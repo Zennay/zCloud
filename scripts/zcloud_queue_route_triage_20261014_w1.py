@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""GitHub-hosted, GET-only queue route triage for #1326 (NO repair authority).
+
+Unlike the strict #1269 *admission* reference, triage deliberately counts
+foreign-branch and zero-job queued runs as diagnostics rather than pretending
+all queued workflows are actionable copies of current main. It never invokes
+GitHub writes, deploys, cancellation, runner recovery or SSH.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import os
+import signal
+import time
+
+try:
+    from scripts import zcloud_watchdog_queue_collector_20261014_w1 as source
+    from scripts import zcloud_watchdog_queue_admission_20261014_w1 as policy
+except ModuleNotFoundError:
+    import zcloud_watchdog_queue_collector_20261014_w1 as source
+    import zcloud_watchdog_queue_admission_20261014_w1 as policy
+
+IDENTITY = "zcloud-actions-queue-route-triage-v1"
+RUN_ROUTE = "/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100"
+_LIMIT_RUNS = 40
+_LIMIT_JOBS = 100
+_MAX_SECONDS = 45
+
+
+def _deny(reason: str = "unverified_github_inventory") -> dict:
+    # Even a detailed read-only route diagnosis NEVER admits side effects.
+    return {
+        "policy": IDENTITY, "decision": "DENY",
+        "reason": reason, "observed_runs": 0, "route_counts": {},
+        "runs": [], "runner_recovery_authorized": False,
+        "cancel_run_ids": [], "production_verified": False,
+        "worker_generation_verified": False,
+    }
+
+
+def _route(jobs: list[dict]) -> str:
+    if not jobs:
+        return "no_job_records"
+    candidates = []
+    for job in jobs:
+        labels = job["labels"]
+        if "self-hosted" not in labels:
+            candidates.append("github_hosted")
+        elif {"self-hosted", "zcloud", "vps"}.issubset(labels) and "ftmo-research" not in labels:
+            candidates.append("zcloud_vps")
+        elif {"self-hosted", "ftmo-research"}.issubset(labels) and not {"zcloud", "vps"}.intersection(labels):
+            candidates.append("ftmo_research")
+        else:
+            candidates.append("other_or_mixed")
+    return candidates[0] if all(v == candidates[0] for v in candidates) else "mixed_job_routes"
+
+
+def _assignment(jobs: list[dict]) -> str:
+    if not jobs:
+        return "no_job_records"
+    values = []
+    for job in jobs:
+        runner_id = job.get("runner_id")
+        name = job.get("runner_name")
+        if runner_id == 0 and name == "":
+            values.append("not_assigned")
+        elif type(runner_id) is int and runner_id > 0 and type(name) is str and name:
+            values.append("assigned")
+        else:
+            values.append("indeterminate")
+    return values[0] if all(x == values[0] for x in values) else "mixed_assignment"
+
+
+def _validated_jobs(jobs: list[dict], run: dict) -> tuple:
+    if len(jobs) > _LIMIT_JOBS:
+        raise source.InventoryError("route_job_cap")
+    signatures = []
+    for job in jobs:
+        signature = source._job_signature(job)
+        if (
+            job["run_id"] != run["id"]
+            or job["run_attempt"] != run["run_attempt"]
+            or job["head_sha"] != run["head_sha"]
+            or job["head_branch"] != run["head_branch"]
+        ):
+            raise source.InventoryError("cross_run_job_evidence")
+        labels = job["labels"]
+        if (
+            len(labels) > 16 or any(len(label) > 64 for label in labels)
+            or type(job.get("runner_name")) is not str
+            or len(job["runner_name"]) > 128
+        ):
+            raise source.InventoryError("invalid_runner_evidence")
+        signatures.append((signature, job["runner_name"]))
+    return tuple(signatures)
+
+
+def _jobs(api_get, run: dict) -> list[dict]:
+    route = f"/repos/Zennay/zCloud/actions/runs/{run['id']}/jobs?per_page=100"
+    jobs = source._pages(api_get, route, "jobs", max_pages=1,
+                         max_count=_LIMIT_JOBS, query={"per_page": "100"})
+    _validated_jobs(jobs, run)
+    return jobs
+
+
+def collect(api_get, *, clock=None, monotonic_clock=None) -> dict:
+    """Audit at most 40 queued runs twice without treating any as cancelable."""
+    monotonic = monotonic_clock or time.monotonic
+    began = monotonic()
+    timestamp = clock if clock is not None else datetime.now(timezone.utc)
+    if (
+        type(began) not in (int, float) or
+        not isinstance(timestamp, datetime) or timestamp.tzinfo is None or
+        timestamp.utcoffset() is None or timestamp.utcoffset().total_seconds() != 0
+    ):
+        raise source.InventoryError("invalid_triage_clock")
+    before = source._main(api_get)
+    run_rows = source._pages(api_get, RUN_ROUTE, "workflow_runs",
+                             max_pages=1, max_count=_LIMIT_RUNS,
+                             query={"status": "queued", "per_page": "100"})
+    # Validate the entire census before fetching individual jobs.
+    identities = [source._run_identity(run) for run in run_rows]
+    first_jobs = [_jobs(api_get, run) for run in run_rows]
+    latest = source._pages(api_get, RUN_ROUTE, "workflow_runs",
+                           max_pages=1, max_count=_LIMIT_RUNS,
+                           query={"status": "queued", "per_page": "100"})
+    if [source._run_identity(run) for run in latest] != identities:
+        raise source.InventoryError("queue_changed_during_inventory")
+    for run, original in zip(run_rows, first_jobs):
+        again = _jobs(api_get, run)
+        if _validated_jobs(again, run) != _validated_jobs(original, run):
+            raise source.InventoryError("job_state_changed_during_inventory")
+    after = source._main(api_get)
+    if after != before or not 0 <= monotonic() - began <= _MAX_SECONDS:
+        raise source.InventoryError("main_moved_or_triage_stale")
+
+    categories: dict[str, int] = {}
+    observations = []
+    for run, jobs in zip(run_rows, first_jobs):
+        repo = run["head_repository"]["full_name"]
+        if repo != source.REPO:
+            scope = "foreign_repository"
+        elif run["head_branch"] != "main":
+            scope = "other_branch"
+        elif run["head_sha"] != before:
+            scope = "historical_main"
+        else:
+            scope = "current_main"
+        route = _route(jobs)
+        assignment = _assignment(jobs)
+        state = (
+            "queued" if jobs and all(j["status"] == "queued" for j in jobs)
+            else "no_job_records" if not jobs
+            else "mixed_or_active"
+        )
+        bucket = f"{scope}/{route}/{assignment}/{state}"
+        categories[bucket] = categories.get(bucket, 0) + 1
+        # Canonical, generated numeric hyperlink. Never echo GitHub job
+        # names, labels, branches, raw responses or token contents.
+        observations.append({
+            "run_id": run["id"],
+            "url": f"https://github.com/Zennay/zCloud/actions/runs/{run['id']}",
+            "scope": scope, "route": route, "assignment": assignment,
+            "job_state": state, "job_count": len(jobs),
+        })
+    return {
+        "policy": IDENTITY, "decision": "OBSERVED",
+        "observed_at": timestamp.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "observed_runs": len(run_rows), "route_counts": dict(sorted(categories.items())),
+        "runs": observations, "main_sha_before": before, "main_sha_after": after,
+        "reason": "read_only_route_counts_not_runner_liveness",
+        "runner_recovery_authorized": False, "cancel_run_ids": [],
+        "production_verified": False, "worker_generation_verified": False,
+    }
+
+
+def main() -> int:
+    count = 0
+    deadline = time.monotonic() + 100
+
+    def on_alarm(_number, _frame):
+        raise source.InventoryError("triage_wallclock_exceeded")
+
+    enabled_alarm = hasattr(signal, "setitimer") and hasattr(signal, "SIGALRM")
+    if enabled_alarm:
+        signal.signal(signal.SIGALRM, on_alarm)
+        signal.setitimer(signal.ITIMER_REAL, 100)
+
+    try:
+        reader = source.ReadOnlyAPI(os.environ.get("GITHUB_TOKEN", ""))
+
+        def bounded_get(path):
+            nonlocal count
+            count += 1
+            if count > 90 or time.monotonic() >= deadline:
+                raise source.InventoryError("triage_budget_exceeded")
+            return reader.get(path)
+
+        report = collect(bounded_get)
+    except (source.InventoryError, OSError, ValueError, TypeError, RecursionError, AttributeError):
+        report = _deny()
+    finally:
+        if enabled_alarm:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+    print(json.dumps(report, separators=(",", ":"), sort_keys=True))
+    return 0 if report["decision"] == "OBSERVED" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
