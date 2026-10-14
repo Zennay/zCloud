@@ -136,11 +136,13 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
             continue
         selection = runner.group(1) if runner else reuse.group(1)
         # Dynamic runner selection and reusable jobs require independent proof.
-        potentially_vps = (
-            "self-hosted" in block.lower()
-            or (runner is not None and (any(mark in selection for mark in ("$", "*", "&", "!")) or not selection.strip()))
-            or reuse is not None
-        )
+        # A custom label such as "vps" or "ftmo-research" can select an
+        # actual self-hosted runner without spelling "self-hosted".
+        hosted = bool(runner and re.fullmatch(
+            r"(?:ubuntu|windows|macos)-(?:latest|[0-9][A-Za-z0-9._-]*)",
+            selection.strip().strip("'\\\""),
+        ))
+        potentially_vps = bool(reuse) or bool(runner and not hosted)
         if not potentially_vps:
             continue
         # Enforce actual job-level if, not shell/source comments or step-level if.
