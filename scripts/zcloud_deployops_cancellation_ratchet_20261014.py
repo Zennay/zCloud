@@ -155,11 +155,9 @@ def static_concurrency_groups(text):
     return groups
 
 
-def literal_group_collision(root, base, head, candidate_path, candidate):
-    """Check unchanged/current + previously live workflow refs for shared groups."""
-    candidate_groups = static_concurrency_groups(candidate)
-    if not candidate_groups:
-        return False  # Not a proof of non-collision: dynamic groups not covered.
+def build_vps_group_index(root, base, head):
+    """Scan each immutable Git revision once, not once per changed workflow."""
+    owners = {}
     for sha in (base, head):
         raw = git(root, "ls-tree", "-r", "--name-only", "-z", sha,
                   "--", ".github/workflows/")
@@ -169,20 +167,28 @@ def literal_group_collision(root, base, head, candidate_path, candidate):
         ):
             raise Unverifiable("collision_inventory")
         for path in paths:
-            if path == candidate_path:
-                continue  # Own earlier-revision exposure is checked separately.
             try:
                 other = source(root, sha, path)
                 _, possible_vps, _ = risks(other, details=True)
             except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
-                continue  # Unknown external YAML cannot prove a literal collision.
-            if possible_vps and candidate_groups & static_concurrency_groups(other):
-                return True
-    return False
+                continue  # Unknown external source is not evidence of non-collision.
+            if possible_vps:
+                for group in static_concurrency_groups(other):
+                    owners.setdefault(group, set()).add(path)
+    return owners
+
+
+def literal_group_collision(candidate_path, candidate, exposure_index):
+    """Reject exact literal cross-workflow concurrency-group collisions."""
+    return any(
+        any(owner != candidate_path for owner in exposure_index.get(group, ()))
+        for group in static_concurrency_groups(candidate)
+    )
 
 
 def evaluate(root, base, head):
     result = []
+    exposure_index = None
     for path in changed(root, base, head):
         before = source(root, base, path, missing_ok=True)
         after = source(root, head, path)
@@ -190,13 +196,14 @@ def evaluate(root, base, head):
         prior_vps = False
         if before is not None:
             _, prior_vps, _ = risks(before, details=True)
-        # GitHub concurrency may cancel a still-running job from the previous
-        # workflow revision. Hosted-only new jobs do NOT prove older VPS
-        # invocations with the same group have stopped.
-        if (now or (prior_vps and now_cancels)
-                or (now_cancels and literal_group_collision(
-                    root, base, head, path, after))):
-            # Changed legacy risk needs owner review. Risk removal passes.
+        # An already-running old VPS job can be cancelled even if new runner
+        # definitions are hosted-only. Check both old and current snapshots.
+        collision = False
+        if not now and not prior_vps and now_cancels and static_concurrency_groups(after):
+            if exposure_index is None:
+                exposure_index = build_vps_group_index(root, base, head)
+            collision = literal_group_collision(path, after, exposure_index)
+        if now or (prior_vps and now_cancels) or collision:
             result.append(path)
     return result
 
