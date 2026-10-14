@@ -29,6 +29,9 @@ def payload():
             },
             'gates': {'580': 'open', '1089': 'open', '1135': 'open'},
             'prs': [{'number': 12, 'head_sha': H, 'base_sha': S,
+                     'ancestry_evidence': {'complete': True, 'main_sha': S,
+                         'head_sha': H, 'merge_base_sha': S,
+                         'ahead_by': 1, 'behind_by': 0, 'status': 'ahead'},
                      'draft': False, 'owner_approved': True,
                      'owner_review_evidence': {
                          'complete': True, 'decision': 'approved', 'dismissed': False,
@@ -91,6 +94,7 @@ class ReviewQueueTests(unittest.TestCase):
         examples = (
             (['overlapping_owner', 'stale_base'], 'coordinate_owners'),
             (['stale_base'], 'request_owner_restack'),
+            (['pr_branch_behind_main'], 'request_owner_restack'),
             (['required_checks_missing'], 'verify_required_checks'),
             (['exact_head_checks_not_green'], 'rerun_exact_head_checks'),
             (['owner_review_stale'], 'request_exact_head_reapproval'),
@@ -136,6 +140,60 @@ class ReviewQueueTests(unittest.TestCase):
         data['gates'] = dict.fromkeys(data['gates'], 'closed')
         self.assertTrue(mod.snapshot(data)['serialized_gates_closed'])
         self.assertFalse(mod.snapshot(data)['release_authorized'])
+
+    def test_mutable_base_ref_does_not_prove_current_merge_base(self):
+        d = payload()
+        # PR API base.sha can be current main despite old merge-base.
+        d['prs'][0]['ancestry_evidence'].update(
+            merge_base_sha='c' * 40, ahead_by=4, behind_by=3, status='diverged')
+        row = snap(d)['review_candidates'][0]
+        self.assertEqual(row['reasons'], ['pr_branch_behind_main'])
+        self.assertFalse(row['review_candidate'])
+        self.assertEqual(row['next_action']['code'], 'request_owner_restack')
+
+    def test_behind_only_pr_cannot_claim_a_green_source_review(self):
+        d = payload()
+        d['prs'][0]['ancestry_evidence'].update(
+            merge_base_sha=H, ahead_by=0, behind_by=1, status='behind')
+        self.assertIn('pr_branch_behind_main', snap(d)['review_candidates'][0]['reasons'])
+
+    def test_incomplete_or_stale_sha_compare_denied(self):
+        for mutation in (
+            lambda a: a.update(complete=False),
+            lambda a: a.update(main_sha=H),
+            lambda a: a.update(head_sha=S),
+            lambda a: a.update(merge_base_sha='x'),
+        ):
+            d = payload()
+            mutation(d['prs'][0]['ancestry_evidence'])
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
+
+    def test_compare_inconsistent_status_denied(self):
+        for state in ('behind', 'diverged', 'identical', 'unknown'):
+            d = payload()
+            d['prs'][0]['ancestry_evidence']['status'] = state
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
+
+    def test_compare_boolean_or_out_of_range_distances_denied(self):
+        for invalid in (True, -1, 2501, 1.5, '1'):
+            d = payload()
+            d['prs'][0]['ancestry_evidence']['behind_by'] = invalid
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
+
+    def test_compare_ahead_claim_with_wrong_merge_base_denied(self):
+        d = payload()
+        d['prs'][0]['ancestry_evidence']['merge_base_sha'] = H
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_exact_sha_head_up_to_date_is_advisory_only(self):
+        d = payload()
+        report = snap(d)
+        self.assertEqual(report['review_candidate_count'], 1)
+        self.assertFalse(report['release_authorized'])
 
     def test_stale_base_denied(self):
         d = payload(); d['prs'][0]['base_sha'] = H
