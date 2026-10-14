@@ -197,6 +197,20 @@ class DashboardProbeTests(unittest.TestCase):
                 response.headers["Content-Encoding"] = value
                 self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
 
+    def test_rejects_ambiguous_content_encoding_metadata(self):
+        for coding in ("", "identity\\n", "identity\\t", "identity\\x00",
+                       "identity,identity", "br", "gZip",
+                       "identity" + " " * 40, "idèntity"):
+            with self.subTest(coding=repr(coding)):
+                response = Response()
+                response.headers["Content-Encoding"] = coding
+                response.read = mock.Mock(side_effect=AssertionError("must not read"))
+                self.assertEqual(probe.probe_once(Opener(response)), "invalid_headers")
+                response.read.assert_not_called()
+        response = Response()
+        response.headers["Content-Encoding"] = " IDENTITY "
+        self.assertEqual(probe.probe_once(Opener(response)), "healthy")
+
     def test_rejects_duplicate_critical_http_headers(self):
         for header, value in (("Content-Length", str(len(VALID))),
                               ("Content-Type", "application/json"),
