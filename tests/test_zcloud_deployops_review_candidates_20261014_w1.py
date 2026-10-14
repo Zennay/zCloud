@@ -74,6 +74,38 @@ class ReviewQueueTests(unittest.TestCase):
                           'contents: write', 'issues: write'):
             self.assertNotIn(forbidden, workflow)
 
+    def test_each_denial_has_one_safe_human_next_action(self):
+        examples = (
+            (['overlapping_owner', 'stale_base'], 'coordinate_owners'),
+            (['stale_base'], 'request_owner_restack'),
+            (['required_checks_missing'], 'verify_required_checks'),
+            (['exact_head_checks_not_green'], 'rerun_exact_head_checks'),
+            (['owner_review_missing'], 'request_independent_review'),
+            (['draft'], 'request_owner_completion'),
+            ([], 'independent_source_review'),
+        )
+        for reasons, expected in examples:
+            action = mod.advisory_next_action(reasons)
+            self.assertEqual(action['code'], expected)
+            self.assertNotIn('merge automatically', action['guidance_nl'])
+            self.assertNotIn('VPS', action['guidance_nl'])
+            self.assertLess(len(action['guidance_nl']), 150)
+
+    def test_next_action_is_reported_without_file_or_branch_names(self):
+        d = payload()
+        d['prs'][0]['base_sha'] = H
+        d['branches'] = [{'name': 'secret-branch-name', 'head_sha': H,
+                          'files': ['scripts/a.py'],
+                          'files_evidence': {'complete': True, 'total_count': 1,
+                                             'head_sha': H, 'base_sha': S}}]
+        report = snap(d)
+        row = report['review_candidates'][0]
+        self.assertEqual(row['next_action']['code'], 'coordinate_owners')
+        text = mod.markdown(report)
+        self.assertIn('Stem bestandsverdeling af', text)
+        self.assertNotIn('secret-branch-name', text)
+        self.assertNotIn('scripts/a.py', text)
+
     def test_advisory_only(self):
         report = mod.snapshot(payload())
         self.assertEqual(report['review_candidate_count'], 1)
