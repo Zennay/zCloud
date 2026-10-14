@@ -423,6 +423,30 @@ class DashboardProbeTests(unittest.TestCase):
                 if expected != "healthy":
                     response.read.assert_not_called()
 
+    def test_structured_extension_values_must_be_unambiguous(self):
+        cases = (
+            ('CDN; fwd=miss; note="safe; despite punctuation"', "healthy"),
+            ("CDN; fwd=miss; custom=12.25", "healthy"),
+            ("CDN; fwd=miss; custom=-12", "healthy"),
+            ("CDN; fwd=miss; custom=?1", "healthy"),
+            ("CDN; fwd=miss; custom=MEMORY", "healthy"),
+            ("CDN; fwd=miss; custom=bad value", "invalid_headers"),
+            ("CDN; fwd=miss; custom=?2", "invalid_headers"),
+            ("CDN; fwd=miss; custom=1.2345", "invalid_headers"),
+            ('CDN; fwd=miss; custom="ok"junk', "invalid_headers"),
+            ('CDN; fwd=miss; custom="broken ' + chr(92) + 'q"', "invalid_headers"),
+            ('CDN; fwd=miss; custom=:AQID:', "invalid_headers"),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                response = Response()
+                response.headers["Cache-Status"] = value
+                if expected != "healthy":
+                    response.read = mock.Mock(side_effect=AssertionError("must not read"))
+                self.assertEqual(probe.probe_once(Opener(response)), expected)
+                if expected != "healthy":
+                    response.read.assert_not_called()
+
     def test_http_cache_status_malformed_or_duplicate_denied(self):
         for value in ("", "cdn; " + "x" * 513, "cdn; hit\n",
                       "cdn; hit\x00", "cdn; hït"):
@@ -839,6 +863,15 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
             ("CDN; fwd=partial; fwd-status=206", "cache_evidence"),
             ("CDN; fwd=uri-miss; fwd-status=200", "healthy"),
             ("CDN; fwd-status=304", "invalid_headers"),
+        ):
+            with self.subTest(value=value):
+                self._run(expected, extra_headers=(("Cache-Status", value),))
+
+    def test_actual_http_malformed_cache_extension_does_not_appear_fresh(self):
+        for value, expected in (
+            ("CDN; fwd=miss; ext=bad value", "invalid_headers"),
+            ("CDN; fwd=miss; ext=25", "healthy"),
+            ('CDN; fwd=miss; ext="quoted; safe"', "healthy"),
         ):
             with self.subTest(value=value):
                 self._run(expected, extra_headers=(("Cache-Status", value),))
