@@ -249,6 +249,40 @@ class GitTest(unittest.TestCase):
         self.assertEqual(2, len(risks))
         self.assertEqual(1, census.call_count)
 
+    def test_quoted_literal_groups_are_equivalent(self):
+        self.assertEqual({"isolated"}, scanner.static_concurrency_groups(SAFE))
+        for quoted in ("'isolated'", '"isolated"'):
+            self.assertEqual({"isolated"}, scanner.static_concurrency_groups(
+                SAFE.replace("group: isolated", "group: " + quoted)
+            ))
+
+    def test_quoted_groups_collide_across_workflows(self):
+        previous = self.path.parent / "vps-other.yml"
+        previous.write_text(
+            SELFHOST.replace("group: isolated", "group: 'isolated'"),
+            encoding="utf-8",
+        )
+        base = self.commit(SAFE)
+        head = self.commit(
+            SAFE.replace("cancel-in-progress: false", "cancel-in-progress: true")
+        )
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_duplicate_group_source_denied(self):
+        source = SAFE.replace(
+            "  group: isolated",
+            "  group: isolated\n  group: shared",
+        )
+        self.assertRaises(scanner.Unverifiable,
+                          scanner.static_concurrency_groups, source)
+
+    def test_inline_quoted_group_is_extracted(self):
+        text = SAFE.replace(
+            "concurrency:\n  group: isolated\n  cancel-in-progress: false",
+            "concurrency: {group: 'shared', cancel-in-progress: true}",
+        )
+        self.assertEqual({"shared"}, scanner.static_concurrency_groups(text))
+
     def test_dynamic_group_is_not_claimed_literal_collision(self):
         self.assertEqual(set(), scanner.static_concurrency_groups(
             SAFE.replace("group: isolated", "group: " + "$" + "{{ github.workflow }}")
