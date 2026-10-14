@@ -61,7 +61,12 @@ def assess(snapshot: Any, *, expected_main_sha: str, now: datetime) -> dict[str,
         or snapshot.get("main_sha_after") != expected_main_sha
     ):
         return _fail("main_identity_mismatch")
-    if now.tzinfo is None or now.utcoffset().total_seconds() != 0:
+    if (
+        not isinstance(now, datetime)
+        or now.tzinfo is None
+        or now.utcoffset() is None
+        or now.utcoffset().total_seconds() != 0
+    ):
         return _fail("invalid_now")
     try:
         observed = _utc(snapshot.get("observed_at"))
@@ -98,9 +103,11 @@ def assess(snapshot: Any, *, expected_main_sha: str, now: datetime) -> dict[str,
                 run.get("repository") != REPO
                 or run.get("head_sha") != expected_main_sha
                 or run.get("head_branch") != "main"
-                or run.get("event") not in _ALLOWED_EVENTS
+                or type(run.get("event")) is not str
+                or run["event"] not in _ALLOWED_EVENTS
                 or not _number(run.get("workflow_id"))
-                or run.get("status") not in _ALLOWED_STATES
+                or type(run.get("status")) is not str
+                or run["status"] not in _ALLOWED_STATES
             ):
                 return _fail("untrusted_or_ambiguous_run")
             if type(run.get("jobs_complete")) is not bool or not run["jobs_complete"]:
@@ -115,7 +122,10 @@ def assess(snapshot: Any, *, expected_main_sha: str, now: datetime) -> dict[str,
                 if job["id"] in job_ids:
                     return _fail("duplicate_job_identity")
                 job_ids.add(job["id"])
-                if job.get("status") not in _ALLOWED_STATES:
+                if (
+                    type(job.get("status")) is not str
+                    or job["status"] not in _ALLOWED_STATES
+                ):
                     return _fail("unknown_job_state")
                 all_queued = all_queued and job["status"] == "queued"
                 labels = job.get("labels")
