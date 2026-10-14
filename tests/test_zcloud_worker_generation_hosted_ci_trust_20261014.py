@@ -20,6 +20,9 @@ class WorkerGenerationHostedSourceTrustTests(unittest.TestCase):
 
     def test_workflow_retains_evidence_test_sources_and_new_safety_gate(self):
         for path in (
+            "server.py",
+            "public/zcloud-worker.user.js",
+            "tests/_worker_env.py",
             "scripts/zcloud_worker_generation_evidence_20261013_w1.py",
             "tests/test_zcloud_worker_generation_evidence_20261013_w1.py",
             "tests/test_zcloud_worker_generation_http_integration_20261013_w1.py",
