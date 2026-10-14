@@ -16,9 +16,9 @@ import subprocess
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
-PR_SOURCE = re.compile(r"\b(?:github\.event\.pull_request\.head\.(?:sha|ref)|github\.head_ref|github\.event\.pull_request\.head\.repo)\b", re.I)
-CHECKOUT = re.compile(r"(?m)^\s*-\s*uses\s*:\s*['\"]?actions/checkout@", re.I)
-RUN_STEP = re.compile(r"(?m)^\s*-\s*run\s*:", re.I)
+PR_SOURCE = re.compile(r"\b(?:github\.event\.pull_request\.head(?:\.[A-Za-z_][\w]*)+|github\.head_ref|github\.event\.pull_request\.(?:title|body))\b", re.I)
+CHECKOUT = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?uses[ \t]*:[ \t]*['\"]?actions/checkout@", re.I)
+RUN_STEP = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?run[ \t]*:", re.I)
 PR_TARGET = re.compile(r"\bpull_request_target\b")
 
 
@@ -101,12 +101,12 @@ def executable_steps(source: str) -> list[str]:
     """Isolate step-level checkout/run contexts, never conflate different jobs.
 
     This intentionally does not execute YAML or GitHub expressions. Steps are
-    only grouped by literal sibling "- name", "- uses" and "- run" tokens.
+    grouped by sibling list-item keys (such as "- name", "- if" or "- uses").
     """
     lines = source.splitlines()
     starts = []
     for index, line in enumerate(lines):
-        match = re.match(r"^([ ]{6,})-\s+(?:name|uses|run):", line)
+        match = re.match(r"^([ ]{6,})-\s+(?:[A-Za-z_][\w-]*):", line)
         if match:
             starts.append((index, len(match.group(1))))
     blocks = []

@@ -63,6 +63,32 @@ class GuardTests(unittest.TestCase):
         src = SAFE + "      - run: git checkout '${{ github.head_ref }}'\n"
         self.assertIn("pr_source_in_run_job", gate.risk_set(src))
 
+    def test_named_checkout_step_with_untrusted_head_ref(self):
+        src = SAFE + "      - name: Checkout PR\n        uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n"
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(SAFE, src))
+
+    def test_named_run_step_with_untrusted_pr_input(self):
+        src = SAFE + "      - name: Execute head branch\n        shell: bash\n        run: git fetch origin '${{ github.head_ref }}'\n"
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_if_first_step_still_detects_checkout(self):
+        src = SAFE + "      - if: always()\n        name: Checkout head\n        uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.ref }}\n"
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+
+    def test_if_first_step_detects_run_pr_input(self):
+        src = SAFE + "      - if: always()\n        name: Execute\n        run: echo '${{ github.event.pull_request.title }}'\n"
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_separate_checkout_and_named_head_metadata_do_not_conflate(self):
+        src = SAFE + "      - name: Checkout base\n        uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.base.sha }}\n"
+        src += "      - name: Metadata\n        env:\n          HEAD: ${{ github.event.pull_request.head.sha }}\n        run: echo safe\n"
+        self.assertNotIn("untrusted_pr_checkout", gate.risk_set(src))
+
+    def test_named_checkout_head_label_variants_are_scanned(self):
+        src = SAFE + "      - name: Checkout head\n        uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.label }}\n"
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
