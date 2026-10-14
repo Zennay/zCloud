@@ -51,7 +51,7 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(2, audit.summarize(rows, max_minutes=30)["finding_count"])
 
     def test_root_compact_jobs_mapping_denied_instead_of_empty_inventory(self):
-        source = "jobs: {private: {runs-on: self-hosted, timeout-minutes: 90}}\\n"
+        source = "jobs: {private: {runs-on: self-hosted, timeout-minutes: 90}}\n"
         with self.assertRaisesRegex(RuntimeError, "inline root jobs"):
             audit.inspect_workflow(".github/workflows/root-flow.yml", source, max_minutes=30)
 
