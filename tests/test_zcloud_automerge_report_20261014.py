@@ -101,6 +101,7 @@ class SummaryTests(unittest.TestCase):
             "GITHUB_SHA": B, "GITHUB_EVENT_NAME": "workflow_dispatch",
             "GITHUB_TOKEN": "test-token", "ZCLOUD_AUTOMERGE_ENABLED": "true",
             "GITHUB_ACTOR": "Zennay", "GITHUB_TRIGGERING_ACTOR": "Zennay",
+            "GITHUB_RUN_ATTEMPT": "1",
         }
         def transport(token, method, path, data=None):
             self.assertEqual(method, "GET")

@@ -13,7 +13,8 @@ B = "b" * 40
 ENV = {"GITHUB_REPOSITORY": "Zennay/zCloud", "GITHUB_REF": "refs/heads/main",
        "GITHUB_SHA": B, "GITHUB_EVENT_NAME": "workflow_dispatch",
        "GITHUB_TOKEN": "unit-test-token", "ZCLOUD_AUTOMERGE_ENABLED": "true",
-       "GITHUB_ACTOR": "Zennay", "GITHUB_TRIGGERING_ACTOR": "Zennay"}
+       "GITHUB_ACTOR": "Zennay", "GITHUB_TRIGGERING_ACTOR": "Zennay",
+       "GITHUB_RUN_ATTEMPT": "1"}
 
 
 def pr(docs=True):
@@ -326,6 +327,36 @@ class DecisionTest(unittest.TestCase):
         for key in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR"):
             with self.subTest(key=key), self.assertRaises(mod.Refused):
                 mod.main(["--apply"], {**ENV, key: "untrusted"}, self.transport)
+
+    def test_replayed_or_untrusted_workflow_attempt_never_reads_api_or_merges(self):
+        # Retry/re-run of a previously completed integration job must not merge
+        # another labelled PR, even though its immutable event SHA is unchanged.
+        for value in (None, "", "0", "2", "3", "01", "1.0", 1, True):
+            env = dict(ENV)
+            if value is None:
+                env.pop("GITHUB_RUN_ATTEMPT")
+            else:
+                env["GITHUB_RUN_ATTEMPT"] = value
+            for args in ([], ["--apply"]):
+                calls = []
+                def forbidden_api(*a, **kw):
+                    calls.append((a, kw))
+                    self.fail("replayed workflow accessed GitHub API")
+                with self.subTest(value=value, args=args), self.assertRaisesRegex(
+                    mod.Refused, "replayed_or_unknown_attempt"
+                ):
+                    mod.main(args, env, forbidden_api)
+                self.assertEqual(calls, [])
+
+    def test_first_attempt_does_not_change_label_sha_and_owner_admission(self):
+        # Keep legitimate scheduled/manual owner-only, labelled exact-head
+        # behaviour; this hardening only closes repeat dispatch.
+        calls = []
+        def transport(token, method, path, data=None):
+            calls.append((method, path))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+        self.assertEqual(sum(method == "PUT" for method, _ in calls), 1)
 
     def test_missing_token_denied(self):
         with self.assertRaises(mod.Refused):
