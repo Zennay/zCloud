@@ -55,6 +55,12 @@ def events_from(source):
 
 def judge(source):
     """Conservative syntactic admission for a *changed* workflow only."""
+    # Duplicate mappings and YAML merge aliases can shadow the first parsed value.
+    for key in ("on", "jobs", "permissions"):
+        if len(re.findall(rf"(?m)^{key}:[ \\t]*", source)) > 1:
+            return [f"duplicate_top_level_{key}"]
+    if re.search(r"(?m)^\\s*<<:[ \\t]*[&*]", source):
+        return ["yaml_merge_alias_not_supported"]
     try:
         events = events_from(source)
         root = re.search(r"(?m)^jobs:\s*$", source)
@@ -65,13 +71,19 @@ def judge(source):
         jobs = [b for b in blocks if re.match(r"(?m)^  [A-Za-z_][\w-]*:[ \t]*$", b)]
         if not jobs or len(jobs) > 100:
             raise ValueError("invalid_jobs")
+        names = [re.match(r"^  ([A-Za-z_][\\w-]*):", b).group(1) for b in jobs]
+        if len(names) != len(set(names)):
+            raise ValueError("duplicate_job_id")
     except ValueError as exc:
         return [str(exc)]
 
     problems = []
     for job in jobs:
         name = re.match(r"^  ([A-Za-z_][\w-]*):", job).group(1)
-        runner = re.search(r"(?m)^    runs-on:\s*(.*)$", job)
+        for field in ("runs-on", "if", "permissions"):
+            if len(re.findall(rf"(?m)^    {field}:[ \\t]*", job)) > 1:
+                problems.append(f"{name}:duplicate_{field.replace('-', '_')}")
+        runner = re.search(r"(?m)^    runs-on:[ \\t]*(.*)$", job)
         if not runner:
             problems.append(f"{name}:runner_unknown")
             continue
