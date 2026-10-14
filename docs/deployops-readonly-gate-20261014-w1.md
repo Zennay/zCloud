@@ -65,3 +65,14 @@ security condition has been independently reviewed.
 - No proof that the machine, listener or application is currently running.
 - No privileged live fix or restart, and no automatic deploy on CI success.
 - The report explicitly marks `deploy_history_exhaustive=false`: its newest 15 observed deploy runs do not prove an exhaustive history. An ambiguous runner name/ID combination is denied rather than reported as assigned.
+
+
+## 14 October continuation: integration on current main and status reconciliation
+
+The observer was fast-forward integrated with canonical `main@c2a944deed94ee6cdaadd37e5d0e54e87785502c` through a two-parent source merge commit (no force push, no privileged runtime change). Only four add-only owned paths remain different from main.
+
+The live main SHA changed from `e5a63e3` to `c2a944d`; the newer SHA returned zero legacy commit-status receipts at the time it was queried. **Status absence is not success or a reason to repeat a deploy automatically.** Unknown or truncated `total_count` is denied. If GitHub's latest main deployment conclusion and production status disagree, the result is `STATUS_RUN_CONFLICT`, not an invented green/red production verdict. Active deployments produce `DEPLOY_RUN_IN_PROGRESS` and advice to observe rather than redispatch.
+
+The workflow now tests **every** commit to this dedicated branch, including a commit that only integrates new current-main changes; this prevents an unnoticed stale green proof when the code base changes but the four observer paths remain unchanged.
+
+A passing hosted workflow is strictly source/test evidence. Production/worker generation/SQLite/runner state requires separate live proof. If an owner later merges this observer into main, use a controlled source-only release path that does not accidentally trigger the legacy `workflow_run` production deployment.
