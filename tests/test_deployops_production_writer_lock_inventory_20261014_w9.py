@@ -6,6 +6,7 @@ non-authorizing report. None of the tests invoke GitHub Actions or VPS APIs.
 from pathlib import Path
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,84 @@ SPEC.loader.exec_module(audit_mod)
 
 def text(name: str) -> str:
     return (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
+
+HOSTED = ROOT / ".github/workflows/zcloud-production-writer-lock-inventory-hosted-20261014-w9.yml"
+
+
+def hosted_failures(source: str) -> list[str]:
+    errors = []
+    if source.count("\non:\n") != 1 or source.count("\npermissions:\n") != 1:
+        errors.append("ambiguous_workflow_roots")
+    if "  pull_request:" not in source or "  push:" not in source:
+        errors.append("source_auto_triggers_missing")
+    if "\n  workflow_dispatch:" in source or "\n  workflow_run:" in source:
+        errors.append("unexpected_event")
+    if re.findall(r"(?m)^    runs-on:\s*(\S+)\s*$", source) != ["ubuntu-latest", "ubuntu-latest"]:
+        errors.append("hosted_only")
+    if re.findall(r"(?m)^  ([a-z-]+):\s*(\S+)\s*$",
+                  source.split("\npermissions:\n", 1)[1].split("\nconcurrency:\n", 1)[0]) != [("contents", "read")]:
+        errors.append("read_only_token")
+    if source.count("  source-admission:\n") != 1 or source.count("  inventory:\n") != 1:
+        errors.append("two_jobs")
+    first = source.split("  source-admission:\n", 1)[1].split("  inventory:\n", 1)[0] if "  source-admission:\n" in source else ""
+    second = source.split("  inventory:\n", 1)[1] if "  inventory:\n" in source else ""
+    for name, marker in {
+        "no_checkout_before_admission": "actions/checkout",
+        "no_token_before_admission": "github.token",
+    }.items():
+        if marker in first:
+            errors.append(name)
+    for marker in ("test \"$TARGET_REPO\" = Zennay/zCloud",
+                   "test \"$HEAD_REPO\" = \"$TARGET_REPO\"",
+                   "test \"$BASE_REPO\" = \"$TARGET_REPO\"",
+                   "test \"$ATTEMPT\" = 1"):
+        if marker not in first:
+            errors.append("source_admission:" + marker)
+    if "needs: source-admission" not in second:
+        errors.append("checkout_requires_admission")
+    if "persist-credentials: false" not in second:
+        errors.append("no_persisted_credentials")
+    if "ref: " + "$" + "{{ github.event.pull_request.head.sha || github.sha }}" not in second:
+        errors.append("exact_source_sha")
+    if "python3 -m unittest -v tests.test_deployops_production_writer_lock_inventory_20261014_w9" not in second:
+        errors.append("self_test_runs")
+    if "python3 scripts/zcloud_production_writer_lock_inventory_20261014_w9.py --repo-root . --deny-new-debt" not in second:
+        errors.append("deny_new_debt")
+    return errors
+
+
+class HostedWriterInventoryAdmissionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = HOSTED.read_text(encoding="utf-8")
+
+    def test_hosted_source_audit_admission_stays_credential_free(self):
+        self.assertEqual([], hosted_failures(self.source))
+
+    def test_untrusted_source_cannot_skip_admission(self):
+        changed = self.source.replace("    needs: source-admission", "    needs: []", 1)
+        self.assertIn("checkout_requires_admission", hosted_failures(changed))
+
+    def test_no_self_hosted_reader_or_extra_privilege(self):
+        changed = self.source.replace("runs-on: ubuntu-latest",
+                                      "runs-on: [self-hosted, zcloud, vps]", 1)
+        self.assertIn("hosted_only", hosted_failures(changed))
+        changed = self.source.replace("  contents: read", "  contents: write", 1)
+        self.assertIn("read_only_token", hosted_failures(changed))
+
+    def test_no_checkout_or_unbound_sha_in_source_admission(self):
+        changed = self.source.replace("    timeout-minutes: 3",
+                                      "    timeout-minutes: 3\n    uses: actions/checkout@v4", 1)
+        self.assertIn("no_checkout_before_admission", hosted_failures(changed))
+        changed = self.source.replace(
+            "ref: " + "$" + "{{ github.event.pull_request.head.sha || github.sha }}",
+            "ref: main", 1)
+        self.assertIn("exact_source_sha", hosted_failures(changed))
+
+    def test_manual_dispatch_would_be_unreviewed_new_entrypoint(self):
+        changed = self.source.replace("  push:", "  workflow_dispatch:\n  push:", 1)
+        self.assertIn("unexpected_event", hosted_failures(changed))
 
 
 class ProductionWriterInventoryTests(unittest.TestCase):
