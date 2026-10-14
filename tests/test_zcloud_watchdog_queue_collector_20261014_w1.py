@@ -672,6 +672,23 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
         with self.assertRaises(collection.InventoryError):
             collection.ReadOnlyAPI("token\r\ninjected")
 
+    def test_api_token_header_boundary_denies_unsafe_credentials_before_request(self):
+        for bad in (
+            "", " token", "token ", "token\tsecret", "token\x00bad",
+            "token\nsecret", "token\rsecret", "token:secret",
+            "token/secret", "token?secret", "tokén", "token\ud800",
+            "token" * 1025, True, 33, {}, ["secret"],
+        ):
+            with self.subTest(credential=type(bad).__name__):
+                with self.assertRaisesRegex(collection.InventoryError, "invalid_token"):
+                    collection.ReadOnlyAPI(bad)
+
+    def test_api_token_header_boundary_preserves_ascii_scoped_credentials(self):
+        for token in ("ghs_fake.token-123", "github_pat_safe_ABC-0123", "fake-token"):
+            with self.subTest(token=token):
+                adapter = collection.ReadOnlyAPI(token)
+                self.assertEqual(adapter.token, token)
+
 
 if __name__ == "__main__":
     unittest.main()
