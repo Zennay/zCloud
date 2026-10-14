@@ -9,6 +9,8 @@ on:
     paths:
       - .github/workflows/zcloud-hosted-emergency-queue-sweep.yml
       - tests/test_zcloud_emergency_queue_quarantine_20261014.py
+      - scripts/zcloud_emergency_entrypoint_ratchet_20261014.py
+      - tests/test_zcloud_emergency_entrypoint_ratchet_20261014.py
   workflow_dispatch:
     inputs:
       confirm_sha:
@@ -91,8 +93,24 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
+          # A prior step's admission may become stale while the hosted job runs.
+          # Check authorization and current canonical main immediately before GET.
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
+          test "$RUNNER_ENVIRONMENT" = "github-hosted"
           python3 - <<'PY'
           import json
           import os

@@ -7,6 +7,8 @@ on:
       - ".github/workflows/**"
       - ".github/workflows/zcloud-overnight-idle-rescue-20261009.yml"
       - "tests/test_retired_overnight_idle_rescue_20261012.py"
+      - "scripts/zcloud_emergency_entrypoint_ratchet_20261014.py"
+      - "tests/test_zcloud_emergency_entrypoint_ratchet_20261014.py"
       - ".github/workflows/zcloud-expired-overnight-rescue-retirement-20261012.yml"
   push:
     branches: [main]
@@ -14,6 +16,8 @@ on:
       - ".github/workflows/**"
       - ".github/workflows/zcloud-overnight-idle-rescue-20261009.yml"
       - "tests/test_retired_overnight_idle_rescue_20261012.py"
+      - "scripts/zcloud_emergency_entrypoint_ratchet_20261014.py"
+      - "tests/test_zcloud_emergency_entrypoint_ratchet_20261014.py"
       - ".github/workflows/zcloud-expired-overnight-rescue-retirement-20261012.yml"
 
 permissions:
@@ -44,4 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s tests -p 'test_retired_overnight_idle_rescue_20261012.py' -v
+          python3 -m unittest -v tests.test_zcloud_emergency_entrypoint_ratchet_20261014
+          python3 scripts/zcloud_emergency_entrypoint_ratchet_20261014.py --repo-root .
           echo "ZCLOUD_EXPIRED_RESCUE_RETIRED=1"
+          echo "ZCLOUD_EMERGENCY_ENTRYPOINT_RATCHET_GREEN=1"
