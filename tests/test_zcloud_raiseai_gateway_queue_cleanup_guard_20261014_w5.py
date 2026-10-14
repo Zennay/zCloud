@@ -74,6 +74,7 @@ class RaiseAiGatewayCleanupGuardTests(unittest.TestCase):
             env.update({
                 "PATH": tmp + os.pathsep + os.environ.get("PATH", ""),
                 "GH_LOG": str(log),
+                "RAISE_REPO": "Zennay/RaiseAI",
                 "GITHUB_REPOSITORY": "Zennay/zCloud",
                 "GITHUB_EVENT_NAME": "workflow_dispatch",
                 "GITHUB_REF": "refs/heads/main",
