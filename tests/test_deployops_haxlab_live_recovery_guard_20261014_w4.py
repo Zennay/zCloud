@@ -13,6 +13,10 @@ TARGET = ROOT / ".github/workflows/zcloud-haxlab-allocation-recovery.yml"
 
 def failures(source: str) -> list[str]:
     problems: list[str] = []
+    # Duplicate YAML roots can shadow earlier safe event and permission mappings.
+    for key in ("on", "permissions", "jobs"):
+        if len(re.findall(rf"(?m)^{key}:\s*$", source)) != 1:
+            problems.append("single_root_" + key)
     if "\non:\n" not in source or "\npermissions:\n" not in source:
         return ["missing_top_level_boundary"]
     triggers = source.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
@@ -22,9 +26,14 @@ def failures(source: str) -> list[str]:
         problems.append("explicit_sha_input")
     if not re.search(r"(?m)^permissions:\n  contents: read\s*$", source):
         problems.append("read_only_token")
+    policy = source.split("\npermissions:\n", 1)[1].split("\njobs:\n", 1)[0] if "\njobs:\n" in source else ""
+    if re.findall(r"(?m)^  ([A-Za-z_-]+):\s*(\S+)\s*$", policy) != [("contents", "read")]:
+        problems.append("exact_least_privilege")
     jobs = source.split("\njobs:\n", 1)[1] if "\njobs:\n" in source else ""
     if re.findall(r"(?m)^  ([a-z][a-z0-9-]*):\s*$", jobs) != ["recover"]:
         problems.append("single_privileged_job")
+    if re.search(r"(?m)^    permissions:\s*$", jobs):
+        problems.append("job_permission_override")
     head = jobs.split("    steps:\n", 1)[0]
     for name, value in {
         "manual_event": "github.event_name == 'workflow_dispatch'",
@@ -124,6 +133,19 @@ class HaxlabLiveRecoveryGuardTests(unittest.TestCase):
                       "python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null"):
             with self.subTest(guard=guard):
                 self.assertNotEqual([], failures(self.source.replace(guard, "echo unchecked")))
+
+    def test_ambiguous_yaml_roots_and_privilege_override_denied(self):
+        for key in ("on", "permissions", "jobs"):
+            with self.subTest(root=key):
+                modified = self.source + f"\n{key}:\n  push:\n"
+                self.assertIn("single_root_" + key, failures(modified))
+        self.assertIn("exact_least_privilege", failures(
+            self.source.replace("  contents: read", "  contents: write", 1)))
+        self.assertIn("exact_least_privilege", failures(
+            self.source.replace("  contents: read", "  actions: write\n  contents: read", 1)))
+        self.assertIn("job_permission_override", failures(
+            self.source.replace("    timeout-minutes: 8",
+                                "    permissions:\n      actions: write\n    timeout-minutes: 8", 1)))
 
     def test_no_restart_or_global_queue_reconciliation(self):
         self.assertIn("destructive_service_operation", failures(self.source.replace(
