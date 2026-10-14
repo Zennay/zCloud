@@ -168,6 +168,11 @@ def risk_signatures(source: str) -> dict[str, Counter[str]]:
             hashlib.sha256(match.group(0).upper().encode("utf-8")).hexdigest()
             for match in SECRET_IDENTITY.finditer(clean)
         )
+    if "untrusted_pr_checkout" in risks or "pr_source_in_run_job" in risks:
+        refs = Counter(match.group(0).lower() for match in PR_SOURCE.finditer(clean))
+        for reason in ("untrusted_pr_checkout", "pr_source_in_run_job"):
+            if reason in risks:
+                signatures[reason] = refs
     return signatures
 
 
