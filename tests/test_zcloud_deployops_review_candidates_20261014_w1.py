@@ -28,12 +28,21 @@ def payload():
             },
             'gates': {'580': 'open', '1089': 'open', '1135': 'open'},
             'prs': [{'number': 12, 'head_sha': H, 'base_sha': S,
-                     'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}, 'required_checks': ['tests'],
+                     'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'], 'previous_files': [],
+                     'files_evidence': {'complete': True, 'total_count': 1,
+                         'rename_sources_complete': True, 'previous_files_total': 0,
+                         'head_sha': H, 'base_sha': S}, 'required_checks': ['tests'],
                      'checks': [{'name': 'tests', 'head_sha': H, 'conclusion': 'success'}]}],
             'branches': []}
 
 def snap(d):
     """Produce matching synthetic #1312 receipt for local tests with branches."""
+    # Synthetic complete diff evidence; targeted malformed tests bypass this helper.
+    for item in d['prs'] + d['branches']:
+        if isinstance(item.get('files_evidence'), dict):
+            item.setdefault('previous_files', [])
+            item['files_evidence'].setdefault('rename_sources_complete', True)
+            item['files_evidence'].setdefault('previous_files_total', len(item['previous_files']))
     receipt = d['branch_inventory_receipt']
     receipt['pr_less'] = [
         {'branch': b['name'], 'commit_sha': b['head_sha']} for b in d['branches']
@@ -171,6 +180,52 @@ class ReviewQueueTests(unittest.TestCase):
         report = snap(d)
         self.assertEqual(report['review_candidate_count'], 0)
         self.assertTrue(all('overlapping_owner' in p['reasons'] for p in report['review_candidates']))
+
+    def test_pr_rename_old_path_reserves_other_worker(self):
+        d = payload()
+        d['prs'][0]['files'] = ['src/new-name.py']
+        d['prs'][0]['previous_files'] = ['src/old-name.py']
+        d['prs'][0]['files_evidence']['previous_files_total'] = 1
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': ['src/old-name.py'],
+            'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+        }]
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
+
+    def test_pr_rename_new_path_reserves_other_worker(self):
+        d = payload()
+        d['prs'][0]['files'] = ['src/new-name.py']
+        d['prs'][0]['previous_files'] = ['src/old-name.py']
+        d['prs'][0]['files_evidence']['previous_files_total'] = 1
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': ['src/new-name.py'],
+            'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+        }]
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
+
+    def test_missing_rename_source_coverage_denied(self):
+        d = payload()
+        d['prs'][0]['files_evidence']['rename_sources_complete'] = False
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_truncated_rename_sources_denied(self):
+        d = payload()
+        d['prs'][0]['files_evidence']['previous_files_total'] = 1
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_zero_change_branch_cannot_claim_renamed_files(self):
+        d = payload()
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': [],
+            'previous_files': ['src/old.py'],
+            'files_evidence': {'complete': True, 'total_count': 0,
+                               'rename_sources_complete': True, 'previous_files_total': 1,
+                               'head_sha': H, 'base_sha': S}
+        }]
+        with self.assertRaises(mod.InvalidEvidence):
+            snap(d)
 
     def test_file_to_directory_swap_collides(self):
         d = payload()
