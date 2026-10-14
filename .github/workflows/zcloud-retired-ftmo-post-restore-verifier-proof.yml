@@ -1,0 +1,58 @@
+name: zCloud retired FTMO post-restore verifier proof
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/ftmo-safe-gate-post-restore-verify.yml
+      - tests/test_retired_ftmo_post_restore_verifier.py
+      - .github/workflows/zcloud-retired-ftmo-post-restore-verifier-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-retired-ftmo-post-restore-verifier-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Prove stale verifier remains retired
+        run: python3 -m unittest -v tests.test_retired_ftmo_post_restore_verifier
+
+  permanent-vps-proof:
+    if: ${{ github.event_name != 'pull_request' || (github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact head and permanent runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${{ github.event.pull_request.head.sha || github.sha }}"
+          test "$(git rev-parse HEAD)" = "$expected"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove retirement contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_retired_ftmo_post_restore_verifier
+          echo ZCLOUD_FTMO_POST_RESTORE_VERIFIER_RETIRED_GREEN=1
