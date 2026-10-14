@@ -168,7 +168,7 @@ def _cache_status_signal(value):
         if escaped:
             escaped = False
             field.append(ch)
-        elif quoted and ch == "\\\\":
+        elif quoted and ch == "\\":
             escaped = True
             field.append(ch)
         elif ch == '"':
