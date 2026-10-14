@@ -117,6 +117,11 @@ def manual_event(source: str) -> bool:
 def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
     source = body.decode("utf-8")
     jobs = split_jobs(source)
+    # Duplicate top-level keys are YAML-loader dependent and can replace an
+    # apparently safe event or job with a dangerous second definition.
+    if (len(re.findall(r"(?m)^on:[ \\t]*", source)) != 1 or
+            len(re.findall(r"(?m)^jobs:[ \\t]*", source)) != 1):
+        raise RefError("duplicate_or_missing_authority_keys")
     # Detect unsupported constructs that could hide runner/jobs/event authority.
     if (re.search(r"(?m)^['\"]?(?:jobs|on)['\"]?:\s*[&*{]", source)
             or re.search(r"(?m)^\s*<<:\s*\*", source)):
