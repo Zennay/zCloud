@@ -58,7 +58,7 @@ jobs:
             'gates': {'580': 'closed','1089': 'closed','1135': 'closed'},
             'prs': [{'number': 12,'head_sha': sha,'base_sha': sha,
               'draft': False,'owner_approved': True,
-              'owner_review_evidence': {'complete': True, 'decision': 'approved',
+              'owner_review_evidence': {'complete': True, 'decision': 'approved', 'dismissed': False,
                   'author_login': 'project-author', 'reviewer_login': 'independent-reviewer',
                   'reviewed_head_sha': sha,
                   'submitted_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')},
