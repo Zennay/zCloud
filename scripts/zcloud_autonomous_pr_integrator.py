@@ -87,11 +87,23 @@ def decide(pr, files, checks, statuses, main_sha):
         return "missing_or_unbounded_checks"
     if not isinstance(statuses, list) or len(statuses) >= 100:
         return "unbounded_statuses"
+    smoke_green = False
     for c in checks:
         if not isinstance(c, dict) or c.get("head_sha") != head_sha:
             return "unbound_check"
-        if c.get("status") != "completed" or c.get("conclusion") not in ALLOWED_CHECK_CONCLUSIONS:
+        name = c.get("name")
+        if name == "critical-runner-flows":
+            if c.get("status") != "completed" or c.get("conclusion") != "success":
+                return "required_smoke_not_green"
+            smoke_green = True
+        elif name == "cpu-snapshot" and c.get("status") in ("queued", "in_progress", "pending") and c.get("conclusion") is None:
+            # This optional VPS diagnostic can queue indefinitely when the
+            # worker listener is absent. It is NOT the hosted regression gate.
+            continue
+        elif c.get("status") != "completed" or c.get("conclusion") not in ALLOWED_CHECK_CONCLUSIONS:
             return "check_not_green"
+    if not smoke_green:
+        return "required_smoke_missing"
     for s in statuses:
         if not isinstance(s, dict) or s.get("state") != "success":
             return "status_not_green"
@@ -119,6 +131,27 @@ def api(token, method, path, data=None):
         raise Refused("github_api_request_failed") from exc
 
 
+
+def list_open_prs(transport, token, max_pages=10):
+    """Use bounded GitHub pages; never silently ignore older opted-in PRs."""
+    seen = set()
+    prs = []
+    for page in range(1, max_pages + 1):
+        batch = transport(token, "GET",
+                          f"/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}")
+        if not isinstance(batch, list) or len(batch) > 100:
+            raise Refused("invalid_pr_page")
+        for pr in batch:
+            number = pr.get("number") if isinstance(pr, dict) else None
+            if type(number) is not int or not 1 <= number <= 10000000 or number in seen:
+                raise Refused("ambiguous_pr_page")
+            seen.add(number)
+            prs.append(pr)
+        if len(batch) < 100:
+            return prs
+    raise Refused("pr_inventory_exceeds_bounded_budget")
+
+
 def main(argv=None, environ=None, transport=api):
     env = os.environ if environ is None else environ
     parser = argparse.ArgumentParser(description=__doc__)
@@ -143,9 +176,7 @@ def main(argv=None, environ=None, transport=api):
     main_sha = (branch.get("commit") or {}).get("sha")
     if main_sha != checked_sha:
         raise Refused("workflow_source_is_stale")
-    prs = transport(token, "GET", "/pulls?state=open&per_page=100")
-    if not isinstance(prs, list) or len(prs) >= 100:
-        raise Refused("incomplete_pr_inventory")
+    prs = list_open_prs(transport, token)
     receipts = []
     for p in prs:
         if not isinstance(p, dict) or not has_label(p):

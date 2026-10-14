@@ -30,7 +30,7 @@ def files(docs=True):
 
 
 def checks():
-    return [{"head_sha": A, "status": "completed", "conclusion": "success"}]
+    return [{"head_sha": A, "name": "critical-runner-flows", "status": "completed", "conclusion": "success"}]
 
 
 class DecisionTest(unittest.TestCase):
@@ -69,10 +69,25 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(mod.decide(pr(), files(), [], [], B), "missing_or_unbounded_checks")
         x = checks()
         x[0]["status"] = "in_progress"
-        self.assertEqual(mod.decide(pr(), files(), x, [], B), "check_not_green")
+        self.assertEqual(mod.decide(pr(), files(), x, [], B), "required_smoke_not_green")
         x = checks()
         x[0]["head_sha"] = B
         self.assertEqual(mod.decide(pr(), files(), x, [], B), "unbound_check")
+
+    def test_optional_queued_vps_cpu_must_not_block_green_hosted_smoke(self):
+        optional = {"head_sha": A, "name": "cpu-snapshot",
+                    "status": "queued", "conclusion": None}
+        self.assertEqual(mod.decide(pr(), files(), checks() + [optional], [], B),
+                         "eligible")
+        unknown = dict(optional, name="unknown-required-or-optional")
+        self.assertEqual(mod.decide(pr(), files(), checks() + [unknown], [], B),
+                         "check_not_green")
+        smoke = checks()
+        smoke[0]["conclusion"] = "failure"
+        self.assertEqual(mod.decide(pr(), files(), smoke + [optional], [], B),
+                         "required_smoke_not_green")
+        self.assertEqual(mod.decide(pr(), files(), [optional], [], B),
+                         "required_smoke_missing")
 
     def test_failed_status_denied(self):
         s = [{"context": "unit-test", "state": "failure"}]
@@ -170,6 +185,37 @@ class DecisionTest(unittest.TestCase):
                 self.fail("must not merge stale main")
             return self.transport(token, method, path, data)
         self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+
+    def test_paginated_pr_inventory_reaches_older_opted_in_items(self):
+        paths = []
+        def transport(token, method, path, data=None):
+            paths.append(path)
+            if path.endswith("page=1"):
+                return [{"number": i, "labels": []} for i in range(1, 101)]
+            if path.endswith("page=2"):
+                return [{"number": 1001, "labels": [{"name": mod.LABEL}]}]
+            self.fail("unexpected page: " + path)
+        result = mod.list_open_prs(transport, "test-token")
+        self.assertEqual(len(result), 101)
+        self.assertEqual(result[-1]["number"], 1001)
+        self.assertEqual(len(paths), 2)
+
+    def test_pagination_fails_closed_on_duplicate_or_oversized_backlog(self):
+        def duplicate(token, method, path, data=None):
+            if path.endswith("page=1"):
+                return [{"number": i} for i in range(1, 101)]
+            return [{"number": 1}]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(duplicate, "test-token")
+        def endless(token, method, path, data=None):
+            page = int(path.split("page=")[-1])
+            return [{"number": 100 * (page - 1) + i} for i in range(1, 101)]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(endless, "test-token")
+        def malformed(token, method, path, data=None):
+            return [{"number": True}]
+        with self.assertRaises(mod.Refused):
+            mod.list_open_prs(malformed, "test-token")
 
     def test_only_original_and_triggering_owner_may_apply(self):
         for key in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR"):
