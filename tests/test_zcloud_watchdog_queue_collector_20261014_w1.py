@@ -163,6 +163,73 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
             collection.collect(get, clock=wrong_clock)
         self.assertEqual(calls, [])
 
+
+    def test_second_pass_run_boolean_attempt_cannot_masquerade_as_one(self):
+        get, _ = api_snapshot(run(1))
+        seen = [0]
+        def forged(path):
+            if path == RUNS:
+                seen[0] += 1
+                altered = run(1)
+                if seen[0] == 2:
+                    altered["run_attempt"] = True  # True == 1 in Python
+                return {"total_count": 1, "workflow_runs": [altered]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "invalid_run_identity"):
+            collection.collect(forged, clock=NOW)
+
+    def test_second_pass_run_boolean_workflow_id_must_deny(self):
+        get, _ = api_snapshot(run(1))
+        seen = [0]
+        def forged(path):
+            if path == RUNS:
+                seen[0] += 1
+                altered = run(1)
+                if seen[0] == 2:
+                    altered["workflow_id"] = True
+                return {"total_count": 1, "workflow_runs": [altered]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "invalid_run_identity"):
+            collection.collect(forged, clock=NOW)
+
+    def test_second_pass_candidate_job_boolean_ids_must_deny(self):
+        for name, replacement in (("run_id", True), ("run_attempt", True),
+                                  ("runner_id", True)):
+            with self.subTest(field=name):
+                # Single-run observations are not candidates: give two
+                # same-intent runs so the second job GET is mandatory.
+                get, _ = api_snapshot(run(1), run(2))
+                seen = {1: 0, 2: 0}
+                def forged(path):
+                    if "/jobs?" in path:
+                        rid = int(path.split("/runs/")[1].split("/")[0])
+                        seen[rid] += 1
+                        record = job(rid + 1000)
+                        if rid == 1 and seen[rid] == 2:
+                            record[name] = replacement
+                        return {"total_count": 1, "jobs": [record]}, ""
+                    return get(path)
+                with self.assertRaisesRegex(collection.InventoryError, "invalid_candidate_job"):
+                    collection.collect(forged, clock=NOW)
+
+    def test_second_pass_candidate_job_can_keep_valid_positive_runner_id(self):
+        get, _ = api_snapshot(run(1), run(2))
+        calls = {1: 0, 2: 0}
+        def stable(path):
+            if "/jobs?" in path:
+                rid = int(path.split("/runs/")[1].split("/")[0])
+                calls[rid] += 1
+                record = job(rid + 1000)
+                record["runner_id"] = 10
+                return {"total_count": 1, "jobs": [record]}, ""
+            return get(path)
+        result = collection.collect(stable, clock=NOW)
+        self.assertEqual(calls, {1: 2, 2: 2})
+        self.assertEqual(
+            policy.assess(result, expected_main_sha=SHA, now=NOW)["decision"],
+            "REVIEW_ONLY",
+        )
+
     def test_second_scan_with_malformed_identity_is_denied(self):
         get, _ = api_snapshot(run(1))
         count = [0]
