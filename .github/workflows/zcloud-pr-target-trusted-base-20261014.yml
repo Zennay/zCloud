@@ -35,7 +35,7 @@ jobs:
           path: trusted
           persist-credentials: false
           submodules: false
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Verify exact main and fetch candidate as inert Git objects
         shell: bash
         env:
