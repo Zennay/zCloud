@@ -8,12 +8,18 @@ on:
       - .github/workflows/zcloud-emergency-addon-hot-reload.yml
       - scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
       - tests/test_zcloud_emergency_addon_idle_guard_20261013_w1.py
+      - tests/test_zcloud_addon_reload_manual_20261014.py
   workflow_dispatch:
     inputs:
       confirm_sha:
         description: "Exact 40-character current main commit approved for addon-only reload"
         required: true
         type: string
+      approve_addon_reload:
+        description: "I explicitly authorize a live addon reload after idle and SHA checks"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,7 +30,10 @@ concurrency:
 
 jobs:
   validate:
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -38,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          python3 -m unittest -v tests.test_zcloud_emergency_addon_idle_guard_20261013_w1
+          python3 -m unittest -v tests.test_zcloud_emergency_addon_idle_guard_20261013_w1 tests.test_zcloud_addon_reload_manual_20261014
           python3 -m py_compile scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
 
   activate:
@@ -47,7 +56,11 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
-      github.actor == 'Zennay'
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.approve_addon_reload == true &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
@@ -62,15 +75,20 @@ jobs:
         shell: bash
         env:
           CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_RELOAD: ${{ inputs.approve_addon_reload }}
         run: |
           set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$APPROVE_RELOAD" = "true"
           [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_ACTOR" = "Zennay"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$CONFIRMED_SHA" = "$GITHUB_SHA"
-          current_main="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test "$current_main" = "$GITHUB_SHA"
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
@@ -93,10 +111,27 @@ jobs:
 
       - name: Recheck exact main and idle workers, then reload addon without a Firefox restart
         shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          APPROVE_RELOAD: ${{ inputs.approve_addon_reload }}
         run: |
           set -euo pipefail
+          # Recheck authorization immediately before the live operation.
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$APPROVE_RELOAD" = "true"
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$GITHUB_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
           python3 scripts/zcloud_emergency_addon_idle_guard_20261013_w1.py
           main_pid="$(ps -eo pid=,args= | awk '$0 ~ /[/]firefox/ && $0 ~ /-start-debugger-server/ {print $1;exit}')"
           test -n "$main_pid"
