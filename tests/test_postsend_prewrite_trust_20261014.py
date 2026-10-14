@@ -127,6 +127,14 @@ class PostsendPrewriteTrustTests(unittest.TestCase):
                 self.assertGreaterEqual(prior, 0)
                 self.assertLess(pos-prior, 210, marker)
 
+    def test_firefox_diagnostic_logging_never_includes_process_argv(self):
+        install = TEXT.split("  install:\n", 1)[1]
+        self.assertEqual(2, install.count("ps -eo pid=,ppid=,comm="))
+        self.assertNotIn("ps -eo pid=,ppid=,args=", install)
+        self.assertIn("head -n 20", install)
+        self.assertNotIn("journalctl ", install)
+        self.assertNotIn("pgrep -af", install)
+
     def test_no_browser_restart_or_auto_install(self):
         self.assertIn("runs-on: ubuntu-latest", TEXT)
         self.assertIn("BROWSER_SERVICE_SIGNAL_SKIPPED=1", TEXT)
