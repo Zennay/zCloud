@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -55,6 +56,15 @@ def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
         # canonical main SHA before presenting route observations.
         before = data.get("main_sha_before")
         after = data.get("main_sha_after")
+        observed_at = data.get("observed_at")
+        if type(observed_at) is not str:
+            raise ValueError("invalid_observation_time")
+        try:
+            parsed_at = datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError as exc:
+            raise ValueError("invalid_observation_time") from exc
+        if parsed_at.strftime("%Y-%m-%dT%H:%M:%SZ") != observed_at:
+            raise ValueError("noncanonical_observation_time")
         if (
             type(before) is not str or len(before) != 40 or
             any(c not in "0123456789abcdef" for c in before)
@@ -91,8 +101,19 @@ def safe_summary(raw: bytes, collector_rc: int) -> tuple[str, int]:
                 or row.get("url") != f"https://github.com/Zennay/zCloud/actions/runs/{number}"
             ):
                 raise ValueError("invalid_route_claim")
-            if (row["route"] == "no_job_records") != (row["job_count"] == 0):
-                raise ValueError("job_count_disagrees")
+            empty = row["job_count"] == 0
+            # The route, assignment and status must agree about missing job
+            # records. A synthetic internally consistent bucket is not proof
+            # of real GitHub evidence, but a contradictory bucket is NEVER
+            # safe to publish as an observed operator count.
+            if (
+                (row["route"] == "no_job_records") != empty
+                or (row["assignment"] == "no_job_records") != empty
+                or (row["job_state"] == "no_job_records") != empty
+                or (not empty and row["route"] == "github_hosted"
+                    and row["assignment"] == "no_job_records")
+            ):
+                raise ValueError("contradictory_job_route")
             bucket = f'{row["scope"]}/{row["route"]}/{row["assignment"]}/{row["job_state"]}'
             computed[bucket] = computed.get(bucket, 0) + 1
             rendered.append(
