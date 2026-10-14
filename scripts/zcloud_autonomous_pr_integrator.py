@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from math import isfinite
 import os
 import re
 import sys
@@ -256,11 +257,18 @@ def strict_github_json(raw):
             value[key] = item
         return value
 
+    def finite_float(text):
+        value = float(text)
+        if not isfinite(value):
+            raise Refused("github_api_nonfinite_number")
+        return value
+
     try:
         parsed = json.loads(
             raw.decode("utf-8"), object_pairs_hook=unique_object,
             parse_constant=lambda _: (_ for _ in ()).throw(
-                Refused("github_api_nonfinite_number"))
+                Refused("github_api_nonfinite_number")),
+            parse_float=finite_float
         )
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise Refused("github_api_malformed_json") from exc
