@@ -10,7 +10,13 @@ on:
     branches: [main]
     paths:
       - .github/workflows/zcloud-live-tab-version-probe.yml
+      - tests/test_zcloud_live_tab_probe_trust.py
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Explicit exact current main SHA for read-only browser debugger inspection"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -21,19 +27,19 @@ concurrency:
 
 jobs:
   hosted-policy-regression:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Read exact PR revision without persisted credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           clean: true
       - name: Check exact PR revision and run trust regressions
         env:
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
@@ -43,10 +49,13 @@ jobs:
     # A PR may only execute the hosted source checks above. Never grant an
     # unreviewed revision access to Firefox or the permanent self-hosted runner.
     if: >-
+      github.event_name == 'workflow_dispatch' &&
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' ||
-       (github.event_name == 'workflow_dispatch' && github.actor == 'Zennay'))
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 4
     steps:
@@ -59,18 +68,28 @@ jobs:
           fetch-depth: 1
       - name: Inspect Firefox debugger version without changing tabs
         shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
         run: |
           set -euo pipefail
+          test "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch"
+          test "${GITHUB_ACTOR:-}" = "Zennay"
+          test "${GITHUB_TRIGGERING_ACTOR:-}" = "Zennay"
+          test "${GITHUB_RUN_ATTEMPT:-}" = "1"
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$GITHUB_SHA"
           test "${GITHUB_REPOSITORY:-}" = "Zennay/zCloud"
           test "${GITHUB_REF:-}" = "refs/heads/main"
           test "${RUNNER_OS:-}" = "Linux"
           test "$(id -un)" = "ubuntu"
           test "$(hostname)" = "vps-bb300bba"
           # Step-level defense in depth if a job-level condition is refactored.
-          case "${GITHUB_EVENT_NAME:-}:${GITHUB_ACTOR:-}" in
-            push:*) ;;
-            workflow_dispatch:Zennay) ;;
+          case "${GITHUB_EVENT_NAME:-}:${GITHUB_ACTOR:-}:${GITHUB_TRIGGERING_ACTOR:-}:${GITHUB_RUN_ATTEMPT:-}" in
+            workflow_dispatch:Zennay:Zennay:1) ;;
             *) echo "Untrusted tab probe invocation refused" >&2; exit 1 ;;
           esac
           python3 - <<'PY'
