@@ -214,6 +214,8 @@ def pr_ancestry_evidence(record, main_sha):
     require(ancestry.get("main_sha") == main_sha
             and ancestry.get("head_sha") == record.get("head_sha"),
             "pr_compare_identity_mismatch")
+    # An unchanged branch cannot have a valid non-empty PR diff.
+    require(record.get("head_sha") != main_sha, "pr_head_equals_main")
     require(sha(ancestry.get("merge_base_sha")), "invalid_pr_merge_base")
     ahead, behind = ancestry.get("ahead_by"), ancestry.get("behind_by")
     require(type(ahead) is int and 0 <= ahead <= 2500
