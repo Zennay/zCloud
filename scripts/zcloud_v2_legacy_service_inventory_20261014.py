@@ -6,6 +6,7 @@ exceptions, private paths, or Firefox tab data to public Actions logs.
 This is observation only: it does not attest worker health or authorize deploy.
 """
 import json
+import os
 import re
 import stat
 import subprocess
@@ -86,17 +87,35 @@ def summarize_units(lines, *, kind):
 
 
 def read_regular(path, maximum):
-    try:
-        if path.is_symlink():
-            return None
-        info = path.stat()
-        if not stat.S_ISREG(info.st_mode) or info.st_size > maximum:
-            return None
-        with path.open("rb") as stream:
-            raw = stream.read(maximum + 1)
-        return raw.decode("utf-8", "strict") if len(raw) <= maximum else None
-    except (OSError, UnicodeError):
+    """Read only the regular inode opened; reject symlink swaps and concurrent edits."""
+    if not isinstance(maximum, int) or isinstance(maximum, bool) or not 0 <= maximum <= 65536:
         return None
+    if not hasattr(os, "O_NOFOLLOW"):
+        return None
+    descriptor = None
+    try:
+        # A prior Path.is_symlink()/stat() check races with a hostile replace.
+        # O_NOFOLLOW validates the final component at the actual open syscall.
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or not 0 <= before.st_size <= maximum:
+            return None
+        with os.fdopen(os.dup(descriptor), "rb") as stream:
+            raw = stream.read(maximum + 1)
+        after = os.fstat(descriptor)
+        if (not stat.S_ISREG(after.st_mode) or
+                (before.st_dev, before.st_ino, before.st_size,
+                 before.st_mtime_ns, before.st_ctime_ns) !=
+                (after.st_dev, after.st_ino, after.st_size,
+                 after.st_mtime_ns, after.st_ctime_ns) or
+                len(raw) != after.st_size):
+            return None
+        return raw.decode("utf-8", "strict")
+    except (OSError, UnicodeError, ValueError):
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def get_source_version(path=WORKER_SCRIPT):
