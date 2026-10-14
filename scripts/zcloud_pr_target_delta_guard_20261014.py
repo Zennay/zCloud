@@ -209,6 +209,69 @@ def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[
     return references
 
 
+def _job_env_run_risks(clean: str) -> Counter[str]:
+    """Find job-scoped PR env values consumed by dynamic run steps in that job.
+
+    A source in job A never contaminates a run in job B. This is intentionally
+    a syntactic boundary, not general-purpose YAML or shell interpretation.
+    """
+    jobs = re.search(r"(?m)^jobs:[ \t]*$", clean)
+    if not jobs:
+        return Counter()
+    lines = clean[jobs.end():].splitlines()
+    stop = next((i for i, line in enumerate(lines)
+                 if line.strip() and not line.startswith((" ", "\t"))),
+                len(lines))
+    lines = lines[:stop]
+    job_headers = []
+    for index, line in enumerate(lines):
+        match = re.match(r"""^([ ]+)(?:['"]?[\w-]+['"]?)[ \t]*:[ \t]*$""", line)
+        if match:
+            job_headers.append((index, len(match.group(1))))
+    if not job_headers:
+        return Counter()
+    job_indent = min(indent for _, indent in job_headers)
+    headers = [index for index, indent in job_headers if indent == job_indent]
+    found: Counter[str] = Counter()
+    for offset, start in enumerate(headers):
+        end = headers[offset + 1] if offset + 1 < len(headers) else len(lines)
+        job_lines = lines[start:end]
+        metadata = []
+        for index, line in enumerate(job_lines):
+            match = re.match(
+                r"""^([ ]+)(?:['"]?(?:env|steps|runs-on|if|permissions|strategy|timeout-minutes)['"]?)[ \t]*:""",
+                line,
+            )
+            if match and len(match.group(1)) > job_indent:
+                metadata.append((index, len(match.group(1))))
+        if not metadata:
+            continue
+        child_indent = min(indent for _, indent in metadata)
+        job_env_blocks = []
+        for index, indent in metadata:
+            if indent != child_indent or not re.match(
+                r"""^[ ]+['"]?env['"]?[ \t]*:""", job_lines[index]
+            ):
+                continue
+            end_env = next(
+                (at for at in range(index + 1, len(job_lines))
+                 if job_lines[at].strip()
+                 and len(job_lines[at]) - len(job_lines[at].lstrip(" ")) <= indent),
+                len(job_lines),
+            )
+            job_env_blocks.extend(job_lines[index:end_env])
+        if not job_env_blocks:
+            continue
+        source = "\n".join(job_lines)
+        for step in executable_steps(source):
+            command = RUN_STEP.search(step)
+            if command:
+                found.update(_env_expressions_executed_by_run(
+                    "\n".join(job_env_blocks), step[command.start():]
+                ))
+    return found
+
+
 def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
     """Count untrusted expressions only inside the step that carries risk.
 
@@ -242,6 +305,7 @@ def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
             found["pr_source_in_run_job"].update(
                 _env_expressions_executed_by_run(step[:command.start()], command_source)
             )
+    found["pr_source_in_run_job"].update(_job_env_run_risks(clean))
     return {reason: count for reason, count in found.items() if count}
 
 
