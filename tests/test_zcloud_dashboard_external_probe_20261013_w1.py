@@ -564,6 +564,22 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
     def test_actual_http_bad_schema(self):
         self._run("invalid_schema", payload=b'{"time":"2026-10-13T22:50:00Z"}')
 
+    def test_actual_http_malformed_project_rows_are_not_healthy(self):
+        for rows in ([None], [0], [["unexpected"]], [{"id": "cloud"}, "fake"]):
+            with self.subTest(rows=rows):
+                raw = json.dumps({
+                    "time": datetime.now(timezone.utc).isoformat(),
+                    "projects": rows,
+                }).encode("utf-8")
+                self._run("invalid_schema", payload=raw)
+
+    def test_actual_http_valid_project_objects_are_reachable(self):
+        raw = json.dumps({
+            "time": datetime.now(timezone.utc).isoformat(),
+            "projects": [{"id": "cloud"}, {"id": "ftmo"}],
+        }).encode("utf-8")
+        self._run("healthy", payload=raw)
+
     def test_actual_http_duplicate_content_type_is_not_healthy(self):
         self._run("invalid_headers",
                   extra_headers=(("Content-Type", "application/json"),))
