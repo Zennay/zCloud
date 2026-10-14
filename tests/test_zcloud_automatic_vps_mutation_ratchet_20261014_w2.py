@@ -102,6 +102,7 @@ class RatchetTests(unittest.TestCase):
         self.assertTrue(guard.check(self.root, sha)["safe_to_review"])
 
     def test_new_scheduled_self_hosted_restart_denied(self):
+        self.save("safe.yml", SAFE)
         sha = self.baseline()
         self.save("scheduled.yml", OLD.replace("push:\n    branches: [main]", "schedule:\n    - cron: '0 * * * *'"))
         self.assertFalse(guard.check(self.root, sha)["safe_to_review"])
