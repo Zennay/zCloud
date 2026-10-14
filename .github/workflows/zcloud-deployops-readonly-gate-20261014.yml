@@ -4,11 +4,8 @@ on:
   push:
     branches:
       - deployops/production-gate-evidence-20261014-w1
-    paths:
-      - scripts/zcloud_deployops_readonly_gate_20261014.py
-      - tests/test_zcloud_deployops_readonly_gate_20261014.py
-      - .github/workflows/zcloud-deployops-readonly-gate-20261014.yml
-      - docs/deployops-readonly-gate-20261014-w1.md
+    # Run on every branch commit, including source-only main restacks.
+    # This branch is isolated and cannot invoke privileged VPS jobs.
   workflow_dispatch:
 
 permissions:
