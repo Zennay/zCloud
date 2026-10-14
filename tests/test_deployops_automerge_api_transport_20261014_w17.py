@@ -66,13 +66,18 @@ class SecureGitHubApiTransportTests(unittest.TestCase):
 
     def test_invalid_or_ambiguous_json_shapes_fail_closed(self):
         bad = (b'null', b'true', b'12', b'"string"', b'NaN', b'{"score":Infinity}',
-               b'{"score":-Infinity}', b'{', b'\\xff\\xfe', b'')
+               b'{"score":-Infinity}', b'{"score":1e10000}',
+               b'{"score":-1e10000}', b'{', b'\\xff\\xfe', b'')
         for raw in bad:
             with self.subTest(raw=raw):
                 with self.assertRaises(engine.Refused):
                     engine.strict_github_json(raw)
         with self.assertRaisesRegex(engine.Refused, "response_oversize"):
             engine.strict_github_json(b"x" * (1024 * 1024 + 1))
+
+    def test_valid_finite_fraction_is_preserved(self):
+        self.assertEqual(engine.strict_github_json(b'{"fraction":1.25}'),
+                         {"fraction": 1.25})
 
     def test_redirect_request_is_denied_without_following(self):
         h = engine.NoGitHubRedirect()
