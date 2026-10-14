@@ -302,7 +302,7 @@ def inventory(root, head):
     return counts
 
 
-def triage(root, head, limit=12):
+def triage(root, head, limit=12, prefix=None):
     """Deterministic bounded workflow-path shortlist; never dump YAML or tokens.
 
     A shortlist is an *observation*, not an authorizing remediation queue:
@@ -310,6 +310,8 @@ def triage(root, head, limit=12):
     """
     if not SHA.fullmatch(head) or not isinstance(limit, int) or not 1 <= limit <= 25:
         raise Unverifiable("triage_arguments")
+    if prefix is not None and not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", prefix):
+        raise Unverifiable("triage_prefix")
     raw = git(root, "ls-tree", "-r", "--name-only", "-z", head,
               "--", ".github/workflows/")
     paths = [item.decode("utf-8", "strict") for item in raw.split(b"\0") if item]
@@ -319,6 +321,8 @@ def triage(root, head, limit=12):
         raise Unverifiable("triage_inventory")
     result = []
     for path in paths:
+        if prefix and not path.rsplit("/", 1)[-1].startswith(prefix):
+            continue
         try:
             text = source(root, head, path)
             finding = bool(risks(text))
@@ -341,6 +345,7 @@ def main(argv=None):
     parser.add_argument("--inventory-head")
     parser.add_argument("--triage-head")
     parser.add_argument("--triage-limit", type=int, default=12)
+    parser.add_argument("--triage-prefix")
     parser.add_argument("--repo-root", type=Path,
                         default=Path(__file__).resolve().parents[1])
     args = parser.parse_args(argv)
@@ -349,7 +354,7 @@ def main(argv=None):
             if any(v is not None for v in (args.base, args.head, args.inventory_head)):
                 raise Unverifiable("mixed_modes")
             entries, total = triage(args.repo_root, args.triage_head,
-                                    args.triage_limit)
+                                    args.triage_limit, args.triage_prefix)
         except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
             print("VPS_CANCELLATION_TRIAGE=DENY reason=unverifiable_source")
             print("VPS_MUTATION_AUTHORIZED=false")
@@ -362,6 +367,8 @@ def main(argv=None):
         return 0
     if args.inventory_head is not None:
         try:
+            if args.triage_prefix is not None:
+                raise Unverifiable("unexpected_triage_filter")
             if args.base is not None or args.head is not None:
                 raise Unverifiable("mixed_modes")
             counts = inventory(args.repo_root, args.inventory_head)
@@ -376,6 +383,8 @@ def main(argv=None):
         print("VPS_MUTATION_AUTHORIZED=false")
         return 0
     try:
+        if args.triage_prefix is not None:
+            raise Unverifiable("unexpected_triage_filter")
         if args.base is None or args.head is None:
             raise Unverifiable("missing_base_head")
         risky = evaluate(args.repo_root, args.base, args.head)
