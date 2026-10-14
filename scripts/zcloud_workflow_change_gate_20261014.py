@@ -61,8 +61,8 @@ def judge(source):
         if not root:
             raise ValueError("missing_jobs")
         region = re.split(r"(?m)^[A-Za-z_][\w-]*:\s*", source[root.end():], maxsplit=1)[0]
-        blocks = re.split(r"(?m)(?=^  [A-Za-z_][\w-]*:\s*$)", region)
-        jobs = [b for b in blocks if re.match(r"^  [A-Za-z_][\w-]*:\s*$", b)]
+        blocks = re.split(r"(?m)(?=^  [A-Za-z_][\w-]*:[ \t]*$)", region)
+        jobs = [b for b in blocks if re.match(r"(?m)^  [A-Za-z_][\w-]*:[ \t]*$", b)]
         if not jobs or len(jobs) > 100:
             raise ValueError("invalid_jobs")
     except ValueError as exc:
