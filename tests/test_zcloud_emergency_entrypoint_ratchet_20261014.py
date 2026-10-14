@@ -26,6 +26,17 @@ def altered(name: str, before: str, after: str) -> list[str]:
     return policy.inspect_text(name, text.replace(before, after, 1))
 
 
+def altered_live(name: str, before: str, after: str) -> list[str]:
+    source = FILES[name]
+    marker = "- name: " + policy.POLICY[name]["step"]
+    if marker not in source:
+        raise AssertionError("missing live-step fixture: " + name)
+    head, tail = source.split(marker, 1)
+    if before not in tail:
+        raise AssertionError("fixture is not in sensitive step: " + name)
+    return policy.inspect_text(name, head + marker + tail.replace(before, after, 1))
+
+
 class EmergencySourceRatchetTests(unittest.TestCase):
     def test_existing_three_trusted_main_contracts_pass(self):
         self.assertEqual(3, len(FILES))
@@ -51,8 +62,8 @@ class EmergencySourceRatchetTests(unittest.TestCase):
         self.assertIn("queue_mutation_authority_reappeared",
                       altered(QUEUE, "  actions: read", "  actions: write"))
         self.assertIn("privileged_queue_observer_runner",
-                      altered(QUEUE, "runs-on: ubuntu-latest\n    timeout-minutes: 5\n    steps:",
-                              "runs-on: [self-hosted, zcloud, vps]\n    timeout-minutes: 5\n    steps:"))
+                      altered_live(QUEUE, "    runs-on: ubuntu-latest",
+                                   "    runs-on: [self-hosted, zcloud, vps]"))
 
     def test_missing_retrigger_guards_denied_before_private_actions(self):
         for name in FILES:
@@ -68,7 +79,7 @@ class EmergencySourceRatchetTests(unittest.TestCase):
                       altered(WORKER, "inputs.approve_readonly_diagnostic == true",
                               "inputs.approve_readonly_diagnostic != false"))
         self.assertIn("missing_in_step_consent",
-                      altered(WORKER, 'test "$APPROVE_DIAGNOSTIC" = "true"',
+                      altered_live(WORKER, 'test "$APPROVE_DIAGNOSTIC" = "true"',
                               'test "$APPROVE_DIAGNOSTIC" != "false"'))
 
     def test_live_addon_reload_cannot_lose_explicit_consent(self):
@@ -76,7 +87,7 @@ class EmergencySourceRatchetTests(unittest.TestCase):
                       altered(ADDON, "inputs.approve_addon_reload == true",
                               "inputs.approve_addon_reload != false"))
         self.assertIn("missing_in_step_consent",
-                      altered(ADDON, 'test "$APPROVE_RELOAD" = "true"',
+                      altered_live(ADDON, 'test "$APPROVE_RELOAD" = "true"',
                               'test "$APPROVE_RELOAD" != "false"'))
 
     def test_current_main_must_be_fetched_inside_sensitive_step(self):
