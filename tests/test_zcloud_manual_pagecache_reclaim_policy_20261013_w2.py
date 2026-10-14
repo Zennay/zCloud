@@ -202,8 +202,316 @@ class WorkflowTrustTests(unittest.TestCase):
         )
         for var in ("current_main", "last_main", "root_main"):
             with self.subTest(var=var):
-                self.assertIn('test -n ", self.reclaim)
-                self.assertIn('test ", self.reclaim)
+                self.assertIn('test -n "
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '"', self.reclaim)
+                self.assertIn(f'test "$\u007bvar\u007d" = "$GITHUB_SHA"', self.reclaim)
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '" = "$GITHUB_SHA"', self.reclaim)
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '"', self.reclaim)
+                self.assertIn(f'test "$\u007bvar\u007d" = "$GITHUB_SHA"', self.reclaim)
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '"', self.reclaim)
+                self.assertIn('test "
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '"', self.reclaim)
+                self.assertIn(f'test "$\u007bvar\u007d" = "$GITHUB_SHA"', self.reclaim)
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '" = "$GITHUB_SHA"', self.reclaim)
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '"', self.reclaim)
+                self.assertIn(f'test "$\u007bvar\u007d" = "$GITHUB_SHA"', self.reclaim)
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
+    def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
+        self.assertEqual(self.text.count("persist-credentials: false"), 2)
+        self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
+        trust = self.reclaim.index("Verify manual approval, immutable current main")
+        drop = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(trust, drop)
+        for assertion in ('test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+                          "git ls-remote --exit-code origin refs/heads/main",
+                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
+            self.assertIn(assertion, self.reclaim[trust:drop])
+
+    def test_memory_policy_mandatory_immediately_before_root(self):
+        previous = self.reclaim.index("if python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then")
+        action = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(previous, action)
+        self.assertIn('SAFE_RECLAIM_SKIPPED=memory-policy-not-eligible', self.reclaim)
+        # Ignore deny-only comments; inspect commands, not explanatory text.
+        commands = "\n".join(line for line in self.reclaim.splitlines()
+                             if not line.lstrip().startswith("#"))
+        self.assertNotIn("swapoff", commands)
+        self.assertNotIn("systemctl restart", commands)
+        self.assertNotIn("pkill ", commands)
+
+    def test_mutex_is_only_in_privileged_job(self):
+        self.assertIn("group: zcloud-production-deploy", self.reclaim)
+        self.assertNotIn("group: zcloud-production-deploy", self.validate)
+        self.assertIn("cancel-in-progress: false", self.reclaim)
+
+
+if __name__ == "__main__":
+    unittest.main()
+ + var + '" = "$GITHUB_SHA"', self.reclaim)
         root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
         kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
         self.assertLess(root, kernel)
