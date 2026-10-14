@@ -366,10 +366,18 @@ def read_manifest_bytes(path):
         require(components[-1] not in (".", ".."), "invalid_manifest_path")
         fd = os.open(components[-1], file_flags, dir_fd=parent_fd)
         with os.fdopen(fd, "rb") as stream:
-            metadata = os.fstat(stream.fileno())
-            require(stat.S_ISREG(metadata.st_mode), "invalid_manifest_file_type")
-            require(metadata.st_size <= MAX_BYTES, "oversized_snapshot")
+            before = os.fstat(stream.fileno())
+            require(stat.S_ISREG(before.st_mode), "invalid_manifest_file_type")
+            require(before.st_size <= MAX_BYTES, "oversized_snapshot")
             body = stream.read(MAX_BYTES + 1)
+            after = os.fstat(stream.fileno())
+            require(stat.S_ISREG(after.st_mode)
+                    and (before.st_dev, before.st_ino, before.st_size,
+                         before.st_mtime_ns, before.st_ctime_ns)
+                    == (after.st_dev, after.st_ino, after.st_size,
+                        after.st_mtime_ns, after.st_ctime_ns)
+                    and len(body) == before.st_size,
+                    "manifest_changed_during_read")
         require(len(body) <= MAX_BYTES, "oversized_snapshot")
         return body
     finally:
