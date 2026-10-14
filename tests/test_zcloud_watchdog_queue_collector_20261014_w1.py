@@ -23,8 +23,9 @@ def run(ident):
             "event": "push", "status": "queued"}
 
 
-def job(ident):
-    return {"id": ident, "status": "queued", "labels": ["self-hosted", "zcloud", "vps"]}
+def job(ident, *, parent=None):
+    return {"id": ident, "run_id": ident - 1000 if parent is None else parent,
+            "status": "queued", "labels": ["self-hosted", "zcloud", "vps"]}
 
 
 def api_snapshot(*runs):
@@ -235,6 +236,38 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
             return get(path)
         with self.assertRaisesRegex(collection.InventoryError, "queue_changed"):
             collection.collect(fetch, clock=NOW)
+
+
+    def test_cross_run_job_evidence_denied(self):
+        get, _ = api_snapshot(run(1))
+        def swapped(path):
+            if "/jobs?" in path:
+                return {"total_count": 1, "jobs": [job(1001, parent=999)]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "cross_run_job_evidence"):
+            collection.collect(swapped, clock=NOW)
+
+    def test_missing_job_parent_run_identity_denied(self):
+        get, _ = api_snapshot(run(1))
+        def missing(path):
+            if "/jobs?" in path:
+                detached = job(1001)
+                detached.pop("run_id")
+                return {"total_count": 1, "jobs": [detached]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "cross_run_job_evidence"):
+            collection.collect(missing, clock=NOW)
+
+    def test_noncanonical_parent_identity_denied(self):
+        for parent in (True, "1", 0):
+            with self.subTest(parent=parent):
+                get, _ = api_snapshot(run(1))
+                def malformed(path):
+                    if "/jobs?" in path:
+                        return {"total_count": 1, "jobs": [job(1001, parent=parent)]}, ""
+                    return get(path)
+                with self.assertRaisesRegex(collection.InventoryError, "cross_run_job_evidence"):
+                    collection.collect(malformed, clock=NOW)
 
     def test_missing_jobs_denied(self):
         get, _ = api_snapshot(run(1))
