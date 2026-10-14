@@ -23,7 +23,7 @@ Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/135
 | HTTP-status niet 200 (overig) | Ook onbekende/niet-standaard statussen zijn nooit een gezonde API; geen responsebody of secrets loggen. |
 | Onverwacht antwoordtype of te groot | Alleen `application/json` met afwezige of ondubbelzinnige UTF-8-charset is geldig. Tegenstrijdige, niet-ASCII, te lange, dubbele of control-character media-parameters worden geweigerd; responses boven het 128 KiB-budget eveneens. Een afwijzing bewijst geen runnerstoring. |
 | Tegenstrijdige HTTP-headers | Dubbele content-/transferheaders, opgegeven lengte die niet klopt, ongeldige lengte, lege, control-character-bevattende of anderszins ongeldige Content-Encoding (alleen eenduidige `identity` is toegestaan) of een aanwezige Transfer-Encoding (óók `chunked` of `identity`). HTTP-framing kan dubbelzinnig zijn wanneer bibliotheken transfercodering verwerken: liever onterecht rood dan vals groen. Ook met HTTP 200 geen geldige status. |
-| Ongeldige JSON of schema | Body onbruikbaar, of vereiste velden ontbreken. |
+| Ongeldige JSON of schema | Body onbruikbaar, vereiste velden ontbreken, of `projects` bevat onbruikbare rijen (bv. null, getallen, strings of geneste arrays in plaats van objecten). Ook een vers HTTP 200-antwoord is dan niet geldig. |
 | Verouderd of toekomstige tijd | >180 seconden oud of >30 seconden in de toekomst: mogelijk cache, replay of klokafwijking. |
 | MAIN_CHANGED / MAIN_UNVERIFIABLE | Exacte actuele main-head vóór/na observatie niet bewezen; geen groene samenvatting publiceren. |
 | Totale tijdslimiet overschreden | De 115-secondenlimiet stopte een trage externe probe. Eventuele gedeeltelijke response wordt weggegooid; de job blijft fout. |
