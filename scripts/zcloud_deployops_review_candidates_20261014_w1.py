@@ -66,7 +66,10 @@ def path_collision(left, right):
 
 
 def conflicted_owners(all_owners):
-    """Index all path ancestry once; avoid PR × owners × paths rescanning."""
+    """Return exact conflicting owner pairs using indexed path ancestors.
+
+    File paths and branch names are deliberately never returned to CLI output.
+    """
     exact = {}
     descendants = {}
     for owner, files in all_owners:
@@ -76,7 +79,7 @@ def conflicted_owners(all_owners):
             parts = name.split("/")
             for i in range(1, len(parts)):
                 descendants.setdefault("/".join(parts[:i]), set()).add(owner)
-    conflicts = set()
+    conflicts = {owner: set() for owner, _ in all_owners}
     for owner, files in all_owners:
         for original in files:
             name = unicodedata.normalize("NFC", original).casefold()
@@ -84,9 +87,7 @@ def conflicted_owners(all_owners):
             parts = name.split("/")
             for i in range(1, len(parts)):
                 possible.update(exact.get("/".join(parts[:i]), ()))
-            if possible - {owner}:
-                conflicts.add(owner)
-                break
+            conflicts[owner].update(possible - {owner})
     return conflicts
 
 
@@ -248,9 +249,15 @@ def snapshot(report, *, now=None):
         if not all(c["head_sha"] == p["head_sha"] and c["conclusion"] == "success"
                    for c in p["checks"]):
             reasons.append("exact_head_checks_not_green")
-        if f"pr:{n}" in overlapping_owners:
+        owner_conflicts = overlapping_owners.get(f"pr:{n}", set())
+        if owner_conflicts:
             reasons.append("overlapping_owner")
-        out.append({"number": n, "review_candidate": not reasons, "reasons": reasons})
+        conflict_summary = {
+            "other_prs": sum(c.startswith("pr:") for c in owner_conflicts),
+            "prless_branches": sum(c.startswith("branch:") for c in owner_conflicts),
+        }
+        out.append({"number": n, "review_candidate": not reasons, "reasons": reasons,
+                    "conflict_counts": conflict_summary})
     blockers = {key: sum(key in row["reasons"] for row in out)
                 for key in ("overlapping_owner", "stale_base", "draft",
                             "owner_review_missing", "required_checks_missing",
@@ -293,7 +300,11 @@ def markdown(result):
             lines.append(f"- PR #{row['number']}: geschikt voor *onafhankelijke bronreview*, niet voor merge.")
         else:
             explanations = ", ".join(REASONS_NL[r] for r in row['reasons'])
-            lines.append(f"- PR #{row['number']}: nog niet reviewgereed — {explanations}.")
+            conflicts = row["conflict_counts"]
+            details = (f" (conflict met {conflicts['other_prs']} andere PR's en "
+                       f"{conflicts['prless_branches']} PR-loze branches)"
+                       if sum(conflicts.values()) else "")
+            lines.append(f"- PR #{row['number']}: nog niet reviewgereed — {explanations}{details}.")
     if len(result['review_candidates']) > 30:
         lines.append(f"- Nog {len(result['review_candidates']) - 30} PR's niet weergegeven (uitvoerlimiet).")
     lines.append("Geen productieactie uitgevoerd. Herhaal inventarisatie met geauthenticeerde GitHub-data op de actuele SHA.")
