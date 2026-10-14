@@ -180,17 +180,21 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
     lane_id = re.sub(r'[^a-zA-Z0-9._:/-]+', '-', lane_id).strip('-')[:80]
+    qa_closure = (
+        ' Rond bestaande QA-PRs af of herstel een bewezen regressie; zonder bug geen nieuwe QA-ronde.'
+        if lane_id in {'quality-validation', 'qa-validation', 'evaluation-validation'} else ''
+    )
     if lane_id:
         if worker_total > 1:
             return (
                 prompt
                 + f' Parallel focus {int(slot or 1)}/{worker_total}: {lane_id}. '
                 'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
-                'dat al actief door een andere worker wordt uitgevoerd.'
+                'dat al actief door een andere worker wordt uitgevoerd.' + qa_closure
             )
         return (
             prompt
-            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.'
+            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.' + qa_closure
         )
     if worker_total <= 1:
         return prompt

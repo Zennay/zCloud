@@ -37,6 +37,20 @@ class WorkerPromptStyleTests(unittest.TestCase):
         self.assertNotIn("VPS_QUEUE_ASSIGNMENT", prompt)
         self.assertNotIn("ZCLOUD_QUEUE_", prompt)
 
+    def test_qa_lanes_close_real_issues_instead_of_infinite_quality_rounds(self):
+        for lane in ("quality-validation", "qa-validation", "evaluation-validation"):
+            item = {**ITEM, "execution_lane": {"lane_id": lane}}
+            prompt = server.project_worker_prompt("supa", "Supa", "", 1, 2, item)
+            self.assertIn("Rond bestaande QA-PRs af", prompt)
+            self.assertIn("zonder bug geen nieuwe QA-ronde", prompt)
+            self.assertIn("geen eindeloze QA-rondes", prompt)
+            self.assertLess(len(prompt), 1800)
+        product = server.project_worker_prompt(
+            "supa", "Supa", "", 1, 2,
+            {**ITEM, "execution_lane": {"lane_id": "product-core"}},
+        )
+        self.assertNotIn("zonder bug geen nieuwe QA-ronde", product)
+
     def test_parallel_lanes_produce_different_prompts_for_same_project(self):
         other = {
             **ITEM,
