@@ -34,10 +34,10 @@ class SummaryTests(unittest.TestCase):
         item["receipts"] = []
         text = report.summary(item)
         self.assertIn("147", text)
-        self.assertIn("required per-PR opt-in label", text)
+        self.assertIn("verplichte expliciete label", text)
         self.assertIn("#12, #13", text)
-        self.assertIn("not merge-approved", text)
-        self.assertIn("production release", text)
+        self.assertIn("NIET goedgekeurd voor merge", text)
+        self.assertIn("productie-uitrol", text)
         self.assertNotIn("authorize automatically", text)
 
     def test_bounded_classifications_not_user_supplied_titles(self):
@@ -47,12 +47,12 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("not_review_ready", md)
         self.assertNotIn("github.com/attacker", md)
         self.assertNotIn("Zennay/zCloud/pull/", md)
-        self.assertIn("Confirmed source PR merges in this run:** 0", md)
+        self.assertIn("Door de integrator gerapporteerde bronmerges:** 0", md)
 
     def test_one_verified_merge_is_allowed_only_in_apply_mode(self):
         sample = fixture()
         sample["receipts"] = [{"pr": 7, "decision": "merged", "merge_sha": "a"*40}]
-        self.assertIn("Confirmed source PR merges in this run:** 1", report.summary(sample))
+        self.assertIn("Door de integrator gerapporteerde bronmerges:** 1", report.summary(sample))
         for change in ({"mode": "dry_run"},
                        {"receipts": [{"pr": 7, "decision": "merged"}]},
                        {"receipts": [{"pr": 7, "decision": "merged", "merge_sha": "x"*40}]},
@@ -87,12 +87,12 @@ class SummaryTests(unittest.TestCase):
                     report.read_report(inp)
         with tempfile.TemporaryDirectory() as d:
             dest = pathlib.Path(d) / "step-summary.md"
-            self.assertEqual(report.main([str(pathlib.Path(d) / "absent"), str(dest)]), 0)
-            self.assertIn("report unavailable", dest.read_text())
+            self.assertEqual(report.main([str(pathlib.Path(d) / "absent"), str(dest)]), 2)
+            self.assertIn("bewijs ontbreekt of is ongeldig", dest.read_text())
             inp = pathlib.Path(d) / "valid.json"
             inp.write_text(json.dumps(fixture()), encoding="utf-8")
             self.assertEqual(report.main([str(inp), str(dest)]), 0)
-            self.assertIn("Open PRs inventoried", dest.read_text())
+            self.assertIn("Open PR\u0027s gecontroleerd", dest.read_text())
 
     def test_integration_engine_reports_zero_opted_in_without_auto_labeling(self):
         B = "b" * 40
@@ -124,7 +124,21 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(inv["unlabeled_non_draft"], 2)
         self.assertEqual(inv["review_only_pr_ids"], [102, 103])
         self.assertEqual(data["receipts"], [])
-        self.assertIn("required per-PR opt-in label", report.summary(data))
+        self.assertIn("verplichte expliciete label", report.summary(data))
+
+    def test_report_writer_always_closes_file_without_resource_warning(self):
+        import warnings
+        with tempfile.TemporaryDirectory() as d:
+            input_path = pathlib.Path(d) / "report.json"
+            output_path = pathlib.Path(d) / "summary.md"
+            input_path.write_text(json.dumps(fixture()), encoding="utf-8")
+            with warnings.catch_warnings(record=True) as seen:
+                warnings.simplefilter("always", ResourceWarning)
+                self.assertEqual(report.main([str(input_path), str(output_path)]), 0)
+                self.assertEqual(report.main([str(input_path), str(output_path)]), 0)
+            self.assertFalse([entry for entry in seen
+                              if issubclass(entry.category, ResourceWarning)])
+            self.assertEqual(output_path.read_text().count("bronoverzicht"), 2)
 
     def test_existing_hourly_pipeline_receipts_are_not_prod_authority(self):
         wf = WORKFLOW.read_text(encoding="utf-8")
