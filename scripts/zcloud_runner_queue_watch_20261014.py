@@ -76,6 +76,7 @@ def summarize(runs, jobsets, now, *, total_count=None):
     if type(total_count) is not int or total_count < len(runs):
         raise Unavailable("invalid_total_count")
     seen = set()
+    seen_job_ids = set()
     observed = 0
     stale_unassigned = 0
     recent_assigned = 0
@@ -106,9 +107,9 @@ def summarize(runs, jobsets, now, *, total_count=None):
         run_age = (now - _utc(run.get("created_at"))).total_seconds()
         if run_age < -5:
             raise Unavailable("future_run")
-        if run_age > MAX_AGE:
-            continue
-        inspected += 1
+        # A GitHub workflow_run's created_at is the ORIGINAL run time.
+        # Rerunning that run schedules new jobs without changing its age.
+        # Judge the live queue window by the bound JOB creation timestamp.
         jobs = jobsets.get(number)
         if not isinstance(jobs, list) or not len(jobs) == 1:
             raise Unavailable("incomplete_job_inventory")
@@ -116,6 +117,7 @@ def summarize(runs, jobsets, now, *, total_count=None):
         job_id = job.get("id") if isinstance(job, dict) else None
         run_attempt = run.get("run_attempt")
         if (type(job) is not dict or type(job_id) is not int
+                or job_id in seen_job_ids
                 or not 0 < job_id <= 9223372036854775807
                 or type(run_attempt) is not int or not 0 < run_attempt <= 100
                 or type(job.get("run_id")) is not int or job["run_id"] != number
@@ -129,6 +131,7 @@ def summarize(runs, jobsets, now, *, total_count=None):
                 or job.get("url") != f"https://api.github.com/repos/{REPO}/actions/jobs/{job_id}"
                 or job.get("html_url") != f"https://github.com/{REPO}/actions/runs/{number}/job/{job_id}"):
             raise Unavailable("unbound_job_provenance")
+        seen_job_ids.add(job_id)
         labels = job.get("labels")
         if not isinstance(labels, list) or any(type(v) is not str for v in labels):
             raise Unavailable("unknown_labels")
@@ -156,6 +159,9 @@ def summarize(runs, jobsets, now, *, total_count=None):
         age = (now - _utc(job.get("created_at"))).total_seconds()
         if age < -5:
             raise Unavailable("future_job")
+        if age > MAX_AGE:
+            continue
+        inspected += 1
         if status == "queued" and runner_id == 0 and job.get("conclusion") is None:
             observed += 1
             oldest_queued_seconds = max(oldest_queued_seconds, int(age))
