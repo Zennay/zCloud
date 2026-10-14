@@ -417,6 +417,47 @@ jobs:
         self.assertEqual(gate.risk_counts(candidate)["pr_source_in_run_job"], 1)
         self.assertIn("pr_source_in_run_job", gate.increasing_risks(previous, candidate))
 
+
+    def test_dynamic_pr_number_builds_untrusted_checkout_ref(self):
+        src = SAFE + """      - uses: actions/checkout@v4
+        with:
+          ref: ${{ format('refs/{0}/{1}', 'pull', github.event.pull_request.number) }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(SAFE, src))
+
+    def test_merge_commit_sha_is_untrusted_checkout_ref(self):
+        src = SAFE + """      - name: unsafe merge checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+
+    def test_github_event_number_in_run_is_untrusted_pr_data(self):
+        src = SAFE + """      - run: echo '${{ github.event.number }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_bracket_pr_number_in_run_is_untrusted_pr_data(self):
+        src = SAFE + """      - run: echo '${{ github['event']['pull_request']['number'] }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_safe_number_metadata_in_concurrency_does_not_run(self):
+        src = SAFE + """concurrency:
+  group: reader-${{ github.event.pull_request.number }}
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_pr_number_to_merge_commit_identity_swap_is_not_laundered(self):
+        prior = SAFE + """      - run: echo '${{ github.event.pull_request.number }}'
+"""
+        candidate = prior.replace("pull_request.number", "pull_request.merge_commit_sha")
+        self.assertEqual(gate.risk_counts(prior)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(prior, candidate))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
