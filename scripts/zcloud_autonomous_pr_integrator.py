@@ -209,8 +209,28 @@ def main(argv=None, environ=None, transport=api):
             continue
         latest_main = (transport(token, "GET", "/branches/main").get("commit") or {}).get("sha")
         latest_pr = transport(token, "GET", f"/pulls/{number}")
-        if latest_main != main_sha or (latest_pr.get("head") or {}).get("sha") != head_sha or latest_pr.get("base", {}).get("sha") != main_sha or not has_label(latest_pr):
+        if (latest_main != main_sha
+                or (latest_pr.get("head") or {}).get("sha") != head_sha
+                or (latest_pr.get("base") or {}).get("sha") != main_sha
+                or not has_label(latest_pr)):
             receipts[-1]["decision"] = "changed_before_merge"
+            continue
+        # Admission is not a one-time snapshot: a PR can become draft, gain a
+        # blocking review, or have its exact-SHA checks rerun between our first
+        # read and the write. Re-fetch all trusted admission facts immediately
+        # before the SHA-bound merge (which still enforces branch protection).
+        fresh_files = transport(token, "GET", f"/pulls/{number}/files?per_page=100")
+        fresh_checks = transport(token, "GET", f"/commits/{head_sha}/check-runs?per_page=100")
+        fresh_statuses = transport(token, "GET", f"/commits/{head_sha}/statuses?per_page=100")
+        if (not isinstance(fresh_checks, dict)
+                or type(fresh_checks.get("total_count")) is not int
+                or fresh_checks["total_count"] != len(fresh_checks.get("check_runs", []))):
+            receipts[-1]["decision"] = "recheck_incomplete_checks"
+            continue
+        fresh_verdict = decide(latest_pr, fresh_files, fresh_checks["check_runs"],
+                               fresh_statuses, latest_main)
+        if fresh_verdict != "eligible":
+            receipts[-1]["decision"] = "recheck_" + fresh_verdict
             continue
         # Source integrations must not implicitly attempt production promotion.
         # An explicitly approved production release runs through its own gate.
