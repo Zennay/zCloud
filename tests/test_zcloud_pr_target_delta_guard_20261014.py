@@ -941,6 +941,47 @@ jobs:
 """
         self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
 
+
+    def test_run_literal_block_preserves_hash_prefixed_pr_expression(self):
+        candidate = SAFE + """      - run: |
+          echo safe
+          #${{ github.event.pull_request.title }}
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, candidate))
+
+    def test_run_folded_block_preserves_hash_prefixed_pr_expression(self):
+        candidate = SAFE + """      - name: folded script
+        run: >-
+          echo safe
+          #${{ github.event.pull_request.body }}
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_run_literal_block_preserves_hash_prefixed_secret_expression(self):
+        candidate = SAFE + """      - run: |
+          echo safe
+          #${{ secrets.DEPLOY_TOKEN }}
+"""
+        self.assertIn("secret_reference", gate.risk_set(candidate))
+        self.assertIn("secret_reference", gate.increasing_risks(SAFE, candidate))
+
+    def test_literal_run_block_does_not_swallow_later_env_metadata(self):
+        candidate = SAFE + """      - run: |
+          echo trusted
+        env:
+          UNUSED: ${{ github.event.pull_request.body }}
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_yaml_comment_outside_block_still_removed(self):
+        clean = gate._content_without_comments(
+            "name: safe # ${{ secrets.NEVER }}\n"
+            "run: |\n  #${{ secrets.INSIDE }}\n"
+        )
+        self.assertNotIn("secrets.NEVER", clean)
+        self.assertIn("secrets.INSIDE", clean)
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
