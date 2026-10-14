@@ -52,7 +52,7 @@ class MobileConsoleHostedCITrustTests(unittest.TestCase):
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', self.text)
         self.assertIn('[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]', self.text)
         self.assertIn('test "$EXPECTED_REPO" = "Zennay/zCloud"', self.text)
-        self.assertLess(self.text.index('test "$(git rev-parse HEAD)"'), self.text.index("Parse dashboard source"))
+        self.assertLess(self.text.index('test "$(git rev-parse HEAD)"'), self.text.index("Check dashboard JavaScript and worker diagnostics behavior"))
         # No repository-controlled tests execute before exact source verification.
         window = self.text[self.text.index("Checkout exact immutable source"):self.text.index("Parse dashboard source")]
         self.assertNotRegex(window, r"(?m)^\s*run: (?:node|python|bash)")
