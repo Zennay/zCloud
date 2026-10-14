@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monotonic, read-only screen for automatically triggered VPS mutation workflows.
+"""Monotonic, read-only screen for automatically triggered workflows with possible VPS access.
 
 This is a conservative source tripwire, not permission to deploy or to recover a
 runner. Existing automatic mutation workflows are grandfathered ONLY while their
@@ -17,29 +17,56 @@ WORKFLOWS = Path(".github/workflows")
 SUFFIXES = {".yml", ".yaml"}
 MAX_FILES = 400
 MAX_BYTES = 256 * 1024
-AUTO = re.compile(
-    r"(?m)^\s{2}(?:push|workflow_run|schedule|repository_dispatch|release):"
-    r"|^\s*[\"']?on[\"']?:\s*(?:\[?\s*(?:push|workflow_run|schedule|repository_dispatch|release)\b|\$\{\{)"
+TRIGGERS = (
+    "push", "pull_request", "pull_request_target", "workflow_call",
+    "workflow_run", "schedule", "repository_dispatch", "release",
+    "issue_comment", "check_run", "check_suite",
 )
-RUNNER = re.compile(r"(?mi)^\s*runs-on:\s*.*self-hosted|^\s*-\s*self-hosted\s*$")
-MUTATION = re.compile(
-    r"(?mi)^\s*(?:-\s*)?(?:run:\s*)?"
-    r".*\b(?:sudo\b|systemctl\s+(?:restart|stop|start|enable|disable)"
-    r"|git\s+push\b|rsync\b|rm\s+-rf\b|killall\b|pkill\b"
-    r"|gh\s+api\s+--method\s+(?:POST|PUT|PATCH|DELETE)\b"
-    r"|curl\b[^\n]*\s-X\s*(?:POST|PUT|PATCH|DELETE)\b)"
+AUTO_BLOCK = re.compile(
+    r"(?m)^[ ]{2}(" + "|".join(TRIGGERS) + r"):[ \\t]*"
 )
-SHA = re.compile(r"[0-9a-f]{40}\Z")
+ON_INLINE = re.compile(r"(?m)^[ \\t]*[\\\"']?on[\\\"']?:[ \\t]*(?P<value>[^\\n]*)$")
+RUNS_ON = re.compile(r"(?m)^[ \\t]+runs-on:[ \\t]*(?P<value>[^\\n#]*)")
+HOSTED = re.compile(
+    r"(?:ubuntu|windows|macos)-(?:latest|[0-9]+(?:\\.[0-9]+)?(?:-arm|-large|-xlarge)?)",
+    re.IGNORECASE,
+)
+SHA = re.compile(r"[0-9a-f]{40}\\Z")
+
+
+def _automatic(text: str) -> bool:
+    if AUTO_BLOCK.search(text):
+        return True
+    for match in ON_INLINE.finditer(text):
+        value = match.group("value").strip()
+        if value.startswith(("*", "${{")):
+            return True
+        if any(re.search(r"(?<![A-Za-z0-9_-])" + name + r"(?![A-Za-z0-9_-])", value)
+               for name in TRIGGERS):
+            return True
+    return False
+
+
+def _possible_vps(text: str) -> bool:
+    for match in RUNS_ON.finditer(text):
+        raw = match.group("value").strip().strip("\\\"'")
+        if HOSTED.fullmatch(raw):
+            continue
+        if raw.startswith("[") and raw.endswith("]"):
+            labels = [part.strip().strip("\\\"'") for part in raw[1:-1].split(",")]
+            if labels and all(HOSTED.fullmatch(label) for label in labels):
+                continue
+        # A name, alias, expression, multiline array or group is not proof
+        # of a hosted runner. Even if the job invokes an innocent script,
+        # it may have write access to VPS runtime state.
+        return True
+    return False
 
 
 def _scan_text(text: str) -> bool:
     # Text-only detection intentionally overapproximates: it is a review gate,
     # never proof that a workflow is safe.
-    if not AUTO.search(text):
-        return False
-    if not RUNNER.search(text):
-        return False
-    return bool(MUTATION.search(text))
+    return _automatic(text) and _possible_vps(text)
 
 
 def _git(root: Path, *args: str) -> bytes:
