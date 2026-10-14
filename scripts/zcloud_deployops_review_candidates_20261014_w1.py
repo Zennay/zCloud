@@ -101,9 +101,19 @@ def complete_files(record, main_sha, head_sha):
             "file_compare_sha_mismatch")
     listed = record.get("files")
     require(type(listed) is list and len(listed) == n, "truncated_file_inventory")
-    if n == 0:
-        return set()
-    return paths(listed)
+    require(f.get("rename_sources_complete") is True,
+            "incomplete_rename_source_inventory")
+    previous = record.get("previous_files")
+    previous_total = f.get("previous_files_total")
+    require(type(previous_total) is int and 0 <= previous_total <= MAX_ITEMS,
+            "invalid_rename_source_total")
+    require(type(previous) is list and len(previous) == previous_total,
+            "truncated_rename_source_inventory")
+    require(n > 0 or previous_total == 0, "orphaned_rename_sources")
+    owned = paths(listed) if listed else set()
+    source_paths = paths(previous) if previous else set()
+    require(len(owned | source_paths) <= MAX_ITEMS, "file_reservation_limit")
+    return owned | source_paths
 
 
 def correlate_prless_receipt(report):
