@@ -181,7 +181,7 @@ jobs:
                           value=response.get("result")
                           if isinstance(value,dict):value=value.get("value","")
                           version=str(value or "")
-                          versions.append(version if re.fullmatch(r"\\d+\\.\\d+\\.\\d+",version) else "unknown")
+                          versions.append(version if re.fullmatch(r"\d+\.\d+\.\d+",version) else "unknown")
                       except (OSError,ValueError,TimeoutError,EOFError):
                           # A failed per-tab observation is unknown, never a
                           # reason to call the entire browser healthy.
