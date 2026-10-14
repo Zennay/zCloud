@@ -289,6 +289,9 @@ def risk_counts(source: str) -> dict[str, int]:
         return {}
     clean = _content_without_comments(source)
     counts = {reason: 1 for reason in risks}
+    if "write_all" in risks:
+        # A boolean risk bucket hides added job-level write-all grants.
+        counts["write_all"] = max(1, len(WRITE_ALL.findall(clean)))
     if "write_permission" in risks:
         counts["write_permission"] = max(1, len(WRITE_SCOPE.findall(clean)))
     if "secret_reference" in risks:
