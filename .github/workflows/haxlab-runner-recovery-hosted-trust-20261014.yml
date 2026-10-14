@@ -1,0 +1,48 @@
+name: HaxLab listener recovery non-interruption hosted proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/haxlab-runner-recovery.yml"
+      - ".github/workflows/haxlab-runner-recovery-hosted-trust-20261014.yml"
+      - "tests/test_haxlab_runner_recovery_noninterrupting_20261014.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/haxlab-runner-recovery.yml"
+      - ".github/workflows/haxlab-runner-recovery-hosted-trust-20261014.yml"
+      - "tests/test_haxlab_runner_recovery_noninterrupting_20261014.py"
+
+permissions:
+  contents: read
+
+jobs:
+  non-interrupting-policy:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == 'Zennay/zCloud' &&
+        github.event.pull_request.base.repo.full_name == 'Zennay/zCloud'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact immutable candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify exact repository and immutable head before source execution
+        shell: bash
+        env:
+          EXPECTED_REPO: ${{ github.repository }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPO" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Regress denial of active listener interruption
+        run: python3 -m unittest -v tests.test_haxlab_runner_recovery_noninterrupting_20261014
