@@ -187,6 +187,20 @@ def _run_command_source(step: str, command: re.Match[str]) -> str:
     return "\n".join(output)
 
 
+def _consumes_env(name: str, command_source: str) -> bool:
+    """Recognize a variable expanded by a shell or a GitHub env context."""
+    if re.search(
+        r"\$(?:\{" + re.escape(name) + r"\}|" + re.escape(name) + r"\b)",
+        command_source,
+    ):
+        return True
+    return bool(re.search(
+        r"""\benv(?:\s*\.\s*""" + re.escape(name)
+        + r"""|\s*\[\s*['"]""" + re.escape(name) + r"""['"]\s*\])(?=\W|$)""",
+        command_source,
+    ))
+
+
 def _env_expressions_executed_by_run(
     step: str, command_source: str, *, require_shell_sink: bool = True
 ) -> Counter[str]:
@@ -211,6 +225,28 @@ def _env_expressions_executed_by_run(
     in_env = False
     env_indent = 0
     for line in step.splitlines():
+        # Flow-style YAML env mappings are valid alongside block-style maps.
+        # Parse each named field independently; a PR title in a literal inline
+        # mapping must not disappear merely because it lacks nested lines.
+        flow = re.match(
+            r"""^[ ]*(?:-\s+)?['"]?env['"]?[ \t]*:[ \t]*\{(?P<entries>.*)\}[ \t]*$""",
+            line,
+        )
+        if flow:
+            fields = flow.group("entries")
+            entries = re.finditer(
+                r"""(?:^|,)[ \t]*['"]?(?P<name>[A-Za-z_][A-Za-z0-9_]*)['"]?"""
+                r"""[ \t]*:[ \t]*(?P<value>.*?)"""
+                r"""(?=[ \t]*,[ \t]*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?[ \t]*:|$)""",
+                fields,
+            )
+            for binding in entries:
+                if _consumes_env(binding.group("name"), command_source):
+                    references.update(
+                        match.group(0).lower()
+                        for match in PR_SOURCE.finditer(binding.group("value"))
+                    )
+            continue
         header = re.match(r"""^([ ]*)(?:-\s+)?['"]?env['"]?[ \t]*:[ \t]*$""", line)
         if header:
             in_env = True
@@ -232,16 +268,7 @@ def _env_expressions_executed_by_run(
         pr_expressions = list(PR_SOURCE.finditer(value))
         if not pr_expressions:
             continue
-        shell_expansion = re.search(
-            r"\$(?:\{" + re.escape(name) + r"\}|" + re.escape(name) + r"\b)",
-            command_source,
-        )
-        expression_expansion = re.search(
-            r"""\benv(?:\s*\.\s*""" + re.escape(name)
-            + r"""|\s*\[\s*['"]""" + re.escape(name) + r"""['"]\s*\])(?=\W|$)""",
-            command_source,
-        )
-        if shell_expansion or expression_expansion:
+        if _consumes_env(name, command_source):
             references.update(match.group(0).lower() for match in pr_expressions)
     return references
 
