@@ -173,9 +173,13 @@ def main(argv=None, environ=None, transport=api):
         if latest_main != main_sha or (latest_pr.get("head") or {}).get("sha") != head_sha or latest_pr.get("base", {}).get("sha") != main_sha or not has_label(latest_pr):
             receipts[-1]["decision"] = "changed_before_merge"
             continue
+        # Source integrations must not implicitly attempt production promotion.
+        # An explicitly approved production release runs through its own gate.
+        title = str(pr.get("title") or "Development integration")
+        title = "".join(c if 32 <= ord(c) <= 126 and c != chr(92) else " " for c in title)[:120].strip()
         result = transport(token, "PUT", f"/pulls/{number}/merge",
                            {"sha": head_sha, "merge_method": "squash",
-                            "commit_title": str(pr.get("title", "Development integration"))[:160]})
+                            "commit_title": title + " [skip ci]"})
         if result.get("merged") is not True or not valid_sha(result.get("sha")):
             raise Refused("merge_not_confirmed")
         receipts[-1]["decision"] = "merged"

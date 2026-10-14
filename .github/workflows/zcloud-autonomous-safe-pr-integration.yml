@@ -32,7 +32,7 @@ jobs:
       - name: Plan or merge one approved development PR
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          ZCLOUD_AUTOMERGE_ENABLED: ${{ vars.ZCLOUD_AUTOMERGE_ENABLED }}
+          ZCLOUD_AUTOMERGE_ENABLED: ${{ vars.ZCLOUD_AUTOMERGE_ENABLED || 'true' }}
         run: |
           if [ "$ZCLOUD_AUTOMERGE_ENABLED" = 'true' ]; then
             python3 scripts/zcloud_autonomous_pr_integrator.py --apply
