@@ -51,3 +51,45 @@ jobs:
           python3 -m py_compile tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py
           python3 -m unittest -v tests.test_zcloud_v2_legacy_service_audit_trust_20261013_w1
           echo "ZCLOUD_V2_LEGACY_CONSENT_SOURCE_VERIFIED=1"
+
+  hosted-full-regression:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      ((github.event_name == 'push' && github.ref_type == 'branch') ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Set up Node 24 for worker extension regressions
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Run full read-only zCloud regression suite
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -m unittest discover -v
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node --check firefox-extension/background.js
+          node --check firefox-extension/recovery.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
+          node --check public/zcloud-worker.user.js
+          echo "ZCLOUD_V2_LEGACY_COMPLETE_SOURCE_REGRESSION_GREEN=1"
