@@ -80,6 +80,10 @@ Even a structurally self-consistent queue report is *time-bounded*. The read-onl
 
 The triage receipt now explicitly includes `mutation_authorized=false` in both OBSERVED and DENY outcomes. Rendering an OBSERVED count additionally requires that exact false value and the sole fixed observational reason `read_only_route_counts_not_runner_liveness`. A malformed/missing/replayed timestamp, forged reason or positive mutation claim produces **no run links or counts and a failing exit**. Offline regressions cover 60-second equality, the subsecond expiry boundary, future timestamps, invalid UTC clock, forged authorization and CLI-level real clock behavior. A passing hosted test does not attest the latest production queue, worker generation, or runner readiness.
 
+### Exact self-hosted pool labels (false attribution safety)
+
+The route observer treats GitHub's standard OS/architecture self-hosted labels (`Linux`, `X64`, `ARM64`, etc.) as non-pool metadata; only an exact remaining pool label set `self-hosted + zcloud + vps` or `self-hosted + ftmo-research` yields the corresponding diagnosis. Unknown additional routing labels, combined FTMO/zCloud labels and duplicated label strings are `other_or_mixed`, **not** a confident statement that a particular VPS runner is targeted. This deliberately sacrifices optimistic classification for trustworthy incident triage. No change to actual workflow runner selection or any runner registration has been made.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
