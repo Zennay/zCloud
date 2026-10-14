@@ -1,21 +1,31 @@
 name: Clean superseded RaiseAI gateway deploy queue
 
+# Mutating cross-repository Actions queue operation: never run on push.
+# Requires an explicit trusted-actor exact-main SHA before runner allocation.
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/raiseai-gateway-deploy-queue-cleanup.yml"
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact current zCloud main commit SHA (40 lowercase hex)"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
   group: raiseai-gateway-deploy-queue-cleanup
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   cleanup:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     env:
