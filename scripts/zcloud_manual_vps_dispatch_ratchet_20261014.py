@@ -177,7 +177,24 @@ def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object
         candidate |= risky_manual_jobs(path, head[path])
     # Grandfather only the identical unsafe job identity. A modified job with
     # unchanged debt remains visible as debt, not as evidence of safety.
-    additions = sorted(candidate - previous)
+    # An old unguarded job must not be allowed to acquire NEW authority while
+    # keeping its original (path, job) identity. Require owner review whenever
+    # its actual job block changes and the resulting job remains unguarded.
+    changed_old_debt: set[tuple[str, str]] = set()
+    for path in modified:
+        if path not in base:
+            continue
+        try:
+            before_jobs = split_jobs(base[path].decode("utf-8"))
+            after_jobs = split_jobs(head[path].decode("utf-8"))
+        except UnicodeError as exc:
+            raise RefError("invalid_workflow_encoding") from exc
+        for key in previous & candidate:
+            if key[0] != path:
+                continue
+            if before_jobs.get(key[1]) != after_jobs.get(key[1]):
+                changed_old_debt.add(key)
+    additions = sorted((candidate - previous) | changed_old_debt)
     return {
         "policy": "manual-vps-dispatch-no-new-debt-v1",
         "ok": not additions,
