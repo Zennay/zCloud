@@ -27,6 +27,7 @@ AUTO_BLOCK = re.compile(
 )
 ON_INLINE = re.compile(r"(?m)^[ \t]*(?:on|\"on\"|'on'):[ \t]*(?P<value>[^\n]*)$")
 RUNS_ON = re.compile(r"(?m)^[ \t]+runs-on:[ \t]*(?P<value>[^\n#]*)")
+JOB_USES = re.compile(r"(?m)^ {4}uses:[ \t]*[^\s#]+")
 HOSTED = re.compile(
     r"(?:ubuntu|windows|macos)-(?:latest|[0-9]+(?:\.[0-9]+)?(?:-arm|-large|-xlarge)?)",
     re.IGNORECASE,
@@ -48,6 +49,10 @@ def _automatic(text: str) -> bool:
 
 
 def _possible_vps(text: str) -> bool:
+    # Job-level reusable workflows may hide self-hosted jobs behind uses:.
+    # Step-level uses: is not a job-level dispatch.
+    if JOB_USES.search(text):
+        return True
     for match in RUNS_ON.finditer(text):
         raw = match.group("value").strip().strip(chr(34) + chr(39))
         if HOSTED.fullmatch(raw):
