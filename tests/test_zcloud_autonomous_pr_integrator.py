@@ -31,7 +31,18 @@ def files(docs=True):
 
 
 def checks():
-    return [{"head_sha": A, "name": "critical-runner-flows", "status": "completed", "conclusion": "success"}]
+    def job(name, jid):
+        link = f"https://github.com/{mod.REPO}/actions/runs/400/job/{jid}"
+        return {
+            "id": jid, "head_sha": A, "name": name,
+            "status": "completed", "conclusion": "success",
+            "details_url": link, "html_url": link,
+            "app": {"id": 15368, "slug": "github-actions",
+                    "owner": {"login": "github"}},
+            "check_suite": {"id": 300},
+        }
+    return [job("critical-runner-flows", 501),
+            job(mod.REQUIRED_ADMISSION, 502)]
 
 
 class DecisionTest(unittest.TestCase):
@@ -124,6 +135,7 @@ class DecisionTest(unittest.TestCase):
             "tests/test_zcloud_automerge_report_20261014.py",
             "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
     "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
+            "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
         }
         self.assertEqual(mod.PROTECTED_INTEGRATION_FILES, expected)
         for path in expected:
@@ -176,7 +188,7 @@ class DecisionTest(unittest.TestCase):
         if path.endswith("/files?per_page=100"):
             return files()
         if path.endswith("/check-runs?per_page=100"):
-            return {"total_count": 1, "check_runs": checks()}
+            return {"total_count": len(checks()), "check_runs": checks()}
         if path.endswith("/statuses?per_page=100"):
             return []
         if path.endswith("/merge"):
@@ -256,8 +268,8 @@ class DecisionTest(unittest.TestCase):
         import json
         cases = (
             ("/check-runs?per_page=100",
-             {"total_count": 1, "check_runs": [
-                 {**checks()[0], "conclusion": "failure"}]},
+             {"total_count": len(checks()), "check_runs": [
+                 {**checks()[0], "conclusion": "failure"}, checks()[1]]},
              "recheck_required_smoke_not_green"),
             ("/check-runs?per_page=100",
              {"total_count": 3, "check_runs": checks()},

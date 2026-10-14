@@ -35,8 +35,40 @@ PROTECTED_INTEGRATION_FILES = frozenset((
     "tests/test_zcloud_automerge_report_20261014.py",
     "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
     "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
+    "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
 ))
 ALLOWED_CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
+# Verified against the actual GitHub Actions check-run API on recent zCloud PR
+# heads. A human-supplied name alone cannot attest the critical regression job.
+GITHUB_ACTIONS_APP_ID = 15368
+TRUSTED_JOB_URL = re.compile(
+    r"^https://github[.]com/Zennay/zCloud/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)$"
+)
+REQUIRED_ADMISSION = "Reject untrusted regression events before checkout"
+
+
+def trusted_job_identity(check):
+    """Bind trusted GitHub-hosted job ID and check suite; never authorize a run."""
+    if not isinstance(check, dict):
+        return None
+    app = check.get("app")
+    owner = app.get("owner") if isinstance(app, dict) else None
+    suite = check.get("check_suite")
+    url = check.get("details_url")
+    match = TRUSTED_JOB_URL.fullmatch(url) if isinstance(url, str) else None
+    if (not isinstance(app, dict) or app.get("slug") != "github-actions"
+            or app.get("id") != GITHUB_ACTIONS_APP_ID
+            or not isinstance(owner, dict) or owner.get("login") != "github"
+            or not isinstance(suite, dict)
+            or type(suite.get("id")) is not int or suite["id"] <= 0
+            or match is None
+            or type(check.get("id")) is not int
+            or check["id"] != int(match.group(2))
+            or check.get("html_url") != url):
+        return None
+    return int(match.group(1)), suite["id"]
+
+
 
 
 class Refused(RuntimeError):
@@ -104,15 +136,30 @@ def decide(pr, files, checks, statuses, main_sha):
     if not isinstance(statuses, list) or len(statuses) >= 100:
         return "unbounded_statuses"
     smoke_green = False
+    smoke_identity = None
+    admission_identity = None
     optional_cpu_pending = False
     for c in checks:
         if not isinstance(c, dict) or c.get("head_sha") != head_sha:
             return "unbound_check"
         name = c.get("name")
         if name == "critical-runner-flows":
+            if smoke_green:
+                return "duplicate_required_check"
             if c.get("status") != "completed" or c.get("conclusion") != "success":
                 return "required_smoke_not_green"
+            smoke_identity = trusted_job_identity(c)
+            if smoke_identity is None:
+                return "untrusted_required_check"
             smoke_green = True
+        elif name == REQUIRED_ADMISSION:
+            if admission_identity is not None:
+                return "duplicate_required_check"
+            if c.get("status") != "completed" or c.get("conclusion") != "success":
+                return "required_admission_not_green"
+            admission_identity = trusted_job_identity(c)
+            if admission_identity is None:
+                return "untrusted_required_check"
         elif name == "cpu-snapshot" and c.get("status") in ("queued", "in_progress", "pending") and c.get("conclusion") is None:
             # This optional VPS diagnostic can queue indefinitely when the
             # worker listener is absent. It is NOT the hosted regression gate.
@@ -122,6 +169,10 @@ def decide(pr, files, checks, statuses, main_sha):
             return "check_not_green"
     if not smoke_green:
         return "required_smoke_missing"
+    if admission_identity is None:
+        return "required_admission_missing"
+    if smoke_identity != admission_identity:
+        return "unbound_admission_suite"
     # GitHub reports unstable when ANY status check is pending; the single
     # recognized optional VPS CPU snapshot may be queued indefinitely.
     # Never relax other required/unknown checks or a blocked branch-protection
