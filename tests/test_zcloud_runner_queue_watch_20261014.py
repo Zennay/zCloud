@@ -121,6 +121,63 @@ class QueueWatchTests(unittest.TestCase):
         with self.assertRaises(m.Unavailable):
             m.NoRedirect().redirect_request(None, None, 302, "", {}, "http://attacker/")
 
+    def test_real_http_parser_is_bounded_to_exact_workflow_and_jobs(self):
+        from unittest.mock import patch
+
+        runs, jobs = [], {}
+        for number in (1, 2, 3):
+            run, job = sample(number, age=1800)
+            runs.append(run)
+            jobs[number] = job
+
+        class Headers:
+            def get_content_type(self):
+                return "application/json"
+
+        class Reply:
+            headers = Headers()
+            def __init__(self, payload):
+                self.payload = json.dumps(payload).encode("utf-8")
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, n):
+                assert n == 1024 * 1024 + 1
+                return self.payload[:n]
+
+        class Opener:
+            def __init__(self):
+                self.urls = []
+            def open(self, request, timeout):
+                self.urls.append(request.full_url)
+                self_timeout = timeout
+                assert self_timeout == 12
+                assert request.get_header("Authorization") == "Bearer test-token"
+                if request.full_url == m.URL:
+                    return Reply({"total_count": 3, "workflow_runs": runs})
+                for rid, job in jobs.items():
+                    if request.full_url.endswith(f"/actions/runs/{rid}/jobs?per_page=100"):
+                        return Reply({"total_count": 1, "jobs": [job]})
+                raise AssertionError("unexpected GitHub request")
+
+        opener = Opener()
+        result = m.collect("test-token", opener=opener)
+        self.assertEqual(result["sampled_runs"], 3)
+        self.assertEqual(len(opener.urls), 4)
+        self.assertFalse(result["production_verified"])
+        self.assertFalse(result["mutation_authorized"])
+        self.assertTrue(all("api.github.com/repos/Zennay/zCloud/" in url
+                            for url in opener.urls))
+
+        class MissingJobOpener(Opener):
+            def open(self, request, timeout):
+                if request.full_url.endswith("/actions/runs/2/jobs?per_page=100"):
+                    return Reply({"total_count": 2, "jobs": [jobs[2]]})
+                return super().open(request, timeout)
+        with self.assertRaisesRegex(m.Unavailable, "incomplete_job_page"):
+            m.collect("test-token", opener=MissingJobOpener())
+
     def test_workflow_hosted_readonly_on_all_events(self):
         wf = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("  schedule:", wf)
