@@ -188,8 +188,15 @@ def probe_once(opener=None):
                 return "content_type"
             # urllib does not transparently decompress bodies. Never accept a
             # potentially misleading compressed/encoded status representation.
-            if headers.get("Content-Encoding", "").strip().lower() not in ("", "identity"):
-                return "invalid_headers"
+            coding = headers.get("Content-Encoding")
+            if coding is not None:
+                # Empty, control-char, non-ASCII or overlong coding metadata
+                # is ambiguous even if stripping it happens to say identity.
+                if (not isinstance(coding, str) or not coding.isascii() or
+                        not 1 <= len(coding) <= 32 or
+                        any(ord(char) < 32 or ord(char) == 127 for char in coding) or
+                        coding.strip(" ").lower() != "identity"):
+                    return "invalid_headers"
             length_text = headers.get("Content-Length")
             declared_length = None
             if length_text is not None:
