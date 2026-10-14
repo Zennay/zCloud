@@ -112,7 +112,10 @@ jobs:
           )
           same={k:current[k] for k in keys if current.get(k) is not None}
           reconcile=post("/api/dynamic-workers",same)
-          print("POOL_RECONCILED",json.dumps(reconcile,sort_keys=True))
+          if not isinstance(reconcile,dict) or reconcile.get("error") or reconcile.get("ok") is False:
+              raise RuntimeError("worker configuration reconciliation not acknowledged")
+          # Never log an API payload that may contain worker or session metadata.
+          print("POOL_RECONCILE_ACK",json.dumps({"response_validated":True},sort_keys=True))
 
           queue=get("/api/portfolio-queue?all=1")
           item=next(
