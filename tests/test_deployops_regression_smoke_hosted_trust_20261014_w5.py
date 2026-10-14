@@ -45,12 +45,16 @@ def failures(source: str) -> list[str]:
         issues.append("event:" + main_condition)
     if re.findall(r"(?m)^  ([a-z][a-z-]*):\s*$", jobs) != ["critical-runner-flows"]:
         issues.append("single_hosted_job")
-    if "runs-on: ubuntu-latest" not in jobs:
+    runner_values = re.findall(r"(?m)^    runs-on:\s*(\S.*?)\s*$", jobs)
+    if runner_values != ["ubuntu-latest"]:
         issues.append("hosted_only")
     if "cancel-in-progress: false" not in before_jobs:
         issues.append("noncancelling")
-    if not re.search(r"(?m)^permissions:\n  contents: read\s*$", before_jobs):
+    permissions = before_jobs.split("\npermissions:\n", 1)[1].split("\nconcurrency:\n", 1)[0] if "\npermissions:\n" in before_jobs and "\nconcurrency:\n" in before_jobs else ""
+    if re.findall(r"(?m)^  ([a-z-]+):\s*([a-z-]+)\s*$", permissions) != [("contents", "read")]:
         issues.append("read_only")
+    if re.search(r"(?m)^    permissions:\s*$", jobs):
+        issues.append("job_permission_override")
     if CHECKOUT_PIN not in steps or ("ref: " + "$" + "{{ " + SHA_EXPR + " }}") not in steps:
         issues.append("exact_checkout")
     if "persist-credentials: false" not in steps:
@@ -107,6 +111,20 @@ class HostedRegressionSmokeTrustTests(unittest.TestCase):
         self.assertIn("hosted_only", failures(bad))
         bad = self.source.replace("contents: read", "contents: write", 1)
         self.assertIn("read_only", failures(bad))
+
+    def test_no_duplicate_runner_selector_or_privileged_job_override(self):
+        doubled = self.source.replace(
+            "    runs-on: ubuntu-latest",
+            "    runs-on: ubuntu-latest\n    runs-on: [self-hosted, zcloud, vps]", 1)
+        self.assertIn("hosted_only", failures(doubled))
+        override = self.source.replace(
+            "    timeout-minutes: 5",
+            "    permissions:\n      actions: write\n    timeout-minutes: 5", 1)
+        self.assertIn("job_permission_override", failures(override))
+        token = self.source.replace(
+            "  contents: read",
+            "  contents: read\n  actions: write", 1)
+        self.assertIn("read_only", failures(token))
 
     def test_cancellation_of_in_progress_proofs_is_forbidden(self):
         self.assertIn("noncancelling", failures(
