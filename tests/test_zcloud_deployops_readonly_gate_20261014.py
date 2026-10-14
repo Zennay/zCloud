@@ -45,10 +45,11 @@ def fixture():
 class GateTests(unittest.TestCase):
     def test_current_main_failure_is_not_runner_outage(self):
         result = gate.classify(fixture())
-        self.assertEqual(result["observation"], "LATEST_MAIN_DEPLOY_FAILURE")
+        self.assertEqual(result["observation"], "OBSERVED_MAIN_DEPLOY_FAILURE")
         self.assertEqual(result["production_status"], "failure")
         self.assertEqual(result["latest_run_failed_jobs"], 1)
         self.assertFalse(result["production_verified"])
+        self.assertFalse(result["deploy_history_exhaustive"])
         self.assertFalse(result["mutation_authorized"])
         self.assertFalse(result["runner_outage_verified"])
 
@@ -108,6 +109,8 @@ class GateTests(unittest.TestCase):
             lambda x: x["jobs_by_run"]["1234"]["jobs"][0].update(run_id=4321),
             lambda x: x["jobs_by_run"]["1234"]["jobs"][0].update(id=True),
             lambda x: x["jobs_by_run"]["1234"]["jobs"][0].update(runner_id=True),
+            lambda x: x["jobs_by_run"]["1234"]["jobs"][0].update(runner_id=21, runner_name=None),
+            lambda x: x["jobs_by_run"]["1234"]["jobs"][0].update(runner_id=None, runner_name="fake-runner"),
             lambda x: x["status"]["statuses"][0].update(id=1),
             lambda x: x["status"]["statuses"][0].update(created_at="2026-10-14"),
             lambda x: x["status"]["statuses"][0].update(state="greenish"),
