@@ -155,6 +155,35 @@ def executable_steps(source: str) -> list[str]:
     return blocks
 
 
+def _run_command_source(step: str, command: re.Match[str]) -> str:
+    """Extract a run scalar, excluding later sibling YAML keys in the step.
+
+    GitHub Actions permits arbitrary ordering of run/env/working-directory. A
+    later env: mapping is metadata and must not masquerade as run code. Treat
+    a '- run:' key as two spaces deeper than the enclosing list-item indent.
+    """
+    lines = step[command.start():].splitlines()
+    if not lines:
+        return ""
+    first = lines[0]
+    indent = len(first) - len(first.lstrip(" "))
+    dash = re.match(r"^[ ]*-[ ]+", first)
+    if dash:
+        indent = len(dash.group(0))
+    output = [first]
+    for line in lines[1:]:
+        trimmed = line.lstrip(" ")
+        current_indent = len(line) - len(trimmed)
+        if (
+            trimmed
+            and current_indent <= indent
+            and re.match(r"""^['"]?[A-Za-z_][\w-]*['"]?[ \t]*:""", trimmed)
+        ):
+            break
+        output.append(line)
+    return "\n".join(output)
+
+
 def _env_expressions_executed_by_run(
     step: str, command_source: str, *, require_shell_sink: bool = True
 ) -> Counter[str]:
@@ -272,7 +301,7 @@ def _job_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[str]:
             command = CHECKOUT.search(step) if checkout else RUN_STEP.search(step)
             if command:
                 found.update(_env_expressions_executed_by_run(
-                    "\n".join(job_env_blocks), step if checkout else step[command.start():],
+                    "\n".join(job_env_blocks), step if checkout else _run_command_source(step, command),
                     require_shell_sink=not checkout,
                 ))
     return found
@@ -293,7 +322,7 @@ def _workflow_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[st
         command = CHECKOUT.search(step) if checkout else RUN_STEP.search(step)
         if command is not None:
             found.update(_env_expressions_executed_by_run(
-                env_section, step if checkout else step[command.start():],
+                env_section, step if checkout else _run_command_source(step, command),
                 require_shell_sink=not checkout,
             ))
     return found
@@ -320,7 +349,7 @@ def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
             )
         command = RUN_STEP.search(step)
         if command is not None:
-            command_source = step[command.start():]
+            command_source = _run_command_source(step, command)
             found["pr_source_in_run_job"].update(
                 match.group(0).lower()
                 for match in PR_SOURCE.finditer(command_source)
