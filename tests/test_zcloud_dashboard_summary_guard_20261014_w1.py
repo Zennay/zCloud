@@ -33,6 +33,43 @@ class CanonicalSummaryTests(unittest.TestCase):
             with self.subTest(rc=rc, raw=payload):
                 self.assertTrue(guard.validate_summary(payload, rc))
 
+    def test_all_existing_probe_failure_categories_have_unambiguous_text(self):
+        for category in sorted(probe.CATEGORIES - {"healthy"}):
+            with self.subTest(category=category):
+                candidate = report("unhealthy", 1, {category: 1})
+                self.assertTrue(guard.validate_summary(candidate, 1))
+                self.assertFalse(guard.validate_summary(candidate, 0))
+
+    def test_real_probe_cli_renderer_can_be_validated_offline(self):
+        # The actual probe CLI renders the exact bytes that the operator guard
+        # admits, not an independently hand-built approximation.
+        import io
+        from contextlib import redirect_stdout
+        from unittest import mock
+        for status, failures, rc in (
+            ("healthy", {}, 0),
+            ("healthy", {"dns": 1, "connection": 1}, 0),
+            ("unhealthy", {"timeout": 2}, 1),
+        ):
+            with self.subTest(status=status, failures=failures):
+                attempts = len(failures) + (status == "healthy")
+                summary = probe.ProbeSummary(
+                    status, None, attempts,
+                    status == "healthy" and attempts > 1, failures,
+                )
+                stream = io.StringIO()
+                with mock.patch.object(probe, "run_probe", return_value=summary):
+                    with redirect_stdout(stream):
+                        self.assertEqual(probe.main(["--format", "markdown"]), rc)
+                self.assertTrue(guard.validate_summary(stream.getvalue().encode("utf-8"), rc))
+
+    def test_guard_source_has_no_recovery_or_transport_capability(self):
+        source = (ROOT / "scripts/zcloud_dashboard_summary_guard_20261014_w1.py").read_text()
+        for forbidden in ("import urllib", "import requests", "import sqlite3",
+                          "import subprocess", "systemctl", "method=\\\"POST\\\"",
+                          "os.system(", "subprocess.run("):
+            self.assertNotIn(forbidden, source)
+
     def test_reject_noncanonical_or_malformed_reports(self):
         valid = report()
         samples = [
