@@ -353,6 +353,32 @@ class QueueRouteTriageTests(unittest.TestCase):
         with self.assertRaisesRegex(source.InventoryError, "job_state_changed"):
             triage.collect(racing, clock=NOW)
 
+    def test_run_id_outside_github_integer_range_denied_before_jobs_get(self):
+        oversize = (1 << 63)
+        get, calls = mock([run(oversize)])
+        with self.assertRaisesRegex(source.InventoryError, "oversized_run_identity"):
+            triage.collect(get, clock=NOW)
+        self.assertFalse(any("/jobs?" in path for path in calls))
+        self.assertEqual(calls.count(RUNS), 1)
+
+    def test_job_id_outside_github_integer_range_denied_before_second_pass(self):
+        oversized_job = job(1)
+        oversized_job["id"] = 1 << 63
+        get, calls = mock([run(1)], {1: [oversized_job]})
+        with self.assertRaisesRegex(source.InventoryError, "oversized_job_identity"):
+            triage.collect(get, clock=NOW)
+        self.assertEqual(calls.count(RUNS), 1)
+        self.assertEqual(sum("/jobs?" in path for path in calls), 1)
+
+    def test_maximum_signed_github_id_is_bounded_but_not_invented_as_liveness(self):
+        max_id = (1 << 63) - 1
+        observed = job(max_id)
+        get, _ = mock([run(max_id)], {max_id: [observed]})
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["runs"][0]["run_id"], max_id)
+        self.assertIs(result["mutation_authorized"], False)
+        self.assertEqual(result["cancel_run_ids"], [])
+
     def test_boolean_runner_assignment_denied(self):
         item = job(1)
         item["runner_id"] = True
