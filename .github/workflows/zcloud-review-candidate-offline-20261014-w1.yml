@@ -1,0 +1,42 @@
+name: zCloud deploy-ops review candidate offline proof (2026-10-14 w1)
+
+on:
+  push:
+    branches:
+      - feat/deployops-review-candidate-admission-20261014-w1
+
+permissions:
+  contents: read
+
+jobs:
+  offline-review-queue:
+    if: ${{ github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/feat/deployops-review-candidate-admission-20261014-w1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable branch head without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Compile standalone offline verifier
+        run: python3 -m py_compile scripts/zcloud_deployops_review_candidates_20261014_w1.py
+      - name: Run exact-head isolated offline regressions
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_deployops_review_candidates_20261014_w1.py' -v
+      - name: Confirm no live mutation is permitted
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          spec = importlib.util.spec_from_file_location('m','scripts/zcloud_deployops_review_candidates_20261014_w1.py')
+          m = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+          sha = 'a' * 40
+          result = m.snapshot({'main_sha': sha, 'inventory': {'prs_complete': True,'branches_complete': True},
+            'gates': {'580': 'closed','1089': 'closed','1135': 'closed'},
+            'prs': [{'number': 12,'head_sha': sha,'base_sha': sha,
+              'draft': False,'owner_approved': True,'files': ['README.md'],
+              'checks': [{'name': 'unit','head_sha': sha,'conclusion': 'success'}]}], 'branches': []})
+          assert result['review_candidate_count'] == 1
+          assert result['release_authorized'] is False
+          assert result['mutations_performed'] is False
+          PY
