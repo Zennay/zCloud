@@ -118,7 +118,9 @@ def summarize(runs, jobsets, now, *, total_count=None):
         if (type(job) is not dict or type(job_id) is not int
                 or not 0 < job_id <= 9223372036854775807
                 or type(run_attempt) is not int or not 0 < run_attempt <= 100
-                or job.get("run_id") != number or job.get("name") != "cpu-snapshot"
+                or type(job.get("run_id")) is not int or job["run_id"] != number
+                or type(job.get("run_attempt")) is not int
+                or job.get("name") != "cpu-snapshot"
                 or job.get("workflow_name") != NAME
                 or job.get("head_sha") != run.get("head_sha")
                 or job.get("head_branch") != run.get("head_branch")
