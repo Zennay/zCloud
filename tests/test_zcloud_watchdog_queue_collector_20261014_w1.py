@@ -80,7 +80,11 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
                 return {"total_count": 1, "jobs": [job(1000 + ident)]}, ""
             raise AssertionError(path)
         snapshot = collection.collect(fetch, clock=NOW)
-        self.assertEqual(len(snapshot["run_pages"][0]["runs"]), 101)
+        self.assertEqual([len(page["runs"]) for page in snapshot["run_pages"]], [100, 1])
+        result = policy.assess(snapshot, expected_main_sha=SHA, now=NOW)
+        self.assertEqual(result["decision"], "REVIEW_ONLY")
+        self.assertFalse(result["inventory_complete"])
+        self.assertEqual(result["cancel_run_ids"], [])
 
     def test_truncated_second_page_denied(self):
         def fetch(path):
