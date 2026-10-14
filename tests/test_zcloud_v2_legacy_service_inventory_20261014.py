@@ -1,5 +1,7 @@
 """Adversarial privacy and correctness checks for read-only Worker-v2 metadata."""
 import json
+import os
+from unittest import mock
 from pathlib import Path
 import subprocess
 import tempfile
@@ -8,7 +10,7 @@ import unittest
 
 from scripts.zcloud_v2_legacy_service_inventory_20261014 import (
     COMMANDS, collect, command_lines, get_background_count, get_source_version,
-    summarize_processes, summarize_units,
+    read_regular, summarize_processes, summarize_units,
 )
 
 
@@ -102,6 +104,54 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[]}}', encoding="utf-8")
             self.assertEqual(get_background_count(manifest), 0)
+
+    def test_readonly_file_handles_symlink_fifo_and_invalid_bounds_without_blocking(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            source = base / "source.json"
+            source.write_text('{"safe":true}', encoding="utf-8")
+            self.assertEqual(read_regular(source, 65536), '{"safe":true}')
+            self.assertIsNone(read_regular(source, 1))
+            self.assertIsNone(read_regular(source, -1))
+            self.assertIsNone(read_regular(source, True))
+            self.assertIsNone(read_regular(source, 65537))
+            link = base / "link"
+            link.symlink_to(source)
+            self.assertIsNone(read_regular(link, 65536))
+            pipe = base / "named-pipe"
+            os.mkfifo(pipe)
+            self.assertIsNone(read_regular(pipe, 65536))
+
+    def test_readonly_file_rejects_mutation_between_fstat_snapshots(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "snapshot"
+            source.write_text("private content", encoding="utf-8")
+            real_fstat = os.fstat
+            calls = []
+
+            def fake_fstat(fd):
+                original = real_fstat(fd)
+                calls.append(original)
+                if len(calls) == 2:
+                    from types import SimpleNamespace
+                    return SimpleNamespace(
+                        st_dev=original.st_dev, st_ino=original.st_ino,
+                        st_mode=original.st_mode, st_size=original.st_size,
+                        st_mtime_ns=original.st_mtime_ns + 1,
+                        st_ctime_ns=original.st_ctime_ns,
+                    )
+                return original
+
+            with mock.patch("scripts.zcloud_v2_legacy_service_inventory_20261014.os.fstat", side_effect=fake_fstat):
+                self.assertIsNone(read_regular(source, 65536))
+            self.assertEqual(len(calls), 2)
+
+    def test_readonly_file_rejects_nofollow_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = Path(temp) / "file"
+            source.write_text("private data", encoding="utf-8")
+            with mock.patch("scripts.zcloud_v2_legacy_service_inventory_20261014.os", spec=[]):
+                self.assertIsNone(read_regular(source, 65536))
 
     def test_partial_evidence_never_claims_full_observation(self):
         rows = {
