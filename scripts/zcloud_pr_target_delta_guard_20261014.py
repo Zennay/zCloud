@@ -23,9 +23,14 @@ PR_SOURCE = re.compile(
     \bgithub
     (?:
       (?:\s*\.\s*event|\s*\[\s*['"]event['"]\s*\])
-      (?:\s*\.\s*pull_request|\s*\[\s*['"]pull_request['"]\s*\])
-      (?:\s*\.\s*(?:head|title|body)\b|\s*\[\s*['"](?:head|title|body)['"]\s*\])
-      (?:\s*\.\s*[A-Za-z_]\w*|\s*\[\s*['"][A-Za-z_]\w*['"]\s*\])*
+      (?:
+        (?:\s*\.\s*pull_request|\s*\[\s*['"]pull_request['"]\s*\])
+        (?:\s*\.\s*(?:head|title|body|number|merge_commit_sha)\b
+          |\s*\[\s*['"](?:head|title|body|number|merge_commit_sha)['"]\s*\])
+        (?:\s*\.\s*[A-Za-z_]\w*|\s*\[\s*['"][A-Za-z_]\w*['"]\s*\])*
+        |
+        (?:\s*\.\s*number\b|\s*\[\s*['"]number['"]\s*\])
+      )
       |
       (?:\s*\.\s*head_ref\b|\s*\[\s*['"]head_ref['"]\s*\])
     )
