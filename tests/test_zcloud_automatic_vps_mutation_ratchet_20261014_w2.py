@@ -152,5 +152,56 @@ class RatchetTests(unittest.TestCase):
         self.assertFalse(guard.check(self.root, sha)["safe_to_review"])
 
 
+    def test_new_automatic_self_hosted_python_script_denied_without_sudo_keyword(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        self.save("script.yml", OLD.replace("sudo systemctl restart zennay-cloud.service",
+                                             "python3 scripts/maybe_writes_history.py"))
+        self.assertFalse(guard.check(self.root, sha)["safe_to_review"])
+
+    def test_dynamic_runner_selector_denied_even_without_literal_self_hosted(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        dynamic = SAFE.replace("pull_request:", "push:")
+        dynamic = dynamic.replace("runs-on: ubuntu-latest", "runs-on: " + "$" + "{{ matrix.target }}")
+        self.save("dynamic.yml", dynamic)
+        self.assertEqual([".github/workflows/dynamic.yml"],
+                         guard.check(self.root, sha)["new_exposure_paths"])
+
+    def test_workflow_call_is_automatic_entrypoint_for_potential_vps(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        self.save("call.yml", OLD.replace("push:", "workflow_call:"))
+        self.assertFalse(guard.check(self.root, sha)["safe_to_review"])
+
+    def test_inline_array_with_manual_and_auto_events_denied(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        self.save("inline.yml", OLD.replace("on:\n  push:\n    branches: [main]",
+                                             "on: [workflow_dispatch, pull_request]"))
+        self.assertFalse(guard.check(self.root, sha)["safe_to_review"])
+
+    def test_quoted_on_and_inline_reusable_trigger_denied(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        self.save("quote.yml", OLD.replace("on:\n  push:\n    branches: [main]",
+                                            "'on': workflow_call"))
+        self.assertFalse(guard.check(self.root, sha)["safe_to_review"])
+
+    def test_ubuntu_24_04_stays_hosted(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        self.save("hosted.yml", OLD.replace("[self-hosted, zcloud, vps]", "ubuntu-24.04"))
+        self.assertTrue(guard.check(self.root, sha)["safe_to_review"])
+
+    def test_unreadable_non_utf8_new_workflow_denied(self):
+        self.save("safe.yml", SAFE)
+        sha = self.baseline()
+        (self.workflows / "invalid.yml").write_bytes(bytes((0xff, 0xfe)))
+        with self.assertRaises(UnicodeDecodeError):
+            guard.check(self.root, sha)
+
+
+
 if __name__ == "__main__":
     unittest.main()
