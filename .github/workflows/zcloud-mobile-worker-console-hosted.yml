@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - public/app.js
+      - public/enhancements.js
       - public/design-system.css
       - public/enhancements.css
       - public/index.html
@@ -12,12 +13,15 @@ on:
       - tests/test_global_worker_console_ui.py
       - tests/test_mobile_worker_console_navigation.py
       - tests/test_mobile_worker_actions_20261010.py
+      - tests/test_mobile_css_delivery_20261010.py
+      - tests/test_dashboard_design_system.py
       - .github/workflows/zcloud-mobile-worker-console-hosted.yml
       - tests/test_zcloud_mobile_console_ci_trust_20261014.py
   push:
     branches: [main, fix/ui-consistency-tokens-and-mobile-20261010]
     paths:
       - public/app.js
+      - public/enhancements.js
       - public/design-system.css
       - public/enhancements.css
       - public/index.html
@@ -25,6 +29,8 @@ on:
       - tests/test_global_worker_console_ui.py
       - tests/test_mobile_worker_console_navigation.py
       - tests/test_mobile_worker_actions_20261010.py
+      - tests/test_mobile_css_delivery_20261010.py
+      - tests/test_dashboard_design_system.py
       - .github/workflows/zcloud-mobile-worker-console-hosted.yml
       - tests/test_zcloud_mobile_console_ci_trust_20261014.py
   workflow_dispatch:
@@ -67,8 +73,13 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-      - name: Parse dashboard source
-        run: node --check public/app.js
+      - name: Check dashboard JavaScript and worker diagnostics behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check public/app.js
+          node --check public/enhancements.js
+          node tests/test_worker_debug_panel.js
       - name: Test worker console, three controls and mobile navigation
         run: python3 -m unittest -v tests.test_global_worker_console_ui tests.test_mobile_worker_console_navigation tests.test_mobile_worker_actions_20261010
       - name: Test mobile-hosted workflow admission and regression coverage
