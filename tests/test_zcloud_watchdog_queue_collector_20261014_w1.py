@@ -86,6 +86,94 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
         self.assertFalse(result["inventory_complete"])
         self.assertEqual(result["cancel_run_ids"], [])
 
+
+    def test_second_page_swap_with_identical_first_page_is_denied(self):
+        """Earlier first-page-only reread missed this queued run replacement."""
+        rows = [run(i) for i in range(1, 102)]
+        first_seen = [0]
+        second_seen = [0]
+        second = ROOT + "/actions/runs?status=queued&per_page=100&page=2"
+        next_link = '<https://api.github.com' + second + '>; rel="next"'
+
+        def fetch(path):
+            if path == MAIN:
+                return main()
+            if path == RUNS:
+                first_seen[0] += 1
+                return {"total_count": 101, "workflow_runs": rows[:100]}, next_link
+            if path == second:
+                second_seen[0] += 1
+                last = run(999) if second_seen[0] == 2 else rows[100]
+                return {"total_count": 101, "workflow_runs": [last]}, ""
+            if path.endswith("/jobs?per_page=100&page=1"):
+                ident = int(path.split("/runs/")[1].split("/")[0])
+                return {"total_count": 1, "jobs": [job(ident + 1000)]}, ""
+            raise AssertionError(path)
+
+        with self.assertRaisesRegex(collection.InventoryError, "queue_changed"):
+            collection.collect(fetch, clock=NOW)
+        self.assertEqual(second_seen[0], 2)
+        self.assertEqual(first_seen[0], 2)
+
+    def test_same_ids_with_changed_workflow_intent_denied(self):
+        get, _ = api_snapshot(run(6))
+        count = [0]
+        def fetch(path):
+            if path == RUNS:
+                count[0] += 1
+                altered = run(6)
+                if count[0] == 2:
+                    altered["workflow_id"] = 77
+                return {"total_count": 1, "workflow_runs": [altered]}, ""
+            return get(path)
+
+        with self.assertRaisesRegex(collection.InventoryError, "queue_changed"):
+            collection.collect(fetch, clock=NOW)
+
+    def test_slow_snapshot_denied_without_refreshing_its_timestamp(self):
+        get, _ = api_snapshot(run(1))
+        ticks = iter((20.0, 65.001))
+        with self.assertRaisesRegex(collection.InventoryError, "snapshot_acquisition_too_slow"):
+            collection.collect(get, clock=NOW, monotonic_clock=lambda: next(ticks))
+
+    def test_clock_reversal_denied(self):
+        get, _ = api_snapshot()
+        ticks = iter((30.0, 29.99))
+        with self.assertRaisesRegex(collection.InventoryError, "snapshot_acquisition_too_slow"):
+            collection.collect(get, clock=NOW, monotonic_clock=lambda: next(ticks))
+
+    def test_snapshot_uses_start_instant_not_end_instant(self):
+        get, _ = api_snapshot(run(1))
+        ticks = iter((10.0, 45.0))
+        snapshot = collection.collect(get, clock=NOW, monotonic_clock=lambda: next(ticks))
+        self.assertEqual(snapshot["observed_at"], "2026-10-14T03:00:00Z")
+        self.assertEqual(
+            policy.assess(snapshot, expected_main_sha=SHA, now=NOW)["decision"],
+            "NOOP",
+        )
+
+    def test_non_utc_start_time_denied_before_http(self):
+        from datetime import timedelta
+        get, calls = api_snapshot()
+        wrong_clock = datetime(2026, 10, 14, 3, tzinfo=timezone(timedelta(hours=2)))
+        with self.assertRaisesRegex(collection.InventoryError, "invalid_observation_clock"):
+            collection.collect(get, clock=wrong_clock)
+        self.assertEqual(calls, [])
+
+    def test_second_scan_with_malformed_identity_is_denied(self):
+        get, _ = api_snapshot(run(1))
+        count = [0]
+        def fetch(path):
+            if path == RUNS:
+                count[0] += 1
+                if count[0] == 2:
+                    changed = run(1)
+                    changed["head_repository"] = None
+                    return {"total_count": 1, "workflow_runs": [changed]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "invalid_run_identity"):
+            collection.collect(fetch, clock=NOW)
+
     def test_truncated_second_page_denied(self):
         def fetch(path):
             if path == MAIN:
