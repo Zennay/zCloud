@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
+from unittest import mock
 
 from scripts import zcloud_deploy_safe_idle as safe_idle
 
@@ -118,6 +119,46 @@ class DeploySafeIdleTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(("cloud::w1", "drain", "completed"), row)
 
+        restored = safe_idle.restore_safe_idle(self.db, self.state)
+        self.assertTrue(restored["ok"])
+        self.assertEqual("running", self.state_of())
+
+    def test_first_state_write_failure_compensates_drain_and_next_attempt_works(self):
+        """No dangling drained worker or pending command after an unpersistable snapshot."""
+        with mock.patch.object(
+            safe_idle, "write_state", side_effect=OSError("run state unwritable")
+        ):
+            with self.assertRaisesRegex(OSError, "run state unwritable"):
+                safe_idle.enter_safe_idle(
+                    self.db,
+                    self.state,
+                    timeout_seconds=0.2,
+                    poll_seconds=0.01,
+                    stable_seconds=0.02,
+                )
+        self.assertEqual("running", self.state_of())
+        failed_id, failed_status = self.pending_drain()
+        self.assertEqual("failed", failed_status)
+        with sqlite3.connect(self.db) as conn:
+            reason = conn.execute(
+                "SELECT result FROM runner_commands WHERE id=?", (failed_id,)
+            ).fetchone()[0]
+        self.assertIn("before pending drain command was consumed", reason)
+
+        # Retry after storage is available; an older failed command must not
+        # prevent successful admission, pause and reversible restoration.
+        self.add_event(age_seconds=600, generating=0, sending=0)
+        result = safe_idle.enter_safe_idle(
+            self.db,
+            self.state,
+            timeout_seconds=0.5,
+            poll_seconds=0.01,
+            stable_seconds=0.02,
+            offline_after_seconds=300,
+        )
+        self.assertTrue(result["safe_idle"])
+        self.assertEqual("paused", self.state_of())
+        self.assertNotEqual(failed_id, self.pending_drain()[0])
         restored = safe_idle.restore_safe_idle(self.db, self.state)
         self.assertTrue(restored["ok"])
         self.assertEqual("running", self.state_of())
