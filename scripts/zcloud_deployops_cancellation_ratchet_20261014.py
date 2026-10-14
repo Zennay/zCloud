@@ -134,6 +134,53 @@ def risks(text, *, details=False):
     return findings
 
 
+def static_concurrency_groups(text):
+    """Only unambiguous literal concurrency group strings, not expressions."""
+    groups = set()
+    for match in re.finditer(r"(?m)^(?P<indent>|    )concurrency:[ \t]*(?P<value>[^\r\n#]*)$", text):
+        indent = match.group("indent")
+        value = match.group("value").strip()
+        if value.startswith("{"):
+            found = re.search(r"(?:^|[{,])\s*group:\s*([A-Za-z0-9_.-]{1,100})\s*[,}]", value)
+        elif value:
+            continue
+        else:
+            tail = text[match.end():]
+            next_peer = re.search(r"(?m)^" + re.escape(indent) + r"[^ \r\n#]", tail)
+            region = tail[:next_peer.start()] if next_peer else tail
+            found = re.search(r"(?m)^" + re.escape(indent) +
+                              r"  group:\s*([A-Za-z0-9_.-]{1,100})[ \t]*(?:#.*)?$", region)
+        if found:
+            groups.add(found.group(1))
+    return groups
+
+
+def literal_group_collision(root, base, head, candidate_path, candidate):
+    """Check unchanged/current + previously live workflow refs for shared groups."""
+    candidate_groups = static_concurrency_groups(candidate)
+    if not candidate_groups:
+        return False  # Not a proof of non-collision: dynamic groups not covered.
+    for sha in (base, head):
+        raw = git(root, "ls-tree", "-r", "--name-only", "-z", sha,
+                  "--", ".github/workflows/")
+        paths = [p.decode("utf-8", "strict") for p in raw.split(b"\0") if p]
+        if len(paths) > 500 or len(paths) != len(set(paths)) or any(
+            not WORKFLOW.fullmatch(p) for p in paths
+        ):
+            raise Unverifiable("collision_inventory")
+        for path in paths:
+            if path == candidate_path:
+                continue  # Own earlier-revision exposure is checked separately.
+            try:
+                other = source(root, sha, path)
+                _, possible_vps, _ = risks(other, details=True)
+            except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
+                continue  # Unknown external YAML cannot prove a literal collision.
+            if possible_vps and candidate_groups & static_concurrency_groups(other):
+                return True
+    return False
+
+
 def evaluate(root, base, head):
     result = []
     for path in changed(root, base, head):
@@ -146,7 +193,9 @@ def evaluate(root, base, head):
         # GitHub concurrency may cancel a still-running job from the previous
         # workflow revision. Hosted-only new jobs do NOT prove older VPS
         # invocations with the same group have stopped.
-        if now or (prior_vps and now_cancels):
+        if (now or (prior_vps and now_cancels)
+                or (now_cancels and literal_group_collision(
+                    root, base, head, path, after))):
             # Changed legacy risk needs owner review. Risk removal passes.
             result.append(path)
     return result
