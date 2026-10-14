@@ -37,6 +37,29 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_quoted_yaml_keys_cannot_hide_timeout_violation(self):
+        source = """'jobs':
+    "private-job":
+        "runs-on": [self-hosted, zcloud, vps]
+        'timeout-minutes': 45
+    'hosted-job':
+        "runs-on": ubuntu-latest
+        "timeout-minutes": 120
+"""
+        rows = audit.inspect_workflow(".github/workflows/quoted.yml", source, max_minutes=30)
+        self.assertEqual([("private-job", "over_limit")], [(r.job, r.status) for r in rows])
+
+    def test_yaml_merge_alias_cannot_hide_inherited_runner(self):
+        source = """defaults: &private
+  runs-on: [self-hosted, zcloud, vps]
+jobs:
+  inherited:
+    <<: *private
+    timeout-minutes: 5
+"""
+        rows = audit.inspect_workflow(".github/workflows/merge.yml", source, max_minutes=30)
+        self.assertEqual([("inherited", "dynamic_runner_unknown")], [(r.job, r.status) for r in rows])
+
     def test_valid_alternate_yaml_indentation_cannot_hide_private_runner(self):
         source = """jobs:
     deeper:
