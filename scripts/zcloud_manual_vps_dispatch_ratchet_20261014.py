@@ -79,7 +79,7 @@ def manifest(root: Path, commit: str) -> dict[str, bytes]:
     return out
 
 def split_jobs(source: str) -> dict[str, str]:
-    jobs = re.search(r"(?m)^jobs:\s*(?:#.*)?$", source)
+    jobs = re.search(r"(?m)^jobs:[ \t]*(?:#.*)?$", source)
     if jobs is None:
         return {}
     text = source[jobs.end():]
@@ -94,7 +94,7 @@ def manual_event(source: str) -> bool:
     # Reject aliases/anchors in the event section rather than guessing which
     # event actually fires (YAML merging and flow maps change semantics).
     source = re.sub(r"(?m)^\s*#.*$", "", source)
-    event = re.search(r"(?m)^on:\s*(.*)$", source)
+    event = re.search(r"(?m)^on:[ \t]*(.*)$", source)
     if not event:
         if re.search(r"(?m)^['\"]on['\"]\s*:", source):
             raise RefError("ambiguous_event_syntax")
@@ -151,10 +151,13 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
 def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object]:
     previous: set[tuple[str, str]] = set()
     candidate: set[tuple[str, str]] = set()
-    for path, body in base.items():
-        previous |= risky_manual_jobs(path, body)
-    for path, body in head.items():
-        candidate |= risky_manual_jobs(path, body)
+    # Isolate new exposure to modified/additive workflows. Legacy ambiguous
+    # YAML outside this PR must not prevent independent safe changes.
+    modified = {p for p in head if base.get(p) != head[p]}
+    for path in sorted(modified):
+        if path in base:
+            previous |= risky_manual_jobs(path, base[path])
+        candidate |= risky_manual_jobs(path, head[path])
     # Grandfather only the identical unsafe job identity. A modified job with
     # unchanged debt remains visible as debt, not as evidence of safety.
     additions = sorted(candidate - previous)
