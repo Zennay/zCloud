@@ -518,6 +518,19 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
         self._run("invalid_headers",
                   extra_headers=(("Content-Length", str(len(VALID))),))
 
+    def test_actual_http_conflicting_transfer_framing_is_not_healthy(self):
+        # An actual HTTP/1.1 response with both Content-Length and
+        # Transfer-Encoding is ambiguous; urllib can otherwise hide the coding.
+        for value in ("chunked", "gzip", "identity"):
+            with self.subTest(transfer_encoding=value):
+                self._run("invalid_headers",
+                          extra_headers=(("Transfer-Encoding", value),))
+
+    def test_actual_http_duplicate_transfer_codings_are_not_healthy(self):
+        self._run("invalid_headers",
+                  extra_headers=(("Transfer-Encoding", "chunked"),
+                                 ("Transfer-Encoding", "gzip")))
+
     def test_actual_http_claims_impossible_large_length(self):
         self._run("body_too_large", declared_length=probe.MAX_BYTES + 1)
 
