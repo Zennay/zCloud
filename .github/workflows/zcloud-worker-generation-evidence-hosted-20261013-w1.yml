@@ -1,0 +1,40 @@
+name: zCloud worker generation evidence (hosted)
+on:
+  pull_request:
+    paths:
+      - "scripts/zcloud_worker_generation_evidence_20261013_w1.py"
+      - "tests/test_zcloud_worker_generation_evidence_20261013_w1.py"
+      - "tests/test_zcloud_worker_generation_http_integration_20261013_w1.py"
+      - "ops/zssh-runner-recipes/zcloud-generation-check.py"
+      - "docs/control-plane-generation-evidence-20261013-w1.md"
+      - ".github/workflows/zcloud-worker-generation-evidence-hosted-20261013-w1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-generation-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-acceptance:
+    if: github.repository == 'Zennay/zCloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify interpreter and test real module
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_worker_generation_evidence_20261013_w1.py tests/test_zcloud_worker_generation_evidence_20261013_w1.py ops/zssh-runner-recipes/zcloud-generation-check.py tests/test_zcloud_worker_generation_http_integration_20261013_w1.py
+          python3 -m unittest -v tests.test_zcloud_worker_generation_evidence_20261013_w1 tests.test_zcloud_worker_generation_http_integration_20261013_w1
+      - name: Record non-production proof boundary
+        run: |
+          echo "This checks offline worker telemetry classification only." >> "$GITHUB_STEP_SUMMARY"
+          echo "Not proof of VPS generation, an open browser tab, or live deployment." >> "$GITHUB_STEP_SUMMARY"
