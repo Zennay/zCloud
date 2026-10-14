@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Read-only GitHub-hosted queue watch, never proof of VPS health or repair authority."""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import os
+import re
+import sys
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, build_opener, HTTPRedirectHandler
+
+REPO = "Zennay/zCloud"
+PATH = ".github/workflows/vps-cpu-diagnostic.yml"
+NAME = "VPS CPU diagnostic snapshot"
+LIMIT = 30
+MIN_AGE = 1200
+MAX_AGE = 24 * 3600
+URL = f"https://api.github.com/repos/{REPO}/actions/workflows/vps-cpu-diagnostic.yml/runs?per_page={LIMIT}"
+SHA = re.compile(r"^[a-f0-9]{40}$")
+EXPECTED_LABELS = {"self-hosted", "zcloud", "vps"}
+STANDARD_LABELS = {"linux", "x64", "arm64"}
+
+
+class Unavailable(ValueError):
+    pass
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        raise Unavailable("redirect_denied")
+
+
+def strict_json(raw):
+    if len(raw) > 1024 * 1024:
+        raise Unavailable("oversized_reply")
+    def unique(items):
+        output = {}
+        for name, value in items:
+            if name in output:
+                raise Unavailable("duplicate_key")
+            output[name] = value
+        return output
+    try:
+        result = json.loads(raw, object_pairs_hook=unique,
+                            parse_constant=lambda _: (_ for _ in ()).throw(Unavailable("nonfinite")))
+    except (ValueError, UnicodeError, RecursionError) as exc:
+        raise Unavailable("invalid_json") from exc
+    if not isinstance(result, dict):
+        raise Unavailable("invalid_payload")
+    return result
+
+
+def _utc(value):
+    if not isinstance(value, str) or len(value) > 40:
+        raise Unavailable("invalid_timestamp")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise Unavailable("invalid_timestamp") from exc
+    if dt.tzinfo is None:
+        raise Unavailable("naive_timestamp")
+    return dt.astimezone(timezone.utc)
+
+
+def summarize(runs, jobsets, now):
+    """Fail closed on incomplete evidence. This never calls a production endpoint."""
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        raise Unavailable("clock_unknown")
+    if not isinstance(runs, list) or not 1 <= len(runs) <= LIMIT:
+        raise Unavailable("run_sample_absent")
+    if not isinstance(jobsets, dict):
+        raise Unavailable("jobs_missing")
+    seen = set()
+    observed = 0
+    stale_unassigned = 0
+    recent_assigned = 0
+    other = 0
+    for run in runs:
+        if not isinstance(run, dict):
+            raise Unavailable("run_shape")
+        number = run.get("id")
+        if type(number) is not int or number <= 0 or number in seen:
+            raise Unavailable("run_identity")
+        seen.add(number)
+        path = run.get("path")
+        repository = run.get("repository")
+        head_repository = run.get("head_repository")
+        if (type(repository) is not dict or type(head_repository) is not dict
+                or not isinstance(path, str) or path.split("@", 1)[0] != PATH
+                or run.get("name") != NAME
+                or run.get("event") not in ("pull_request", "workflow_dispatch")
+                or repository.get("full_name") != REPO
+                or head_repository.get("full_name") != REPO
+                or not isinstance(run.get("head_sha"), str)
+                or not SHA.fullmatch(run["head_sha"])):
+            raise Unavailable("run_provenance")
+        run_age = (now - _utc(run.get("created_at"))).total_seconds()
+        if run_age < -5:
+            raise Unavailable("future_run")
+        if run_age > MAX_AGE:
+            continue
+        jobs = jobsets.get(number)
+        if not isinstance(jobs, list) or not len(jobs) == 1:
+            raise Unavailable("incomplete_job_inventory")
+        job = jobs[0]
+        if not isinstance(job, dict) or job.get("run_id") != number or job.get("name") != "cpu-snapshot":
+            raise Unavailable("wrong_job")
+        labels = job.get("labels")
+        if not isinstance(labels, list) or any(type(v) is not str for v in labels):
+            raise Unavailable("unknown_labels")
+        normalized = [v.lower() for v in labels]
+        if len(normalized) != len(set(normalized)):
+            raise Unavailable("duplicate_labels")
+        if not set(normalized).issubset(EXPECTED_LABELS | STANDARD_LABELS) or not EXPECTED_LABELS.issubset(set(normalized)):
+            raise Unavailable("unknown_runner_target")
+        status = job.get("status")
+        runner_id = job.get("runner_id")
+        if runner_id is None:
+            runner_id = 0
+        if type(runner_id) is not int or runner_id < 0:
+            raise Unavailable("invalid_runner_id")
+        runner_name = job.get("runner_name")
+        if runner_id == 0 and runner_name not in (None, ""):
+            raise Unavailable("contradictory_runner_identity")
+        if runner_id > 0 and (runner_id != 21 or runner_name != "zcloud-vps-1"):
+            raise Unavailable("unattested_runner_assignment")
+        if status == "completed" and job.get("conclusion") not in (
+                "success", "failure", "cancelled", "timed_out", "neutral", "skipped"):
+            raise Unavailable("ambiguous_conclusion")
+        if status != "completed" and job.get("conclusion") is not None:
+            raise Unavailable("nonterminal_conclusion")
+        age = (now - _utc(job.get("created_at"))).total_seconds()
+        if age < -5:
+            raise Unavailable("future_job")
+        if status == "queued" and runner_id == 0 and job.get("conclusion") is None:
+            observed += 1
+            if age >= MIN_AGE:
+                stale_unassigned += 1
+        elif status in ("in_progress", "completed") and runner_id > 0:
+            observed += 1
+            if age < MIN_AGE:
+                recent_assigned += 1
+        elif status == "completed" and job.get("conclusion") == "skipped" and runner_id == 0:
+            other += 1
+        else:
+            raise Unavailable("ambiguous_job_state")
+    # Even repeated long queues cannot establish a dead listener without
+    # independently authenticated service and runner-registration evidence.
+    if stale_unassigned >= 3 and recent_assigned == 0:
+        classification = "POSSIBLE_LISTENER_GAP"
+    elif recent_assigned > 0:
+        classification = "RECENT_RUNNER_ASSIGNMENT_OBSERVED"
+    else:
+        classification = "INSUFFICIENT_QUEUE_EVIDENCE"
+    return {"schema": "zcloud-hosted-runner-queue-watch-v1",
+            "classification": classification, "sampled_runs": len(seen),
+            "queue_jobs_observed": observed, "stale_unassigned": stale_unassigned,
+            "recent_assignments": recent_assigned, "skipped": other,
+            "runner_offline_verified": False, "production_verified": False,
+            "mutation_authorized": False, "mutations_performed": False}
+
+
+def _get(url, token, opener):
+    request = Request(url, headers={"Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "zcloud-hosted-queue-watch"})
+    try:
+        with opener.open(request, timeout=12) as response:
+            if response.headers.get_content_type() != "application/json":
+                raise Unavailable("not_json")
+            return strict_json(response.read(1024 * 1024 + 1))
+    except (HTTPError, URLError, TimeoutError) as exc:
+        raise Unavailable("github_unavailable") from exc
+
+
+def collect(token, opener=None):
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,2048}", token):
+        raise Unavailable("missing_token")
+    opener = opener or build_opener(NoRedirect())
+    root = _get(URL, token, opener)
+    runs = root.get("workflow_runs")
+    if not isinstance(runs, list) or not 1 <= len(runs) <= LIMIT:
+        raise Unavailable("invalid_run_inventory")
+    data = {}
+    for run in runs:
+        rid = run.get("id") if isinstance(run, dict) else None
+        if type(rid) is not int or rid < 1 or rid in data:
+            raise Unavailable("duplicate_run")
+        page = _get(f"https://api.github.com/repos/{REPO}/actions/runs/{rid}/jobs?per_page=100", token, opener)
+        jobs = page.get("jobs")
+        if type(page.get("total_count")) is not int or not isinstance(jobs, list) or len(jobs) != page["total_count"]:
+            raise Unavailable("incomplete_job_page")
+        data[rid] = jobs
+    return summarize(runs, data, datetime.now(timezone.utc))
+
+
+def main():
+    try:
+        report = collect(os.getenv("GH_TOKEN", ""))
+        status = 0
+    except (Unavailable, ValueError, TypeError):
+        report = {"schema": "zcloud-hosted-runner-queue-watch-v1",
+                  "classification": "EVIDENCE_UNAVAILABLE",
+                  "runner_offline_verified": False, "production_verified": False,
+                  "mutation_authorized": False, "mutations_performed": False}
+        status = 2
+    print(json.dumps(report, sort_keys=True))
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())
