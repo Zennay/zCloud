@@ -37,6 +37,56 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_moving_git_ref_is_pinned_before_any_snapshot_read(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflow = root / ".github" / "workflows" / "pinned.yml"
+            workflow.parent.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for k, v in (("user.name", "Audit Tests"), ("user.email", "audit@example.invalid")):
+                subprocess.run(["git", "-C", str(root), "config", k, v], check=True)
+            workflow.write_text(
+                "jobs:\n  proof:\n    runs-on: self-hosted\n    timeout-minutes: 10\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "-C", str(root), "add", ".github"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "bounded"], check=True)
+            old_sha = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            workflow.write_text(
+                "jobs:\n  proof:\n    runs-on: self-hosted\n    timeout-minutes: 45\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "-C", str(root), "add", ".github"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "over limit"], check=True)
+            new_sha = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+
+            original_run = subprocess.run
+            flipped = False
+
+            def move_head_after_resolution(args, **kwargs):
+                nonlocal flipped
+                if "ls-tree" in args and not flipped:
+                    flipped = True
+                    original_run(["git", "-C", str(root), "update-ref", "HEAD", old_sha], check=True)
+                return original_run(args, **kwargs)
+
+            with patch.object(audit.subprocess, "run", side_effect=move_head_after_resolution):
+                observed = audit.scan_git_ref(root, "HEAD", max_minutes=30)
+
+            self.assertTrue(flipped)
+            self.assertEqual([("proof", 45, "over_limit")],
+                             [(x.job, x.timeout_minutes, x.status) for x in observed])
+            self.assertEqual(old_sha, subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip())
+            self.assertNotEqual(old_sha, new_sha)
+
     def test_git_baseline_preserves_exact_unusual_workflow_filenames(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
