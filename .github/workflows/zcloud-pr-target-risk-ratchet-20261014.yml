@@ -1,8 +1,17 @@
 name: zCloud PR-target privilege delta guard
 
-# Hosted-only, read-only source ratchet. Never promotes production.
+# Pull-request checks execute only on GitHub-hosted runners without write tokens.
+# Once this workflow is on main, pull_request_target executes the IMMUTABLE
+# trusted base's checker; never execute the untrusted candidate checkout.
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_pr_target_delta_guard_20261014.py'
+      - 'tests/test_zcloud_pr_target_delta_guard_20261014.py'
+  pull_request_target:
+    types: [opened, synchronize, reopened]
     branches: [main]
     paths:
       - '.github/workflows/**'
@@ -13,12 +22,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-pr-target-ratchet-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: zcloud-pr-target-ratchet-${{ github.event_name }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   source-only:
     if: >-
+      github.event_name == 'pull_request' &&
       github.repository == 'Zennay/zCloud' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.repo.full_name == github.repository
@@ -30,6 +40,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
+          submodules: false
       - name: Bind exact PR head and base then test source-only ratchet
         shell: bash
         env:
@@ -39,7 +50,55 @@ jobs:
           set -euo pipefail
           [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
           test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
           git cat-file -e "$EXACT_BASE^{commit}"
           python3 -m unittest -v tests.test_zcloud_pr_target_delta_guard_20261014
           python3 scripts/zcloud_pr_target_delta_guard_20261014.py --base "$EXACT_BASE" --head "$EXACT_HEAD"
+
+  trusted-main:
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout immutable trusted-base implementation
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Zennay/zCloud
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+      - name: Checkout untrusted candidate as data only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+      - name: Validate exact immutable revisions, run ONLY trusted-base scanner
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git -C trusted rev-parse HEAD)" = "$EXACT_BASE"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXACT_HEAD"
+          current_main="$(timeout 15 git -C trusted ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          test -n "$current_main"
+          test "$current_main" = "$EXACT_BASE"
+          git -C candidate fetch --quiet --no-tags https://github.com/Zennay/zCloud.git "$EXACT_BASE"
+          (cd trusted && python3 -m unittest -v tests.test_zcloud_pr_target_delta_guard_20261014)
+          python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py \
+            --root "$GITHUB_WORKSPACE/candidate" --base "$EXACT_BASE" --head "$EXACT_HEAD"
