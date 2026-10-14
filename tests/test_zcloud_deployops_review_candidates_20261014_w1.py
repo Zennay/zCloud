@@ -522,6 +522,51 @@ class ReviewQueueTests(unittest.TestCase):
     def test_empty_checks_denied(self):
         self.assert_denied(lambda d: d['prs'][0].update(checks=[]))
 
+    def test_read_denies_in_place_file_change_between_stat_calls(self):
+        from unittest import mock
+        import os
+        with tempfile.TemporaryDirectory() as t:
+            path = pathlib.Path(t) / 'manifest.json'
+            path.write_text(json.dumps(payload()))
+            original_fstat = os.fstat
+            calls = [0]
+
+            def mutate_between_reads(fd):
+                calls[0] += 1
+                if calls[0] == 2:
+                    path.write_text(json.dumps(payload()) + ' more-bytes')
+                return original_fstat(fd)
+
+            with mock.patch.object(mod.os, 'fstat', side_effect=mutate_between_reads):
+                with self.assertRaises(mod.InvalidEvidence) as caught:
+                    mod.read_manifest_bytes(str(path))
+            self.assertEqual(str(caught.exception), 'manifest_changed_during_read')
+            self.assertGreaterEqual(calls[0], 2)
+
+    def test_read_denies_same_size_mtime_changed_during_read(self):
+        from unittest import mock
+        import os
+        with tempfile.TemporaryDirectory() as t:
+            path = pathlib.Path(t) / 'manifest.json'
+            path.write_text(json.dumps(payload()))
+            original_fstat = os.fstat
+            calls = [0]
+
+            def mutate_same_size(fd):
+                calls[0] += 1
+                if calls[0] == 2:
+                    prior = original_fstat(fd)
+                    replacement = b'X' * prior.st_size
+                    with open(path, 'wb') as stream:
+                        stream.write(replacement)
+                    os.utime(path, ns=(prior.st_atime_ns, prior.st_mtime_ns + 1_000_000_000))
+                return original_fstat(fd)
+
+            with mock.patch.object(mod.os, 'fstat', side_effect=mutate_same_size):
+                with self.assertRaises(mod.InvalidEvidence) as caught:
+                    mod.read_manifest_bytes(str(path))
+            self.assertEqual(str(caught.exception), 'manifest_changed_during_read')
+
     def test_cli_refuses_symlinked_parent_directory(self):
         with tempfile.TemporaryDirectory() as t:
             root = pathlib.Path(t)
