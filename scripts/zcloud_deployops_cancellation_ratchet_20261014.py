@@ -71,7 +71,7 @@ def _cancel_values(area, *, indent):
 def _inline_concurrency(area, indent):
     """Inline YAML concurrency maps are ambiguous: never silently ignore them."""
     vals = re.findall(
-        r"(?m)^" + re.escape(indent) + r"concurrency:\s*(\{[^\r\n]*\}|[^\r\n#]+)$",
+        r"(?m)^" + re.escape(indent) + r"concurrency:[ \t]*(\{[^\r\n]*\}|[^\r\n#]+)$",
         area,
     )
     return bool(vals)
