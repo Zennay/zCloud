@@ -59,7 +59,7 @@ def decide(pr, files, checks, statuses, main_sha):
         return "no_explicit_label"
     if pr.get("state") != "open" or pr.get("draft") is not False:
         return "not_review_ready"
-    if pr.get("mergeable") is not True or pr.get("mergeable_state") != "clean":
+    if pr.get("mergeable") is not True or pr.get("mergeable_state") not in ("clean", "unstable"):
         return "not_cleanly_mergeable"
     head, base = pr.get("head"), pr.get("base")
     if not isinstance(head, dict) or not isinstance(base, dict):
@@ -88,6 +88,7 @@ def decide(pr, files, checks, statuses, main_sha):
     if not isinstance(statuses, list) or len(statuses) >= 100:
         return "unbounded_statuses"
     smoke_green = False
+    optional_cpu_pending = False
     for c in checks:
         if not isinstance(c, dict) or c.get("head_sha") != head_sha:
             return "unbound_check"
@@ -99,11 +100,18 @@ def decide(pr, files, checks, statuses, main_sha):
         elif name == "cpu-snapshot" and c.get("status") in ("queued", "in_progress", "pending") and c.get("conclusion") is None:
             # This optional VPS diagnostic can queue indefinitely when the
             # worker listener is absent. It is NOT the hosted regression gate.
+            optional_cpu_pending = True
             continue
         elif c.get("status") != "completed" or c.get("conclusion") not in ALLOWED_CHECK_CONCLUSIONS:
             return "check_not_green"
     if not smoke_green:
         return "required_smoke_missing"
+    # GitHub reports unstable when ANY status check is pending; the single
+    # recognized optional VPS CPU snapshot may be queued indefinitely.
+    # Never relax other required/unknown checks or a blocked branch-protection
+    # state: the GitHub merge endpoint enforces protections again.
+    if pr.get("mergeable_state") == "unstable" and not optional_cpu_pending:
+        return "unstable_without_known_optional"
     for s in statuses:
         if not isinstance(s, dict) or s.get("state") != "success":
             return "status_not_green"
