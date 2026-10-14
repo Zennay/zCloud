@@ -1,20 +1,55 @@
 name: Recover zCloud and allocate HaxLab P1
 
+# Historical P1 queue recovery is never automatic: it mutates the live VPS.
 on:
-  push:
-    branches: [main]
-    paths:
-      - .github/workflows/zcloud-haxlab-allocation-recovery.yml
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: 'Paste the exact current 40-character main commit SHA'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   recover:
-    runs-on: self-hosted
+    # Owner-only, exact-main, first attempt; no push/PR/re-run can start live mutation.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
+      github.event.inputs.confirm_sha == github.sha
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 8
     steps:
+      - name: Check out exact immutable main source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Refuse stale source or unexpected permanent runner before any live writes
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+          EXPECTED_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPO" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRMED_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | awk '{print $1}')" = "$EXPECTED_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
       - name: Recover control plane and reconcile queue
         shell: bash
         run: |
@@ -87,8 +122,11 @@ jobs:
           )
           if not item:
               raise RuntimeError("HaxLab Arena v2 P1 item missing")
-          print("HAXLAB_P1_LIVE",json.dumps(item,sort_keys=True))
-          print("ALLOCATION_LIVE",json.dumps(queue.get("allocation"),sort_keys=True))
+          # Do not emit task prompts, conversations or raw allocation snapshots.
+          print("HAXLAB_P1_STATUS",json.dumps({
+              "queue_id_match":item.get("queue_id")=="haxlab-closed-loop-arena-v2-implementation",
+              "status":item.get("status") if item.get("status") in {"claimed","running","verifying"} else "not_ready",
+          },sort_keys=True))
           if str(item.get("status") or "").lower() not in {"claimed","running","verifying"}:
               raise RuntimeError("HaxLab Arena v2 P1 not allocated after reconcile")
           PY
