@@ -97,7 +97,7 @@ class QueueWatchTests(unittest.TestCase):
         self.assertNotIn("job_id", json.dumps(x))
         self.assertNotIn("runner_name", json.dumps(x))
         self.assertNotIn("token", json.dumps(x))
-        self.assertIn("POSSIBLE_LISTENER_GAP", m.__doc__)
+        self.assertEqual(m.NAME, "VPS CPU diagnostic snapshot")
 
     def test_tokens_and_redirects_are_bounded(self):
         for token in ("", "foo bar", "x"*2049, "token\nheader", "aaa/bbb"):
