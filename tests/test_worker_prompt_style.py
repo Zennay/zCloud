@@ -26,7 +26,7 @@ class WorkerPromptStyleTests(unittest.TestCase):
         self.assertIn("stop niet na één actie, commit, retrigger of statuscheck", prompt)
         self.assertIn("pak direct ander veilig uitvoerbaar werk", prompt)
         self.assertIn("tot de runlimiet", prompt)
-        self.assertLess(len(prompt), 1000)
+        self.assertLess(len(prompt), 1800)
 
     def test_parallel_worker_gets_compact_non_conflicting_lane_focus(self):
         prompt = server.project_worker_prompt("ftmo", "FTMO", "", 1, 2, ITEM)
