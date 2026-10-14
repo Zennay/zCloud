@@ -69,3 +69,6 @@ jobs:
           echo "CANCELLATION_INVENTORY_AFTER=1"
           python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
             --inventory-head "$EXACT_HEAD"
+          # Path-only deterministic triage. This is not a remediation permit.
+          python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
+            --triage-head "$EXACT_HEAD" --triage-limit 12
