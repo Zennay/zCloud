@@ -32,6 +32,7 @@ CATEGORIES = frozenset({
     "http_redirect", "http_client_error", "http_server_error",
     "content_type", "body_too_large", "invalid_json", "invalid_schema",
     "transport_failure", "stale_timestamp", "future_timestamp", "invalid_headers",
+    "cache_evidence",
 })
 
 
@@ -167,7 +168,7 @@ def probe_once(opener=None):
             # HTTPMessage.get_all exposes duplicate / conflicting header lines.
             # A dictionary test fixture cannot contain duplicate physical lines.
             if hasattr(headers, "get_all"):
-                for header in ("Content-Type", "Content-Length", "Content-Encoding", "Transfer-Encoding"):
+                for header in ("Content-Type", "Content-Length", "Content-Encoding", "Transfer-Encoding", "Age"):
                     if len(headers.get_all(header, [])) > 1:
                         return "invalid_headers"
             # urllib/http.client de-chunks some Transfer-Encoding variants. A
@@ -176,6 +177,18 @@ def probe_once(opener=None):
             # Prefer a false negative to claiming an ambiguous HTTP frame green.
             if headers.get("Transfer-Encoding") is not None:
                 return "invalid_headers"
+            # A nonzero Age header means an intermediary claims the response
+            # was served from a stored representation. Do not treat this as
+            # proof of a fresh live status, even with a plausible timestamp.
+            # Fail closed on duplicate, malformed or absurd Age headers.
+            age_header = headers.get("Age")
+            if age_header is not None:
+                if (not isinstance(age_header, str) or
+                        not 1 <= len(age_header) <= 12 or
+                        not age_header.isascii() or not age_header.isdigit()):
+                    return "invalid_headers"
+                if int(age_header) > 0:
+                    return "cache_evidence"
             # A conflicting or exotic charset cannot safely describe the
             # UTF-8 JSON bytes we parse. Reject duplicate/malformed params,
             # controls and opaque non-ASCII metadata instead of ignoring them.
@@ -275,6 +288,7 @@ def operator_markdown(summary: ProbeSummary) -> str:
         "http_client_error": "HTTP-aanvraag geweigerd (4xx)",
         "http_server_error": "HTTP-serverfout (5xx)",
         "invalid_headers": "Tegenstrijdige HTTP-headers",
+        "cache_evidence": "HTTP-antwoord heeft cacheleeftijd",
         "content_type": "Onverwacht antwoordtype",
         "body_too_large": "Antwoord te groot",
         "invalid_json": "Ongeldige JSON",
