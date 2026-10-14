@@ -145,7 +145,7 @@ def main(argv=None):
         result = snapshot(unique_pairs(body.decode("utf-8")))
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0
-    except (OSError, UnicodeError, json.JSONDecodeError, InvalidEvidence) as error:
+    except (OSError, UnicodeError, ValueError, RecursionError) as error:
         # Never echo untrusted filenames, URLs, full JSON, tokens or exception text.
         code = str(error) if isinstance(error, InvalidEvidence) else "unreadable_snapshot"
         print(json.dumps({"error": code, "release_authorized": False,
