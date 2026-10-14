@@ -92,6 +92,34 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertTrue(all(row.status == "runner_target_unknown" for row in rows))
         self.assertEqual(3, audit.summarize(rows, max_minutes=30)["by_status"]["runner_target_unknown"])
 
+    def test_git_and_workspace_symlink_ancestors_fail_closed(self):
+        for alias in ("github", "workflows"):
+            with self.subTest(alias=alias), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                external = root / "external"
+                external.mkdir()
+                (external / "hosted.yml").write_text(
+                    "jobs:\n  prove:\n    runs-on: ubuntu-latest\n", encoding="utf-8"
+                )
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                for key, value in (("user.email", "audit@example.invalid"), ("user.name", "Audit Test")):
+                    subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+                folder = root / ".github"
+                if alias == "github":
+                    folder.symlink_to(external, target_is_directory=True)
+                else:
+                    folder.mkdir()
+                    (folder / "workflows").symlink_to(external, target_is_directory=True)
+                subprocess.run(["git", "-C", str(root), "add", ".github"], check=True)
+                subprocess.run(["git", "-C", str(root), "commit", "-qm", "symlink snapshot"], check=True)
+                sha = subprocess.check_output(
+                    ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+                ).strip()
+                with self.assertRaisesRegex(RuntimeError, "symlink workflow"):
+                    audit.scan_repository(root, max_minutes=30)
+                with self.assertRaisesRegex(RuntimeError, "symlink or non-tree"):
+                    audit.scan_git_ref(root, sha, max_minutes=30)
+
     def test_legacy_unknown_runner_timeout_cannot_increase_or_disappear(self):
         path = ".github/workflows/private.yml"
         for status in ("dynamic_runner_unknown", "runner_target_unknown"):
