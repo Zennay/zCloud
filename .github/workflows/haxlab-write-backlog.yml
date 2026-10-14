@@ -82,7 +82,11 @@ jobs:
           def post(payload):
               req=urllib.request.Request(base+"/api/portfolio-queue",data=json.dumps(payload).encode(),method="POST",headers={"Content-Type":"application/json"})
               with urllib.request.urlopen(req,timeout=10) as r:
-                  return json.load(r)
+                  result=json.load(r)
+              # Never continue from an ambiguous or rejected queue mutation.
+              if not isinstance(result,dict) or result.get("ok") is not True:
+                  raise RuntimeError("queue update did not return a positive acknowledgement")
+              return result
 
           live=get_queue()
           items=live.get("items",[])
@@ -121,7 +125,7 @@ jobs:
                     "source_url":str(row.get("source_url") or ""),
                     "parent_queue_id":row.get("parent_queue_id"),
                   })
-                  print("STALE_QUEUE_DEPRIORITIZED",json.dumps({"response_object":isinstance(result,dict)},sort_keys=True))
+                  print("STALE_QUEUE_DEPRIORITIZED",json.dumps({"acknowledged":True},sort_keys=True))
 
           for qid,(priority,title,criteria) in canonical.items():
               result=post({
@@ -133,7 +137,7 @@ jobs:
                 "completion_criteria":criteria,
                 "source_url":"https://app.notion.com/p/3e59e19ac9558189853ffc41080c858b",
               })
-              print("WRITE_QUEUE_NORMALIZED",json.dumps({"response_object":isinstance(result,dict)},sort_keys=True))
+              print("WRITE_QUEUE_NORMALIZED",json.dumps({"acknowledged":True},sort_keys=True))
 
           # No cross-project or active-worker preemption. A queued HaxLab task
           # must be admitted by the normal serialized allocator, never by
@@ -162,7 +166,9 @@ jobs:
           )
           with urllib.request.urlopen(req,timeout=10) as r:
               reconciled=json.load(r)
-          print("WORKER_POOL_RECONCILED",json.dumps({"response_object":isinstance(reconciled,dict)},sort_keys=True))
+          if not isinstance(reconciled,dict) or reconciled.get("ok") is not True:
+              raise RuntimeError("worker allocation reconciliation not acknowledged")
+          print("WORKER_POOL_RECONCILED",json.dumps({"acknowledged":True},sort_keys=True))
 
           final=get_queue()
           hax=[x for x in final.get("items",[]) if x.get("project_id")=="haxlab" and x.get("eligible")]
