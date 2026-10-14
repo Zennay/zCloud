@@ -58,6 +58,8 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
@@ -77,12 +79,14 @@ jobs:
           set -euo pipefail
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
           test "$GITHUB_REF" = refs/heads/main
           [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRM_SHA" = "$GITHUB_SHA"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           test "$(hostname -s)" = vps-bb300bba
           test "$(id -un)" = ubuntu
           python3 scripts/zcloud_vps_runner_guard.py --json
@@ -91,4 +95,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           python3 scripts/zcloud_vm_actor_readonly_probe_20261014.py

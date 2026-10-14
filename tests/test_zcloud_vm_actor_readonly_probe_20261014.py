@@ -156,16 +156,41 @@ class VmActorReadOnlyProbeTests(unittest.TestCase):
         source = WORKFLOW.read_text()
         for required in ("github.actor == 'Zennay'",
                          "github.repository == 'Zennay/zCloud'",
+                         "github.triggering_actor == 'Zennay'",
+                         "github.run_attempt == 1",
                          "github.ref == 'refs/heads/main'",
                          "inputs.confirm_sha == github.sha",
                          "runs-on: [self-hosted, zcloud, vps]",
                          'test "$CONFIRM_SHA" = "$GITHUB_SHA"',
                          'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
-                         'git ls-remote --exit-code origin refs/heads/main',
+                         'test "$GITHUB_TRIGGERING_ACTOR" = Zennay',
+                         'test "$GITHUB_RUN_ATTEMPT" = 1',
+                         'timeout 15 git ls-remote --exit-code origin refs/heads/main',
                          "python3 scripts/zcloud_vps_runner_guard.py --json"):
             with self.subTest(required=required):
                 self.assertIn(required, source)
         self.assertNotIn("runs-on: [self-hosted, ftmo-research]", source)
+
+    def test_live_metadata_probe_rechecks_fresh_main_before_socket(self):
+        source = WORKFLOW.read_text(encoding="utf-8")
+        observe = source.split(
+            "      - name: Observe only bounded Firefox addon metadata", 1
+        )[1]
+        for check in (
+            'test "$GITHUB_EVENT_NAME" = workflow_dispatch',
+            'test "$GITHUB_REPOSITORY" = Zennay/zCloud',
+            'test "$GITHUB_REF" = refs/heads/main',
+            'test "$GITHUB_ACTOR" = Zennay',
+            'test "$GITHUB_TRIGGERING_ACTOR" = Zennay',
+            'test "$GITHUB_RUN_ATTEMPT" = 1',
+            'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+            'timeout 15 git ls-remote --exit-code origin refs/heads/main',
+        ):
+            self.assertIn(check, observe.split(
+                "python3 scripts/zcloud_vm_actor_readonly_probe_20261014.py", 1
+            )[0])
+        self.assertIn("cancel-in-progress: false", source)
+        self.assertNotIn("runs-on: [self-hosted", source.split("  inspect:", 1)[0])
 
     def test_pinned_credential_free_checkout_and_no_live_mutation(self):
         source = WORKFLOW.read_text()
