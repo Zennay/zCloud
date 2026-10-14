@@ -52,6 +52,15 @@ jobs:
           test "$current_main" = "$EXACT_BASE"
           git -C trusted fetch --quiet --no-tags origin "$EXACT_HEAD"
           test "$(git -C trusted rev-parse --verify "$EXACT_HEAD^{commit}")" = "$EXACT_HEAD"
+          trust_root_changes="$(git -C trusted diff --name-only "$EXACT_BASE...$EXACT_HEAD" -- \
+            scripts/zcloud_pr_target_delta_guard_20261014.py \
+            tests/test_zcloud_pr_target_delta_guard_20261014.py \
+            .github/workflows/zcloud-pr-target-risk-ratchet-20261014.yml \
+            .github/workflows/zcloud-pr-target-trusted-base-20261014.yml)"
+          if [ -n "$trust_root_changes" ]; then
+            echo "PR_TARGET_TRUST_ROOT_REVIEW_REQUIRED" >&2
+            exit 2
+          fi
           (cd trusted && python3 -m unittest -v tests.test_zcloud_pr_target_delta_guard_20261014)
           python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py \
             --root "$GITHUB_WORKSPACE/trusted" --base "$EXACT_BASE" --head "$EXACT_HEAD"
