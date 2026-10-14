@@ -346,6 +346,19 @@ jobs:
             with self.assertRaisesRegex(RuntimeError, "size exceeds limit"):
                 audit.scan_git_ref(root, sha, max_minutes=30)
 
+    def test_empty_workflow_jobs_mapping_cannot_appear_green(self):
+        for source in (
+            "jobs:\n",
+            "jobs:\n  # deliberately empty\n",
+            "jobs:\n\n# only comments\n",
+        ):
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(RuntimeError, "no auditable jobs"):
+                    audit.inspect_workflow("empty.yml", source, max_minutes=30)
+
+        hosted_only = "jobs:\n  hosted:\n    runs-on: ubuntu-latest\n"
+        self.assertEqual([], audit.inspect_workflow("hosted.yml", hosted_only, max_minutes=30))
+
     def test_workflow_missing_jobs_root_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "jobs root missing"):
             audit.inspect_workflow("rootless.yml", "name: rootless\non: push\n", max_minutes=30)
