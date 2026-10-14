@@ -1,0 +1,102 @@
+name: zCloud main-protection negative canary plan proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_main_protection_negative_canary.py"
+      - "tests/test_zcloud_main_protection_negative_canary.py"
+      - "tests/test_zcloud_main_protection_negative_canary_workflow.py"
+      - ".github/workflows/zcloud-main-protection-negative-canary-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-main-protection-negative-canary-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    name: Prove offline negative-canary contract
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Enforce permanent VPS runner identity
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+
+      - name: Run focused contract regressions
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 -m unittest -v tests.test_zcloud_main_protection_negative_canary
+          python3 -m unittest -v tests.test_zcloud_main_protection_negative_canary_workflow
+
+      - name: Prove CLI remains non-executable and main-safe
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          plan="$RUNNER_TEMP/zcloud-main-protection-target.json"
+          out="$RUNNER_TEMP/zcloud-main-protection-negative-canary.json"
+          python3 - "$plan" <<'PY'
+          import json, sys
+          path = sys.argv[1]
+          payload = {
+              "schema_version": 1,
+              "policy": "zcloud-main-protection-plan-v1",
+              "repository": "Zennay/zCloud",
+              "branch": "main",
+              "expected_main_sha": "a" * 40,
+              "required_check": "critical-runner-flows",
+              "prechange_status": "unprotected",
+              "target_protection": {
+                  "required_status_checks": {"strict": True, "contexts": ["critical-runner-flows"]},
+                  "enforce_admins": True,
+                  "required_pull_request_reviews": {
+                      "dismiss_stale_reviews": False,
+                      "require_code_owner_reviews": False,
+                      "required_approving_review_count": 0,
+                      "require_last_push_approval": False,
+                      "bypass_pull_request_allowances": {"users": [], "teams": [], "apps": []},
+                  },
+                  "restrictions": None,
+                  "required_conversation_resolution": True,
+                  "allow_force_pushes": False,
+                  "allow_deletions": False,
+              },
+              "rollback": {"action": "delete_branch_protection", "reason": "prechange_state_was_unprotected"},
+              "apply_allowed": False,
+              "mutation_performed": False,
+          }
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(payload, handle)
+          PY
+
+          python3 scripts/zcloud_main_protection_negative_canary.py             --target-plan-json "$plan" | tee "$out"
+
+          python3 - "$out" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              data = json.load(handle)
+          assert data["policy"] == "zcloud-main-protection-negative-canary-v1"
+          assert data["execution_allowed"] is False
+          assert data["mutation_performed"] is False
+          assert data["mutation_scope"]["allowed_refs"] == ["refs/heads/zcloud-protection-canary/aaaaaaaaaaaa"]
+          assert data["mutation_scope"]["forbidden_refs"] == ["refs/heads/main"]
+          assert data["mutation_scope"]["allow_main_protection_mutation"] is False
+          assert data["mutation_scope"]["allow_ruleset_mutation"] is False
+          assert data["failure_handling"]["cleanup_on_all_outcomes"] is True
+          assert data["required_postconditions"]["main_ref_unchanged"] is True
+          print("ZCLOUD_MAIN_PROTECTION_NEGATIVE_CANARY_PLAN_VPS_GREEN")
+          PY
