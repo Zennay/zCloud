@@ -1,0 +1,179 @@
+name: zCloud serialized gate metadata drift audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_serialized_gate_metadata_drift_audit.py"
+      - "tests/test_zcloud_serialized_gate_metadata_drift_audit.py"
+      - ".github/workflows/zcloud-serialized-gate-metadata-drift-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-serialized-gate-metadata-drift-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_serialized_gate_metadata_drift_audit
+          python3 -m py_compile scripts/zcloud_serialized_gate_metadata_drift_audit.py
+
+      - name: Capture bounded open-PR metadata snapshot
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-gate-metadata-snapshot.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          out = Path(os.environ["SNAPSHOT"])
+
+          def gh(path: str):
+              proc = subprocess.run(
+                  ["gh", "api", path],
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              return json.loads(proc.stdout)
+
+          current_main = str(
+              gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
+          )
+
+          pulls = []
+          inventory_complete = False
+          for page in range(1, 7):
+              batch = gh(
+                  f"repos/{repo}/pulls?state=open&per_page=100&page={page}&sort=created&direction=asc"
+              )
+              if page == 6 and batch:
+                  raise SystemExit("open PR inventory exceeds bounded limit of 500")
+              for item in batch:
+                  pulls.append(
+                      {
+                          "number": int(item["number"]),
+                          "state": str(item["state"]),
+                          "draft": bool(item.get("draft")),
+                          "head_sha": str(item["head"]["sha"]),
+                          "base_sha": str(item["base"]["sha"]),
+                          "body": str(item.get("body") or ""),
+                      }
+                  )
+              if len(batch) < 100:
+                  inventory_complete = True
+                  break
+          if not inventory_complete:
+              raise SystemExit("open PR inventory completeness not proven")
+
+          retired = gh(f"repos/{repo}/pulls/576")
+          successor = gh(f"repos/{repo}/pulls/1089")
+
+          payload = {
+              "repository": repo,
+              "current_main_sha": current_main,
+              "inventory_complete": True,
+              "gate_succession": {
+                  "primary_gate": 580,
+                  "retired_gate": 576,
+                  "successor_gate": 1089,
+                  "retired_state": str(retired["state"]),
+                  "retired_merged": bool(retired.get("merged")),
+                  "retired_head_sha": str(retired["head"]["sha"]),
+                  "successor_state": str(successor["state"]),
+                  "successor_merged": bool(successor.get("merged")),
+                  "successor_head_sha": str(successor["head"]["sha"]),
+                  "successor_base_sha": str(successor["base"]["sha"]),
+              },
+              "pull_requests": pulls,
+          }
+          out.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+          print(
+              "SERIALIZED_GATE_METADATA_SNAPSHOT="
+              f"main:{current_main}:open_pulls:{len(pulls)}:"
+              f"retired_state:{retired['state']}:successor_state:{successor['state']}"
+          )
+          PY
+
+      - name: Audit serialized gate metadata drift read only
+        shell: bash
+        env:
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-gate-metadata-snapshot.json
+          REPORT: ${{ runner.temp }}/zcloud-serialized-gate-metadata-drift-audit.json
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_serialized_gate_metadata_drift_audit.py \
+            --snapshot "$SNAPSHOT" \
+            --json | tee "$REPORT"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "zcloud-serialized-gate-metadata-drift-audit-v1"
+          assert payload["mutation_performed"] is False
+          assert payload["release_authorized"] is False
+          assert payload["retired_gate"] == 576
+          assert payload["successor_gate"] == 1089
+          assert payload["stale_reference_count"] <= 500
+          print(
+              "ZCLOUD_SERIALIZED_GATE_METADATA_DRIFT="
+              f"status:{payload['status']}:"
+              f"stale:{payload['stale_reference_count']}:"
+              f"successor_aware:{payload['successor_aware_pr_count']}:"
+              f"serialized_primary:{payload['serialized_primary_pr_count']}:"
+              f"release_authorized:{str(payload['release_authorized']).lower()}"
+          )
+          PY
+
+      - name: Upload bounded metadata-drift evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-serialized-gate-metadata-drift-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-serialized-gate-metadata-drift-audit.json
+          if-no-files-found: error
+          retention-days: 14
