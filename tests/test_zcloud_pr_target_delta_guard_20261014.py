@@ -617,6 +617,42 @@ jobs:
         self.assertEqual(gate.risk_counts(after)["pr_source_in_run_job"], 1)
         self.assertIn("pr_source_in_run_job", gate.increasing_risks(before, after))
 
+
+    def test_bash_login_command_execution_from_pr_env_denied(self):
+        src = SAFE + """      - env:
+          SCRIPT: ${{ github.event.pull_request.body }}
+        run: bash -lc "$SCRIPT"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_shell_combined_flags_exec_from_pr_env_denied(self):
+        src = SAFE + """      - env:
+          SCRIPT: ${{ github.event.pull_request.title }}
+        run: sh -ec "$SCRIPT"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_node_eval_from_pr_env_denied(self):
+        src = SAFE + """      - env:
+          SOURCE: ${{ github.event.pull_request.body }}
+        run: node -e "$SOURCE"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_dot_source_execution_from_pr_env_denied(self):
+        src = SAFE + """      - env:
+          FILEPATH: ${{ github.event.pull_request.head.ref }}
+        run: . "$FILEPATH"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_safe_job_sha_fetch_without_shell_eval_still_allowed(self):
+        src = SAFE + """      - env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags origin "$EXACT_HEAD"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
