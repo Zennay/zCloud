@@ -57,6 +57,8 @@ jobs:
               'pr_less': []},
             'gates': {'580': 'closed','1089': 'closed','1135': 'closed'},
             'prs': [{'number': 12,'head_sha': sha,'base_sha': sha,
+              'ancestry_evidence': {'complete': True, 'main_sha': sha, 'head_sha': sha,
+                 'merge_base_sha': sha, 'ahead_by': 0, 'behind_by': 0, 'status': 'identical'},
               'draft': False,'owner_approved': True,
               'owner_review_evidence': {'complete': True, 'decision': 'approved', 'dismissed': False,
                   'repository_full_name': 'Zennay/zCloud', 'pr_number': 12, 'review_id': 99012,
