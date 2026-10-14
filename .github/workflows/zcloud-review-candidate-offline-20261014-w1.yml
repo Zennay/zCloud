@@ -48,6 +48,11 @@ jobs:
           spec.loader.exec_module(m)
           sha = 'a' * 40
           result = m.snapshot({'main_sha': sha, 'inventory': {'prs_complete': True,'branches_complete': True},
+            'branch_inventory_receipt': {'schema': 'zcloud-prless-branch-snapshot-v1',
+              'inventory_complete': True, 'admission_authorized': False,
+              'deployment_authorized': False, 'paths_compared': False, 'main_sha': sha,
+              'branch_count': 1, 'open_pr_head_count': 1, 'branch_pages': 1, 'pr_pages': 1,
+              'pr_less': []},
             'gates': {'580': 'closed','1089': 'closed','1135': 'closed'},
             'prs': [{'number': 12,'head_sha': sha,'base_sha': sha,
               'draft': False,'owner_approved': True,'files': ['README.md'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': sha, 'base_sha': sha}, 'required_checks': ['unit'],
