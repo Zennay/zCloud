@@ -752,6 +752,70 @@ jobs:
         self.assertEqual(gate.risk_counts(after)["untrusted_pr_checkout"], 1)
         self.assertIn("untrusted_pr_checkout", gate.increasing_risks(before, after))
 
+
+    def test_step_env_after_run_still_taints_shell_execution(self):
+        candidate = SAFE + """      - name: late env mapping
+        run: bash -c "$COMMAND"
+        env:
+          COMMAND: ${{ github.event.pull_request.body }}
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, candidate))
+
+    def test_job_env_with_before_uses_checkout_still_detected(self):
+        candidate = """name: out of order checkout
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    env:
+      PR_REF: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - with:
+          ref: ${{ env.PR_REF }}
+        uses: actions/checkout@v4
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(candidate))
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(SAFE, candidate))
+
+    def test_workflow_env_with_before_uses_checkout_still_detected(self):
+        candidate = """name: inherited out of order checkout
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env:
+  PR_MERGE: ${{ github.event.pull_request.merge_commit_sha }}
+jobs:
+  checkout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: read candidate
+        with:
+          ref: ${{ env.PR_MERGE }}
+        uses: actions/checkout@v4
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(candidate))
+
+    def test_step_env_after_uses_with_ref_before_uses(self):
+        candidate = SAFE + """      - with:
+          ref: ${{ env.REF }}
+        uses: actions/checkout@v4
+        env:
+          REF: ${{ github.event.pull_request.head.sha }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(candidate))
+
+    def test_benign_out_of_order_env_does_not_gain_risk(self):
+        candidate = SAFE + """      - run: echo done
+        env:
+          METADATA: ${{ github.event.pull_request.head.sha }}
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
