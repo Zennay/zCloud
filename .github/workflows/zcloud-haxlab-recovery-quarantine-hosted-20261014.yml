@@ -1,0 +1,48 @@
+name: zCloud legacy HaxLab recovery quarantine (hosted source gate)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-haxlab-allocation-recovery.yml"
+      - ".github/workflows/zcloud-haxlab-recovery-quarantine-hosted-20261014.yml"
+      - "tests/test_zcloud_haxlab_recovery_manual_trust_20261014.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-haxlab-allocation-recovery.yml"
+      - ".github/workflows/zcloud-haxlab-recovery-quarantine-hosted-20261014.yml"
+      - "tests/test_zcloud_haxlab_recovery_manual_trust_20261014.py"
+
+permissions:
+  contents: read
+
+jobs:
+  source-only:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == 'Zennay/zCloud' &&
+        github.event.pull_request.base.repo.full_name == 'Zennay/zCloud'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact immutable source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify source revision before running repository Python
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPO" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Prove legacy automatic deploy stays retired
+        run: python3 -m unittest -v tests.test_zcloud_haxlab_recovery_manual_trust_20261014
