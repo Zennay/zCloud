@@ -180,6 +180,25 @@ def _valid_quoted_sf_string(token):
     return True
 
 
+def _valid_sf_item(value):
+    """Accept bounded RFC 8941 primitives, reject ambiguous extension input."""
+    if not value:
+        return False
+    if value.startswith('"'):
+        return _valid_quoted_sf_string(value)
+    if value in ("?0", "?1") or _valid_sf_token(value):
+        return True
+    # Numeric integer / decimal primitives. Byte sequences and dates are not
+    # needed by this observer: they fail closed instead of being guessed at.
+    numeric = value[1:] if value.startswith("-") else value
+    whole, dot, fraction = numeric.partition(".")
+    if not whole.isascii() or not whole.isdigit():
+        return False
+    if dot:
+        return 1 <= len(whole) <= 12 and 1 <= len(fraction) <= 3 and fraction.isascii() and fraction.isdigit()
+    return 1 <= len(whole) <= 15
+
+
 def _cache_status_signal(value):
     """Conservative RFC 9211 hit classifier; never print intermediary data.
 
@@ -247,6 +266,8 @@ def _cache_status_signal(value):
                     (separator and not raw_value.strip())):
                 return "invalid_headers"
             seen_keys.add(key)
+            if separator and not _valid_sf_item(raw_value.strip()):
+                return "invalid_headers"
             if key == "hit":
                 if cache_hit is not None:
                     return "invalid_headers"
