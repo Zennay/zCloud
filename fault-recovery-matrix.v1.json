@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "contract": "fault-recovery-matrix-v1",
+  "description": "Side-effect-free simulations for the roadmap failure modes: Firefox runtime loss, zCloud service bootstrap/restart, and stale resource lease recovery.",
+  "scenarios": [
+    {
+      "id": "firefox_runtime_loss",
+      "kind": "python_unittest",
+      "selector": "tests.test_worker_progress_watchdog.WorkerWatchdogRuntimeRecoveryTests.test_critical_memory_lost_runtime_restarts_firefox",
+      "invariant": "allocated offline worker runtime requests bounded Firefox recovery through the control API"
+    },
+    {
+      "id": "zcloud_service_restart",
+      "kind": "python_unittest",
+      "selector": "tests.test_runner_smoke.RunnerSmokeTests.test_reconnect_adopts_and_persists_conversation",
+      "invariant": "schema/bootstrap restart preserves the adopted worker conversation mapping"
+    },
+    {
+      "id": "stale_resource_lease",
+      "kind": "python_unittest",
+      "selector": "tests.test_project_runtime.ProjectRuntimeTests.test_expired_heavy_lease_is_recovered_after_owner_crash",
+      "invariant": "an expired owner lease cannot permanently block another admitted heavy project"
+    }
+  ],
+  "additional_contracts": [
+    "tests/test_firefox_recovery_contract.js"
+  ]
+}
