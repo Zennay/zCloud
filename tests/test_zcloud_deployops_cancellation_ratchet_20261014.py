@@ -91,6 +91,24 @@ class PolicyTest(unittest.TestCase):
             "runs-on: [self-hosted, zcloud, vps]", "runs-on: ubuntu-private-vps"
         )))
 
+    def test_nonstandard_global_indent_is_denied(self):
+        text = CANCEL.replace("  cancel-in-progress: true",
+                              "   cancel-in-progress: true")
+        self.assertRaises(scanner.Unverifiable, scanner.risks, text)
+
+    def test_nonstandard_job_indent_is_denied(self):
+        text = JOB_CANCEL.replace("      cancel-in-progress: true",
+                                  "       cancel-in-progress: true")
+        self.assertRaises(scanner.Unverifiable, scanner.risks, text)
+
+    def test_quoted_concurrency_key_is_denied(self):
+        text = CANCEL.replace("concurrency:", "'concurrency':")
+        self.assertRaises(scanner.Unverifiable, scanner.risks, text)
+
+    def test_quoted_cancel_key_is_denied(self):
+        text = CANCEL.replace("cancel-in-progress:", "'cancel-in-progress':")
+        self.assertRaises(scanner.Unverifiable, scanner.risks, text)
+
     def test_dynamic_runner_denied(self):
         self.assertTrue(scanner.risks(DYNAMIC))
 
