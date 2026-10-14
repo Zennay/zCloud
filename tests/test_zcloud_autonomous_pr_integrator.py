@@ -12,7 +12,8 @@ A = "a" * 40
 B = "b" * 40
 ENV = {"GITHUB_REPOSITORY": "Zennay/zCloud", "GITHUB_REF": "refs/heads/main",
        "GITHUB_SHA": B, "GITHUB_EVENT_NAME": "workflow_dispatch",
-       "GITHUB_TOKEN": "unit-test-token", "ZCLOUD_AUTOMERGE_ENABLED": "true"}
+       "GITHUB_TOKEN": "unit-test-token", "ZCLOUD_AUTOMERGE_ENABLED": "true",
+       "GITHUB_ACTOR": "Zennay", "GITHUB_TRIGGERING_ACTOR": "Zennay"}
 
 
 def pr(docs=True):
@@ -36,10 +37,11 @@ class DecisionTest(unittest.TestCase):
     def test_docs_green(self):
         self.assertEqual(mod.decide(pr(), files(), checks(), [], B), "eligible")
 
-    def test_engine_code_requires_production_release(self):
-        self.assertEqual(mod.decide(pr(False), files(False), checks(), [], B),
-                         "production_gate_not_green")
-        ok = [{"context": "zcloud/vps-production", "state": "success"}]
+    def test_development_source_independent_from_production_release(self):
+        # A production blocker must not freeze separate development merges.
+        # Unsafe core runtime paths remain forbidden by safe_path().
+        self.assertEqual(mod.decide(pr(False), files(False), checks(), [], B), "eligible")
+        ok = [{"context": "other-required-check", "state": "success"}]
         self.assertEqual(mod.decide(pr(False), files(False), checks(), ok, B), "eligible")
 
     def test_nonopted_pr_does_not_merge(self):
@@ -155,6 +157,11 @@ class DecisionTest(unittest.TestCase):
                 self.fail("must not merge stale main")
             return self.transport(token, method, path, data)
         self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+
+    def test_only_original_and_triggering_owner_may_apply(self):
+        for key in ("GITHUB_ACTOR", "GITHUB_TRIGGERING_ACTOR"):
+            with self.subTest(key=key), self.assertRaises(mod.Refused):
+                mod.main(["--apply"], {**ENV, key: "untrusted"}, self.transport)
 
     def test_missing_token_denied(self):
         with self.assertRaises(mod.Refused):
