@@ -98,6 +98,10 @@ jobs:
               qid=row.get("queue_id")
               if qid not in stale_ids:
                   continue
+              if row.get("project_id")!="haxlab":
+                  # Never demote or complete a task belonging to another project.
+                  print("FOREIGN_QUEUE_ITEM_UNTOUCHED")
+                  continue
               status=str(row.get("status") or "").lower()
               slot=row.get("worker_slot")
               if status in {"claimed","running","verifying"}:
