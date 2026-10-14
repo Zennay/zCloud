@@ -238,6 +238,46 @@ jobs:
         privileged = src.replace("contents: read", "contents: write")
         self.assertIn("write_permission", gate.risk_set(privileged))
 
+
+    def test_aliased_root_event_must_not_look_like_non_target(self):
+        # An alias can expand to a privileged trigger absent from source text
+        # in the on: value. Refuse even if the explicit trigger is invisible.
+        src = SAFE.replace(
+            "on:\n  pull_request_target:\n    branches: [main]",
+            "on: *privileged_events",
+        )
+        with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
+            gate.risk_set(src)
+
+    def test_quoted_alias_event_is_not_a_safe_non_target(self):
+        src = SAFE.replace(
+            "on:\n  pull_request_target:\n    branches: [main]",
+            "on: '*privileged_events'",
+        )
+        with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
+            gate.risk_set(src)
+
+    def test_event_mapping_merge_alias_is_denied_before_early_exit(self):
+        src = SAFE.replace(
+            "on:\n  pull_request_target:\n    branches: [main]",
+            "on:\n  <<: *privileged_events",
+        )
+        with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
+            gate.risk_set(src)
+
+    def test_event_anchor_is_denied_when_target_unobservable(self):
+        src = SAFE.replace(
+            "on:\n  pull_request_target:\n    branches: [main]",
+            "on: &events\n  push: {}",
+        )
+        with self.assertRaisesRegex(gate.Unverified, "aliased_event_trigger"):
+            gate.risk_set(src)
+
+    def test_other_yaml_anchor_not_used_for_events_keeps_non_target(self):
+        src = SAFE.replace("pull_request_target:", "push:")
+        src += "x-ignore: &docs\n  note: safe\n"
+        self.assertEqual(gate.risk_set(src), set())
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
