@@ -19,6 +19,26 @@ TIMEOUT_RE = re.compile(r"(?m)^ {4}timeout-minutes:\s*(?P<value>[^#\n]+?)\s*$")
 SELF_HOSTED_LABEL_RE = re.compile(r"(?<![\w-])self-hosted(?![\w-])", re.IGNORECASE)
 # An expression can resolve to a self-hosted runner at execution time.
 DYNAMIC_RUNNER_RE = re.compile(r"\$\{\{|\*[A-Za-z_][\w-]*")
+# Only canonical hosted runner labels may be excluded from the self-hosted
+# capacity audit. Custom labels and group selectors can reach private runners
+# even when the explicit "self-hosted" label is omitted.
+KNOWN_HOSTED_LABEL_RE = re.compile(
+    r"(?i)^(?:ubuntu-(?:latest|slim|[0-9]{2}\.[0-9]{2}(?:-arm)?)"
+    r"|windows-(?:latest|[0-9]{4}(?:-arm)?)"
+    r"|macos-(?:latest|[0-9]{2}(?:-large|-[a-z0-9]+)?))$"
+)
+
+
+def _definitely_hosted_runner(runs_on: str) -> bool:
+    selector = runs_on.strip()
+    if selector.startswith("[") and selector.endswith("]"):
+        labels = selector[1:-1].split(",")
+        if len(labels) != 1:
+            return False
+        selector = labels[0].strip()
+    selector = selector.strip("'\"").strip()
+    return bool(KNOWN_HOSTED_LABEL_RE.fullmatch(selector))
+
 
 
 @dataclass(frozen=True)
@@ -86,7 +106,13 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
         if runs_on is None:
             continue
         runner_is_dynamic = bool(DYNAMIC_RUNNER_RE.search(runs_on))
-        if not runner_is_dynamic and not SELF_HOSTED_LABEL_RE.search(runs_on):
+        runner_has_self_hosted_label = bool(SELF_HOSTED_LABEL_RE.search(runs_on))
+        runner_is_unknown = (
+            not runner_is_dynamic
+            and not runner_has_self_hosted_label
+            and not _definitely_hosted_runner(runs_on)
+        )
+        if not runner_is_dynamic and not runner_has_self_hosted_label and not runner_is_unknown:
             continue
 
         timeout_match = TIMEOUT_RE.search(block)
@@ -111,6 +137,9 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
         if runner_is_dynamic:
             # Even a short timeout is not proof the unknown runner is hosted.
             status = "dynamic_runner_unknown"
+        elif runner_is_unknown:
+            # Custom labels and runner groups may resolve to self-hosted agents.
+            status = "runner_target_unknown"
 
         findings.append(
             TimeoutFinding(
@@ -210,7 +239,7 @@ def new_debt(
 def summarize(rows: list[TimeoutFinding], *, max_minutes: int) -> dict[str, object]:
     by_status = {
         status: sum(1 for row in rows if row.status == status)
-        for status in ("bounded", "missing", "over_limit", "dynamic_or_invalid", "invalid", "dynamic_runner_unknown")
+        for status in ("bounded", "missing", "over_limit", "dynamic_or_invalid", "invalid", "dynamic_runner_unknown", "runner_target_unknown")
     }
     debt = [row.bounded() for row in rows if row.status != "bounded"]
     return {
