@@ -1354,6 +1354,33 @@ jobs:
         )
         self.assertIn("write_permission", gate.increasing_risks(before, after))
 
+
+    def test_removing_nonworkflow_notes_inside_actions_directory_is_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def command(*args):
+                return subprocess.check_output(
+                    ["git", *args], cwd=root, stderr=subprocess.DEVNULL
+                ).decode().strip()
+            command("init", "-q")
+            command("config", "user.name", "zcloud test")
+            command("config", "user.email", "test@example.invalid")
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            workflow = folder / "safe.yml"
+            notes = folder / "README.md"
+            workflow.write_text(SAFE)
+            notes.write_text("old docs")
+            command("add", ".")
+            command("commit", "-qm", "base")
+            base = command("rev-parse", "HEAD")
+            notes.unlink()
+            command("add", "-A")
+            command("commit", "-qm", "remove non-workflow notes")
+            head = command("rev-parse", "HEAD")
+            self.assertEqual(gate.changed_workflows(root, base, head), [])
+            self.assertEqual(gate.evaluate(root, base, head), (0, []))
+
     def test_git_mode_denies_symlink(self):
         with patch.object(gate, "git", return_value=b"120000 blob deadbeef\t.github/workflows/a.yml\n"):
             with self.assertRaises(gate.Unverified):
