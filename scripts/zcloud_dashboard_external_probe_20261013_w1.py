@@ -172,8 +172,19 @@ def probe_once(opener=None):
             # Prefer a false negative to claiming an ambiguous HTTP frame green.
             if headers.get("Transfer-Encoding") is not None:
                 return "invalid_headers"
-            media_type = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-            if media_type != "application/json":
+            # A conflicting or exotic charset cannot safely describe the
+            # UTF-8 JSON bytes we parse. Reject duplicate/malformed params,
+            # controls and opaque non-ASCII metadata instead of ignoring them.
+            media_header = headers.get("Content-Type", "")
+            if (not isinstance(media_header, str) or
+                    not media_header.isascii() or len(media_header) > 120 or
+                    any(ord(char) < 32 or ord(char) == 127 for char in media_header)):
+                return "content_type"
+            media_parts = media_header.split(";")
+            if (media_parts[0].strip().lower() != "application/json" or
+                    len(media_parts) > 2 or
+                    (len(media_parts) == 2 and media_parts[1].strip().lower()
+                     not in ('charset=utf-8', 'charset="utf-8"'))):
                 return "content_type"
             # urllib does not transparently decompress bodies. Never accept a
             # potentially misleading compressed/encoded status representation.
