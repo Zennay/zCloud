@@ -169,6 +169,9 @@ def classify(source: dict) -> dict:
                 raise EvidenceError("invalid_runner")
             if runner_name is not None and not isinstance(runner_name, str):
                 raise EvidenceError("invalid_runner")
+            # A name without an ID (or ID without a name) is not proof of assignment.
+            if (type(runner_id) is int and runner_id > 0) != bool(runner_name):
+                raise EvidenceError("ambiguous_runner_assignment")
             if job_phase == "queued" and runner_id in (None, 0) and not runner_name:
                 queued_unassigned += 1
             if job_phase == "completed":
@@ -190,7 +193,7 @@ def classify(source: dict) -> dict:
     if latest_run:
         run = latest_run[3]
         if run["status"] == "completed" and run["conclusion"] != "success":
-            outcome = "LATEST_MAIN_DEPLOY_" + run["conclusion"].upper()
+            outcome = "OBSERVED_MAIN_DEPLOY_" + run["conclusion"].upper()
         elif latest_run[4] and run["status"] == "queued":
             outcome = "DEPLOY_JOB_QUEUED_UNASSIGNED"
     return {
@@ -202,6 +205,7 @@ def classify(source: dict) -> dict:
         "current_main_deploy_run": latest_run[1] if latest_run else None,
         "current_main_deploy_attempt": latest_run[2] if latest_run else None,
         "latest_run_failed_jobs": latest_run[5] if latest_run else None,
+        "deploy_history_exhaustive": False,
         "latest_run_queued_unassigned_jobs": latest_run[4] if latest_run else None,
         "scanned_deploy_runs": len(verified),
         "status_is_runtime_proof": False,
