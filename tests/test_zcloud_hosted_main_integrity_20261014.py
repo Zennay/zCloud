@@ -62,6 +62,20 @@ class HostedMainIntegrityTests(unittest.TestCase):
                        {"checkout_sha":"b"*40}, {"ref":"refs/heads/main"}):
             self.assertFalse(admission(**dict(sample, **change))["source_verified"])
 
+    def test_supported_immutable_node24_hosted_source_runtime(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn(
+            "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0",
+            workflow,
+        )
+        self.assertIn("node-version: 24", workflow)
+        self.assertIn("package-manager-cache: false", workflow)
+        self.assertIn("node -p 'process.versions.node.split(\".\")[0]'", workflow)
+        self.assertNotIn("actions/setup-node@v4", workflow)
+        self.assertNotIn("node-version: 20", workflow)
+        self.assertNotIn("npm install", workflow)
+        self.assertNotIn("npm ci", workflow)
+
     def test_schedule_bypasses_skip_ci_without_deployment_triggers(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("  schedule:", source)
