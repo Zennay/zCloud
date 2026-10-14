@@ -50,7 +50,7 @@ jobs:
           result = m.snapshot({'main_sha': sha, 'inventory': {'prs_complete': True,'branches_complete': True},
             'gates': {'580': 'closed','1089': 'closed','1135': 'closed'},
             'prs': [{'number': 12,'head_sha': sha,'base_sha': sha,
-              'draft': False,'owner_approved': True,'files': ['README.md'], 'required_checks': ['unit'],
+              'draft': False,'owner_approved': True,'files': ['README.md'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': sha, 'base_sha': sha}, 'required_checks': ['unit'],
               'checks': [{'name': 'unit','head_sha': sha,'conclusion': 'success'}]}], 'branches': []})
           assert result['review_candidate_count'] == 1
           assert result['release_authorized'] is False
