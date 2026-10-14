@@ -68,6 +68,15 @@ def _cancel_values(area, *, indent):
     ) for item in matches)
 
 
+def _inline_concurrency(area, indent):
+    """Inline YAML concurrency maps are ambiguous: never silently ignore them."""
+    vals = re.findall(
+        r"(?m)^" + re.escape(indent) + r"concurrency:\s*(\{[^\r\n]*\}|[^\r\n#]+)$",
+        area,
+    )
+    return bool(vals)
+
+
 def risks(text):
     """Conservative parser of jobs and root/job-level cancellation.
 
@@ -81,15 +90,18 @@ def risks(text):
     if re.search(r"(?m)^[ ]{0,6}(?:<<:|concurrency:\s*[&*]|runs-on:\s*[&*])", text):
         raise Unverifiable("yaml_alias")
     start = re.search(r"(?m)^jobs:\s*$", text)
-    jobs_area = re.split(
-        r"(?m)^[A-Za-z_-][\w-]*:\s*", text[start.end():], maxsplit=1
-    )[0]
+    tail = text[start.end():]
+    next_root = re.search(r"(?m)^[A-Za-z_-][\w-]*:\s*", tail)
+    jobs_area = tail[:next_root.start()] if next_root else tail
+    outside_jobs = text[:start.start()] + "\n" + (
+        tail[next_root.start():] if next_root else ""
+    )
     markers = list(JOB.finditer(jobs_area))
     if not markers or len(markers) > 100:
         raise Unverifiable("jobs")
     if len({m.group(1) for m in markers}) != len(markers):
         raise Unverifiable("duplicate_job")
-    global_cancel = _cancel_values(text[:start.start()], indent="  ")
+    global_cancel = _cancel_values(outside_jobs, indent="  ") or _inline_concurrency(outside_jobs, "")
     findings = []
     for index, marker in enumerate(markers):
         job = jobs_area[
@@ -98,7 +110,7 @@ def risks(text):
         ]
         runner = RUNNER.findall("  " + marker.group(1) + ":\n" + job)
         is_hosted = len(runner) == 1 and bool(HOSTED.fullmatch(runner[0].strip()))
-        job_cancel = _cancel_values(job, indent="      ")
+        job_cancel = _cancel_values(job, indent="      ") or _inline_concurrency(job, "    ")
         if (global_cancel or job_cancel) and not is_hosted:
             findings.append("possible_vps_cancellation")
     return sorted(set(findings))
