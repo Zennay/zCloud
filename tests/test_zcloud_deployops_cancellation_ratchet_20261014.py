@@ -293,6 +293,22 @@ class GitTest(unittest.TestCase):
         )
         self.assertEqual({"shared"}, scanner.static_concurrency_groups(text))
 
+    def test_dynamic_cancel_group_denied_without_collision_proof(self):
+        base = self.commit(SAFE)
+        unknown_group = SAFE.replace(
+            "group: isolated", "group: " + "$" + "{{ github.workflow }}"
+        ).replace("cancel-in-progress: false", "cancel-in-progress: true")
+        head = self.commit(unknown_group)
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_missing_cancel_group_denied_without_collision_proof(self):
+        base = self.commit(SAFE)
+        changed = SAFE.replace("  group: isolated\n", "").replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        )
+        head = self.commit(changed)
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
     def test_dynamic_group_is_not_claimed_literal_collision(self):
         self.assertEqual(set(), scanner.static_concurrency_groups(
             SAFE.replace("group: isolated", "group: " + "$" + "{{ github.workflow }}")
