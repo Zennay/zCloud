@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Read-only Git source ratchet: deny cancellation of possible VPS jobs.
+
+This is not a deployment or release authorization; no HTTP/Actions/VPS/DB writes.
+"""
+import argparse
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
+HOSTED = re.compile(r"(?:ubuntu|macos|windows)-[A-Za-z0-9_.-]+\Z")
+RUNNER = re.compile(r"(?m)^    runs-on:\s*([^\r\n#]*)")
+JOB = re.compile(r"(?m)^  ([A-Za-z_][A-Za-z0-9_-]*):\s*$")
+
+
+class Unverifiable(ValueError):
+    pass
+
+
+def git(root, *args):
+    return subprocess.check_output(
+        ["git", *args], cwd=root, timeout=15, stderr=subprocess.DEVNULL
+    )
+
+
+def changed(root, base, head):
+    if not SHA.fullmatch(base) or not SHA.fullmatch(head):
+        raise Unverifiable("sha")
+    raw = git(root, "diff", "--name-only", "-z", "--diff-filter=ACMRT",
+              f"{base}...{head}", "--", ".github/workflows/")
+    paths = [part.decode("utf-8", "strict") for part in raw.split(b"\0") if part]
+    if len(paths) > 250 or len(paths) != len(set(paths)) or any(
+        not WORKFLOW.fullmatch(path) for path in paths
+    ):
+        raise Unverifiable("paths")
+    return paths
+
+
+def source(root, sha, path, *, missing_ok=False):
+    if not SHA.fullmatch(sha) or not WORKFLOW.fullmatch(path):
+        raise Unverifiable("path")
+    info = git(root, "ls-tree", "-z", sha, "--", path)
+    if not info:
+        if missing_ok:
+            return None
+        raise Unverifiable("missing")
+    if info.count(b"\0") != 1 or not info.startswith(b"100644 blob "):
+        raise Unverifiable("mode")
+    raw = git(root, "show", f"{sha}:{path}")
+    if len(raw) > 100000 or b"\0" in raw:
+        raise Unverifiable("size")
+    try:
+        return raw.decode("utf-8", "strict")
+    except UnicodeDecodeError as exc:
+        raise Unverifiable("encoding") from exc
+
+
+def _cancel_values(area, *, indent):
+    matches = re.findall(
+        r"(?m)^" + re.escape(indent) + r"cancel-in-progress:\s*([^\r\n#]*)",
+        area,
+    )
+    return any(item.strip().lower() not in (
+        "false", "'false'", '"false"'
+    ) for item in matches)
+
+
+def risks(text):
+    """Conservative parser of jobs and root/job-level cancellation.
+
+    Unknown runner expressions/reusable jobs are possibly self-hosted.
+    Unexpected source layouts are denied rather than approved.
+    """
+    if (not re.search(r"(?m)^on:\s*(?:\[.*\]|\{.*\})?\s*$|^on:\s*$", text)
+            or len(re.findall(r"(?m)^jobs:\s*$", text)) != 1
+            or len(re.findall(r"(?m)^on:", text)) != 1):
+        raise Unverifiable("structure")
+    if re.search(r"(?m)^[ ]{0,6}(?:<<:|concurrency:\s*[&*]|runs-on:\s*[&*])", text):
+        raise Unverifiable("yaml_alias")
+    start = re.search(r"(?m)^jobs:\s*$", text)
+    jobs_area = re.split(
+        r"(?m)^[A-Za-z_-][\w-]*:\s*", text[start.end():], maxsplit=1
+    )[0]
+    markers = list(JOB.finditer(jobs_area))
+    if not markers or len(markers) > 100:
+        raise Unverifiable("jobs")
+    if len({m.group(1) for m in markers}) != len(markers):
+        raise Unverifiable("duplicate_job")
+    global_cancel = _cancel_values(text[:start.start()], indent="  ")
+    findings = []
+    for index, marker in enumerate(markers):
+        job = jobs_area[
+            marker.end():markers[index + 1].start()
+            if index + 1 < len(markers) else None
+        ]
+        runner = RUNNER.findall("  " + marker.group(1) + ":\n" + job)
+        is_hosted = len(runner) == 1 and bool(HOSTED.fullmatch(runner[0].strip()))
+        job_cancel = _cancel_values(job, indent="      ")
+        if (global_cancel or job_cancel) and not is_hosted:
+            findings.append("possible_vps_cancellation")
+    return sorted(set(findings))
+
+
+def evaluate(root, base, head):
+    result = []
+    for path in changed(root, base, head):
+        before = source(root, base, path, missing_ok=True)
+        after = source(root, head, path)
+        now = risks(after)
+        if before is not None:
+            risks(before)  # Reject unparseable legacy content as well.
+        if now:
+            # Changed legacy risk needs owner review. Risk removal passes.
+            result.append(path)
+    return result
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--head", required=True)
+    parser.add_argument("--repo-root", type=Path,
+                        default=Path(__file__).resolve().parents[1])
+    args = parser.parse_args(argv)
+    try:
+        risky = evaluate(args.repo_root, args.base, args.head)
+    except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
+        print("VPS_CANCELLATION_RATCHET=DENY reason=unverifiable_source")
+        print("VPS_MUTATION_AUTHORIZED=false")
+        return 2
+    print(f"VPS_CANCELLATION_RATCHET={'DENY' if risky else 'PASS'} risky_changed={len(risky)}")
+    for path in risky[:25]:
+        print(f"DENY {path}")
+    print("VPS_MUTATION_AUTHORIZED=false")
+    return int(bool(risky))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
