@@ -1,6 +1,14 @@
 name: zCloud P0 preserve ChatGPT tabs after send
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-postsend-tab-preservation-live.yml
+      - tests/test_postsend_owner_manual_workflow_20261014.py
+      - public/zcloud-worker.user.js
+      - firefox-extension/background.js
+      - deploy/chatgpt-firefox.service
   push:
     branches: [main]
     paths:
@@ -8,7 +16,18 @@ on:
       - firefox-extension/background.js
       - deploy/chatgpt-firefox.service
       - .github/workflows/zcloud-postsend-tab-preservation-live.yml
+      - tests/test_postsend_owner_manual_workflow_20261014.py
   workflow_dispatch:
+    inputs:
+      apply:
+        description: "Owner-only install after tests; false means no VPS changes"
+        required: true
+        type: boolean
+        default: false
+      confirm_sha:
+        description: "Exact current main SHA to install"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -23,7 +42,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - name: Execute targeted tab preservation regressions
         shell: bash
         run: |
@@ -36,18 +57,48 @@ jobs:
           node tests/test_worker_tab_identity_guard.js
           node tests/test_worker_tabs_restore.js
           python3 -m unittest discover -s tests -p test_firefox_worker_prestart.py
+          python3 -m unittest -v tests.test_postsend_owner_manual_workflow_20261014
           echo "POSTSEND_TAB_IDENTITY_TESTS_GREEN=1"
 
   install:
     name: Install safety patch on VPS without touching browser
     needs: offline
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      inputs.apply == true &&
+      inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
+        with:
+          persist-credentials: false
+      - name: Verify manual owner approval and immutable current main
+        shell: bash
+        env:
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+          APPLY_REQUESTED: ${{ inputs.apply }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$APPLY_REQUESTED" = true
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CONFIRM_SHA"
+          current_main="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test -n "$current_main"
+          test "$current_main" = "$CONFIRM_SHA"
+          test "$(hostname -s)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          echo "POSTSEND_OWNER_MANUAL_MAIN_VERIFIED=1"
       - name: Record running Firefox, install files, preserve session
         shell: bash
         env:

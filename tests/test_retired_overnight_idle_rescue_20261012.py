@@ -139,16 +139,21 @@ class ExpiredOvernightRescueRetirementTests(unittest.TestCase):
             self.assertEqual({}, unexpected_rescue_fingerprints(root))
 
     def test_dated_eight_worker_safety_keeps_automatic_trigger_retired(self):
-        # This is a separate existing owner scope. Assert the safe observable
-        # property; do not modify that workflow or grant a manual restart.
+        # PR #1367 also retired the formerly manually dispatchable eight-worker
+        # incident handler. The old assertion incorrectly tried to read the
+        # deleted file and failed every unrelated PR's hosted regression.
+        # Keep cross-incident protection without resurrecting that workflow.
         path = WORKFLOWS / "zcloud-overnight-eight-20261009.yml"
-        source = path.read_text(encoding="utf-8")
-        self.assertIn("2026-10-09", source)
-        self.assertIn("on:\n  workflow_dispatch:", source)
-        active_header = source.split("on:\n", 1)[1].split("\npermissions:", 1)[0]
-        self.assertNotIn("schedule:", active_header)
-        self.assertNotIn("push:", active_header)
-        self.assertNotIn("workflow_run:", active_header)
+        self.assertFalse(path.exists(), "Expired eight-worker handler must stay absent")
+        for candidate in sorted(WORKFLOWS.iterdir()):
+            if candidate.suffix.lower() not in {".yaml", ".yml"}:
+                continue
+            with self.subTest(workflow=candidate.name):
+                self.assertNotIn(
+                    "name: zCloud overnight eight-worker watchdog",
+                    candidate.read_text(encoding="utf-8"),
+                    "Renamed expired eight-worker handler must stay retired",
+                )
 
     def test_no_unsafe_retirement_evidence_is_inferred(self):
         # Deleting an expired workflow is NOT proof of active worker continuity
