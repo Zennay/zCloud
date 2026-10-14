@@ -2,8 +2,8 @@
 
 ## Scope and provenance
 
-This deploy-ops operation removes exactly four **obsolete GitHub Actions
-entrypoints**, each running a pinned historical LightUp PR on the permanent
+This deploy-ops operation removes four **obsolete GitHub Actions
+proof entrypoints** plus one terminal, historical Actions-write cancel workflow, each running a pinned historical LightUp PR on the permanent
 zCloud VPS. At retirement selection zCloud main was
 `566f7663be12ea13c1cabdd43d6501dd9cad03a6`.
 
@@ -26,17 +26,22 @@ original Actions receipts rather than preserving a runnable obsolete workflow.
 - Exact file path and active PR text searches returned no owner for these
   four paths; matching un-PR'd branch searches for each PR stem and for the
   combined CSV retirement task returned no active branch.
-- The existing `lightup-export-obsolete-proof-cleanup.yml` references
-  the historical **name** of the PR960 workflow when checking a single
-  old Actions run. That **different** workflow and its cancellation authority
-  are not changed or invoked by this deletion.
+- The historical `lightup-export-obsolete-proof-cleanup.yml` was
+  separately verified to have no remaining purpose: its *only* cancellation
+  target [run #37704077077](https://github.com/Zennay/zCloud/actions/runs/37704077077)
+  returned `status=completed`, `conclusion=cancelled`,
+  `head_sha=4e797963f1b305c4bb0b8e6018cc86a97387cb94`, updated
+  2026-10-07T23:54:57Z. This extra `workflow_dispatch` path carried
+  `actions: write` and is now **removed**; no repeat cancel was made.
+  Exact-path open PR search and matching un-PR'd branch search found no owner
+  beyond this draft retirement PR's documentation reference.
 - [LightUp PR #963](https://github.com/Zennay/LightUp/pull/963)
   remained **open** at selection. Its separate
   `lightup-pr963-exact-head-proof.yml` is explicitly preserved.
 - Other LightUp terminal proof owners, including zCloud PR #755 and the
   production activation/recovery lanes #580/PWQ-41 and #1089, are untouched.
 - Removing YAML does not cancel existing in-progress/queued historical jobs;
-  no Actions write permission, queue control, runner recovery, service restart,
+  no Actions write request, queue control, runner recovery, service restart,
   browser/worker/SQLite operation or live LightUp assessment was performed.
 
 ## Acceptance
