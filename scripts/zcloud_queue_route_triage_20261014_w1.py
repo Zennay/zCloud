@@ -82,7 +82,9 @@ def _assignment(jobs: list[dict]) -> str:
         name = job.get("runner_name")
         # GitHub may serialize an unassigned runner as null/null or 0/""
         # (also mixed null/empty). None never counts as a *known* runner.
-        if runner_id in (None, 0) and name in (None, ""):
+        unassigned_id = runner_id is None or (type(runner_id) is int and runner_id == 0)
+        unassigned_name = name is None or (type(name) is str and name == "")
+        if unassigned_id and unassigned_name:
             values.append("not_assigned")
         elif type(runner_id) is int and runner_id > 0 and type(name) is str and name:
             values.append("assigned")
