@@ -213,6 +213,12 @@ def reviewer_evidence(record):
     review = obj(record.get("owner_review_evidence"), "owner_review_evidence")
     require(review.get("complete") is True, "incomplete_review_evidence")
     require(type(review.get("dismissed")) is bool, "invalid_review_dismissal")
+    require(review.get("repository_full_name") == "Zennay/zCloud",
+            "review_repository_mismatch")
+    require(type(review.get("pr_number")) is int and 0 < review["pr_number"] < 10000000,
+            "invalid_review_pr")
+    require(type(review.get("review_id")) is int and 0 < review["review_id"] < 10**18,
+            "invalid_review_id")
     decision = review.get("decision")
     require(decision in ("approved", "pending", "changes_requested")
             and type(decision) is str, "invalid_review_decision")
@@ -261,6 +267,7 @@ def snapshot(report, *, now=None):
     all_owners = []
     prs = []
     ids = set()
+    review_ids = set()
     for pr in d["prs"]:
         p = obj(pr, "pr")
         n = p.get("number")
@@ -271,6 +278,9 @@ def snapshot(report, *, now=None):
         require(type(p.get("draft")) is bool and type(p.get("owner_approved")) is bool,
                 "invalid_pr_admission")
         review = reviewer_evidence(p)
+        require(review["pr_number"] == n, "review_pr_mismatch")
+        require(review["review_id"] not in review_ids, "duplicate_review_id")
+        review_ids.add(review["review_id"])
         observed_at = datetime.strptime(d["observed_at"], "%Y-%m-%dT%H:%M:%SZ")
         submitted_at = datetime.strptime(review["submitted_at"], "%Y-%m-%dT%H:%M:%SZ")
         require(submitted_at <= observed_at + timedelta(seconds=30),
