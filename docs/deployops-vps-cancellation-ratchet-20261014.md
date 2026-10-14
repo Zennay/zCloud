@@ -43,7 +43,11 @@ The scanner now exposes a **bounded, path-only triage mode** (maximum 25 entries
 ```sh
 python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
   --triage-head <exact-commit-sha> --triage-limit 12
+python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
+  --triage-head <exact-commit-sha> --triage-limit 12 --triage-prefix zcloud-
 ```
+
+The optional `--triage-prefix` is strictly a **workflow filename prefix** (1–40 safe characters, no slashes), intended to limit follow-up to a disjoint project lane. This is not proof of unowned files: verify open branches, changed PR filenames and current Notion assignments before any edit. The generic top 12 currently includes FTMO-specific workflows, which this deploy-ops lane does **not** claim; the zCloud prefix exposes a separate 12-file shortlist. A path on this shortlist is a potential risk requiring investigation, **not** a remediation authorization.
 
 When the old VPS workflow's concurrency group is dynamic, a new hosted cancellation group may resolve to the same name. The guard denies a claimed clean cross-workflow comparison when that previous VPS group cannot be established as distinct. A VPS-capable workflow with **no concurrency block at all** is not invented as a cross-group collision. The code also distinguishes literal quoted/unquoted group values.
 
