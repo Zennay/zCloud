@@ -337,6 +337,30 @@ class QueueRouteTriageTests(unittest.TestCase):
                 with self.assertRaises(source.InventoryError):
                     triage.collect(get, clock=NOW)
 
+    def test_whitespace_runner_name_does_not_imply_known_runner_assignment(self):
+        for blank in (" ", "   ", "\u2003", "\u00a0"):
+            with self.subTest(name=repr(blank)):
+                entry = job(1)
+                entry["runner_id"] = 73
+                entry["runner_name"] = blank
+                get, _ = mock([run(1)], {1: [entry]})
+                result = triage.collect(get, clock=NOW)
+                self.assertEqual(result["runs"][0]["assignment"], "indeterminate")
+                self.assertIs(result["mutation_authorized"], False)
+                self.assertEqual(result["cancel_run_ids"], [])
+
+    def test_runner_name_control_characters_fail_closed_before_second_read(self):
+        for bad in ("runner\nNEXT", "runner\rRETURN", "runner\tTAB",
+                    "name\x00NUL", "runner\x7fDEL"):
+            with self.subTest(bad=repr(bad)):
+                entry = job(1)
+                entry["runner_id"] = 19
+                entry["runner_name"] = bad
+                get, calls = mock([run(1)], {1: [entry]})
+                with self.assertRaisesRegex(source.InventoryError, "invalid_runner_evidence"):
+                    triage.collect(get, clock=NOW)
+                self.assertEqual(calls.count(RUNS), 1)
+
     def test_change_from_null_to_assigned_between_reads_denies(self):
         item = job(1)
         item["runner_id"] = None
