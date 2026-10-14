@@ -118,6 +118,12 @@ The GET-only route triage now treats GitHub run and job IDs as positive **signed
 
 A positive runner ID is **not** a trustworthy named assignment when GitHub's `runner_name` consists only of whitespace: that is recorded as `indeterminate`, never a healthy assigned runner. Control bytes (CR, LF, tab, NUL, DEL) inside otherwise bounded runner names are denied as malformed source evidence before a second pass or sanitized operator report. Legitimate explicit `null/null` and `0/""` *unassigned* records remain permitted; no raw runner names are printed. None of this is proof of a listener outage, generation activity, safe cancellation, or permission to restart/deploy.
 
+### Signed runner-ID boundary and invisible-name denial
+
+The same conservative signed-64-bit boundary now also applies to **runner IDs**, not just job/run IDs. A recorded runner ID above that range is rejected as malformed evidence, rather than proving a job has been assigned. A positive in-range runner ID with a whitespace-only or nonprinting/invisible Unicode runner name (for example bidirectional controls or a zero-width suffix) is not a credible named assignment. The collector denies these malformed names; the direct classification helper returns `indeterminate` if invoked separately. Regular printable internationalized runner names remain valid, but their raw value is never reflected in public operator summaries.
+
+These checks guard against forged observations and ambiguous audit logs only: a valid positive runner ID and printable name still do **not** prove the listener is healthy or a zCloud worker is generating text. Existing exclusive restart, SQLite and production gates remain untouched.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
