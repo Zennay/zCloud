@@ -185,6 +185,24 @@ def evidence_freshness(report, *, now=None):
     require(-30 <= age <= 300, "stale_or_future_observation")
 
 
+ADVISORY_NEXT_ACTIONS = (
+    ("overlapping_owner", "coordinate_owners", "Stem bestandsverdeling af met de betrokken eigenaren."),
+    ("stale_base", "request_owner_restack", "Vraag de eigenaar om de branch op actuele main bij te werken."),
+    ("required_checks_missing", "verify_required_checks", "Laat de onafhankelijke reviewer ontbrekende verplichte checks verifiëren."),
+    ("exact_head_checks_not_green", "rerun_exact_head_checks", "Laat de eigenaar de juiste commit opnieuw testen."),
+    ("owner_review_missing", "request_independent_review", "Vraag onafhankelijke beoordeling door de bron-eigenaar."),
+    ("draft", "request_owner_completion", "Laat de eigenaar het concept afronden."),
+)
+
+
+def advisory_next_action(reasons):
+    for reason, action, guidance in ADVISORY_NEXT_ACTIONS:
+        if reason in reasons:
+            return {"code": action, "guidance_nl": guidance}
+    return {"code": "independent_source_review",
+            "guidance_nl": "Vraag onafhankelijke bronreview; nooit automatisch mergen of deployen."}
+
+
 def snapshot(report, *, now=None):
     d = obj(report, "snapshot")
     require(sha(d.get("main_sha")), "invalid_main_sha")
@@ -272,7 +290,8 @@ def snapshot(report, *, now=None):
             "prless_branches": sum(c.startswith("branch:") for c in owner_conflicts),
         }
         out.append({"number": n, "review_candidate": not reasons, "reasons": reasons,
-                    "conflict_counts": conflict_summary})
+                    "conflict_counts": conflict_summary,
+                    "next_action": advisory_next_action(reasons)})
     blockers = {key: sum(key in row["reasons"] for row in out)
                 for key in ("overlapping_owner", "stale_base", "draft",
                             "owner_review_missing", "required_checks_missing",
@@ -312,14 +331,14 @@ def markdown(result):
     lines += ["", "#### Kandidaten en blokkades"]
     for row in result['review_candidates'][:30]:
         if row['review_candidate']:
-            lines.append(f"- PR #{row['number']}: geschikt voor *onafhankelijke bronreview*, niet voor merge.")
+            lines.append(f"- PR #{row['number']}: geschikt voor *onafhankelijke bronreview*, niet voor merge. {row['next_action']['guidance_nl']}")
         else:
             explanations = ", ".join(REASONS_NL[r] for r in row['reasons'])
             conflicts = row["conflict_counts"]
             details = (f" (conflict met {conflicts['other_prs']} andere PR's en "
                        f"{conflicts['prless_branches']} PR-loze branches)"
                        if sum(conflicts.values()) else "")
-            lines.append(f"- PR #{row['number']}: nog niet reviewgereed — {explanations}{details}.")
+            lines.append(f"- PR #{row['number']}: nog niet reviewgereed — {explanations}{details}. {row['next_action']['guidance_nl']}")
     if len(result['review_candidates']) > 30:
         lines.append(f"- Nog {len(result['review_candidates']) - 30} PR's niet weergegeven (uitvoerlimiet).")
     lines.append("Geen productieactie uitgevoerd. Herhaal inventarisatie met geauthenticeerde GitHub-data op de actuele SHA.")
