@@ -72,3 +72,6 @@ jobs:
           # Path-only deterministic triage. This is not a remediation permit.
           python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
             --triage-head "$EXACT_HEAD" --triage-limit 12
+          # Disjoint zCloud-only shortlist; no other project is claimed.
+          python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
+            --triage-head "$EXACT_HEAD" --triage-limit 12 --triage-prefix zcloud-
