@@ -65,7 +65,7 @@ class CockpitHostedDispatchAdmissionTests(unittest.TestCase):
     def test_negative_job_admission_mutations(self):
         for condition in CONDITIONS:
             with self.subTest(condition=condition):
-                changed = self.src.replace(condition, "false /* removed gate */", 1)
+                changed = self.src.replace(condition, "false /* removed gate */")
                 self.assertIn("job-if:" + condition, admission_failures(changed))
 
     def test_negative_runtime_provenance_mutations(self):
