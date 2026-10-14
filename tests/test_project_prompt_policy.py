@@ -66,3 +66,21 @@ def test_collision_coordination_is_compact_without_raw_claim_bloat():
     assert "Er werken 2 workers parallel" in prompt
     assert "claims" not in prompt
     assert "preregistration, walk-forward en final holdout" not in prompt
+
+
+def test_autonomous_merge_first_policy_prevents_permanent_noncritical_hold():
+    """Workers finish eligible work; a held future milestone does not freeze current deliverables."""
+    for project_id in ACTIVE_PROJECTS:
+        project = server.PROJECT_INDEX[project_id]
+        base = server.project_runner_prompt(project_id, project["name"])
+        prompt = server.project_worker_prompt(
+            project_id, project["name"], "",
+            1, 2, {"queue_id": "policy-check", "execution_lane": {"lane_id": "qa-validation"}}
+        )
+        assert "Rond open PRs af" in base
+        assert "integreer op actuele main" in prompt
+        assert "groene exact-head CI en vereiste review" in prompt
+        assert "HOLD alleen bij falende CI, scopeconflict" in prompt
+        assert "rechten, research of productie" in prompt
+        assert "Werk anders door aan huidig projectwerk" in prompt
+        assert len(prompt) < 1000
