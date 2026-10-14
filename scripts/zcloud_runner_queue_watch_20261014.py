@@ -80,6 +80,8 @@ def summarize(runs, jobsets, now, *, total_count=None):
     observed = 0
     stale_unassigned = 0
     recent_assigned = 0
+    queued_assigned = 0
+    unassigned_cancelled = 0
     other = 0
     oldest_queued_seconds = 0
     stale_over_2h = 0
@@ -169,14 +171,27 @@ def summarize(runs, jobsets, now, *, total_count=None):
                 stale_unassigned += 1
             if age >= 7200:
                 stale_over_2h += 1
+        elif status == "queued" and runner_id > 0:
+            # GitHub can attach a runner before a job leaves queued status.
+            # This is an observed assignment, NOT proof of a live listener.
+            observed += 1
+            queued_assigned += 1
+            if age < MIN_AGE:
+                recent_assigned += 1
         elif status in ("in_progress", "completed") and runner_id > 0:
             observed += 1
             if age < MIN_AGE:
                 recent_assigned += 1
             if status == "completed" and job["conclusion"] not in ("success", "skipped"):
                 assigned_failures += 1
-        elif status == "completed" and job.get("conclusion") == "skipped" and runner_id == 0:
-            other += 1
+        elif (status == "completed" and runner_id == 0
+              and job.get("conclusion") in ("skipped", "cancelled")):
+            # A job cancelled before assignment never exercised a VPS runner.
+            # Keep it out of both the stale queue and recovery signal.
+            if job["conclusion"] == "cancelled":
+                unassigned_cancelled += 1
+            else:
+                other += 1
         else:
             raise Unavailable("ambiguous_job_state")
     # Even repeated long queues cannot establish a dead listener without
@@ -203,7 +218,8 @@ def summarize(runs, jobsets, now, *, total_count=None):
             "oldest_queued_minutes": oldest_queued_seconds // 60 if oldest_queued_seconds else None,
             "queued_over_2h": stale_over_2h,
             "recent_assignments": recent_assigned, "assigned_failures": assigned_failures,
-            "skipped": other,
+            "queued_with_assigned_runner": queued_assigned,
+            "cancelled_before_assignment": unassigned_cancelled, "skipped": other,
             "runner_offline_verified": False, "production_verified": False,
             "mutation_authorized": False, "mutations_performed": False}
 

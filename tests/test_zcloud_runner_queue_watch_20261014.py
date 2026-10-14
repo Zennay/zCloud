@@ -186,6 +186,77 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(report["classification"], "RECENT_RUNNER_ASSIGNMENT_OBSERVED")
         self.assertFalse(report["runner_offline_verified"])
 
+    def test_queued_with_attested_runner_is_assignment_not_unassigned_backlog(self):
+        run, job = sample(11, age=70, status="queued", runner=21)
+        report = self.classify((run, job))
+        self.assertEqual(report["classification"], "RECENT_RUNNER_ASSIGNMENT_OBSERVED")
+        self.assertEqual(report["queued_with_assigned_runner"], 1)
+        self.assertEqual(report["recent_assignments"], 1)
+        self.assertEqual(report["stale_unassigned"], 0)
+        self.assertIsNone(report["oldest_queued_minutes"])
+        self.assertFalse(report["runner_offline_verified"])
+        self.assertFalse(report["production_verified"])
+
+    def test_old_queued_assignment_is_not_fresh_listener_proof(self):
+        pairs = (sample(1, age=1700), sample(2, age=1600),
+                 sample(3, age=1500), sample(11, age=1900, runner=21))
+        report = self.classify(*pairs)
+        self.assertEqual(report["queued_with_assigned_runner"], 1)
+        self.assertEqual(report["recent_assignments"], 0)
+        self.assertEqual(report["stale_unassigned"], 3)
+        self.assertEqual(report["classification"], "POSSIBLE_LISTENER_GAP")
+        self.assertFalse(report["runner_offline_verified"])
+
+    def test_unassigned_cancelled_job_is_neither_live_listener_nor_stale_queue(self):
+        run, job = sample(12, age=1700, status="completed", runner=0)
+        job["conclusion"] = "cancelled"
+        report = self.classify((run, job))
+        self.assertEqual(report["classification"], "INSUFFICIENT_QUEUE_EVIDENCE")
+        self.assertEqual(report["cancelled_before_assignment"], 1)
+        self.assertEqual(report["queued_with_assigned_runner"], 0)
+        self.assertEqual(report["recent_assignments"], 0)
+        self.assertEqual(report["stale_unassigned"], 0)
+        self.assertEqual(report["queue_jobs_observed"], 0)
+        self.assertEqual(report["skipped"], 0)
+        self.assertFalse(report["runner_offline_verified"])
+
+    def test_cancelled_with_runner_is_assigned_failure_not_unassigned(self):
+        run, job = sample(13, age=90, status="completed", runner=21)
+        job["conclusion"] = "cancelled"
+        report = self.classify((run, job))
+        self.assertEqual(report["assigned_failures"], 1)
+        self.assertEqual(report["cancelled_before_assignment"], 0)
+        self.assertEqual(report["recent_assignments"], 1)
+        self.assertEqual(report["classification"], "RECENT_RUNNER_ASSIGNMENT_OBSERVED")
+        self.assertFalse(report["production_verified"])
+
+    def test_nonterminal_cancellation_and_unbound_assignment_still_denied(self):
+        patches = (
+            {"status": "queued", "runner_id": 21, "runner_name": "wrong"},
+            {"status": "queued", "runner_id": 21, "runner_name": None},
+            {"status": "queued", "conclusion": "cancelled"},
+            {"status": "completed", "conclusion": "failure", "runner_id": 0},
+            {"status": "completed", "conclusion": "cancelled", "runner_id": True},
+        )
+        for patch in patches:
+            run, job = sample(14)
+            job.update(patch)
+            with self.subTest(patch=patch), self.assertRaises(m.Unavailable):
+                self.classify((run, job))
+
+    def test_cancelled_job_never_suppresses_genuine_stale_queue_signal(self):
+        jobs = [sample(1, age=1700), sample(2, age=1600), sample(3, age=1500)]
+        cancelled_run, cancelled_job = sample(
+            4, age=80, status="completed", runner=0
+        )
+        cancelled_job["conclusion"] = "cancelled"
+        jobs.append((cancelled_run, cancelled_job))
+        report = self.classify(*jobs)
+        self.assertEqual(report["stale_unassigned"], 3)
+        self.assertEqual(report["cancelled_before_assignment"], 1)
+        self.assertEqual(report["recent_assignments"], 0)
+        self.assertEqual(report["classification"], "POSSIBLE_LISTENER_GAP")
+
     def test_queued_job_identity_must_match_exact_run(self):
         for mutation in ({"workflow_name": "Other workflow"},
                          {"head_branch": "elsewhere"},
@@ -331,7 +402,8 @@ class QueueWatchTests(unittest.TestCase):
         self.assertIn("retention-days: 7", wf)
         for field in ("queued_over_2h", "oldest_queued_minutes",
                       "sample_truncated", "total_workflow_runs",
-                      "assigned_failures"):
+                      "assigned_failures", "queued_with_assigned_runner",
+                     "cancelled_before_assignment"):
             self.assertIn(field, wf)
 
 
