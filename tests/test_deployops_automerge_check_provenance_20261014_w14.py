@@ -10,6 +10,25 @@ from tests.test_zcloud_autonomous_pr_integrator import A, B, ENV, checks, files,
 
 
 class BoundHostedSmokeTests(unittest.TestCase):
+    def test_write_scoped_hourly_job_runs_all_trust_suites_before_merge(self):
+        from pathlib import Path
+        wf = (Path(__file__).resolve().parents[1]
+              / ".github/workflows/zcloud-autonomous-safe-pr-integration.yml"
+              ).read_text(encoding="utf-8")
+        preflight = wf.index("Validate engine and safety gates")
+        write = wf.index("Plan or merge one approved development PR")
+        self.assertLess(preflight, write)
+        for module in (
+            "tests.test_zcloud_autonomous_pr_integrator",
+            "tests.test_deployops_automerge_trust_roots_20261014_w12",
+            "tests.test_deployops_automerge_check_provenance_20261014_w14",
+            "tests.test_zcloud_automerge_report_20261014",
+        ):
+            with self.subTest(module=module):
+                self.assertIn(module, wf[preflight:write])
+        self.assertIn("runs-on: ubuntu-latest", wf)
+        self.assertNotIn("runs-on: [self-hosted", wf)
+
     def test_actual_github_hosted_shape_is_eligible(self):
         sample = checks()
         self.assertEqual(engine.trusted_job_identity(sample[0]), (400, 300))
