@@ -29,6 +29,7 @@ RUNTIME = (
     'test "$EVENT_REF" = refs/heads/main',
     'test "$ACTOR" = Zennay',
     'test "$TRIGGERING_ACTOR" = Zennay',
+    'test "$current_main" = "$EXPECTED_SHA"',
     '*) echo "Unrecognized workflow event" >&2; exit 1 ;;',
     'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"',
 )
