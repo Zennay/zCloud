@@ -190,17 +190,17 @@ def risk_set(source: str) -> set[str]:
     # PR-target events may inherit a write-scoped GITHUB_TOKEN unless the
     # workflow explicitly narrows root permissions. Deny newly omitted roots,
     # even if every step looks read-only in this syntax-only scan.
-    if not re.search(r"(?m)^permissions:[ \t]*", clean):
+    if not re.search(r"""(?m)^['"]?permissions['"]?[ \t]*:""", clean):
         risk.add("missing_explicit_root_permissions")
     # Merge aliases or YAML anchors can obscure the effective trigger and
     # permissions. Do not allow a changed PR-target job to use them.
     if re.search(r"(?m)^\s*<<\s*:|\s[&*][A-Za-z][\w-]*", clean):
         risk.add("yaml_alias_or_merge")
-    if len(re.findall(r"(?m)^permissions:\s*", clean)) > 1 or len(anchors) > 1:
+    if len(re.findall(r"""(?m)^['"]?permissions['"]?:\s*""", clean)) > 1 or len(anchors) > 1:
         risk.add("ambiguous_permissions_or_trigger")
     # Fail closed on granting ANY explicit write scope, regardless of where
     # permissions are nested. Harmless comments are not counted.
-    if re.search(r"(?m)^\s*permissions\s*:\s*write-all\s*$", clean):
+    if WRITE_ALL.search(clean):
         risk.add("write_all")
     if WRITE_SCOPE.search(clean):
         risk.add("write_permission")
@@ -208,6 +208,18 @@ def risk_set(source: str) -> set[str]:
         risk.add("secret_reference")
     risk.update(step_reference_risks(clean))
     return risk
+
+
+# Permissions are YAML scalars: quoting, folding or line breaks must not
+# conceal the write-all token from the monotonic authority check.
+WRITE_ALL = re.compile(
+    r"""(?mix)
+    ^[ \t]*['"]?permissions['"]?[ \t]*:[ \t]*
+    (?:['"]?write-all['"]?
+       |(?:[>|][+-]?)?[ \t]*\n[ \t]+['"]?write-all['"]?)
+    [ \t]*$
+    """
+)
 
 
 # Existing legacy debt is counted, not merely bucketed. Otherwise a PR that
