@@ -615,10 +615,18 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         shell = shell.replace(
             expected, 'printf "%s" "$FAKE_PROBE_OUTPUT" > "$summary_file"; '
                       'probe_rc="$FAKE_PROBE_RC"')
+        # Execute the REAL standalone sanitizer even in fake-GitHub-shell tests.
+        # Only the network probe and gh CLI are substituted.
+        guard_cmd = "python3 scripts/zcloud_dashboard_summary_guard_20261014_w1.py"
+        self.assertIn(guard_cmd, shell)
+        shell = shell.replace(
+            guard_cmd,
+            "python3 " + str(MODULE.parents[0] / "zcloud_dashboard_summary_guard_20261014_w1.py"),
+        )
         if output is None:
-            output = ("## zCloud · externe dashboardcontrole\n"
-                      "**Status:** API bereikbaar\n"
-                      "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\n")
+            output = probe.operator_markdown(
+                probe.ProbeSummary("healthy", None, 1, False, {})
+            ) + "\n"
         if published is None:
             published = expected_rc == 0
         current = "a" * 40
@@ -681,7 +689,7 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self.assertLess(manual.index("verify_main_head\n"),
                         manual.index("summary_file="))
         self.assertLess(manual.rindex("verify_main_head\n"),
-                        manual.index('cat "$summary_file" | tee'))
+                        manual.index('cat "$verified_file" | tee'))
 
     def test_workflow_bash_parses_without_network(self):
         result = subprocess.run(["bash", "-n"], input=self._workflow_shell(),
@@ -718,12 +726,32 @@ class DashboardManualMainLeaseTests(unittest.TestCase):
         self._simulate(["a" * 40, "a" * 40], 3, probe_rc=1, published=False)
 
     def test_failure_summary_can_publish_but_job_remains_failed(self):
-        body = ("## zCloud · externe dashboardcontrole\n"
-                "**Status:** API niet aantoonbaar bereikbaar\n"
-                "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\n")
+        body = probe.operator_markdown(
+            probe.ProbeSummary("unhealthy", "timeout", 1, False, {"timeout": 1})
+        ) + "\n"
         observed = self._simulate(["a" * 40, "a" * 40], 1,
                                   output=body, probe_rc=1, published=True)
         self.assertIn("niet aantoonbaar", observed)
+
+    def test_canonical_summary_guard_drops_injected_markdown(self):
+        valid = probe.operator_markdown(
+            probe.ProbeSummary("healthy", None, 1, False, {})
+        ) + "\n"
+        for injected in ("\\nSECRET_PRIVATE_LINK=http://internal.example",
+                         "\\n**Status:** API bereikbaar",
+                         "\\n## Unexpected heading",
+                         "\\n- Unexpected additional diagnostics: secret"):
+            with self.subTest(injection=injected):
+                observed = valid + injected + "\n"
+                self._simulate(["a" * 40, "a" * 40], 3,
+                               output=observed, published=False)
+
+    def test_canonical_summary_guard_drops_noncanonical_failure_receipt(self):
+        fake_failure = ("## zCloud · externe dashboardcontrole\n"
+                        "**Status:** API niet aantoonbaar bereikbaar\n"
+                        "**Herstel of herstart wordt nooit automatisch uitgevoerd.**\n")
+        self._simulate(["a" * 40, "a" * 40], 3,
+                       output=fake_failure, probe_rc=1, published=False)
 
     def test_global_timeout_replaces_partial_sensitive_output(self):
         observed = self._simulate(["a" * 40, "a" * 40], 124,
