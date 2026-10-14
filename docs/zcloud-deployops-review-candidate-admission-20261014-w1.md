@@ -10,6 +10,7 @@ Scope: isolated **offline-only** advisory for [issue #1009](https://github.com/Z
 - The manifest must include a **separately owned #1312-compatible PR-less branch inventory receipt**; its exact main SHA, full branch names and head SHAs, completion counters and never-authorizing flags must agree with the candidate manifest. If the receipt is missing, partial or mismatched, the classifier refuses the entire input. This is schema/consistency checking, not authentication of data or ownership takeover.
 - Every PR and PR-less branch reserves its changed paths. Draft and not-yet-reviewed PRs still own their files; any overlap rejects both candidates. Every changed-file cohort must additionally carry exact main/base and head SHA, `complete=true`, and an integer total count matching the entire path list. This prevents page-1-only lists (GitHub PR files can span multiple pages), stale comparisons and empty PR diffs from masquerading as conflict-free. A genuinely unchanged PR-less branch may have zero paths and reserves none.
 - Invalid JSON, duplicate keys, non-finite values, missing inventory, stale base, failed/pending/skipped tests, unknown gates, path traversal, conflicting owners and oversized input deny admission. Path conflicts conservatively include a file-to-directory replacement, Unicode NFC-equivalent names and case-only differences, rather than relying only on exact strings. Invalid snapshots are not echoed.
+- Snapshot `observed_at` must be strict UTC seconds, not older than five minutes or more than 30 seconds in the future relative to the execution clock. Timestamps are user-supplied advisory freshness constraints, **not** proof that GitHub was actually consulted at that instant.
 - Outputs `review_candidate` (a suggestion for **subsequent human review**, **not merge eligibility**), bounded reason codes and non-authorization flags.
 
 ## Running the isolated proof
@@ -25,6 +26,7 @@ The input JSON schema uses:
 ```json
 {
   "main_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "observed_at": "2026-10-14T01:00:00Z",
   "inventory": {"prs_complete": true, "branches_complete": true},
   "branch_inventory_receipt": {
     "schema": "zcloud-prless-branch-snapshot-v1",
@@ -53,6 +55,8 @@ The input JSON schema uses:
   "branches": []
 }
 ```
+
+The static `observed_at` in this example expires after five minutes; use a freshly generated UTC timestamp for a real offline fixture. **Never override the observation clock to make a stale real snapshot appear fresh.**
 
 This is a **synthetic fixture**, not a verified GitHub snapshot. The tool intentionally does not fetch from the network or validate who produced these assertions. A caller must independently obtain and authenticate complete paginated live inventories, current main, run/check attempts, branch diffs, review decisions and protected environments. Never mark a real production release green using the sample data or this script alone.
 
