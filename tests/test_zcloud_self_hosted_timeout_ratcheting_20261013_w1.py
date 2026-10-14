@@ -37,6 +37,36 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_valid_alternate_yaml_indentation_cannot_hide_private_runner(self):
+        source = """jobs:
+    deeper:
+        runs-on: [self-hosted, zcloud, vps]
+        timeout-minutes: 75
+    custom:
+        runs-on: [zcloud, vps]
+        timeout-minutes: 5
+"""
+        rows = audit.inspect_workflow(".github/workflows/deeper.yml", source, max_minutes=30)
+        self.assertEqual(["deeper", "custom"], [row.job for row in rows])
+        self.assertEqual(["over_limit", "runner_target_unknown"], [row.status for row in rows])
+
+    def test_alternate_child_key_indentation_does_not_match_nested_script(self):
+        source = """jobs:
+  proof:
+      runs-on: ubuntu-latest
+      steps:
+        - run: |
+            echo runs-on: self-hosted
+            echo timeout-minutes: 999
+  private:
+      name: private runner proof
+      runs-on: my-special-runner
+      timeout-minutes: 45
+"""
+        rows = audit.inspect_workflow(".github/workflows/alternate.yml", source, max_minutes=30)
+        self.assertEqual(["private"], [row.job for row in rows])
+        self.assertEqual(["runner_target_unknown"], [row.status for row in rows])
+
     def test_custom_label_and_group_runner_are_never_assumed_hosted(self):
         source = """jobs:
   custom:
