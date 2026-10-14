@@ -214,7 +214,7 @@ def reviewer_evidence(record):
     decision = review.get("decision")
     require(decision in ("approved", "pending", "changes_requested")
             and type(decision) is str, "invalid_review_decision")
-    actor_re = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37})\\Z")
+    actor_re = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37})\Z")
     author = review.get("author_login")
     reviewer = review.get("reviewer_login")
     require(type(author) is str and bool(actor_re.fullmatch(author))
@@ -225,7 +225,7 @@ def reviewer_evidence(record):
     require(sha(approved_sha), "invalid_review_head")
     timestamp = review.get("submitted_at")
     require(type(timestamp) is str
-            and re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z", timestamp),
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp),
             "invalid_review_time")
     try:
         datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
