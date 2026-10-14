@@ -279,6 +279,61 @@ class GitTest(unittest.TestCase):
         )
         self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
 
+    def test_mixed_static_dynamic_previous_vps_group_denied(self):
+        legacy = self.path.parent / "legacy-mixed.yml"
+        workflow = SELFHOST.replace("group: isolated", "group: unrelated")
+        workflow = workflow.replace(
+            "    runs-on: [self-hosted, zcloud, vps]",
+            "    runs-on: [self-hosted, zcloud, vps]\n"
+            "    concurrency:\n"
+            "      group: " + "$" + "{{ inputs.job_group }}\n"
+            "      cancel-in-progress: false",
+        )
+        self.assertEqual({"unrelated"}, scanner.static_concurrency_groups(workflow))
+        self.assertTrue(scanner.has_ambiguous_group(workflow))
+        legacy.write_text(workflow, encoding="utf-8")
+        base = self.commit(SAFE)
+        head = self.commit(
+            SAFE.replace("cancel-in-progress: false",
+                         "cancel-in-progress: true")
+        )
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_mixed_static_dynamic_hosted_candidate_denied(self):
+        base = self.commit(SAFE)
+        candidate = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n"
+            "      group: " + "$" + "{{ github.event.inputs.group }}\n"
+            "      cancel-in-progress: false"
+        ).replace("  cancel-in-progress: false", "  cancel-in-progress: true")
+        self.assertEqual({"isolated"}, scanner.static_concurrency_groups(candidate))
+        self.assertTrue(scanner.has_ambiguous_group(candidate))
+        head = self.commit(candidate)
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_multiple_literal_groups_are_not_ambiguous(self):
+        workflow = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n"
+            "      group: isolated-job\n"
+            "      cancel-in-progress: false"
+        )
+        self.assertEqual({"isolated", "isolated-job"},
+                         scanner.static_concurrency_groups(workflow))
+        self.assertFalse(scanner.has_ambiguous_group(workflow))
+
+    def test_missing_job_group_is_ambiguous_alongside_static(self):
+        workflow = SAFE.replace(
+            "    runs-on: ubuntu-latest",
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n"
+            "      cancel-in-progress: false"
+        )
+        self.assertTrue(scanner.has_ambiguous_group(workflow))
+
     def test_vps_without_any_group_is_not_collision_evidence(self):
         other = self.path.parent / "isolated-vps.yml"
         other.write_text(
