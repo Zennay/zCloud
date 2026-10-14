@@ -83,7 +83,11 @@ def _validate_payload(raw, *, now=None):
     if not isinstance(doc, dict):
         return "invalid_schema"
     stamp, projects = doc.get("time"), doc.get("projects")
-    if not isinstance(stamp, str) or len(stamp) > 80 or not isinstance(projects, list):
+    if (not isinstance(stamp, str) or len(stamp) > 80 or
+            not isinstance(projects, list) or
+            any(not isinstance(item, dict) for item in projects)):
+        # The dashboard iterates project objects. A fresh timestamp and a
+        # nominal list are insufficient when rows are null/scalars/arrays.
         return "invalid_schema"
     try:
         parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
