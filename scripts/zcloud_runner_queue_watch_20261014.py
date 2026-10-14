@@ -106,7 +106,8 @@ def summarize(runs, jobsets, now, *, total_count=None):
                 or not isinstance(run.get("head_sha"), str)
                 or not SHA.fullmatch(run["head_sha"])):
             raise Unavailable("run_provenance")
-        run_age = (now - _utc(run.get("created_at"))).total_seconds()
+        run_created = _utc(run.get("created_at"))
+        run_age = (now - run_created).total_seconds()
         if run_age < -5:
             raise Unavailable("future_run")
         # A GitHub workflow_run's created_at is the ORIGINAL run time.
@@ -158,7 +159,13 @@ def summarize(runs, jobsets, now, *, total_count=None):
             raise Unavailable("ambiguous_conclusion")
         if status != "completed" and job.get("conclusion") is not None:
             raise Unavailable("nonterminal_conclusion")
-        age = (now - _utc(job.get("created_at"))).total_seconds()
+        job_created = _utc(job.get("created_at"))
+        # A workflow attempt may have new jobs created long after its original
+        # workflow run (rerun). A job cannot predate its owning run. Allow a
+        # small GitHub clock/timestamp precision tolerance, then fail closed.
+        if (job_created - run_created).total_seconds() < -5:
+            raise Unavailable("job_before_workflow_run")
+        age = (now - job_created).total_seconds()
         if age < -5:
             raise Unavailable("future_job")
         if age > MAX_AGE:
