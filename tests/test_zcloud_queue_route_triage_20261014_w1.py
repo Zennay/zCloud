@@ -343,11 +343,19 @@ class QueueRouteTriageTests(unittest.TestCase):
                 entry = job(1)
                 entry["runner_id"] = 73
                 entry["runner_name"] = blank
+                # Direct semantic classifier is conservative for every
+                # whitespace-only name. Some Unicode whitespace is additionally
+                # unprintable and is denied at the GitHub schema boundary.
+                self.assertEqual(triage._assignment([entry]), "indeterminate")
                 get, _ = mock([run(1)], {1: [entry]})
-                result = triage.collect(get, clock=NOW)
-                self.assertEqual(result["runs"][0]["assignment"], "indeterminate")
-                self.assertIs(result["mutation_authorized"], False)
-                self.assertEqual(result["cancel_run_ids"], [])
+                if blank.isprintable():
+                    result = triage.collect(get, clock=NOW)
+                    self.assertEqual(result["runs"][0]["assignment"], "indeterminate")
+                    self.assertIs(result["mutation_authorized"], False)
+                    self.assertEqual(result["cancel_run_ids"], [])
+                else:
+                    with self.assertRaisesRegex(source.InventoryError, "invalid_runner_evidence"):
+                        triage.collect(get, clock=NOW)
 
     def test_runner_name_control_characters_fail_closed_before_second_read(self):
         for bad in ("runner\nNEXT", "runner\rRETURN", "runner\tTAB",
