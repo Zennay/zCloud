@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/zcloud-postsend-tab-preservation-live.yml
       - tests/test_postsend_owner_manual_workflow_20261014.py
+      - tests/test_postsend_prewrite_trust_20261014.py
       - public/zcloud-worker.user.js
       - firefox-extension/background.js
       - deploy/chatgpt-firefox.service
@@ -17,6 +18,7 @@ on:
       - deploy/chatgpt-firefox.service
       - .github/workflows/zcloud-postsend-tab-preservation-live.yml
       - tests/test_postsend_owner_manual_workflow_20261014.py
+      - tests/test_postsend_prewrite_trust_20261014.py
   workflow_dispatch:
     inputs:
       apply:
@@ -59,7 +61,7 @@ jobs:
           node tests/test_worker_tab_identity_guard.js
           node tests/test_worker_tabs_restore.js
           python3 -m unittest discover -s tests -p test_firefox_worker_prestart.py
-          python3 -m unittest -v tests.test_postsend_owner_manual_workflow_20261014
+          python3 -m unittest -v tests.test_postsend_owner_manual_workflow_20261014 tests.test_postsend_prewrite_trust_20261014
           echo "POSTSEND_TAB_IDENTITY_TESTS_GREEN=1"
 
   install:
@@ -144,12 +146,14 @@ jobs:
           node --check firefox-extension/background.js
           require_live_main
           install -d -m 0755 "$root/public"
+          require_live_main
           cp -p "$root/public/zcloud-worker.user.js" "$HOME/.local/state/zcloud-userscript.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
           require_live_main
           install -m 0644 public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
           cmp public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
           echo "LIVE_USER_SCRIPT_SOURCE_UPDATED=1"
           if [ -f "$extension/manifest.json" ]; then
+            require_live_main
             cp -p "$extension/background.js" "$HOME/.local/state/zcloud-background.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
             require_live_main
             install -m 0644 firefox-extension/background.js "$extension/background.js"
@@ -159,6 +163,7 @@ jobs:
             echo "LIVE_EXTENSION_NOT_PRESENT=1"
           fi
           if [ -f "$unit" ]; then
+            require_live_main
             cp -p "$unit" "$unit.pre-postsend-$GITHUB_RUN_ID"
           fi
           require_live_main
