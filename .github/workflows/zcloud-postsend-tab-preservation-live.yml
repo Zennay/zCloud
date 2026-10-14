@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/zcloud-postsend-tab-preservation-live.yml
       - tests/test_postsend_owner_manual_workflow_20261014.py
+      - tests/test_postsend_prewrite_trust_20261014.py
       - public/zcloud-worker.user.js
       - firefox-extension/background.js
       - deploy/chatgpt-firefox.service
@@ -17,6 +18,7 @@ on:
       - deploy/chatgpt-firefox.service
       - .github/workflows/zcloud-postsend-tab-preservation-live.yml
       - tests/test_postsend_owner_manual_workflow_20261014.py
+      - tests/test_postsend_prewrite_trust_20261014.py
   workflow_dispatch:
     inputs:
       apply:
@@ -59,7 +61,7 @@ jobs:
           node tests/test_worker_tab_identity_guard.js
           node tests/test_worker_tabs_restore.js
           python3 -m unittest discover -s tests -p test_firefox_worker_prestart.py
-          python3 -m unittest -v tests.test_postsend_owner_manual_workflow_20261014
+          python3 -m unittest -v tests.test_postsend_owner_manual_workflow_20261014 tests.test_postsend_prewrite_trust_20261014
           echo "POSTSEND_TAB_IDENTITY_TESTS_GREEN=1"
 
   install:
@@ -71,6 +73,7 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       inputs.apply == true &&
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
@@ -93,6 +96,7 @@ jobs:
           test "$GITHUB_REF" = refs/heads/main
           test "$GITHUB_ACTOR" = Zennay
           test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = "1"
           test "$APPLY_REQUESTED" = true
           [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRM_SHA" = "$GITHUB_SHA"
@@ -102,6 +106,7 @@ jobs:
           test "$current_main" = "$CONFIRM_SHA"
           test "$(hostname -s)" = vps-bb300bba
           test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
           echo "POSTSEND_OWNER_MANUAL_MAIN_VERIFIED=1"
       - name: Record running Firefox, install files, preserve session
         shell: bash
@@ -113,23 +118,46 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # The earlier job check may be stale after an Actions queue wait.
+          # Reconfirm immutable canonical main and owner immediately before
+          # any backup, mkdir, runtime file write, or daemon-reload.
+          require_live_main() {
+            test "$GITHUB_EVENT_NAME" = workflow_dispatch
+            test "$GITHUB_REPOSITORY" = Zennay/zCloud
+            test "$GITHUB_REF" = refs/heads/main
+            test "$GITHUB_ACTOR" = Zennay
+            test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+            test "$GITHUB_RUN_ATTEMPT" = "1"
+            test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+            local live_main
+            live_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+            [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+            test "$live_main" = "$GITHUB_SHA"
+          }
           root="/home/ubuntu/zennay-cloud"
           extension="$HOME/snap/firefox/common/chatgpt-project-extension"
           unit="$HOME/.config/systemd/user/chatgpt-firefox.service"
+          # Bounded PID/name evidence only: no process argv, user profile paths,
+          # URLs, prompts or OAuth tokens may reach Actions logs.
           echo "=== EXISTING FIREFOX PROCESSES (before; no signals will be sent) ==="
-          ps -eo pid=,ppid=,args= | grep -E '[f]irefox|[w]eb-ext' | head -n 50 || true
+          ps -eo pid=,ppid=,comm= | grep -Ei 'firefox|web-ext' | head -n 20 || true
           echo "=== SYSTEMD UNIT (before) ==="
           systemctl --user show chatgpt-firefox.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Restart --no-pager || true
           echo "=== INSTALL WITHOUT STOPPING BROWSER ==="
           node --check public/zcloud-worker.user.js
           node --check firefox-extension/background.js
+          require_live_main
           install -d -m 0755 "$root/public"
+          require_live_main
           cp -p "$root/public/zcloud-worker.user.js" "$HOME/.local/state/zcloud-userscript.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
+          require_live_main
           install -m 0644 public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
           cmp public/zcloud-worker.user.js "$root/public/zcloud-worker.user.js"
           echo "LIVE_USER_SCRIPT_SOURCE_UPDATED=1"
           if [ -f "$extension/manifest.json" ]; then
+            require_live_main
             cp -p "$extension/background.js" "$HOME/.local/state/zcloud-background.pre-postsend-$GITHUB_RUN_ID" 2>/dev/null || true
+            require_live_main
             install -m 0644 firefox-extension/background.js "$extension/background.js"
             cmp firefox-extension/background.js "$extension/background.js"
             echo "LIVE_EXTENSION_SOURCE_UPDATED=1"
@@ -137,9 +165,12 @@ jobs:
             echo "LIVE_EXTENSION_NOT_PRESENT=1"
           fi
           if [ -f "$unit" ]; then
+            require_live_main
             cp -p "$unit" "$unit.pre-postsend-$GITHUB_RUN_ID"
           fi
+          require_live_main
           install -D -m 0644 deploy/chatgpt-firefox.service "$unit"
+          require_live_main
           systemctl --user daemon-reload
           echo "SYSTEMD_RESTART_POLICY_INSTALLED=1"
           # The new Restart=on-abnormal policy stops profile-lock retry loops
@@ -148,6 +179,6 @@ jobs:
           echo "BROWSER_SERVICE_SIGNAL_SKIPPED=1"
           echo "=== POST DEPLOY (existing Firefox untouched) ==="
           systemctl --user show chatgpt-firefox.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Restart --no-pager || true
-          ps -eo pid=,ppid=,args= | grep -E '[f]irefox|[w]eb-ext' | head -n 50 || true
+          ps -eo pid=,ppid=,comm= | grep -Ei 'firefox|web-ext' | head -n 20 || true
           echo "NO_FIREFOX_OR_TAB_TERMINATION_ISSUED=1"
           echo "NOTE=Violentmonkey installed userscript is activated by its regular update cycle; no unsafe live-tab reload was attempted."
