@@ -51,6 +51,10 @@ def strict_json(raw):
         result = json.loads(raw, object_pairs_hook=unique,
                             parse_constant=lambda _: (_ for _ in ()).throw(Unavailable("nonfinite")),
                             parse_float=finite_float)
+    except Unavailable:
+        # Preserve the exact fail-closed reason raised by strict validation.
+        # Unavailable subclasses ValueError and must not be misclassified.
+        raise
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise Unavailable("invalid_json") from exc
     if not isinstance(result, dict):
