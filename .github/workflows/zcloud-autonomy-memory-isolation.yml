@@ -20,7 +20,11 @@ concurrency:
 jobs:
   verify:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.repository == 'Zennay/zCloud' &&
+       github.ref == 'refs/heads/main' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay') ||
       (github.event_name == 'pull_request' &&
        github.actor == 'Zennay' &&
        github.triggering_actor == 'Zennay' &&
@@ -43,7 +47,18 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
           test "$(id -un)" = ubuntu
+          # Manual proof uses only a fresh, owner-dispatched canonical main.
+          # A stale workflow_dispatch SHA may not be interpreted as current state.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            test "$GITHUB_REF" = "refs/heads/main"
+            test "$GITHUB_ACTOR" = "Zennay"
+            test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+            current_main="$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+            test -n "$current_main"
+            test "$current_main" = "$EXPECTED_ZCLOUD_SHA"
+          fi
           python3 scripts/zcloud_vps_runner_guard.py --json
 
       - name: Record live memory admission without mutating it
