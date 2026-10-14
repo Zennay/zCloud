@@ -80,7 +80,9 @@ def _assignment(jobs: list[dict]) -> str:
     for job in jobs:
         runner_id = job.get("runner_id")
         name = job.get("runner_name")
-        if runner_id == 0 and name == "":
+        # GitHub may serialize an unassigned runner as null/null or 0/""
+        # (also mixed null/empty). None never counts as a *known* runner.
+        if runner_id in (None, 0) and name in (None, ""):
             values.append("not_assigned")
         elif type(runner_id) is int and runner_id > 0 and type(name) is str and name:
             values.append("assigned")
@@ -107,8 +109,12 @@ def _validated_jobs(jobs: list[dict], run: dict) -> tuple:
             raise source.InventoryError("unknown_queue_job_state")
         if (
             len(labels) > 16 or any(len(label) > 64 for label in labels)
-            or type(job.get("runner_name")) is not str
-            or len(job["runner_name"]) > 128
+            # A key that is present with a JSON null value differs from
+            # missing runner evidence. Only null and bounded strings are valid.
+            or "runner_id" not in job or "runner_name" not in job
+            or not (job["runner_name"] is None
+                    or (type(job["runner_name"]) is str
+                        and len(job["runner_name"]) <= 128))
         ):
             raise source.InventoryError("invalid_runner_evidence")
         signatures.append((signature, job["runner_name"]))
