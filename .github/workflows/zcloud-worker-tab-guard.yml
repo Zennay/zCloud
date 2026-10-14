@@ -79,8 +79,6 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
           clean: true
-        with:
-          persist-credentials: false
       - name: Verify exact immutable main and authorized permanent runner
         env:
           APPLY: ${{ inputs.apply }}
