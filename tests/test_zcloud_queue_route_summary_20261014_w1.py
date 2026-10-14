@@ -312,6 +312,29 @@ class QueueRouteSummaryTests(unittest.TestCase):
             self.assertNotIn("SECRET", output)
             self.assertEqual(result.stdout, "")
 
+    def test_cli_replayed_observation_never_publishes_old_run_links(self):
+        for when, authorized in (
+            ("2025-01-01T00:00:00Z", False),
+            ("2099-01-01T00:00:00Z", False),
+            (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), True),
+        ):
+            with self.subTest(observed_at=when, authorized=authorized):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "data.json"
+                    summary_path = Path(tmp) / "github-step-summary.md"
+                    payload = report([record()])
+                    payload["observed_at"] = when
+                    payload["mutation_authorized"] = authorized
+                    path.write_text(json.dumps(payload), encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, str(CLI), "--report", str(path),
+                         "--collector-exit", "0", "--summary-path", str(summary_path)],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    self.assertEqual(result.returncode, 1)
+                    self.assertNotIn("Run 71", summary_path.read_text(encoding="utf-8"))
+                    self.assertNotIn("Traceback", result.stderr)
+
     def test_cli_missing_report_is_non_green_and_nonleaking(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "summary.md"
