@@ -20,6 +20,32 @@ _ROUTES = {"no_job_records", "github_hosted", "zcloud_vps", "ftmo_research",
 _ASSIGNMENT = {"no_job_records", "not_assigned", "assigned",
                "indeterminate", "mixed_assignment"}
 _STATES = {"queued", "no_job_records", "mixed_or_active"}
+_SCOPE_NL = {
+    "current_main": "huidige hoofdbranch",
+    "historical_main": "eerdere hoofdbranch",
+    "other_branch": "andere branch",
+    "foreign_repository": "externe bron",
+}
+_ROUTE_NL = {
+    "no_job_records": "geen jobgegevens",
+    "github_hosted": "GitHub-hosted route",
+    "zcloud_vps": "zCloud-VPS-route",
+    "ftmo_research": "FTMO-onderzoeksroute",
+    "other_or_mixed": "onbekende route",
+    "mixed_job_routes": "verschillende jobroutes",
+}
+_ASSIGNMENT_NL = {
+    "no_job_records": "geen jobgegevens",
+    "not_assigned": "nog geen runner toegewezen",
+    "assigned": "runner toegewezen",
+    "indeterminate": "runnertoewijzing onzeker",
+    "mixed_assignment": "gemengde runnertoewijzing",
+}
+_STATE_NL = {
+    "queued": "wachtend",
+    "no_job_records": "geen jobgegevens",
+    "mixed_or_active": "gemengde of actieve jobs",
+}
 
 
 def _unique(pairs):
@@ -133,7 +159,8 @@ def safe_summary(raw: bytes, collector_rc: int, *, now=None) -> tuple[str, int]:
             computed[bucket] = computed.get(bucket, 0) + 1
             rendered.append(
                 f'- [Run {number}](https://github.com/Zennay/zCloud/actions/runs/{number}): '
-                f'{row["scope"]} · {row["route"]} · {row["assignment"]} · {row["job_state"]}.'
+                f'{_SCOPE_NL[row["scope"]]} · {_ROUTE_NL[row["route"]]} · '
+                f'{_ASSIGNMENT_NL[row["assignment"]]} · {_STATE_NL[row["job_state"]]}.'
             )
         if summary != computed:
             raise ValueError("group_counts_disagree")
@@ -159,6 +186,32 @@ def safe_summary(raw: bytes, collector_rc: int, *, now=None) -> tuple[str, int]:
                 "- Een job zonder runnertoewijzing bewijst **niet** dat een listener defect is; "
                 "een run zonder jobrecord is evenmin een veilige annuleringskandidaat.\n"
             )
+            # Source-local route distinctions yield one operator next step,
+            # never a live restart/cancel/deploy instruction or runner verdict.
+            current_vps_unassigned = sum(
+                row["scope"] == "current_main" and row["route"] == "zcloud_vps"
+                and row["assignment"] == "not_assigned" for row in rows
+            )
+            ftmo_unassigned = sum(
+                row["route"] == "ftmo_research"
+                and row["assignment"] == "not_assigned" for row in rows
+            )
+            if current_vps_unassigned:
+                lines.append(
+                    "- Controlepunt: bekijk de zCloud-runnerlabels en repositorytoegang "
+                    "voor wachtende jobs op de huidige hoofdbranch. "
+                    "Geen bewijs dat de listener offline is.\n"
+                )
+            elif ftmo_unassigned:
+                lines.append(
+                    "- Controlepunt: onderzoek afzonderlijk de FTMO-runnerroute "
+                    "en repositorytoegang; leid hieruit geen zCloud-VPS-storing af.\n"
+                )
+            elif no_jobs:
+                lines.append(
+                    "- Controlepunt: inspecteer de workflowvoorwaarden van runs "
+                    "zonder jobgegevens voordat een runnerstoring wordt vermoed.\n"
+                )
             lines += [line + "\n" for line in rendered]
         lines.append(disclaimer)
         return "".join(lines), 0
