@@ -1,0 +1,177 @@
+name: LightUp evidence-remediation parser VPS proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/lightup-evidence-remediation-parser-vps-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-evidence-remediation-parser-vps-proof
+  cancel-in-progress: true
+
+env:
+  LIGHTUP_REPO: /home/ubuntu/zennay-cloud/repos/lightup
+  PURITY_BRANCH: chatgpt/st5-implementation-plan-revision-request-parser-input-purity-20261007
+  PURITY_EXPECTED_SHA: 20d82a9b7d863cf480a892b99c349efe36028a4a
+  MAPPING_BRANCH: chatgpt/st5-implementation-plan-revision-request-exact-mapping-red-20261007
+  MAPPING_EXPECTED_SHA: 6ff8097797f178dccffe06f95421a48296dfaea4
+
+jobs:
+  prove:
+    name: Parser contracts on permanent vps-bb300bba
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard permanent VPS runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Snapshot exact LightUp children
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "${LIGHTUP_REPO}/.git"
+
+          git -C "${LIGHTUP_REPO}" fetch --prune origin             "+refs/heads/${PURITY_BRANCH}:refs/remotes/origin/lightup-parser-purity-proof"             "+refs/heads/${MAPPING_BRANCH}:refs/remotes/origin/lightup-exact-mapping-proof"
+
+          PURITY_ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-parser-purity-proof^{commit})"
+          MAPPING_ACTUAL_SHA="$(git -C "${LIGHTUP_REPO}" rev-parse refs/remotes/origin/lightup-exact-mapping-proof^{commit})"
+          test "${PURITY_ACTUAL_SHA}" = "${PURITY_EXPECTED_SHA}"
+          test "${MAPPING_ACTUAL_SHA}" = "${MAPPING_EXPECTED_SHA}"
+
+          TMP_ROOT="${RUNNER_TEMP}/lightup-evidence-remediation-parser-${GITHUB_RUN_ID}"
+          PURITY_SNAPSHOT="${TMP_ROOT}/purity"
+          MAPPING_SNAPSHOT="${TMP_ROOT}/mapping"
+          rm -rf "${TMP_ROOT}"
+          mkdir -p "${PURITY_SNAPSHOT}" "${MAPPING_SNAPSHOT}"
+
+          git -C "${LIGHTUP_REPO}" archive "${PURITY_ACTUAL_SHA}" | tar -x -C "${PURITY_SNAPSHOT}"
+          git -C "${LIGHTUP_REPO}" archive "${MAPPING_ACTUAL_SHA}" | tar -x -C "${MAPPING_SNAPSHOT}"
+
+          echo "LIGHTUP_TMP_ROOT=${TMP_ROOT}" >> "${GITHUB_ENV}"
+          echo "PURITY_SNAPSHOT=${PURITY_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "MAPPING_SNAPSHOT=${MAPPING_SNAPSHOT}" >> "${GITHUB_ENV}"
+          echo "PURITY_ACTUAL_SHA=${PURITY_ACTUAL_SHA}" >> "${GITHUB_ENV}"
+          echo "MAPPING_ACTUAL_SHA=${MAPPING_ACTUAL_SHA}" >> "${GITHUB_ENV}"
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python 3.11 targeted contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "${PURITY_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_implementation_plan_revision_request_parser_input_purity
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          cd "${MAPPING_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          LOG="${RUNNER_TEMP}/lightup-exact-mapping-py311.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_implementation_plan_revision_request_exact_mapping >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          grep -Fq "Ran 2 tests" "${LOG}"
+          grep -Fq "FAILED (failures=1)" "${LOG}"
+          grep -Fq "test_dict_subclass_cannot_substitute_persisted_reviewer_provenance" "${LOG}"
+          grep -Fq "test_exact_builtin_dict_control_remains_accepted" "${LOG}"
+          grep -Fq "AssertionError: ValueError not raised" "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Setup Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Python 3.14 targeted contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "${PURITY_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_implementation_plan_revision_request_parser_input_purity
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+          cd "${MAPPING_SNAPSHOT}"
+          PYTHONPATH=src:tests python -m compileall -q src tests
+          LOG="${RUNNER_TEMP}/lightup-exact-mapping-py314.log"
+          set +e
+          PYTHONPATH=src:tests python -m unittest -v             test_future_remediation_implementation_plan_revision_request_exact_mapping >"${LOG}" 2>&1
+          RC=$?
+          set -e
+          cat "${LOG}"
+          test "${RC}" -ne 0
+          grep -Fq "Ran 2 tests" "${LOG}"
+          grep -Fq "FAILED (failures=1)" "${LOG}"
+          grep -Fq "test_dict_subclass_cannot_substitute_persisted_reviewer_provenance" "${LOG}"
+          grep -Fq "test_exact_builtin_dict_control_remains_accepted" "${LOG}"
+          grep -Fq "AssertionError: ValueError not raised" "${LOG}"
+          PYTHONPATH=src python scripts/check_safety_canaries.py
+
+      - name: Write exact-head receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          RECEIPT_DIR="${RUNNER_TEMP}/lightup-evidence-remediation-parser-receipt"
+          mkdir -p "${RECEIPT_DIR}"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              "project": "LightUp",
+              "focus": "evidence-remediation",
+              "host": os.uname().nodename,
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "python": ["3.11", "3.14"],
+              "parser_purity_issue": 504,
+              "parser_purity_pr": 506,
+              "parser_purity_sha": os.environ["PURITY_ACTUAL_SHA"],
+              "parser_purity": "green_targeted_both",
+              "exact_mapping_issue": 509,
+              "exact_mapping_pr": 510,
+              "exact_mapping_sha": os.environ["MAPPING_ACTUAL_SHA"],
+              "exact_mapping": "expected_red_targeted_both",
+              "exact_mapping_expected_tests": 2,
+              "exact_mapping_expected_failures": 1,
+              "safety_canaries": "green_both_snapshots_both_pythons",
+              "lightup_production_source_changes": 0,
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "lightup-evidence-remediation-parser-receipt" / "receipt.json"
+          path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(payload, sort_keys=True))
+          PY
+
+      - name: Upload exact-head receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightup-evidence-remediation-parser-vps-proof
+          path: ${{ runner.temp }}/lightup-evidence-remediation-parser-receipt/receipt.json
+          if-no-files-found: error
+
+      - name: Cleanup snapshots
+        if: always()
+        shell: bash
+        run: rm -rf "${LIGHTUP_TMP_ROOT:-}"
