@@ -1,0 +1,48 @@
+name: zCloud retired LightUp CSV historical VPS proofs (hosted)
+
+# Source-only. Never schedules, accesses or changes permanent VPS jobs.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/lightup-pr956-exact-head-proof.yml"
+      - ".github/workflows/lightup-pr959-exact-head-proof.yml"
+      - ".github/workflows/lightup-pr960-exact-head-proof.yml"
+      - ".github/workflows/lightup-pr962-exact-head-proof.yml"
+      - ".github/workflows/zcloud-lightup-csv-proof-retirement-hosted-20261014-w3.yml"
+      - "tests/test_zcloud_lightup_csv_proof_retirement_20261014_w3.py"
+      - "docs/deployops-lightup-csv-proof-retirement-20261014-w3.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lightup-csv-proof-retirement-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  prove-retired:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout immutable owner PR candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+      - name: Prove immutable head and read-only retired proof paths
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 -m unittest -v tests.test_zcloud_lightup_csv_proof_retirement_20261014_w3
+          echo "LIGHTUP_CSV_HISTORICAL_PROOFS_RETIRED_HOSTED_GREEN=1"
