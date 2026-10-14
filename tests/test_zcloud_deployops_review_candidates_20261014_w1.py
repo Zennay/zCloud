@@ -343,6 +343,38 @@ class ReviewQueueTests(unittest.TestCase):
     def test_empty_checks_denied(self):
         self.assert_denied(lambda d: d['prs'][0].update(checks=[]))
 
+    def test_cli_refuses_symlink_without_following(self):
+        with tempfile.TemporaryDirectory() as t:
+            private = pathlib.Path(t) / 'private.json'
+            private.write_text('{"secret":"hidden"}')
+            link = pathlib.Path(t) / 'manifest.json'
+            link.symlink_to(private)
+            r = subprocess.run([sys.executable, str(SCRIPT), str(link)],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2)
+            self.assertNotIn('hidden', r.stdout + r.stderr)
+            self.assertFalse(json.loads(r.stdout)['release_authorized'])
+
+    @unittest.skipUnless(hasattr(__import__('os'), 'mkfifo'), 'requires POSIX FIFO')
+    def test_cli_refuses_fifo_without_hanging(self):
+        import os
+        with tempfile.TemporaryDirectory() as t:
+            fifo = pathlib.Path(t) / 'pipe.json'
+            os.mkfifo(fifo)
+            r = subprocess.run([sys.executable, str(SCRIPT), str(fifo)],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2)
+            self.assertFalse(json.loads(r.stdout)['release_authorized'])
+
+    def test_cli_refuses_oversized_regular_file(self):
+        with tempfile.TemporaryDirectory() as t:
+            big = pathlib.Path(t) / 'big.json'
+            big.write_bytes(b' ' * (mod.MAX_BYTES + 1))
+            r = subprocess.run([sys.executable, str(SCRIPT), str(big)],
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2)
+            self.assertEqual(json.loads(r.stdout)['error'], 'oversized_snapshot')
+
     def test_cli_fail_closed_does_not_leak_snapshot(self):
         with tempfile.TemporaryDirectory() as t:
             path = pathlib.Path(t) / 'secret-token-manifest.json'
