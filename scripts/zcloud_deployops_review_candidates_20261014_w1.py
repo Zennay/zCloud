@@ -44,6 +44,22 @@ def paths(value):
     return set(value)
 
 
+def complete_files(record, main_sha, head_sha):
+    """Deny partial/renumbered file inventories and SHA-unspecific compares."""
+    f = obj(record.get("files_evidence"), "files_evidence")
+    require(f.get("complete") is True, "incomplete_file_evidence")
+    n = f.get("total_count")
+    require(type(n) is int and 0 <= n <= MAX_ITEMS, "invalid_file_total")
+    require(f.get("head_sha") == head_sha and f.get("base_sha") == main_sha
+            and sha(f.get("head_sha")) and sha(f.get("base_sha")),
+            "file_compare_sha_mismatch")
+    listed = record.get("files")
+    require(type(listed) is list and len(listed) == n, "truncated_file_inventory")
+    if n == 0:
+        return set()
+    return paths(listed)
+
+
 def snapshot(report):
     d = obj(report, "snapshot")
     require(sha(d.get("main_sha")), "invalid_main_sha")
@@ -86,7 +102,8 @@ def snapshot(report):
             require(sha(c.get("head_sha")) and c.get("conclusion") in
                     ("success", "failure", "pending", "cancelled", "skipped", "neutral"),
                     "invalid_check")
-        files = paths(p.get("files"))
+        files = complete_files(p, d["main_sha"], p["head_sha"])
+        require(bool(files), "empty_pr_changes")
         prs.append((n, p, files))
         all_owners.append((f"pr:{n}", files))
     seen_branches = set()
@@ -97,7 +114,8 @@ def snapshot(report):
                 "invalid_branch_identity")
         seen_branches.add(name)
         require(sha(b.get("head_sha")), "invalid_branch_sha")
-        all_owners.append((f"branch:{name}", paths(b.get("files"))))
+        all_owners.append((f"branch:{name}",
+                           complete_files(b, d["main_sha"], b["head_sha"])))
     out = []
     for n, p, files in sorted(prs, key=lambda x: x[0]):
         reasons = []
