@@ -1,0 +1,44 @@
+name: zCloud RaiseAI queue cancel guard offline (hosted only)
+
+# Simulates every cancel path against a fake gh executable. Never contacts
+# RaiseAI nor allocates a self-hosted runner.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/raiseai-gateway-deploy-queue-cleanup.yml"
+      - ".github/workflows/zcloud-raiseai-queue-cancel-guard-hosted-20261014-w5.yml"
+      - "tests/test_zcloud_raiseai_gateway_queue_cleanup_guard_20261014_w5.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: raiseai-queue-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  deny-first:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable PR head without retained credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Prove exact SHA and simulated cancellation denial/allow boundaries
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 -m unittest -v tests.test_zcloud_raiseai_gateway_queue_cleanup_guard_20261014_w5
+          echo RAISEAI_QUEUE_CANCEL_DENY_FIRST_HOSTED_GREEN=1
