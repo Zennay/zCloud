@@ -92,6 +92,9 @@ jobs:
           test "$current_main" = "$CONFIRMED_SHA"
           test "$(hostname)" = 'vps-bb300bba'
           test "$(id -un)" = 'ubuntu'
+          test "$(id -u)" = '1000'
+          test "$RUNNER_NAME" = 'zcloud-vps-1'
+          test "$RUNNER_OS" = 'Linux'
           # Runner identity guard returns trusted status only. Its JSON also
           # includes machine and runner names; never leak those to Actions.
           if ! python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null 2>&1; then
@@ -120,6 +123,13 @@ jobs:
           current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$current_main"
           test "$current_main" = "$CONFIRMED_SHA"
+          # A stale/misrouted job must not observe the wrong VPS even if
+          # a workflow job label was accepted by Actions earlier.
+          test "$(hostname)" = 'vps-bb300bba'
+          test "$(id -un)" = 'ubuntu'
+          test "$(id -u)" = '1000'
+          test "$RUNNER_NAME" = 'zcloud-vps-1'
+          test "$RUNNER_OS" = 'Linux'
           # Private process IDs, unit descriptions, user paths and browser
           # metadata must never be printed to public Actions output.
           # This module emits a bounded allowlisted JSON summary only.

@@ -204,6 +204,23 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
                         observation.index("python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py"))
         self.assertNotIn("systemctl ", gate)
 
+    def test_canonical_runner_identity_checked_again_at_time_of_observation(self):
+        vps = self.job(self.text, "inspect")
+        for required in (
+            """test "$(hostname)" = 'vps-bb300bba'""",
+            """test "$(id -un)" = 'ubuntu'""",
+            """test "$(id -u)" = '1000'""",
+            """test "$RUNNER_NAME" = 'zcloud-vps-1'""",
+            """test "$RUNNER_OS" = 'Linux'""",
+        ):
+            with self.subTest(required=required):
+                self.assertEqual(vps.count(required), 2)
+        self.assertLess(vps.index("test \"$RUNNER_NAME\" = 'zcloud-vps-1'"),
+                        vps.index("python3 scripts/zcloud_vps_runner_guard.py"))
+        observe = vps.split("- name: Read-only bounded worker service inventory", 1)[1]
+        self.assertLess(observe.index("test \"$RUNNER_NAME\" = 'zcloud-vps-1'"),
+                        observe.index("python3 scripts/zcloud_v2_legacy_service_inventory_20261014.py"))
+
     def test_runner_identity_guard_is_silent_and_fail_closed(self):
         workflow = self.job(self.text, "inspect")
         identity = workflow.split(
