@@ -26,6 +26,7 @@ RUN_ROUTE = "/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100"
 _LIMIT_RUNS = 40
 _LIMIT_JOBS = 100
 _MAX_SECONDS = 45
+_MAX_GITHUB_ID = (1 << 63) - 1
 # Only unambiguous, familiar GitHub-hosted image requests merit that label.
 # Unknown/custom/missing labels are observational OTHER, never proof that
 # GitHub-hosted capacity or the dedicated VPS listener is healthy.
@@ -99,6 +100,8 @@ def _validated_jobs(jobs: list[dict], run: dict) -> tuple:
     signatures = []
     for job in jobs:
         signature = source._job_signature(job)
+        if job["id"] > _MAX_GITHUB_ID:
+            raise source.InventoryError("oversized_job_identity")
         if (
             job["run_id"] != run["id"]
             or job["run_attempt"] != run["run_attempt"]
@@ -148,6 +151,9 @@ def collect(api_get, *, clock=None, monotonic_clock=None) -> dict:
                              query={"status": "queued", "per_page": "100"})
     # Validate the entire census before fetching individual jobs.
     identities = [source._run_identity(run) for run in run_rows]
+    # Do not request a job endpoint for a forged, non-GitHub-size run ID.
+    if any(run["id"] > _MAX_GITHUB_ID for run in run_rows):
+        raise source.InventoryError("oversized_run_identity")
     if any(run["status"] != "queued" for run in run_rows):
         raise source.InventoryError("nonqueued_run_in_queued_snapshot")
     first_jobs = [_jobs(api_get, run) for run in run_rows]
