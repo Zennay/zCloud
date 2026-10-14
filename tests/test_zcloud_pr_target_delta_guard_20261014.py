@@ -880,6 +880,67 @@ other: "q#${{ github.event.pull_request.title }}"
         self.assertIn("secrets.FOO", clean)
         self.assertIn("pull_request.title", clean)
 
+
+    def test_inline_step_env_pr_body_is_executed_by_shell(self):
+        candidate = SAFE + """      - run: bash -c "$PAYLOAD"
+        env: {PAYLOAD: "${{ github.event.pull_request.body }}"}
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, candidate))
+
+    def test_inline_job_env_pr_title_reaches_run(self):
+        candidate = """name: flow job map
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    env: {SCRIPT: "${{ github.event.pull_request.title }}"}
+    steps:
+      - run: sh -c "$SCRIPT"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_inline_global_env_pr_object_reaches_run(self):
+        candidate = """name: flow root map
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env: {COMMAND: "${{ toJSON(github.event.pull_request) }}"}
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - run: eval "$COMMAND"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_inline_global_env_tainted_checkout(self):
+        candidate = """name: flow checkout
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env: {UNTRUSTED_REF: "${{ github.event.pull_request.head.sha }}"}
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "${{ env.UNTRUSTED_REF }}"
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(candidate))
+
+    def test_inline_env_metadata_unused_by_dynamic_command(self):
+        candidate = SAFE + """      - env: {DATA: "${{ github.event.pull_request.body }}"}
+        run: bash -c "$OTHER"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
