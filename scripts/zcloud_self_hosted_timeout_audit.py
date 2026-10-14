@@ -15,7 +15,12 @@ WORKFLOW_DIR = Path(".github/workflows")
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
 MAX_WORKFLOW_FILES = 512
 MAX_WORKFLOW_FILE_BYTES = 1_048_576
-JOB_RE = re.compile(r"^(?P<indent> +)(?P<job>[A-Za-z0-9_-]+):[ \t]*(?:#.*)?$")
+JOB_RE = re.compile(
+    r"""^(?P<indent> +)(?:["']?(?P<job>[A-Za-z0-9_-]+)["']?):[ \t]*(?:#.*)?$"""
+)
+ROOT_JOBS_RE = re.compile(r"""^(?:jobs|'jobs'|"jobs"):[ \t]*(?:#.*)?$""")
+RUNS_ON_KEY_RE = r"""(?:runs-on|'runs-on'|"runs-on")"""
+TIMEOUT_KEY_RE = r"""(?:timeout-minutes|'timeout-minutes'|"timeout-minutes")"""
 SELF_HOSTED_LABEL_RE = re.compile(r"(?<![\w-])self-hosted(?![\w-])", re.IGNORECASE)
 # An expression can resolve to a self-hosted runner at execution time.
 DYNAMIC_RUNNER_RE = re.compile(r"\$\{\{|\*[A-Za-z_][\w-]*")
@@ -60,7 +65,7 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
 
     for index, line in enumerate(lines):
         if not in_jobs:
-            if re.fullmatch(r"jobs:\s*(?:#.*)?", line):
+            if ROOT_JOBS_RE.fullmatch(line):
                 in_jobs = True
             continue
 
@@ -97,7 +102,7 @@ def _job_key_indent(block: str) -> int:
 
 def _runs_on_text(block: str, *, key_indent: int) -> str | None:
     match = re.search(
-        rf"(?m)^ {{{key_indent}}}runs-on:[ \t]*(?P<value>[^#\n]*)",
+        rf"(?m)^ {{{key_indent}}}{RUNS_ON_KEY_RE}:[ \t]*(?P<value>[^#\n]*)",
         block,
     )
     if match is None:
@@ -109,7 +114,7 @@ def _runs_on_text(block: str, *, key_indent: int) -> str | None:
     lines = block.splitlines()
     for index, line in enumerate(lines):
         if re.match(
-            rf"^ {{{key_indent}}}runs-on:[ \t]*(?:[>|][+-]?)?(?:#.*)?$",
+            rf"^ {{{key_indent}}}{RUNS_ON_KEY_RE}:[ \t]*(?:[>|][+-]?)?(?:#.*)?$",
             line,
         ):
             continuation: list[str] = []
@@ -131,7 +136,12 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
         key_indent = _job_key_indent(block)
         runs_on = _runs_on_text(block, key_indent=key_indent)
         if runs_on is None:
-            continue
+            # A job-level YAML merge alias may inherit an implicit runs-on.
+            # Without a resolved AST this cannot be accepted as hosted.
+            if re.search(rf"(?m)^ {{{key_indent}}}<<:[ \t]*\*[A-Za-z_]", block):
+                runs_on = "*yaml_inherited_runner"
+            else:
+                continue
         runner_is_dynamic = bool(DYNAMIC_RUNNER_RE.search(runs_on))
         runner_has_self_hosted_label = bool(SELF_HOSTED_LABEL_RE.search(runs_on))
         runner_is_unknown = (
@@ -143,7 +153,7 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
             continue
 
         timeout_match = re.search(
-            rf"(?m)^ {{{key_indent}}}timeout-minutes:[ \t]*(?P<value>[^#\n]+?)[ \t]*$",
+            rf"(?m)^ {{{key_indent}}}{TIMEOUT_KEY_RE}:[ \t]*(?P<value>[^#\n]+?)[ \t]*$",
             block,
         )
         if timeout_match is None:
