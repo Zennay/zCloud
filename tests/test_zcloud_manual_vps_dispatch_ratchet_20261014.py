@@ -135,6 +135,20 @@ class ManualDispatchPolicy(unittest.TestCase):
         new = workflow(job="another")
         self.assertDenied(new)
 
+    def test_modified_legacy_unguarded_job_is_new_debt(self):
+        old = workflow()
+        new = old.replace(b"echo evidence-only", b"sudo systemctl restart dangerous")
+        self.assertDenied(new)
+        result = guard.evaluate({WF: old}, {WF: new})
+        self.assertEqual(1, result["new_debt_count"])
+
+    def test_unchanged_unguarded_job_with_unrelated_workflow_edit_is_not_new_debt(self):
+        old = workflow()
+        new = old.replace(b"name: proof", b"name: renamed proof")
+        out = guard.evaluate({WF: old}, {WF: new})
+        self.assertTrue(out["ok"])
+        self.assertEqual(0, out["new_debt_count"])
+
     def test_fixing_legacy_debt_is_permitted(self):
         old = workflow()
         new = workflow(if_statement=SAFE_IF)
