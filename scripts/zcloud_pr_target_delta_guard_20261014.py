@@ -272,6 +272,26 @@ def _job_env_run_risks(clean: str) -> Counter[str]:
     return found
 
 
+def _workflow_env_run_risks(clean: str) -> Counter[str]:
+    """Detect untrusted workflow-level env forwarded to executable shell code."""
+    header = re.search(r"""(?m)^['"]?env['"]?[ \t]*:[ \t]*$""", clean)
+    if not header:
+        return Counter()
+    # Only the top-level env mapping is inherited by every job. A later
+    # root key ends this mapping, independently of its position in the file.
+    rest = clean[header.start():]
+    boundary = re.search(r"""(?m)^[A-Za-z_][\w-]*[ \t]*:""", rest[header.end()-header.start():])
+    env_section = rest[:header.end()-header.start()+boundary.start()] if boundary else rest
+    found: Counter[str] = Counter()
+    for step in executable_steps(clean):
+        run = RUN_STEP.search(step)
+        if run is not None:
+            found.update(_env_expressions_executed_by_run(
+                env_section, step[run.start():]
+            ))
+    return found
+
+
 def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
     """Count untrusted expressions only inside the step that carries risk.
 
@@ -306,6 +326,7 @@ def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
                 _env_expressions_executed_by_run(step[:command.start()], command_source)
             )
     found["pr_source_in_run_job"].update(_job_env_run_risks(clean))
+    found["pr_source_in_run_job"].update(_workflow_env_run_risks(clean))
     return {reason: count for reason, count in found.items() if count}
 
 
