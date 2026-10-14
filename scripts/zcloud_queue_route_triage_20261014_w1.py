@@ -180,10 +180,13 @@ def collect(api_get, *, clock=None, monotonic_clock=None) -> dict:
             scope = "current_main"
         route = _route(jobs)
         assignment = _assignment(jobs)
+        # Do not collapse completed, actively running and approval-pending
+        # jobs into one "mixed_or_active" bucket: that would make a queued
+        # workflow look like its jobs are all waiting for a runner.
+        states = {job["status"] for job in jobs}
         state = (
-            "queued" if jobs and all(j["status"] == "queued" for j in jobs)
-            else "no_job_records" if not jobs
-            else "mixed_or_active"
+            "no_job_records" if not jobs else
+            next(iter(states)) if len(states) == 1 else "mixed_job_states"
         )
         bucket = f"{scope}/{route}/{assignment}/{state}"
         categories[bucket] = categories.get(bucket, 0) + 1
