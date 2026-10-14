@@ -370,6 +370,42 @@ class ReviewQueueTests(unittest.TestCase):
             self.assertFalse(json.loads(r.stdout)['release_authorized'])
             self.assertNotIn('Traceback', r.stdout + r.stderr)
 
+    def test_grouped_blocker_counts_and_no_double_count_per_reason(self):
+        d = payload()
+        second = copy.deepcopy(d['prs'][0])
+        second['number'] = 13
+        second['files'] = ['scripts/b.py']
+        second['draft'] = True
+        second['owner_approved'] = False
+        second['checks'][0]['head_sha'] = S
+        d['prs'].append(second)
+        report = snap(d)
+        self.assertEqual(report['blocked_candidate_count'], 1)
+        self.assertEqual(report['blocker_counts']['draft'], 1)
+        self.assertEqual(report['blocker_counts']['owner_review_missing'], 1)
+        self.assertEqual(report['blocker_counts']['exact_head_checks_not_green'], 1)
+        self.assertEqual(report['blocker_counts']['overlapping_owner'], 0)
+        display = mod.markdown(report)
+        self.assertIn('Nog niet reviewgereed: **1**', display)
+        self.assertIn('concept-PR: **1', display)
+        self.assertNotIn('scripts/b.py', display)
+
+    def test_grouped_blockers_cap_show_three_even_if_thirty_pr_limit(self):
+        d = payload()
+        d['prs'] = []
+        for n in range(1, 35):
+            p = copy.deepcopy(payload()['prs'][0])
+            p['number'] = n
+            p['draft'] = True
+            p['files'] = [f'path/item-{n}.py']
+            d['prs'].append(p)
+        report = snap(d)
+        self.assertEqual(report['blocked_candidate_count'], 34)
+        self.assertEqual(report['blocker_counts']['draft'], 34)
+        display = mod.markdown(report)
+        self.assertIn('concept-PR: **34', display)
+        self.assertIn('Nog 4 PR', display)
+
     def test_markdown_never_authorizes_release(self):
         d = payload(); d['gates'] = dict.fromkeys(d['gates'], 'closed')
         report = mod.markdown(snap(d))
