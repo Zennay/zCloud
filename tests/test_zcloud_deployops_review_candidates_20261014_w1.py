@@ -19,7 +19,7 @@ def payload():
     return {'main_sha': S, 'inventory': {'prs_complete': True, 'branches_complete': True},
             'gates': {'580': 'open', '1089': 'open', '1135': 'open'},
             'prs': [{'number': 12, 'head_sha': H, 'base_sha': S,
-                     'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'], 'required_checks': ['tests'],
+                     'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}, 'required_checks': ['tests'],
                      'checks': [{'name': 'tests', 'head_sha': H, 'conclusion': 'success'}]}],
             'branches': []}
 
@@ -66,11 +66,52 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
 
     def test_prless_branch_collision_denied(self):
-        d = payload(); d['branches'] = [{'name': 'owner-active', 'head_sha': H, 'files': ['scripts/a.py']}]
+        d = payload(); d['branches'] = [{'name': 'owner-active', 'head_sha': H, 'files': ['scripts/a.py'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}}]
         self.assertEqual(mod.snapshot(d)['review_candidate_count'], 0)
 
     def test_disjoint_branch_not_blocking(self):
-        d = payload(); d['branches'] = [{'name': 'owner-active', 'head_sha': H, 'files': ['scripts/b.py']}]
+        d = payload(); d['branches'] = [{'name': 'owner-active', 'head_sha': H, 'files': ['scripts/b.py'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}}]
+        self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
+
+    def test_per_pr_incomplete_diff_denied(self):
+        self.assert_denied(lambda d: d['prs'][0]['files_evidence'].update(complete=False))
+
+    def test_per_pr_truncated_diff_denied(self):
+        self.assert_denied(lambda d: d['prs'][0]['files_evidence'].update(total_count=301))
+
+    def test_file_sha_mismatch_denied(self):
+        self.assert_denied(lambda d: d['prs'][0]['files_evidence'].update(head_sha=S))
+
+    def test_file_base_drift_denied(self):
+        self.assert_denied(lambda d: d['prs'][0]['files_evidence'].update(base_sha=H))
+
+    def test_file_count_bool_denied(self):
+        self.assert_denied(lambda d: d['prs'][0]['files_evidence'].update(total_count=True))
+
+    def test_file_count_negative_denied(self):
+        self.assert_denied(lambda d: d['prs'][0]['files_evidence'].update(total_count=-1))
+
+    def test_file_evidence_missing_denied(self):
+        self.assert_denied(lambda d: d['prs'][0].pop('files_evidence'))
+
+    def test_unbound_branch_file_evidence_denied(self):
+        d = payload()
+        d['branches'] = [{'name': 'owner', 'head_sha': H, 'files': ['scripts/z.py'],
+                          'files_evidence': {'complete': False, 'total_count': 1, 'head_sha': H, 'base_sha': S}}]
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_zero_change_pr_denied(self):
+        d = payload()
+        d['prs'][0]['files_evidence']['total_count'] = 0
+        d['prs'][0]['files'] = []
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_empty_unmerged_branch_is_safe(self):
+        d = payload()
+        d['branches'] = [{'name': 'empty', 'head_sha': H, 'files': [],
+                          'files_evidence': {'complete': True, 'total_count': 0, 'head_sha': H, 'base_sha': S}}]
         self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
 
     def test_incomplete_inventory_denied(self):
