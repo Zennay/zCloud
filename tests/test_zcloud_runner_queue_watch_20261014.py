@@ -217,6 +217,7 @@ class QueueWatchTests(unittest.TestCase):
         self.assertEqual(report["recent_assignments"], 0)
         self.assertEqual(report["stale_unassigned"], 0)
         self.assertEqual(report["queue_jobs_observed"], 0)
+        self.assertEqual(report["skipped"], 0)
         self.assertFalse(report["runner_offline_verified"])
 
     def test_cancelled_with_runner_is_assigned_failure_not_unassigned(self):
