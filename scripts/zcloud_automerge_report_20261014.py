@@ -63,31 +63,32 @@ def summary(report):
     if len(rec) > labeled or merged > 1 or (mode == "dry_run" and merged != 0):
         raise InvalidReport("inconsistent_receipts")
     lines = [
-        "## zCloud autonomous integration — source-only evidence", "",
-        f"- **Mode:** `{mode}`",
-        f"- **Open PRs inventoried:** {scanned}",
-        f"- **Explicitly opted-in (`zcloud-automerge-ready`):** {labeled}",
-        f"- **Draft PRs:** {draft}",
-        f"- **Unlabeled non-draft PRs (review only):** {review}",
-        f"- **Confirmed source PR merges in this run:** {merged}",
-        "- **Worker, VPS runner, production deploy and SQLite health:** not verified",
-        "- **Automatic authorization from this report:** none",
+        "## zCloud autonome PR-integratie — bronoverzicht", "",
+        f"- **Modus:** `{mode}`",
+        f"- **Open PR's gecontroleerd:** {scanned}",
+        f"- **Expliciet toegelaten (`zcloud-automerge-ready`):** {labeled}",
+        f"- **Concept-PR's:** {draft}",
+        f"- **PR's zonder label (alleen bekijken):** {review}",
+        f"- **Door de integrator gerapporteerde bronmerges:** {merged}",
+        "- **Live workers, VPS-runner, productie en SQLite:** niet gecontroleerd",
+        "- **Nieuwe goedkeuringen vanuit dit rapport:** geen",
     ]
     if not labeled:
-        lines.append("- **Next action:** no PR carries the required per-PR opt-in label;"
-                     " review candidates manually, verify source checks/ownership,"
-                     " then explicitly authorize only intended PRs.")
+        lines.append("- **Vervolg:** geen PR heeft het verplichte expliciete label."
+                     " Controleer eigenaarschap, broncode en tests eerst; keur"
+                     " alleen de bedoelde PR daarna afzonderlijk goed.")
     if ids:
-        lines.append("- **Latest unlabeled, non-draft PR IDs for manual review"
-                     " (not merge-approved):** " + ", ".join(
+        lines.append("- **Recente PR-nummers zonder label (handmatig beoordelen,"
+                     " NIET goedgekeurd voor merge):** " + ", ".join(
                          f"#{n}" for n in ids))
     if reasons:
-        lines.extend(["", "| Decision | Number |", "| --- | ---: |"])
+        lines.extend(["", "| Besluitcode | Aantal |", "| --- | ---: |"])
         for reason, count in sorted(reasons.items()):
             lines.append(f"| `{reason}` | {count} |")
-    lines.extend(["", "A GitHub-hosted integration result is **not** evidence"
-                  " of live generation, self-hosted runner assignment or a"
-                  " successful production release."])
+    lines.extend(["", "Dit is een door de integrator opgesteld bronoverzicht."
+                  " De gemelde merge is hier niet onafhankelijk via GitHub"
+                  " herbevestigd. Een GitHub-hosted test bewijst **geen**"
+                  " live tekstgeneratie, werkende VPS-runner of productie-uitrol."])
     return "\n".join(lines) + "\n"
 
 
@@ -115,13 +116,16 @@ def main(argv=None):
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 2:
         return 2
+    valid = True
     try:
         result = read_report(args[0])
     except (InvalidReport, OSError):
-        result = ("## zCloud autonomous integration — report unavailable\n\n"
-                  "Source integration result is not confirmed by this summary.\n")
-    Path(args[1]).open("a", encoding="utf-8").write(result)
-    return 0
+        valid = False
+        result = ("## zCloud PR-integratie — bewijs ontbreekt of is ongeldig\n\n"
+                  "Deze samenvatting bevestigt geen bronmerge of productie-uitrol.\n")
+    with Path(args[1]).open("a", encoding="utf-8") as target:
+        target.write(result)
+    return 0 if valid else 2
 
 
 if __name__ == "__main__":
