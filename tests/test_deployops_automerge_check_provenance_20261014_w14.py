@@ -6,7 +6,7 @@ import json
 import unittest
 
 from scripts import zcloud_autonomous_pr_integrator as engine
-from tests.test_zcloud_autonomous_pr_integrator import A, B, ENV, checks, files, pr
+from tests.test_zcloud_autonomous_pr_integrator import A, B, ENV, checks, files, pr, optional_cpu_check
 
 
 class BoundHostedSmokeTests(unittest.TestCase):
@@ -22,6 +22,7 @@ class BoundHostedSmokeTests(unittest.TestCase):
             "tests.test_zcloud_autonomous_pr_integrator",
             "tests.test_deployops_automerge_trust_roots_20261014_w12",
             "tests.test_deployops_automerge_check_provenance_20261014_w14",
+            "tests.test_deployops_automerge_file_count_cpu_20261014_w15",
             "tests.test_zcloud_automerge_report_20261014",
         ):
             with self.subTest(module=module):
@@ -87,8 +88,7 @@ class BoundHostedSmokeTests(unittest.TestCase):
                              "duplicate_required_check")
 
     def test_optional_queued_vps_does_not_impersonate_required_hosted_check(self):
-        optional = {"head_sha": A, "name": "cpu-snapshot",
-                    "status": "queued", "conclusion": None}
+        optional = optional_cpu_check()
         p = pr()
         p["mergeable_state"] = "unstable"
         self.assertEqual(engine.decide(p, files(), checks() + [optional], [], B),

@@ -36,6 +36,7 @@ PROTECTED_INTEGRATION_FILES = frozenset((
     "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
     "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
     "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
+    "tests/test_deployops_automerge_file_count_cpu_20261014_w15.py",
 ))
 ALLOWED_CHECK_CONCLUSIONS = {"success", "neutral", "skipped"}
 # Verified against the actual GitHub Actions check-run API on recent zCloud PR
@@ -131,6 +132,12 @@ def decide(pr, files, checks, statuses, main_sha):
         if not safe_path(name) or name in filenames:
             return "unsafe_or_duplicate_path"
         filenames.add(name)
+    # GitHub's single-page /pulls/:number/files API has no total_count.
+    # Bind the fetched set to the authoritative /pulls/:number changed_files
+    # field, both on first admission and the pre-merge second read.
+    file_count = pr.get("changed_files")
+    if type(file_count) is not int or not 1 <= file_count < 100 or file_count != len(filenames):
+        return "incomplete_file_inventory"
     if not isinstance(checks, list) or not (1 <= len(checks) < 100):
         return "missing_or_unbounded_checks"
     if not isinstance(statuses, list) or len(statuses) >= 100:
@@ -161,8 +168,11 @@ def decide(pr, files, checks, statuses, main_sha):
             if admission_identity is None:
                 return "untrusted_required_check"
         elif name == "cpu-snapshot" and c.get("status") in ("queued", "in_progress", "pending") and c.get("conclusion") is None:
-            # This optional VPS diagnostic can queue indefinitely when the
-            # worker listener is absent. It is NOT the hosted regression gate.
+            # A same-named third-party check must not manufacture an
+            # exception to the GitHub mergeable_state=unstable policy.
+            # Assignment/queue state is NOT proof that the VPS is healthy.
+            if trusted_job_identity(c) is None:
+                return "untrusted_optional_cpu_check"
             optional_cpu_pending = True
             continue
         elif c.get("status") != "completed" or c.get("conclusion") not in ALLOWED_CHECK_CONCLUSIONS:
