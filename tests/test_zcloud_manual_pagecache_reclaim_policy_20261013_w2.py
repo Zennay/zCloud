@@ -171,6 +171,45 @@ class WorkflowTrustTests(unittest.TestCase):
             self.assertIn(key, self.reclaim)
         self.assertEqual(self.text.count("runs-on: [self-hosted, zcloud, vps]"), 1)
 
+    def test_root_job_rejects_same_owner_reruns_and_requires_sha(self):
+        job_gate = self.reclaim.split("    runs-on:", 1)[0]
+        for required in (
+            "github.event_name == 'workflow_dispatch'",
+            "github.triggering_actor == 'Zennay'",
+            "github.run_attempt == 1",
+            "inputs.confirm_sha == github.sha",
+            "inputs.maintenance_ack == 'I_APPROVE_PAGECACHE_RECLAIM'",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, job_gate)
+        self.assertNotIn("||", job_gate)
+
+    def test_runtime_rechecks_dispatch_identity_and_attempt(self):
+        trust = self.reclaim.split("      - name: Verify manual approval", 1)[1].split("      - name: Reclaim clean", 1)[0]
+        for required in (
+            'test "$GITHUB_TRIGGERING_ACTOR" = Zennay',
+            'test "$GITHUB_RUN_ATTEMPT" = "1"',
+            'test "$GITHUB_REPOSITORY" = Zennay/zCloud',
+            'test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, trust)
+
+    def test_bounded_live_main_verifications_before_privileged_kernel_write(self):
+        self.assertGreaterEqual(
+            self.reclaim.count("timeout 15 git ls-remote --exit-code origin refs/heads/main"),
+            3,
+        )
+        for var in ("current_main", "last_main", "root_main"):
+            with self.subTest(var=var):
+                self.assertIn('test -n "' + chr(36) + var + '"', self.reclaim)
+                self.assertIn('test "' + chr(36) + var + '" = "' + chr(36) + 'GITHUB_SHA"', self.reclaim)
+        root = self.reclaim.index('root_main="$(timeout 15 git ls-remote')
+        kernel = self.reclaim.index("sudo -n sh -c 'echo 1 > /proc/sys/vm/drop_caches'")
+        self.assertLess(root, kernel)
+        self.assertLess(self.reclaim.index("python3 scripts/zcloud_manual_pagecache_reclaim_policy_20261013_w2.py; then"), root)
+        self.assertNotIn("|| true", self.reclaim[root:kernel])
+
     def test_checkout_sha_and_canonical_runner_guard_precede_root_action(self):
         self.assertEqual(self.text.count("persist-credentials: false"), 2)
         self.assertEqual(self.text.count("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"), 2)
