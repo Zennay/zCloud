@@ -1,0 +1,153 @@
+name: Fuckball autonomous AI league on VPS
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: Confirm the exact zCloud main commit SHA before VPS changes
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuckball-ai-league-vps
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 30
+    steps:
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install or recover isolated training service without touching the game
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          [[ "$CONFIRMED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          export PATH="$PATH:/usr/local/bin"
+          app=/opt/fuckball-ai-league
+          data=/opt/fuckball-league-training
+          unit=fuckball-ai-league.service
+          legacy=fuckball-training.service
+          temp="$(mktemp -d)"
+          trap 'rm -rf "$temp"' EXIT
+          echo "Training-only operation on $(hostname) as $(id -un)"
+          # A STOP file is an operator veto, including scheduled recovery.
+          if [ -f "$data/STOP" ]; then
+            echo "STOP file exists: will not install or restart training."
+            exit 0
+          fi
+          git clone --quiet --depth 1 --branch main https://github.com/Zennay/fuckball.git "$temp/fuckball"
+          cd "$temp/fuckball"
+          wanted="$(git rev-parse HEAD)"
+          test "$(git status --porcelain | wc -l)" -eq 0
+          test -f training/league.cjs
+          test -f training/human_mix.cjs
+          node --check training/league.cjs
+          node --check training/continuous.cjs
+          node --check training/haxlab_selfplay.cjs
+          node tests/league.cjs
+          if sudo systemctl is-active --quiet "$unit" && [ -f "$app/active-sha" ] && [ "$(cat "$app/active-sha")" = "$wanted" ]; then
+            echo "Training service already running exact accepted source $wanted"
+            exit 0
+          fi
+          who="$(id -un)"
+          group="$(id -gn)"
+          sudo install -d -m 0755 -o "$who" -g "$group" "$app" "$app/releases" "$data"
+          if [ ! -d "$app/releases/$wanted" ]; then
+            mkdir "$app/releases/$wanted.tmp"
+            cp -a "$temp/fuckball/." "$app/releases/$wanted.tmp/"
+            mv "$app/releases/$wanted.tmp" "$app/releases/$wanted"
+          fi
+          if [ ! -x "$app/venv/bin/python3" ]; then
+            python3 -m venv "$app/venv"
+          fi
+          "$app/venv/bin/python3" -m pip install --disable-pip-version-check 'numpy>=2.1,<3'
+          "$app/venv/bin/python3" -c 'from pathlib import Path; import numpy as np; print("numpy", np.__version__)'
+          nodebin="$(command -v node)"
+          unitfile="$temp/fuckball-ai-league.service"
+          cat > "$unitfile" <<EOF
+          [Unit]
+          Description=Fuckball autonomous 4v4 AI training league (not live game)
+          After=network-online.target
+          Wants=network-online.target
+          StartLimitIntervalSec=3600
+          StartLimitBurst=3
+
+          [Service]
+          Type=simple
+          User=$who
+          Group=$group
+          WorkingDirectory=$app/releases/$wanted
+          Environment=NODE_ENV=production
+          Environment=PYTHONUNBUFFERED=1
+          Environment=CODEX_PRIMARY_RUNTIME_PYTHON=$app/venv/bin/python3
+          Environment=HAXLAB_EPISODES=48
+          Environment=HAXLAB_GENERATIONS=6
+          Environment=HAXLAB_LEAGUE_FRAMES=2400
+          ExecStart=$nodebin $app/releases/$wanted/training/continuous.cjs $data forever
+          Restart=on-failure
+          RestartSec=90
+          CPUQuota=200%
+          MemoryMax=3G
+          Nice=12
+          IOSchedulingClass=best-effort
+          IOSchedulingPriority=7
+          NoNewPrivileges=true
+          ProtectSystem=strict
+          ProtectHome=read-only
+          PrivateTmp=true
+          ReadWritePaths=$data
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          # Existing /opt/fuckball game code remains untouched. Preserve the
+          # old research data when transitioning to a new isolated state root.
+          old_running=no
+          if sudo systemctl is-active --quiet "$legacy"; then old_running=yes; fi
+          sudo install -m 0644 "$unitfile" /etc/systemd/system/"$unit"
+          sudo systemctl daemon-reload
+          if [ "$old_running" = yes ]; then
+            sudo systemctl stop "$legacy"
+          fi
+          sudo systemctl enable "$unit"
+          if ! sudo systemctl restart "$unit"; then
+            if [ "$old_running" = yes ]; then sudo systemctl start "$legacy" || true; fi
+            echo "New trainer failed to start; prior trainer restored when possible." >&2
+            exit 1
+          fi
+          sleep 3
+          if ! sudo systemctl is-active --quiet "$unit"; then
+            sudo journalctl -u "$unit" --no-pager -n 80
+            if [ "$old_running" = yes ]; then sudo systemctl start "$legacy" || true; fi
+            exit 1
+          fi
+          active_pid="$(sudo systemctl show -p MainPID --value "$unit")"
+          if [ "$active_pid" = 0 ] || ! tr '\0' ' ' < "/proc/$active_pid/cmdline" | grep -Fq "$app/releases/$wanted/training/continuous.cjs"; then
+            echo 'Service active source is not the requested exact release' >&2
+            exit 1
+          fi
+          if [ "$old_running" = yes ]; then sudo systemctl disable "$legacy" || true; fi
+          printf '%s\n' "$wanted" > "$app/active-sha.tmp"
+          mv "$app/active-sha.tmp" "$app/active-sha"
+          echo "## Fuckball autonomous 4v4 trainer" >> "$GITHUB_STEP_SUMMARY"
+          echo "Pinned training source: $wanted" >> "$GITHUB_STEP_SUMMARY"
+          echo "Systemd: $unit, state: $data" >> "$GITHUB_STEP_SUMMARY"
+          echo "Gameplay /opt/fuckball untouched; HaxLab model pointers untouched." >> "$GITHUB_STEP_SUMMARY"
+          sudo systemctl status "$unit" --no-pager | head -n 20
