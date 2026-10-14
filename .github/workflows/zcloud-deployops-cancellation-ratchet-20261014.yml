@@ -7,14 +7,17 @@ on:
     paths:
       - "scripts/zcloud_deployops_cancellation_ratchet_20261014.py"
       - "tests/test_zcloud_deployops_cancellation_ratchet_20261014.py"
+      - "docs/deployops-vps-cancellation-ratchet-20261014.md"
       - ".github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml"
       - ".github/workflows/**"
   push:
     branches:
+      - main
       - "worker/zcloud-deployops-cancellation-ratchet-20261014-w1"
     paths:
       - "scripts/zcloud_deployops_cancellation_ratchet_20261014.py"
       - "tests/test_zcloud_deployops_cancellation_ratchet_20261014.py"
+      - "docs/deployops-vps-cancellation-ratchet-20261014.md"
       - ".github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml"
 
 permissions:
