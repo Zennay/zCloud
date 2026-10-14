@@ -1381,6 +1381,45 @@ jobs:
             self.assertEqual(gate.changed_workflows(root, base, head), [])
             self.assertEqual(gate.evaluate(root, base, head), (0, []))
 
+
+    def test_bash_default_parameter_expansion_of_untrusted_env_is_denied(self):
+        candidate = SAFE + """      - env:
+          PAYLOAD: ${{ github.event.pull_request.body }}
+        run: bash -c "${PAYLOAD:-echo safe}"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_bash_substring_parameter_expansion_of_untrusted_env_is_denied(self):
+        candidate = SAFE + """      - env:
+          PAYLOAD: ${{ github.event.pull_request.title }}
+        run: bash -c "${PAYLOAD:0:100}"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_bash_indirect_parameter_expansion_of_untrusted_env_is_denied(self):
+        candidate = SAFE + """      - env:
+          PAYLOAD: ${{ github.event.pull_request.body }}
+        run: eval "${!PAYLOAD}"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_bash_modifier_does_not_conflate_prefix_variable_names(self):
+        candidate = SAFE + """      - env:
+          PAYLOAD: ${{ github.event.pull_request.body }}
+        run: bash -c "${PAYLOAD_EXTRA:-echo safe}"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_bash_modifier_preserves_equal_count_identity_ratchet(self):
+        old = SAFE + """      - env:
+          PAYLOAD: ${{ github.event.pull_request.title }}
+        run: eval "${PAYLOAD:?required}"
+"""
+        new = old.replace("pull_request.title", "pull_request.body")
+        self.assertEqual(gate.risk_counts(old)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(new)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(old, new))
+
     def test_git_mode_denies_symlink(self):
         with patch.object(gate, "git", return_value=b"120000 blob deadbeef\t.github/workflows/a.yml\n"):
             with self.assertRaises(gate.Unverified):
