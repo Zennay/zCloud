@@ -77,13 +77,16 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
 
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        match = JOB_RE.match(line)
-        if match:
-            indent = len(match.group("indent"))
-            if job_indent is None:
-                job_indent = indent
-            if indent == job_indent:
-                starts.append((index, match.group("job")))
+        indent = len(line) - len(line.lstrip(" "))
+        if job_indent is None:
+            job_indent = indent
+        if indent == job_indent:
+            match = JOB_RE.match(line)
+            if match is None:
+                # An unparsed job key can hide a self-hosted runner from this
+                # scanner. Do not certify a partial job inventory as complete.
+                raise RuntimeError("unparseable workflow job declaration")
+            starts.append((index, match.group("job")))
 
     for pos, (start, job) in enumerate(starts):
         end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
