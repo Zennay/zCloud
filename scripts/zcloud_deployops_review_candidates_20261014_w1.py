@@ -62,6 +62,31 @@ def path_collision(left, right):
     return overlaps(l, r) or overlaps(r, l)
 
 
+def conflicted_owners(all_owners):
+    """Index all path ancestry once; avoid PR × owners × paths rescanning."""
+    exact = {}
+    descendants = {}
+    for owner, files in all_owners:
+        for original in files:
+            name = unicodedata.normalize("NFC", original).casefold()
+            exact.setdefault(name, set()).add(owner)
+            parts = name.split("/")
+            for i in range(1, len(parts)):
+                descendants.setdefault("/".join(parts[:i]), set()).add(owner)
+    conflicts = set()
+    for owner, files in all_owners:
+        for original in files:
+            name = unicodedata.normalize("NFC", original).casefold()
+            possible = set(exact.get(name, ())) | set(descendants.get(name, ()))
+            parts = name.split("/")
+            for i in range(1, len(parts)):
+                possible.update(exact.get("/".join(parts[:i]), ()))
+            if possible - {owner}:
+                conflicts.add(owner)
+                break
+    return conflicts
+
+
 def complete_files(record, main_sha, head_sha):
     """Deny partial/renumbered file inventories and SHA-unspecific compares."""
     f = obj(record.get("files_evidence"), "files_evidence")
@@ -134,6 +159,7 @@ def snapshot(report):
         require(sha(b.get("head_sha")), "invalid_branch_sha")
         all_owners.append((f"branch:{name}",
                            complete_files(b, d["main_sha"], b["head_sha"])))
+    overlapping_owners = conflicted_owners(all_owners)
     out = []
     for n, p, files in sorted(prs, key=lambda x: x[0]):
         reasons = []
@@ -148,8 +174,7 @@ def snapshot(report):
         if not all(c["head_sha"] == p["head_sha"] and c["conclusion"] == "success"
                    for c in p["checks"]):
             reasons.append("exact_head_checks_not_green")
-        if any(path_collision(files, other) for owner, other in all_owners
-               if owner != f"pr:{n}"):
+        if f"pr:{n}" in overlapping_owners:
             reasons.append("overlapping_owner")
         out.append({"number": n, "review_candidate": not reasons, "reasons": reasons})
     return {"main_sha": d["main_sha"], "inventory_complete": True,
