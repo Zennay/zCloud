@@ -168,6 +168,22 @@ def _run_identity(run):
     )
 
 
+def _job_signature(job):
+    """Bounded evidence identity; omit private log payloads and display names."""
+    if type(job) is not dict:
+        raise InventoryError("invalid_candidate_job")
+    labels = job.get("labels")
+    if type(labels) is not list or any(type(x) is not str for x in labels):
+        raise InventoryError("invalid_candidate_labels")
+    if type(job.get("id")) is not int or job["id"] <= 0:
+        raise InventoryError("invalid_candidate_job_id")
+    return (
+        job["id"], job.get("run_id"), job.get("run_attempt"),
+        job.get("head_sha"), job.get("head_branch"), job.get("status"),
+        tuple(sorted(labels)), job.get("runner_id"),
+    )
+
+
 def collect(api_get, *, clock=None, monotonic_clock=None):
     """Verify stable queue census and bounded acquisition time; GET only."""
     monotonic = monotonic_clock or time.monotonic
@@ -184,6 +200,10 @@ def collect(api_get, *, clock=None, monotonic_clock=None):
     runs = _pages(api_get, run_route, "workflow_runs", max_pages=_MAX_RUN_PAGES,
                   max_count=_MAX_RUNS, query={"status": "queued", "per_page": "100"})
     mapped = []
+    # Only runs with queued dedicated-VPS jobs can ever appear in a
+    # duplicate-looking advisory group. Retain *bounded identifiers*, not
+    # untrusted body/log data, for a second independent job-state read.
+    candidate_groups = {}
     for run in runs:
         if type(run) is not dict or not _integer(run.get("id")):
             raise InventoryError("invalid_run_id")
@@ -213,6 +233,22 @@ def collect(api_get, *, clock=None, monotonic_clock=None):
                 or job.get("head_branch") != run["head_branch"]
             ):
                 raise InventoryError("cross_run_job_evidence")
+        if (
+            run.get("status") == "queued"
+            and all(
+                job.get("status") == "queued"
+                and type(job.get("labels")) is list
+                and {"self-hosted", "zcloud", "vps"}.issubset(set(
+                    label for label in job["labels"] if type(label) is str
+                ))
+                for job in jobs
+            )
+        ):
+            key = (run.get("workflow_id"), run.get("event"),
+                   run.get("head_branch"), run.get("head_sha"))
+            candidate_groups.setdefault(key, []).append(
+                (run["id"], tuple(_job_signature(job) for job in jobs))
+            )
         mapped.append({
             "id": run["id"], "repository": (run.get("head_repository") or {}).get("full_name"),
             "head_sha": run.get("head_sha"), "head_branch": run.get("head_branch"),
@@ -230,6 +266,22 @@ def collect(api_get, *, clock=None, monotonic_clock=None):
         _run_identity(item) for item in runs
     ]:
         raise InventoryError("queue_changed_during_inventory")
+    # The earlier job response can go stale while the run census remains
+    # unchanged. Recheck only plausible duplicate groups, still with GETs.
+    # No cancellation is authorized even when every comparison succeeds.
+    candidate_members = [
+        member
+        for group in candidate_groups.values() if len(group) > 1
+        for member in group
+    ]
+    if len(candidate_members) > 110:
+        raise InventoryError("candidate_recheck_cap_exceeded")
+    for run_id, original in candidate_members:
+        route = f"/repos/Zennay/zCloud/actions/runs/{run_id}/jobs?per_page=100"
+        fresh_jobs = _pages(api_get, route, "jobs", max_pages=_MAX_JOB_PAGES,
+                            max_count=_MAX_JOBS_PER_RUN, query={"per_page": "100"})
+        if tuple(_job_signature(job) for job in fresh_jobs) != original:
+            raise InventoryError("candidate_job_changed_during_inventory")
     after = _main(api_get)
     if after != before:
         raise InventoryError("main_moved_during_inventory")
