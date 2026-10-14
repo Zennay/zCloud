@@ -260,6 +260,55 @@ class GitTest(unittest.TestCase):
         self.assertRaises(scanner.Unverifiable, scanner.evaluate,
                           self.root, "main", head)
 
+    def test_inventory_classifies_safe_risky_unknown(self):
+        self.path.write_text(SAFE)
+        (self.path.parent / "risk.yml").write_text(CANCEL)
+        (self.path.parent / "unparseable.yml").write_text("bad: bytes\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "three-class fixture")
+        counts = scanner.inventory(self.root, self.git("rev-parse", "HEAD"))
+        self.assertEqual({"scanned": 3, "safe": 1, "risky": 1, "unknown": 1},
+                         counts)
+
+    def test_inventory_does_not_accept_non_workflow_paths(self):
+        self.commit(SAFE)
+        (self.path.parent / "NOT-A-WORKFLOW.txt").write_text("unexpected")
+        self.git("add", ".")
+        self.git("commit", "-qm", "unexpected workflow path")
+        self.assertRaises(scanner.Unverifiable, scanner.inventory,
+                          self.root, self.git("rev-parse", "HEAD"))
+
+    def test_inventory_cli_prints_counts_without_workflow_contents(self):
+        self.commit(CANCEL)
+        sha = self.git("rev-parse", "HEAD")
+        from io import StringIO
+        from contextlib import redirect_stdout
+        report = StringIO()
+        with redirect_stdout(report):
+            code = scanner.main(["--repo-root", str(self.root),
+                                 "--inventory-head", sha])
+        self.assertEqual(0, code)
+        self.assertIn("risky=1", report.getvalue())
+        self.assertIn("VPS_MUTATION_AUTHORIZED=false", report.getvalue())
+        self.assertNotIn("echo safe", report.getvalue())
+        self.assertNotIn("runs-on:", report.getvalue())
+
+    def test_inventory_rejects_modes_mixed(self):
+        sha = self.commit(SAFE)
+        from io import StringIO
+        from contextlib import redirect_stdout
+        report = StringIO()
+        with redirect_stdout(report):
+            rc = scanner.main(["--repo-root", str(self.root),
+                               "--inventory-head", sha, "--head", sha])
+        self.assertEqual(2, rc)
+        self.assertIn("INVENTORY=DENY", report.getvalue())
+
+    def test_inventory_rejects_untrusted_sha(self):
+        self.commit(SAFE)
+        self.assertRaises(scanner.Unverifiable, scanner.inventory,
+                          self.root, "HEAD")
+
     def test_output_denies_authority_without_raw_steps(self):
         from io import StringIO
         from contextlib import redirect_stdout
