@@ -43,11 +43,12 @@ jobs:
         run: |
           python3 - <<'PY'
           import importlib.util
+          from datetime import datetime, timezone
           spec = importlib.util.spec_from_file_location('m','scripts/zcloud_deployops_review_candidates_20261014_w1.py')
           m = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(m)
           sha = 'a' * 40
-          result = m.snapshot({'main_sha': sha, 'inventory': {'prs_complete': True,'branches_complete': True},
+          result = m.snapshot({'main_sha': sha, 'observed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'inventory': {'prs_complete': True,'branches_complete': True},
             'branch_inventory_receipt': {'schema': 'zcloud-prless-branch-snapshot-v1',
               'inventory_complete': True, 'admission_authorized': False,
               'deployment_authorized': False, 'paths_compared': False, 'main_sha': sha,
