@@ -38,6 +38,7 @@ def _unique(pairs):
 def summarize(raw: bytes, collector_exit: int) -> tuple[str, int]:
     outcome = "DENY"
     explanation = _DUTCH_REASON["github_inventory_untrusted"]
+    counts_line = ""
     try:
         if not isinstance(raw, bytes) or not 0 < len(raw) < _MAX_BYTES:
             raise ValueError("oversized_or_empty")
@@ -60,6 +61,30 @@ def summarize(raw: bytes, collector_exit: int) -> tuple[str, int]:
         expected_exit = 0 if decision == "NOOP" else 1
         if type(collector_exit) is not int or collector_exit != expected_exit:
             raise ValueError("status_mismatch")
+        # A displayed count is only a source-local observation, never proof
+        # of reliable GitHub provenance or authority for queue operations.
+        if decision != "DENY":
+            count = report.get("observed_run_count")
+            groups = report.get("candidate_duplicate_groups")
+            if type(count) is not int or not 0 <= count <= 500 or type(groups) is not list:
+                raise ValueError("invalid_observation_counts")
+            group_ids = []
+            for group in groups:
+                if type(group) is not list or not 2 <= len(group) <= 500:
+                    raise ValueError("invalid_group")
+                if any(type(value) is not int or value <= 0 for value in group):
+                    raise ValueError("invalid_group_id")
+                group_ids.extend(group)
+            if (len(group_ids) != len(set(group_ids))
+                or len(group_ids) > count
+                or (decision == "NOOP" and groups)
+                or (decision == "REVIEW_ONLY" and not groups)):
+                raise ValueError("contradictory_observation")
+            counts_line = (
+                f"- Aangeleverde wachtrijruns: **{count}**; "
+                f"groepen ter beoordeling: **{len(groups)}** "
+                "(geen bevestiging van productiegezondheid).\\n"
+            )
         outcome = decision
         if decision == "DENY":
             # Use *only* hardcoded translations, never any external text.
@@ -73,12 +98,14 @@ def summarize(raw: bytes, collector_exit: int) -> tuple[str, int]:
             explanation = "Geen mogelijke dubbele opdrachten aangetroffen in de aangeleverde observatie."
     except (UnicodeError, ValueError, TypeError, RecursionError, OverflowError):
         outcome = "DENY"
+        counts_line = ""
         explanation = _DUTCH_REASON["github_inventory_untrusted"]
 
     markdown = (
         "### zCloud wachtrij — alleen observatie\n"
         f"- Wachtrijclassificatie: **{outcome}**\n"
         f"- Verklaring: {explanation}\n"
+        f"{counts_line}"
         "- Acties annuleren, diensten herstarten of workers forceren: **NIET TOEGESTAAN**\n"
         "- Productiestatus en echte AI-generatie: **NIET BEWEZEN**\n"
         "- GitHub-gegevens zijn geen onafhankelijk bewijs van dezelfde opdrachtintentie.\n"
