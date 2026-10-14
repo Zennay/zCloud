@@ -47,7 +47,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           main_sha="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)"
           test "$main_sha" = "$GITHUB_SHA"
-      - name: Validate engine, admission provenance and reporting before write token use
+      - name: Validate engine and safety gates
         shell: bash
         run: |
           set -euo pipefail
