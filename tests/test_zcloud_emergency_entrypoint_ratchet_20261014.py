@@ -61,9 +61,13 @@ class EmergencySourceRatchetTests(unittest.TestCase):
                       altered(QUEUE, 'method="GET"', 'method="POST"'))
         self.assertIn("queue_mutation_authority_reappeared",
                       altered(QUEUE, "  actions: read", "  actions: write"))
+        source = FILES[QUEUE]
+        runner = "    runs-on: ubuntu-latest"
+        self.assertEqual(2, source.count(runner))
+        head, separator, tail = source.rpartition(runner)
         self.assertIn("privileged_queue_observer_runner",
-                      altered_live(QUEUE, "    runs-on: ubuntu-latest",
-                                   "    runs-on: [self-hosted, zcloud, vps]"))
+                      policy.inspect_text(QUEUE, head +
+                          "    runs-on: [self-hosted, zcloud, vps]" + tail))
 
     def test_missing_retrigger_guards_denied_before_private_actions(self):
         for name in FILES:
