@@ -51,7 +51,8 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay'
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
@@ -72,6 +73,7 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_ACTOR" = "Zennay"
           test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$CONFIRMED_SHA" = "$GITHUB_SHA"
           test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
@@ -85,6 +87,12 @@ jobs:
           DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
         run: |
           set -euo pipefail
+          # Recheck the immutable main admission immediately before live observation.
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
           python3 scripts/zcloud_v2_live_proof_freshness_20261013_w1.py
           test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
           # Existing timer and process observations are read-only, names only.

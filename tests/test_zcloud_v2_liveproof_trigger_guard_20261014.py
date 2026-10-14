@@ -12,13 +12,15 @@ SOURCE = (Path(__file__).resolve().parents[1] /
 
 
 def manual_eligible(event, repository, ref, actor, triggering_actor,
-                    submitted_sha, confirmed_sha, remote_main_sha):
+                    submitted_sha, confirmed_sha, remote_main_sha, run_attempt=1):
     return (
         event == "workflow_dispatch"
         and repository == "Zennay/zCloud"
         and ref == "refs/heads/main"
         and actor == "Zennay"
         and triggering_actor == "Zennay"
+        and type(run_attempt) is int
+        and run_attempt == 1
         and type(submitted_sha) is str
         and len(submitted_sha) == 40
         and all(char in "0123456789abcdef" for char in submitted_sha)
@@ -59,6 +61,7 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
             "github.ref == 'refs/heads/main'",
             "github.actor == 'Zennay'",
             "github.triggering_actor == 'Zennay'",
+            "github.run_attempt == 1",
         ):
             self.assertIn(marker, self.gate)
         self.assertNotIn("||", self.gate)
@@ -71,12 +74,101 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
         for marker in (
             'test "$GITHUB_ACTOR" = "Zennay"',
             'test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"',
+            'test "$GITHUB_RUN_ATTEMPT" = "1"',
             'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
             'test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
             "timeout 15 git ls-remote --exit-code origin refs/heads/main",
             "scripts/zcloud_vps_runner_guard.py --json",
         ):
             self.assertIn(marker, before)
+
+    def test_replay_attempt_is_rejected_without_vps_access(self):
+        for attempt in (0, 2, 3, -1, "1", True, 1.0, None):
+            with self.subTest(attempt=attempt):
+                self.assertFalse(manual_eligible(*self.good, run_attempt=attempt))
+
+    def test_main_rechecked_directly_before_live_observation(self):
+        observation = self.live.split(
+            "- name: Check live worker heartbeats on read-only SQLite and localhost", 1
+        )[1]
+        proof = observation.split("python3 scripts/zcloud_v2_live_proof_freshness_20261013_w1.py", 1)
+        self.assertEqual(len(proof), 2)
+        for marker in (
+            'test "$GITHUB_EVENT_NAME" = "workflow_dispatch"',
+            'test "$GITHUB_RUN_ATTEMPT" = "1"',
+            'test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"',
+            'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+            "timeout 15 git ls-remote --exit-code origin refs/heads/main",
+        ):
+            self.assertIn(marker, proof[0])
+        self.assertIn("timeout 15 git ls-remote --exit-code origin refs/heads/main", proof[1])
+
+    def test_real_bash_preflight_denies_replay_and_stale_main(self):
+        """Execute extracted Bash admission with mocked identity, never contacting VPS."""
+        import os
+        import subprocess
+        import tempfile
+        import textwrap
+
+        preflight = self.live.split(
+            "- name: Trust preflight before reading live worker/SQLite state", 1
+        )[1].split("- name: Check live worker heartbeats", 1)[0]
+        script = textwrap.dedent(preflight.split("run: |\n", 1)[1])
+        good_sha = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            commands = {
+                "git": """#!/bin/sh
+if [ "$1" = "rev-parse" ]; then echo "$GITHUB_SHA"; exit 0; fi
+if [ "$1" = "ls-remote" ]; then echo "$MOCK_REMOTE_MAIN refs/heads/main"; exit 0; fi
+exit 3
+""",
+                "id": "#!/bin/sh\necho ubuntu\n",
+                "hostname": "#!/bin/sh\necho vps-bb300bba\n",
+                "python3": '#!/bin/sh\necho guard-called >> "$MOCK_GUARD_LOG"\n',
+            }
+            for name, body in commands.items():
+                exe = Path(tmp) / name
+                exe.write_text(body, encoding="utf-8")
+                exe.chmod(0o755)
+            env = dict(os.environ)
+            env.update({
+                "PATH": tmp + os.pathsep + env.get("PATH", ""),
+                "CONFIRMED_SHA": good_sha,
+                "GITHUB_SHA": good_sha,
+                "MOCK_REMOTE_MAIN": good_sha,
+                "GITHUB_REPOSITORY": "Zennay/zCloud",
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_ACTOR": "Zennay",
+                "GITHUB_TRIGGERING_ACTOR": "Zennay",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "MOCK_GUARD_LOG": str(Path(tmp) / "guard.log"),
+            })
+            log = Path(env["MOCK_GUARD_LOG"])
+
+            def execute(overrides):
+                log.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ["bash", "-c", script], env={**env, **overrides},
+                    capture_output=True, text=True, timeout=5
+                )
+                return result.returncode, log.exists()
+
+            self.assertEqual(execute({}), (0, True))
+            for overrides in (
+                {"GITHUB_RUN_ATTEMPT": "2"},
+                {"GITHUB_RUN_ATTEMPT": ""},
+                {"GITHUB_TRIGGERING_ACTOR": "another"},
+                {"GITHUB_ACTOR": "another"},
+                {"GITHUB_REPOSITORY": "fork/zCloud"},
+                {"GITHUB_REF": "refs/heads/feature"},
+                {"CONFIRMED_SHA": "b" * 40},
+                {"MOCK_REMOTE_MAIN": "b" * 40},
+                {"MOCK_REMOTE_MAIN": ""},
+            ):
+                with self.subTest(overrides=overrides):
+                    code, guard_called = execute(overrides)
+                    self.assertNotEqual(code, 0)
+                    self.assertFalse(guard_called)
 
     def test_trusted_fresh_owner_manual_is_eligible(self):
         self.assertTrue(manual_eligible(*self.good))
