@@ -1,0 +1,229 @@
+name: zCloud serialized gate metadata rewrite preview
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_serialized_gate_metadata_rewrite_preview.py"
+      - "tests/test_zcloud_serialized_gate_metadata_rewrite_preview.py"
+      - ".github/workflows/zcloud-serialized-gate-metadata-rewrite-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-serialized-gate-metadata-rewrite-preview-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_serialized_gate_metadata_rewrite_preview
+          python3 -m py_compile scripts/zcloud_serialized_gate_metadata_rewrite_preview.py
+
+      - name: Capture current first batch intent and bodies
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          INTENT: ${{ runner.temp }}/zcloud-serialized-gate-intent-current.json
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-gate-rewrite-preview-snapshot.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          intent_path = Path(os.environ["INTENT"])
+          snapshot_path = Path(os.environ["SNAPSHOT"])
+          markers = (
+              "serialized",
+              "keep unmerged",
+              "integration window",
+              "live writer",
+              "production/control-plane window",
+              "control-plane window",
+          )
+
+          def gh(path: str):
+              proc = subprocess.run(
+                  ["gh", "api", path],
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              return json.loads(proc.stdout)
+
+          current_main = str(gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"])
+          retired = gh(f"repos/{repo}/pulls/576")
+          successor = gh(f"repos/{repo}/pulls/1089")
+          if str(retired["state"]) != "closed" or bool(retired.get("merged")):
+              raise SystemExit("retired gate #576 no longer matches succession contract")
+          successor_open = str(successor["state"]) == "open" and not bool(successor.get("merged"))
+          if not successor_open:
+              raise SystemExit("successor #1089 is no longer open")
+
+          pulls = []
+          complete = False
+          for page in range(1, 7):
+              batch = gh(
+                  f"repos/{repo}/pulls?state=open&per_page=100&page={page}&sort=created&direction=asc"
+              )
+              if page == 6 and batch:
+                  raise SystemExit("open PR inventory exceeds bounded limit of 500")
+              pulls.extend(batch)
+              if len(batch) < 100:
+                  complete = True
+                  break
+          if not complete:
+              raise SystemExit("open PR inventory completeness not proven")
+
+          stale = []
+          for item in pulls:
+              number = int(item["number"])
+              if number == 1089:
+                  continue
+              body = str(item.get("body") or "")
+              lowered = body.lower()
+              if "#580" in lowered and any(m in lowered for m in markers):
+                  if "#576" in lowered and "#1089" not in lowered:
+                      stale.append(item)
+          stale.sort(key=lambda item: int(item["number"]))
+          selected = stale[:20]
+
+          intents = []
+          snapshot_pulls = []
+          for item in selected:
+              body = str(item.get("body") or "")
+              head_sha = str(item["head"]["sha"])
+              intents.append({
+                  "number": int(item["number"]),
+                  "expected_head_sha": head_sha,
+                  "expected_body_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+                  "old_marker": "#576",
+                  "new_marker": "#1089",
+              })
+              snapshot_pulls.append({
+                  "number": int(item["number"]),
+                  "state": str(item["state"]),
+                  "head_sha": head_sha,
+                  "body": body,
+              })
+
+          intent = {
+              "schema": "zcloud-serialized-gate-metadata-remediation-intent-v1",
+              "repository": repo,
+              "current_main_sha": current_main,
+              "status": "intent_ready" if intents else "clean",
+              "intent_count": len(intents),
+              "intents": intents,
+              "compare_and_swap_required": True,
+              "requires_fresh_body_hash_match": True,
+              "metadata_write_authorized": False,
+              "merge_authorized": False,
+              "deploy_authorized": False,
+              "mutation_performed": False,
+          }
+          snapshot = {
+              "schema": "zcloud-serialized-gate-metadata-rewrite-preview-snapshot-v1",
+              "repository": repo,
+              "current_main_sha": current_main,
+              "primary_gate": 580,
+              "retired_gate": 576,
+              "successor_gate": 1089,
+              "successor_open": True,
+              "pull_requests": snapshot_pulls,
+          }
+          intent_path.write_text(json.dumps(intent, sort_keys=True), encoding="utf-8")
+          snapshot_path.write_text(json.dumps(snapshot, sort_keys=True), encoding="utf-8")
+          print(
+              "SERIALIZED_GATE_METADATA_REWRITE_INPUT="
+              f"main:{current_main}:open:{len(pulls)}:"
+              f"stale:{len(stale)}:selected:{len(selected)}"
+          )
+          PY
+
+      - name: Preview line-scoped rewrite read only
+        shell: bash
+        env:
+          INTENT: ${{ runner.temp }}/zcloud-serialized-gate-intent-current.json
+          SNAPSHOT: ${{ runner.temp }}/zcloud-serialized-gate-rewrite-preview-snapshot.json
+          REPORT: ${{ runner.temp }}/zcloud-serialized-gate-metadata-rewrite-preview.json
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_serialized_gate_metadata_rewrite_preview.py             --intent "$INTENT"             --snapshot "$SNAPSHOT"             --json | tee "$REPORT"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "zcloud-serialized-gate-metadata-rewrite-preview-v1"
+          assert payload["status"] in {"preview_ready", "clean"}
+          assert payload["line_scoped_rewrite_required"] is True
+          assert payload["compare_and_swap_required"] is True
+          assert payload["metadata_write_authorized"] is False
+          assert payload["merge_authorized"] is False
+          assert payload["deploy_authorized"] is False
+          assert payload["mutation_performed"] is False
+          assert payload["preview_count"] <= 20
+          for item in payload["previews"]:
+              assert re.fullmatch(r"[0-9a-f]{40}", item["expected_head_sha"])
+              assert re.fullmatch(r"[0-9a-f]{64}", item["original_body_sha256"])
+              assert re.fullmatch(r"[0-9a-f]{64}", item["proposed_body_sha256"])
+              assert item["original_body_sha256"] != item["proposed_body_sha256"]
+              assert 1 <= item["changed_line_count"] <= 5
+              assert 1 <= item["replacement_count"] <= 10
+          print(
+              "ZCLOUD_SERIALIZED_GATE_METADATA_REWRITE_PREVIEW="
+              f"status:{payload['status']}:"
+              f"previews:{payload['preview_count']}:"
+              "line_scoped:true:metadata_write_authorized:false"
+          )
+          PY
+
+      - name: Upload sanitized rewrite preview
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-serialized-gate-metadata-rewrite-preview-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-serialized-gate-metadata-rewrite-preview.json
+          if-no-files-found: error
+          retention-days: 14
