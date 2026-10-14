@@ -170,9 +170,9 @@ def _valid_quoted_sf_string(token):
     index = 0
     while index < len(inside):
         char = inside[index]
-        if char == "\\\\":
+        if char == "\\":
             index += 1
-            if index >= len(inside) or inside[index] not in ('"', "\\\\"):
+            if index >= len(inside) or inside[index] not in ('"', "\\"):
                 return False
         elif char == '"':
             return False
