@@ -15,30 +15,37 @@ on:
       - "scripts/zcloud-self-heal.sh"
       - "tests/test_self_heal_assets.py"
       - ".github/workflows/zcloud-oom-guard-vps-validation.yml"
+      - "tests/test_oom_guard_workflow.py"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: zcloud-oom-guard-vps-validation-${{ github.ref }}
+  group: zcloud-oom-guard-vps-validation-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
-    runs-on: self-hosted
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
+    env:
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ env.EXPECTED_SHA }}
           clean: true
           fetch-depth: 1
+          persist-credentials: false
 
-      - name: Verify validation host
+      - name: Verify permanent zCloud VPS runner and exact head
         shell: bash
         run: |
           set -euo pipefail
-          test "$(hostname)" = "vps-bb300bba"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
           echo "VALIDATION_HOST=$(hostname)"
 
       - name: Compile OOM recovery paths
@@ -57,7 +64,8 @@ jobs:
             tests.test_zcloud_healthcheck \
             tests.test_self_heal_assets \
             tests.test_portfolio_queue_backend \
-            tests.test_runner_smoke
+            tests.test_runner_smoke \
+            tests.test_oom_guard_workflow
 
       - name: Probe live VPS memory and swap without changing runtime
         shell: bash
