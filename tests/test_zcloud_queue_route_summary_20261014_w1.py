@@ -170,6 +170,22 @@ class QueueRouteSummaryTests(unittest.TestCase):
                 self.assertNotIn("Geen jobgegevens", output)
                 self.assertIn("Geen bewijs van productiestatus", output)
 
+    def test_runner_pressure_counts_only_still_queued_unassigned_jobs(self):
+        rows = [
+            record(71, route="ftmo_research", state="completed"),
+            record(72, route="zcloud_vps", state="in_progress"),
+            record(73, route="ftmo_research", state="waiting"),
+            record(74, route="ftmo_research", state="queued"),
+            record(75, route="zcloud_vps", state="queued",
+                   assignment="assigned"),
+        ]
+        output, status = self.render(report(rows))
+        self.assertEqual(status, 0)
+        self.assertIn("**1 wachtende jobs zonder runnertoewijzing**", output)
+        self.assertIn("FTMO-runnerroute", output)
+        self.assertNotIn("zCloud-runnerlabels en repositorytoegang", output)
+        self.assertIn("Geen bewijs van productiestatus", output)
+
     def test_unknown_job_phase_does_not_print_any_run_link(self):
         data = report([record(state="PRIVATE_UNTRUSTED_STATUS")])
         output, status = self.render(data)
