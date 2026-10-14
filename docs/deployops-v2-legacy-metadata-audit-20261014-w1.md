@@ -35,3 +35,6 @@ The inventory CLI **exits with code 2 when `inventory_complete=false`**, after p
 
 
 Directory ancestry hardening: source reads now walk each absolute directory component via `O_DIRECTORY | O_NOFOLLOW` descriptors, then open the leaf with `O_NOFOLLOW | O_NONBLOCK`, rejecting symlinked ancestors, relative traversal and ambiguous paths without race-prone pre-checks. Deeply nested JSON manifests fail closed without logging a traceback. These constraints may deliberately mark older symlink-based installations incomplete until their separate operator-controlled upgrade is approved.
+
+
+The observation subprocesses receive a **fixed least-privilege environment** (system binaries PATH, fixed ubuntu HOME, locale, user DBus socket and systemd output controls), not the surrounding GitHub Actions environment. This prevents accidental forwarding of GitHub/SSH credentials, dynamic library injection variables or Python import paths. The preflight identity guard remains a mandatory status-only check with its host/runner JSON suppressed.

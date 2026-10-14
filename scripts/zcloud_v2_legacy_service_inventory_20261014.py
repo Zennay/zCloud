@@ -33,6 +33,19 @@ MAX_LINES = 4000
 MAX_OUTPUT = 65536
 
 
+def _safe_subprocess_env():
+    """Never forward the runner's tokens or untrusted host environment."""
+    return {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/home/ubuntu",
+        "LANG": "C.UTF-8",
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        "SYSTEMD_COLORS": "0",
+        "SYSTEMD_PAGER": "cat",
+    }
+
+
 def _bounded_process_output(argv, *, timeout_seconds=5):
     """Stream subprocess output with a hard memory and wall-time ceiling.
 
@@ -48,6 +61,7 @@ def _bounded_process_output(argv, *, timeout_seconds=5):
         process = subprocess.Popen(
             list(argv), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True,
+            env=_safe_subprocess_env(),
         )
         selector = selectors.DefaultSelector()
         selector.register(process.stdout, selectors.EVENT_READ)

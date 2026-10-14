@@ -13,7 +13,7 @@ import types
 import unittest
 
 from scripts.zcloud_v2_legacy_service_inventory_20261014 import (
-    COMMANDS, _bounded_process_output, collect, command_lines, get_background_count, get_source_version,
+    COMMANDS, _bounded_process_output, _safe_subprocess_env, collect, command_lines, get_background_count, get_source_version,
     main, read_regular, summarize_processes, summarize_units,
 )
 
@@ -172,6 +172,30 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             "process", "user_services", "system_services", "user_timers",
             "source_version", "extension_background_script_count",
         }))
+
+    def test_subprocess_does_not_inherit_runner_secrets_or_mutable_paths(self):
+        with mock.patch.dict(os.environ, {
+            "GITHUB_TOKEN": "secret",
+            "GH_TOKEN": "secret",
+            "HOME": "/tmp/attacker",
+            "PATH": "/tmp/attacker/bin",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/attacker-bus",
+            "LD_PRELOAD": "/tmp/malicious.so",
+            "PYTHONPATH": "/tmp/code",
+            "SSH_AUTH_SOCK": "/tmp/forwarded-socket",
+        }):
+            env = _safe_subprocess_env()
+        self.assertEqual(env["PATH"], "/usr/bin:/bin")
+        self.assertEqual(env["HOME"], "/home/ubuntu")
+        self.assertEqual(env["DBUS_SESSION_BUS_ADDRESS"], "unix:path=/run/user/1000/bus")
+        self.assertEqual(env["XDG_RUNTIME_DIR"], "/run/user/1000")
+        self.assertTrue(set(env).issubset({
+            "PATH", "HOME", "LANG", "XDG_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS", "SYSTEMD_COLORS", "SYSTEMD_PAGER",
+        }))
+        self.assertNotIn("secret", repr(env))
+        for key in ("LD_PRELOAD", "PYTHONPATH", "SSH_AUTH_SOCK", "GH_TOKEN", "GITHUB_TOKEN"):
+            self.assertNotIn(key, env)
 
     def test_live_command_allowlist_uses_absolute_system_binaries(self):
         # Do not inherit a mutable PATH to resolve live VPS diagnostics.
