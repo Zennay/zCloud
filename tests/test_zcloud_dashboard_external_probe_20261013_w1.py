@@ -320,6 +320,18 @@ class DashboardProbeTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.assertEqual(probe.probe_once(Opener(Response(raw=raw))), "invalid_schema")
 
+    def test_projects_must_be_objects_not_merely_a_json_list(self):
+        now = datetime.now(timezone.utc)
+        for rows in ([None], [True], [0], ["fake"], [[]],
+                     [{"id": "cloud"}, 0], [{"id": "cloud"}, None]):
+            with self.subTest(rows=rows):
+                raw = json.dumps({"time": now.isoformat(), "projects": rows}).encode()
+                self.assertEqual(probe._validate_payload(raw, now=now), "invalid_schema")
+        for rows in ([], [{}], [{"id": "cloud"}, {"id": "ftmo"}]):
+            with self.subTest(valid_rows=rows):
+                raw = json.dumps({"time": now.isoformat(), "projects": rows}).encode()
+                self.assertEqual(probe._validate_payload(raw, now=now), "healthy")
+
     def test_bounded_body(self):
         body = b"x" * (probe.MAX_BYTES + 100)
         self.assertEqual(probe.probe_once(Opener(Response(raw=body))), "body_too_large")
