@@ -5,6 +5,7 @@ Input is an externally collected, *untrusted* snapshot. This utility does not
 collect evidence, validate GitHub authenticity or exercise production authority.
 """
 import argparse
+import hashlib
 import json
 import os
 import stat
@@ -349,7 +350,13 @@ def snapshot(report, *, now=None):
                 for key in ("overlapping_owner", "stale_base", "draft",
                             "owner_review_missing", "owner_review_stale", "owner_review_dismissed", "required_checks_missing",
                             "exact_head_checks_not_green")}
+    # Stable audit correlation only; a digest does NOT authenticate who supplied the JSON.
+    evidence_sha256 = hashlib.sha256(
+        json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+                   allow_nan=False).encode("utf-8")
+    ).hexdigest()
     return {"main_sha": d["main_sha"], "inventory_complete": True,
+            "evidence_sha256": evidence_sha256,
             "serialized_gates_closed": all(gates[k] == "closed" for k in REQUIRED_GATES),
             "release_authorized": False, "mutations_performed": False,
             "review_candidates": out, "review_candidate_count": sum(x["review_candidate"] for x in out),
@@ -378,6 +385,7 @@ def markdown(result):
              f"Kandidaat-PR's: **{result['review_candidate_count']} / {len(result['review_candidates'])}**.",
              f"Nog niet reviewgereed: **{result['blocked_candidate_count']}**.",
              f"Geserialiseerde issues allemaal gesloten: **{'ja' if result['serialized_gates_closed'] else 'nee'}**. Ook bij ja ontbreekt vrijgavebewijs.",
+             f"Auditvingerafdruk: `{result['evidence_sha256'][:16]}` (alleen vergelijking, geen bronverificatie).",
              "", "#### Belangrijkste blokkades"]
     for reason, count in sorted(result["blocker_counts"].items(),
                                 key=lambda item: (-item[1], item[0])):
