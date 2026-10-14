@@ -6,6 +6,8 @@ collect evidence, validate GitHub authenticity or exercise production authority.
 """
 import argparse
 import json
+import os
+import stat
 import re
 import sys
 from datetime import datetime, timezone
@@ -305,7 +307,12 @@ def main(argv=None):
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     a = parser.parse_args(argv)
     try:
-        with open(a.manifest, "rb") as f:
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(a.manifest, flags)
+        with os.fdopen(fd, "rb") as f:
+            info = os.fstat(f.fileno())
+            require(stat.S_ISREG(info.st_mode), "invalid_manifest_file_type")
+            require(info.st_size <= MAX_BYTES, "oversized_snapshot")
             body = f.read(MAX_BYTES + 1)
         require(len(body) <= MAX_BYTES, "oversized_snapshot")
         result = snapshot(unique_pairs(body.decode("utf-8")))
