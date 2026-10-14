@@ -190,6 +190,7 @@ ADVISORY_NEXT_ACTIONS = (
     ("stale_base", "request_owner_restack", "Vraag de eigenaar om de branch op actuele main bij te werken."),
     ("required_checks_missing", "verify_required_checks", "Laat de onafhankelijke reviewer ontbrekende verplichte checks verifiëren."),
     ("exact_head_checks_not_green", "rerun_exact_head_checks", "Laat de eigenaar de juiste commit opnieuw testen."),
+    ("owner_review_stale", "request_exact_head_reapproval", "Vraag nieuwe onafhankelijke goedkeuring op de huidige PR-commit."),
     ("owner_review_missing", "request_independent_review", "Vraag onafhankelijke beoordeling door de bron-eigenaar."),
     ("draft", "request_owner_completion", "Laat de eigenaar het concept afronden."),
 )
@@ -201,6 +202,36 @@ def advisory_next_action(reasons):
             return {"code": action, "guidance_nl": guidance}
     return {"code": "independent_source_review",
             "guidance_nl": "Vraag onafhankelijke bronreview; nooit automatisch mergen of deployen."}
+
+
+def reviewer_evidence(record):
+    """Read a non-authoritative independent reviewer receipt bound to a PR head.
+
+    Schema checks never prove GitHub provenance or create merge authorization.
+    """
+    review = obj(record.get("owner_review_evidence"), "owner_review_evidence")
+    require(review.get("complete") is True, "incomplete_review_evidence")
+    decision = review.get("decision")
+    require(decision in ("approved", "pending", "changes_requested")
+            and type(decision) is str, "invalid_review_decision")
+    actor_re = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37})\\Z")
+    author = review.get("author_login")
+    reviewer = review.get("reviewer_login")
+    require(type(author) is str and bool(actor_re.fullmatch(author))
+            and type(reviewer) is str and bool(actor_re.fullmatch(reviewer))
+            and author.casefold() != reviewer.casefold(),
+            "invalid_independent_reviewers")
+    approved_sha = review.get("reviewed_head_sha")
+    require(sha(approved_sha), "invalid_review_head")
+    timestamp = review.get("submitted_at")
+    require(type(timestamp) is str
+            and re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z", timestamp),
+            "invalid_review_time")
+    try:
+        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        raise InvalidEvidence("invalid_review_time") from None
+    return review
 
 
 def snapshot(report, *, now=None):
@@ -237,6 +268,7 @@ def snapshot(report, *, now=None):
         require(sha(p.get("head_sha")) and sha(p.get("base_sha")), "invalid_pr_sha")
         require(type(p.get("draft")) is bool and type(p.get("owner_approved")) is bool,
                 "invalid_pr_admission")
+        reviewer_evidence(p)
         required_checks = p.get("required_checks")
         require(type(required_checks) is list and 0 < len(required_checks) <= 100
                 and all(type(x) is str and 0 < len(x) <= 128 for x in required_checks)
@@ -275,8 +307,11 @@ def snapshot(report, *, now=None):
             reasons.append("stale_base")
         if p["draft"]:
             reasons.append("draft")
-        if not p["owner_approved"]:
+        review = p["owner_review_evidence"]
+        if not p["owner_approved"] or review["decision"] != "approved":
             reasons.append("owner_review_missing")
+        elif review["reviewed_head_sha"] != p["head_sha"]:
+            reasons.append("owner_review_stale")
         if not set(p["required_checks"]).issubset({c["name"] for c in p["checks"]}):
             reasons.append("required_checks_missing")
         if not all(c["head_sha"] == p["head_sha"] and c["conclusion"] == "success"
@@ -294,7 +329,7 @@ def snapshot(report, *, now=None):
                     "next_action": advisory_next_action(reasons)})
     blockers = {key: sum(key in row["reasons"] for row in out)
                 for key in ("overlapping_owner", "stale_base", "draft",
-                            "owner_review_missing", "required_checks_missing",
+                            "owner_review_missing", "owner_review_stale", "required_checks_missing",
                             "exact_head_checks_not_green")}
     return {"main_sha": d["main_sha"], "inventory_complete": True,
             "serialized_gates_closed": all(gates[k] == "closed" for k in REQUIRED_GATES),
@@ -310,6 +345,7 @@ REASONS_NL = {
     "stale_base": "verouderde hoofdbranch",
     "draft": "concept-PR",
     "owner_review_missing": "geen eigenaarstoestemming",
+    "owner_review_stale": "goedkeuring hoort bij oudere PR-commit",
     "required_checks_missing": "verplichte CI-controle ontbreekt",
     "exact_head_checks_not_green": "tests niet groen op exacte commit",
     "overlapping_owner": "bestandsconflict met andere worker",
