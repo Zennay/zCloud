@@ -152,10 +152,12 @@ def _literal_group(value):
     """Return a single bounded literal string; never resolve expressions."""
     token = value.strip()
     if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", token):
-        return token
+        # GitHub Actions concurrency group names are case-insensitive;
+        # a case-sensitive comparison could falsely approve a VPS collision.
+        return token.lower()
     if (len(token) >= 3 and token[0] == token[-1] and token[0] in "'\""
             and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", token[1:-1])):
-        return token[1:-1]
+        return token[1:-1].lower()
     return None
 
 
