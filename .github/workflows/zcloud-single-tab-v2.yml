@@ -2,6 +2,7 @@ name: zCloud one-tab-per-worker v2
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - public/zcloud-worker.user.js
       - public/zcloud-worker-v2-engine.js
@@ -18,6 +19,7 @@ on:
       - tests/test_v2_dispatch_recovery_20261013_w3.js
       - scripts/zcloud_retire_legacy_worker_services.sh
       - .github/workflows/zcloud-single-tab-v2.yml
+      - tests/test_zcloud_single_tab_v2_ci_quarantine_20261014.py
   push:
     branches: [main]
     paths:
@@ -26,12 +28,17 @@ on:
       - firefox-extension/background.js
       - firefox-extension/worker-controller-v2.js
       - firefox-extension/manifest.json
+      - tests/test_single_tab_v2_crash_recovery.js
+      - tests/test_single_tab_v2_auto_heal.js
+      - tests/test_v2_auto_open_missing_worker_ids_20261013_w4.js
       - tests/test_single_tab_worker_v2.js
       - tests/test_single_tab_v2_thinking_high.js
       - tests/test_v2_workmode_high_controls.js
       - tests/test_single_tab_v2_cycle.js
+      - tests/test_v2_dispatch_recovery_20261013_w3.js
       - scripts/zcloud_retire_legacy_worker_services.sh
       - .github/workflows/zcloud-single-tab-v2.yml
+      - tests/test_zcloud_single_tab_v2_ci_quarantine_20261014.py
 
 permissions:
   contents: read
@@ -42,10 +49,34 @@ concurrency:
 
 jobs:
   tests:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout exact immutable source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Prove exact canonical source before executing one-tab code
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install pinned Node 24 for hosted regressions
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
       - name: Validate v2 one-tab ownership and High-thinking gate
         run: |
           set -euo pipefail
@@ -64,97 +95,6 @@ jobs:
           node tests/test_worker_tab_identity_guard.js
           node tests/test_worker_tab_reuse.js
           node tests/test_firefox_recovery_contract.js
-          python3 -m unittest tests.test_violentmonkey_runner
+          python3 -m unittest tests.test_violentmonkey_runner tests.test_zcloud_single_tab_v2_ci_quarantine_20261014
           echo 'ONE_TAB_PER_WORKER_V2_TESTS_GREEN=1'
 
-  install:
-    needs: tests
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
-    runs-on: [self-hosted, zcloud, vps]
-    timeout-minutes: 8
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Install exclusive worker v2 without stopping Firefox
-        env:
-          XDG_RUNTIME_DIR: /run/user/1000
-          DBUS_SESSION_BUS_ADDRESS: unix:path=/run/user/1000/bus
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(hostname)" = vps-bb300bba
-          test "$(id -un)" = ubuntu
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
-          node tests/test_single_tab_worker_v2.js
-          node tests/test_single_tab_v2_thinking_high.js
-          node tests/test_v2_workmode_high_controls.js
-          node tests/test_single_tab_v2_cycle.js
-          root="/home/ubuntu/zennay-cloud"
-          addon="$HOME/snap/firefox/common/chatgpt-project-extension"
-          backup="$HOME/.local/state/zcloud/worker-v2-backup-$GITHUB_RUN_ID"
-          mkdir -p "$backup" "$root/public" "$addon"
-          for relative in public/zcloud-worker.user.js public/zcloud-worker-v2-engine.js; do
-            if [ -f "$root/$relative" ]; then
-              cp -p "$root/$relative" "$backup/$(basename "$relative").old"
-            fi
-            install -m 0644 "$relative" "$root/$relative"
-            cmp "$relative" "$root/$relative"
-          done
-          for relative in background.js manifest.json worker-controller-v2.js; do
-            if [ -f "$addon/$relative" ]; then
-              cp -p "$addon/$relative" "$backup/$relative.old"
-            fi
-            install -m 0644 "firefox-extension/$relative" "$addon/$relative"
-            cmp "firefox-extension/$relative" "$addon/$relative"
-          done
-          echo "WORKER_V2_SOURCE_INSTALLED=1"
-          echo "LEGACY_CONTROLLER_DISABLED_ON_NEXT_ADDON_RELOAD=1"
-          echo "VM_SCRIPT_VERSION_SOURCE=$(grep -m1 '^// @version' "$root/public/zcloud-worker.user.js" | awk '{print $3}')"
-          # Unlike the old service restart path: no systemctl restart/stop,
-          # kill, browser launch, windows.create, tabs.remove, or refresh.
-          # Addon-only hot-reload is allowed only if all workers are proven idle.
-          # Read-only check. The legacy safe_idle enter action mutates runner
-          # commands/drain state; it must NEVER be used just for addon reload.
-          if python3 - <<'PY'
-          import json, time, urllib.request
-          # The local API may be briefly slow under Firefox memory pressure.
-          # Never treat a timeout as idle, but also do not give up forever
-          # after the first 6-second miss. This check is read-only.
-          for attempt in range(1, 6):
-              try:
-                  with urllib.request.urlopen(
-                      "http://127.0.0.1:8765/api/runner-live", timeout=15
-                  ) as response:
-                      data=json.load(response)
-                  runners=list((data.get("chatgpt_runners") or {}).values())
-                  workers=[w for p in runners for w in (p.get("workers") or []) if w.get("active")]
-                  if not workers:
-                      raise ValueError("No observed active workers")
-                  if any(w.get("sending") or w.get("generating") or
-                         w.get("desired_state")=="draining" for w in workers):
-                      raise ValueError("An active worker is busy")
-                  print("READ_ONLY_IDLE_WORKERS="+str(len(workers)))
-                  raise SystemExit(0)
-              except Exception as exc:
-                  print("IDLE_PROBE_ATTEMPT="+str(attempt)+":"
-                        +type(exc).__name__+":"+str(exc)[:120])
-                  if attempt < 5:
-                      time.sleep(3)
-          # All retries failed. Preserve the current Firefox addon and tabs.
-          print("IDLE_UNVERIFIED=all-probes-failed")
-          raise SystemExit(1)
-          PY
-          then
-            if node scripts/zcloud_reload_extension.mjs; then
-              echo "V2_ADDON_HOT_RELOADED_NO_FIREFOX_RESTART=1"
-            else
-              echo "V2_ADDON_ACTIVATION_DEFERRED=1"
-            fi
-          else
-            echo "V2_ADDON_ACTIVATION_DEFERRED=busy-or-idle-unverified"
-          fi
-          bash scripts/zcloud_retire_legacy_worker_services.sh
-          echo "VM_INSTALLED_SCRIPT_ACTIVATION_REQUIRES_VERSION_CHECK=1"
-          echo "EXISTING_CHAT_TABS_PRESERVED=1"
