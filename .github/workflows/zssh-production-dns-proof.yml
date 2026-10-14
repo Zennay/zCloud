@@ -4,10 +4,12 @@ on:
   pull_request:
     paths:
       - ".github/workflows/zssh-production-dns-proof.yml"
+      - "tests/test_zssh_production_dns_proof_workflow.py"
   push:
     branches: [main]
     paths:
       - ".github/workflows/zssh-production-dns-proof.yml"
+      - "tests/test_zssh_production_dns_proof_workflow.py"
   workflow_dispatch:
 
 permissions:
@@ -98,7 +100,7 @@ jobs:
 
       - name: Upload non-secret DNS evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: zssh-production-dns-proof-${{ github.run_id }}
           path: ${{ runner.temp }}/zssh-production-dns-proof.json
