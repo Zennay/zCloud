@@ -89,6 +89,26 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(mod.decide(pr(), files(), [optional], [], B),
                          "required_smoke_missing")
 
+    def test_known_optional_queued_vps_can_explain_unstable_state(self):
+        p = pr()
+        p["mergeable_state"] = "unstable"
+        optional = {"head_sha": A, "name": "cpu-snapshot",
+                    "status": "queued", "conclusion": None}
+        self.assertEqual(mod.decide(p, files(), checks(), [], B),
+                         "unstable_without_known_optional")
+        self.assertEqual(mod.decide(p, files(), checks() + [optional], [], B),
+                         "eligible")
+        bad = dict(optional, name="unknown-queued")
+        self.assertEqual(mod.decide(p, files(), checks() + [bad], [], B),
+                         "check_not_green")
+        p["mergeable_state"] = "blocked"
+        self.assertEqual(mod.decide(p, files(), checks() + [optional], [], B),
+                         "not_cleanly_mergeable")
+        p["mergeable_state"] = "unstable"
+        p["mergeable"] = False
+        self.assertEqual(mod.decide(p, files(), checks() + [optional], [], B),
+                         "not_cleanly_mergeable")
+
     def test_failed_status_denied(self):
         s = [{"context": "unit-test", "state": "failure"}]
         self.assertEqual(mod.decide(pr(), files(), checks(), s, B), "status_not_green")
