@@ -182,6 +182,91 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(writes[0][2]["sha"], A)
         self.assertTrue(writes[0][2]["commit_title"].endswith(" [skip ci]"))
 
+    def test_merge_rechecks_latest_approval_and_checks_before_write(self):
+        from collections import Counter
+        calls = []
+        def transport(token, method, path, data=None):
+            calls.append((method, path))
+            return self.transport(token, method, path, data)
+        self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+        reads = Counter(path for method, path in calls if method == "GET")
+        for path in ("/pulls/21", "/pulls/21/files?per_page=100",
+                     f"/commits/{A}/check-runs?per_page=100",
+                     f"/commits/{A}/statuses?per_page=100"):
+            self.assertEqual(reads[path], 2, path)
+        writes = [i for i, (method, _) in enumerate(calls) if method == "PUT"]
+        self.assertEqual(len(writes), 1)
+        self.assertGreater(writes[0], max(
+            i for i, (method, path) in enumerate(calls)
+            if method == "GET" and path.endswith("/statuses?per_page=100")))
+
+    def test_last_second_pr_draft_and_review_gate_are_fail_closed(self):
+        import contextlib
+        import io
+        import json
+        for updated, expected in (
+            ({"draft": True}, "recheck_not_review_ready"),
+            ({"state": "closed"}, "recheck_not_review_ready"),
+            ({"mergeable": None}, "recheck_not_cleanly_mergeable"),
+            ({"mergeable_state": "blocked"}, "recheck_not_cleanly_mergeable"),
+            ({"base": {**pr()["base"], "ref": "other"}}, "recheck_base_drift"),
+            ({"labels": []}, "changed_before_merge"),
+        ):
+            calls = 0
+            def transport(token, method, path, data=None):
+                nonlocal calls
+                if path == "/pulls/21":
+                    calls += 1
+                    if calls == 2:
+                        return {**pr(), **updated}
+                if method == "PUT":
+                    self.fail("unsafe source merge after PR approval drift")
+                return self.transport(token, method, path, data)
+            with self.subTest(updated=updated):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+                self.assertEqual(json.loads(out.getvalue())["receipts"][0]["decision"],
+                                 expected)
+                self.assertEqual(calls, 2)
+
+    def test_last_second_checks_statuses_and_file_scope_are_rechecked(self):
+        import contextlib
+        import io
+        import json
+        cases = (
+            ("/check-runs?per_page=100",
+             {"total_count": 1, "check_runs": [
+                 {**checks()[0], "conclusion": "failure"}]},
+             "recheck_required_smoke_not_green"),
+            ("/check-runs?per_page=100",
+             {"total_count": 3, "check_runs": checks()},
+             "recheck_incomplete_checks"),
+            ("/statuses?per_page=100",
+             [{"context": "branch-protection", "state": "failure"}],
+             "recheck_status_not_green"),
+            ("/files?per_page=100",
+             [{"filename": "public/unsafe.js", "status": "added"}],
+             "recheck_unsafe_or_duplicate_path"),
+        )
+        for suffix, replacement, expected in cases:
+            counts = {}
+            def transport(token, method, path, data=None):
+                if method == "PUT":
+                    self.fail("unsafe source merge after a second-stage check change")
+                if path.endswith(suffix):
+                    counts[path] = counts.get(path, 0) + 1
+                    if counts[path] == 2:
+                        return replacement
+                return self.transport(token, method, path, data)
+            with self.subTest(suffix=suffix, expected=expected):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(mod.main(["--apply"], ENV, transport), 0)
+                self.assertEqual(json.loads(out.getvalue())["receipts"][0]["decision"],
+                                 expected)
+                self.assertEqual(max(counts.values()), 2)
+
     def test_untrusted_multiline_title_cannot_change_commit_directives(self):
         def transport(token, method, path, data=None):
             if path == "/pulls/21":
