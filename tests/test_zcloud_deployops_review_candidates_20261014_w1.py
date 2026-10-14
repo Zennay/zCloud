@@ -114,6 +114,55 @@ class ReviewQueueTests(unittest.TestCase):
                           'files_evidence': {'complete': True, 'total_count': 0, 'head_sha': H, 'base_sha': S}}]
         self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
 
+    def test_file_to_directory_swap_collides(self):
+        d = payload()
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': ['scripts/a.py/subfile'],
+            'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+        }]
+        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+
+    def test_directory_to_file_swap_collides(self):
+        d = payload()
+        d['prs'][0]['files'] = ['scripts/a.py/subfile']
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': ['scripts/a.py'],
+            'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+        }]
+        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+
+    def test_case_only_file_collision_rejected(self):
+        d = payload()
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': ['SCRIPTS/A.PY'],
+            'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+        }]
+        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+
+    def test_nfc_normalized_file_collision_rejected(self):
+        d = payload()
+        d['prs'][0]['files'] = ['src/café.py']
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': ['src/cafe\u0301.py'],
+            'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+        }]
+        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+
+    def test_unicode_duplicate_within_pr_denied(self):
+        d = payload()
+        d['prs'][0]['files'] = ['src/café.py', 'src/cafe\u0301.py']
+        d['prs'][0]['files_evidence']['total_count'] = 2
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_sibling_names_are_disjoint(self):
+        d = payload()
+        d['branches'] = [{
+            'name': 'other', 'head_sha': H, 'files': ['scripts/a.py-next'],
+            'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
+        }]
+        self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
+
     def test_incomplete_inventory_denied(self):
         self.assert_denied(lambda d: d['inventory'].update(branches_complete=False))
 
