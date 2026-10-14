@@ -52,7 +52,7 @@ class CanonicalSummaryTests(unittest.TestCase):
             ("unhealthy", {"timeout": 2}, 1),
         ):
             with self.subTest(status=status, failures=failures):
-                attempts = len(failures) + (status == "healthy")
+                attempts = sum(failures.values()) + (status == "healthy")
                 summary = probe.ProbeSummary(
                     status, None, attempts,
                     status == "healthy" and attempts > 1, failures,
