@@ -487,6 +487,22 @@ jobs:
                 with self.assertRaisesRegex(RuntimeError, "symlink or non-tree"):
                     audit.scan_git_ref(root, sha, max_minutes=30)
 
+    def test_oversized_numeric_timeout_literals_are_bounded_and_denied(self):
+        huge = "9" * 6000
+        for raw in (huge, "-" + huge):
+            with self.subTest(sign=raw[0]):
+                source = (
+                    "jobs:\n"
+                    "  oversize:\n"
+                    "    runs-on: [self-hosted, zcloud]\n"
+                    f"    timeout-minutes: {raw}\n"
+                )
+                rows = audit.inspect_workflow("huge.yml", source, max_minutes=30)
+                self.assertEqual(1, len(rows))
+                self.assertEqual("dynamic_or_invalid", rows[0].status)
+                self.assertIsNone(rows[0].timeout_minutes)
+                self.assertEqual(1, audit.summarize(rows, max_minutes=30)["finding_count"])
+
     def test_noncanonical_numeric_timeout_scalars_are_never_bounded(self):
         values = ["1_0", "+10", "01", "٠٥", "１０", "-1", "0", "10"]
         workflow = "jobs:\n" + "".join(
