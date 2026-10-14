@@ -19,7 +19,10 @@ _ROUTES = {"no_job_records", "github_hosted", "zcloud_vps", "ftmo_research",
            "other_or_mixed", "mixed_job_routes"}
 _ASSIGNMENT = {"no_job_records", "not_assigned", "assigned",
                "indeterminate", "mixed_assignment"}
-_STATES = {"queued", "no_job_records", "mixed_or_active"}
+_STATES = {
+    "queued", "in_progress", "completed", "waiting", "requested", "pending",
+    "no_job_records", "mixed_job_states",
+}
 _SCOPE_NL = {
     "current_main": "huidige hoofdbranch",
     "historical_main": "eerdere hoofdbranch",
@@ -44,7 +47,12 @@ _ASSIGNMENT_NL = {
 _STATE_NL = {
     "queued": "wachtend",
     "no_job_records": "geen jobgegevens",
-    "mixed_or_active": "gemengde of actieve jobs",
+    "in_progress": "bezig met uitvoeren",
+    "completed": "al afgerond",
+    "waiting": "wacht op volgende stap",
+    "requested": "uitvoering aangevraagd",
+    "pending": "in behandeling",
+    "mixed_job_states": "jobs in verschillende fasen",
 }
 
 
@@ -190,11 +198,13 @@ def safe_summary(raw: bytes, collector_rc: int, *, now=None) -> tuple[str, int]:
             # never a live restart/cancel/deploy instruction or runner verdict.
             current_vps_unassigned = sum(
                 row["scope"] == "current_main" and row["route"] == "zcloud_vps"
-                and row["assignment"] == "not_assigned" for row in rows
+                and row["assignment"] == "not_assigned"
+                and row["job_state"] == "queued" for row in rows
             )
             ftmo_unassigned = sum(
                 row["route"] == "ftmo_research"
-                and row["assignment"] == "not_assigned" for row in rows
+                and row["assignment"] == "not_assigned"
+                and row["job_state"] == "queued" for row in rows
             )
             if current_vps_unassigned:
                 lines.append(
