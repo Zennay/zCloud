@@ -9,6 +9,7 @@ on:
     paths:
       - .github/workflows/zcloud-hosted-emergency-queue-sweep.yml
       - tests/test_zcloud_emergency_queue_quarantine_20261014.py
+      - tests/test_zcloud_queue_observation_semantics_20261014.py
       - scripts/zcloud_emergency_entrypoint_ratchet_20261014.py
       - tests/test_zcloud_emergency_entrypoint_ratchet_20261014.py
   workflow_dispatch:
@@ -49,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          python3 -m unittest -v tests.test_zcloud_emergency_queue_quarantine_20261014
+          python3 -m unittest -v tests.test_zcloud_emergency_queue_quarantine_20261014 tests.test_zcloud_queue_observation_semantics_20261014
 
   observe:
     if: >-
@@ -146,6 +147,9 @@ jobs:
               "queued_jobs": 0,
               "in_progress_jobs": 0,
               "stale_queued_jobs": 0,
+              "stale_unassigned_jobs": 0,
+              "queued_with_assigned_runner": 0,
+              "queue_age_unknown_jobs": 0,
               "runs_with_no_job_records": 0,
               "indeterminate_job_rows": 0,
           }
@@ -175,37 +179,61 @@ jobs:
                   summary["sampled_runs"] += 1
                   if not jobs:
                       summary["runs_with_no_job_records"] += 1
+                      summary["sample_complete"] = False
                   for job in jobs:
                       if not isinstance(job, dict):
                           summary["indeterminate_job_rows"] += 1
+                          summary["sample_complete"] = False
                           continue
                       labels = job.get("labels")
                       if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
                           summary["indeterminate_job_rows"] += 1
+                          summary["sample_complete"] = False
                           continue
                       if "self-hosted" not in {x.lower() for x in labels}:
                           continue
                       phase = job.get("status")
                       if phase not in ("queued", "in_progress"):
                           summary["indeterminate_job_rows"] += 1
+                          summary["sample_complete"] = False
                           continue
                       summary["sampled_jobs"] += 1
                       summary[phase + "_jobs"] += 1
                       if phase == "queued":
-                          timestamp = run.get("created_at")
+                          # A workflow run can be old while its individual job
+                          # was only just queued. Never attribute run age to a job.
+                          timestamp = job.get("created_at")
                           if not isinstance(timestamp, str):
                               summary["indeterminate_job_rows"] += 1
+                              summary["queue_age_unknown_jobs"] += 1
+                              summary["sample_complete"] = False
                               continue
                           try:
                               created = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
                               seconds = (now - created).total_seconds()
                           except (ValueError, TypeError, OverflowError):
                               summary["indeterminate_job_rows"] += 1
+                              summary["queue_age_unknown_jobs"] += 1
+                              summary["sample_complete"] = False
                               continue
                           if created.tzinfo is None or seconds < 0:
                               summary["indeterminate_job_rows"] += 1
-                          elif seconds > 480:
+                              summary["queue_age_unknown_jobs"] += 1
+                              summary["sample_complete"] = False
+                              continue
+                          runner_id = job.get("runner_id")
+                          if runner_id is not None and (
+                              type(runner_id) is not int or runner_id < 0
+                          ):
+                              summary["indeterminate_job_rows"] += 1
+                              summary["sample_complete"] = False
+                              continue
+                          if isinstance(runner_id, int) and runner_id > 0:
+                              summary["queued_with_assigned_runner"] += 1
+                          if seconds > 480:
                               summary["stale_queued_jobs"] += 1
+                              if runner_id in (None, 0):
+                                  summary["stale_unassigned_jobs"] += 1
           # Counts are sampled, not proof of runner failure or permission to cancel.
           print("ZCLOUD_QUEUE_READONLY=" + json.dumps(summary, sort_keys=True, separators=(",", ":")))
           PY
