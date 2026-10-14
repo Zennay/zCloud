@@ -41,7 +41,8 @@ def _deny(reason: str = "unverified_github_inventory") -> dict:
     return {
         "policy": IDENTITY, "decision": "DENY",
         "reason": reason, "observed_runs": 0, "route_counts": {},
-        "runs": [], "runner_recovery_authorized": False,
+        "runs": [], "mutation_authorized": False,
+        "runner_recovery_authorized": False,
         "cancel_run_ids": [], "production_verified": False,
         "worker_generation_verified": False,
     }
@@ -194,6 +195,7 @@ def collect(api_get, *, clock=None, monotonic_clock=None) -> dict:
         "observed_runs": len(run_rows), "route_counts": dict(sorted(categories.items())),
         "runs": observations, "main_sha_before": before, "main_sha_after": after,
         "reason": "read_only_route_counts_not_runner_liveness",
+        "mutation_authorized": False,
         "runner_recovery_authorized": False, "cancel_run_ids": [],
         "production_verified": False, "worker_generation_verified": False,
     }
