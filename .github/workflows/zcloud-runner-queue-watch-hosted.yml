@@ -1,0 +1,114 @@
+name: zCloud hosted VPS runner queue watch (read-only)
+
+# Observation of GitHub scheduling only. Never occupies/restarts a VPS runner.
+on:
+  schedule:
+    - cron: '41 */2 * * *'
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-runner-queue-watch-hosted.yml
+      - scripts/zcloud_runner_queue_watch_20261014.py
+      - tests/test_zcloud_runner_queue_watch_20261014.py
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: zcloud-runner-queue-readonly-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-proof:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Check exact source, compile and offline queue scenarios
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          python3 -m py_compile scripts/zcloud_runner_queue_watch_20261014.py
+          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014
+
+  observe:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == 1 &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.actor == 'Zennay' &&
+        github.triggering_actor == 'Zennay'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate exact main checkout and no VPS/production authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014
+      - name: Observe newest canonical CPU diagnostic jobs from GitHub Actions API
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_runner_queue_watch_20261014.py > "$RUNNER_TEMP/zcloud-runner-queue-watch.json"
+      - name: Explain runner scheduling without inventing listener health
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          p = Path(os.environ["RUNNER_TEMP"]) / "zcloud-runner-queue-watch.json"
+          result = json.loads(p.read_text()) if p.exists() else {}
+          state = result.get("classification", "EVIDENCE_UNAVAILABLE")
+          if state == "POSSIBLE_LISTENER_GAP":
+              print("::warning::Repeated aged self-hosted queue jobs have no assigned runner; see issue #1326")
+          lines = [
+              "## zCloud VPS runner queue — hosted observation",
+              "",
+              f"- **Queue classification:** {state}",
+              f"- **Sampled workflow runs:** {result.get('sampled_runs', 'unavailable')}",
+              f"- **Queued > 20 minutes:** {result.get('stale_unassigned', 'unavailable')}",
+              f"- **Recent assigned CPU jobs:** {result.get('recent_assignments', 'unavailable')}",
+              "- **VPS listener state:** not independently verified",
+              "- **Production deployment:** not verified",
+              "- **Runner restart, browser, SQLite, queue or production mutation:** none",
+              "- **Tracked remediation owner:** https://github.com/Zennay/zCloud/issues/1326",
+          ]
+          Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a").write("\n".join(lines) + "\n")
+          PY
+      - name: Preserve redacted count-only observation for seven days
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-hosted-runner-queue-watch-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-runner-queue-watch.json
+          retention-days: 7
+          if-no-files-found: warn
