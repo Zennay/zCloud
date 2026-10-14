@@ -79,7 +79,10 @@ def test_autonomous_merge_first_policy_prevents_permanent_noncritical_hold():
         )
         assert "Rond open PRs af" in base
         assert "integreer op actuele main" in prompt
-        assert "groene exact-head CI en vereiste review" in prompt
+        assert "groene exact-head CI en branchchecks" in prompt
+        assert "Geen extra review tenzij GitHub die verplicht" in prompt
+        assert "Na uitrol gelden release-gates" in prompt
+        assert "merge is geen live deploy" in prompt
         assert "HOLD alleen bij falende CI, scopeconflict" in prompt
         assert "rechten, research of productie" in prompt
         assert "de uurlijkse audit doet de brede kwaliteits- en voortgangsreview" in prompt
