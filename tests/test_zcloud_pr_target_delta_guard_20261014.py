@@ -301,6 +301,45 @@ jobs:
         previous = SAFE.replace("permissions:\n  contents: read", "permissions: write-all")
         self.assertNotIn("write_all", gate.increasing_risks(previous, previous + "# write-all\n"))
 
+
+    def test_explicit_pull_merge_ref_checkout_is_never_trusted(self):
+        source = SAFE + """      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/42/merge
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(source))
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(SAFE, source))
+
+    def test_interpolated_pull_head_ref_checkout_is_denied(self):
+        source = SAFE + """      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.number }}/head
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(source))
+
+    def test_literal_pull_ref_in_run_is_denied(self):
+        source = SAFE + """      - run: git checkout refs/pull/78/merge
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(source))
+
+    def test_existing_pull_ref_does_not_launder_new_pull_ref_identity(self):
+        previous = SAFE + """      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/42/merge
+"""
+        candidate = previous.replace("refs/pull/42/merge", "refs/pull/43/head")
+        self.assertEqual(gate.risk_counts(previous)["untrusted_pr_checkout"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["untrusted_pr_checkout"], 1)
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(previous, candidate))
+
+    def test_trusted_main_ref_checkout_remains_unflagged(self):
+        source = SAFE + """      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+"""
+        self.assertNotIn("untrusted_pr_checkout", gate.risk_set(source))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
