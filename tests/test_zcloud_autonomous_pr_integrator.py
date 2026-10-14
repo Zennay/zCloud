@@ -30,7 +30,7 @@ def files(docs=True):
 
 
 def checks():
-    return [{"head_sha": A, "status": "completed", "conclusion": "success"}]
+    return [{"head_sha": A, "name": "critical-runner-flows", "status": "completed", "conclusion": "success"}]
 
 
 class DecisionTest(unittest.TestCase):
@@ -73,6 +73,21 @@ class DecisionTest(unittest.TestCase):
         x = checks()
         x[0]["head_sha"] = B
         self.assertEqual(mod.decide(pr(), files(), x, [], B), "unbound_check")
+
+    def test_optional_queued_vps_cpu_must_not_block_green_hosted_smoke(self):
+        optional = {"head_sha": A, "name": "cpu-snapshot",
+                    "status": "queued", "conclusion": None}
+        self.assertEqual(mod.decide(pr(), files(), checks() + [optional], [], B),
+                         "eligible")
+        unknown = dict(optional, name="unknown-required-or-optional")
+        self.assertEqual(mod.decide(pr(), files(), checks() + [unknown], [], B),
+                         "check_not_green")
+        smoke = checks()
+        smoke[0]["conclusion"] = "failure"
+        self.assertEqual(mod.decide(pr(), files(), smoke + [optional], [], B),
+                         "required_smoke_not_green")
+        self.assertEqual(mod.decide(pr(), files(), [optional], [], B),
+                         "required_smoke_missing")
 
     def test_failed_status_denied(self):
         s = [{"context": "unit-test", "state": "failure"}]
