@@ -98,6 +98,38 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(gate.risk_counts(previous)["write_permission"], 1)
         self.assertEqual(gate.risk_counts(current)["write_permission"], 2)
 
+    def test_equal_total_write_scope_swap_does_not_launder_new_authority(self):
+        previous = SAFE.replace("contents: read", "contents: write")
+        candidate = SAFE.replace("contents: read", "actions: write")
+        self.assertEqual(gate.risk_counts(previous)["write_permission"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["write_permission"], 1)
+        self.assertIn("write_permission", gate.increasing_risks(previous, candidate))
+
+    def test_equal_total_secret_swap_does_not_launder_new_secret(self):
+        previous = SAFE + "      - run: echo '${{ secrets.OLD_KEY }}'\n"
+        candidate = SAFE + "      - run: echo '${{ secrets.NEW_KEY }}'\n"
+        self.assertEqual(gate.risk_counts(previous)["secret_reference"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["secret_reference"], 1)
+        self.assertIn("secret_reference", gate.increasing_risks(previous, candidate))
+        for signature in gate.risk_signatures(candidate)["secret_reference"]:
+            self.assertRegex(signature, r"^[0-9a-f]{64}$")
+            self.assertNotIn("NEW_KEY", signature)
+
+    def test_unchanged_legacy_secret_and_write_identity_does_not_block(self):
+        previous = SAFE.replace("contents: read", "contents: write")
+        previous += "      - run: echo '${{ secrets.EXISTING }}'\n"
+        self.assertEqual(gate.increasing_risks(previous, previous + "# harmless edit\n"), set())
+
+    def test_quoted_permission_key_identity_is_accepted(self):
+        baseline = SAFE.replace("contents: read", "actions: write")
+        candidate = SAFE.replace("contents: read", "'actions': write")
+        self.assertEqual(gate.increasing_risks(baseline, candidate), set())
+
+    def test_repeated_identical_secret_reference_ratcheted(self):
+        previous = SAFE + "      - run: echo '${{ secrets.EXISTING }}'\n"
+        candidate = previous + "      - run: echo '${{ secrets.EXISTING }}'\n"
+        self.assertIn("secret_reference", gate.increasing_risks(previous, candidate))
+
     def test_comment_only_rewrite_preserves_risk_counters(self):
         previous = SAFE.replace("contents: read", "contents: write") + "      - run: echo '${{ secrets.FIRST }}'\n"
         candidate = previous + "# actions: write and secrets.BAD are commented out\n"
