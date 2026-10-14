@@ -302,14 +302,63 @@ def inventory(root, head):
     return counts
 
 
+def triage(root, head, limit=12):
+    """Deterministic bounded workflow-path shortlist; never dump YAML or tokens.
+
+    A shortlist is an *observation*, not an authorizing remediation queue:
+    every path still requires current Notion/PR/branch ownership review.
+    """
+    if not SHA.fullmatch(head) or not isinstance(limit, int) or not 1 <= limit <= 25:
+        raise Unverifiable("triage_arguments")
+    raw = git(root, "ls-tree", "-r", "--name-only", "-z", head,
+              "--", ".github/workflows/")
+    paths = [item.decode("utf-8", "strict") for item in raw.split(b"\0") if item]
+    if not paths or len(paths) > 500 or len(set(paths)) != len(paths) or any(
+        not WORKFLOW.fullmatch(path) for path in paths
+    ):
+        raise Unverifiable("triage_inventory")
+    result = []
+    for path in paths:
+        try:
+            text = source(root, head, path)
+            finding = bool(risks(text))
+            if finding:
+                result.append(("manual_only" if is_manual_only(text)
+                               else "automatic_or_unknown", path))
+        except (Unverifiable, OSError, UnicodeError, subprocess.SubprocessError):
+            result.append(("unknown_source", path))
+    # Automatic/unknown first, manual-only second, unreadable last. Never
+    # expose source lines, expressions, runner labels or contents.
+    priority = {"automatic_or_unknown": 0, "manual_only": 1, "unknown_source": 2}
+    result.sort(key=lambda x: (priority[x[0]], x[1]))
+    return result[:limit], len(result)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--base")
     parser.add_argument("--head")
     parser.add_argument("--inventory-head")
+    parser.add_argument("--triage-head")
+    parser.add_argument("--triage-limit", type=int, default=12)
     parser.add_argument("--repo-root", type=Path,
                         default=Path(__file__).resolve().parents[1])
     args = parser.parse_args(argv)
+    if args.triage_head is not None:
+        try:
+            if any(v is not None for v in (args.base, args.head, args.inventory_head)):
+                raise Unverifiable("mixed_modes")
+            entries, total = triage(args.repo_root, args.triage_head,
+                                    args.triage_limit)
+        except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
+            print("VPS_CANCELLATION_TRIAGE=DENY reason=unverifiable_source")
+            print("VPS_MUTATION_AUTHORIZED=false")
+            return 2
+        print(f"VPS_CANCELLATION_TRIAGE=OBSERVED total={total} shown={len(entries)}")
+        for category, relative in entries:
+            print(f"OBSERVED {category} {relative}")
+        print("VPS_MUTATION_AUTHORIZED=false")
+        return 0
     if args.inventory_head is not None:
         try:
             if args.base is not None or args.head is not None:
