@@ -189,6 +189,7 @@ def evidence_freshness(report, *, now=None):
 ADVISORY_NEXT_ACTIONS = (
     ("overlapping_owner", "coordinate_owners", "Stem bestandsverdeling af met de betrokken eigenaren."),
     ("stale_base", "request_owner_restack", "Vraag de eigenaar om de branch op actuele main bij te werken."),
+    ("pr_branch_behind_main", "request_owner_restack", "Vraag de eigenaar om de branch op actuele main bij te werken."),
     ("required_checks_missing", "verify_required_checks", "Laat de onafhankelijke reviewer ontbrekende verplichte checks verifiëren."),
     ("exact_head_checks_not_green", "rerun_exact_head_checks", "Laat de eigenaar de juiste commit opnieuw testen."),
     ("owner_review_stale", "request_exact_head_reapproval", "Vraag nieuwe onafhankelijke goedkeuring op de huidige PR-commit."),
@@ -204,6 +205,30 @@ def advisory_next_action(reasons):
             return {"code": action, "guidance_nl": guidance}
     return {"code": "independent_source_review",
             "guidance_nl": "Vraag onafhankelijke bronreview; nooit automatisch mergen of deployen."}
+
+
+def pr_ancestry_evidence(record, main_sha):
+    """Validate immutable compare identity; base.sha alone cannot prove restacking."""
+    ancestry = obj(record.get("ancestry_evidence"), "ancestry_evidence")
+    require(ancestry.get("complete") is True, "incomplete_pr_ancestry")
+    require(ancestry.get("main_sha") == main_sha
+            and ancestry.get("head_sha") == record.get("head_sha"),
+            "pr_compare_identity_mismatch")
+    require(sha(ancestry.get("merge_base_sha")), "invalid_pr_merge_base")
+    ahead, behind = ancestry.get("ahead_by"), ancestry.get("behind_by")
+    require(type(ahead) is int and 0 <= ahead <= 2500
+            and type(behind) is int and 0 <= behind <= 2500,
+            "invalid_pr_compare_distance")
+    state = ancestry.get("status")
+    expected = ("identical" if ahead == behind == 0
+                else "ahead" if ahead > 0 and behind == 0
+                else "behind" if behind > 0 and ahead == 0
+                else "diverged")
+    require(state == expected, "inconsistent_pr_compare_status")
+    if state in ("identical", "ahead"):
+        require(ancestry["merge_base_sha"] == main_sha,
+                "invalid_pr_compare_merge_base")
+    return ancestry
 
 
 def reviewer_evidence(record):
@@ -276,6 +301,7 @@ def snapshot(report, *, now=None):
                 "duplicate_or_invalid_pr")
         ids.add(n)
         require(sha(p.get("head_sha")) and sha(p.get("base_sha")), "invalid_pr_sha")
+        pr_ancestry_evidence(p, d["main_sha"])
         require(type(p.get("draft")) is bool and type(p.get("owner_approved")) is bool,
                 "invalid_pr_admission")
         review = reviewer_evidence(p)
@@ -322,6 +348,9 @@ def snapshot(report, *, now=None):
         reasons = []
         if p["base_sha"] != d["main_sha"]:
             reasons.append("stale_base")
+        if (p["ancestry_evidence"]["merge_base_sha"] != d["main_sha"]
+                or p["ancestry_evidence"]["behind_by"] != 0):
+            reasons.append("pr_branch_behind_main")
         if p["draft"]:
             reasons.append("draft")
         review = p["owner_review_evidence"]
@@ -347,7 +376,7 @@ def snapshot(report, *, now=None):
                     "conflict_counts": conflict_summary,
                     "next_action": advisory_next_action(reasons)})
     blockers = {key: sum(key in row["reasons"] for row in out)
-                for key in ("overlapping_owner", "stale_base", "draft",
+                for key in ("overlapping_owner", "stale_base", "pr_branch_behind_main", "draft",
                             "owner_review_missing", "owner_review_stale", "owner_review_dismissed", "required_checks_missing",
                             "exact_head_checks_not_green")}
     # Stable audit correlation only; a digest does NOT authenticate who supplied the JSON.
@@ -368,6 +397,7 @@ def snapshot(report, *, now=None):
 
 REASONS_NL = {
     "stale_base": "verouderde hoofdbranch",
+    "pr_branch_behind_main": "PR-branch bevat huidige main nog niet",
     "draft": "concept-PR",
     "owner_review_missing": "geen eigenaarstoestemming",
     "owner_review_stale": "goedkeuring hoort bij oudere PR-commit",
