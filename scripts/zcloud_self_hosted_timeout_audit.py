@@ -297,14 +297,20 @@ def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFindi
         if mode == "120000" or object_type != "tree":
             raise RuntimeError("symlink or non-tree workflow Git ancestor rejected")
     proc = subprocess.run(
-        ["git", "-C", str(root), "ls-tree", "-r", ref, "--", WORKFLOW_DIR.as_posix()],
+        ["git", "-C", str(root), "ls-tree", "-r", "-z", ref, "--", WORKFLOW_DIR.as_posix()],
         check=True,
         capture_output=True,
         text=True,
     )
     rows: list[TimeoutFinding] = []
     workflow_count = 0
-    for line in proc.stdout.splitlines():
+    # NUL separation avoids git's quoted-path display and safely preserves
+    # whitespace, tabs, unicode and newline characters in workflow filenames.
+    if proc.stdout and not proc.stdout.endswith("\0"):
+        raise RuntimeError("truncated NUL-delimited Git workflow inventory")
+    for line in proc.stdout.split("\0"):
+        if not line:
+            continue
         metadata, sep, relative = line.partition("\t")
         if not sep:
             raise RuntimeError("unexpected git ls-tree output")
