@@ -256,8 +256,13 @@ def collect(*, execute=None, source_path=WORKER_SCRIPT, manifest_path=EXTENSION_
 
 
 def main():
-    print("ZCLOUD_V2_LEGACY_SAFE_METADATA=" + json.dumps(collect(), sort_keys=True, separators=(",", ":")))
+    report = collect()
+    print("ZCLOUD_V2_LEGACY_SAFE_METADATA=" + json.dumps(report, sort_keys=True, separators=(",", ":")))
     print("NO_PROCESS_OR_TAB_MUTATION=1")
+    # A successful Actions job is only a complete *inventory*, not a release
+    # admission. Incomplete observation must never silently look green.
+    if not report["inventory_complete"]:
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

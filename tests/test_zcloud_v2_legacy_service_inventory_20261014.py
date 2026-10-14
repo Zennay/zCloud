@@ -1,5 +1,7 @@
 """Adversarial privacy and correctness checks for read-only Worker-v2 metadata."""
 import json
+import io
+from contextlib import redirect_stdout
 import os
 from unittest import mock
 from pathlib import Path
@@ -11,7 +13,7 @@ import unittest
 
 from scripts.zcloud_v2_legacy_service_inventory_20261014 import (
     COMMANDS, _bounded_process_output, collect, command_lines, get_background_count, get_source_version,
-    read_regular, summarize_processes, summarize_units,
+    main, read_regular, summarize_processes, summarize_units,
 )
 
 
@@ -107,6 +109,43 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[]}}', encoding="utf-8")
             self.assertEqual(get_background_count(manifest), 0)
+
+    def test_main_returns_failure_for_partial_snapshot_without_leaking_raw_error(self):
+        payload = {
+            "policy": "zcloud-v2-legacy-readonly-inventory-v1",
+            "inventory_complete": False,
+            "observation_complete": False,
+            "missing_components": ["user_services"],
+            "mutation_performed": False,
+            "production_verified": False,
+            "worker_generation_verified": False,
+        }
+        output = io.StringIO()
+        with mock.patch("scripts.zcloud_v2_legacy_service_inventory_20261014.collect", return_value=payload):
+            with redirect_stdout(output), self.assertRaises(SystemExit) as outcome:
+                main()
+        self.assertEqual(outcome.exception.code, 2)
+        self.assertIn("ZCLOUD_V2_LEGACY_SAFE_METADATA=", output.getvalue())
+        self.assertIn("NO_PROCESS_OR_TAB_MUTATION=1", output.getvalue())
+        self.assertNotIn("private-service-path", output.getvalue())
+
+    def test_main_returns_success_only_for_complete_inventory(self):
+        payload = {
+            "policy": "zcloud-v2-legacy-readonly-inventory-v1",
+            "inventory_complete": True,
+            "observation_complete": True,
+            "missing_components": [],
+            "mutation_performed": False,
+            "production_verified": False,
+            "worker_generation_verified": False,
+        }
+        output = io.StringIO()
+        with mock.patch("scripts.zcloud_v2_legacy_service_inventory_20261014.collect", return_value=payload):
+            with redirect_stdout(output):
+                self.assertIsNone(main())
+        record = output.getvalue().splitlines()[0]
+        self.assertTrue(json.loads(record.split("=", 1)[1])["inventory_complete"])
+        self.assertIn("NO_PROCESS_OR_TAB_MUTATION=1", output.getvalue())
 
     def test_missing_component_names_are_allowlisted_not_raw_errors(self):
         marker = "PRIVATE_UNIT_DESCRIPTION_DO_NOT_EXPOSE"

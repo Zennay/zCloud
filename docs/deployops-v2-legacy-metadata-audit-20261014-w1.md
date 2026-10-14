@@ -28,3 +28,7 @@ The script has 5-second command deadlines, bounded input (64 KiB/4,000 rows per 
 The local `ps` and `systemctl` commands now stream stdout into a **hard 64 KiB maximum** with **five seconds per command**, instead of capturing unbounded memory and checking size afterwards. Timeout, non-zero exit, invalid UTF-8, duplicate or malformed rows and oversize output give incomplete evidence. Each regular source file is opened with `O_NOFOLLOW` and checked with descriptor `fstat` before/after the read, rejecting swaps, symlinks and concurrent edits.
 
 The JSON contains `observation_complete` for the four command components, and `inventory_complete` for all six components including script version and extension manifest. `missing_components` is a sorted fixed-name allowlist (no raw exceptions or sensitive identities). Neither completion flag implies the runner is healthy, a worker is generating, nor that any production release is authorized.
+
+## Exit semantics and false-green prevention
+
+The inventory CLI **exits with code 2 when `inventory_complete=false`**, after publishing only bounded allowlisted JSON with `missing_components`. Thus missing systemctl evidence, absent/invalid source version, inaccessible manifest or insufficient process data cannot make the GitHub diagnostic job appear green. A zero exit means only that the bounded inventory had every expected component; it is **never** proof of healthy worker generation or production acceptance.
