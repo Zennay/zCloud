@@ -66,6 +66,7 @@ class QueueRouteTriageTests(unittest.TestCase):
         self.assertEqual(calls.count(MAIN), 2)
         self.assertEqual(calls.count(RUNS), 2)
         self.assertFalse(result["runner_recovery_authorized"])
+        self.assertIs(result["mutation_authorized"], False)
         self.assertEqual(result["cancel_run_ids"], [])
         self.assertFalse(result["production_verified"])
 
@@ -290,6 +291,7 @@ class QueueRouteTriageTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         report = json.loads(result.stdout)
         self.assertEqual(report["decision"], "DENY")
+        self.assertIs(report["mutation_authorized"], False)
         self.assertEqual(report["cancel_run_ids"], [])
         self.assertNotIn("Traceback", result.stderr)
 
