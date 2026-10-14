@@ -249,6 +249,46 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
         # second-pass job reads are started beyond the cap.
         self.assertEqual(sum("/jobs?" in path for path in reads), 111)
 
+
+    def test_duplicate_run_id_across_pages_denied_before_jobs_fetch(self):
+        second = ROOT + "/actions/runs?status=queued&per_page=100&page=2"
+        marker = '<https://api.github.com' + second + '>; rel="next"'
+        paths = []
+        def api(path):
+            paths.append(path)
+            if path == MAIN:
+                return main()
+            if path == RUNS:
+                return {"total_count": 2, "workflow_runs": [run(1)]}, marker
+            if path == second:
+                return {"total_count": 2, "workflow_runs": [run(1)]}, ""
+            raise AssertionError("job endpoint must not be reached")
+        with self.assertRaisesRegex(collection.InventoryError, "duplicate_or_invalid_paged_identity"):
+            collection.collect(api, clock=NOW)
+        self.assertFalse(any("/jobs?" in path for path in paths))
+
+    def test_duplicate_job_ids_within_page_denied(self):
+        get, _ = api_snapshot(run(1))
+        def api(path):
+            if "/jobs?" in path:
+                return {"total_count": 2, "jobs": [job(1001), job(1001)]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "duplicate_or_invalid_paged_identity"):
+            collection.collect(api, clock=NOW)
+
+    def test_invalid_run_page_id_denied_early(self):
+        for ident in (True, 0, "1", -1):
+            with self.subTest(ident=ident):
+                record = run(1)
+                record["id"] = ident
+                get, _ = api_snapshot()
+                def api(path):
+                    if path == RUNS:
+                        return {"total_count": 1, "workflow_runs": [record]}, ""
+                    return get(path)
+                with self.assertRaisesRegex(collection.InventoryError, "duplicate_or_invalid_paged_identity"):
+                    collection.collect(api, clock=NOW)
+
     def test_truncated_second_page_denied(self):
         def fetch(path):
             if path == MAIN:
