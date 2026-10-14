@@ -108,7 +108,11 @@ class LegacyServiceAuditTrustTests(unittest.TestCase):
         self.assertNotIn("ps -eo", job)
         self.assertNotIn("head -n", job)
         self.assertNotIn("LIVE_EXTENSION_BACKGROUND_FILES=", job)
-        self.assertIn("NO_PROCESS_OR_TAB_MUTATION=1", job)
+        # The diagnostic prints the acknowledgement inside the privacy-safe
+        # module, never as a standalone raw shell probe or process listing.
+        module = (ROOT / "scripts/zcloud_v2_legacy_service_inventory_20261014.py").read_text(encoding="utf-8")
+        self.assertIn("NO_PROCESS_OR_TAB_MUTATION=1", module)
+        self.assertNotIn("echo '=== FIREFOX", job)
 
 
 
