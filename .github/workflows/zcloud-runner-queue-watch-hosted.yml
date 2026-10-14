@@ -11,6 +11,7 @@ on:
       - .github/workflows/zcloud-runner-queue-watch-hosted.yml
       - scripts/zcloud_runner_queue_watch_20261014.py
       - tests/test_zcloud_runner_queue_watch_20261014.py
+      - tests/test_deployops_runner_queue_chronology_20261014_w8.py
 
 permissions:
   contents: read
@@ -41,7 +42,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           python3 -m py_compile scripts/zcloud_runner_queue_watch_20261014.py
-          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014
+          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014 tests.test_deployops_runner_queue_chronology_20261014_w8
 
   observe:
     if: >-
@@ -68,7 +69,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = 1
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
-          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014
+          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014 tests.test_deployops_runner_queue_chronology_20261014_w8
       - name: Observe newest canonical CPU diagnostic jobs from GitHub Actions API
         env:
           GH_TOKEN: ${{ github.token }}
