@@ -183,8 +183,8 @@ def risk_set(source: str) -> set[str]:
     # event block never spells it out. Refuse before the early non-target exit.
     # This is intentionally narrower than banning unrelated YAML anchors.
     trigger_line = anchors[0].group(1).strip()
-    if re.match(r"^['\\\"]?\\*[A-Za-z_][\\w-]*", trigger_line) or re.search(
-        r"(?m)^['\\\"]?on['\\\"]?:[ \\t]*[&*][A-Za-z_][\\w-]*", clean
+    if re.match(r"^['\"]?\*[A-Za-z_][\w-]*", trigger_line) or re.search(
+        r"(?m)^['\"]?on['\"]?:[ \t]*[&*][A-Za-z_][\w-]*", clean
     ):
         raise Unverified("aliased_event_trigger")
     # Only a root-level event block or supported inline event forms qualify.
