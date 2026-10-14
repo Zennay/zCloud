@@ -17,6 +17,7 @@ concurrency:
 
 jobs:
   prove:
+    if: github.actor == 'Zennay' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, ftmo-research]
     timeout-minutes: 4
     steps:
@@ -25,6 +26,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           test "$(hostname)" = "vps-bb300bba"
+          test "${RUNNER_NAME:-}" = "vps-bb300bba-ftmo"
+          echo "ZCLOUD_CROSS_RUNNER_IDENTITY runner=${RUNNER_NAME:-missing} host=$(hostname)"
 
           service="actions.runner.Zennay-zCloud.zcloud-vps-1.service"
           runner_root="/home/ubuntu/actions-runner-zcloud"
