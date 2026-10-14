@@ -38,3 +38,9 @@ Directory ancestry hardening: source reads now walk each absolute directory comp
 
 
 The observation subprocesses receive a **fixed least-privilege environment** (system binaries PATH, fixed ubuntu HOME, locale, user DBus socket and systemd output controls), not the surrounding GitHub Actions environment. This prevents accidental forwarding of GitHub/SSH credentials, dynamic library injection variables or Python import paths. The preflight identity guard remains a mandatory status-only check with its host/runner JSON suppressed.
+
+## Strict runtime identity and safe abort
+
+The manual job denies admission unless both the initial gate and the immediately-before-observation gate see **RUNNER_NAME=zcloud-vps-1**, **RUNNER_OS=Linux**, **hostname=vps-bb300bba**, **user=ubuntu**, and **UID=1000**. This binds the fixed DBus socket and fixed subprocess environment to the expected permanent VPS. If those values differ, the job must fail without attempting to repair/restart/re-register the runner or mutating browser/SQLite state. The runner identity JSON is deliberately discarded; only a constant denial code may reach the GitHub log.
+
+Every inventory command runs inside a **new isolated process session**, with stdout streamed under 64 KiB and a 5-second per-command limit. On any timeout, oversize, malformed output or unsuccessful exit, only that command's **own subprocess process group** is terminated and reaped; no shared systemd unit, browser process, main workflow worker, unrelated session or runner listener is stopped. The acceptance test uses disposable GitHub-hosted child processes, not the permanent VPS. These checks do not prove a production release or healthy worker generation.

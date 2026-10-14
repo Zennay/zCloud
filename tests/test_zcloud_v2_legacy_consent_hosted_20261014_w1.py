@@ -55,6 +55,12 @@ class LegacyConsentHostedCIContract(unittest.TestCase):
                             "worker_generation_verified", "#638", "#1135"):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, document)
+        for runtime_contract in ("RUNNER_NAME=zcloud-vps-1", "RUNNER_OS=Linux",
+                                 "hostname=vps-bb300bba", "UID=1000",
+                                 "own subprocess process group", "64 KiB",
+                                 "5-second", "GitHub-hosted"):
+            with self.subTest(runtime_contract=runtime_contract):
+                self.assertIn(runtime_contract, document)
         self.assertNotIn("sudo systemctl restart", document)
 
     def test_only_branch_push_and_same_repo_pr(self):
