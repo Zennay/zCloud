@@ -382,6 +382,18 @@ class ReviewQueueTests(unittest.TestCase):
         }]
         self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
+    def test_invisible_or_directional_source_path_rejected(self):
+        for bad in ('src/secret\u202e.py', 'src/a\u200b.py', 'src/hidden\ufeff.py'):
+            d = payload()
+            d['prs'][0]['files'] = [bad]
+            with self.assertRaises(mod.InvalidEvidence):
+                snap(d)
+
+    def test_legitimate_accented_source_filename_is_supported(self):
+        d = payload()
+        d['prs'][0]['files'] = ['src/café.py']
+        self.assertEqual(snap(d)['review_candidate_count'], 1)
+
     def test_unicode_duplicate_within_pr_denied(self):
         d = payload()
         d['prs'][0]['files'] = ['src/café.py', 'src/cafe\u0301.py']
