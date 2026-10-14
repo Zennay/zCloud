@@ -548,6 +548,75 @@ jobs:
 """
         self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
 
+
+    def test_workflow_env_pr_title_consumed_by_exec_denied(self):
+        candidate = """name: globally inherited danger
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env:
+  GLOBAL_COMMAND: ${{ github.event.pull_request.title }}
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - run: eval "$GLOBAL_COMMAND"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, candidate))
+
+    def test_workflow_env_pr_data_as_nonexec_argument_not_denied(self):
+        candidate = """name: global metadata
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env:
+  EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git fetch origin "$EXACT_HEAD"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_workflow_env_pr_data_not_used_by_any_run_is_safe(self):
+        candidate = """name: independent metadata
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env:
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - run: eval "$OTHER"
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_workflow_env_identity_swap_denied_at_equal_count(self):
+        before = """name: global env
+on:
+  pull_request_target:
+permissions:
+  contents: read
+env:
+  COMMAND: ${{ github.event.pull_request.title }}
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sh -c "$COMMAND"
+"""
+        after = before.replace("pull_request.title", "pull_request.body")
+        self.assertEqual(gate.risk_counts(before)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(after)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(before, after))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
