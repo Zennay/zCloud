@@ -34,6 +34,19 @@ The read-only inventory mode classifies every workflow in an exact Git snapshot 
 
 The companion `.github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml` runs exclusively on **GitHub-hosted ubuntu-latest**, with `contents: read`, immutable checkout and `persist-credentials: false`. It includes a candidate-head check and full Git history for the comparison. It has no secret, VPS/runner, Actions write, force-start, worker/Firefox, SQLite or release permission.
 
+## Automatic change coverage and actionable evidence
+
+The hosted workflow checks **all changed `.github/workflows/**` sources on `main` pushes** as well as PR source changes; it previously only checked pushes touching its own policy files. This is a **post-push detection**, not a GitHub ruleset, an approval, or a pre-merge block. Do not treat its green status as proof that production was promoted, or its red status as authorization to cancel running actions.
+
+The scanner now exposes a **bounded, path-only triage mode** (maximum 25 entries, 12 by default), with exact Git SHA in every inventory/triage summary. Entries distinguish `automatic_or_unknown`, `manual_only`, and `unknown_source`. Paths match the strict GitHub workflow filename grammar; raw YAML, runner labels, environment values, and tokens are never printed. Use this only as a starting shortlist, and inspect **fresh ownership in Notion and current open PR/branch changes** before taking any action.
+
+```sh
+python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
+  --triage-head <exact-commit-sha> --triage-limit 12
+```
+
+When the old VPS workflow's concurrency group is dynamic, a new hosted cancellation group may resolve to the same name. The guard denies a claimed clean cross-workflow comparison when that previous VPS group cannot be established as distinct. A VPS-capable workflow with **no concurrency block at all** is not invented as a cross-group collision. The code also distinguishes literal quoted/unquoted group values.
+
 ## Known boundary
 
 This conservative syntactic source gate is **not** a general YAML parser or proof of live runner state. It screens newly changed candidate workflows; it does not remediate legacy files, verify global GitHub concurrency-group uniqueness, prove queue safety, authorize a merge, or promote production. Before integrating, review file ownership, PR-triggered self-hosted workflows such as #638, privileged dashboard recovery #1135 and serialized #580/PWQ-41/#1089. Do not create a PR or restart jobs merely to obtain a green check while those live gates remain open.
