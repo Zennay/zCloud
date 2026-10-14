@@ -191,6 +191,12 @@ def snapshot(report, *, now=None):
             "invalid_pr_inventory")
     require(type(d.get("branches")) is list and len(d["branches"]) <= MAX_ITEMS,
             "invalid_branch_inventory")
+    for declared, actual in (("open_pr_count", len(d["prs"])),
+                             ("prless_branch_count", len(d["branches"]))):
+        count = inv.get(declared)
+        require(type(count) is int and 0 <= count <= MAX_ITEMS,
+                "invalid_inventory_count")
+        require(count == actual, "inventory_count_mismatch")
     correlate_prless_receipt(d)
     all_owners = []
     prs = []
