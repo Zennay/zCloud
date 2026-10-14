@@ -1,0 +1,71 @@
+name: zCloud self-hosted trust no-regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_self_hosted_trust_no_regression.py"
+      - "tests/test_self_hosted_trust_no_regression.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-self-hosted-trust-no-regression-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact PR head with base history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e "$BASE_SHA^{commit}"
+
+      - name: Run guard regressions
+        run: python3 -m unittest tests.test_self_hosted_trust_no_regression
+
+      - name: Reject only newly introduced self-hosted trust debt
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_self_hosted_trust_no_regression.py \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --json | tee "$RUNNER_TEMP/zcloud-self-hosted-trust-no-regression.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          report = json.loads(
+              Path(os.environ["RUNNER_TEMP"])
+              .joinpath("zcloud-self-hosted-trust-no-regression.json")
+              .read_text(encoding="utf-8")
+          )
+          print(
+              "ZCLOUD_SELF_HOSTED_TRUST_NO_REGRESSION="
+              + ("GREEN" if report["ok"] else "FAIL")
+          )
+          print(
+              "ZCLOUD_SELF_HOSTED_TRUST_CHANGED_WORKFLOWS="
+              + str(report["changed_workflow_count"])
+          )
+          if not report["ok"]:
+              raise SystemExit(2)
+          PY
