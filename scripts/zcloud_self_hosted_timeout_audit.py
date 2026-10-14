@@ -201,7 +201,10 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
             # Unicode digits and leading-zero values. A YAML/Actions
             # interpreter need not agree; only canonical ASCII decimals
             # can substantiate a bounded timeout.
-            if not re.fullmatch(r"-?(?:0|[1-9][0-9]*)", raw):
+            # A valid Actions timeout is far below one million minutes.
+            # Refuse excessive decimal literals before int() to avoid Python
+            # integer parsing limits and unbounded integer allocation.
+            if len(raw) > 7 or not re.fullmatch(r"-?(?:0|[1-9][0-9]*)", raw):
                 timeout = None
                 status = "dynamic_or_invalid"
             else:
