@@ -101,12 +101,17 @@ def _job_key_indent(block: str) -> int:
 
 
 def _runs_on_text(block: str, *, key_indent: int) -> str | None:
-    match = re.search(
+    matches = list(re.finditer(
         rf"(?m)^ {{{key_indent}}}{RUNS_ON_KEY_RE}:[ \t]*(?P<value>[^#\n]*)",
         block,
-    )
-    if match is None:
+    ))
+    if not matches:
         return None
+    if len(matches) != 1:
+        # A YAML parser may reject duplicate keys or prefer the final value.
+        # A line-oriented audit must never trust either interpretation.
+        return "*duplicate_runner_selector"
+    match = matches[0]
     value = match.group("value").strip()
     if value and value not in ("|", "|-", "|+", ">", ">-", ">+"):
         return value
@@ -152,15 +157,18 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
         if not runner_is_dynamic and not runner_has_self_hosted_label and not runner_is_unknown:
             continue
 
-        timeout_match = re.search(
+        timeout_matches = list(re.finditer(
             rf"(?m)^ {{{key_indent}}}{TIMEOUT_KEY_RE}:[ \t]*(?P<value>[^#\n]+?)[ \t]*$",
             block,
-        )
-        if timeout_match is None:
+        ))
+        if not timeout_matches:
             timeout = None
             status = "missing"
+        elif len(timeout_matches) != 1:
+            timeout = None
+            status = "dynamic_or_invalid"
         else:
-            raw = timeout_match.group("value").strip().strip("'\"")
+            raw = timeout_matches[0].group("value").strip().strip("'\"")
             try:
                 timeout = int(raw)
             except ValueError:
