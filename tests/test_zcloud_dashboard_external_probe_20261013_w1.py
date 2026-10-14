@@ -316,8 +316,8 @@ class DashboardProbeTests(unittest.TestCase):
                 self.assertEqual(probe.probe_once(Opener(response)), "healthy")
 
     def test_http_cache_status_malformed_or_duplicate_denied(self):
-        for value in ("", "cdn; " + "x" * 513, "cdn; hit\\n",
-                      "cdn; hit\\x00", "cdn; hït"):
+        for value in ("", "cdn; " + "x" * 513, "cdn; hit\n",
+                      "cdn; hit\x00", "cdn; hït"):
             with self.subTest(value=repr(value)):
                 response = Response()
                 response.headers["Cache-Status"] = value
