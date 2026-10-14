@@ -134,6 +134,8 @@ exit 3
             env.update({
                 "PATH": tmp + os.pathsep + env.get("PATH", ""),
                 "CONFIRMED_SHA": good_sha,
+                "READONLY_APPROVAL": "true",
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
                 "GITHUB_SHA": good_sha,
                 "MOCK_REMOTE_MAIN": good_sha,
                 "GITHUB_REPOSITORY": "Zennay/zCloud",
@@ -155,6 +157,9 @@ exit 3
 
             self.assertEqual(execute({}), (0, True))
             for overrides in (
+                {"READONLY_APPROVAL": "false"},
+                {"READONLY_APPROVAL": ""},
+                {"GITHUB_EVENT_NAME": "push"},
                 {"GITHUB_RUN_ATTEMPT": "2"},
                 {"GITHUB_RUN_ATTEMPT": ""},
                 {"GITHUB_TRIGGERING_ACTOR": "another"},
