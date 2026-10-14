@@ -150,6 +150,52 @@ def executable_steps(source: str) -> list[str]:
     return blocks
 
 
+def _env_expressions_executed_by_run(step: str, command_source: str) -> Counter[str]:
+    """Trace simple step-local env bindings into a run command without YAML eval.
+
+    A PR title in an env declaration is dangerous if the shell subsequently
+    expands that variable. Metadata never read by the command is not counted.
+    The scanner deliberately does not claim full shell data-flow coverage.
+    """
+    references: Counter[str] = Counter()
+    in_env = False
+    env_indent = 0
+    for line in step.splitlines():
+        header = re.match(r"""^([ ]+)['"]?env['"]?[ \t]*:[ \t]*$""", line)
+        if header:
+            in_env = True
+            env_indent = len(header.group(1))
+            continue
+        if not in_env or not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= env_indent:
+            in_env = False
+            continue
+        binding = re.match(
+            r"""^[ ]+['"]?(?P<name>[A-Za-z_][A-Za-z0-9_]*)['"]?[ \t]*:[ \t]*(?P<value>[^\r\n]*)$""",
+            line,
+        )
+        if not binding:
+            continue
+        name, value = binding.group("name"), binding.group("value")
+        pr_expressions = list(PR_SOURCE.finditer(value))
+        if not pr_expressions:
+            continue
+        shell_expansion = re.search(
+            r"\$(?:\{" + re.escape(name) + r"\}|" + re.escape(name) + r"\b)",
+            command_source,
+        )
+        expression_expansion = re.search(
+            r"""\benv(?:\s*\.\s*""" + re.escape(name)
+            + r"""|\s*\[\s*['"]""" + re.escape(name) + r"""['"]\s*\])\b""",
+            command_source,
+        )
+        if shell_expansion or expression_expansion:
+            references.update(match.group(0).lower() for match in pr_expressions)
+    return references
+
+
 def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
     """Count untrusted expressions only inside the step that carries risk.
 
@@ -179,6 +225,9 @@ def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
             found["pr_source_in_run_job"].update(
                 "pull_ref:" + match.group(0).lower()
                 for match in PULL_REF.finditer(command_source)
+            )
+            found["pr_source_in_run_job"].update(
+                _env_expressions_executed_by_run(step[:command.start()], command_source)
             )
     return {reason: count for reason, count in found.items() if count}
 
