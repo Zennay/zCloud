@@ -4,7 +4,9 @@ The only permissible PR execution is a hosted, read-only source regression.
 The self-hosted Firefox RDP probe must be limited to the canonical repository's
 main push or an explicitly owner-initiated manual dispatch on main.
 """
+import ast
 import os
+import textwrap
 from pathlib import Path
 import subprocess
 import unittest
@@ -102,6 +104,22 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", header)
         self.assertIn("workflow_dispatch:", header)
         self.assertNotIn("pull_request_target:", header)
+
+
+    def test_embedded_rdp_probe_is_valid_python(self):
+        embedded = SOURCE.split("python3 - <<'PY'", 1)[1].split("\n          PY", 1)[0]
+        ast.parse(textwrap.dedent(embedded), filename="zcloud-live-tab-version-probe.yml")
+
+    def test_every_selected_tab_is_observed_before_claiming_version_health(self):
+        inspect = _job("inspect")
+        self.assertIn("sampled=chat[:20]", inspect)
+        self.assertIn("for tab in sampled:", inspect)
+        self.assertIn('send(sock,{"to":tab_actor,"type":"getTarget"})', inspect)
+        self.assertNotIn('chat[0]["actor"]', inspect)
+        self.assertIn("len(chat)<=20 and len(versions)==len(chat)", inspect)
+        self.assertIn("RDP_SAMPLE_COMPLETE=", inspect)
+        self.assertIn("RDP_IS_TARGET_SCRIPT_LIVE=", inspect)
+
 
 
 if __name__ == "__main__":
