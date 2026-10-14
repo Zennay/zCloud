@@ -130,6 +130,7 @@ class ReadOnlyAPI:
 def _pages(api_get, route, collection, *, max_pages, max_count, query):
     """Page through a bounded trusted route and reject incomplete count or links."""
     items = []
+    seen_ids: set[int] = set()
     expected_total = None
     for index in range(1, max_pages + 1):
         path = route + ("&" if "?" in route else "?") + "page=" + str(index)
@@ -146,6 +147,16 @@ def _pages(api_get, route, collection, *, max_pages, max_count, query):
                           expected_page=index, required_query=query)
         if more and not page_items:
             raise InventoryError("empty_nonterminal_page")
+        # Catch a duplicated or malformed run/job ID before requesting
+        # downstream resources. Page overlap is not a complete inventory.
+        for record in page_items:
+            if (
+                type(record) is not dict
+                or not _integer(record.get("id"))
+                or record["id"] in seen_ids
+            ):
+                raise InventoryError("duplicate_or_invalid_paged_identity")
+            seen_ids.add(record["id"])
         items.extend(page_items)
         if len(items) > max_count:
             raise InventoryError("excess_inventory")
