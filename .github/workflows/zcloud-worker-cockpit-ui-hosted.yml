@@ -1,8 +1,25 @@
 name: zCloud Worker Cockpit UI (hosted)
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - public/app.js
+      - public/enhancements.css
+      - public/index.html
+      - public/design-system.css
+      - tests/test_dashboard_ux_hierarchy.py
+      - tests/test_global_worker_console_ui.py
+      - tests/test_mobile_worker_actions_20261010.py
+      - tests/test_mobile_worker_console_navigation.py
+      - tests/test_mobile_css_delivery_20261010.py
+      - tests/test_dashboard_design_system.py
+      - tests/test_dashboard_start_force_regression.py
+      - .github/workflows/zcloud-worker-cockpit-ui-hosted.yml
+      - tests/test_worker_cockpit_ui_hosted_trust_20261014.py
   push:
     branches:
       - fix/worker-allocation-cockpit-20261013
+      - main
   workflow_dispatch:
 
 permissions:
@@ -18,12 +35,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout exact branch revision
-        uses: actions/checkout@v4
+      - name: Checkout immutable candidate revision without retained credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Check JavaScript syntax
-        run: node --check public/app.js
+          clean: true
+          fetch-depth: 1
+      - name: Confirm tested candidate SHA before executing UI code
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$REPOSITORY" = Zennay/zCloud
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          echo "COCKPIT_UI_IMMUTABLE_SOURCE_VERIFIED=1"
+      - name: Check JavaScript syntax and workflow trust
+        run: |
+          set -euo pipefail
+          node --check public/app.js
+          python3 -m unittest -v tests.test_worker_cockpit_ui_hosted_trust_20261014
       - name: Run focused UI contracts
         run: |
           set -euo pipefail
