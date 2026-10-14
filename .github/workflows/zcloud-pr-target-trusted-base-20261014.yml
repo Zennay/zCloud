@@ -67,3 +67,18 @@ jobs:
           final_main="$(timeout 15 git -C trusted ls-remote --exit-code origin refs/heads/main | cut -f1)"
           test -n "$final_main"
           test "$final_main" = "$EXACT_BASE"
+
+  # A forked head must not silently skip the security workflow. Protected
+  # workflow changes from external repositories require separate admission.
+  deny-foreign-head:
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Explicitly deny external PR heads for privileged workflow changes
+        shell: bash
+        run: |
+          echo "PR_TARGET_RISK=DENY reason=foreign_head_repository" >&2
+          echo "PRODUCTION_MUTATION_AUTHORIZED=false"
+          exit 1

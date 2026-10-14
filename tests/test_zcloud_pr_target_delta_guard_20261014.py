@@ -230,6 +230,18 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn("cd candidate && python3", trusted)
         self.assertEqual(gate.risk_set(trusted), set())
 
+    def test_external_pr_heads_explicitly_denied_not_silently_skipped(self):
+        trusted = (TARGET.parents[1] / ".github/workflows/zcloud-pr-target-trusted-base-20261014.yml").read_text()
+        self.assertIn("  deny-foreign-head:\n", trusted)
+        denial = trusted.split("  deny-foreign-head:\n", 1)[1]
+        self.assertIn("github.event.pull_request.head.repo.full_name != github.repository", denial)
+        self.assertIn("PR_TARGET_RISK=DENY reason=foreign_head_repository", denial)
+        self.assertIn("PRODUCTION_MUTATION_AUTHORIZED=false", denial)
+        self.assertIn("exit 1", denial)
+        self.assertIn("runs-on: ubuntu-latest", denial)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", trusted)
+        self.assertEqual(gate.risk_set(trusted), set())
+
     def test_trusted_base_denies_its_own_modified_trust_roots(self):
         trusted = (TARGET.parents[1] / ".github/workflows/zcloud-pr-target-trusted-base-20261014.yml").read_text()
         self.assertIn("trust_root_changes=\"$(git -C trusted diff --name-only", trusted)
