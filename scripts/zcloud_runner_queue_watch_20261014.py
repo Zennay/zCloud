@@ -83,8 +83,10 @@ def summarize(runs, jobsets, now):
         if type(number) is not int or number <= 0 or number in seen:
             raise Unavailable("run_identity")
         seen.add(number)
-        if (run.get("name") != NAME or run.get("path") != PATH
-                or run.get("head_branch") not in ("main", None)
+        path = run.get("path")
+        if (not isinstance(path, str) or path.split("@", 1)[0] != PATH
+                or run.get("name") != NAME
+                or run.get("event") not in ("pull_request", "workflow_dispatch")
                 or run.get("repository", {}).get("full_name") != REPO
                 or run.get("head_repository", {}).get("full_name") != REPO
                 or not isinstance(run.get("head_sha"), str)
