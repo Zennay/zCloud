@@ -66,6 +66,14 @@ Triage deliberately does **not** use the strict `assess` admission result. It in
 
 The existing new **manual-only GitHub-hosted** read-only workflow now runs both references before a final main SHA recheck, publishes both sanitized Dutch reports, and exits non-green if either fails. Its hosted runtime timeout was increased from four to **six minutes** to bound the two collectors; permission scope remains exactly `contents:read` plus `actions:read`. No automatic trigger, GitHub write, cancellation, VPS contact, worker push or deploy has been introduced. This workflow is still **draft/unmerged and not runnable from main**. Actual runner recovery remains entirely with #1317 and serialized release approval.
 
+### Additional source admission hardening — 14 October
+
+The separate route observer now rejects **cross-run job-ID reuse**, even when both per-run job pages are individually well formed. It also rejects a non-queued run returned by GitHub's queued-only search, and unrecognized job-state strings. These contradictions no longer become plausible-looking route totals.
+
+The report renderer requires canonical calendar-valid UTC second timestamps and a causally consistent triple of **route / runner assignment / job state**. A missing job record cannot simultaneously be reported as assigned, queued or containing a nonzero job count. Contradictory source-local buckets suppress all numbers and links rather than producing a misleading operator dashboard.
+
+Only a single explicitly recognized GitHub-hosted image label is classified as `github_hosted`; empty, combined, private or unfamiliar labels go to `other_or_mixed`. This is deliberately conservative and may undercount hosted capacity. It is **not** an assertion that the zCloud VPS listener is offline. Focused adversarial regressions are included in the existing independent triage and summary suites. None of these checks authorizes cancel/restart/deploy or changes the exclusive queue-watchdog, listener, control-plane or SQLite owners.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
