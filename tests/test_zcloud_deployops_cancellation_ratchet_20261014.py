@@ -171,6 +171,14 @@ class PolicyTest(unittest.TestCase):
         )
         self.assertEqual([], scanner.risks(changed))
 
+    def test_yaml_explicit_complex_policy_keys_are_denied(self):
+        for key in ("concurrency", "cancel-in-progress"):
+            with self.subTest(key=key):
+                changed = CANCEL.replace(
+                    key + ":", "? " + key + "\n: "
+                )
+                self.assertRaises(scanner.Unverifiable, scanner.risks, changed)
+
     def test_quoted_concurrency_key_is_denied(self):
         text = CANCEL.replace("concurrency:", "'concurrency':")
         self.assertRaises(scanner.Unverifiable, scanner.risks, text)
@@ -567,6 +575,54 @@ class GitTest(unittest.TestCase):
         main = self.commit(SAFE + "# diverged main\n")
         self.assertRaises(scanner.Unverifiable, scanner.evaluate,
                           self.root, main, feature)
+
+    def test_executable_workflow_blob_denied(self):
+        base = self.commit(SAFE)
+        self.path.chmod(0o755)
+        self.git("add", ".")
+        self.git("commit", "-qm", "executable workflow mode")
+        head = self.git("rev-parse", "HEAD")
+        self.assertRaises(scanner.Unverifiable, scanner.evaluate,
+                          self.root, base, head)
+
+    def test_invalid_utf8_workflow_blob_denied(self):
+        base = self.commit(SAFE)
+        self.path.write_bytes(b"name: invalid\xff\n")
+        self.git("add", ".")
+        self.git("commit", "-qm", "invalid workflow bytes")
+        head = self.git("rev-parse", "HEAD")
+        self.assertRaises(scanner.Unverifiable, scanner.evaluate,
+                          self.root, base, head)
+
+    def test_oversized_workflow_blob_denied(self):
+        base = self.commit(SAFE)
+        self.path.write_text(SAFE + ("# bounded blob proof\n" * 7000),
+                             encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "oversized workflow blob")
+        head = self.git("rev-parse", "HEAD")
+        self.assertRaises(scanner.Unverifiable, scanner.evaluate,
+                          self.root, base, head)
+
+    def test_safe_rename_is_tracked_without_false_vps_alarm(self):
+        base = self.commit(SAFE)
+        moved = self.path.with_name("renamed.yml")
+        self.path.rename(moved)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "workflow rename")
+        head = self.git("rev-parse", "HEAD")
+        self.assertEqual([], scanner.evaluate(self.root, base, head))
+
+    def test_risky_workflow_rename_is_denied(self):
+        base = self.commit(SAFE)
+        moved = self.path.with_name("renamed.yml")
+        self.path.rename(moved)
+        moved.write_text(CANCEL, encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "risk on workflow rename")
+        head = self.git("rev-parse", "HEAD")
+        self.assertEqual([".github/workflows/renamed.yml"],
+                         scanner.evaluate(self.root, base, head))
 
     def test_ambiguous_revision_denied(self):
         head = self.commit(SAFE)
