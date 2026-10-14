@@ -31,7 +31,15 @@ PR_SOURCE = re.compile(
     )
     """
 )
-CHECKOUT = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?['\"]?uses['\"]?[ \t]*:[ \t]*['\"]?actions/checkout@", re.I)
+# GitHub accepts plain, quoted, folded and literal YAML scalar values for
+# "uses"; a line break must not hide an untrusted checkout target.
+CHECKOUT = re.compile(
+    r"""(?mix)
+    ^[ \t]*(?:-[ \t]*)?['"]?uses['"]?[ \t]*:
+    (?:[ \t]*['"]?actions/checkout@
+      | [ \t]*(?:[>|][+-]?)?[ \t]*\n[ \t]+['"]?actions/checkout@)
+    """
+)
 RUN_STEP = re.compile(r"(?m)^[ \t]*(?:-[ \t]*)?['\"]?run['\"]?[ \t]*:", re.I)
 PR_TARGET = re.compile(r"\bpull_request_target\b")
 
