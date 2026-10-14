@@ -49,7 +49,7 @@ timeout() {
 }
 """
     result = subprocess.run(
-        ["bash", "-c", "set -euo pipefail\\n" + mock + prewrite_guard() + "\\nrequire_live_main"],
+        ["bash", "-c", "set -euo pipefail\n" + mock + prewrite_guard() + "\nrequire_live_main"],
         env=env, capture_output=True, text=True, timeout=4,
     )
     return result.returncode
@@ -87,7 +87,7 @@ class PostsendPrewriteTrustTests(unittest.TestCase):
                 self.assertNotEqual(0, admission(**case))
 
     def test_only_manual_first_attempt_can_install(self):
-        install = TEXT.split("  install:\\n", 1)[1]
+        install = TEXT.split("  install:\n", 1)[1]
         job_gate = install.split("    runs-on:", 1)[0]
         for required in (
             "github.event_name == 'workflow_dispatch'",
@@ -102,7 +102,7 @@ class PostsendPrewriteTrustTests(unittest.TestCase):
         self.assertNotIn("||", job_gate)
 
     def test_authorized_runner_guard_precedes_install(self):
-        install = TEXT.split("  install:\\n", 1)[1]
+        install = TEXT.split("  install:\n", 1)[1]
         admission_step = install.split("      - name: Verify manual owner approval", 1)[1].split("      - name: Record running Firefox", 1)[0]
         self.assertIn('test "$GITHUB_RUN_ATTEMPT" = "1"', admission_step)
         self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", admission_step)
