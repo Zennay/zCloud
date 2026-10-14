@@ -89,7 +89,7 @@ def classify(source: dict) -> dict:
     if not isinstance(status, dict) or sha(status.get("sha")) != main_sha:
         raise EvidenceError("unbound_status")
     statuses = status.get("statuses")
-    if not isinstance(statuses, list) or not 1 <= len(statuses) <= 100:
+    if not isinstance(statuses, list) or not 0 <= len(statuses) <= 100:
         raise EvidenceError("incomplete_statuses")
     seen_status_ids: set[int] = set()
     production = []
