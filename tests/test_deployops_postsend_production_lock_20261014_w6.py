@@ -108,8 +108,9 @@ class PostsendProductionLockTests(unittest.TestCase):
                 self.assertIn("manual_gate:" + clause, errors(changed, self.deploy))
 
     def test_hosted_only_never_runs_a_service_command(self):
-        changed = self.source.replace("  offline:\n",
-                                      "  offline:\n    run: sudo systemctl restart firefox\n", 1)
+        changed = self.source.replace(
+            "          node --check firefox-extension/background.js",
+            "          sudo systemctl restart firefox\n          node --check firefox-extension/background.js", 1)
         self.assertIn("hosted_mutation", errors(changed, self.deploy))
 
     def test_regression_source_must_trigger_both_events(self):
