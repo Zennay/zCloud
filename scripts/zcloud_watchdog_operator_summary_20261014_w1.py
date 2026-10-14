@@ -83,7 +83,7 @@ def summarize(raw: bytes, collector_exit: int) -> tuple[str, int]:
             counts_line = (
                 f"- Aangeleverde wachtrijruns: **{count}**; "
                 f"groepen ter beoordeling: **{len(groups)}** "
-                "(geen bevestiging van productiegezondheid).\\n"
+                "(geen bevestiging van productiegezondheid).\n"
             )
         outcome = decision
         if decision == "DENY":
