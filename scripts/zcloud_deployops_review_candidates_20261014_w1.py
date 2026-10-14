@@ -122,6 +122,35 @@ def snapshot(report):
             "disclaimer": "Offline advisory only: requires authenticated live revalidation, independent review and serialized owner release before any merge, deployment or recovery."}
 
 
+
+REASONS_NL = {
+    "stale_base": "verouderde hoofdbranch",
+    "draft": "concept-PR",
+    "owner_review_missing": "geen eigenaarstoestemming",
+    "required_checks_missing": "verplichte CI-controle ontbreekt",
+    "exact_head_checks_not_green": "tests niet groen op exacte commit",
+    "overlapping_owner": "bestandsconflict met andere worker",
+}
+
+
+def markdown(result):
+    """Bounded, sanitized human-readable advisory; never a release permit."""
+    lines = ["### zCloud · deploy-ops reviewoverzicht",
+             "Dit is **alleen een bronreview-advies**. Geen toestemming voor merge, herstel of deploy.",
+             f"Kandidaat-PR's: **{result['review_candidate_count']} / {len(result['review_candidates'])}**.",
+             f"Geserialiseerde issues allemaal gesloten: **{'ja' if result['serialized_gates_closed'] else 'nee'}**. Ook bij ja ontbreekt vrijgavebewijs.",
+             "", "#### Kandidaten en blokkades"]
+    for row in result['review_candidates'][:30]:
+        if row['review_candidate']:
+            lines.append(f"- PR #{row['number']}: geschikt voor *onafhankelijke bronreview*, niet voor merge.")
+        else:
+            explanations = ", ".join(REASONS_NL[r] for r in row['reasons'])
+            lines.append(f"- PR #{row['number']}: nog niet reviewgereed — {explanations}.")
+    if len(result['review_candidates']) > 30:
+        lines.append(f"- Nog {len(result['review_candidates']) - 30} PR's niet weergegeven (uitvoerlimiet).")
+    lines.append("Geen productieactie uitgevoerd. Herhaal inventarisatie met geauthenticeerde GitHub-data op de actuele SHA.")
+    return "\n".join(lines)
+
 def unique_pairs(items):
     def no_duplicates(pairs):
         d = {}
@@ -137,13 +166,15 @@ def unique_pairs(items):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", help="untrusted local JSON snapshot; no network access")
+    parser.add_argument("--format", choices=("json", "markdown"), default="json")
     a = parser.parse_args(argv)
     try:
         with open(a.manifest, "rb") as f:
             body = f.read(MAX_BYTES + 1)
         require(len(body) <= MAX_BYTES, "oversized_snapshot")
         result = snapshot(unique_pairs(body.decode("utf-8")))
-        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        print(markdown(result) if a.format == "markdown" else
+              json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0
     except (OSError, UnicodeError, ValueError, RecursionError) as error:
         # Never echo untrusted filenames, URLs, full JSON, tokens or exception text.
