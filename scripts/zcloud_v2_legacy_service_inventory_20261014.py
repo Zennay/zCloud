@@ -161,7 +161,13 @@ def summarize_units(lines, *, kind):
             continue
         if not unit.lower().startswith(PREFIXES):
             continue
-        if len(fields) < 4 or fields[2] not in STATES or unit in observed:
+        # systemctl columns are UNIT LOAD ACTIVE SUB DESCRIPTION. A status
+        # like "not-found active running" is contradictory: never call it
+        # active merely because the third column contains that string.
+        if (len(fields) < 4 or fields[1] != "loaded" or
+                fields[2] not in STATES or unit in observed):
+            return None
+        if not re.fullmatch(r"[a-z][a-z-]{0,39}", fields[3]):
             return None
         observed.add(unit)
         count += 1

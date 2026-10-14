@@ -79,6 +79,21 @@ class LegacyServiceInventoryTests(unittest.TestCase):
         self.assertEqual(summarize_units(["● zcloud.service loaded active running private prompt"], kind="service"),
                          {"matching_units": 1, "active_units": 1, "failed_units": 0})
         self.assertIsNone(summarize_units(["zcloud.service loaded unknown running"], kind="service"))
+        # A phantom/masked/broken service must never be counted as active.
+        for load in ("not-found", "masked", "error", "bad-setting", "unknown"):
+            with self.subTest(load=load):
+                self.assertIsNone(summarize_units(
+                    [f"zcloud.service {load} active running"], kind="service"))
+        self.assertIsNone(summarize_units(
+            ["zcloud.service loaded active ???"], kind="service"))
+        self.assertIsNone(summarize_units(
+            ["zcloud.service loaded active"], kind="service"))
+        self.assertEqual(summarize_units(
+            ["zcloud.service loaded inactive dead"], kind="service"),
+            {"matching_units": 1, "active_units": 0, "failed_units": 0})
+        self.assertEqual(summarize_units(
+            ["zcloud.service loaded failed failed"], kind="service"),
+            {"matching_units": 1, "active_units": 0, "failed_units": 1})
         self.assertIsNone(summarize_units(["zcloud.service loaded active running",
                                           "zcloud.service loaded active running"], kind="service"))
         self.assertEqual(summarize_units(["unrelated.service loaded active running"], kind="service")["matching_units"], 0)
