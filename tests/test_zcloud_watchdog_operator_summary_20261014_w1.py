@@ -90,6 +90,41 @@ class TestHostedQueueSummary(unittest.TestCase):
         self.assertNotIn("supersecret_internal_token", markdown)
         self.assertNotIn("private prompt", markdown)
 
+
+    def test_safe_dutch_reason_categories_are_shown_without_raw_error_text(self):
+        expected = {
+            "incomplete_queue_pages": "geen complete",
+            "invalid_job_identity": "identiteit",
+            "job_state_changed": "veranderde",
+            "queue_too_large": "meer wachtrijgegevens",
+            "main_changed": "hoofdbranch",
+            "observation_too_slow": "te lang",
+            "github_inventory_untrusted": "niet betrouwbaar",
+        }
+        for code, fragment in expected.items():
+            with self.subTest(code=code):
+                markdown, exit_status = reporter.summarize(report("DENY", reason=code), 1)
+                self.assertEqual(exit_status, 1)
+                self.assertIn(fragment, markdown)
+                self.assertNotIn(code, markdown)
+
+    def test_unrecognized_reason_and_control_chars_never_reach_markdown(self):
+        for injected in ("token=secret-file", "bad\\n- **APPROVED**", "private prompt",
+                         "cross_origin_next_link", None, ["not", "a", "code"]):
+            with self.subTest(value=injected):
+                markdown, status = reporter.summarize(report("DENY", reason=injected), 1)
+                self.assertEqual(status, 1)
+                self.assertIn("niet betrouwbaar", markdown)
+                self.assertNotIn(str(injected), markdown)
+                self.assertNotIn("APPROVED", markdown)
+
+    def test_green_observation_does_not_present_production_green(self):
+        markdown, status = reporter.summarize(report("NOOP", reason="irrelevant"), 0)
+        self.assertEqual(status, 0)
+        self.assertIn("Geen mogelijke dubbele", markdown)
+        self.assertIn("**NIET BEWEZEN**", markdown)
+        self.assertNotIn("Productie gezond", markdown)
+
     def test_actual_cli_writes_only_sanitized_summary(self):
         with tempfile.TemporaryDirectory() as temp:
             folder = Path(temp)
