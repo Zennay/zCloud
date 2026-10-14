@@ -7,6 +7,7 @@ on:
       - .github/workflows/zcloud-postsend-tab-preservation-live.yml
       - tests/test_postsend_owner_manual_workflow_20261014.py
       - tests/test_postsend_prewrite_trust_20261014.py
+      - tests/test_deployops_postsend_production_lock_20261014_w6.py
       - public/zcloud-worker.user.js
       - firefox-extension/background.js
       - deploy/chatgpt-firefox.service
@@ -19,6 +20,7 @@ on:
       - .github/workflows/zcloud-postsend-tab-preservation-live.yml
       - tests/test_postsend_owner_manual_workflow_20261014.py
       - tests/test_postsend_prewrite_trust_20261014.py
+      - tests/test_deployops_postsend_production_lock_20261014_w6.py
   workflow_dispatch:
     inputs:
       apply:
@@ -35,7 +37,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: zcloud-postsend-preserve-tabs-vps
+  # Hosted PR proofs never occupy the global deployment writer lock.
+  group: zcloud-postsend-hosted-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -61,12 +64,17 @@ jobs:
           node tests/test_worker_tab_identity_guard.js
           node tests/test_worker_tabs_restore.js
           python3 -m unittest discover -s tests -p test_firefox_worker_prestart.py
-          python3 -m unittest -v tests.test_postsend_owner_manual_workflow_20261014 tests.test_postsend_prewrite_trust_20261014
+          python3 -m unittest -v tests.test_postsend_owner_manual_workflow_20261014 tests.test_postsend_prewrite_trust_20261014 tests.test_deployops_postsend_production_lock_20261014_w6
           echo "POSTSEND_TAB_IDENTITY_TESTS_GREEN=1"
 
   install:
     name: Install safety patch on VPS without touching browser
     needs: offline
+    # Release coordination: only owner-approved writes share the production lock.
+    # PR/push hosted checks retain their own unrelated concurrency group.
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
