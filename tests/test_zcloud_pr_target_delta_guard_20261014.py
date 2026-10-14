@@ -94,6 +94,66 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn("pr_source_in_run_job", gate.risk_set(src))
         self.assertEqual(gate.risk_set(src), set())
 
+
+    def test_minimally_indented_checkout_step_is_not_invisible(self):
+        # YAML accepts indentation other than the conventional six spaces.
+        src = """name: varied indentation
+on:
+ pull_request_target:
+permissions:
+ contents: read
+jobs:
+ gate:
+  runs-on: ubuntu-latest
+  steps:
+   - "uses": actions/checkout@v4
+     with:
+      ref: ${{ github.event.pull_request.head.sha }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(src))
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(SAFE, src))
+
+    def test_quoted_run_key_with_untrusted_title_is_detected(self):
+        src = """name: quoted run
+on:
+  pull_request_target:
+permissions:
+  contents: read
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - 'name': risky step
+        'run': printf '%s' '${{ github.event.pull_request.title }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
+    def test_minimal_indent_job_boundaries_do_not_launder_run_exposure(self):
+        src = """name: separate jobs
+on:
+ pull_request_target:
+permissions:
+ contents: read
+jobs:
+ first:
+  runs-on: ubuntu-latest
+  steps:
+   - run: echo safe
+ second:
+  if: github.event.pull_request.head.repo.full_name != github.repository
+  runs-on: ubuntu-latest
+  steps:
+   - run: echo trusted
+"""
+        self.assertEqual(gate.risk_set(src), set())
+
+    def test_minimal_indent_named_run_still_detects_head_ref(self):
+        src = SAFE.replace(
+            "      - run: echo 'trusted metadata'",
+            "   - name: inspect head\\n     run: echo '${{ github.head_ref }}'",
+        )
+        self.assertIn("pr_source_in_run_job", gate.risk_set(src))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
