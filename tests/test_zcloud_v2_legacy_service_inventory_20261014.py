@@ -3,6 +3,7 @@ import json
 import io
 from contextlib import redirect_stdout
 import os
+import time
 from unittest import mock
 from pathlib import Path
 import subprocess
@@ -180,6 +181,29 @@ class LegacyServiceInventoryTests(unittest.TestCase):
         self.assertIsNone(command_lines(invalid_utf8))
         failing = (sys.executable, "-c", "import sys; print('firefox'); sys.exit(2)")
         self.assertIsNone(command_lines(failing))
+
+    def test_timeout_kills_child_process_group_not_only_parent(self):
+        # A child that outlives its timed-out parent could otherwise continue
+        # running on the permanent VPS. Test solely in a hosted temp folder.
+        with tempfile.TemporaryDirectory() as temporary:
+            witness = Path(temporary) / "late-child-witness"
+            child = (
+                "import pathlib,time,sys;"
+                "time.sleep(0.35);"
+                "pathlib.Path(sys.argv[1]).write_text('should-never-run')"
+            )
+            parent = (
+                "import subprocess,sys,time;"
+                "subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]]);"
+                "time.sleep(1)"
+            )
+            result = _bounded_process_output(
+                (sys.executable, "-c", parent, child, str(witness)),
+                timeout_seconds=0.08,
+            )
+            self.assertIsNone(result)
+            time.sleep(0.45)
+            self.assertFalse(witness.exists(), "timed-out child escaped process group")
 
     def test_subprocess_deadline_is_fail_closed_and_process_is_reaped(self):
         slow = (sys.executable, "-c", "import time; time.sleep(5); print('firefox')")

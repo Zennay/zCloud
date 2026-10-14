@@ -9,6 +9,7 @@ import json
 import os
 import re
 import selectors
+import signal
 import time
 import stat
 import subprocess
@@ -40,6 +41,7 @@ def _bounded_process_output(argv, *, timeout_seconds=5):
     """
     process = None
     selector = None
+    completed = False
     try:
         if timeout_seconds <= 0 or timeout_seconds > 5:
             return None
@@ -64,18 +66,27 @@ def _bounded_process_output(argv, *, timeout_seconds=5):
                 return None
         if process.wait(timeout=max(0.001, deadline - time.monotonic())) != 0:
             return None
-        return bytes(bounded).decode("utf-8", "strict")
+        decoded = bytes(bounded).decode("utf-8", "strict")
+        completed = True
+        return decoded
     except (OSError, UnicodeError, ValueError, TypeError, subprocess.SubprocessError):
         return None
     finally:
         if selector is not None:
             selector.close()
         if process is not None:
+            # start_new_session=True isolates this invocation from every other
+            # runner/Firefox process. Abort the whole private process group on
+            # timeout, oversize or malformed output; killing only the parent
+            # can leave a child writing after the five-second deadline.
+            if not completed:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             try:
-                if process.poll() is None:
-                    process.kill()
                 process.wait(timeout=1)
-            except (OSError, subprocess.SubprocessError):
+            except subprocess.SubprocessError:
                 pass
             if process.stdout is not None:
                 process.stdout.close()
