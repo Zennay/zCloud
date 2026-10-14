@@ -179,6 +179,14 @@ def risk_set(source: str) -> set[str]:
     anchors = list(re.finditer(r"(?m)^['\"]?on['\"]?:[ \t]*(.*)$", clean))
     if len(anchors) != 1:
         raise Unverified("ambiguous_event_trigger")
+    # An aliased trigger may expand to pull_request_target even if the visible
+    # event block never spells it out. Refuse before the early non-target exit.
+    # This is intentionally narrower than banning unrelated YAML anchors.
+    trigger_line = anchors[0].group(1).strip()
+    if re.match(r"^['\\\"]?\\*[A-Za-z_][\\w-]*", trigger_line) or re.search(
+        r"(?m)^['\\\"]?on['\\\"]?:[ \\t]*[&*][A-Za-z_][\\w-]*", clean
+    ):
+        raise Unverified("aliased_event_trigger")
     # Only a root-level event block or supported inline event forms qualify.
     event_region = clean[anchors[0].start():]
     match = re.search(r"(?m)^[A-Za-z_][\w-]*:[ \t]*", clean[anchors[0].end():])
