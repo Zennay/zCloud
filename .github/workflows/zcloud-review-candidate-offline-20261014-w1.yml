@@ -23,6 +23,22 @@ jobs:
         run: python3 -m py_compile scripts/zcloud_deployops_review_candidates_20261014_w1.py
       - name: Run exact-head isolated offline regressions
         run: python3 -m unittest discover -s tests -p 'test_zcloud_deployops_review_candidates_20261014_w1.py' -v
+      - name: Run complete zCloud Python regression suite
+        run: python3 -m unittest discover -v
+      - name: Run browser and scheduler contract smoke
+        run: |
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node --check firefox-extension/recovery.js
+          node --check firefox-extension/background.js
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
+          node --check public/zcloud-worker.user.js
       - name: Confirm no live mutation is permitted
         run: |
           python3 - <<'PY'
