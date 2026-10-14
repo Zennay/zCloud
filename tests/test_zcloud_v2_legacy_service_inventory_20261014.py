@@ -171,6 +171,17 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             "source_version", "extension_background_script_count",
         }))
 
+    def test_live_command_allowlist_uses_absolute_system_binaries(self):
+        # Do not inherit a mutable PATH to resolve live VPS diagnostics.
+        self.assertEqual(len(COMMANDS), 4)
+        for name, argv in COMMANDS.items():
+            with self.subTest(name=name):
+                self.assertIn(argv[0], ("/usr/bin/ps", "/usr/bin/systemctl"))
+                self.assertTrue(all(isinstance(item, str) for item in argv))
+                self.assertNotIn("-c", argv)
+                self.assertNotIn("sh", argv)
+                self.assertNotIn("bash", argv)
+
     def test_real_subprocess_streaming_is_bounded_before_decoding(self):
         ok = (sys.executable, "-c", "print('firefox')")
         self.assertEqual(command_lines(ok), ["firefox"])

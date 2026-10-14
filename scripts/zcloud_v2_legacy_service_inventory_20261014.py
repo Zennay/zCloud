@@ -19,10 +19,10 @@ ROOT = Path("/home/ubuntu")
 WORKER_SCRIPT = ROOT / "zennay-cloud/public/zcloud-worker.user.js"
 EXTENSION_MANIFEST = ROOT / "snap/firefox/common/chatgpt-project-extension/manifest.json"
 COMMANDS = {
-    "process": ("ps", "-eo", "comm="),
-    "user_services": ("systemctl", "--user", "list-units", "--all", "--type=service", "--no-legend", "--plain", "--no-pager"),
-    "system_services": ("systemctl", "list-units", "--all", "--type=service", "--no-legend", "--plain", "--no-pager"),
-    "user_timers": ("systemctl", "--user", "list-units", "--all", "--type=timer", "--no-legend", "--plain", "--no-pager"),
+    "process": ("/usr/bin/ps", "-eo", "comm="),
+    "user_services": ("/usr/bin/systemctl", "--user", "list-units", "--all", "--type=service", "--no-legend", "--plain", "--no-pager"),
+    "system_services": ("/usr/bin/systemctl", "list-units", "--all", "--type=service", "--no-legend", "--plain", "--no-pager"),
+    "user_timers": ("/usr/bin/systemctl", "--user", "list-units", "--all", "--type=timer", "--no-legend", "--plain", "--no-pager"),
 }
 PREFIXES = ("zcloud", "zennay-cloud", "chatgpt", "firefox", "worker", "watchdog", "self-heal")
 UNIT_RE = re.compile(r"^[a-zA-Z0-9_.@:-]{1,150}\.(service|timer)$")
@@ -82,7 +82,7 @@ def _bounded_process_output(argv, *, timeout_seconds=5):
             if not completed:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
+                except OSError:
                     pass
             try:
                 process.wait(timeout=1)
