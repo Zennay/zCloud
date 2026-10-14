@@ -94,7 +94,7 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         self.assertEqual(0, _event_guard_result("push", "github-actions[bot]").returncode)
         inspect = _job("inspect")
         self.assertIn("READ_ONLY_PROBE_NO_TAB_OR_BROWSER_CHANGES=1", inspect)
-        self.assertNotIn("actions/checkout@", inspect)
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", inspect)
         for forbidden in ("systemctl ", "sqlite3.connect(", "os.kill(", "subprocess.Popen("):
             self.assertNotIn(forbidden, inspect)
 
@@ -147,6 +147,7 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         self.assertEqual(0, outcome.returncode, outcome.stderr)
         self.assertIn("RDP_EXPECTED_SCRIPT_VERSION=" + match.group(1), outcome.stdout)
         self.assertIn("set(versions)=={expected_version}", SOURCE)
+        self.assertIn('re.fullmatch(r"\d+\.\d+\.\d+",version)', SOURCE)
         self.assertNotIn('set(versions)=={"1.3.18"}', SOURCE)
 
     def test_mismatched_source_metadata_denies_health(self):
@@ -173,7 +174,7 @@ class LiveTabProbeTrustTests(unittest.TestCase):
     def test_self_hosted_checkout_is_exact_immutable_main(self):
         inspect = _job("inspect")
         self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", inspect)
-        self.assertIn("ref: \${{ github.sha }}", inspect)
+        self.assertIn("ref: ${{ github.sha }}", inspect)
         self.assertIn("persist-credentials: false", inspect)
         self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', inspect)
         self.assertLess(inspect.index('test "$(git rev-parse HEAD)"'), inspect.index("python3 - <<'PY'"))
