@@ -181,13 +181,20 @@ def safe_summary(raw: bytes, collector_rc: int, *, now=None) -> tuple[str, int]:
             no_jobs = sum(row["route"] == "no_job_records" for row in rows)
             ftmo = sum(row["route"] == "ftmo_research" for row in rows)
             zcloud = sum(row["route"] == "zcloud_vps" for row in rows)
-            unassigned = sum(row["assignment"] == "not_assigned" for row in rows)
+            # Runner capacity pressure is only meaningful for jobs still
+            # queued; a completed, running or approval-pending job without
+            # an assigned runner must not inflate the "waiting unassigned"
+            # operator total.
+            unassigned = sum(
+                row["assignment"] == "not_assigned"
+                and row["job_state"] == "queued" for row in rows
+            )
             current = sum(row["scope"] == "current_main" for row in rows)
             lines.append(
                 "- Routes: "
                 f"**{ftmo} FTMO-onderzoek**, **{zcloud} zCloud-VPS**, "
                 f"**{no_jobs} zonder jobrecords**; "
-                f"**{unassigned} zonder runnertoewijzing**, "
+                f"**{unassigned} wachtende jobs zonder runnertoewijzing**, "
                 f"**{current} op huidige main**.\n"
             )
             lines.append(
