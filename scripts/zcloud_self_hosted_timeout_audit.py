@@ -66,6 +66,8 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
     root_jobs_sections = [
         line for line in lines if ROOT_JOBS_RE.fullmatch(line)
     ]
+    if not root_jobs_sections:
+        raise RuntimeError("workflow jobs root missing or unparseable")
     if len(root_jobs_sections) > 1:
         raise RuntimeError("duplicate root jobs sections cannot be audited")
     in_jobs = False
@@ -263,6 +265,15 @@ def scan_repository(root: Path, *, max_minutes: int) -> list[TimeoutFinding]:
                     if opened.st_size > MAX_WORKFLOW_FILE_BYTES:
                         raise RuntimeError("workflow file size exceeds limit")
                     data = stream.read(MAX_WORKFLOW_FILE_BYTES + 1)
+                    after_read = os.fstat(stream.fileno())
+                    # Even when the file size remains unchanged, an in-place
+                    # write during this read must invalidate the evidence.
+                    version = lambda info: (
+                        info.st_dev, info.st_ino, info.st_size,
+                        info.st_mtime_ns, info.st_ctime_ns,
+                    )
+                    if version(opened) != version(after_read):
+                        raise RuntimeError("workflow changed during read")
                 if len(data) > MAX_WORKFLOW_FILE_BYTES:
                     raise RuntimeError("workflow file size changed during read")
                 findings.extend(
