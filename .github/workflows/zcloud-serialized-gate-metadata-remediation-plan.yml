@@ -1,0 +1,198 @@
+name: zCloud serialized gate metadata remediation plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_serialized_gate_metadata_remediation_plan.py"
+      - "tests/test_zcloud_serialized_gate_metadata_remediation_plan.py"
+      - ".github/workflows/zcloud-serialized-gate-metadata-remediation-plan.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-serialized-gate-metadata-remediation-plan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_serialized_gate_metadata_remediation_plan
+          python3 -m py_compile scripts/zcloud_serialized_gate_metadata_remediation_plan.py
+
+      - name: Capture current bounded drift inventory
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          AUDIT_REPORT: ${{ runner.temp }}/zcloud-serialized-gate-metadata-drift-current.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["REPO"]
+          out = Path(os.environ["AUDIT_REPORT"])
+          markers = (
+              "serialized",
+              "keep unmerged",
+              "integration window",
+              "live writer",
+              "production/control-plane window",
+              "control-plane window",
+          )
+
+          def gh(path: str):
+              proc = subprocess.run(
+                  ["gh", "api", path],
+                  check=True,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.DEVNULL,
+                  text=True,
+              )
+              return json.loads(proc.stdout)
+
+          current_main = str(
+              gh(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
+          )
+          retired = gh(f"repos/{repo}/pulls/576")
+          successor = gh(f"repos/{repo}/pulls/1089")
+
+          pulls = []
+          complete = False
+          for page in range(1, 7):
+              batch = gh(
+                  f"repos/{repo}/pulls?state=open&per_page=100&page={page}&sort=created&direction=asc"
+              )
+              if page == 6 and batch:
+                  raise SystemExit("open PR inventory exceeds bounded limit of 500")
+              pulls.extend(batch)
+              if len(batch) < 100:
+                  complete = True
+                  break
+          if not complete:
+              raise SystemExit("open PR inventory completeness not proven")
+
+          stale = []
+          aware = []
+          serialized_primary = []
+          for item in pulls:
+              number = int(item["number"])
+              if number == 1089:
+                  continue
+              body = str(item.get("body") or "")
+              lowered = body.lower()
+              if "#580" not in lowered or not any(marker in lowered for marker in markers):
+                  continue
+              serialized_primary.append(number)
+              if "#576" in lowered and "#1089" in lowered:
+                  aware.append(number)
+              elif "#576" in lowered:
+                  stale.append(number)
+
+          stale.sort()
+          aware.sort()
+          serialized_primary.sort()
+          payload = {
+              "schema": "zcloud-serialized-gate-metadata-drift-audit-v1",
+              "repository": repo,
+              "current_main_sha": current_main,
+              "status": "drift_detected" if stale else "clean",
+              "primary_gate": 580,
+              "retired_gate": 576,
+              "successor_gate": 1089,
+              "successor_open": (
+                  str(successor["state"]) == "open"
+                  and not bool(successor.get("merged"))
+              ),
+              "open_pr_count": len(pulls),
+              "serialized_primary_pr_count": len(serialized_primary),
+              "successor_aware_pr_count": len(aware),
+              "stale_reference_count": len(stale),
+              "stale_reference_prs": stale,
+              "mutation_performed": False,
+              "release_authorized": False,
+          }
+          if str(retired["state"]) != "closed" or bool(retired.get("merged")):
+              raise SystemExit("retired gate #576 no longer matches succession contract")
+          out.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+          print(
+              "SERIALIZED_GATE_METADATA_DRIFT_CURRENT="
+              f"main:{current_main}:open:{len(pulls)}:"
+              f"stale:{len(stale)}:aware:{len(aware)}"
+          )
+          PY
+
+      - name: Plan deterministic remediation batches read only
+        shell: bash
+        env:
+          AUDIT_REPORT: ${{ runner.temp }}/zcloud-serialized-gate-metadata-drift-current.json
+          PLAN_REPORT: ${{ runner.temp }}/zcloud-serialized-gate-metadata-remediation-plan.json
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_serialized_gate_metadata_remediation_plan.py             --audit-report "$AUDIT_REPORT"             --batch-size 20             --json | tee "$PLAN_REPORT"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["PLAN_REPORT"]).read_text(encoding="utf-8"))
+          assert payload["schema"] == "zcloud-serialized-gate-metadata-remediation-plan-v1"
+          assert payload["metadata_write_authorized"] is False
+          assert payload["merge_authorized"] is False
+          assert payload["deploy_authorized"] is False
+          assert payload["mutation_performed"] is False
+          assert payload["batch_size"] == 20
+          assert payload["stale_reference_count"] <= 500
+          print(
+              "ZCLOUD_SERIALIZED_GATE_METADATA_REMEDIATION_PLAN="
+              f"status:{payload['status']}:"
+              f"stale:{payload['stale_reference_count']}:"
+              f"batches:{payload['batch_count']}:"
+              "metadata_write_authorized:false"
+          )
+          PY
+
+      - name: Upload bounded remediation plan
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-serialized-gate-metadata-remediation-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-serialized-gate-metadata-remediation-plan.json
+          if-no-files-found: error
+          retention-days: 14
