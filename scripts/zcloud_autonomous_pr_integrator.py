@@ -87,11 +87,23 @@ def decide(pr, files, checks, statuses, main_sha):
         return "missing_or_unbounded_checks"
     if not isinstance(statuses, list) or len(statuses) >= 100:
         return "unbounded_statuses"
+    smoke_green = False
     for c in checks:
         if not isinstance(c, dict) or c.get("head_sha") != head_sha:
             return "unbound_check"
-        if c.get("status") != "completed" or c.get("conclusion") not in ALLOWED_CHECK_CONCLUSIONS:
+        name = c.get("name")
+        if name == "critical-runner-flows":
+            if c.get("status") != "completed" or c.get("conclusion") != "success":
+                return "required_smoke_not_green"
+            smoke_green = True
+        elif name == "cpu-snapshot" and c.get("status") in ("queued", "in_progress", "pending") and c.get("conclusion") is None:
+            # This optional VPS diagnostic can queue indefinitely when the
+            # worker listener is absent. It is NOT the hosted regression gate.
+            continue
+        elif c.get("status") != "completed" or c.get("conclusion") not in ALLOWED_CHECK_CONCLUSIONS:
             return "check_not_green"
+    if not smoke_green:
+        return "required_smoke_missing"
     for s in statuses:
         if not isinstance(s, dict) or s.get("state") != "success":
             return "status_not_green"
