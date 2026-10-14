@@ -134,24 +134,47 @@ def risks(text, *, details=False):
     return findings
 
 
+def _literal_group(value):
+    """Return a single bounded literal string; never resolve expressions."""
+    token = value.strip()
+    if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", token):
+        return token
+    if (len(token) >= 3 and token[0] == token[-1] and token[0] in "'\""
+            and re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", token[1:-1])):
+        return token[1:-1]
+    return None
+
+
 def static_concurrency_groups(text):
-    """Only unambiguous literal concurrency group strings, not expressions."""
+    """Literal quoted/unquoted groups, excluding all dynamic expressions."""
     groups = set()
-    for match in re.finditer(r"(?m)^(?P<indent>|    )concurrency:[ \t]*(?P<value>[^\r\n#]*)$", text):
+    for match in re.finditer(
+        r"(?m)^(?P<indent>|    )concurrency:[ \t]*(?P<value>[^\r\n#]*)$", text
+    ):
         indent = match.group("indent")
         value = match.group("value").strip()
         if value.startswith("{"):
-            found = re.search(r"(?:^|[{,])\s*group:\s*([A-Za-z0-9_.-]{1,100})\s*[,}]", value)
+            m = re.search(r"(?:^|[{,])\s*group:\s*([^,}]+)\s*[,}]", value)
         elif value:
             continue
         else:
             tail = text[match.end():]
             next_peer = re.search(r"(?m)^" + re.escape(indent) + r"[^ \r\n#]", tail)
             region = tail[:next_peer.start()] if next_peer else tail
-            found = re.search(r"(?m)^" + re.escape(indent) +
-                              r"  group:\s*([A-Za-z0-9_.-]{1,100})[ \t]*(?:#.*)?$", region)
-        if found:
-            groups.add(found.group(1))
+            matches = re.findall(r"(?m)^" + re.escape(indent) +
+                                 r"  group:[ \t]*([^\r\n#]*)$", region)
+            if len(matches) > 1:
+                raise Unverifiable("duplicate_group")
+            m = matches[0] if matches else None
+            if m is not None:
+                group = _literal_group(m)
+                if group:
+                    groups.add(group)
+                continue
+        if m:
+            group = _literal_group(m.group(1))
+            if group:
+                groups.add(group)
     return groups
 
 
