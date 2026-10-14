@@ -81,7 +81,10 @@ jobs:
             workflow_dispatch)
               test "$EVENT_REF" = refs/heads/main
               test "$ACTOR" = Zennay
-              test "$TRIGGERING_ACTOR" = Zennay ;;
+              test "$TRIGGERING_ACTOR" = Zennay
+              current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+              test -n "$current_main"
+              test "$current_main" = "$EXPECTED_SHA" ;;
             *) echo "Unrecognized workflow event" >&2; exit 1 ;;
           esac
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
