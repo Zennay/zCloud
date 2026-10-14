@@ -37,6 +37,33 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_git_baseline_only_counts_direct_workflow_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflows = root / ".github" / "workflows"
+            nested = workflows / "examples"
+            nested.mkdir(parents=True)
+            (workflows / "active.yml").write_text(
+                "jobs:\n  active:\n    runs-on: self-hosted\n    timeout-minutes: 15\n",
+                encoding="utf-8",
+            )
+            (nested / "sample.yml").write_text(
+                "jobs:\n  example:\n    runs-on: self-hosted\n    timeout-minutes: 100\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for k, v in (("user.name", "Workflow Audit"), ("user.email", "audit@example.invalid")):
+                subprocess.run(["git", "-C", str(root), "config", k, v], check=True)
+            subprocess.run(["git", "-C", str(root), "add", ".github"], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "workflow snapshot"], check=True)
+            sha = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            working = audit.scan_repository(root, max_minutes=30)
+            baseline = audit.scan_git_ref(root, sha, max_minutes=30)
+            self.assertEqual(working, baseline)
+            self.assertEqual([("active", "bounded")], [(x.job, x.status) for x in baseline])
+
     def test_duplicate_root_jobs_sections_fail_closed(self):
         for first_root, second_root in (("jobs", "jobs"), ("jobs", "'jobs'")):
             with self.subTest(first_root=first_root, second_root=second_root):
