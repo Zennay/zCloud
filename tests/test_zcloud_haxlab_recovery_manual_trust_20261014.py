@@ -62,19 +62,58 @@ def trust_issues(source):
     if any(x not in job for x in required_preflight):
         issues.append("fresh_main_gate")
     preflight = job.find("python3 scripts/zcloud_vps_runner_guard.py --json")
-    write_start = job.find("sudo -n systemctl restart zennay-cloud.service")
+    write_start = job.find("sudo -n systemctl start zennay-cloud.service")
     if preflight < 0 or write_start <= preflight:
         issues.append("preflight_order")
     if 'print("HAXLAB_P1_LIVE"' in job or 'print("ALLOCATION_LIVE"' in job:
         issues.append("raw_queue_leak")
     if 'print("HAXLAB_P1_STATUS"' not in job:
         issues.append("sanitized_queue_status")
-    if 'print("POOL_RECONCILED",json.dumps(reconcile' in job or 'print("POOL_RECONCILE_ACK"' not in job:
-        issues.append("raw_reconcile_payload")
-    if 'reconcile.get("error")' not in job or 'reconcile.get("ok") is False' not in job:
-        issues.append("reconcile_failure_guard")
-    if 'post("/api/dynamic-workers",same)' not in job:
-        issues.append("existing_functionality")
+    # Preserve the conditional service recovery, not the historic global
+    # worker-pool POST/reconcile. No task/worker state may be changed here.
+    if 'sudo -n systemctl start zennay-cloud.service' not in job:
+        issues.append("conditional_recovery_preserved")
+    if 'sudo -n systemctl restart zennay-cloud.service' in job:
+        issues.append("disruptive_restart")
+    if any(token in job for token in (
+        'post("/api/dynamic-workers"',
+        'base+"/api/dynamic-workers"',
+        'urllib.request.Request(',
+        'method="POST"',
+    )):
+        issues.append("global_worker_mutation")
+    if 'get("/api/portfolio-queue?all=1")' not in job:
+        issues.append("queue_read_preserved")
+    section = job.split("      - name: Recover only if service is down; verify HaxLab queue without global pool writes", 1)
+    if len(section) != 2:
+        issues.append("local_prewrite_admission")
+    else:
+        local = section[1].split('          echo "SERVICE_BEFORE=', 1)[0]
+        for required in (
+            'CONFIRMED_SHA: ${{ inputs.confirm_sha }}',
+            'test "$GITHUB_EVENT_NAME" = workflow_dispatch',
+            'test "$GITHUB_REPOSITORY" = Zennay/zCloud',
+            'test "$GITHUB_REF" = refs/heads/main',
+            'test "$GITHUB_ACTOR" = Zennay',
+            'test "$GITHUB_TRIGGERING_ACTOR" = Zennay',
+            'test "$GITHUB_RUN_ATTEMPT" = 1',
+            'test "$CONFIRMED_SHA" = "$GITHUB_SHA"',
+            'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+            'timeout 15s git ls-remote --exit-code origin refs/heads/main',
+            'test "$live_main" = "$GITHUB_SHA"',
+            'test "$(hostname)" = vps-bb300bba',
+            'test "$(id -un)" = ubuntu',
+            'python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null',
+        ):
+            if required not in local:
+                issues.append("local_prewrite_admission")
+                break
+        if 'sudo -n systemctl restart' in local:
+            issues.append("prewrite_order")
+    if 'print("ZCLOUD_RECOVERED",json.dumps({"ready":True}' not in job:
+        issues.append("bounded_status_receipt")
+    if 'last=repr(exc)' in job or 'last=status' in job or 'str(last)[:1000]' in job:
+        issues.append("raw_api_error_logging")
     return issues
 
 
@@ -133,17 +172,37 @@ class LegacyHaxLabRecoveryTrust(unittest.TestCase):
         self.assertIn("raw_queue_leak", trust_issues(
             self.source.replace('print("HAXLAB_P1_STATUS"', 'print("ALLOCATION_LIVE"')))
 
-    def test_full_reconcile_json_leak_denied(self):
-        raw = self.source.replace('print("POOL_RECONCILE_ACK"',
-                                  'print("POOL_RECONCILED",json.dumps(reconcile,sort_keys=True)); print("POOL_RECONCILE_ACK"')
-        self.assertIn("raw_reconcile_payload", trust_issues(raw))
+    def test_global_worker_reconcile_can_never_be_reintroduced(self):
+        self.assertIn("global_worker_mutation", trust_issues(self.source.replace(
+            'queue=get("/api/portfolio-queue?all=1")',
+            'post("/api/dynamic-workers",{"chatgpt_count": 8})\n          queue=get("/api/portfolio-queue?all=1")')))
 
-    def test_error_reconcile_must_abort(self):
-        bad = self.source.replace('reconcile.get("error")', "False")
-        self.assertIn("reconcile_failure_guard", trust_issues(bad))
+    def test_rechecks_exact_main_and_owner_immediately_before_service_write(self):
+        for token in (
+            'test "$GITHUB_TRIGGERING_ACTOR" = Zennay',
+            'test "$GITHUB_RUN_ATTEMPT" = 1',
+            'test "$live_main" = "$GITHUB_SHA"',
+            'python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null',
+        ):
+            with self.subTest(token=token):
+                self.assertIn("local_prewrite_admission", trust_issues(
+                    self.source.replace(token, "echo bypass")))
 
-    def test_existing_queue_path_preserved(self):
-        self.assertIn("post(\"/api/dynamic-workers\",same)", self.source)
+    def test_raw_api_errors_never_reach_workflow_logs(self):
+        for bad in ('last=repr(exc)', 'last=status', 'str(last)[:1000]'):
+            with self.subTest(bad=bad):
+                self.assertIn("raw_api_error_logging", trust_issues(
+                    self.source.replace('last="transport_unavailable"', bad)))
+
+    def test_service_start_must_never_interrupt_a_raced_healthy_runtime(self):
+        old = self.source.replace('sudo -n systemctl start zennay-cloud.service',
+                                  'sudo -n systemctl restart zennay-cloud.service')
+        self.assertIn("disruptive_restart", trust_issues(old))
+
+    def test_queue_read_and_conditional_service_recovery_preserved(self):
+        self.assertIn('get("/api/portfolio-queue?all=1")', self.source)
+        self.assertIn('sudo -n systemctl start zennay-cloud.service', self.source)
+        self.assertNotIn('post("/api/dynamic-workers"', self.source)
 
 
 if __name__ == "__main__":
