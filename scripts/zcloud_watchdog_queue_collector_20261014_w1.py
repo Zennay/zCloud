@@ -131,7 +131,13 @@ def _next_link(header, *, expected_path, expected_page, required_query):
 
 class ReadOnlyAPI:
     def __init__(self, token):
-        if not isinstance(token, str) or not 1 <= len(token) <= 4096 or any(c in token for c in "\r\n\x00"):
+        # GitHub-issued bearer credentials consist of bounded ASCII token
+        # characters. Never let whitespace, Unicode, controls or delimiters
+        # enter an HTTP Authorization header; reject before building a Request.
+        if (
+            type(token) is not str or not 1 <= len(token) <= 4096
+            or re.fullmatch(r"[A-Za-z0-9_.-]+", token, flags=re.ASCII) is None
+        ):
             raise InventoryError("invalid_token")
         self.token = token
         self.opener = build_opener(ProxyHandler({}), HTTPSHandler(), _NoRedirect())
