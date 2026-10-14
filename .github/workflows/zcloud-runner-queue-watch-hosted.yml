@@ -90,6 +90,8 @@ jobs:
           state = result.get("classification", "EVIDENCE_UNAVAILABLE")
           if state == "POSSIBLE_LISTENER_GAP":
               print("::warning::Repeated aged self-hosted queue jobs have no assigned runner; see issue #1326")
+          elif state == "INCOMPLETE_QUEUE_SAMPLE":
+              print("::notice::Actions run inventory is truncated; no listener-gap warning may be inferred")
           lines = [
               "## zCloud VPS runner queue — hosted observation",
               "",
@@ -104,6 +106,7 @@ jobs:
               f"- **All matching workflow runs:** {result.get('total_workflow_runs', 'unavailable')}",
               f"- **Sample truncated:** {result.get('sample_truncated', 'unavailable')}",
               "- **Limit:** most recent 30 workflow runs, not an exhaustive incident inventory",
+              "- **Incomplete sample:** do not infer absent runner assignment from unsampled runs",
               "- **VPS listener state:** not independently verified",
               "- **Production deployment:** not verified",
               "- **Runner restart, browser, SQLite, queue or production mutation:** none",
