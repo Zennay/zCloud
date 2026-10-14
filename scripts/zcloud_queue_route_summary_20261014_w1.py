@@ -39,7 +39,9 @@ _ROUTE_NL = {
 }
 _ASSIGNMENT_NL = {
     "no_job_records": "geen jobgegevens",
-    "not_assigned": "nog geen runner toegewezen",
+    # Also applies to completed/skipped jobs: do not imply that a runner
+    # is still being awaited when GitHub merely has no runner recorded.
+    "not_assigned": "geen runner geregistreerd",
     "assigned": "runner toegewezen",
     "indeterminate": "runnertoewijzing onzeker",
     "mixed_assignment": "gemengde runnertoewijzing",
