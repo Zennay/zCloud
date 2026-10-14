@@ -172,6 +172,50 @@ class GitTest(unittest.TestCase):
         head = self.commit(CANCEL + "# unrelated edit\n")
         self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
 
+    def test_prior_live_vps_can_be_cancelled_by_new_hosted_global(self):
+        # The old workflow's runner can still be executing when the new one
+        # claims the same concurrency group, even if new jobs run on GitHub.
+        base = self.commit(SELFHOST)
+        head = self.commit(SAFE.replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        ))
+        self.assertEqual([".github/workflows/cancellation.yml"],
+                         scanner.evaluate(self.root, base, head))
+        self.assertEqual([], scanner.risks(
+            SAFE.replace("cancel-in-progress: false", "cancel-in-progress: true")
+        ))
+
+    def test_prior_live_vps_can_be_cancelled_by_new_hosted_job(self):
+        base = self.commit(SELFHOST)
+        hosted_with_job_cancel = JOB_CANCEL.replace(
+            "runs-on: [self-hosted, zcloud, vps]", "runs-on: ubuntu-latest"
+        )
+        head = self.commit(hosted_with_job_cancel)
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_prior_vps_hosted_transition_without_cancel_allowed(self):
+        base = self.commit(SELFHOST)
+        head = self.commit(SAFE)
+        self.assertEqual([], scanner.evaluate(self.root, base, head))
+
+    def test_prior_hosted_to_hosted_with_cancel_allowed(self):
+        base = self.commit(SAFE)
+        head = self.commit(SAFE.replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        ))
+        self.assertEqual([], scanner.evaluate(self.root, base, head))
+
+    def test_prior_dynamic_runner_to_hosted_with_cancel_denied(self):
+        previous = SELFHOST.replace(
+            "runs-on: [self-hosted, zcloud, vps]",
+            "runs-on: " + "$" + "{{ matrix.runner }}"
+        )
+        base = self.commit(previous)
+        head = self.commit(SAFE.replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        ))
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
     def test_safe_reduction_passes(self):
         base = self.commit(CANCEL)
         head = self.commit(SELFHOST)
