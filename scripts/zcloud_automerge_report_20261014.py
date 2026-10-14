@@ -35,13 +35,18 @@ def summary(report):
     labeled = _integer(inv.get("explicitly_labeled"))
     draft = _integer(inv.get("draft_prs"))
     review = _integer(inv.get("unlabeled_non_draft"))
-    if labeled > scanned or draft > scanned or review > scanned or review > scanned - labeled:
+    # Draft PRs and unlabeled, non-draft PRs are disjoint classes.
+    # Never present impossible aggregate counts as a trusted owner report.
+    if (labeled > scanned or draft > scanned or review > scanned
+            or review > scanned - labeled or draft + review > scanned):
         raise InvalidReport("inconsistent_inventory")
     ids = inv.get("review_only_pr_ids")
     if type(ids) is not list or len(ids) > 10 or len(set(str(x) for x in ids)) != len(ids):
         raise InvalidReport("untrusted_review_ids")
     if any(type(n) is not int or not 0 < n <= 10000000 for n in ids):
         raise InvalidReport("untrusted_review_ids")
+    if len(ids) > review:
+        raise InvalidReport("inconsistent_review_ids")
     reasons = Counter()
     seen = set()
     merged = 0
@@ -60,6 +65,8 @@ def summary(report):
             if type(item.get("merge_sha")) is not str or re.fullmatch(
                     r"[0-9a-f]{40}", item["merge_sha"]) is None:
                 raise InvalidReport("untrusted_merge")
+    if any(n in seen for n in ids):
+        raise InvalidReport("contradictory_pr_cohorts")
     if len(rec) > labeled or merged > 1 or (mode == "dry_run" and merged != 0):
         raise InvalidReport("inconsistent_receipts")
     lines = [

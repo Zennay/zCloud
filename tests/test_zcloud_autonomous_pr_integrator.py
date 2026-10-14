@@ -114,6 +114,25 @@ class DecisionTest(unittest.TestCase):
         s = [{"context": "unit-test", "state": "failure"}]
         self.assertEqual(mod.decide(pr(), files(), checks(), s, B), "status_not_green")
 
+    def test_integrator_trust_roots_require_separate_human_merge(self):
+        # The hourly integration workflow runs this fixture on trusted main.
+        # A labelled, green PR must never replace its own admission authority.
+        expected = {
+            "scripts/zcloud_autonomous_pr_integrator.py",
+            "scripts/zcloud_automerge_report_20261014.py",
+            "tests/test_zcloud_autonomous_pr_integrator.py",
+            "tests/test_zcloud_automerge_report_20261014.py",
+            "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
+    "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
+        }
+        self.assertEqual(mod.PROTECTED_INTEGRATION_FILES, expected)
+        for path in expected:
+            with self.subTest(path=path):
+                self.assertFalse(mod.safe_path(path))
+                candidate = [{"filename": path, "status": "modified"}]
+                self.assertEqual(mod.decide(pr(), candidate, checks(), [], B),
+                                 "protected_integration_source")
+
     def test_no_special_runtime_paths(self):
         for path in (".github/workflows/unsafe.yml", "server.py", "public/app.js",
                      "projects.json", "scripts/../server.py", "/docs/x.md",
