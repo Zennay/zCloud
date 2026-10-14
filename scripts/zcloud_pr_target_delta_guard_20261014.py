@@ -106,7 +106,17 @@ def _content_without_comments(source: str) -> str:
     # Quotes containing # are retained; comments are discarded. This is NOT a
     # YAML parser: ambiguous aliases / templates are refused separately.
     output = []
+    block_parent_indent = None
     for line in source.splitlines():
+        # A YAML block scalar preserves its content literally. Lines beginning
+        # with '#' inside run: | or run: > are not YAML comments and may still
+        # contain GitHub expressions, even when the shell would ignore them.
+        current_indent = len(line) - len(line.lstrip(" "))
+        if block_parent_indent is not None:
+            if not line.strip() or current_indent > block_parent_indent:
+                output.append(line)
+                continue
+            block_parent_indent = None
         quote = None
         escaped = False
         useful = []
@@ -126,7 +136,16 @@ def _content_without_comments(source: str) -> str:
             if ch == "#" and quote is None and (not useful or useful[-1].isspace()):
                 break
             useful.append(ch)
-        output.append("".join(useful))
+        cleaned_line = "".join(useful)
+        output.append(cleaned_line)
+        scalar = re.match(
+            r"""^([ ]*)(?:-[ ]+)?['"]?[A-Za-z_][\w-]*['"]?[ \t]*:"""
+            r"""[ \t]*[>|][+-]?[ \t]*$""",
+            cleaned_line,
+        )
+        if scalar:
+            item = re.match(r"^[ ]*-[ ]+", cleaned_line)
+            block_parent_indent = item.end() if item else len(scalar.group(1))
     return "\n".join(output) + "\n"
 
 
