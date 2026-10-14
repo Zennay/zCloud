@@ -59,8 +59,16 @@ class TimeoutFinding:
 
 def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
     lines = text.splitlines()
+    # Duplicate root jobs sections can be interpreted as first- or last-wins
+    # by different YAML consumers. Never certify only the first block.
+    root_jobs_sections = [
+        line for line in lines if ROOT_JOBS_RE.fullmatch(line)
+    ]
+    if len(root_jobs_sections) > 1:
+        raise RuntimeError("duplicate root jobs sections cannot be audited")
     in_jobs = False
     starts: list[tuple[int, str]] = []
+    seen_jobs: set[str] = set()
     job_indent: int | None = None
 
     for index, line in enumerate(lines):
@@ -86,7 +94,11 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
                 # An unparsed job key can hide a self-hosted runner from this
                 # scanner. Do not certify a partial job inventory as complete.
                 raise RuntimeError("unparseable workflow job declaration")
-            starts.append((index, match.group("job")))
+            job_name = match.group("job")
+            if job_name in seen_jobs:
+                raise RuntimeError("duplicate workflow job declaration")
+            seen_jobs.add(job_name)
+            starts.append((index, job_name))
 
     for pos, (start, job) in enumerate(starts):
         end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
