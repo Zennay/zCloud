@@ -13,7 +13,10 @@ import re
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, build_opener, HTTPSHandler, ProxyHandler, HTTPRedirectHandler
 
-import zcloud_watchdog_queue_admission_20261014_w1 as policy
+try:
+    from scripts import zcloud_watchdog_queue_admission_20261014_w1 as policy
+except ModuleNotFoundError:
+    import zcloud_watchdog_queue_admission_20261014_w1 as policy
 
 REPO = "Zennay/zCloud"
 API_ROOT = "https://api.github.com"
@@ -163,8 +166,8 @@ def collect(api_get, *, clock=None):
         job_route = "/repos/Zennay/zCloud/actions/runs/" + str(run["id"]) + "/jobs?per_page=100"
         jobs = _pages(api_get, job_route, "jobs", max_pages=_MAX_JOB_PAGES,
                       max_count=_MAX_JOBS_PER_RUN, query={"per_page": "100"})
-        if not jobs:
-            raise InventoryError("run_without_job_evidence")
+        if not jobs or any(type(job) is not dict for job in jobs):
+            raise InventoryError("run_without_valid_job_evidence")
         mapped.append({
             "id": run["id"], "repository": (run.get("head_repository") or {}).get("full_name"),
             "head_sha": run.get("head_sha"), "head_branch": run.get("head_branch"),
