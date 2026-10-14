@@ -39,10 +39,11 @@ moves during observation. Every valid and denied report carries
 - Offline negative-case replay: `python3 -m unittest -v tests.test_zcloud_deployops_readonly_gate_20261014`.
 
 The hosted workflow is restricted to its own branch; it performs an immutable
-checkout, runs adversarial tests, then makes GET-only requests with
+checkout, runs adversarial tests, full Python regression, a shell/Node smoke, then makes GET-only requests with
 `contents:read`, `actions:read` and `statuses:read`. The live observer's
 diagnosis is **not** an acceptance or production-release gate, even if source
-tests are green.
+tests are green. Each hosted execution publishes a sanitized human-readable GitHub
+job summary and a seven-day JSON evidence artifact; neither is recovery authority.
 
 ## Integration owner boundaries
 
