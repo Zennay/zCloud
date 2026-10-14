@@ -17,11 +17,28 @@ H = 'b' * 40
 
 def payload():
     return {'main_sha': S, 'inventory': {'prs_complete': True, 'branches_complete': True},
+            'branch_inventory_receipt': {
+                'schema': 'zcloud-prless-branch-snapshot-v1',
+                'inventory_complete': True, 'admission_authorized': False,
+                'deployment_authorized': False, 'paths_compared': False,
+                'main_sha': S, 'branch_count': 1, 'open_pr_head_count': 1,
+                'branch_pages': 1, 'pr_pages': 1, 'pr_less': []
+            },
             'gates': {'580': 'open', '1089': 'open', '1135': 'open'},
             'prs': [{'number': 12, 'head_sha': H, 'base_sha': S,
                      'draft': False, 'owner_approved': True, 'files': ['scripts/a.py'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}, 'required_checks': ['tests'],
                      'checks': [{'name': 'tests', 'head_sha': H, 'conclusion': 'success'}]}],
             'branches': []}
+
+def snap(d):
+    """Produce matching synthetic #1312 receipt for local tests with branches."""
+    receipt = d['branch_inventory_receipt']
+    receipt['pr_less'] = [
+        {'branch': b['name'], 'commit_sha': b['head_sha']} for b in d['branches']
+    ]
+    receipt['branch_count'] = 1 + len(d['branches'])
+    return mod.snapshot(d)
+
 
 class ReviewQueueTests(unittest.TestCase):
     def assert_denied(self, mutation):
@@ -44,34 +61,34 @@ class ReviewQueueTests(unittest.TestCase):
 
     def test_stale_base_denied(self):
         d = payload(); d['prs'][0]['base_sha'] = H
-        self.assertEqual(mod.snapshot(d)['review_candidates'][0]['reasons'], ['stale_base'])
+        self.assertEqual(snap(d)['review_candidates'][0]['reasons'], ['stale_base'])
 
     def test_draft_owner_unapproved(self):
         d = payload(); d['prs'][0]['draft'] = True; d['prs'][0]['owner_approved'] = False
-        self.assertEqual(mod.snapshot(d)['review_candidate_count'], 0)
-        self.assertIn('draft', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertEqual(snap(d)['review_candidate_count'], 0)
+        self.assertIn('draft', snap(d)['review_candidates'][0]['reasons'])
 
     def test_old_head_green_denied(self):
         d = payload(); d['prs'][0]['checks'][0]['head_sha'] = S
-        self.assertIn('exact_head_checks_not_green', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('exact_head_checks_not_green', snap(d)['review_candidates'][0]['reasons'])
 
     def test_failed_or_skipped_checks_denied(self):
         for state in ('failure', 'pending', 'cancelled', 'skipped', 'neutral'):
             d = payload(); d['prs'][0]['checks'][0]['conclusion'] = state
-            self.assertEqual(mod.snapshot(d)['review_candidate_count'], 0)
+            self.assertEqual(snap(d)['review_candidate_count'], 0)
 
     def test_open_draft_pr_still_reserves_files(self):
         d = payload(); other = copy.deepcopy(d['prs'][0]); other['number'] = 13
         other['draft'] = True; d['prs'].append(other)
-        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
     def test_prless_branch_collision_denied(self):
         d = payload(); d['branches'] = [{'name': 'owner-active', 'head_sha': H, 'files': ['scripts/a.py'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}}]
-        self.assertEqual(mod.snapshot(d)['review_candidate_count'], 0)
+        self.assertEqual(snap(d)['review_candidate_count'], 0)
 
     def test_disjoint_branch_not_blocking(self):
         d = payload(); d['branches'] = [{'name': 'owner-active', 'head_sha': H, 'files': ['scripts/b.py'], 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}}]
-        self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
+        self.assertEqual(snap(d)['review_candidate_count'], 1)
 
     def test_per_pr_incomplete_diff_denied(self):
         self.assert_denied(lambda d: d['prs'][0]['files_evidence'].update(complete=False))
@@ -99,20 +116,20 @@ class ReviewQueueTests(unittest.TestCase):
         d['branches'] = [{'name': 'owner', 'head_sha': H, 'files': ['scripts/z.py'],
                           'files_evidence': {'complete': False, 'total_count': 1, 'head_sha': H, 'base_sha': S}}]
         with self.assertRaises(mod.InvalidEvidence):
-            mod.snapshot(d)
+            snap(d)
 
     def test_zero_change_pr_denied(self):
         d = payload()
         d['prs'][0]['files_evidence']['total_count'] = 0
         d['prs'][0]['files'] = []
         with self.assertRaises(mod.InvalidEvidence):
-            mod.snapshot(d)
+            snap(d)
 
     def test_empty_unmerged_branch_is_safe(self):
         d = payload()
         d['branches'] = [{'name': 'empty', 'head_sha': H, 'files': [],
                           'files_evidence': {'complete': True, 'total_count': 0, 'head_sha': H, 'base_sha': S}}]
-        self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
+        self.assertEqual(snap(d)['review_candidate_count'], 1)
 
     def test_many_disjoint_owners_stay_review_candidates(self):
         d = payload()
@@ -128,7 +145,7 @@ class ReviewQueueTests(unittest.TestCase):
                 'files': [f'feature/branch-{i}/run.py'],
                 'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
             })
-        report = mod.snapshot(d)
+        report = snap(d)
         self.assertEqual(report['review_candidate_count'], 200)
         self.assertFalse(report['release_authorized'])
 
@@ -141,7 +158,7 @@ class ReviewQueueTests(unittest.TestCase):
                                   'files': [path],
                                   'files_evidence': {'complete': True, 'total_count': 1,
                                                      'head_sha': H, 'base_sha': S}})
-        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
     def test_ancestry_index_marks_both_colliding_prs(self):
         d = payload()
@@ -149,7 +166,7 @@ class ReviewQueueTests(unittest.TestCase):
         other['number'] = 13
         other['files'] = ['scripts/a.py/inner']
         d['prs'].append(other)
-        report = mod.snapshot(d)
+        report = snap(d)
         self.assertEqual(report['review_candidate_count'], 0)
         self.assertTrue(all('overlapping_owner' in p['reasons'] for p in report['review_candidates']))
 
@@ -159,7 +176,7 @@ class ReviewQueueTests(unittest.TestCase):
             'name': 'other', 'head_sha': H, 'files': ['scripts/a.py/subfile'],
             'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
         }]
-        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
     def test_directory_to_file_swap_collides(self):
         d = payload()
@@ -168,7 +185,7 @@ class ReviewQueueTests(unittest.TestCase):
             'name': 'other', 'head_sha': H, 'files': ['scripts/a.py'],
             'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
         }]
-        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
     def test_case_only_file_collision_rejected(self):
         d = payload()
@@ -176,7 +193,7 @@ class ReviewQueueTests(unittest.TestCase):
             'name': 'other', 'head_sha': H, 'files': ['SCRIPTS/A.PY'],
             'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
         }]
-        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
     def test_nfc_normalized_file_collision_rejected(self):
         d = payload()
@@ -185,14 +202,14 @@ class ReviewQueueTests(unittest.TestCase):
             'name': 'other', 'head_sha': H, 'files': ['src/cafe\u0301.py'],
             'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
         }]
-        self.assertIn('overlapping_owner', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('overlapping_owner', snap(d)['review_candidates'][0]['reasons'])
 
     def test_unicode_duplicate_within_pr_denied(self):
         d = payload()
         d['prs'][0]['files'] = ['src/café.py', 'src/cafe\u0301.py']
         d['prs'][0]['files_evidence']['total_count'] = 2
         with self.assertRaises(mod.InvalidEvidence):
-            mod.snapshot(d)
+            snap(d)
 
     def test_sibling_names_are_disjoint(self):
         d = payload()
@@ -200,7 +217,58 @@ class ReviewQueueTests(unittest.TestCase):
             'name': 'other', 'head_sha': H, 'files': ['scripts/a.py-next'],
             'files_evidence': {'complete': True, 'total_count': 1, 'head_sha': H, 'base_sha': S}
         }]
-        self.assertEqual(mod.snapshot(d)['review_candidate_count'], 1)
+        self.assertEqual(snap(d)['review_candidate_count'], 1)
+
+    def test_prless_missing_receipt_denied(self):
+        d = payload()
+        del d['branch_inventory_receipt']
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_prless_other_main_sha_denied(self):
+        d = payload()
+        d['branch_inventory_receipt']['main_sha'] = H
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_prless_false_complete_denied(self):
+        d = payload()
+        d['branch_inventory_receipt']['inventory_complete'] = False
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_prless_receipt_unexpected_branch_denied(self):
+        d = payload()
+        d['branch_inventory_receipt']['pr_less'] = [{'branch': 'unexpected', 'commit_sha': H}]
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_prless_receipt_missing_branch_denied(self):
+        d = payload()
+        d['branches'] = [{'name': 'owner', 'head_sha': H, 'files': [],
+                          'files_evidence': {'complete': True, 'total_count': 0, 'head_sha': H, 'base_sha': S}}]
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_prless_receipt_wrong_branch_sha_denied(self):
+        d = payload()
+        d['branches'] = [{'name': 'owner', 'head_sha': H, 'files': [],
+                          'files_evidence': {'complete': True, 'total_count': 0, 'head_sha': H, 'base_sha': S}}]
+        d['branch_inventory_receipt']['pr_less'] = [{'branch': 'owner', 'commit_sha': S}]
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_prless_receipt_authority_spoof_denied(self):
+        d = payload()
+        d['branch_inventory_receipt']['admission_authorized'] = True
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_prless_invalid_page_count_denied(self):
+        d = payload()
+        d['branch_inventory_receipt']['branch_pages'] = 0
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
 
     def test_incomplete_inventory_denied(self):
         self.assert_denied(lambda d: d['inventory'].update(branches_complete=False))
@@ -234,7 +302,7 @@ class ReviewQueueTests(unittest.TestCase):
 
     def test_missing_required_green_check_denied(self):
         d = payload(); d['prs'][0]['required_checks'] = ['security', 'tests']
-        self.assertIn('required_checks_missing', mod.snapshot(d)['review_candidates'][0]['reasons'])
+        self.assertIn('required_checks_missing', snap(d)['review_candidates'][0]['reasons'])
 
     def test_empty_required_check_policy_denied(self):
         self.assert_denied(lambda d: d['prs'][0].update(required_checks=[]))
@@ -274,7 +342,7 @@ class ReviewQueueTests(unittest.TestCase):
 
     def test_markdown_never_authorizes_release(self):
         d = payload(); d['gates'] = dict.fromkeys(d['gates'], 'closed')
-        report = mod.markdown(mod.snapshot(d))
+        report = mod.markdown(snap(d))
         self.assertIn('Geen toestemming', report)
         self.assertIn('PR #12', report)
         self.assertNotIn('scripts/a.py', report)
@@ -287,7 +355,7 @@ class ReviewQueueTests(unittest.TestCase):
         for i in range(1, 35):
             p = copy.deepcopy(payload()['prs'][0]); p['number'] = i; p['files'] = [f'changes/{i}.py']
             d['prs'].append(p)
-        output = mod.markdown(mod.snapshot(d))
+        output = mod.markdown(snap(d))
         self.assertIn('Nog 4 PR', output)
         self.assertNotIn('PR #34:', output)
 
