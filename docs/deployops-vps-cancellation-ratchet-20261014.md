@@ -59,12 +59,33 @@ The optional `--triage-prefix` is strictly a **workflow filename prefix** (1–4
 
 When the old VPS workflow's concurrency group is dynamic, a new hosted cancellation group may resolve to the same name. The guard denies a claimed clean cross-workflow comparison when that previous VPS group cannot be established as distinct. A VPS-capable workflow with **no concurrency block at all** is not invented as a cross-group collision. The code also distinguishes literal quoted/unquoted group values.
 
+## Disjoint ownership handoff for the measured zCloud shortlist
+
+At the 14 October exact-source census, the `zcloud-` filename prefix exposed **12** potential cancellation exposures. All require a **fresh** main/PR/branch/Notion check at the time of integration; this table is not a work reservation or permission to edit. Existing overlapping owner work and prior remediation are listed to prevent collision:
+
+| Workflow name (`.github/workflows/` prefix omitted) | Existing owner/remediation reference |
+| --- | --- |
+| `zcloud-autonomy-memory-isolation.yml` | [#1379](https://github.com/Zennay/zCloud/pull/1379) (already merged; reassess exact current main) |
+| `zcloud-live-debug.yml` | [#1097](https://github.com/Zennay/zCloud/pull/1097) (open); [#1397](https://github.com/Zennay/zCloud/pull/1397) (merged) |
+| `zcloud-one-worker-testing-activation.yml` | [#1046](https://github.com/Zennay/zCloud/pull/1046) (open) |
+| `zcloud-oom-guard-vps-validation.yml` | [#1035](https://github.com/Zennay/zCloud/pull/1035) (open) |
+| `zcloud-preflight-evidence-coherence.yml` | [#1023](https://github.com/Zennay/zCloud/pull/1023) (open) |
+| `zcloud-project-telemetry-adapters-proof.yml` | [#1078](https://github.com/Zennay/zCloud/pull/1078) (open) |
+| `zcloud-self-hosted-timeout-audit.yml` | [#1325](https://github.com/Zennay/zCloud/pull/1325) (open) |
+| `zcloud-state-receipt-coverage-audit.yml` | [#1094](https://github.com/Zennay/zCloud/pull/1094) (open) |
+| `zcloud-violentmonkey-profile-diagnostic.yml` | [#1088](https://github.com/Zennay/zCloud/pull/1088) (open) |
+| `zcloud-violentmonkey-vps-validation.yml` | [#631](https://github.com/Zennay/zCloud/pull/631) (open) |
+| `zcloud-vps-execution-probe.yml` | [#681](https://github.com/Zennay/zCloud/pull/681) (open) |
+| `zcloud-worker-watchdog-deploy.yml` | [#1014](https://github.com/Zennay/zCloud/pull/1014) (open) |
+
+The isolated cancellation-source ratchet **does not modify any of these twelve workflows**. In particular, never auto-dispatch privileged PR workflows just to prove this census. Owner-mediated workflow changes and the serialized release are distinct steps.
+
 ## Known boundary
 
 This conservative syntactic source gate is **not** a general YAML parser or proof of live runner state. It screens newly changed candidate workflows; it does not remediate legacy files, verify global GitHub concurrency-group uniqueness, prove queue safety, authorize a merge, or promote production. Before integrating, review file ownership, PR-triggered self-hosted workflows such as #638, privileged dashboard recovery #1135 and serialized #580/PWQ-41/#1089. Do not create a PR or restart jobs merely to obtain a green check while those live gates remain open.
 
 ## Reproduction evidence
 
-- The regression suite now also covers cancelled previous-revision VPS jobs, exact-Git inventory cohorts, YAML quoted false values and malformed Git ancestry. CI is run on exact immutable heads; counts and run URLs must be verified against the final SHA, never copied from earlier heads.
-- [Hosted exact-head cancellation ratchet #38615456281](https://github.com/Zennay/zCloud/actions/runs/38615456281): terminal success on SHA `90b3c81fa32d1c9a5f8f2177f3829e59297a0abe` (prior to this documentation-only commit).
-- A full repository regression run must be checked against this document's final branch SHA; hosted source proof does not imply current VPS health.
+- The safety regression covers old and changed VPS jobs, ambiguous and case-insensitive group collisions, exact-Git inventory/triage, quoted/duplicate/nonstandard YAML keys, untrusted Git source and malformed ancestry.
+- [Hosted source run #38621732240](https://github.com/Zennay/zCloud/actions/runs/38621732240) passed **100 exact-source offline tests** on SHA `65982e6299a1e6e84c3ff048a13b6d35087310f0`; later documentation changes have a different head and must receive their own exact-head CI proof.
+- A separate **full repository regression** on the same final commit must be terminal success before claiming review-ready evidence. GitHub-hosted source checks do not prove VPS health, prevent PR-triggered mutation, or authorize production promotion.
