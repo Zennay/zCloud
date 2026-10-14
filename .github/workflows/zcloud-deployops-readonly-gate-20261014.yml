@@ -79,9 +79,9 @@ jobs:
           lines = [
               "## zCloud — read-only deployment observation",
               "",
-              f"- **Observed classification:** \`{observation}\`",
-              f"- **Exact main SHA:** \`{sha if len(sha) == 40 else 'unavailable'}\`",
-              f"- **GitHub production status:** \`{receipt.get('production_status', 'unverified')}\`",
+              f"- **Observed classification:** `{observation}`",
+              f"- **Exact main SHA:** `{sha if len(sha) == 40 else 'unavailable'}`",
+              f"- **GitHub production status:** `{receipt.get('production_status', 'unverified')}`",
               f"- **Deployment run:** {('https://github.com/Zennay/zCloud/actions/runs/' + str(run_id)) if type(run_id) is int and run_id > 0 else 'unverified'}",
               "- **Source coverage:** latest bounded window; not exhaustive",
               "- **VPS/AI generation health:** not verified",
@@ -89,7 +89,7 @@ jobs:
               "",
               "Hosted source regression and this observation do **not** certify production.",
           ]
-          Path(environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8").write("\\n".join(lines) + "\\n")
+          Path(environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8").write("\n".join(lines) + "\n")
           PY
       - name: Preserve bounded non-authorizing evidence for review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
