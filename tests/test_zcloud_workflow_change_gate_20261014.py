@@ -46,7 +46,9 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
-      github.actor == 'Zennay'
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     steps:
       - run: |
@@ -82,6 +84,30 @@ class WorkflowChangeGateTests(unittest.TestCase):
 
     def test_dynamic_runner_denied(self):
         self.assertTrue(gate.judge(HOSTED.replace("ubuntu-latest", "project-runner")))
+
+    def test_inequality_bypass_denied(self):
+        altered = MANUAL.replace("github.actor == 'Zennay'", "github.actor != 'Zennay'")
+        self.assertIn("apply:incomplete_manual_if", gate.judge(altered))
+
+    def test_wrong_triggering_actor_denied(self):
+        altered = MANUAL.replace("github.triggering_actor == 'Zennay'", "github.triggering_actor == 'SomeoneElse'")
+        self.assertIn("apply:incomplete_manual_if", gate.judge(altered))
+
+    def test_second_attempt_denied(self):
+        altered = MANUAL.replace("github.run_attempt == 1", "github.run_attempt == 2")
+        self.assertIn("apply:incomplete_manual_if", gate.judge(altered))
+
+    def test_wrong_repo_denied(self):
+        altered = MANUAL.replace("github.repository == 'Zennay/zCloud'", "github.repository == 'other/repo'")
+        self.assertIn("apply:incomplete_manual_if", gate.judge(altered))
+
+    def test_wrong_branch_denied(self):
+        altered = MANUAL.replace("github.ref == 'refs/heads/main'", "github.ref == 'refs/heads/testing'")
+        self.assertIn("apply:incomplete_manual_if", gate.judge(altered))
+
+    def test_missing_confirm_sha_input_denied(self):
+        altered = MANUAL.replace("      confirm_sha:\n        type: string", "      other_input:\n        type: string")
+        self.assertIn("apply:no_exact_main_preflight", gate.judge(altered))
 
     def test_missing_on_denied(self):
         self.assertEqual(gate.judge("jobs:\n  test:\n    runs-on: ubuntu-latest\n"), ["missing_literal_on"])

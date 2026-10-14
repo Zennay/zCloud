@@ -1,0 +1,63 @@
+name: zCloud trusted-main workflow change admission
+
+# Pull-request target is used ONLY to read source. Never execute PR code.
+# The scanner and tests are loaded from the immutable CURRENT canonical main.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_workflow_change_gate_20261014.py"
+      - "tests/test_zcloud_workflow_change_gate_20261014.py"
+      - "tests/test_zcloud_workflow_trusted_gate_20261014.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-trusted-workflow-change-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  trusted-source-screen:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.base.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Checkout trusted immutable main source (executable)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Zennay/zCloud
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Checkout untrusted PR candidate as data only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+      - name: Verify both exact commits then execute only trusted-main scanner
+        shell: bash
+        env:
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git -C trusted rev-parse HEAD)" = "$EXACT_BASE"
+          test "$(git -C candidate rev-parse HEAD)" = "$EXACT_HEAD"
+          test "$(git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | cut -f1)" = "$EXACT_BASE"
+          git -C candidate fetch --quiet --no-tags https://github.com/Zennay/zCloud.git "$EXACT_BASE"
+          cd trusted
+          python3 -m unittest -v tests.test_zcloud_workflow_change_gate_20261014
+          python3 scripts/zcloud_workflow_change_gate_20261014.py --root "$GITHUB_WORKSPACE/candidate" --base "$EXACT_BASE" --head "$EXACT_HEAD"

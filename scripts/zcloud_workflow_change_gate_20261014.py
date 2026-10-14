@@ -19,13 +19,13 @@ EVENTS = {"push", "pull_request", "pull_request_target", "workflow_run",
 HOSTED = re.compile(r"(?:ubuntu|windows|macos)-[A-Za-z0-9_.-]+\Z")
 
 
-def changed_workflows(base, head):
+def changed_workflows(base, head, root=ROOT):
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
         raise ValueError("invalid_exact_sha")
     output = subprocess.check_output(
         ["git", "diff", "--name-only", "-z", "--diff-filter=ACMRT",
          f"{base}...{head}", "--", ".github/workflows/"],
-        cwd=ROOT, timeout=15)
+        cwd=root, timeout=15)
     paths = [p.decode("utf-8", "strict") for p in output.split(b"\0") if p]
     if len(paths) > 250 or len(set(paths)) != len(paths):
         raise ValueError("invalid_inventory")
@@ -92,11 +92,20 @@ def judge(source):
                 break
             lines.append(line.strip())
         expression = " ".join(lines)
-        required = ("github.event_name", "workflow_dispatch",
-                    "github.repository", "github.ref", "github.actor")
-        if any(word not in expression for word in required) or "||" in expression:
+        # Require positive equalities, not mere marker words (which could
+        # occur in !=, comments or untrusted fallback alternatives).
+        conditions = (
+            r"github\.event_name\s*==\s*['\"]workflow_dispatch['\"]",
+            r"github\.repository\s*==\s*['\"]Zennay/zCloud['\"]",
+            r"github\.ref\s*==\s*['\"]refs/heads/main['\"]",
+            r"github\.actor\s*==\s*['\"]Zennay['\"]",
+            r"github\.triggering_actor\s*==\s*['\"]Zennay['\"]",
+            r"github\.run_attempt\s*==\s*1\b",
+        )
+        if any(not re.search(pattern, expression) for pattern in conditions) or "||" in expression:
             problems.append(f"{name}:incomplete_manual_if")
-        if "confirm_sha" not in source or "GITHUB_SHA" not in job or "git ls-remote" not in job:
+        if (not re.search(r"(?m)^      confirm_sha:[ \t]*$", source)
+                or "GITHUB_SHA" not in job or "git ls-remote" not in job):
             problems.append(f"{name}:no_exact_main_preflight")
     return problems
 
@@ -108,6 +117,10 @@ def evaluate(paths, root=ROOT):
             problems.append("invalid_workflow_path")
             continue
         path = root / relative
+        if (root.is_symlink() or (root / '.github').is_symlink() or
+                (root / '.github/workflows').is_symlink()):
+            problems.append(f"{relative}:symlink_ancestor")
+            continue
         if path.is_symlink() or not path.is_file() or path.stat().st_size > 100000:
             problems.append(f"{relative}:invalid_source_file")
             continue
@@ -124,10 +137,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args()
     try:
-        paths = changed_workflows(args.base, args.head)
-        problems = evaluate(paths)
+        if args.root.is_symlink() or not args.root.is_dir():
+            raise ValueError('invalid_source_root')
+        paths = changed_workflows(args.base, args.head, args.root)
+        problems = evaluate(paths, args.root)
     except (ValueError, UnicodeError, OSError, subprocess.SubprocessError):
         print("WORKFLOW_CHANGE_GATE=DENY reason=unverifiable_source")
         return 1
