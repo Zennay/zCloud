@@ -29,6 +29,10 @@ ALLOWED_CONCLUSIONS = {"success", "failure", "neutral", "cancelled", "skipped",
                        "timed_out", "action_required", "startup_failure", "stale"}
 LANES = {"zcloud_vps": {"self-hosted", "zcloud", "vps"},
          "ftmo_research": {"self-hosted", "ftmo-research"}}
+# GitHub may add standard OS/architecture labels to a self-hosted job. A
+# private/additional required label changes scheduling eligibility and must
+# NEVER be reported as evidence that the base zCloud VPS pool is unhealthy.
+STANDARD_SELF_HOSTED_LABELS = {"linux", "windows", "macos", "x64", "arm64"}
 
 
 class InvalidEvidence(ValueError):
@@ -148,10 +152,16 @@ def classify_job(job: dict, now: datetime) -> dict:
     if not isinstance(labels, list) or not all(type(x) is str and 0 < len(x) < 80 for x in labels):
         raise InvalidEvidence("invalid_job_labels")
     label_set = {x.lower() for x in labels}
+    if len(label_set) != len(labels):
+        raise InvalidEvidence("duplicate_runner_label")
     matches = [name for name, required in LANES.items() if required <= label_set]
     if len(matches) > 1:
         raise InvalidEvidence("mixed_runner_lane")
-    lane = matches[0] if matches else "other"
+    effective_labels = label_set - STANDARD_SELF_HOSTED_LABELS
+    # Subset matching alone is unsafe: a queued job with an extra dedicated
+    # private label is not necessarily runnable by zcloud-vps-1.
+    lane = next((name for name, required in LANES.items()
+                 if effective_labels == required), "other")
     runner_id = job.get("runner_id")
     runner_name = job.get("runner_name")
     if runner_id is None:
