@@ -4,12 +4,13 @@ import os
 from unittest import mock
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
 
 from scripts.zcloud_v2_legacy_service_inventory_20261014 import (
-    COMMANDS, collect, command_lines, get_background_count, get_source_version,
+    COMMANDS, _bounded_process_output, collect, command_lines, get_background_count, get_source_version,
     read_regular, summarize_processes, summarize_units,
 )
 
@@ -104,6 +105,23 @@ class LegacyServiceInventoryTests(unittest.TestCase):
             self.assertIsNone(get_background_count(manifest))
             manifest.write_text('{"background":{"scripts":[]}}', encoding="utf-8")
             self.assertEqual(get_background_count(manifest), 0)
+
+    def test_real_subprocess_streaming_is_bounded_before_decoding(self):
+        ok = (sys.executable, "-c", "print('firefox')")
+        self.assertEqual(command_lines(ok), ["firefox"])
+        huge = (sys.executable, "-c", "import sys; sys.stdout.write('X' * 131072)")
+        self.assertIsNone(_bounded_process_output(huge))
+        self.assertIsNone(command_lines(huge))
+        invalid_utf8 = (sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\xff')")
+        self.assertIsNone(command_lines(invalid_utf8))
+        failing = (sys.executable, "-c", "import sys; print('firefox'); sys.exit(2)")
+        self.assertIsNone(command_lines(failing))
+
+    def test_subprocess_deadline_is_fail_closed_and_process_is_reaped(self):
+        slow = (sys.executable, "-c", "import time; time.sleep(5); print('firefox')")
+        self.assertIsNone(_bounded_process_output(slow, timeout_seconds=0.05))
+        self.assertIsNone(_bounded_process_output(slow, timeout_seconds=0))
+        self.assertIsNone(_bounded_process_output(slow, timeout_seconds=6))
 
     def test_readonly_file_handles_symlink_fifo_and_invalid_bounds_without_blocking(self):
         with tempfile.TemporaryDirectory() as temp:
