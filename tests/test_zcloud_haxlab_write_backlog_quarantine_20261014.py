@@ -162,9 +162,11 @@ class HaxLabWriteBacklogSafety(unittest.TestCase):
                               'print("ALLOCATION_FINAL",json.dumps(final.get("allocation"),sort_keys=True))')))
 
     def test_no_raw_reconcile_response(self):
-        self.assertIn("raw_data_logging", problems(
-            self.text.replace('json.dumps({"response_object":isinstance(reconciled,dict)},sort_keys=True)',
-                              'json.dumps(reconciled,sort_keys=True)')))
+        safe = 'print("WORKER_POOL_RECONCILED",json.dumps({"acknowledged":True},sort_keys=True))'
+        unsafe = 'print("WORKER_POOL_RECONCILED",json.dumps(reconciled,sort_keys=True))'
+        self.assertIn(safe, self.text)
+        self.assertNotEqual(self.text, self.text.replace(safe, unsafe))
+        self.assertIn("raw_data_logging", problems(self.text.replace(safe, unsafe)))
 
 
 if __name__ == "__main__":
