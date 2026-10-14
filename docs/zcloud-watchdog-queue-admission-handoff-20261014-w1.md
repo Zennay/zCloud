@@ -74,6 +74,12 @@ The report renderer requires canonical calendar-valid UTC second timestamps and 
 
 Only a single explicitly recognized GitHub-hosted image label is classified as `github_hosted`; empty, combined, private or unfamiliar labels go to `other_or_mixed`. This is deliberately conservative and may undercount hosted capacity. It is **not** an assertion that the zCloud VPS listener is offline. Focused adversarial regressions are included in the existing independent triage and summary suites. None of these checks authorizes cancel/restart/deploy or changes the exclusive queue-watchdog, listener, control-plane or SQLite owners.
 
+### Fresh operator report and immutable nonauthorization receipt
+
+Even a structurally self-consistent queue report is *time-bounded*. The read-only route summary now revalidates the source-local `observed_at` against its own **current UTC clock** and rejects a timestamp more than 60 seconds old or in the future. It also rejects invalid current clocks (naive or non-UTC) when tested with injected time. These checks protect an operator from treating a cached/replayed observation as an up-to-date queue count; they are **not authenticated freshness proof**. The standalone collector still has its independent 45-second acquisition cap and canonical-main before/after GET.
+
+The triage receipt now explicitly includes `mutation_authorized=false` in both OBSERVED and DENY outcomes. Rendering an OBSERVED count additionally requires that exact false value and the sole fixed observational reason `read_only_route_counts_not_runner_liveness`. A malformed/missing/replayed timestamp, forged reason or positive mutation claim produces **no run links or counts and a failing exit**. Offline regressions cover 60-second equality, the subsecond expiry boundary, future timestamps, invalid UTC clock, forged authorization and CLI-level real clock behavior. A passing hosted test does not attest the latest production queue, worker generation, or runner readiness.
+
 ## Exclusive owner integration criteria
 
 1. Gate all event forms against a freshly fetched canonical repository main SHA, with a second after-read SHA. Require authenticated owner and serialized #580/PWQ-41 + #1089 + #1135 release controls. Context branch/SHA alone cannot attest current main.
