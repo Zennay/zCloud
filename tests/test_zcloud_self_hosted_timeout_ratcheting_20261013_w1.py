@@ -37,6 +37,46 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_strict_cli_rejects_mutable_git_ref_but_allows_reporting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflow = root / ".github" / "workflows" / "tiny.yml"
+            workflow.parent.mkdir(parents=True)
+            workflow.write_text(
+                "jobs:\n  safe:\n    runs-on: self-hosted\n    timeout-minutes: 5\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            for key, val in (("user.name", "Guard Test"), ("user.email", "guard@example.invalid")):
+                subprocess.run(["git", "-C", str(root), "config", key, val], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(root), "commit", "-qm", "baseline"], check=True)
+            sha = subprocess.check_output(
+                ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+            ).strip()
+            before = workflow.read_bytes()
+            cmd = [
+                sys.executable, str(Path(audit.__file__).resolve()),
+                "--repo-root", str(root), "--base-ref", "HEAD",
+            ]
+            regular = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            strict = subprocess.run(
+                cmd + ["--require-no-new-debt"], capture_output=True, text=True, check=False
+            )
+            exact = subprocess.run(
+                cmd[:-1] + [sha, "--require-no-new-debt"],
+                capture_output=True, text=True, check=False
+            )
+            self.assertEqual(0, regular.returncode, regular.stderr)
+            self.assertEqual(2, strict.returncode, strict.stderr)
+            self.assertEqual(
+                "strict_base_ref_must_be_full_immutable_sha",
+                json.loads(strict.stdout)["error"],
+            )
+            self.assertEqual(0, exact.returncode, exact.stderr)
+            self.assertEqual(0, json.loads(exact.stdout)["new_debt_count"])
+            self.assertEqual(before, workflow.read_bytes())
+
     def test_compact_yaml_job_mapping_and_alias_cannot_escape_audit(self):
         source = """jobs:
   compact: {runs-on: [self-hosted, zcloud, vps], timeout-minutes: 90}
