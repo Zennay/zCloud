@@ -152,14 +152,60 @@ def evaluate(root, base, head):
     return result
 
 
+def inventory(root, head):
+    """Read-only exact-commit debt census, with unknowns never called safe.
+
+    Return only aggregate values; do not print workflow contents, host identity,
+    runner labels, bearer tokens or paths from untrusted repository YAML.
+    """
+    if not SHA.fullmatch(head):
+        raise Unverifiable("inventory_sha")
+    raw = git(root, "ls-tree", "-r", "--name-only", "-z", head, "--",
+              ".github/workflows/")
+    paths = [part.decode("utf-8", "strict") for part in raw.split(b"\0") if part]
+    if not paths or len(paths) > 500 or len(paths) != len(set(paths)):
+        raise Unverifiable("inventory_size")
+    if any(not WORKFLOW.fullmatch(path) for path in paths):
+        raise Unverifiable("inventory_path")
+    counts = {"scanned": len(paths), "risky": 0, "unknown": 0, "safe": 0}
+    for path in paths:
+        try:
+            text = source(root, head, path)
+            findings = risks(text)
+        except (Unverifiable, subprocess.SubprocessError, UnicodeError, OSError):
+            counts["unknown"] += 1
+            continue
+        counts["risky" if findings else "safe"] += 1
+    if sum(counts[k] for k in ("risky", "unknown", "safe")) != counts["scanned"]:
+        raise Unverifiable("inventory_inconsistent")
+    return counts
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", required=True)
-    parser.add_argument("--head", required=True)
+    parser.add_argument("--base")
+    parser.add_argument("--head")
+    parser.add_argument("--inventory-head")
     parser.add_argument("--repo-root", type=Path,
                         default=Path(__file__).resolve().parents[1])
     args = parser.parse_args(argv)
+    if args.inventory_head is not None:
+        try:
+            if args.base is not None or args.head is not None:
+                raise Unverifiable("mixed_modes")
+            counts = inventory(args.repo_root, args.inventory_head)
+        except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
+            print("VPS_CANCELLATION_INVENTORY=DENY reason=unverifiable_source")
+            print("VPS_MUTATION_AUTHORIZED=false")
+            return 2
+        print("VPS_CANCELLATION_INVENTORY=OBSERVED "
+              + " ".join(f"{key}={counts[key]}" for key in
+                         ("scanned", "safe", "risky", "unknown")))
+        print("VPS_MUTATION_AUTHORIZED=false")
+        return 0
     try:
+        if args.base is None or args.head is None:
+            raise Unverifiable("missing_base_head")
         risky = evaluate(args.repo_root, args.base, args.head)
     except (Unverifiable, subprocess.SubprocessError, OSError, UnicodeError):
         print("VPS_CANCELLATION_RATCHET=DENY reason=unverifiable_source")
