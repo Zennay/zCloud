@@ -62,7 +62,7 @@ def trust_issues(source):
     if any(x not in job for x in required_preflight):
         issues.append("fresh_main_gate")
     preflight = job.find("python3 scripts/zcloud_vps_runner_guard.py --json")
-    write_start = job.find("sudo -n systemctl restart zennay-cloud.service")
+    write_start = job.find("sudo -n systemctl start zennay-cloud.service")
     if preflight < 0 or write_start <= preflight:
         issues.append("preflight_order")
     if 'print("HAXLAB_P1_LIVE"' in job or 'print("ALLOCATION_LIVE"' in job:
@@ -71,8 +71,10 @@ def trust_issues(source):
         issues.append("sanitized_queue_status")
     # Preserve the conditional service recovery, not the historic global
     # worker-pool POST/reconcile. No task/worker state may be changed here.
-    if 'sudo -n systemctl restart zennay-cloud.service' not in job:
+    if 'sudo -n systemctl start zennay-cloud.service' not in job:
         issues.append("conditional_recovery_preserved")
+    if 'sudo -n systemctl restart zennay-cloud.service' in job:
+        issues.append("disruptive_restart")
     if any(token in job for token in (
         'post("/api/dynamic-workers"',
         'base+"/api/dynamic-workers"',
@@ -192,9 +194,14 @@ class LegacyHaxLabRecoveryTrust(unittest.TestCase):
                 self.assertIn("raw_api_error_logging", trust_issues(
                     self.source.replace('last="transport_unavailable"', bad)))
 
+    def test_service_start_must_never_interrupt_a_raced_healthy_runtime(self):
+        old = self.source.replace('sudo -n systemctl start zennay-cloud.service',
+                                  'sudo -n systemctl restart zennay-cloud.service')
+        self.assertIn("disruptive_restart", trust_issues(old))
+
     def test_queue_read_and_conditional_service_recovery_preserved(self):
         self.assertIn('get("/api/portfolio-queue?all=1")', self.source)
-        self.assertIn('sudo -n systemctl restart zennay-cloud.service', self.source)
+        self.assertIn('sudo -n systemctl start zennay-cloud.service', self.source)
         self.assertNotIn('post("/api/dynamic-workers"', self.source)
 
 
