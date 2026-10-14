@@ -418,6 +418,37 @@ class GitTest(unittest.TestCase):
                 SAFE.replace("group: isolated", "group: " + quoted)
             ))
 
+    def test_literal_group_names_are_github_case_insensitive(self):
+        for name in ("PROD", "PrOd", "'PrOd'", '"PROD"'):
+            with self.subTest(name=name):
+                text = SAFE.replace("group: isolated", "group: " + name)
+                self.assertEqual({"prod"}, scanner.static_concurrency_groups(text))
+
+    def test_case_different_groups_collide_with_previous_vps(self):
+        legacy = self.path.parent / "different-case.yml"
+        legacy.write_text(
+            SELFHOST.replace("group: isolated", "group: ProD"),
+            encoding="utf-8",
+        )
+        initial = SAFE.replace("group: isolated", "group: prod")
+        base = self.commit(initial)
+        head = self.commit(
+            initial.replace("cancel-in-progress: false",
+                            "cancel-in-progress: true")
+        )
+        self.assertEqual([".github/workflows/cancellation.yml"],
+                         scanner.evaluate(self.root, base, head))
+
+    def test_case_normalization_does_not_confuse_distinct_groups(self):
+        self.assertNotEqual(
+            scanner.static_concurrency_groups(
+                SAFE.replace("group: isolated", "group: prod")
+            ),
+            scanner.static_concurrency_groups(
+                SAFE.replace("group: isolated", "group: production")
+            )
+        )
+
     def test_quoted_groups_collide_across_workflows(self):
         previous = self.path.parent / "vps-other.yml"
         previous.write_text(
