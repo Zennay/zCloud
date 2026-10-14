@@ -55,3 +55,7 @@ jobs:
           python3 -m unittest -v tests.test_zcloud_deployops_cancellation_ratchet_20261014
           python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
             --base "$EXACT_BASE" --head "$EXACT_HEAD"
+          # Read-only census: legacy risk and unsupported YAML remain visible.
+          # OBSERVED never grants queue, VPS, or deployment mutation authority.
+          python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
+            --inventory-head "$EXACT_HEAD"
