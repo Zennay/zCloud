@@ -1,0 +1,106 @@
+name: zCloud production writer lock inventory (GitHub-hosted only)
+
+# Source-only no-new-debt audit; passing CI does NOT authorize a deployment.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-vps-deploy.yml"
+      - ".github/workflows/zcloud-postsend-tab-preservation-live.yml"
+      - ".github/workflows/zcloud-safe-memory-reclaim-20261013.yml"
+      - ".github/workflows/zcloud-v2-activate-addon-in-place.yml"
+      - ".github/workflows/zcloud-worker-tab-guard.yml"
+      - ".github/workflows/zcloud-no-browser-churn-hotfix.yml"
+      - ".github/workflows/zcloud-emergency-addon-hot-reload.yml"
+      - "scripts/zcloud_production_writer_lock_inventory_20261014_w9.py"
+      - "tests/test_deployops_production_writer_lock_inventory_20261014_w9.py"
+      - ".github/workflows/zcloud-production-writer-lock-inventory-hosted-20261014-w9.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-vps-deploy.yml"
+      - ".github/workflows/zcloud-postsend-tab-preservation-live.yml"
+      - ".github/workflows/zcloud-safe-memory-reclaim-20261013.yml"
+      - ".github/workflows/zcloud-v2-activate-addon-in-place.yml"
+      - ".github/workflows/zcloud-worker-tab-guard.yml"
+      - ".github/workflows/zcloud-no-browser-churn-hotfix.yml"
+      - ".github/workflows/zcloud-emergency-addon-hot-reload.yml"
+      - "scripts/zcloud_production_writer_lock_inventory_20261014_w9.py"
+      - "tests/test_deployops_production_writer_lock_inventory_20261014_w9.py"
+      - ".github/workflows/zcloud-production-writer-lock-inventory-hosted-20261014-w9.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-prod-writer-source-inventory-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-admission:
+    name: Reject forked or non-canonical source before checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify event provenance (no checkout or VPS access)
+        shell: bash
+        env:
+          TARGET_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name || github.repository }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$TARGET_REPO" = Zennay/zCloud
+          test "$HEAD_REPO" = "$TARGET_REPO"
+          test "$BASE_REPO" = "$TARGET_REPO"
+          test "$ATTEMPT" = 1
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) test "$GITHUB_BASE_REF" = main ;;
+            push) test "$GITHUB_REF" = refs/heads/main ;;
+            *) exit 1 ;;
+          esac
+  inventory:
+    name: Reject new writer lock debt; list known production conflicts
+    needs: source-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact immutable repository source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Verify tested revision and repository identity
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Run the release writer inventory and adversarial regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_production_writer_lock_inventory_20261014_w9.py
+          python3 -m unittest -v tests.test_deployops_production_writer_lock_inventory_20261014_w9
+          python3 scripts/zcloud_production_writer_lock_inventory_20261014_w9.py --repo-root . --deny-new-debt | tee "$RUNNER_TEMP/zcloud-writer-lock-inventory.json"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = json.loads((Path(os.environ["RUNNER_TEMP"]) / "zcloud-writer-lock-inventory.json").read_text())
+          assert report["new_or_regressed_debt"] == [], report["new_or_regressed_debt"]
+          assert report["source_only"] is True
+          assert report["mutation_performed"] is False
+          assert report["release_authorized"] is False
+          assert report["production_verified"] is False
+          assert len(report["protected_workflows"]) + len(report["outstanding_writer_debt"]) == report["observed_workflows"]
+          print("WRITER_LOCK_SOURCE_INVENTORY_VERIFIED=1")
+          print("KNOWN_UNPROTECTED_WRITERS=" + str(len(report["outstanding_writer_debt"])))
+          print("PRODUCTION_RELEASE_AUTHORIZED=false")
+          PY
