@@ -531,6 +531,24 @@ def risk_signatures(source: str) -> dict[str, Counter[str]]:
             match.group("scope").strip("\"'").lower()
             for match in WRITE_SCOPE.finditer(clean)
         )
+        # A write scope used only in job A is not equivalent to granting it
+        # to *every* job at workflow root. Keep scope identities and track
+        # root grants separately, so equal total counts cannot mask a move.
+        permissions = re.search(
+            r"""(?m)^['"]?permissions['"]?[ \t]*:""", clean
+        )
+        if permissions:
+            remainder = clean[permissions.end():]
+            boundary = re.search(
+                r"""(?m)^['"]?[A-Za-z_][\w-]*['"]?[ \t]*:""", remainder
+            )
+            root_block = clean[permissions.start():permissions.end()] + (
+                remainder[:boundary.start()] if boundary else remainder
+            )
+            signatures["write_permission"].update(
+                "workflow_root:" + match.group("scope").strip("\"'").lower()
+                for match in WRITE_SCOPE.finditer(root_block)
+            )
     if "secret_reference" in risks:
         signatures["secret_reference"] = Counter(
             hashlib.sha256(match.group(0).upper().encode("utf-8")).hexdigest()
