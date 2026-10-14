@@ -11,6 +11,7 @@ on:
       - tests/test_zcloud_worker_prompt_safe_diagnostic.py
       - tests/test_zcloud_worker_prompt_fresh_main_20261014.py
       - tests/test_zcloud_worker_diagnostic_explicit_consent_20261014.py
+      - tests/test_deployops_worker_diagnostic_fork_admission_20261014_w7.py
   workflow_dispatch:
     inputs:
       confirm_sha:
@@ -31,8 +32,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  hosted-policy-proof:
+  trusted-pr-source:
+    # No checkout of pull_request source until the owner/repository admission
+    # is explicitly successful. A fork must fail, not report a green skip.
     if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Reject untrusted source before any contributor code executes
+        shell: bash
+        env:
+          EXPECTED_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_KIND: ${{ github.event_name }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_KIND" = pull_request
+          test "$EXPECTED_REPO" = Zennay/zCloud
+          test "$HEAD_REPO" = "$EXPECTED_REPO"
+          test "$BASE_REPO" = "$EXPECTED_REPO"
+          test "$GITHUB_BASE_REF" = main
+          test "$ATTEMPT" = 1
+  hosted-policy-proof:
+    needs: trusted-pr-source
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.run_attempt == 1
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -49,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          python3 -m unittest -v tests.test_zcloud_worker_prompt_safe_diagnostic tests.test_zcloud_worker_prompt_fresh_main_20261014 tests.test_zcloud_worker_diagnostic_explicit_consent_20261014
+          python3 -m unittest -v tests.test_zcloud_worker_prompt_safe_diagnostic tests.test_zcloud_worker_prompt_fresh_main_20261014 tests.test_zcloud_worker_diagnostic_explicit_consent_20261014 tests.test_deployops_worker_diagnostic_fork_admission_20261014_w7
           python3 -m py_compile scripts/zcloud_worker_prompt_safe_diagnostic.py
 
   owner-vps-inspection:
