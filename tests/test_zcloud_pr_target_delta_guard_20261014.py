@@ -175,6 +175,24 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(gate.risk_counts(candidate)["pr_source_in_run_job"], 1)
         self.assertIn("pr_source_in_run_job", gate.increasing_risks(base, candidate))
 
+    def test_benign_head_metadata_cannot_offset_added_unsafe_run(self):
+        dangerous = "      - run: git checkout '${{ github.head_ref }}'\n"
+        harmless = "      - name: metadata\n        env:\n          HEAD: ${{ github.head_ref }}\n        run: echo safe\n"
+        previous = SAFE + dangerous + harmless
+        candidate = SAFE + dangerous + dangerous
+        self.assertEqual(gate.risk_counts(previous)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["pr_source_in_run_job"], 2)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(previous, candidate))
+
+    def test_benign_head_metadata_cannot_offset_added_unsafe_checkout(self):
+        dangerous = "      - name: checkout\n        uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n"
+        harmless = "      - name: metadata\n        env:\n          HEAD: ${{ github.event.pull_request.head.sha }}\n        run: echo safe\n"
+        previous = SAFE + dangerous + harmless
+        candidate = SAFE + dangerous + dangerous
+        self.assertEqual(gate.risk_counts(previous)["untrusted_pr_checkout"], 1)
+        self.assertEqual(gate.risk_counts(candidate)["untrusted_pr_checkout"], 2)
+        self.assertIn("untrusted_pr_checkout", gate.increasing_risks(previous, candidate))
+
     def test_comment_only_rewrite_preserves_risk_counters(self):
         previous = SAFE.replace("contents: read", "contents: write") + "      - run: echo '${{ secrets.FIRST }}'\n"
         candidate = previous + "# actions: write and secrets.BAD are commented out\n"

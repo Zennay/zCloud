@@ -120,6 +120,30 @@ def executable_steps(source: str) -> list[str]:
     return blocks
 
 
+def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
+    """Count untrusted expressions only inside the step that carries risk.
+
+    Harmless metadata in another step cannot offset a newly introduced
+    PR-head checkout or execution, even if expression totals are unchanged.
+    """
+    found: dict[str, Counter[str]] = {
+        "untrusted_pr_checkout": Counter(),
+        "pr_source_in_run_job": Counter(),
+    }
+    for step in executable_steps(clean):
+        if CHECKOUT.search(step):
+            found["untrusted_pr_checkout"].update(
+                match.group(0).lower() for match in PR_SOURCE.finditer(step)
+            )
+        command = RUN_STEP.search(step)
+        if command is not None:
+            found["pr_source_in_run_job"].update(
+                match.group(0).lower()
+                for match in PR_SOURCE.finditer(step[command.start():])
+            )
+    return {reason: count for reason, count in found.items() if count}
+
+
 def risk_set(source: str) -> set[str]:
     """Return coarse, monotonic reasons (no source text or secrets exposed)."""
     if not source:
@@ -155,14 +179,7 @@ def risk_set(source: str) -> set[str]:
         risk.add("write_permission")
     if re.search(r"\bsecrets\s*\.", clean, re.I) or re.search(r"\bsecrets\s*\[", clean, re.I):
         risk.add("secret_reference")
-    for step in executable_steps(clean):
-        # A trusted-base checkout and PR metadata in a different job are not
-        # evidence that any untrusted PR bytes will be executed.
-        if CHECKOUT.search(step) and PR_SOURCE.search(step):
-            risk.add("untrusted_pr_checkout")
-        command = RUN_STEP.search(step)
-        if command is not None and PR_SOURCE.search(step[command.start():]):
-            risk.add("pr_source_in_run_job")
+    risk.update(step_reference_risks(clean))
     return risk
 
 
@@ -195,11 +212,9 @@ def risk_signatures(source: str) -> dict[str, Counter[str]]:
             hashlib.sha256(match.group(0).upper().encode("utf-8")).hexdigest()
             for match in SECRET_IDENTITY.finditer(clean)
         )
-    if "untrusted_pr_checkout" in risks or "pr_source_in_run_job" in risks:
-        refs = Counter(match.group(0).lower() for match in PR_SOURCE.finditer(clean))
-        for reason in ("untrusted_pr_checkout", "pr_source_in_run_job"):
-            if reason in risks:
-                signatures[reason] = refs
+    for reason, counter in step_reference_risks(clean).items():
+        if reason in risks:
+            signatures[reason] = counter
     return signatures
 
 
@@ -227,11 +242,9 @@ def risk_counts(source: str) -> dict[str, int]:
         counts["write_permission"] = max(1, len(WRITE_SCOPE.findall(clean)))
     if "secret_reference" in risks:
         counts["secret_reference"] = max(1, len(SECRET_REFERENCE.findall(clean)))
-    if "untrusted_pr_checkout" in risks or "pr_source_in_run_job" in risks:
-        occurrences = max(1, len(PR_SOURCE.findall(clean)))
-        for reason in ("untrusted_pr_checkout", "pr_source_in_run_job"):
-            if reason in risks:
-                counts[reason] = occurrences
+    for reason, counter in step_reference_risks(clean).items():
+        if reason in risks:
+            counts[reason] = sum(counter.values())
     return counts
 
 
