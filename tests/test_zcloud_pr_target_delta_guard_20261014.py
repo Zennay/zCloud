@@ -816,6 +816,41 @@ jobs:
 """
         self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
 
+
+    def test_entire_pr_object_in_run_is_untrusted_exposure(self):
+        candidate = SAFE + """      - run: echo '${{ toJSON(github.event.pull_request) }}'
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(SAFE, candidate))
+
+    def test_whole_pr_object_through_step_env_into_eval_is_denied(self):
+        candidate = SAFE + """      - env:
+          COMMAND: ${{ toJSON(github['event']['pull_request']) }}
+        run: bash -c "$COMMAND"
+"""
+        self.assertIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_whole_pr_object_in_untrusted_checkout_ref_is_denied(self):
+        candidate = SAFE + """      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request }}
+"""
+        self.assertIn("untrusted_pr_checkout", gate.risk_set(candidate))
+
+    def test_trusted_base_sha_still_unflagged_after_whole_object_gate(self):
+        candidate = SAFE + """      - run: git fetch origin '${{ github.event.pull_request.base.sha }}'
+"""
+        self.assertNotIn("pr_source_in_run_job", gate.risk_set(candidate))
+
+    def test_whole_pr_object_identity_change_is_detected_at_same_count(self):
+        before = SAFE + """      - run: echo '${{ github.event.pull_request.title }}'
+"""
+        after = SAFE + """      - run: echo '${{ toJSON(github.event.pull_request) }}'
+"""
+        self.assertEqual(gate.risk_counts(before)["pr_source_in_run_job"], 1)
+        self.assertEqual(gate.risk_counts(after)["pr_source_in_run_job"], 1)
+        self.assertIn("pr_source_in_run_job", gate.increasing_risks(before, after))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
