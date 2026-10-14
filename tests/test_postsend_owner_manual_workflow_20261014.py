@@ -77,7 +77,7 @@ class PostsendOwnerManualWorkflowTests(unittest.TestCase):
         for name, job in (("offline", self.offline), ("install", self.install)):
             with self.subTest(job=name):
                 checkout = job.split("- uses: " + CHECKOUT, 1)[1].split("- name:", 1)[0]
-                self.assertEqual(1, len(re.findall(r"(?m)^        with:\\s*$", checkout)))
+                self.assertEqual(1, len(re.findall(r"(?m)^        with:\s*$", checkout)))
                 self.assertEqual(1, len(re.findall(r"(?m)^          ref:", checkout)))
                 self.assertIn("clean: true", checkout)
                 self.assertIn("persist-credentials: false", checkout)
