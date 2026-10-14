@@ -1,0 +1,56 @@
+name: zCloud dashboard state UX contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "public/index.html"
+      - "public/app.js"
+      - "tests/test_dashboard_empty_loading_error_states.py"
+      - ".github/workflows/zcloud-dashboard-state-contract.yml"
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-dashboard-state-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 6
+    env:
+      EXPECTED_ZCLOUD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out exact trusted candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.EXPECTED_ZCLOUD_SHA }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove permanent runner and exact checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_ZCLOUD_SHA"
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Prove dashboard loading empty and error states
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tests/test_dashboard_empty_loading_error_states.py
+          python3 -m unittest -v tests.test_dashboard_empty_loading_error_states
+          node --check public/app.js
+          echo "ZCLOUD_DASHBOARD_STATE_CONTRACT_GREEN=1"
