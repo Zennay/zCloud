@@ -340,6 +340,27 @@ jobs:
 """
         self.assertNotIn("untrusted_pr_checkout", gate.risk_set(source))
 
+
+    def test_write_all_relocation_from_job_to_workflow_is_escalation(self):
+        before = SAFE.replace("    runs-on:", "    permissions: write-all\n    runs-on:")
+        after = SAFE.replace("permissions:\n  contents: read", "permissions: write-all")
+        self.assertEqual(gate.risk_counts(before)["write_all"], 1)
+        self.assertEqual(gate.risk_counts(after)["write_all"], 1)
+        self.assertIn("write_all", gate.increasing_risks(before, after))
+        self.assertEqual(
+            gate.risk_signatures(after)["write_all"]["workflow_root"], 1
+        )
+
+    def test_restricting_workflow_write_all_to_one_job_is_not_expansion(self):
+        before = SAFE.replace("permissions:\n  contents: read", "permissions: write-all")
+        after = SAFE.replace("    runs-on:", "    permissions: write-all\n    runs-on:")
+        self.assertNotIn("write_all", gate.increasing_risks(before, after))
+
+    def test_quoted_root_write_all_also_gains_root_risk_identity(self):
+        before = SAFE.replace("    runs-on:", "    permissions: 'write-all'\n    runs-on:")
+        after = SAFE.replace("permissions:\n  contents: read", '"permissions": "write-all"')
+        self.assertIn("write_all", gate.increasing_risks(before, after))
+
     def test_comments_are_not_risks(self):
         self.assertEqual(gate.risk_set(SAFE + "# permissions: write-all; secrets.ADMIN\n"), set())
 
