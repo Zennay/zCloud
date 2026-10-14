@@ -29,6 +29,11 @@ class GuardTests(unittest.TestCase):
     def test_safe_hosted_read_only(self):
         self.assertEqual(gate.risk_set(SAFE), set())
 
+    def test_missing_root_permissions(self):
+        candidate = SAFE.replace("permissions:\n  contents: read\n", "")
+        self.assertIn("missing_explicit_root_permissions", gate.risk_set(candidate))
+        self.assertEqual(gate.risk_set(SAFE.replace("permissions:\n  contents: read", "permissions: {}")), set())
+
     def test_root_write(self):
         self.assertIn("write_permission", gate.risk_set(SAFE.replace("contents: read", "contents: write")))
 
