@@ -22,7 +22,7 @@ Kandidaat bij issue #1166 en PR #1351 (https://github.com/Zennay/zCloud/pull/135
 | HTTP-serverfout (5xx) | Backend geeft foutstatus; vereist onafhankelijke service-evidence. |
 | HTTP-status niet 200 (overig) | Ook onbekende/niet-standaard statussen zijn nooit een gezonde API; geen responsebody of secrets loggen. |
 | Onverwacht antwoordtype of te groot | Ongeldige API-representatie; fail closed. |
-| Tegenstrijdige HTTP-headers | Dubbele content headers, opgegeven lengte die niet klopt, ongeldige lengte of ongewenste content-encoding. Ook met HTTP 200 geen geldige status. |
+| Tegenstrijdige HTTP-headers | Dubbele content-/transferheaders, opgegeven lengte die niet klopt, ongeldige lengte, ongewenste Content-Encoding of een aanwezige Transfer-Encoding (óók `chunked` of `identity`). HTTP-framing kan dubbelzinnig zijn wanneer bibliotheken transfercodering verwerken: liever onterecht rood dan vals groen. Ook met HTTP 200 geen geldige status. |
 | Ongeldige JSON of schema | Body onbruikbaar, of vereiste velden ontbreken. |
 | Verouderd of toekomstige tijd | >180 seconden oud of >30 seconden in de toekomst: mogelijk cache, replay of klokafwijking. |
 | MAIN_CHANGED / MAIN_UNVERIFIABLE | Exacte actuele main-head vóór/na observatie niet bewezen; geen groene samenvatting publiceren. |
@@ -33,7 +33,7 @@ De manual job verifieert current-main tweemaal via **GitHub REST / GitHub CLI** 
 ## Verificatie zonder production mutation
 
 - PR-CI checkt de onveranderlijke head-commit rechtstreeks, niet de synthetische PR-merge. Een andere repository als PR-bron wordt geweigerd.
-- Negatieve tests gebruiken tevens een echte tijdelijke 127.0.0.1 HTTP-server, inclusief redirects, 503, foutieve body, oversize, stale snapshot en proxy-injectie. Geen productie-GET in de PR-tests.
+- Negatieve tests gebruiken tevens een echte tijdelijke 127.0.0.1 HTTP-server, inclusief redirects, 503, foutieve body, oversize, stale snapshot, proxy-injectie en `Content-Length` + `Transfer-Encoding` conflicten (waaronder dubbele transferheaders). Geen productie-GET in de PR-tests.
 - De vaste API GET zet `Cache-Control: no-cache, no-store, max-age=0` en `Pragma: no-cache`, zodat tussenliggende HTTP-caches geen oud succesantwoord behoren te hergebruiken; timestampcontrole blijft verplicht. De vaste API GET heeft maximaal 128 KiB body-budget, controle van de aangegeven Content-Length (ook vroege oversize-weigering), weigering van dubbele kritische HTTP-headers en onverwachte Content-Encoding, beperkte nested JSON, duplicate-key/Unicode/nonfinite denial, strenge MIME- en UTC-freshnesscontrole.
 - De originele dashboard recovery workflow blijft ongewijzigd; de privilegieerde recover-job blijft gedeactiveerd.
 - Succesvolle CI is geen herstelsleutel. Productiedeploy en zCloud-workers behoren aan andere geserialiseerde eigenaren.
