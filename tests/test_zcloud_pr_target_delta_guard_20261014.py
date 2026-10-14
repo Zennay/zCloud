@@ -154,6 +154,31 @@ class GuardTests(unittest.TestCase):
         candidate = previous + "# actions: write and secrets.BAD are commented out\n"
         self.assertEqual(gate.risk_counts(previous), gate.risk_counts(candidate))
 
+    def test_trusted_target_workflow_isolated_from_untrusted_source(self):
+        workflow = (TARGET.parents[1] / ".github/workflows/zcloud-pr-target-risk-ratchet-20261014.yml").read_text()
+        self.assertIn("  pull_request_target:\n", workflow)
+        self.assertIn("  pull_request:\n", workflow)
+        self.assertIn("github.event_name == 'pull_request_target'", workflow)
+        self.assertIn("github.event_name == 'pull_request'", workflow)
+        self.assertIn("github.event_name }}-${{ github.event.pull_request.number", workflow)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertNotIn("self-hosted", workflow)
+        self.assertNotIn("permissions: write-all", workflow)
+        trusted = workflow.split("  trusted-main:\n", 1)[1]
+        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", trusted)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", trusted)
+        self.assertIn("path: trusted", trusted)
+        self.assertIn("path: candidate", trusted)
+        self.assertIn("persist-credentials: false", trusted)
+        self.assertIn("submodules: false", trusted)
+        self.assertIn("test \"$current_main\" = \"$EXACT_BASE\"", trusted)
+        self.assertIn("git -C candidate fetch", trusted)
+        self.assertIn("(cd trusted && python3 -m unittest", trusted)
+        self.assertIn("python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py", trusted)
+        self.assertNotIn("python3 candidate/", trusted)
+        self.assertNotIn("cd candidate && python3", trusted)
+
     def test_git_base_delta_blocks_new_risk(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
