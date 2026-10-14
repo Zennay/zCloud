@@ -39,6 +39,37 @@ _ALLOWED_GET_PATH = re.compile(
 )
 
 
+# Only published stable categories are exposed. No exception text, URLs,
+# labels, tokens, worker names or raw GitHub data may reach operator output.
+_ERROR_CATEGORIES = {
+    "invalid_total_count": "incomplete_queue_pages",
+    "unstable_or_invalid_page": "incomplete_queue_pages",
+    "empty_nonterminal_page": "incomplete_queue_pages",
+    "truncated_inventory": "incomplete_queue_pages",
+    "pagination_cap_reached": "incomplete_queue_pages",
+    "untrusted_next_cursor": "incomplete_queue_pages",
+    "duplicate_next_link": "incomplete_queue_pages",
+    "duplicate_or_invalid_paged_identity": "invalid_job_identity",
+    "cross_run_job_evidence": "invalid_job_identity",
+    "invalid_run_provenance": "invalid_job_identity",
+    "run_without_valid_job_evidence": "invalid_job_identity",
+    "candidate_job_changed_during_inventory": "job_state_changed",
+    "candidate_recheck_cap_exceeded": "queue_too_large",
+    "excess_inventory": "queue_too_large",
+    "queue_changed_during_inventory": "job_state_changed",
+    "main_moved_during_inventory": "main_changed",
+    "snapshot_acquisition_too_slow": "observation_too_slow",
+    "collector_budget_exhausted": "observation_too_slow",
+    "collector_wallclock_exceeded": "observation_too_slow",
+}
+
+
+def safe_error_category(error):
+    """Return only a fixed public reason; never reflect untrusted exceptions."""
+    code = error.args[0] if isinstance(error, InventoryError) and error.args else None
+    return _ERROR_CATEGORIES.get(code, "github_inventory_untrusted")
+
+
 class InventoryError(ValueError):
     pass
 
@@ -349,7 +380,9 @@ def main():
         snapshot = collect(bounded_get)
         answer = policy.assess(snapshot, expected_main_sha=snapshot["main_sha_before"],
                                now=datetime.now(timezone.utc))
-    except (InventoryError, OSError, TypeError, AttributeError, ValueError, RecursionError):
+    except InventoryError as exc:
+        answer = policy._fail(safe_error_category(exc))
+    except (OSError, TypeError, AttributeError, ValueError, RecursionError):
         answer = policy._fail("github_inventory_untrusted")
     finally:
         if hasattr(signal, "setitimer") and hasattr(signal, "SIGALRM"):
