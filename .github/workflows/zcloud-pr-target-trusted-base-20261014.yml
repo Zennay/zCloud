@@ -55,3 +55,6 @@ jobs:
           (cd trusted && python3 -m unittest -v tests.test_zcloud_pr_target_delta_guard_20261014)
           python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py \
             --root "$GITHUB_WORKSPACE/trusted" --base "$EXACT_BASE" --head "$EXACT_HEAD"
+          final_main="$(timeout 15 git -C trusted ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          test -n "$final_main"
+          test "$final_main" = "$EXACT_BASE"
