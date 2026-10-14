@@ -43,9 +43,19 @@ class LegacyConsentHostedCIContract(unittest.TestCase):
                      "tests/test_zcloud_v2_legacy_service_audit_trust_20261013_w1.py",
                      "tests/test_zcloud_v2_legacy_consent_hosted_20261014_w1.py",
                      "scripts/zcloud_v2_legacy_service_inventory_20261014.py",
-                     "tests/test_zcloud_v2_legacy_service_inventory_20261014.py"):
+                     "tests/test_zcloud_v2_legacy_service_inventory_20261014.py",
+                     "docs/deployops-v2-legacy-metadata-audit-20261014-w1.md"):
             self.assertEqual(self.text.count("- " + path), 2)
         self.assertIn("python3 -m unittest discover -v", self.text)
+
+    def test_operator_runbook_denies_release_authority(self):
+        document = (ROOT / "docs/deployops-v2-legacy-metadata-audit-20261014-w1.md").read_text(encoding="utf-8")
+        for requirement in ("workflow_dispatch", "approve_readonly_probe", "confirm_sha",
+                            "run_attempt", "observation_complete", "production_verified",
+                            "worker_generation_verified", "#638", "#1135"):
+            with self.subTest(requirement=requirement):
+                self.assertIn(requirement, document)
+        self.assertNotIn("sudo systemctl restart", document)
 
     def test_only_branch_push_and_same_repo_pr(self):
         self.assertIn("fix/deployops-v2-legacy-manual-replay-gate-20261014-w1", self.text)

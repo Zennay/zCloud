@@ -12,6 +12,7 @@ on:
       - tests/test_zcloud_v2_legacy_consent_hosted_20261014_w1.py
       - scripts/zcloud_v2_legacy_service_inventory_20261014.py
       - tests/test_zcloud_v2_legacy_service_inventory_20261014.py
+      - docs/deployops-v2-legacy-metadata-audit-20261014-w1.md
   pull_request:
     branches: [main]
     paths:
@@ -21,6 +22,7 @@ on:
       - tests/test_zcloud_v2_legacy_consent_hosted_20261014_w1.py
       - scripts/zcloud_v2_legacy_service_inventory_20261014.py
       - tests/test_zcloud_v2_legacy_service_inventory_20261014.py
+      - docs/deployops-v2-legacy-metadata-audit-20261014-w1.md
 
 permissions:
   contents: read
