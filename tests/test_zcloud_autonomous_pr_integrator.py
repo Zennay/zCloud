@@ -19,7 +19,7 @@ ENV = {"GITHUB_REPOSITORY": "Zennay/zCloud", "GITHUB_REF": "refs/heads/main",
 
 def pr(docs=True):
     return {"number": 21, "state": "open", "draft": False,
-            "mergeable": True, "mergeable_state": "clean", "title": "Useful change",
+            "mergeable": True, "mergeable_state": "clean", "changed_files": 1, "title": "Useful change",
             "labels": [{"name": mod.LABEL}],
             "head": {"sha": A, "repo": {"full_name": mod.REPO}},
             "base": {"sha": B, "ref": "main", "repo": {"full_name": mod.REPO}}}
@@ -28,6 +28,18 @@ def pr(docs=True):
 def files(docs=True):
     return [{"filename": "docs/worker-integration.md" if docs else "scripts/new_engine.py",
              "status": "added"}]
+
+
+def optional_cpu_check():
+    link = f"https://github.com/{mod.REPO}/actions/runs/401/job/503"
+    return {
+        "id": 503, "head_sha": A, "name": "cpu-snapshot",
+        "status": "queued", "conclusion": None,
+        "details_url": link, "html_url": link,
+        "app": {"id": 15368, "slug": "github-actions",
+                "owner": {"login": "github"}},
+        "check_suite": {"id": 301},
+    }
 
 
 def checks():
@@ -87,8 +99,7 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(mod.decide(pr(), files(), x, [], B), "unbound_check")
 
     def test_optional_queued_vps_cpu_must_not_block_green_hosted_smoke(self):
-        optional = {"head_sha": A, "name": "cpu-snapshot",
-                    "status": "queued", "conclusion": None}
+        optional = optional_cpu_check()
         self.assertEqual(mod.decide(pr(), files(), checks() + [optional], [], B),
                          "eligible")
         unknown = dict(optional, name="unknown-required-or-optional")
@@ -104,8 +115,7 @@ class DecisionTest(unittest.TestCase):
     def test_known_optional_queued_vps_can_explain_unstable_state(self):
         p = pr()
         p["mergeable_state"] = "unstable"
-        optional = {"head_sha": A, "name": "cpu-snapshot",
-                    "status": "queued", "conclusion": None}
+        optional = optional_cpu_check()
         self.assertEqual(mod.decide(p, files(), checks(), [], B),
                          "unstable_without_known_optional")
         self.assertEqual(mod.decide(p, files(), checks() + [optional], [], B),
@@ -136,6 +146,7 @@ class DecisionTest(unittest.TestCase):
             "tests/test_deployops_automerge_workflow_replay_20261014_w11.py",
     "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
             "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
+            "tests/test_deployops_automerge_file_count_cpu_20261014_w15.py",
         }
         self.assertEqual(mod.PROTECTED_INTEGRATION_FILES, expected)
         for path in expected:
