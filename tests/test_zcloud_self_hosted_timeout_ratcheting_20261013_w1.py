@@ -210,6 +210,28 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         rows = audit.inspect_workflow(".github/workflows/quoted.yml", source, max_minutes=30)
         self.assertEqual([("private-job", "over_limit")], [(r.job, r.status) for r in rows])
 
+    def test_inherited_inline_or_sequence_yaml_merge_runner_cannot_escape(self):
+        source = """defaults: &private
+  runs-on: [self-hosted, zcloud, vps]
+jobs:
+  mapping_merge:
+    <<: {runs-on: [self-hosted, zcloud, vps]}
+    timeout-minutes: 5
+  sequence_merge:
+    <<: [*private]
+    timeout-minutes: 10
+  explicit_hosted_override:
+    <<: *private
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+"""
+        rows = audit.inspect_workflow("merge-shapes.yml", source, max_minutes=30)
+        self.assertEqual(
+            [("mapping_merge", "dynamic_runner_unknown"),
+             ("sequence_merge", "dynamic_runner_unknown")],
+            [(row.job, row.status) for row in rows],
+        )
+
     def test_yaml_merge_alias_cannot_hide_inherited_runner(self):
         source = """defaults: &private
   runs-on: [self-hosted, zcloud, vps]
