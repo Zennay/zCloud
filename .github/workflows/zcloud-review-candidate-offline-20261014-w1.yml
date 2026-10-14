@@ -48,6 +48,7 @@ jobs:
           m = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(m)
           sha = 'a' * 40
+          head = 'b' * 40
           result = m.snapshot({'main_sha': sha, 'observed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'inventory': {'prs_complete': True,'branches_complete': True,
               'open_pr_count': 1, 'prless_branch_count': 0},
             'branch_inventory_receipt': {'schema': 'zcloud-prless-branch-snapshot-v1',
@@ -56,19 +57,19 @@ jobs:
               'branch_count': 1, 'open_pr_head_count': 1, 'branch_pages': 1, 'pr_pages': 1,
               'pr_less': []},
             'gates': {'580': 'closed','1089': 'closed','1135': 'closed'},
-            'prs': [{'number': 12,'head_sha': sha,'base_sha': sha,
-              'ancestry_evidence': {'complete': True, 'main_sha': sha, 'head_sha': sha,
-                 'merge_base_sha': sha, 'ahead_by': 0, 'behind_by': 0, 'status': 'identical'},
+            'prs': [{'number': 12,'head_sha': head,'base_sha': sha,
+              'ancestry_evidence': {'complete': True, 'main_sha': sha, 'head_sha': head,
+                 'merge_base_sha': sha, 'ahead_by': 1, 'behind_by': 0, 'status': 'ahead'},
               'draft': False,'owner_approved': True,
               'owner_review_evidence': {'complete': True, 'decision': 'approved', 'dismissed': False,
                   'repository_full_name': 'Zennay/zCloud', 'pr_number': 12, 'review_id': 99012,
                   'author_login': 'project-author', 'reviewer_login': 'independent-reviewer',
-                  'reviewed_head_sha': sha,
+                  'reviewed_head_sha': head,
                   'submitted_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')},
               'files': ['README.md'], 'previous_files': [], 'files_evidence': {'complete': True,
                 'total_count': 1, 'rename_sources_complete': True, 'previous_files_total': 0,
-                'head_sha': sha, 'base_sha': sha}, 'required_checks': ['unit'],
-              'checks': [{'name': 'unit','head_sha': sha,'conclusion': 'success'}]}], 'branches': []})
+                'head_sha': head, 'base_sha': sha}, 'required_checks': ['unit'],
+              'checks': [{'name': 'unit','head_sha': head,'conclusion': 'success'}]}], 'branches': []})
           assert result['review_candidate_count'] == 1
           assert result['release_authorized'] is False
           assert result['mutations_performed'] is False
