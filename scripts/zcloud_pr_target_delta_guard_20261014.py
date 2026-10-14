@@ -70,6 +70,13 @@ def checked_sha(value: str) -> str:
 def changed_workflows(root: Path, base: str, head: str) -> list[str]:
     checked_sha(base)
     checked_sha(head)
+    # Deleting or renaming away a workflow can remove an existing security
+    # enforcement job. Fail closed rather than silently treating it as no diff.
+    # --no-renames exposes the removed side of a rename for explicit review.
+    removed = git(root, "diff", "--name-only", "-z", "--no-renames",
+                  "--diff-filter=D", f"{base}...{head}", "--", ".github/workflows/")
+    if removed:
+        raise Unverified("workflow_removal_requires_review")
     raw = git(root, "diff", "--name-only", "-z", "--diff-filter=ACMRT", f"{base}...{head}", "--", ".github/workflows/")
     paths = [part.decode("utf-8", "strict") for part in raw.split(b"\x00") if part]
     if len(paths) > 250 or len(paths) != len(set(paths)) or any(not WORKFLOW.fullmatch(p) for p in paths):
