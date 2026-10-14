@@ -1,0 +1,216 @@
+"""Offline boundary tests for the GET-only queue pagination collector."""
+from datetime import datetime, timezone
+import json
+import unittest
+
+from scripts import zcloud_watchdog_queue_collector_20261014_w1 as collection
+from scripts import zcloud_watchdog_queue_admission_20261014_w1 as policy
+
+SHA = "a" * 40
+NOW = datetime(2026, 10, 14, 3, tzinfo=timezone.utc)
+ROOT = "/repos/Zennay/zCloud"
+MAIN = ROOT + "/branches/main"
+RUNS = ROOT + "/actions/runs?status=queued&per_page=100&page=1"
+
+
+def main(sha=SHA):
+    return {"commit": {"sha": sha}}, ""
+
+
+def run(ident):
+    return {"id": ident, "head_repository": {"full_name": "Zennay/zCloud"},
+            "workflow_id": 30, "head_sha": SHA, "head_branch": "main",
+            "event": "push", "status": "queued"}
+
+
+def job(ident):
+    return {"id": ident, "status": "queued", "labels": ["self-hosted", "zcloud", "vps"]}
+
+
+def api_snapshot(*runs):
+    calls = []
+    run_ids = [r["id"] for r in runs]
+    def fetch(path):
+        calls.append(path)
+        if path == MAIN:
+            return main()
+        if path == RUNS:
+            return {"total_count": len(runs), "workflow_runs": list(runs)}, ""
+        for ident in run_ids:
+            if path == ROOT + f"/actions/runs/{ident}/jobs?per_page=100&page=1":
+                return {"total_count": 1, "jobs": [job(1000 + ident)]}, ""
+        raise AssertionError(f"unexpected GET {path}")
+    return fetch, calls
+
+
+class TestReadOnlyQueueCollector(unittest.TestCase):
+    def test_empty_queue_persists_no_mutation(self):
+        get, calls = api_snapshot()
+        evidence = collection.collect(get, clock=NOW)
+        self.assertEqual(evidence["run_pages"][0]["runs"], [])
+        self.assertEqual(calls.count(MAIN), 2)
+        decision = policy.assess(evidence, expected_main_sha=SHA, now=NOW)
+        self.assertEqual(decision["decision"], "NOOP")
+        self.assertFalse(decision["inventory_complete"])
+        self.assertFalse(decision["mutation_authorized"])
+
+    def test_two_runs_are_review_only_after_real_source_collection(self):
+        get, _ = api_snapshot(run(5), run(9))
+        evidence = collection.collect(get, clock=NOW)
+        result = policy.assess(evidence, expected_main_sha=SHA, now=NOW)
+        self.assertEqual(result["candidate_duplicate_groups"], [[5, 9]])
+        self.assertEqual(result["cancel_run_ids"], [])
+        self.assertEqual(result["decision"], "REVIEW_ONLY")
+
+    def test_page_two_is_fully_traversed(self):
+        rows = [run(i) for i in range(1, 102)]
+        first = ROOT + "/actions/runs?status=queued&per_page=100&page=1"
+        second = ROOT + "/actions/runs?status=queued&per_page=100&page=2"
+        def fetch(path):
+            if path == MAIN:
+                return main()
+            if path == first:
+                return {"total_count": 101, "workflow_runs": rows[:100]}, (
+                    '<https://api.github.com' + second + '>; rel="next"'
+                )
+            if path == second:
+                return {"total_count": 101, "workflow_runs": rows[100:]}, ""
+            if path.endswith("/jobs?per_page=100&page=1"):
+                ident = int(path.split("/runs/")[1].split("/")[0])
+                return {"total_count": 1, "jobs": [job(1000 + ident)]}, ""
+            raise AssertionError(path)
+        snapshot = collection.collect(fetch, clock=NOW)
+        self.assertEqual(len(snapshot["run_pages"][0]["runs"]), 101)
+
+    def test_truncated_second_page_denied(self):
+        def fetch(path):
+            if path == MAIN:
+                return main()
+            if path == RUNS:
+                return {"total_count": 2, "workflow_runs": [run(1)]}, ""
+            raise AssertionError(path)
+        with self.assertRaisesRegex(collection.InventoryError, "truncated_inventory"):
+            collection.collect(fetch, clock=NOW)
+
+    def test_missing_first_page_link_denied_if_total_larger(self):
+        get, _ = api_snapshot(run(1))
+        def fetch(path):
+            if path == RUNS:
+                return {"total_count": 101, "workflow_runs": [run(1)]}, ""
+            return get(path)
+        with self.assertRaises(collection.InventoryError):
+            collection.collect(fetch, clock=NOW)
+
+    def test_malicious_cross_origin_next_cursor_denied(self):
+        link = '<https://evil.example/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100&page=2>; rel="next"'
+        with self.assertRaisesRegex(collection.InventoryError, "cross_origin_next_link"):
+            collection._next_link(link, expected_path=ROOT + "/actions/runs",
+                                  expected_page=1,
+                                  required_query={"status": "queued", "per_page": "100"})
+
+    def test_duplicate_next_links_denied(self):
+        item = '<https://api.github.com' + ROOT + '/actions/runs?status=queued&per_page=100&page=2>; rel="next"'
+        with self.assertRaises(collection.InventoryError):
+            collection._next_link(item + "," + item,
+                                  expected_path=ROOT + "/actions/runs", expected_page=1,
+                                  required_query={"status": "queued", "per_page": "100"})
+
+    def test_replayed_cursor_denied(self):
+        item = '<https://api.github.com' + ROOT + '/actions/runs?status=queued&per_page=100&page=1>; rel="next"'
+        with self.assertRaisesRegex(collection.InventoryError, "untrusted_next_cursor"):
+            collection._next_link(item, expected_path=ROOT + "/actions/runs", expected_page=1,
+                                  required_query={"status": "queued", "per_page": "100"})
+
+    def test_changed_main_after_queue_denied(self):
+        get, _ = api_snapshot(run(1))
+        hits = [0]
+        def fetch(path):
+            if path == MAIN:
+                hits[0] += 1
+                return main("b" * 40 if hits[0] == 2 else SHA)
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "main_moved"):
+            collection.collect(fetch, clock=NOW)
+
+    def test_race_in_latest_queued_inventory_denied(self):
+        get, _ = api_snapshot(run(1))
+        seen = [0]
+        def fetch(path):
+            if path == RUNS:
+                seen[0] += 1
+                if seen[0] == 2:
+                    return {"total_count": 1, "workflow_runs": [run(2)]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "queue_changed"):
+            collection.collect(fetch, clock=NOW)
+
+    def test_missing_jobs_denied(self):
+        get, _ = api_snapshot(run(1))
+        def fetch(path):
+            if "/jobs?" in path:
+                return {"total_count": 0, "jobs": []}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "run_without_valid_job"):
+            collection.collect(fetch, clock=NOW)
+
+    def test_unbounded_total_denied(self):
+        get, _ = api_snapshot(run(1))
+        def fetch(path):
+            if path == RUNS:
+                return {"total_count": 1000, "workflow_runs": [run(1)]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "invalid_total_count"):
+            collection.collect(fetch, clock=NOW)
+
+    def test_bad_repo_context_preserved_as_denial(self):
+        foreign = run(1)
+        foreign["head_repository"]["full_name"] = "elsewhere/fork"
+        get, _ = api_snapshot(foreign)
+        evidence = collection.collect(get, clock=NOW)
+        self.assertEqual(policy.assess(evidence, expected_main_sha=SHA, now=NOW)["decision"], "DENY")
+
+    def test_api_adapter_never_uses_post(self):
+        adapter = collection.ReadOnlyAPI("fake-token")
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, _):
+                return b'{"commit":{"sha":"' + SHA.encode() + b'"}}'
+        class FakeOpener:
+            def open(self, request, timeout):
+                self_ref.assertEqual(request.get_method(), "GET")
+                self_ref.assertEqual(timeout, 12)
+                self_ref.assertTrue(request.full_url.startswith("https://api.github.com/repos/Zennay/zCloud/"))
+                return Response()
+        self_ref = self
+        adapter.opener = FakeOpener()
+        payload, link = adapter.get(MAIN)
+        self.assertEqual(payload["commit"]["sha"], SHA)
+        self.assertEqual(link, "")
+
+    def test_adapter_rejects_duplicate_json_objects(self):
+        adapter = collection.ReadOnlyAPI("fake-token")
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, _):
+                return b'{"a":1,"a":2}'
+        adapter.opener = type("Fake", (), {"open": lambda _self, req, timeout: Response()})()
+        with self.assertRaises(collection.InventoryError):
+            adapter.get(MAIN)
+
+    def test_api_token_validation_denies_newlines(self):
+        with self.assertRaises(collection.InventoryError):
+            collection.ReadOnlyAPI("token\r\ninjected")
+
+
+if __name__ == "__main__":
+    unittest.main()
