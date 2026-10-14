@@ -493,6 +493,44 @@ class GitTest(unittest.TestCase):
         self.assertEqual(1, len(first))
         self.assertEqual("automatic_or_unknown", first[0][0])
 
+    def test_triage_prefix_only_selects_requested_lane(self):
+        self.path.write_text(CANCEL)
+        (self.path.parent / "zcloud-one.yml").write_text(CANCEL)
+        (self.path.parent / "zcloud-two.yml").write_text(CANCEL)
+        (self.path.parent / "ftmo-one.yml").write_text(CANCEL)
+        self.git("add", ".")
+        self.git("commit", "-qm", "cross-lane risk shortlist")
+        sha = self.git("rev-parse", "HEAD")
+        entries, count = scanner.triage(self.root, sha, 12, "zcloud-")
+        self.assertEqual(2, count)
+        self.assertTrue(all(path.startswith(".github/workflows/zcloud-")
+                            for _, path in entries))
+
+    def test_triage_prefix_rejects_untrusted_paths(self):
+        sha = self.commit(CANCEL)
+        for prefix in ("../", "zcloud/other", "", "a" * 41, " "):
+            with self.subTest(prefix=prefix):
+                self.assertRaises(scanner.Unverifiable, scanner.triage,
+                                  self.root, sha, 12, prefix)
+
+    def test_triage_cli_lane_is_path_only(self):
+        self.path.write_text(CANCEL)
+        (self.path.parent / "zcloud-safe.yml").write_text(CANCEL)
+        self.git("add", ".")
+        self.git("commit", "-qm", "scoped risk")
+        sha = self.git("rev-parse", "HEAD")
+        from io import StringIO
+        from contextlib import redirect_stdout
+        stdout = StringIO()
+        with redirect_stdout(stdout):
+            code = scanner.main(["--triage-head", sha,
+                                 "--triage-prefix", "zcloud-",
+                                 "--repo-root", str(self.root)])
+        self.assertEqual(0, code)
+        self.assertIn("total=1 shown=1", stdout.getvalue())
+        self.assertNotIn("cancellation.yml", stdout.getvalue())
+        self.assertIn("zcloud-safe.yml", stdout.getvalue())
+
     def test_triage_refuses_untrusted_ref_and_bad_limits(self):
         self.commit(SAFE)
         sha = self.git("rev-parse", "HEAD")
