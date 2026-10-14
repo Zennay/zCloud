@@ -148,6 +148,38 @@ def _exception_category(exc):
     return "transport_failure"
 
 
+def _valid_sf_key(key):
+    """Subset of RFC 8941 key syntax; malformed extensions fail closed."""
+    return (bool(key) and key[0] in "abcdefghijklmnopqrstuvwxyz*" and
+            all(ch in "abcdefghijklmnopqrstuvwxyz0123456789_-.*"
+                for ch in key))
+
+
+def _valid_sf_token(token):
+    """Recognize common RFC 8941 token syntax without accepting spaces."""
+    initial = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ*"
+    allowed = initial + "0123456789!#$%&'+-.^_`|~:/"
+    return bool(token) and token[0] in initial and all(ch in allowed for ch in token)
+
+
+def _valid_quoted_sf_string(token):
+    """Conservative structured-string grammar: only backslash/quote escapes."""
+    if len(token) < 2 or token[0] != '"' or token[-1] != '"':
+        return False
+    inside = token[1:-1]
+    index = 0
+    while index < len(inside):
+        char = inside[index]
+        if char == "\\\\":
+            index += 1
+            if index >= len(inside) or inside[index] not in ('"', "\\\\"):
+                return False
+        elif char == '"':
+            return False
+        index += 1
+    return True
+
+
 def _cache_status_signal(value):
     """Conservative RFC 9211 hit classifier; never print intermediary data.
 
@@ -193,13 +225,26 @@ def _cache_status_signal(value):
     for group in groups:
         # A cache identifier is mandatory. Unquoted commas/semicolons
         # inside identifiers have already been split as separators.
-        if not group[0]:
+        identifier = group[0]
+        # A cache member must begin with an RFC 8941 token or quoted string.
+        # Never silently accept broken punctuation or an unquoted space as an
+        # origin identifier: it can hide syntax that spoofs cache evidence.
+        if identifier.startswith('"'):
+            if (len(identifier) < 2 or not identifier.endswith('"') or
+                    not _valid_quoted_sf_string(identifier)):
+                return "invalid_headers"
+        elif not _valid_sf_token(identifier):
             return "invalid_headers"
         cache_hit = None
         has_fwd = False
+        seen_keys = set()
         for param in group[1:]:
             key, separator, raw_value = param.partition("=")
             key = key.strip().lower()
+            if (not _valid_sf_key(key) or key in seen_keys or
+                    (separator and not raw_value.strip())):
+                return "invalid_headers"
+            seen_keys.add(key)
             if key == "hit":
                 if cache_hit is not None:
                     return "invalid_headers"
