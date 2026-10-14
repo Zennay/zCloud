@@ -115,14 +115,21 @@ jobs:
           if [ "$old_running" = yes ]; then
             sudo systemctl stop "$legacy"
           fi
-          if ! sudo systemctl enable --now "$unit"; then
+          sudo systemctl enable "$unit"
+          if ! sudo systemctl restart "$unit"; then
             if [ "$old_running" = yes ]; then sudo systemctl start "$legacy" || true; fi
             echo "New trainer failed to start; prior trainer restored when possible." >&2
             exit 1
           fi
+          sleep 3
           if ! sudo systemctl is-active --quiet "$unit"; then
             sudo journalctl -u "$unit" --no-pager -n 80
             if [ "$old_running" = yes ]; then sudo systemctl start "$legacy" || true; fi
+            exit 1
+          fi
+          active_pid="$(sudo systemctl show -p MainPID --value "$unit")"
+          if [ "$active_pid" = 0 ] || ! tr '\\0' ' ' < "/proc/$active_pid/cmdline" | grep -Fq "$app/releases/$wanted/training/continuous.cjs"; then
+            echo 'Service active source is not the requested exact release' >&2
             exit 1
           fi
           if [ "$old_running" = yes ]; then sudo systemctl disable "$legacy" || true; fi
