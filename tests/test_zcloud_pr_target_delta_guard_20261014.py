@@ -173,6 +173,11 @@ class GuardTests(unittest.TestCase):
         self.assertIn("persist-credentials: false", trusted)
         self.assertIn("submodules: false", trusted)
         self.assertIn('test "$current_main" = "$EXACT_BASE"', trusted)
+        self.assertIn('test "$final_main" = "$EXACT_BASE"', trusted)
+        self.assertLess(trusted.index('test "$current_main" = "$EXACT_BASE"'),
+                        trusted.index('python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py'))
+        self.assertGreater(trusted.index('test "$final_main" = "$EXACT_BASE"'),
+                           trusted.index('python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py'))
         self.assertIn('git -C trusted fetch --quiet --no-tags origin "$EXACT_HEAD"', trusted)
         self.assertIn("(cd trusted && python3 -m unittest", trusted)
         self.assertIn("python3 trusted/scripts/zcloud_pr_target_delta_guard_20261014.py", trusted)
