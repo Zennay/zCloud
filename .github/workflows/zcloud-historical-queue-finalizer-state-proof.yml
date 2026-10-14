@@ -1,0 +1,122 @@
+name: zCloud historical queue finalizer state proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/zcloud-historical-queue-finalizer-state-proof.yml"
+      - "tests/test_historical_queue_finalizer_state_proof_workflow.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-historical-queue-finalizer-state-proof-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'Zennay'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 3
+    steps:
+      - name: Require trusted same-repository owner PR and permanent VPS
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = "vps-bb300bba"
+          test "$(id -un)" = "ubuntu"
+          python3 - "$GITHUB_EVENT_PATH" "$EXPECTED_HEAD" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          event = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          pr = event.get("pull_request") or {}
+          head = pr.get("head") or {}
+          head_repo = head.get("repo") or {}
+          user = pr.get("user") or {}
+          base = pr.get("base") or {}
+          if head_repo.get("full_name") != "Zennay/zCloud":
+              raise SystemExit("untrusted head repository")
+          if user.get("login") != "Zennay":
+              raise SystemExit("untrusted pull request owner")
+          if base.get("ref") != "main":
+              raise SystemExit("unexpected base branch")
+          if head.get("sha") != sys.argv[2]:
+              raise SystemExit("head identity mismatch")
+          print("HISTORICAL_QUEUE_PROOF_TRUST_GREEN=1")
+          PY
+
+      - name: Prove exact historical queue rows are terminal read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sqlite3
+          from pathlib import Path
+
+          db = Path("/home/ubuntu/zennay-cloud/history.db")
+          if not db.is_file() or db.is_symlink():
+              raise SystemExit("live zCloud history.db missing or unsafe")
+
+          queue_ids = (
+              "zssh-ftmo-safe-gate-3b512f56",
+              "zssh-ftmo-verify72-runner-recovery-20261002",
+              "zssh-ftmo-cpu-attribution-proof",
+          )
+
+          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=3)
+          conn.row_factory = sqlite3.Row
+          try:
+              conn.execute("PRAGMA query_only=ON")
+              if conn.execute(
+                  "SELECT 1 FROM sqlite_master WHERE type='table' AND name='portfolio_queue'"
+              ).fetchone() is None:
+                  raise SystemExit("portfolio_queue table missing")
+
+              rows = conn.execute(
+                  "SELECT queue_id,status,eligible,worker_slot,updated_at "
+                  "FROM portfolio_queue WHERE queue_id IN (?,?,?)",
+                  queue_ids,
+              ).fetchall()
+              found = {str(row["queue_id"]): dict(row) for row in rows}
+              result = []
+              nonterminal = []
+              for queue_id in queue_ids:
+                  row = found.get(queue_id)
+                  if row is None:
+                      result.append({"queue_id": queue_id, "state": "missing"})
+                      continue
+                  status = str(row.get("status") or "").strip().lower()
+                  eligible = bool(row.get("eligible"))
+                  worker_slot = row.get("worker_slot")
+                  terminal = status == "done" and not eligible and worker_slot is None
+                  item = {
+                      "queue_id": queue_id,
+                      "state": "terminal" if terminal else "nonterminal",
+                      "status": status,
+                      "eligible": eligible,
+                      "worker_slot": worker_slot,
+                      "updated_at": row.get("updated_at"),
+                  }
+                  result.append(item)
+                  if not terminal:
+                      nonterminal.append(queue_id)
+
+              if conn.total_changes != 0:
+                  raise SystemExit("read-only proof unexpectedly changed SQLite state")
+              print("HISTORICAL_QUEUE_FINALIZER_STATE=" + json.dumps(result, sort_keys=True))
+              if nonterminal:
+                  raise SystemExit(
+                      "nonterminal historical queue rows remain: " + ",".join(nonterminal)
+                  )
+              print("HISTORICAL_QUEUE_FINALIZER_STATE_GREEN=1")
+          finally:
+              conn.close()
+          PY
