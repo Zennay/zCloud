@@ -61,6 +61,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
       github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       inputs.apply == true &&
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
@@ -85,6 +86,7 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/main"
           test "$GITHUB_ACTOR" = "Zennay"
           test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
           test "$APPLY" = "true"
           [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRM_SHA" = "$GITHUB_SHA"
@@ -105,6 +107,13 @@ jobs:
           python3 -m py_compile scripts/zcloud_worker_watchdog.py
           echo "WATCHDOG_RUNTIME_ROOT_PRESENT=$(test -d "$root/scripts" && echo yes || echo no)"
           echo "WATCHDOG_LIVE_PRESENT=$(test -f "$live" && echo yes || echo no)"
+          # The earlier job preflight may be arbitrarily old while hosted CI
+          # or a scarce VPS runner is queued. Repeat remote-main equality
+          # immediately before the first runtime/backup filesystem write.
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          prewrite_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$prewrite_main"
+          test "$prewrite_main" = "$GITHUB_SHA"
           backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
           mkdir -p "$(dirname "$backup")"
           if test -f "$live"; then cp -p "$live" "$backup"; fi
@@ -113,6 +122,11 @@ jobs:
           else
             echo "Runtime repository absent/read-only; only canonical standalone path eligible."
           fi
+          # A second bounded proof denies root-owned promotion after a
+          # moving-main race during the optional runtime-source update.
+          final_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$final_main"
+          test "$final_main" = "$GITHUB_SHA"
           sudo -n install -D -m 0755 scripts/zcloud_worker_watchdog.py "$live"
           sudo -n cmp scripts/zcloud_worker_watchdog.py "$live"
           echo "LIVE_WATCHDOG_NO_BROWSER_RESTART=1"
