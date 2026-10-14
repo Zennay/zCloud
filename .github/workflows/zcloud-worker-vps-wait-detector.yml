@@ -1,0 +1,91 @@
+name: zCloud worker VPS wait detector proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_worker_vps_wait_detector.py"
+      - "tests/test_zcloud_worker_vps_wait_detector.py"
+      - ".github/workflows/zcloud-worker-vps-wait-detector.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-worker-vps-wait-detector-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prove:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact permanent zCloud runner
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(id -un)" = "ubuntu"
+          test "$(hostname)" = "vps-bb300bba"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+
+      - name: Run focused VPS-wait detector regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_worker_vps_wait_detector
+          python3 -m py_compile scripts/zcloud_worker_vps_wait_detector.py
+
+      - name: Read live worker VPS-wait evidence
+        shell: bash
+        env:
+          LIVE_DB: /home/ubuntu/zennay-cloud/history.db
+        run: |
+          set -euo pipefail
+          test -f "$LIVE_DB"
+          report="$RUNNER_TEMP/zcloud-worker-vps-wait-detector.json"
+          python3 scripts/zcloud_worker_vps_wait_detector.py             "$LIVE_DB"             --hours 2             --min-signals 2             --require-compatible | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "zcloud-worker-vps-wait-detector-v1"
+          assert payload["event_inventory_complete"] is True
+          assert payload["mutation_performed"] is False
+          assert payload["scanned_event_count"] >= 0
+          assert payload["delegate_candidate_count"] >= 0
+          assert all(
+              candidate["routing_advice"] == "delegate_vps_wait_and_continue"
+              for candidate in payload["candidates"]
+          )
+          print(
+              "ZCLOUD_WORKER_VPS_WAIT_DETECTOR_GREEN="
+              f"events:{payload['scanned_event_count']}:"
+              f"workers:{payload['worker_count']}:"
+              f"candidates:{payload['delegate_candidate_count']}"
+          )
+          PY
+
+      - name: Upload bounded VPS-wait evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zcloud-worker-vps-wait-detector-${{ github.run_id }}
+          path: ${{ runner.temp }}/zcloud-worker-vps-wait-detector.json
+          if-no-files-found: error
+          retention-days: 14
