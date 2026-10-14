@@ -76,8 +76,11 @@ jobs:
           python3 scripts/zcloud_vps_runner_guard.py --json >/dev/null
 
           echo "SERVICE_BEFORE=$(systemctl is-active zennay-cloud.service || true)"
+          # 'start' is idempotent: if another owner makes the service healthy
+          # between the first probe and this command, no healthy session is
+          # stopped. 'restart' would interrupt workers during that race.
           if ! systemctl is-active --quiet zennay-cloud.service; then
-            sudo -n systemctl restart zennay-cloud.service
+            sudo -n systemctl start zennay-cloud.service
           fi
 
           python3 - <<'PY'
