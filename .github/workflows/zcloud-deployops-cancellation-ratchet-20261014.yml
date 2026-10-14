@@ -60,5 +60,9 @@ jobs:
             --base "$EXACT_BASE" --head "$EXACT_HEAD"
           # Read-only census: legacy risk and unsupported YAML remain visible.
           # OBSERVED never grants queue, VPS, or deployment mutation authority.
+          echo "CANCELLATION_INVENTORY_BEFORE=1"
+          python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
+            --inventory-head "$EXACT_BASE"
+          echo "CANCELLATION_INVENTORY_AFTER=1"
           python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
             --inventory-head "$EXACT_HEAD"
