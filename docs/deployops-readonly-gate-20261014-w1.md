@@ -23,7 +23,7 @@ SQLite access, filesystem promotion, or browser interactions.
 A deployed main status of `success` is **STATUS_GREEN_UNVERIFIED**, rather than
 live runtime proof. `DEPLOY_JOB_QUEUED_UNASSIGNED` does not assert the VPS
 listener is down: labels, repository entitlement, concurrency, runner groups,
-or a skipped job may be involved. `LATEST_MAIN_DEPLOY_FAILURE` means a matching
+or a skipped job may be involved. `OBSERVED_MAIN_DEPLOY_FAILURE` means a matching
 main deployment run has failed; it is not a permission to retry it.
 
 `DENY_INCOMPLETE_OR_CONTRADICTORY_EVIDENCE` suppresses counts and links when
@@ -63,4 +63,4 @@ security condition has been independently reviewed.
 - No proof that a worker performs useful AI generation; owner #1340/#1342.
 - No proof that the machine, listener or application is currently running.
 - No privileged live fix or restart, and no automatic deploy on CI success.
-- No retrospective guarantee that the latest 15 deploy runs cover all history.
+- The report explicitly marks `deploy_history_exhaustive=false`: its newest 15 observed deploy runs do not prove an exhaustive history. An ambiguous runner name/ID combination is denied rather than reported as assigned.
