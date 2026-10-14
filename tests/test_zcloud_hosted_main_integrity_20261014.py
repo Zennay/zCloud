@@ -40,6 +40,21 @@ class HostedMainIntegrityTests(unittest.TestCase):
             with self.subTest(mutation=mutation):
                 self.assertFalse(admission(**dict(good(), **mutation))["source_verified"])
 
+    def test_automerge_workflow_run_only_on_new_main(self):
+        old = "b" * 40
+        valid = dict(good("workflow_run"), upstream_sha=old)
+        value = admission(**valid)
+        self.assertTrue(value["source_verified"])
+        self.assertFalse(value["production_verified"])
+        self.assertFalse(value["authorizes_mutation"])
+        for upstream in (None, "", "0", "x"*40, "A"*40, SHA, True, 42):
+            with self.subTest(upstream=upstream):
+                self.assertFalse(admission(**dict(valid, upstream_sha=upstream))["source_verified"])
+        for change in ({"main_sha":old}, {"checkout_sha":old},
+                       {"ref":"refs/heads/other"}, {"attempt":"2"},
+                       {"repository":"other/zCloud"}):
+            self.assertFalse(admission(**dict(valid, **change))["source_verified"])
+
     def test_pr_requires_immutable_same_repo_head(self):
         sample = dict(good("pull_request"), ref="refs/pull/1401/merge")
         self.assertTrue(admission(**sample)["source_verified"])
@@ -54,7 +69,11 @@ class HostedMainIntegrityTests(unittest.TestCase):
         self.assertIn("  pull_request:", source)
         self.assertIn("  workflow_dispatch:", source)
         self.assertNotIn("\n  push:\n", source)
-        self.assertNotIn("\n  workflow_run:\n", source)
+        self.assertIn("\n  workflow_run:\n", source)
+        self.assertIn("workflows: ['zCloud autonomous safe PR integration']", source)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", source)
+        self.assertIn("github.event.workflow_run.head_repository.full_name == github.repository", source)
+        self.assertIn("github.event.workflow_run.head_sha != github.sha", source)
         self.assertIn("permissions:\n  contents: read\n", source)
         self.assertEqual(source.count("runs-on: ubuntu-latest"), 1)
         for forbidden in ("runs-on: self-hosted", "runs-on: [self-hosted",
@@ -73,6 +92,7 @@ class HostedMainIntegrityTests(unittest.TestCase):
         self.assertGreater(source.index("--stage after"), source.index("python3 -m unittest discover -v"))
         self.assertIn("if: always()", source)
         self.assertIn("retention-days: 7", source)
+        self.assertEqual(source.count("--upstream-sha"), 2)
 
 
 if __name__ == "__main__":
