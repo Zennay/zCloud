@@ -193,6 +193,16 @@ class GitTest(unittest.TestCase):
         ))
         self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
 
+    def test_unknown_other_workflow_cannot_prove_no_collision(self):
+        other = self.path.parent / "uncertain.yml"
+        other.write_text("name: untrusted\njobs: not-a-map\n", encoding="utf-8")
+        base = self.commit(SAFE)
+        head = self.commit(
+            SAFE.replace("cancel-in-progress: false", "cancel-in-progress: true")
+        )
+        self.assertRaises(scanner.Unverifiable, scanner.evaluate,
+                          self.root, base, head)
+
     def test_different_literal_groups_do_not_collide(self):
         other = self.path.parent / "other-vps.yml"
         other.write_text(SELFHOST.replace("group: isolated", "group: other"),
