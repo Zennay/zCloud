@@ -1,0 +1,57 @@
+name: zCloud deploy-ops VPS cancellation ratchet (hosted)
+
+# No self-hosted job, no token persistence, no deployment or queue mutation.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/zcloud_deployops_cancellation_ratchet_20261014.py"
+      - "tests/test_zcloud_deployops_cancellation_ratchet_20261014.py"
+      - ".github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml"
+      - ".github/workflows/**"
+  push:
+    branches:
+      - "worker/zcloud-deployops-cancellation-ratchet-20261014-w1"
+    paths:
+      - "scripts/zcloud_deployops_cancellation_ratchet_20261014.py"
+      - "tests/test_zcloud_deployops_cancellation_ratchet_20261014.py"
+      - ".github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-hosted-cancel-ratchet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      (github.event_name == 'push' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate with full history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 0
+      - name: Run offline regression and exact-Git-source ratchet
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          python3 -m py_compile scripts/zcloud_deployops_cancellation_ratchet_20261014.py
+          python3 -m unittest -v tests.test_zcloud_deployops_cancellation_ratchet_20261014
+          python3 scripts/zcloud_deployops_cancellation_ratchet_20261014.py \
+            --base "$EXACT_BASE" --head "$EXACT_HEAD"
