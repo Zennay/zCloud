@@ -22,6 +22,7 @@ class ProtectedAutoIntegrationRoots(unittest.TestCase):
     "tests/test_deployops_automerge_trust_roots_20261014_w12.py",
             "tests/test_deployops_automerge_check_provenance_20261014_w14.py",
             "tests/test_deployops_automerge_file_count_cpu_20261014_w15.py",
+            "tests/test_deployops_automerge_import_shadow_20261014_w16.py",
         }
         self.assertEqual(required, engine.PROTECTED_INTEGRATION_FILES)
         for path in sorted(required):
