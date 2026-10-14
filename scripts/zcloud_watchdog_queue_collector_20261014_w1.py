@@ -28,6 +28,15 @@ _MAX_JOBS_PER_RUN = 300
 _MAX_JOB_PAGES = 3
 _PAGE_SIZE = 100
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+# Fixed API route family: this token may NEVER be redirected to other repo
+# endpoints, downloaded artifacts, arbitrary URLs, or mutation endpoints.
+_ALLOWED_GET_PATH = re.compile(
+    r"^/repos/Zennay/zCloud/(?:"
+    r"branches/main"
+    r"|actions/runs\\?status=queued&per_page=100&page=[1-9][0-9]*"
+    r"|actions/runs/[1-9][0-9]*/jobs\\?per_page=100&page=[1-9][0-9]*"
+    r")$"
+)
 
 
 class InventoryError(ValueError):
@@ -93,7 +102,7 @@ class ReadOnlyAPI:
         self.opener = build_opener(ProxyHandler({}), HTTPSHandler(), _NoRedirect())
 
     def get(self, path, *, max_bytes=4 * 1024 * 1024):
-        if not isinstance(path, str) or not path.startswith("/repos/Zennay/zCloud/"):
+        if type(path) is not str or _ALLOWED_GET_PATH.fullmatch(path) is None:
             raise InventoryError("noncanonical_api_path")
         req = Request(API_ROOT + path, method="GET", headers={
             "Authorization": "Bearer " + self.token,
