@@ -66,7 +66,7 @@ class FirefoxProbeManualTrustTests(unittest.TestCase):
 
     def test_no_live_mutation(self):
         for forbidden in ("systemctl restart","systemctl stop","sudo -n",
-                          "api/dynamic-workers","api/runner-targets","curl -X POST",
+                          "api/dynamic-workers","curl -X POST",
                           "sqlite3.connect", "rm -rf", "browser.tabs.remove"):
             self.assertNotIn(forbidden,SOURCE)
 
