@@ -83,6 +83,17 @@ class ManualDispatchPolicy(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(0, out["candidate_debt_count"])
 
+    def test_static_custom_runner_labels_are_vps_candidates(self):
+        for label in ("vps", "ftmo-research", "custom-linux"):
+            with self.subTest(label=label):
+                self.assertDenied(workflow(runner=label))
+
+    def test_known_hosted_runner_images_remain_allowed(self):
+        for label in ("ubuntu-latest", "ubuntu-24.04", "windows-latest", "macos-15"):
+            with self.subTest(label=label):
+                out = guard.evaluate({}, {WF: workflow(runner=label)})
+                self.assertTrue(out["ok"])
+
     def test_no_dispatch_event_is_not_in_scope(self):
         self.assertTrue(guard.evaluate({}, {WF: workflow(event="push:")})["ok"])
 
