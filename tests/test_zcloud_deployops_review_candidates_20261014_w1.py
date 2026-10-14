@@ -18,7 +18,8 @@ H = 'b' * 40
 
 def payload():
     return {'main_sha': S, 'observed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'inventory': {'prs_complete': True, 'branches_complete': True},
+            'inventory': {'prs_complete': True, 'branches_complete': True,
+                          'open_pr_count': 1, 'prless_branch_count': 0},
             'branch_inventory_receipt': {
                 'schema': 'zcloud-prless-branch-snapshot-v1',
                 'inventory_complete': True, 'admission_authorized': False,
@@ -43,6 +44,8 @@ def snap(d):
             item.setdefault('previous_files', [])
             item['files_evidence'].setdefault('rename_sources_complete', True)
             item['files_evidence'].setdefault('previous_files_total', len(item['previous_files']))
+    d['inventory']['open_pr_count'] = len(d['prs'])
+    d['inventory']['prless_branch_count'] = len(d['branches'])
     receipt = d['branch_inventory_receipt']
     receipt['pr_less'] = [
         {'branch': b['name'], 'commit_sha': b['head_sha']} for b in d['branches']
@@ -395,6 +398,31 @@ class ReviewQueueTests(unittest.TestCase):
     def test_invalid_clock_rejected(self):
         with self.assertRaises(mod.InvalidEvidence):
             mod.snapshot(payload(), now=datetime(2026, 10, 14))
+
+    def test_claimed_pr_count_must_match_complete_inventory(self):
+        d = payload()
+        d['inventory']['open_pr_count'] = 2
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_claimed_branch_count_must_match_complete_inventory(self):
+        d = payload()
+        d['inventory']['prless_branch_count'] = 1
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_boolean_claimed_inventory_count_denied(self):
+        d = payload()
+        d['inventory']['open_pr_count'] = True
+        with self.assertRaises(mod.InvalidEvidence):
+            mod.snapshot(d)
+
+    def test_negative_and_oversized_inventory_counts_denied(self):
+        for count in (-1, mod.MAX_ITEMS + 1):
+            d = payload()
+            d['inventory']['prless_branch_count'] = count
+            with self.assertRaises(mod.InvalidEvidence):
+                mod.snapshot(d)
 
     def test_incomplete_inventory_denied(self):
         self.assert_denied(lambda d: d['inventory'].update(branches_complete=False))
