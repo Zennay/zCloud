@@ -120,7 +120,7 @@ class ReadOnlyFirefoxDiagnosticTests(unittest.TestCase):
     def test_no_live_execution_without_exact_current_main(self):
         source = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', source)
-        self.assertIn('test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"', source)
+        self.assertIn('test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"', source)
         self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", source)
         self.assertIn("persist-credentials: false", source)
 
