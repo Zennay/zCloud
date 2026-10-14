@@ -553,6 +553,27 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
                 self.assertIsNotNone(collection._ALLOWED_GET_PATH.fullmatch(path))
 
 
+
+    def test_error_redaction_never_crashes_on_unhashable_or_hostile_codes(self):
+        for value in ([], {}, ["secret"], {"token": "secret"},
+                      123, True, "secret" * 1000):
+            with self.subTest(value=value):
+                outcome = collection.safe_error_category(
+                    collection.InventoryError(value)
+                )
+                self.assertEqual(outcome, "github_inventory_untrusted")
+                self.assertNotIn("secret", outcome)
+
+    def test_unknown_error_type_never_leaks_message(self):
+        self.assertEqual(
+            collection.safe_error_category(ValueError("secret-credential")),
+            "github_inventory_untrusted",
+        )
+        self.assertEqual(
+            collection.safe_error_category(collection.InventoryError()),
+            "github_inventory_untrusted",
+        )
+
     def test_collector_error_category_is_allowlisted_and_redacted(self):
         pairs = {
             "truncated_inventory": "incomplete_queue_pages",
