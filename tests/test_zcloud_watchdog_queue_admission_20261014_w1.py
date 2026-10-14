@@ -1,5 +1,9 @@
 """Adversarial offline tests for the queue-watchdog observation boundary."""
 import copy
+import json
+import subprocess
+import sys
+import tempfile
 from datetime import datetime, timezone, timedelta
 import importlib.util
 from pathlib import Path
@@ -129,6 +133,47 @@ class TestWatchdogQueueAdmission(unittest.TestCase):
         snap = fixture()
         snap["run_pages"][0]["runs"] = [run(i) for i in range(1, 102)]
         self.assertEqual(self.classify(snap)["decision"], "DENY")
+
+    def test_cli_rejects_duplicate_json_keys_without_exposing_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "case.json"
+            snapshot.write_text('{"repository":"Zennay/zCloud","repository":"evil"}', encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(PATH), "--snapshot", str(snapshot), "--expected-main-sha", SHA],
+                capture_output=True, text=True, timeout=8,
+            )
+        self.assertEqual(completed.returncode, 1)
+        report = json.loads(completed.stdout)
+        self.assertEqual(report["decision"], "DENY")
+        self.assertEqual(report["reason"], "invalid_snapshot_file")
+        self.assertNotIn("evil", completed.stdout)
+
+    def test_cli_rejects_oversized_input_before_parsing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "huge.json"
+            snapshot.write_bytes(b"x" * (2 * 1024 * 1024 + 5))
+            completed = subprocess.run(
+                [sys.executable, str(PATH), "--snapshot", str(snapshot), "--expected-main-sha", SHA],
+                capture_output=True, text=True, timeout=8,
+            )
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(json.loads(completed.stdout)["reason"], "invalid_snapshot_file")
+
+    def test_cli_never_authorizes_on_valid_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot = Path(directory) / "case.json"
+            payload = fixture(run(4), run(8))
+            payload["observed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            snapshot.write_text(json.dumps(payload), encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(PATH), "--snapshot", str(snapshot), "--expected-main-sha", SHA],
+                capture_output=True, text=True, timeout=8,
+            )
+        report = json.loads(completed.stdout)
+        self.assertEqual(report["decision"], "REVIEW_ONLY")
+        self.assertEqual(report["cancel_run_ids"], [])
+        self.assertFalse(report["mutation_authorized"])
+        self.assertFalse(report["inventory_complete"])
 
 
 if __name__ == "__main__":
