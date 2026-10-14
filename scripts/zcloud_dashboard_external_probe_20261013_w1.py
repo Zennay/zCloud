@@ -168,7 +168,7 @@ def probe_once(opener=None):
             # HTTPMessage.get_all exposes duplicate / conflicting header lines.
             # A dictionary test fixture cannot contain duplicate physical lines.
             if hasattr(headers, "get_all"):
-                for header in ("Content-Type", "Content-Length", "Content-Encoding", "Transfer-Encoding", "Age"):
+                for header in ("Content-Type", "Content-Length", "Content-Encoding", "Transfer-Encoding", "Age", "Cache-Status"):
                     if len(headers.get_all(header, [])) > 1:
                         return "invalid_headers"
             # urllib/http.client de-chunks some Transfer-Encoding variants. A
@@ -188,6 +188,25 @@ def probe_once(opener=None):
                         not age_header.isascii() or not age_header.isdigit()):
                     return "invalid_headers"
                 if int(age_header) > 0:
+                    return "cache_evidence"
+            # RFC 9211 Cache-Status exposes intermediary cache hits even if
+            # an Age field is absent or zero. Only admit bounded ASCII header
+            # metadata, never log it, and fail closed on an explicit 'hit'
+            # parameter. This is just replay evidence, not origin proof.
+            cache_status = headers.get("Cache-Status")
+            if cache_status is not None:
+                if (not isinstance(cache_status, str) or
+                        not 1 <= len(cache_status) <= 512 or
+                        not cache_status.isascii() or
+                        any(ord(char) < 32 or ord(char) == 127
+                            for char in cache_status)):
+                    return "invalid_headers"
+                cache_parts = [
+                    part.strip().lower()
+                    for item in cache_status.split(",")
+                    for part in item.split(";")
+                ]
+                if "hit" in cache_parts:
                     return "cache_evidence"
             # A conflicting or exotic charset cannot safely describe the
             # UTF-8 JSON bytes we parse. Reject duplicate/malformed params,
