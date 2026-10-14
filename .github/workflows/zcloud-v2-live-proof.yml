@@ -119,9 +119,7 @@ jobs:
             systemctl is-active "$unit" || true
           done
           # Report aggregate browser presence only, never PIDs or process args.
-          browser_count="$(ps -eo comm= | grep -Eic '^(firefox|firefox-bin|web-ext)
-          echo 'LIVE_V2_PROOF_NO_BROWSER_QUEUE_SQLITE_OR_SERVICE_MUTATION=1'
- || true)"
+          browser_count="$(ps -eo comm= | grep -Eic '^(firefox|firefox-bin|web-ext)$' || true)"
           [[ "$browser_count" =~ ^[0-9]{1,6}$ ]]
           echo "BROWSER_PROCESS_COUNT=$browser_count"
           echo 'LIVE_V2_PROOF_NO_BROWSER_QUEUE_SQLITE_OR_SERVICE_MUTATION=1'
