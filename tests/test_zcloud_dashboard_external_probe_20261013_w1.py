@@ -522,6 +522,13 @@ class DashboardProbeRealHttpTests(unittest.TestCase):
     def test_actual_http_wrong_media_type(self):
         self._run("content_type", media_type="text/html")
 
+    def test_actual_http_conflicting_json_charset_is_not_healthy(self):
+        self._run("content_type", media_type="application/json; charset=latin-1")
+        self._run("content_type", media_type="application/json; charset=utf-8; profile=x")
+
+    def test_actual_http_standard_utf8_json_charset_is_accepted(self):
+        self._run("healthy", media_type="application/json; charset=UTF-8")
+
     def test_actual_http_oversize_stream_is_rejected(self):
         self._run("body_too_large", payload=b"A" * (probe.MAX_BYTES + 1024))
 
