@@ -255,6 +255,17 @@ class QueueRouteTriageTests(unittest.TestCase):
                 with self.assertRaises(source.InventoryError):
                     triage.collect(get, clock=NOW)
 
+    def test_direct_assignment_helper_cannot_coerce_boolean_or_float_zero(self):
+        # Defensive type boundary, even if the helper is ever reused before
+        # the full GitHub job parser performs its strict schema check.
+        for forged_id in (False, True, 0.0, "0"):
+            for empty_name in ("", None):
+                with self.subTest(runner_id=forged_id, name=empty_name):
+                    self.assertEqual(
+                        triage._assignment([{
+                            "runner_id": forged_id, "runner_name": empty_name,
+                        }]), "indeterminate")
+
     def test_null_and_zero_runner_id_with_empty_or_null_name_are_unassigned(self):
         # GitHub REST jobs can represent an unassigned runner by JSON null,
         # without proving that any particular listener is offline.
