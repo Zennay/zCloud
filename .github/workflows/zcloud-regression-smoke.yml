@@ -10,10 +10,11 @@ on:
 permissions:
   contents: read
 
-# Do not cancel a completed source proof or a still-running main regression.
+# Only superseded checks of the SAME PR may be cancelled; preserve all main,
+# worker-branch and operator-dispatched evidence until terminal completion.
 concurrency:
   group: zcloud-regression-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   trusted-event:
