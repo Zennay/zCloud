@@ -36,6 +36,40 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
         self.assertEqual(2, counts["by_status"]["dynamic_runner_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
+    def test_custom_label_and_group_runner_are_never_assumed_hosted(self):
+        source = """jobs:
+  custom:
+    runs-on: [zcloud, vps]
+    timeout-minutes: 120
+  group:
+    runs-on:
+      group: private-vps-group
+      labels: [zcloud, vps]
+    timeout-minutes: 5
+  single_custom:
+    runs-on: private-vps-label
+    timeout-minutes: 5
+  official:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 50
+  official_list:
+    runs-on: [windows-2022]
+    timeout-minutes: 50
+"""
+        rows = audit.inspect_workflow(".github/workflows/labels.yml", source, max_minutes=30)
+        self.assertEqual(["custom", "group", "single_custom"], [row.job for row in rows])
+        self.assertTrue(all(row.status == "runner_target_unknown" for row in rows))
+        self.assertEqual(3, audit.summarize(rows, max_minutes=30)["by_status"]["runner_target_unknown"])
+
+    def test_custom_label_timeout_debt_is_rejected_by_strict_new_debt_gate(self):
+        path = ".github/workflows/admitted.yml"
+        baseline = [audit.TimeoutFinding(path, "old", 10, "bounded")]
+        candidate = [
+            audit.TimeoutFinding(path, "old", 10, "bounded"),
+            audit.TimeoutFinding(path, "new", 3, "runner_target_unknown"),
+        ]
+        self.assertEqual(candidate[1:], audit.new_debt(baseline, candidate, deny_worsening=True))
+
     def test_yaml_block_scalar_runner_expressions_are_not_ignored(self):
         source = """jobs:
   folded:
