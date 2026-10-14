@@ -60,11 +60,11 @@ def validate_summary(raw: bytes, probe_rc: int) -> bool:
                 not lines[3].startswith("**Controlepogingen:** ") or
                 not lines[4].startswith("**Hersteld na hercontrole:** ")):
             return False
-        attempts_text = lines[3].split(": ", 1)[1]
+        attempts_text = lines[3][len("**Controlepogingen:** "):]
         if not re.fullmatch(r"[1-6]", attempts_text):
             return False
         attempts = int(attempts_text)
-        recovered_text = lines[4].split(": ", 1)[1]
+        recovered_text = lines[4][len("**Hersteld na hercontrole:** "):]
         if recovered_text not in ("ja", "nee"):
             return False
         recovered = recovered_text == "ja"
