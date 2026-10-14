@@ -13,6 +13,8 @@ from typing import Iterable
 
 WORKFLOW_DIR = Path(".github/workflows")
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
+MAX_WORKFLOW_FILES = 512
+MAX_WORKFLOW_FILE_BYTES = 1_048_576
 JOB_RE = re.compile(r"^(?P<indent> +)(?P<job>[A-Za-z0-9_-]+):[ \t]*(?:#.*)?$")
 SELF_HOSTED_LABEL_RE = re.compile(r"(?<![\w-])self-hosted(?![\w-])", re.IGNORECASE)
 # An expression can resolve to a self-hosted runner at execution time.
@@ -187,15 +189,24 @@ def scan_repository(root: Path, *, max_minutes: int) -> list[TimeoutFinding]:
     if not workflows.is_dir():
         raise FileNotFoundError(f"workflow directory not found: {workflows}")
 
+    paths = [
+        path for path in sorted(workflows.iterdir())
+        if path.suffix.lower() in WORKFLOW_SUFFIXES
+    ]
+    if len(paths) > MAX_WORKFLOW_FILES:
+        raise RuntimeError("workflow inventory file count exceeds limit")
     findings: list[TimeoutFinding] = []
-    for path in sorted(workflows.iterdir()):
-        if path.suffix.lower() not in WORKFLOW_SUFFIXES:
-            continue
+    for path in paths:
         if path.is_symlink():
             raise RuntimeError(f"symlink workflow rejected: {path}")
         if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
+            raise RuntimeError("non-file workflow entry rejected")
+        if path.stat().st_size > MAX_WORKFLOW_FILE_BYTES:
+            raise RuntimeError("workflow file size exceeds limit")
+        data = path.read_bytes()
+        if len(data) > MAX_WORKFLOW_FILE_BYTES:
+            raise RuntimeError("workflow file size changed during read")
+        text = data.decode("utf-8")
         findings.extend(
             inspect_workflow(
                 path.relative_to(root).as_posix(),
@@ -230,6 +241,7 @@ def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFindi
         text=True,
     )
     rows: list[TimeoutFinding] = []
+    workflow_count = 0
     for line in proc.stdout.splitlines():
         metadata, sep, relative = line.partition("\t")
         if not sep:
@@ -238,10 +250,19 @@ def scan_git_ref(root: Path, ref: str, *, max_minutes: int) -> list[TimeoutFindi
         path = Path(relative)
         if path.suffix.lower() not in WORKFLOW_SUFFIXES:
             continue
+        workflow_count += 1
+        if workflow_count > MAX_WORKFLOW_FILES:
+            raise RuntimeError("Git workflow inventory file count exceeds limit")
         if mode == "120000":
             raise RuntimeError(f"symlink workflow rejected at git ref: {relative}")
         if object_type != "blob":
-            continue
+            raise RuntimeError("non-blob Git workflow entry rejected")
+        size = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-s", _object_id],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        if not size.isdigit() or int(size) > MAX_WORKFLOW_FILE_BYTES:
+            raise RuntimeError("Git workflow file size exceeds limit")
         blob = subprocess.run(
             ["git", "-C", str(root), "show", f"{ref}:{relative}"],
             check=True,
