@@ -117,6 +117,15 @@ def complete_files(record, main_sha, head_sha):
     return owned | source_paths
 
 
+def branch_identity_key(name):
+    """Reject ambiguous Git branch identities rather than silently collapsing refs."""
+    require(type(name) is str and 0 < len(name) <= 256
+            and name != "main" and name == unicodedata.normalize("NFC", name)
+            and all(unicodedata.category(ch) not in ("Cc", "Cf", "Cs") for ch in name)
+            and name.strip() == name, "invalid_branch_identity")
+    return name.casefold()
+
+
 def correlate_prless_receipt(report):
     """Cross-check against #1312's separately owned full branch-inventory schema.
 
@@ -146,16 +155,16 @@ def correlate_prless_receipt(report):
     for item in listed:
         b = obj(item, "prless_receipt_branch")
         name, head = b.get("branch"), b.get("commit_sha")
-        require(type(name) is str and 0 < len(name) <= 256 and name not in names
-                and sha(head), "invalid_prless_receipt_branch")
-        names[name] = head
+        key = branch_identity_key(name)
+        require(key not in names and sha(head), "invalid_prless_receipt_branch")
+        names[key] = (name, head)
     local = {}
     for item in branches:
         b = obj(item, "branch")
         name, head = b.get("name"), b.get("head_sha")
-        require(type(name) is str and 0 < len(name) <= 256 and name not in local
-                and sha(head), "invalid_local_branch")
-        local[name] = head
+        key = branch_identity_key(name)
+        require(key not in local and sha(head), "invalid_local_branch")
+        local[key] = (name, head)
     require(names == local, "prless_receipt_identity_drift")
 
 
@@ -234,9 +243,9 @@ def snapshot(report, *, now=None):
     for branch in d["branches"]:
         b = obj(branch, "branch")
         name = b.get("name")
-        require(type(name) is str and 0 < len(name) <= 256 and name not in seen_branches,
-                "invalid_branch_identity")
-        seen_branches.add(name)
+        key = branch_identity_key(name)
+        require(key not in seen_branches, "invalid_branch_identity")
+        seen_branches.add(key)
         require(sha(b.get("head_sha")), "invalid_branch_sha")
         all_owners.append((f"branch:{name}",
                            complete_files(b, d["main_sha"], b["head_sha"])))
