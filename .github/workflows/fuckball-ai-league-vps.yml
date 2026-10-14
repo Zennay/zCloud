@@ -128,7 +128,7 @@ jobs:
             exit 1
           fi
           active_pid="$(sudo systemctl show -p MainPID --value "$unit")"
-          if [ "$active_pid" = 0 ] || ! tr '\\0' ' ' < "/proc/$active_pid/cmdline" | grep -Fq "$app/releases/$wanted/training/continuous.cjs"; then
+          if [ "$active_pid" = 0 ] || ! tr '\0' ' ' < "/proc/$active_pid/cmdline" | grep -Fq "$app/releases/$wanted/training/continuous.cjs"; then
             echo 'Service active source is not the requested exact release' >&2
             exit 1
           fi
