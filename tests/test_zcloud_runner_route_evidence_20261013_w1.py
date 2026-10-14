@@ -150,6 +150,45 @@ class RunnerRouteEvidenceTests(unittest.TestCase):
         data = route.classify_run(5, [x], NOW)
         self.assertEqual(data["lanes"]["zcloud_vps"]["assigned_count"], 0)
 
+    def test_private_self_hosted_labels_never_implicate_vps_base_pool(self):
+        # A private/custom label on a queued job changes the set of eligible
+        # runners. It is not proof of a zcloud/vps listener outage.
+        for extra in ("dedicated", "requires-special-hardware", "prod-private"):
+            with self.subTest(extra=extra):
+                record = make_job(labels=["self-hosted", "zcloud", "vps", extra])
+                result = route.classify_run(22, [record], NOW)
+                self.assertEqual(result["lanes"]["zcloud_vps"]["unassigned_count"], 0)
+                self.assertEqual(result["lanes"]["zcloud_vps"]["job_count"], 0)
+                self.assertEqual(result["jobs"][0]["lane"], "other")
+                self.assertFalse(result["authorizes_mutation"])
+
+    def test_standard_self_hosted_os_labels_preserve_exact_runner_pool(self):
+        for extras in (["Linux", "X64"], ["linux", "arm64"], []):
+            with self.subTest(extras=extras):
+                zcloud = make_job(labels=["self-hosted", "zcloud", "vps"] + extras)
+                ftmo = make_job(job_id=99, labels=["self-hosted", "ftmo-research"] + extras)
+                result = route.classify_run(23, [zcloud, ftmo], NOW)
+                self.assertEqual(result["lanes"]["zcloud_vps"]["unassigned_count"], 1)
+                self.assertEqual(result["lanes"]["ftmo_research"]["unassigned_count"], 1)
+
+    def test_unknown_pool_and_private_ftmo_route_remain_unattributed(self):
+        jobs = [
+            make_job(job_id=41, labels=["self-hosted", "ftmo-research", "special"]),
+            make_job(job_id=42, labels=["self-hosted", "another-runner-pool"]),
+        ]
+        result = route.classify_run(24, jobs, NOW)
+        self.assertEqual(result["lanes"]["ftmo_research"]["job_count"], 0)
+        self.assertEqual(result["lanes"]["zcloud_vps"]["job_count"], 0)
+        self.assertEqual([x["lane"] for x in result["jobs"]], ["other", "other"])
+
+    def test_duplicate_casefolded_runner_labels_are_untrusted(self):
+        for labels in (["self-hosted", "zcloud", "vps", "VPS"],
+                       ["self-hosted", "Self-Hosted", "zcloud", "vps"]):
+            with self.subTest(labels=labels):
+                with self.assertRaisesRegex(route.InvalidEvidence,
+                                            "duplicate_runner_label"):
+                    route.classify_run(25, [make_job(labels=labels)], NOW)
+
     def test_mixed_lanes_denied(self):
         x = make_job(labels=["self-hosted", "ftmo-research", "zcloud", "vps"])
         with self.assertRaises(route.InvalidEvidence):
