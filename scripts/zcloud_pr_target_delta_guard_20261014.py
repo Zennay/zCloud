@@ -192,6 +192,10 @@ def risk_set(source: str) -> set[str]:
     match = re.search(r"(?m)^[A-Za-z_][\w-]*:[ \t]*", clean[anchors[0].end():])
     if match:
         event_region = clean[anchors[0].start():anchors[0].end() + match.start()]
+    # A trigger mapping merge can also import an unseen target event. This
+    # must not be misclassified as an ordinary non-target workflow.
+    if re.search(r"(?m)^\\s*<<\\s*:\\s*\\*[A-Za-z_][\\w-]*", event_region):
+        raise Unverified("aliased_event_trigger")
     if not PR_TARGET.search(event_region):
         return set()
     risk = set()
