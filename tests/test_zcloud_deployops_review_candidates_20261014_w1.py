@@ -206,6 +206,18 @@ class ReviewQueueTests(unittest.TestCase):
         with self.assertRaises(mod.InvalidEvidence):
             mod.snapshot(d)
 
+    def test_same_main_and_pr_head_with_changed_files_denied(self):
+        d = payload()
+        d['prs'][0]['head_sha'] = S
+        d['prs'][0]['ancestry_evidence'].update(
+            head_sha=S, ahead_by=0, behind_by=0, status='identical')
+        d['prs'][0]['owner_review_evidence']['reviewed_head_sha'] = S
+        d['prs'][0]['files_evidence']['head_sha'] = S
+        d['prs'][0]['checks'][0]['head_sha'] = S
+        with self.assertRaises(mod.InvalidEvidence) as context:
+            mod.snapshot(d)
+        self.assertEqual(str(context.exception), 'pr_head_equals_main')
+
     def test_exact_sha_head_up_to_date_is_advisory_only(self):
         report = snap(payload())
         self.assertEqual(report['review_candidate_count'], 1)
