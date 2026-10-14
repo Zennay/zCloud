@@ -52,6 +52,15 @@ if len(args) >= 2 and args[0] == "api":
 sys.exit(68)
 """
 
+FAKE_GIT = r"""#!/usr/bin/env python3
+import os
+import sys
+if sys.argv[1:3] == ["ls-remote", "--exit-code"]:
+    print(os.environ.get("GIT_REMOTE_MAIN", "a" * 40) + "\trefs/heads/main")
+    sys.exit(0)
+sys.exit(69)
+"""
+
 
 def workflow_script():
     source = WF.read_text(encoding="utf-8")
@@ -68,6 +77,9 @@ class RaiseAiGatewayCleanupGuardTests(unittest.TestCase):
             exe = Path(tmp) / "gh"
             exe.write_text(FAKE_GH, encoding="utf-8")
             exe.chmod(0o755)
+            git = Path(tmp) / "git"
+            git.write_text(FAKE_GIT, encoding="utf-8")
+            git.chmod(0o755)
             log = Path(tmp) / "posted.txt"
             log.write_text("")
             env = dict(os.environ)
@@ -84,6 +96,7 @@ class RaiseAiGatewayCleanupGuardTests(unittest.TestCase):
                 "GITHUB_SHA": ZCLOUD_MAIN,
                 "ZCLOUD_EXPECTED_SHA": ZCLOUD_MAIN,
                 "REMOTE_ZCLOUD_MAIN": ZCLOUD_MAIN,
+                "GIT_REMOTE_MAIN": ZCLOUD_MAIN,
                 "REMOTE_RAISE_MAIN": RAISE_MAIN,
                 "STALE_ROWS": "",
             })
@@ -105,6 +118,7 @@ class RaiseAiGatewayCleanupGuardTests(unittest.TestCase):
         self.assertIn("github.actor == 'Zennay'", wf)
         self.assertIn("github.triggering_actor == 'Zennay'", wf)
         self.assertIn("github.run_attempt == 1", wf)
+        self.assertIn("git ls-remote", wf)
         self.assertIn("github.ref == 'refs/heads/main'", wf)
         self.assertIn("cancel-in-progress: false", wf)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", wf)
@@ -140,6 +154,7 @@ class RaiseAiGatewayCleanupGuardTests(unittest.TestCase):
             {"GITHUB_SHA": "d" * 40},
             {"ZCLOUD_EXPECTED_SHA": "bad"},
             {"REMOTE_ZCLOUD_MAIN": "e" * 40},
+            {"GIT_REMOTE_MAIN": "e" * 40},
             {"REMOTE_RAISE_MAIN": "f" * 40},
         ]
         for patch in failures:
