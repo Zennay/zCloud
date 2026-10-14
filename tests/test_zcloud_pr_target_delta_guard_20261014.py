@@ -172,6 +172,7 @@ class GuardTests(unittest.TestCase):
         self.assertIn("path: trusted", trusted)
         self.assertIn("persist-credentials: false", trusted)
         self.assertIn("submodules: false", trusted)
+        self.assertIn("fetch-depth: 0", trusted)
         self.assertIn('test "$current_main" = "$EXACT_BASE"', trusted)
         self.assertIn('test "$final_main" = "$EXACT_BASE"', trusted)
         self.assertLess(trusted.index('test "$current_main" = "$EXACT_BASE"'),
