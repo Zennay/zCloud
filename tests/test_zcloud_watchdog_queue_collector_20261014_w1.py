@@ -19,12 +19,14 @@ def main(sha=SHA):
 
 def run(ident):
     return {"id": ident, "head_repository": {"full_name": "Zennay/zCloud"},
-            "workflow_id": 30, "head_sha": SHA, "head_branch": "main",
+            "workflow_id": 30, "run_attempt": 1,
+            "head_sha": SHA, "head_branch": "main",
             "event": "push", "status": "queued"}
 
 
 def job(ident, *, parent=None):
     return {"id": ident, "run_id": ident - 1000 if parent is None else parent,
+            "run_attempt": 1, "head_sha": SHA, "head_branch": "main",
             "status": "queued", "labels": ["self-hosted", "zcloud", "vps"]}
 
 
@@ -268,6 +270,69 @@ class TestReadOnlyQueueCollector(unittest.TestCase):
                     return get(path)
                 with self.assertRaisesRegex(collection.InventoryError, "cross_run_job_evidence"):
                     collection.collect(malformed, clock=NOW)
+
+
+    def test_job_attempt_must_match_original_run_attempt(self):
+        get, _ = api_snapshot(run(1))
+        def swapped(path):
+            if "/jobs?" in path:
+                record = job(1001)
+                record["run_attempt"] = 2
+                return {"total_count": 1, "jobs": [record]}, ""
+            return get(path)
+        with self.assertRaisesRegex(collection.InventoryError, "cross_run_job_evidence"):
+            collection.collect(swapped, clock=NOW)
+
+    def test_job_sha_and_branch_must_match_run(self):
+        for key, value in (("head_sha", "b" * 40), ("head_branch", "worker/unsafe")):
+            with self.subTest(key=key):
+                get, _ = api_snapshot(run(1))
+                def swapped(path):
+                    if "/jobs?" in path:
+                        record = job(1001)
+                        record[key] = value
+                        return {"total_count": 1, "jobs": [record]}, ""
+                    return get(path)
+                with self.assertRaisesRegex(collection.InventoryError, "cross_run_job_evidence"):
+                    collection.collect(swapped, clock=NOW)
+
+    def test_missing_boolean_or_invalid_attempt_denied(self):
+        for attempt in (None, True, 0, -1, "1", 2.0):
+            with self.subTest(attempt=attempt):
+                get, _ = api_snapshot(run(1))
+                def swapped(path):
+                    if "/jobs?" in path:
+                        record = job(1001)
+                        record["run_attempt"] = attempt
+                        return {"total_count": 1, "jobs": [record]}, ""
+                    return get(path)
+                with self.assertRaisesRegex(collection.InventoryError, "cross_run_job_evidence"):
+                    collection.collect(swapped, clock=NOW)
+
+    def test_invalid_parent_attempt_denied_before_job_read(self):
+        for attempt in (None, 0, True, "1"):
+            with self.subTest(attempt=attempt):
+                parent = run(1)
+                parent["run_attempt"] = attempt
+                get, _ = api_snapshot(parent)
+                with self.assertRaisesRegex(collection.InventoryError, "invalid_run_provenance"):
+                    collection.collect(get, clock=NOW)
+
+    def test_retried_run_and_matching_job_attempt_are_allowed_as_observation(self):
+        parent = run(1)
+        parent["run_attempt"] = 3
+        get, _ = api_snapshot(parent)
+        def matched(path):
+            if "/jobs?" in path:
+                record = job(1001)
+                record["run_attempt"] = 3
+                return {"total_count": 1, "jobs": [record]}, ""
+            return get(path)
+        snapshot = collection.collect(matched, clock=NOW)
+        self.assertEqual(snapshot["run_pages"][0]["runs"][0]["id"], 1)
+        outcome = policy.assess(snapshot, expected_main_sha=SHA, now=NOW)
+        self.assertEqual(outcome["decision"], "NOOP")
+        self.assertFalse(outcome["mutation_authorized"])
 
     def test_missing_jobs_denied(self):
         get, _ = api_snapshot(run(1))
