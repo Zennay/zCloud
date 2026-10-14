@@ -36,7 +36,7 @@ De workflow schrijft de externe observatie eerst naar een tijdelijk bestand en p
 
 ## Verificatie zonder production mutation
 
-- PR-CI checkt de onveranderlijke head-commit rechtstreeks, niet de synthetische PR-merge. Een andere repository als PR-bron wordt geweigerd.
+- PR-CI checkt de onveranderlijke head-commit rechtstreeks, niet de synthetische PR-merge. Een andere repository als PR-bron wordt geweigerd. Beide eigen hosted-only workflows gebruiken `actions/checkout` gepind op exact commit `11bd71901bbe5b1630ceea73d27597364c9af683` (v4.2.2) in plaats van een verplaatsbare `@v4`-tag; `persist-credentials: false` blijft van kracht. De PR-regressie bewaakt die twee SHA-pins.
 - Negatieve tests gebruiken tevens een echte tijdelijke 127.0.0.1 HTTP-server, inclusief redirects, 503, foutieve body, oversize, stale snapshot, proxy-injectie en `Content-Length` + `Transfer-Encoding` conflicten (waaronder dubbele transferheaders). Geen productie-GET in de PR-tests.
 - De vaste API GET zet `Cache-Control: no-cache, no-store, max-age=0` en `Pragma: no-cache`, zodat tussenliggende HTTP-caches geen oud succesantwoord behoren te hergebruiken; timestampcontrole blijft verplicht. De vaste API GET heeft maximaal 128 KiB body-budget, controle van de aangegeven Content-Length (ook vroege oversize-weigering), weigering van dubbele kritische HTTP-headers en onverwachte Content-Encoding, beperkte nested JSON, duplicate-key/Unicode/nonfinite denial, strenge MIME- en UTC-freshnesscontrole.
 - De originele dashboard recovery workflow blijft ongewijzigd; de privilegieerde recover-job blijft gedeactiveerd.
