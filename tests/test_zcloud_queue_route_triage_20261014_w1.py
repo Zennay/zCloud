@@ -373,6 +373,7 @@ class QueueRouteTriageTests(unittest.TestCase):
     def test_maximum_signed_github_id_is_bounded_but_not_invented_as_liveness(self):
         max_id = (1 << 63) - 1
         observed = job(max_id)
+        observed["id"] = max_id
         get, _ = mock([run(max_id)], {max_id: [observed]})
         result = triage.collect(get, clock=NOW)
         self.assertEqual(result["runs"][0]["run_id"], max_id)
