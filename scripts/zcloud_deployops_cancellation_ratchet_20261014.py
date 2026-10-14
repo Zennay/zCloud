@@ -65,9 +65,9 @@ def _cancel_values(area, *, indent):
         r"(?m)^" + re.escape(indent) + r"cancel-in-progress:\s*([^\r\n#]*)",
         area,
     )
-    return any(item.strip().lower() not in (
-        "false", "'false'", '"false"'
-    ) for item in matches)
+    # Only a literal YAML boolean false is provably non-cancelling.
+    # Quoted "false" is a string and must not be treated as a proof.
+    return any(item.strip() != "false" for item in matches)
 
 
 def _inline_concurrency(area, indent):
