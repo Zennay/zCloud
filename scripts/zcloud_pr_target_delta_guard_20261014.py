@@ -272,7 +272,7 @@ def _job_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[str]:
             command = CHECKOUT.search(step) if checkout else RUN_STEP.search(step)
             if command:
                 found.update(_env_expressions_executed_by_run(
-                    "\n".join(job_env_blocks), step[command.start():],
+                    "\n".join(job_env_blocks), step if checkout else step[command.start():],
                     require_shell_sink=not checkout,
                 ))
     return found
@@ -293,7 +293,7 @@ def _workflow_env_run_risks(clean: str, *, checkout: bool = False) -> Counter[st
         command = CHECKOUT.search(step) if checkout else RUN_STEP.search(step)
         if command is not None:
             found.update(_env_expressions_executed_by_run(
-                env_section, step[command.start():],
+                env_section, step if checkout else step[command.start():],
                 require_shell_sink=not checkout,
             ))
     return found
@@ -330,7 +330,7 @@ def step_reference_risks(clean: str) -> dict[str, Counter[str]]:
                 for match in PULL_REF.finditer(command_source)
             )
             found["pr_source_in_run_job"].update(
-                _env_expressions_executed_by_run(step[:command.start()], command_source)
+                _env_expressions_executed_by_run(step, command_source)
             )
     found["pr_source_in_run_job"].update(_job_env_run_risks(clean))
     found["pr_source_in_run_job"].update(_workflow_env_run_risks(clean))
