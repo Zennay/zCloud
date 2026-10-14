@@ -10,6 +10,7 @@ on:
       - tests/test_worker_tab_identity_guard.js
       - tests/test_violentmonkey_send_tab_preservation.js
       - .github/workflows/zcloud-worker-tab-guard.yml
+      - tests/test_worker_tab_guard_manual_install_20261014.py
   push:
     branches: [main, fix/worker-tab-spam-circuit-breaker-20261012]
     paths:
@@ -21,6 +22,18 @@ on:
       - tests/test_worker_tab_identity_guard.js
       - tests/test_violentmonkey_send_tab_preservation.js
       - .github/workflows/zcloud-worker-tab-guard.yml
+      - tests/test_worker_tab_guard_manual_install_20261014.py
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Owner-only install; false never changes the VPS"
+        type: boolean
+        required: true
+        default: false
+      confirm_sha:
+        description: "Exact current main commit SHA"
+        type: string
+        required: true
 permissions:
   contents: read
 
@@ -30,7 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
       - name: JS syntax + existing recovery regression
         shell: bash
         run: |
@@ -41,18 +58,52 @@ jobs:
           node tests/test_worker_tab_reuse.js
           node tests/test_worker_tab_identity_guard.js
           node tests/test_violentmonkey_send_tab_preservation.js
+          python3 -m unittest -v tests.test_worker_tab_guard_manual_install_20261014
           echo "WORKER_TAB_SPAM_GUARD_GREEN=1"
 
   install:
     name: Install worker tab guard on VPS (do not kill live chats)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      inputs.apply == true &&
+      inputs.confirm_sha == github.sha
     needs: unit
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
         with:
           persist-credentials: false
+      - name: Verify exact immutable main and authorized permanent runner
+        env:
+          APPLY: ${{ inputs.apply }}
+          CONFIRM_SHA: ${{ inputs.confirm_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$APPLY" = true
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRM_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$CONFIRM_SHA"
+          current_main="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test -n "$current_main"
+          test "$current_main" = "$CONFIRM_SHA"
+          test "$(hostname -s)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          echo "WORKER_TAB_OWNER_MANUAL_MAIN_VERIFIED=1"
+
       - name: Install verified worker browser background code
         shell: bash
         run: |
