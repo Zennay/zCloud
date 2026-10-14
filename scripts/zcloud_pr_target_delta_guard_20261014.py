@@ -220,7 +220,8 @@ def _run_command_source(step: str, command: re.Match[str]) -> str:
 def _consumes_env(name: str, command_source: str) -> bool:
     """Recognize a variable expanded by a shell or a GitHub env context."""
     if re.search(
-        r"\$(?:\{" + re.escape(name) + r"\}|" + re.escape(name) + r"\b)",
+        r"\$(?:\{!?" + re.escape(name)
+        + r"(?=[}:?+/%#^,@\[])|" + re.escape(name) + r"\b)",
         command_source,
     ):
         return True
