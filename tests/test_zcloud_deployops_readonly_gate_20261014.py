@@ -164,6 +164,29 @@ class GateTests(unittest.TestCase):
                 self.assertFalse(result["mutation_authorized"])
                 self.assertNotIn("main_sha", result)
 
+    def test_combined_status_truncation_never_claims_latest_production(self):
+        for value in (3, -1, True, 1.0, "2", None):
+            item = fixture()
+            # GitHub status count is normally two, but missing is permitted for
+            # archived offline fixtures that predate GitHub's count field.
+            if value is None:
+                item["status"].pop("total_count", None)
+                self.assertNotEqual(gate.safe_report(item)["observation"],
+                                    "DENY_INCOMPLETE_OR_CONTRADICTORY_EVIDENCE")
+                continue
+            item["status"]["total_count"] = value
+            with self.subTest(count=value):
+                receipt = gate.safe_report(item)
+                self.assertEqual(receipt["observation"],
+                                 "DENY_INCOMPLETE_OR_CONTRADICTORY_EVIDENCE")
+                self.assertNotIn("production_status", receipt)
+                self.assertFalse(receipt["mutation_authorized"])
+
+    def test_combined_status_complete_count_is_accepted(self):
+        item = fixture()
+        item["status"]["total_count"] = len(item["status"]["statuses"])
+        self.assertEqual(gate.classify(item)["production_status"], "failure")
+
     def test_extra_and_duplicate_run_entries_deny(self):
         item = fixture()
         item["runs"]["workflow_runs"].append(copy.deepcopy(item["runs"]["workflow_runs"][0]))
