@@ -2,7 +2,7 @@
 
 The only permissible PR execution is a hosted, read-only source regression.
 The self-hosted Firefox RDP probe must be limited to the canonical repository's
-main push or an explicitly owner-initiated manual dispatch on main.
+an explicitly owner-initiated first-attempt manual dispatch on exact main.
 """
 import ast
 import os
@@ -28,13 +28,15 @@ def _job(name):
 
 
 def _step_event_guard():
-    start = SOURCE.index('          case "${GITHUB_EVENT_NAME:-}:${GITHUB_ACTOR:-}" in')
+    start = SOURCE.index('          case "${GITHUB_EVENT_NAME:-}:${GITHUB_ACTOR:-}:${GITHUB_TRIGGERING_ACTOR:-}:${GITHUB_RUN_ATTEMPT:-}" in')
     end = SOURCE.index("          esac", start) + len("          esac")
     return "\n".join(line[10:] for line in SOURCE[start:end].splitlines())
 
 
-def _event_guard_result(event, actor):
-    env = dict(os.environ, GITHUB_EVENT_NAME=event, GITHUB_ACTOR=actor)
+def _event_guard_result(event, actor, triggering_actor="Zennay", attempt="1"):
+    env = dict(os.environ, GITHUB_EVENT_NAME=event, GITHUB_ACTOR=actor,
+               GITHUB_TRIGGERING_ACTOR=triggering_actor,
+               GITHUB_RUN_ATTEMPT=attempt)
     return subprocess.run(["bash", "-c", "set -euo pipefail\n" + _step_event_guard()],
                           env=env, capture_output=True, text=True, timeout=3)
 
@@ -44,13 +46,17 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         inspect = _job("inspect")
         self.assertIn("github.repository == 'Zennay/zCloud'", inspect)
         self.assertIn("github.ref == 'refs/heads/main'", inspect)
-        self.assertIn("github.event_name == 'push'", inspect)
-        self.assertIn("github.event_name == 'workflow_dispatch' && github.actor == 'Zennay'", inspect)
+        self.assertIn("github.event_name == 'workflow_dispatch'", inspect)
+        self.assertIn("github.actor == 'Zennay'", inspect)
+        self.assertIn("github.triggering_actor == 'Zennay'", inspect)
+        self.assertIn("github.run_attempt == 1", inspect)
+        self.assertIn("inputs.confirm_sha == github.sha", inspect)
+        self.assertNotIn("github.event_name == 'push'", inspect)
 
     def test_pr_checks_are_hosted_only(self):
         hosted = _job("hosted-policy-regression")
         inspect = _job("inspect")
-        self.assertIn("if: github.event_name == 'pull_request'", hosted)
+        self.assertIn("if: github.event_name == 'pull_request' || github.event_name == 'push'", hosted)
         self.assertIn("runs-on: ubuntu-latest", hosted)
         self.assertNotIn("self-hosted", hosted)
         self.assertIn("runs-on: [self-hosted, ftmo-research]", inspect)
@@ -60,7 +66,7 @@ class LiveTabProbeTrustTests(unittest.TestCase):
     def test_hosted_job_uses_immutable_checkout_without_write_credentials(self):
         hosted = _job("hosted-policy-regression")
         self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", hosted)
-        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", hosted)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", hosted)
         self.assertIn("persist-credentials: false", hosted)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"', hosted)
 
@@ -85,18 +91,42 @@ class LiveTabProbeTrustTests(unittest.TestCase):
             with self.subTest(actor=actor):
                 self.assertNotEqual(0, _event_guard_result("workflow_dispatch", actor).returncode)
 
+    def test_manual_reruns_and_untrusted_triggering_actor_denied(self):
+        self.assertNotEqual(0, _event_guard_result(
+            "workflow_dispatch", "Zennay", triggering_actor="attacker").returncode)
+        for attempt in ("", "0", "2", "01"):
+            with self.subTest(attempt=attempt):
+                self.assertNotEqual(0, _event_guard_result(
+                    "workflow_dispatch", "Zennay", attempt=attempt).returncode)
+
     def test_pr_and_other_events_denied_at_runtime(self):
-        for event in ("pull_request", "pull_request_target", "workflow_run", ""):
+        for event in ("pull_request", "pull_request_target", "workflow_run", "push", ""):
             with self.subTest(event=event):
                 self.assertNotEqual(0, _event_guard_result(event, "Zennay").returncode)
 
-    def test_main_push_may_read_probe_only(self):
-        self.assertEqual(0, _event_guard_result("push", "github-actions[bot]").returncode)
+    def test_main_push_can_only_run_hosted_source_tests(self):
+        self.assertNotEqual(0, _event_guard_result("push", "github-actions[bot]").returncode)
+        self.assertNotEqual(0, _event_guard_result("push", "Zennay").returncode)
         inspect = _job("inspect")
         self.assertIn("READ_ONLY_PROBE_NO_TAB_OR_BROWSER_CHANGES=1", inspect)
         self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", inspect)
         for forbidden in ("systemctl ", "sqlite3.connect(", "os.kill(", "subprocess.Popen("):
             self.assertNotIn(forbidden, inspect)
+
+    def test_exact_main_sha_and_origin_verification_precede_debugger_access(self):
+        inspect = _job("inspect")
+        for required in (
+            '[[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]',
+            'test "$CONFIRM_SHA" = "$GITHUB_SHA"',
+            "timeout 15 git ls-remote --exit-code origin refs/heads/main",
+            'test -n "$current_main"',
+            'test "$current_main" = "$GITHUB_SHA"',
+            'test "${GITHUB_RUN_ATTEMPT:-}" = "1"',
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, inspect)
+        self.assertLess(inspect.index('test "$current_main" = "$GITHUB_SHA"'),
+                        inspect.index("python3 - <<'PY'"))
 
     def test_concurrency_and_permissions(self):
         header = SOURCE.split("\njobs:\n", 1)[0]
@@ -105,6 +135,8 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         self.assertNotIn("issues: write", header)
         self.assertIn("cancel-in-progress: false", header)
         self.assertIn("workflow_dispatch:", header)
+        self.assertIn("confirm_sha:", header)
+        self.assertIn("required: true", header)
         self.assertNotIn("pull_request_target:", header)
 
 
