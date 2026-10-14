@@ -69,7 +69,7 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(mod.decide(pr(), files(), [], [], B), "missing_or_unbounded_checks")
         x = checks()
         x[0]["status"] = "in_progress"
-        self.assertEqual(mod.decide(pr(), files(), x, [], B), "check_not_green")
+        self.assertEqual(mod.decide(pr(), files(), x, [], B), "required_smoke_not_green")
         x = checks()
         x[0]["head_sha"] = B
         self.assertEqual(mod.decide(pr(), files(), x, [], B), "unbound_check")
