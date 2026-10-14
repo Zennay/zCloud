@@ -26,13 +26,26 @@ Example (informational only):
 - scripts/zcloud_watchdog_queue_collector_20261014_w1.py
 - tests/test_zcloud_watchdog_queue_collector_20261014_w1.py
 
-The separate collector reads the **canonical main SHA before and after**, fetches every available queued run page and every selected run's job pages (all requests strictly HTTP GET to api.github.com), verifies total counts and exact next-page links, and repeats the first queue page to detect mid-read changes. Unknown/oversized totals, external links, duplicate JSON keys, moved main, missing jobs, race or timeout are denied with a fixed privacy-safe reason. It has a 115-second global wall-clock and maximum 640-request budget. Proxy inheritance, HTTP redirects and dynamic destination hosts are disallowed. Tokens are never printed.
+The separate collector reads the **canonical main SHA before and after**, fetches every available queued run page and every selected run's job pages (all requests strictly HTTP GET to api.github.com), verifies total counts and exact next-page links, and **re-reads every queue page** after the job inventory, rejecting same-count replacements on later pages and identity changes under the same run ID. Unknown/oversized totals, external links, duplicate JSON keys, moved main, missing jobs, race or timeout are denied with a fixed privacy-safe reason. It timestamps the **start** of the observation, rejects snapshots taking more than **45 seconds** before treating them as current, and has a separate **115-second** process wall-clock and maximum **640-request** budget. Proxy inheritance, HTTP redirects and dynamic destination hosts are disallowed. Tokens are never printed.
 
 Run manually for observation only on a trusted shell with an appropriately scoped read-only token in the environment:
 
     GITHUB_TOKEN=<read-only-token> python3 scripts/zcloud_watchdog_queue_collector_20261014_w1.py
 
 Do not place a real token in documentation, issue comments or command history. A complete GET snapshot still has no separately authenticated same-intent key and **cannot authorize cancellation**, even if identical queued runs are reported. CI only runs offline fakes and a fake HTTP opener, not real privileged API calls.
+
+## Manual GitHub-hosted observer — never a production control
+
+- .github/workflows/zcloud-watchdog-hosted-queue-readonly-20261014-w1.yml
+- scripts/zcloud_watchdog_operator_summary_20261014_w1.py
+- tests/test_zcloud_watchdog_operator_summary_20261014_w1.py
+- tests/test_zcloud_watchdog_hosted_workflow_20261014_w1.py
+
+This is a **new, separate, manual-only** workflow. It has no push, pull_request, schedule or workflow_run trigger, requires the exact canonical repository, actor Zennay, main ref and first attempt, and runs **only on GitHub-hosted ubuntu-latest**. GitHub permissions are exactly contents:read and actions:read; checkout is immutable with saved credentials disabled. The owner can start it from Actions after review and eventual main merge; **there is no currently deployed workflow to run** while this PR is draft.
+
+Manual execution checks main's actual GitHub API SHA **both before and after** the bounded GET-only collector, and publishes a short, **redacted Dutch operator summary**. Reports with duplicate keys, oversized data, ambiguous exits, fake mutation permissions or alleged production verification are denied. No raw API response, prompt or credentials are printed in the summary. A REVIEW_ONLY or DENY decision intentionally makes the hosted job fail rather than imply approval.
+
+This workflow provides **no** restart, runner repair, run cancellation, SQLite write, Firefox mutation, worker push or deploy. It does **not** replace the existing privileged watchdog owner; the fact that an observation is structurally stable does not prove duplicate run intent.
 
 ## Exclusive owner integration criteria
 
