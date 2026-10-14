@@ -184,6 +184,53 @@ class GitTest(unittest.TestCase):
         head = self.commit(CANCEL + "# unrelated edit\n")
         self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
 
+    def test_literal_cross_workflow_vps_collision_denied(self):
+        other = self.path.parent / "other-vps.yml"
+        other.write_text(SELFHOST, encoding="utf-8")
+        base = self.commit(SAFE)
+        head = self.commit(SAFE.replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        ))
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_different_literal_groups_do_not_collide(self):
+        other = self.path.parent / "other-vps.yml"
+        other.write_text(SELFHOST.replace("group: isolated", "group: other"),
+                         encoding="utf-8")
+        base = self.commit(SAFE)
+        head = self.commit(SAFE.replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        ))
+        self.assertEqual([], scanner.evaluate(self.root, base, head))
+
+    def test_retired_prior_vps_still_counts_for_collision(self):
+        other = self.path.parent / "other-vps.yml"
+        other.write_text(SELFHOST, encoding="utf-8")
+        base = self.commit(SAFE)
+        other.unlink()
+        head = self.commit(SAFE.replace(
+            "cancel-in-progress: false", "cancel-in-progress: true"
+        ))
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_job_level_literal_group_collision_denied(self):
+        other = self.path.parent / "legacy-vps.yml"
+        other.write_text(
+            SELFHOST.replace("group: isolated", "group: shared-live-service"),
+            encoding="utf-8",
+        )
+        base = self.commit(SAFE)
+        candidate = JOB_CANCEL.replace(
+            "runs-on: [self-hosted, zcloud, vps]", "runs-on: ubuntu-latest"
+        )
+        head = self.commit(candidate)
+        self.assertEqual(1, len(scanner.evaluate(self.root, base, head)))
+
+    def test_dynamic_group_is_not_claimed_literal_collision(self):
+        self.assertEqual(set(), scanner.static_concurrency_groups(
+            SAFE.replace("group: isolated", "group: " + "$" + "{{ github.workflow }}")
+        ))
+
     def test_prior_live_vps_can_be_cancelled_by_new_hosted_global(self):
         # The old workflow's runner can still be executing when the new one
         # claims the same concurrency group, even if new jobs run on GitHub.
