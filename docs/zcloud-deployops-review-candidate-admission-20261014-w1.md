@@ -16,6 +16,7 @@ Scope: isolated **offline-only** advisory for [issue #1009](https://github.com/Z
 ```sh
 python -m unittest discover -s tests -p 'test_zcloud_deployops_review_candidates_20261014_w1.py' -v
 python scripts/zcloud_deployops_review_candidates_20261014_w1.py snapshot.json
+python scripts/zcloud_deployops_review_candidates_20261014_w1.py snapshot.json --format markdown
 ```
 
 The input JSON schema uses:
