@@ -13,9 +13,7 @@ from typing import Iterable
 
 WORKFLOW_DIR = Path(".github/workflows")
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
-JOB_RE = re.compile(r"^  (?P<job>[A-Za-z0-9_-]+):\s*(?:#.*)?$")
-RUNS_ON_RE = re.compile(r"(?m)^ {4}runs-on:\s*(?P<value>[^#\n]*)")
-TIMEOUT_RE = re.compile(r"(?m)^ {4}timeout-minutes:\s*(?P<value>[^#\n]+?)\s*$")
+JOB_RE = re.compile(r"^(?P<indent> +)(?P<job>[A-Za-z0-9_-]+):[ \t]*(?:#.*)?$")
 SELF_HOSTED_LABEL_RE = re.compile(r"(?<![\w-])self-hosted(?![\w-])", re.IGNORECASE)
 # An expression can resolve to a self-hosted runner at execution time.
 DYNAMIC_RUNNER_RE = re.compile(r"\$\{\{|\*[A-Za-z_][\w-]*")
@@ -56,6 +54,7 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
     lines = text.splitlines()
     in_jobs = False
     starts: list[tuple[int, str]] = []
+    job_indent: int | None = None
 
     for index, line in enumerate(lines):
         if not in_jobs:
@@ -66,17 +65,39 @@ def iter_job_blocks(text: str) -> Iterable[tuple[str, str]]:
         if line and not line[0].isspace():
             break
 
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
         match = JOB_RE.match(line)
         if match:
-            starts.append((index, match.group("job")))
+            indent = len(match.group("indent"))
+            if job_indent is None:
+                job_indent = indent
+            if indent == job_indent:
+                starts.append((index, match.group("job")))
 
     for pos, (start, job) in enumerate(starts):
         end = starts[pos + 1][0] if pos + 1 < len(starts) else len(lines)
         yield job, "\n".join(lines[start:end])
 
 
-def _runs_on_text(block: str) -> str | None:
-    match = RUNS_ON_RE.search(block)
+def _job_key_indent(block: str) -> int:
+    """Find the job's immediate child indentation, not nested step/script keys."""
+    lines = block.splitlines()
+    job_indent = len(lines[0]) - len(lines[0].lstrip(" "))
+    indents = [
+        len(line) - len(line.lstrip(" "))
+        for line in lines[1:]
+        if line.strip() and not line.lstrip().startswith("#")
+        and len(line) - len(line.lstrip(" ")) > job_indent
+    ]
+    return min(indents, default=job_indent + 2)
+
+
+def _runs_on_text(block: str, *, key_indent: int) -> str | None:
+    match = re.search(
+        rf"(?m)^ {{{key_indent}}}runs-on:[ \t]*(?P<value>[^#\n]*)",
+        block,
+    )
     if match is None:
         return None
     value = match.group("value").strip()
@@ -85,14 +106,17 @@ def _runs_on_text(block: str) -> str | None:
 
     lines = block.splitlines()
     for index, line in enumerate(lines):
-        if re.match(r"^ {4}runs-on:\s*(?:[>|][+-]?)?(?:#.*)?$", line):
+        if re.match(
+            rf"^ {{{key_indent}}}runs-on:[ \t]*(?:[>|][+-]?)?(?:#.*)?$",
+            line,
+        ):
             continuation: list[str] = []
             for following in lines[index + 1 :]:
                 stripped = following.lstrip()
                 if not stripped:
                     continue
                 indent = len(following) - len(stripped)
-                if indent <= 4:
+                if indent <= key_indent:
                     break
                 continuation.append(stripped)
             return " ".join(continuation)
@@ -102,7 +126,8 @@ def _runs_on_text(block: str) -> str | None:
 def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutFinding]:
     findings: list[TimeoutFinding] = []
     for job, block in iter_job_blocks(text):
-        runs_on = _runs_on_text(block)
+        key_indent = _job_key_indent(block)
+        runs_on = _runs_on_text(block, key_indent=key_indent)
         if runs_on is None:
             continue
         runner_is_dynamic = bool(DYNAMIC_RUNNER_RE.search(runs_on))
@@ -115,7 +140,10 @@ def inspect_workflow(path: str, text: str, *, max_minutes: int) -> list[TimeoutF
         if not runner_is_dynamic and not runner_has_self_hosted_label and not runner_is_unknown:
             continue
 
-        timeout_match = TIMEOUT_RE.search(block)
+        timeout_match = re.search(
+            rf"(?m)^ {{{key_indent}}}timeout-minutes:[ \t]*(?P<value>[^#\n]+?)[ \t]*$",
+            block,
+        )
         if timeout_match is None:
             timeout = None
             status = "missing"
