@@ -239,10 +239,16 @@ def snapshot(report, *, now=None):
         if f"pr:{n}" in overlapping_owners:
             reasons.append("overlapping_owner")
         out.append({"number": n, "review_candidate": not reasons, "reasons": reasons})
+    blockers = {key: sum(key in row["reasons"] for row in out)
+                for key in ("overlapping_owner", "stale_base", "draft",
+                            "owner_review_missing", "required_checks_missing",
+                            "exact_head_checks_not_green")}
     return {"main_sha": d["main_sha"], "inventory_complete": True,
             "serialized_gates_closed": all(gates[k] == "closed" for k in REQUIRED_GATES),
             "release_authorized": False, "mutations_performed": False,
             "review_candidates": out, "review_candidate_count": sum(x["review_candidate"] for x in out),
+            "blocked_candidate_count": len(out) - sum(x["review_candidate"] for x in out),
+            "blocker_counts": blockers,
             "disclaimer": "Offline advisory only: requires authenticated live revalidation, independent review and serialized owner release before any merge, deployment or recovery."}
 
 
@@ -262,8 +268,14 @@ def markdown(result):
     lines = ["### zCloud · deploy-ops reviewoverzicht",
              "Dit is **alleen een bronreview-advies**. Geen toestemming voor merge, herstel of deploy.",
              f"Kandidaat-PR's: **{result['review_candidate_count']} / {len(result['review_candidates'])}**.",
+             f"Nog niet reviewgereed: **{result['blocked_candidate_count']}**.",
              f"Geserialiseerde issues allemaal gesloten: **{'ja' if result['serialized_gates_closed'] else 'nee'}**. Ook bij ja ontbreekt vrijgavebewijs.",
-             "", "#### Kandidaten en blokkades"]
+             "", "#### Belangrijkste blokkades"]
+    for reason, count in sorted(result["blocker_counts"].items(),
+                                key=lambda item: (-item[1], item[0])):
+        if count:
+            lines.append(f"- {REASONS_NL[reason]}: **{count} PR's**.")
+    lines += ["", "#### Kandidaten en blokkades"]
     for row in result['review_candidates'][:30]:
         if row['review_candidate']:
             lines.append(f"- PR #{row['number']}: geschikt voor *onafhankelijke bronreview*, niet voor merge.")
