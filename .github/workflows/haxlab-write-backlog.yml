@@ -143,32 +143,9 @@ jobs:
           # must be admitted by the normal serialized allocator, never by
           # forcing another worker's current assignment to CONTINUE.
 
-          # Reconcile the existing worker pool without changing its settings so
-          # the freshly freed slot is immediately allocated by global priority.
-          with urllib.request.urlopen(base+"/api/dynamic-workers",timeout=10) as r:
-              settings=json.load(r).get("dynamic_workers") or {}
-          same_settings={
-              key:settings.get(key)
-              for key in (
-                  "chatgpt_count","claude_count",
-                  "chatgpt_cooldown_seconds","claude_cooldown_seconds",
-                  "check_interval_ms","tick_interval_ms",
-                  "heartbeat_interval_ms","generation_start_timeout_ms",
-                  "scheduler_interval_seconds"
-              )
-              if settings.get(key) is not None
-          }
-          req=urllib.request.Request(
-              base+"/api/dynamic-workers",
-              data=json.dumps(same_settings).encode(),
-              method="POST",
-              headers={"Content-Type":"application/json","X-ZCloud-Actor":"haxlab-write-queue-normalizer"},
-          )
-          with urllib.request.urlopen(req,timeout=10) as r:
-              reconciled=json.load(r)
-          if not isinstance(reconciled,dict) or reconciled.get("ok") is not True:
-              raise RuntimeError("worker allocation reconciliation not acknowledged")
-          print("WORKER_POOL_RECONCILED",json.dumps({"acknowledged":True},sort_keys=True))
+          # Do NOT POST to /api/dynamic-workers. The serialized scheduler
+          # observes queue changes itself. A historical HaxLab queue operation
+          # must never adjust global workers or affect another project's slot.
 
           final=get_queue()
           hax=[x for x in final.get("items",[]) if x.get("project_id")=="haxlab" and x.get("eligible")]
