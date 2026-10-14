@@ -69,6 +69,10 @@ def trust_issues(source):
         issues.append("raw_queue_leak")
     if 'print("HAXLAB_P1_STATUS"' not in job:
         issues.append("sanitized_queue_status")
+    if 'print("POOL_RECONCILED",json.dumps(reconcile' in job or 'print("POOL_RECONCILE_ACK"' not in job:
+        issues.append("raw_reconcile_payload")
+    if 'reconcile.get("error")' not in job or 'reconcile.get("ok") is False' not in job:
+        issues.append("reconcile_failure_guard")
     if 'post("/api/dynamic-workers",same)' not in job:
         issues.append("existing_functionality")
     return issues
@@ -128,6 +132,15 @@ class LegacyHaxLabRecoveryTrust(unittest.TestCase):
     def test_raw_queue_telemetry_is_denied(self):
         self.assertIn("raw_queue_leak", trust_issues(
             self.source.replace('print("HAXLAB_P1_STATUS"', 'print("ALLOCATION_LIVE"')))
+
+    def test_full_reconcile_json_leak_denied(self):
+        raw = self.source.replace('print("POOL_RECONCILE_ACK"',
+                                  'print("POOL_RECONCILED",json.dumps(reconcile,sort_keys=True)); print("POOL_RECONCILE_ACK"')
+        self.assertIn("raw_reconcile_payload", trust_issues(raw))
+
+    def test_error_reconcile_must_abort(self):
+        bad = self.source.replace('reconcile.get("error")', "False")
+        self.assertIn("reconcile_failure_guard", trust_issues(bad))
 
     def test_existing_queue_path_preserved(self):
         self.assertIn("post(\"/api/dynamic-workers\",same)", self.source)
