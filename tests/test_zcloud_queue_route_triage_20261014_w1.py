@@ -1,0 +1,225 @@
+"""Offline regression matrix for independent GET-only zCloud runner-route triage."""
+import copy
+from datetime import datetime, timezone
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts import zcloud_queue_route_triage_20261014_w1 as triage
+from scripts import zcloud_watchdog_queue_collector_20261014_w1 as source
+
+SHA = "a" * 40
+OLD = "b" * 40
+NOW = datetime(2026, 10, 14, 4, tzinfo=timezone.utc)
+MAIN = "/repos/Zennay/zCloud/branches/main"
+RUNS = "/repos/Zennay/zCloud/actions/runs?status=queued&per_page=100&page=1"
+ROOT = "/repos/Zennay/zCloud"
+
+
+def run(number, *, branch="main", sha=SHA, repo="Zennay/zCloud"):
+    return {
+        "id": number, "workflow_id": 7, "run_attempt": 1,
+        "event": "workflow_run", "status": "queued",
+        "head_sha": sha, "head_branch": branch,
+        "head_repository": {"full_name": repo},
+    }
+
+
+def job(number, *, route="ftmo-research", state="queued"):
+    return {
+        "id": number + 1000, "run_id": number,
+        "run_attempt": 1, "status": state,
+        "head_sha": SHA, "head_branch": "main",
+        "labels": ["self-hosted", route] if route != "zcloud_vps"
+                  else ["self-hosted", "zcloud", "vps"],
+        "runner_id": 0, "runner_name": "",
+    }
+
+
+def mock(records, by_run=None):
+    by_run = by_run or {}
+    calls = []
+    def get(path):
+        calls.append(path)
+        if path == MAIN:
+            return {"commit": {"sha": SHA}}, ""
+        if path == RUNS:
+            return {"total_count": len(records), "workflow_runs": copy.deepcopy(records)}, ""
+        if path.endswith("/jobs?per_page=100&page=1"):
+            rid = int(path.split("/runs/")[1].split("/")[0])
+            group = copy.deepcopy(by_run.get(rid, []))
+            return {"total_count": len(group), "jobs": group}, ""
+        raise AssertionError("Unexpected GET: " + path)
+    return get, calls
+
+
+class QueueRouteTriageTests(unittest.TestCase):
+    def test_empty_queue_is_observation_not_authority(self):
+        get, calls = mock([])
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["decision"], "OBSERVED")
+        self.assertEqual(result["observed_runs"], 0)
+        self.assertEqual(result["route_counts"], {})
+        self.assertEqual(calls.count(MAIN), 2)
+        self.assertEqual(calls.count(RUNS), 2)
+        self.assertFalse(result["runner_recovery_authorized"])
+        self.assertEqual(result["cancel_run_ids"], [])
+        self.assertFalse(result["production_verified"])
+
+    def test_live_shaped_mixed_queue_separates_missing_job_records(self):
+        rows = [run(1), run(2, sha=OLD), run(3, branch="diagnostic/SECRET", sha=OLD)]
+        jobs = {
+            1: [],
+            2: [dict(job(2), head_sha=OLD)],
+            3: [dict(job(3), head_sha=OLD, head_branch="diagnostic/SECRET")],
+        }
+        get, calls = mock(rows, jobs)
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["observed_runs"], 3)
+        by_id = {row["run_id"]: row for row in result["runs"]}
+        self.assertEqual((by_id[1]["scope"], by_id[1]["route"]),
+                         ("current_main", "no_job_records"))
+        self.assertEqual((by_id[2]["scope"], by_id[2]["route"]),
+                         ("historical_main", "ftmo_research"))
+        self.assertEqual((by_id[3]["scope"], by_id[3]["route"]),
+                         ("other_branch", "ftmo_research"))
+        self.assertEqual(by_id[2]["assignment"], "not_assigned")
+        self.assertEqual(sum(result["route_counts"].values()), 3)
+        self.assertEqual(sum("/jobs?" in path for path in calls), 6)
+        self.assertNotIn("SECRET", json.dumps(result))
+        self.assertFalse(result["worker_generation_verified"])
+
+    def test_current_main_zcloud_vps_job_is_still_not_runner_recovery(self):
+        get, _ = mock([run(1)], {1: [job(1, route="zcloud_vps")]})
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["runs"][0]["route"], "zcloud_vps")
+        self.assertEqual(result["runs"][0]["assignment"], "not_assigned")
+        self.assertEqual(result["runs"][0]["scope"], "current_main")
+        self.assertFalse(result["runner_recovery_authorized"])
+        self.assertEqual(result["cancel_run_ids"], [])
+
+    def test_second_pass_started_job_denied_not_summarized(self):
+        get, _ = mock([run(1)], {1: [job(1, route="zcloud_vps")]})
+        job_reads = [0]
+        def racing(path):
+            if "/jobs?" in path:
+                job_reads[0] += 1
+                if job_reads[0] == 2:
+                    return {"total_count": 1, "jobs": [job(1, route="zcloud_vps", state="in_progress")]}, ""
+            return get(path)
+        with self.assertRaisesRegex(source.InventoryError, "job_state_changed"):
+            triage.collect(racing, clock=NOW)
+
+    def test_changed_runner_id_or_name_denied(self):
+        for key, value in (("runner_id", 31), ("runner_name", "runner-SECRET")):
+            with self.subTest(field=key):
+                get, _ = mock([run(1)], {1: [job(1)]})
+                reads = [0]
+                def racing(path):
+                    if "/jobs?" in path:
+                        reads[0] += 1
+                        if reads[0] == 2:
+                            item = job(1)
+                            item[key] = value
+                            return {"total_count": 1, "jobs": [item]}, ""
+                    return get(path)
+                with self.assertRaisesRegex(source.InventoryError, "job_state_changed"):
+                    triage.collect(racing, clock=NOW)
+
+    def test_queued_run_census_changed_denied(self):
+        get, _ = mock([run(1)], {1: [job(1)]})
+        hits = [0]
+        def racing(path):
+            if path == RUNS:
+                hits[0] += 1
+                if hits[0] == 2:
+                    return {"total_count": 1, "workflow_runs": [run(2)]}, ""
+            return get(path)
+        with self.assertRaisesRegex(source.InventoryError, "queue_changed"):
+            triage.collect(racing, clock=NOW)
+
+    def test_main_sha_moves_denied(self):
+        get, _ = mock([run(1)], {1: [job(1)]})
+        hits = [0]
+        def racing(path):
+            if path == MAIN:
+                hits[0] += 1
+                if hits[0] == 2:
+                    return {"commit": {"sha": OLD}}, ""
+            return get(path)
+        with self.assertRaisesRegex(source.InventoryError, "main_moved"):
+            triage.collect(racing, clock=NOW)
+
+    def test_forced_stale_snapshot_denied(self):
+        get, _ = mock([])
+        ticks = iter((1.0, 47.0))
+        with self.assertRaisesRegex(source.InventoryError, "triage_stale"):
+            triage.collect(get, clock=NOW, monotonic_clock=lambda: next(ticks))
+
+    def test_too_many_runs_denied_before_fetching_any_jobs(self):
+        rows = [run(i) for i in range(1, 42)]
+        get, calls = mock(rows)
+        with self.assertRaises(source.InventoryError):
+            triage.collect(get, clock=NOW)
+        self.assertFalse(any("/jobs?" in call for call in calls))
+
+    def test_forged_job_parent_or_attempt_denied(self):
+        for field, value in (("run_id", 10), ("run_attempt", True),
+                             ("head_sha", OLD), ("head_branch", "main-secret")):
+            with self.subTest(field=field):
+                item = job(1)
+                item[field] = value
+                get, _ = mock([run(1)], {1: [item]})
+                with self.assertRaises(source.InventoryError):
+                    triage.collect(get, clock=NOW)
+
+    def test_boolean_runner_assignment_denied(self):
+        item = job(1)
+        item["runner_id"] = True
+        get, _ = mock([run(1)], {1: [item]})
+        with self.assertRaises(source.InventoryError):
+            triage.collect(get, clock=NOW)
+
+    def test_mixed_route_jobs_are_not_confused_as_ftmo(self):
+        get, _ = mock([run(1)], {1: [job(1, route="zcloud_vps"),
+                                           dict(job(1), id=1002)]})
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["runs"][0]["route"], "mixed_job_routes")
+        self.assertEqual(result["runs"][0]["job_count"], 2)
+
+    def test_job_with_positive_assigned_runner_keeps_uncertain_liveness(self):
+        item = job(1)
+        item["runner_id"] = 32
+        item["runner_name"] = "some-runner"
+        get, _ = mock([run(1)], {1: [item]})
+        result = triage.collect(get, clock=NOW)
+        self.assertEqual(result["runs"][0]["assignment"], "assigned")
+        self.assertFalse(result["production_verified"])
+        self.assertFalse(result["worker_generation_verified"])
+
+    def test_invalid_label_length_denied_before_render(self):
+        item = job(1)
+        item["labels"] = ["self-hosted", "PRIVATE" * 100]
+        get, _ = mock([run(1)], {1: [item]})
+        with self.assertRaisesRegex(source.InventoryError, "invalid_runner_evidence"):
+            triage.collect(get, clock=NOW)
+
+    def test_api_cli_missing_readonly_token_denies_without_raw_error(self):
+        entry = Path(__file__).resolve().parents[1] / "scripts/zcloud_queue_route_triage_20261014_w1.py"
+        import os
+        env = dict(os.environ)
+        env.pop("GITHUB_TOKEN", None)
+        result = subprocess.run([sys.executable, str(entry)], env=env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1)
+        report = json.loads(result.stdout)
+        self.assertEqual(report["decision"], "DENY")
+        self.assertEqual(report["cancel_run_ids"], [])
+        self.assertNotIn("Traceback", result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()
