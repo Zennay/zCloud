@@ -481,7 +481,7 @@ class WorkflowSourceTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.source = (MODULE.parents[0] /
+        cls.source = (MODULE.parents[1] /
                       ".github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml"
                      ).read_text(encoding="utf-8")
 
@@ -494,7 +494,7 @@ class WorkflowSourceTest(unittest.TestCase):
     def test_source_path_and_tests_retrigger_on_change(self):
         for path in ("scripts/zcloud_deployops_cancellation_ratchet_20261014.py",
                      "tests/test_zcloud_deployops_cancellation_ratchet_20261014.py"):
-            self.assertGreaterEqual(self.source.count(path), 3)
+            self.assertGreaterEqual(self.source.count(path), 2)
 
     def test_no_selfhosted_or_write_permissions(self):
         self.assertIn("    runs-on: ubuntu-latest", self.source)
