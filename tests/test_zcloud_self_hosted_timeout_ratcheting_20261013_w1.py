@@ -29,11 +29,12 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
     timeout-minutes: 99
 """
         rows = audit.inspect_workflow(".github/workflows/dynamic.yml", source, max_minutes=30)
-        self.assertEqual(["dynamic", "alias"], [item.job for item in rows])
-        self.assertTrue(all(item.status == "dynamic_runner_unknown" for item in rows))
+        self.assertEqual(["dynamic", "alias", "misleading"], [item.job for item in rows])
+        self.assertEqual(["dynamic_runner_unknown", "dynamic_runner_unknown", "runner_target_unknown"], [item.status for item in rows])
         counts = audit.summarize(rows, max_minutes=30)
-        self.assertEqual(2, counts["finding_count"])
+        self.assertEqual(3, counts["finding_count"])
         self.assertEqual(2, counts["by_status"]["dynamic_runner_unknown"])
+        self.assertEqual(1, counts["by_status"]["runner_target_unknown"])
         self.assertFalse(counts["mutation_performed"])
 
     def test_custom_label_and_group_runner_are_never_assumed_hosted(self):
@@ -99,7 +100,7 @@ class TimeoutDebtRatchetingTests(unittest.TestCase):
     timeout-minutes: 300
 """
         rows = audit.inspect_workflow(".github/workflows/labels.yml", source, max_minutes=30)
-        self.assertEqual([("real", "bounded")], [(r.job, r.status) for r in rows])
+        self.assertEqual([("real", "bounded"), ("different", "runner_target_unknown")], [(r.job, r.status) for r in rows])
 
     def test_legacy_excessive_timeout_cannot_get_longer_or_disappear(self):
         path = ".github/workflows/old.yml"
