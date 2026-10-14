@@ -487,6 +487,19 @@ jobs:
                 with self.assertRaisesRegex(RuntimeError, "symlink or non-tree"):
                     audit.scan_git_ref(root, sha, max_minutes=30)
 
+    def test_noncanonical_numeric_timeout_scalars_are_never_bounded(self):
+        values = ["1_0", "+10", "01", "٠٥", "１０", "-1", "0", "10"]
+        workflow = "jobs:\n" + "".join(
+            f"  j{i}:\n    runs-on: self-hosted\n    timeout-minutes: {raw}\n"
+            for i, raw in enumerate(values)
+        )
+        rows = audit.inspect_workflow("noncanonical.yml", workflow, max_minutes=30)
+        self.assertEqual(
+            ["dynamic_or_invalid"] * 5 + ["invalid", "invalid", "bounded"],
+            [r.status for r in rows],
+        )
+        self.assertTrue(all(r.timeout_minutes is None for r in rows[:5]))
+
     def test_strict_mode_rejects_changes_between_legacy_debt_types(self):
         path = ".github/workflows/legacy.yml"
         missing = audit.TimeoutFinding(path, "legacy", None, "missing")
