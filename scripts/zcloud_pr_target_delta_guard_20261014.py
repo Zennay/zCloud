@@ -121,7 +121,9 @@ def _content_without_comments(source: str) -> str:
                 continue
             if ch in "\"'":
                 quote = None if ch == quote else ch if quote is None else quote
-            if ch == "#" and quote is None:
+            # YAML only begins a plain-scalar comment at a separation
+            # boundary. A contiguous x#${{ expression }} is literal data.
+            if ch == "#" and quote is None and (not useful or useful[-1].isspace()):
                 break
             useful.append(ch)
         output.append("".join(useful))
