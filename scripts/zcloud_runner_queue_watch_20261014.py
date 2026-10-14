@@ -63,7 +63,7 @@ def _utc(value):
     return dt.astimezone(timezone.utc)
 
 
-def summarize(runs, jobsets, now):
+def summarize(runs, jobsets, now, *, total_count=None):
     """Fail closed on incomplete evidence. This never calls a production endpoint."""
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise Unavailable("clock_unknown")
@@ -71,11 +71,19 @@ def summarize(runs, jobsets, now):
         raise Unavailable("run_sample_absent")
     if not isinstance(jobsets, dict):
         raise Unavailable("jobs_missing")
+    if total_count is None:
+        total_count = len(runs)
+    if type(total_count) is not int or total_count < len(runs):
+        raise Unavailable("invalid_total_count")
     seen = set()
     observed = 0
     stale_unassigned = 0
     recent_assigned = 0
     other = 0
+    oldest_queued_seconds = 0
+    stale_over_2h = 0
+    assigned_failures = 0
+    inspected = 0
     for run in runs:
         if not isinstance(run, dict):
             raise Unavailable("run_shape")
@@ -100,12 +108,27 @@ def summarize(runs, jobsets, now):
             raise Unavailable("future_run")
         if run_age > MAX_AGE:
             continue
+        inspected += 1
         jobs = jobsets.get(number)
         if not isinstance(jobs, list) or not len(jobs) == 1:
             raise Unavailable("incomplete_job_inventory")
         job = jobs[0]
-        if not isinstance(job, dict) or job.get("run_id") != number or job.get("name") != "cpu-snapshot":
-            raise Unavailable("wrong_job")
+        job_id = job.get("id") if isinstance(job, dict) else None
+        run_attempt = run.get("run_attempt")
+        if (type(job) is not dict or type(job_id) is not int
+                or not 0 < job_id <= 9223372036854775807
+                or type(run_attempt) is not int or not 0 < run_attempt <= 100
+                or type(job.get("run_id")) is not int or job["run_id"] != number
+                or type(job.get("run_attempt")) is not int
+                or job.get("name") != "cpu-snapshot"
+                or job.get("workflow_name") != NAME
+                or job.get("head_sha") != run.get("head_sha")
+                or job.get("head_branch") != run.get("head_branch")
+                or job.get("run_attempt") != run_attempt
+                or job.get("run_url") != f"https://api.github.com/repos/{REPO}/actions/runs/{number}"
+                or job.get("url") != f"https://api.github.com/repos/{REPO}/actions/jobs/{job_id}"
+                or job.get("html_url") != f"https://github.com/{REPO}/actions/runs/{number}/job/{job_id}"):
+            raise Unavailable("unbound_job_provenance")
         labels = job.get("labels")
         if not isinstance(labels, list) or any(type(v) is not str for v in labels):
             raise Unavailable("unknown_labels")
@@ -135,12 +158,17 @@ def summarize(runs, jobsets, now):
             raise Unavailable("future_job")
         if status == "queued" and runner_id == 0 and job.get("conclusion") is None:
             observed += 1
+            oldest_queued_seconds = max(oldest_queued_seconds, int(age))
             if age >= MIN_AGE:
                 stale_unassigned += 1
+            if age >= 7200:
+                stale_over_2h += 1
         elif status in ("in_progress", "completed") and runner_id > 0:
             observed += 1
             if age < MIN_AGE:
                 recent_assigned += 1
+            if status == "completed" and job["conclusion"] not in ("success", "skipped"):
+                assigned_failures += 1
         elif status == "completed" and job.get("conclusion") == "skipped" and runner_id == 0:
             other += 1
         else:
@@ -155,8 +183,14 @@ def summarize(runs, jobsets, now):
         classification = "INSUFFICIENT_QUEUE_EVIDENCE"
     return {"schema": "zcloud-hosted-runner-queue-watch-v1",
             "classification": classification, "sampled_runs": len(seen),
+            "inspected_recent_runs": inspected,
+            "total_workflow_runs": total_count,
+            "sample_truncated": total_count > len(seen),
             "queue_jobs_observed": observed, "stale_unassigned": stale_unassigned,
-            "recent_assignments": recent_assigned, "skipped": other,
+            "oldest_queued_minutes": oldest_queued_seconds // 60 if oldest_queued_seconds else None,
+            "queued_over_2h": stale_over_2h,
+            "recent_assignments": recent_assigned, "assigned_failures": assigned_failures,
+            "skipped": other,
             "runner_offline_verified": False, "production_verified": False,
             "mutation_authorized": False, "mutations_performed": False}
 
@@ -183,6 +217,9 @@ def collect(token, opener=None):
     runs = root.get("workflow_runs")
     if not isinstance(runs, list) or not 1 <= len(runs) <= LIMIT:
         raise Unavailable("invalid_run_inventory")
+    total_count = root.get("total_count")
+    if type(total_count) is not int or total_count < len(runs):
+        raise Unavailable("invalid_run_count")
     data = {}
     for run in runs:
         rid = run.get("id") if isinstance(run, dict) else None
@@ -193,7 +230,7 @@ def collect(token, opener=None):
         if type(page.get("total_count")) is not int or not isinstance(jobs, list) or len(jobs) != page["total_count"]:
             raise Unavailable("incomplete_job_page")
         data[rid] = jobs
-    return summarize(runs, data, datetime.now(timezone.utc))
+    return summarize(runs, data, datetime.now(timezone.utc), total_count=total_count)
 
 
 def main():

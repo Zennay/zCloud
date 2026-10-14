@@ -15,13 +15,18 @@ def iso(seconds):
 
 
 def sample(n, age=1500, *, status="queued", runner=0):
-    run = {"id": n, "name": m.NAME,
+    run = {"id": n, "name": m.NAME, "run_attempt": 1,
            "event": "pull_request", "head_branch": "patch",
            "path": m.PATH + "@refs/pull/1403/merge",
            "head_sha": "a" * 40, "created_at": iso(age),
            "repository": {"full_name": m.REPO},
            "head_repository": {"full_name": m.REPO}}
     job = {"id": 1000 + n, "run_id": n, "name": "cpu-snapshot",
+           "workflow_name": m.NAME, "head_branch": run["head_branch"],
+           "head_sha": run["head_sha"], "run_attempt": 1,
+           "run_url": f"https://api.github.com/repos/{m.REPO}/actions/runs/{n}",
+           "url": f"https://api.github.com/repos/{m.REPO}/actions/jobs/{1000+n}",
+           "html_url": f"https://github.com/{m.REPO}/actions/runs/{n}/job/{1000+n}",
            "created_at": iso(age), "status": status,
            "runner_id": runner,
            "runner_name": "zcloud-vps-1" if runner else None,
@@ -41,6 +46,10 @@ class QueueWatchTests(unittest.TestCase):
         report = self.classify(sample(1), sample(2, 1400), sample(3, 1300))
         self.assertEqual(report["classification"], "POSSIBLE_LISTENER_GAP")
         self.assertEqual(report["stale_unassigned"], 3)
+        self.assertEqual(report["oldest_queued_minutes"], 25)
+        self.assertEqual(report["queued_over_2h"], 0)
+        self.assertEqual(report["inspected_recent_runs"], 3)
+        self.assertFalse(report["sample_truncated"])
         for key in ("runner_offline_verified", "production_verified",
                     "mutation_authorized", "mutations_performed"):
             self.assertIs(report[key], False)
@@ -64,6 +73,41 @@ class QueueWatchTests(unittest.TestCase):
             job.update(data)
             with self.subTest(data=data), self.assertRaises(m.Unavailable):
                 self.classify((run, job))
+
+    def test_oldest_queue_and_failed_assignments_are_separate(self):
+        report = self.classify(sample(1, age=8000), sample(2, age=7300),
+                               sample(3, age=2400),
+                               sample(4, age=60, status="completed", runner=21))
+        self.assertEqual(report["queued_over_2h"], 2)
+        self.assertEqual(report["oldest_queued_minutes"], 133)
+        self.assertEqual(report["classification"], "RECENT_RUNNER_ASSIGNMENT_OBSERVED")
+        self.assertEqual(report["assigned_failures"], 0)
+        r, j = sample(6, age=40, status="completed", runner=21)
+        j["conclusion"] = "failure"
+        self.assertEqual(self.classify((r, j))["assigned_failures"], 1)
+
+    def test_partial_window_is_disclosed_not_claimed_exhaustive(self):
+        r, j = sample(1)
+        x = m.summarize([r], {1: [j]}, NOW, total_count=275)
+        self.assertTrue(x["sample_truncated"])
+        self.assertEqual(x["total_workflow_runs"], 275)
+        self.assertEqual(x["sampled_runs"], 1)
+        for invalid in (-1, 0, True, "275"):
+            with self.subTest(invalid=invalid), self.assertRaises(m.Unavailable):
+                m.summarize([r], {1: [j]}, NOW, total_count=invalid)
+
+    def test_queued_job_identity_must_match_exact_run(self):
+        for mutation in ({"workflow_name": "Other workflow"},
+                         {"head_branch": "elsewhere"},
+                         {"head_sha": "b"*40}, {"run_attempt": 2},
+                         {"run_attempt": True}, {"run_url": "https://attacker.invalid"},
+                         {"url": "https://attacker.invalid"},
+                         {"html_url": "https://attacker.invalid"},
+                         {"id": True}, {"id": 9223372036854775808}):
+            r, j = sample(1)
+            j.update(mutation)
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(m.Unavailable, "unbound_job_provenance"):
+                self.classify((r, j))
 
     def test_not_enough_jobs_or_new_jobs_are_inconclusive(self):
         for pairs in ((sample(1),), (sample(1, 1500), sample(2, 60)),
@@ -155,7 +199,7 @@ class QueueWatchTests(unittest.TestCase):
                 assert self_timeout == 12
                 assert request.get_header("Authorization") == "Bearer test-token"
                 if request.full_url == m.URL:
-                    return Reply({"total_count": 3, "workflow_runs": runs})
+                    return Reply({"total_count": 99, "workflow_runs": runs})
                 for rid, job in jobs.items():
                     if request.full_url.endswith(f"/actions/runs/{rid}/jobs?per_page=100"):
                         return Reply({"total_count": 1, "jobs": [job]})
@@ -164,6 +208,8 @@ class QueueWatchTests(unittest.TestCase):
         opener = Opener()
         result = m.collect("test-token", opener=opener)
         self.assertEqual(result["sampled_runs"], 3)
+        self.assertTrue(result["sample_truncated"])
+        self.assertEqual(result["total_workflow_runs"], 99)
         self.assertEqual(len(opener.urls), 4)
         self.assertFalse(result["production_verified"])
         self.assertFalse(result["mutation_authorized"])
@@ -193,6 +239,10 @@ class QueueWatchTests(unittest.TestCase):
         self.assertIn("github.triggering_actor == 'Zennay'", wf)
         self.assertIn("github.run_attempt == 1", wf)
         self.assertIn("retention-days: 7", wf)
+        for field in ("queued_over_2h", "oldest_queued_minutes",
+                      "sample_truncated", "total_workflow_runs",
+                      "assigned_failures"):
+            self.assertIn(field, wf)
 
 
 if __name__ == "__main__":
