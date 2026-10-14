@@ -103,6 +103,72 @@ class V2LiveproofTriggerGuardTests(unittest.TestCase):
             self.assertIn(marker, proof[0])
         self.assertIn("timeout 15 git ls-remote --exit-code origin refs/heads/main", proof[1])
 
+    def test_real_bash_preflight_denies_replay_and_stale_main(self):
+        """Execute extracted workflow admission with fake Git/identity; never touch VPS."""
+        import os
+        import subprocess
+        import tempfile
+        import textwrap
+
+        preflight = self.live.split(
+            "- name: Trust preflight before reading live worker/SQLite state", 1
+        )[1].split("- name: Check live worker heartbeats", 1)[0]
+        script = textwrap.dedent(preflight.split("run: |\\n", 1)[1])
+        good_sha = "a" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            commands = {
+                "git": (
+                    '#!/bin/sh\\n'
+                    'if [ "$1" = "rev-parse" ]; then printf "%s\\\\n" "$GITHUB_SHA"; exit 0; fi\\n'
+                    'if [ "$1" = "ls-remote" ]; then printf "%s\\\\trefs/heads/main\\\\n" "$MOCK_REMOTE_MAIN"; exit 0; fi\\n'
+                    'exit 3\\n'
+                ),
+                "id": '#!/bin/sh\\nprintf "ubuntu\\\\n"\\n',
+                "hostname": '#!/bin/sh\\nprintf "vps-bb300bba\\\\n"\\n',
+                "python3": '#!/bin/sh\\nprintf "guard-called\\\\n" >> "$MOCK_GUARD_LOG"\\n',
+            }
+            for name, body in commands.items():
+                exe = Path(tmp) / name
+                exe.write_text(body.replace("\\\\n", "\\n").replace("\\\\t", "\\t"), encoding="utf-8")
+                exe.chmod(0o755)
+            env = dict(os.environ)
+            env.update({
+                "PATH": tmp + os.pathsep + env.get("PATH", ""),
+                "CONFIRMED_SHA": good_sha,
+                "GITHUB_SHA": good_sha,
+                "MOCK_REMOTE_MAIN": good_sha,
+                "GITHUB_REPOSITORY": "Zennay/zCloud",
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_ACTOR": "Zennay",
+                "GITHUB_TRIGGERING_ACTOR": "Zennay",
+                "GITHUB_RUN_ATTEMPT": "1",
+                "MOCK_GUARD_LOG": str(Path(tmp) / "guard.log"),
+            })
+            log = Path(env["MOCK_GUARD_LOG"])
+
+            def execute(overrides):
+                log.unlink(missing_ok=True)
+                result = subprocess.run(["bash", "-c", script], env={**env, **overrides},
+                                        capture_output=True, text=True, timeout=5)
+                return result.returncode, log.exists()
+
+            self.assertEqual(execute({}), (0, True))
+            for overrides in (
+                {"GITHUB_RUN_ATTEMPT": "2"},
+                {"GITHUB_RUN_ATTEMPT": ""},
+                {"GITHUB_TRIGGERING_ACTOR": "another"},
+                {"GITHUB_ACTOR": "another"},
+                {"GITHUB_REPOSITORY": "fork/zCloud"},
+                {"GITHUB_REF": "refs/heads/feature"},
+                {"CONFIRMED_SHA": "b" * 40},
+                {"MOCK_REMOTE_MAIN": "b" * 40},
+                {"MOCK_REMOTE_MAIN": ""},
+            ):
+                with self.subTest(overrides=overrides):
+                    code, guard_called = execute(overrides)
+                    self.assertNotEqual(code, 0)
+                    self.assertFalse(guard_called)
+
     def test_trusted_fresh_owner_manual_is_eligible(self):
         self.assertTrue(manual_eligible(*self.good))
 
