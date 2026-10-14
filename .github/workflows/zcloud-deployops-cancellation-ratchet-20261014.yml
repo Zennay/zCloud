@@ -11,10 +11,13 @@ on:
       - ".github/workflows/zcloud-deployops-cancellation-ratchet-20261014.yml"
       - ".github/workflows/**"
   push:
+    # On main, inspect changes to ANY workflow rather than only changes to
+    # this gate. This remains post-push observation, never deploy authority.
     branches:
       - main
       - "worker/zcloud-deployops-cancellation-ratchet-20261014-w1"
     paths:
+      - ".github/workflows/**"
       - "scripts/zcloud_deployops_cancellation_ratchet_20261014.py"
       - "tests/test_zcloud_deployops_cancellation_ratchet_20261014.py"
       - "docs/deployops-vps-cancellation-ratchet-20261014.md"
