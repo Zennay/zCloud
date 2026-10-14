@@ -188,9 +188,10 @@ def summarize(runs, jobsets, now, *, total_count=None):
               and job.get("conclusion") in ("skipped", "cancelled")):
             # A job cancelled before assignment never exercised a VPS runner.
             # Keep it out of both the stale queue and recovery signal.
-            other += 1
             if job["conclusion"] == "cancelled":
                 unassigned_cancelled += 1
+            else:
+                other += 1
         else:
             raise Unavailable("ambiguous_job_state")
     # Even repeated long queues cannot establish a dead listener without
