@@ -12,6 +12,18 @@ from pathlib import Path
 
 POLICY = "zcloud-queue-watchdog-admission-v1"
 _MAX_BYTES = 32768
+_DUTCH_REASON = {
+    "incomplete_queue_pages": "GitHub leverde geen complete of consistente wachtrijpagina's.",
+    "invalid_job_identity": "Job- of workflow-identiteit ontbreekt, is dubbel of spreekt elkaar tegen.",
+    "job_state_changed": "Wachtrij of jobstatus veranderde tijdens de controle.",
+    "queue_too_large": "Er staan meer wachtrijgegevens klaar dan veilig gecontroleerd kunnen worden.",
+    "main_changed": "De hoofdbranch veranderde tijdens de controle.",
+    "observation_too_slow": "Het ophalen duurde te lang voor een betrouwbaar actueel beeld.",
+    "github_inventory_untrusted": "De GitHub-gegevens konden niet betrouwbaar worden vastgesteld.",
+}
+
+
+
 
 
 def _unique(pairs):
@@ -25,6 +37,7 @@ def _unique(pairs):
 
 def summarize(raw: bytes, collector_exit: int) -> tuple[str, int]:
     outcome = "DENY"
+    explanation = _DUTCH_REASON["github_inventory_untrusted"]
     try:
         if not isinstance(raw, bytes) or not 0 < len(raw) < _MAX_BYTES:
             raise ValueError("oversized_or_empty")
@@ -48,12 +61,24 @@ def summarize(raw: bytes, collector_exit: int) -> tuple[str, int]:
         if type(collector_exit) is not int or collector_exit != expected_exit:
             raise ValueError("status_mismatch")
         outcome = decision
+        if decision == "DENY":
+            # Use *only* hardcoded translations, never any external text.
+            explanation = _DUTCH_REASON.get(
+                report.get("reason") if type(report.get("reason")) is str else None,
+                _DUTCH_REASON["github_inventory_untrusted"],
+            )
+        elif decision == "REVIEW_ONLY":
+            explanation = "Mogelijk vergelijkbare wachtrijopdrachten: handmatige beoordeling nodig."
+        else:
+            explanation = "Geen mogelijke dubbele opdrachten aangetroffen in de aangeleverde observatie."
     except (UnicodeError, ValueError, TypeError, RecursionError, OverflowError):
         outcome = "DENY"
+        explanation = _DUTCH_REASON["github_inventory_untrusted"]
 
     markdown = (
         "### zCloud wachtrij — alleen observatie\n"
         f"- Wachtrijclassificatie: **{outcome}**\n"
+        f"- Verklaring: {explanation}\n"
         "- Acties annuleren, diensten herstarten of workers forceren: **NIET TOEGESTAAN**\n"
         "- Productiestatus en echte AI-generatie: **NIET BEWEZEN**\n"
         "- GitHub-gegevens zijn geen onafhankelijk bewijs van dezelfde opdrachtintentie.\n"
