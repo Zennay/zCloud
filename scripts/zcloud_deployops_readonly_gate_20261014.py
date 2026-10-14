@@ -190,17 +190,38 @@ def classify(source: dict) -> dict:
     latest_run = current[0] if current else None
     outcome = ("STATUS_GREEN_UNVERIFIED" if latest == "success"
                else "PRODUCTION_STATUS_" + latest.upper())
+    source_conflict = False
     if latest_run:
         run = latest_run[3]
-        if run["status"] == "completed" and run["conclusion"] != "success":
+        run_complete = run["status"] == "completed"
+        run_success = run_complete and run["conclusion"] == "success"
+        run_failure = run_complete and run["conclusion"] != "success"
+        # A later status and a sampled workflow can refer to different retries.
+        # Never silently overwrite a green status with an old failure (or vice versa).
+        if (latest == "success" and run_failure) or (latest in ("failure", "error") and run_success):
+            outcome = "STATUS_RUN_CONFLICT"
+            source_conflict = True
+        elif run_failure:
             outcome = "OBSERVED_MAIN_DEPLOY_" + run["conclusion"].upper()
         elif latest_run[4] and run["status"] == "queued":
             outcome = "DEPLOY_JOB_QUEUED_UNASSIGNED"
+        elif run["status"] == "in_progress":
+            outcome = "DEPLOY_RUN_IN_PROGRESS"
+    followups = {
+        "STATUS_RUN_CONFLICT": "review_exact_main_status_and_deploy_attempts",
+        "DEPLOY_JOB_QUEUED_UNASSIGNED": "review_runner_labels_and_assignment_without_restart",
+        "DEPLOY_RUN_IN_PROGRESS": "observe_existing_deploy_without_redispatch",
+        "STATUS_GREEN_UNVERIFIED": "verify_application_health_independently",
+        "PRODUCTION_STATUS_ABSENT": "review_missing_status_without_redispatch",
+    }
+    next_check = followups.get(outcome, "review_latest_main_deploy_evidence")
     return {
         "policy": "zcloud-deployops-read-only-gate-v1",
         "repo": REPO,
         "main_sha": main_sha,
         "production_status": latest,
+        "source_conflict": source_conflict,
+        "next_check": next_check,
         "observation": outcome,
         "current_main_deploy_run": latest_run[1] if latest_run else None,
         "current_main_deploy_attempt": latest_run[2] if latest_run else None,
