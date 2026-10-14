@@ -8,6 +8,7 @@ on:
       - scripts/zcloud_deployops_readonly_gate_20261014.py
       - tests/test_zcloud_deployops_readonly_gate_20261014.py
       - .github/workflows/zcloud-deployops-readonly-gate-20261014.yml
+      - docs/deployops-readonly-gate-20261014-w1.md
   workflow_dispatch:
 
 permissions:
@@ -44,6 +45,9 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/zcloud_deployops_readonly_gate_20261014.py tests/test_zcloud_deployops_readonly_gate_20261014.py
           python3 -m unittest -v tests.test_zcloud_deployops_readonly_gate_20261014
+          python3 -m unittest discover -v
+          bash tests/test_birds_eye_review.sh
+          node --check firefox-extension/recovery.js
       - name: Read-only live main diagnostic (never authoritative)
         env:
           GITHUB_TOKEN: ${{ github.token }}
