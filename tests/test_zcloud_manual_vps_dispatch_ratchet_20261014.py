@@ -98,6 +98,13 @@ class ManualDispatchPolicy(unittest.TestCase):
         with self.assertRaises(guard.RefError):
             guard.evaluate(base, {WF: historical.replace(b"&anchor", b"&changed")})
 
+    def test_glob_pattern_in_event_path_filter_is_not_yaml_alias(self):
+        body = workflow(if_statement=SAFE_IF).decode().replace(
+            "  workflow_dispatch:",
+            "  pull_request:\n    paths: ['.github/workflows/**', '*.yml']\n  workflow_dispatch:",
+        )
+        self.assertTrue(guard.evaluate({}, {WF: body.encode()})["ok"])
+
     def test_flow_dispatch_event_detected(self):
         body = workflow().decode().replace("on:\n  workflow_dispatch:", "on: [workflow_dispatch]")
         self.assertDenied(body.encode())
