@@ -132,6 +132,12 @@ def safe_summary(raw: bytes, collector_rc: int, *, now=None) -> tuple[str, int]:
             raise ValueError("inconsistent_counts")
         if type(summary) is not dict:
             raise ValueError("missing_counts")
+        # JSON true compares equal to Python integer 1. Never let a boolean
+        # bucket pass a numeric equality check even when the rendered summary
+        # later derives its own counts from validated run rows.
+        if any(type(key) is not str or type(value) is not int or value <= 0
+               for key, value in summary.items()):
+            raise ValueError("invalid_bucket_count_types")
         computed = {}
         seen = set()
         rendered = []
