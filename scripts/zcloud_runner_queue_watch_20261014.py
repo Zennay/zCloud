@@ -266,7 +266,37 @@ def collect(token, opener=None):
         if type(page.get("total_count")) is not int or not isinstance(jobs, list) or len(jobs) != page["total_count"]:
             raise Unavailable("incomplete_job_page")
         data[rid] = jobs
-    return summarize(runs, data, datetime.now(timezone.utc), total_count=total_count)
+    first = summarize(runs, data, datetime.now(timezone.utc), total_count=total_count)
+    # A listener-gap warning is a NEGATIVE claim about runner assignment.
+    # Repeat the entire bounded observation to reject jobs that were assigned
+    # while the first pass was reading other runs. A positive assignment
+    # observation does not authorize recovery and does not need this sweep.
+    if first["classification"] != "POSSIBLE_LISTENER_GAP":
+        return first
+    second_root = _get(URL, token, opener)
+    second_runs = second_root.get("workflow_runs")
+    if (type(second_root.get("total_count")) is not int
+            or second_root["total_count"] != total_count
+            or not isinstance(second_runs, list)
+            or second_runs != runs):
+        raise Unavailable("queue_run_inventory_changed")
+    second_data = {}
+    for run in second_runs:
+        rid = run["id"]
+        page = _get(f"https://api.github.com/repos/{REPO}/actions/runs/{rid}/jobs?per_page=100",
+                    token, opener)
+        jobs = page.get("jobs")
+        if (type(page.get("total_count")) is not int
+                or not isinstance(jobs, list)
+                or len(jobs) != page["total_count"]):
+            raise Unavailable("queue_job_inventory_changed")
+        second_data[rid] = jobs
+    second = summarize(second_runs, second_data, datetime.now(timezone.utc),
+                       total_count=total_count)
+    if (second["classification"] != "POSSIBLE_LISTENER_GAP"
+            or second_data != data):
+        raise Unavailable("queue_state_changed")
+    return second
 
 
 def main():
