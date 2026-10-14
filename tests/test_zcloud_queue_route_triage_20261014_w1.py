@@ -254,6 +254,77 @@ class QueueRouteTriageTests(unittest.TestCase):
                 with self.assertRaises(source.InventoryError):
                     triage.collect(get, clock=NOW)
 
+    def test_null_and_zero_runner_id_with_empty_or_null_name_are_unassigned(self):
+        # GitHub REST jobs can represent an unassigned runner by JSON null,
+        # without proving that any particular listener is offline.
+        for runner_id, runner_name in (
+            (0, ""), (0, None), (None, ""), (None, None)
+        ):
+            with self.subTest(runner_id=runner_id, runner_name=runner_name):
+                item = job(1, route="zcloud_vps")
+                item["runner_id"] = runner_id
+                item["runner_name"] = runner_name
+                get, _ = mock([run(1)], {1: [item]})
+                result = triage.collect(get, clock=NOW)
+                self.assertEqual(result["runs"][0]["assignment"], "not_assigned")
+                self.assertEqual(result["runs"][0]["job_state"], "queued")
+                self.assertFalse(result["runner_recovery_authorized"])
+                self.assertIs(result["mutation_authorized"], False)
+
+    def test_incomplete_or_contradictory_runner_evidence_is_never_assigned(self):
+        for runner_id, runner_name, expected in (
+            (23, None, "indeterminate"),
+            (23, "", "indeterminate"),
+            (0, "named-runner", "indeterminate"),
+            (None, "named-runner", "indeterminate"),
+            (23, "named-runner", "assigned"),
+        ):
+            with self.subTest(runner_id=runner_id, runner_name=runner_name):
+                item = job(1)
+                item["runner_id"] = runner_id
+                item["runner_name"] = runner_name
+                get, _ = mock([run(1)], {1: [item]})
+                result = triage.collect(get, clock=NOW)
+                self.assertEqual(result["runs"][0]["assignment"], expected)
+                self.assertEqual(result["cancel_run_ids"], [])
+
+    def test_missing_or_invalid_runner_fields_never_become_bogus_unassigned(self):
+        for change in ("missing_name", "missing_id", "boolean_name",
+                       "list_name", "long_name", "negative_runner_id"):
+            with self.subTest(case=change):
+                item = job(1)
+                if change == "missing_name":
+                    del item["runner_name"]
+                elif change == "missing_id":
+                    del item["runner_id"]
+                elif change == "boolean_name":
+                    item["runner_name"] = True
+                elif change == "list_name":
+                    item["runner_name"] = ["runner"]
+                elif change == "long_name":
+                    item["runner_name"] = "r" * 129
+                elif change == "negative_runner_id":
+                    item["runner_id"] = -1
+                get, _ = mock([run(1)], {1: [item]})
+                with self.assertRaises(source.InventoryError):
+                    triage.collect(get, clock=NOW)
+
+    def test_change_from_null_to_assigned_between_reads_denies(self):
+        item = job(1)
+        item["runner_id"] = None
+        item["runner_name"] = None
+        get, _ = mock([run(1)], {1: [item]})
+        reads = [0]
+        def racing(path):
+            if "/jobs?" in path:
+                reads[0] += 1
+                if reads[0] == 2:
+                    update = dict(item, runner_id=12, runner_name="new-runner")
+                    return {"total_count": 1, "jobs": [update]}, ""
+            return get(path)
+        with self.assertRaisesRegex(source.InventoryError, "job_state_changed"):
+            triage.collect(racing, clock=NOW)
+
     def test_boolean_runner_assignment_denied(self):
         item = job(1)
         item["runner_id"] = True
