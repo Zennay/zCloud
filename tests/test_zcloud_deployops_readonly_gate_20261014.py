@@ -4,6 +4,7 @@ import importlib.util
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_deployops_readonly_gate_20261014.py"
 spec = importlib.util.spec_from_file_location("gate", SCRIPT)
@@ -151,6 +152,48 @@ class GateTests(unittest.TestCase):
             with self.subTest(path=path, token=token):
                 with self.assertRaises(gate.EvidenceError):
                     gate.api(path, token)
+
+    def test_live_snapshot_binds_main_before_after(self):
+        original = fixture()
+        calls = []
+
+        def mocked_api(path, token):
+            calls.append((path, token))
+            if path == "/branches/main":
+                return {"commit": {"sha": SHA if len(calls) == 1 else OTHER_SHA}}
+            if path == "/commits/main/status":
+                return original["status"]
+            if path.startswith("/actions/workflows/"):
+                return original["runs"]
+            if path == "/actions/runs/1234/jobs?per_page=100":
+                return original["jobs_by_run"]["1234"]
+            self.fail("unexpected GitHub route")
+
+        with mock.patch.object(gate, "api", side_effect=mocked_api):
+            seen = gate.live_snapshot("safe")
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(seen["main_sha"], SHA)
+        self.assertEqual(seen["main_sha_after"], OTHER_SHA)
+        self.assertEqual(gate.safe_report(seen)["observation"], "DENY_INCOMPLETE_OR_CONTRADICTORY_EVIDENCE")
+
+    def test_live_transport_is_get_only(self):
+        body = b'{"commit":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = body
+        with mock.patch.object(gate.urllib.request, "urlopen", return_value=response) as urlopen:
+            result = gate.api("/branches/main", "ghp_test1")
+        request = urlopen.call_args.args[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertTrue(request.full_url.endswith("/branches/main"))
+        self.assertEqual(result["commit"]["sha"], SHA)
+
+    def test_completed_failure_without_job_is_not_runner_outage(self):
+        item = fixture()
+        item["jobs_by_run"]["1234"] = {"total_count": 0, "jobs": []}
+        result = gate.classify(item)
+        self.assertEqual(result["observation"], "OBSERVED_MAIN_DEPLOY_FAILURE")
+        self.assertEqual(result["latest_run_failed_jobs"], 0)
+        self.assertFalse(result["runner_outage_verified"])
 
     def test_no_job_leak_on_failure(self):
         item = fixture()
