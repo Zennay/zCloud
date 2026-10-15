@@ -206,12 +206,20 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
                 self.assertFalse(evidence["dispatch_authorized"])
                 self.edit(name, "    concurrency:\n", "    concurrency:\n      group: zcloud-production-deploy\n")
 
-    def test_job_level_required_even_with_workflow_level_lock(self):
+    def test_workflow_level_shared_production_lock_cannot_replace_job_lock(self):
         name = "zcloud-worker-tab-guard.yml"
         self.edit(name, "    concurrency:\n      group: zcloud-production-deploy\n      cancel-in-progress: false\n", "")
         p = self.dir / name
         text = p.read_text(encoding="utf-8")
         p.write_text(text.replace("jobs:", "concurrency:\n  group: zcloud-production-deploy\n  cancel-in-progress: false\njobs:"), encoding="utf-8")
+        self.assertEqual(module.inspect_workflow(self.root, name, "install", "job"),
+                         "parent_shares_production_group")
+
+    def test_missing_job_lock_is_rejected_even_with_disjoint_parent(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "    concurrency:\n      group: zcloud-production-deploy\n      cancel-in-progress: false\n", "")
+        self.edit(name, "jobs:\n", "concurrency:\n  group: separate-hosted-workflow\n"
+                  "  cancel-in-progress: false\njobs:\n")
         self.assertEqual(module.inspect_workflow(self.root, name, "install", "job"),
                          "missing_concurrency")
 
