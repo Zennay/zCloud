@@ -70,6 +70,82 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         self.assertFalse(result["authorizes_deploy"])
         self.assertFalse(result["mutation_performed"])
 
+    def test_named_checkout_with_explicit_false_is_accepted(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - name: Checkout source\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body)
+
+    def test_named_checkout_with_id_and_false_is_accepted(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - name: Checkout source\n        id: source\n"
+            f"        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body)
+
+    def test_named_checkout_omitted_false_denied(self):
+        body = workflow(None).replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - name: Checkout source\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "missing_explicit_false")
+
+    def test_named_checkout_with_true_denied(self):
+        body = workflow("true").replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - name: Checkout source\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "persisted_credentials")
+
+    def test_named_checkout_wrong_indent_denied(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - name: Checkout source\n"
+            f"          uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "ambiguous_checkout")
+
+    def test_named_checkout_nested_under_unrelated_field_denied(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - name: Checkout source\n        env:\n"
+            f"          uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "ambiguous_checkout")
+
+    def test_named_checkout_in_composite_action_is_accepted(self):
+        body = (f"name: local action\nruns:\n  using: composite\n  steps:\n"
+                f"    - name: Checkout safely\n      uses: actions/checkout@{PIN}\n"
+                f"      with:\n        persist-credentials: false\n")
+        self.verify(body, path=".github/actions/demo/action.yml")
+
+    def test_duplicate_uses_after_checkout_denied(self):
+        body = workflow().replace(
+            "          persist-credentials: false\n",
+            f"          persist-credentials: false\n"
+            f"        uses: example/other@{PIN}\n",
+        )
+        self.verify(body, "ambiguous_step_uses")
+
+    def test_duplicate_uses_before_named_checkout_denied(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - name: Checkout source\n"
+            f"        uses: example/other@{PIN}\n"
+            f"        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "ambiguous_step_uses")
+
+    def test_adjacent_named_checkouts_each_required_false(self):
+        body = workflow().replace(
+            "      - run: echo done\n",
+            f"      - name: Second checkout\n"
+            f"        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "missing_explicit_false")
+
     def test_no_checkout_safe(self):
         self.verify("name: simple\njobs:\n  smoke:\n    runs-on: ubuntu-latest\n")
 
