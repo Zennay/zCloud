@@ -109,6 +109,31 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         )
         self.verify(bad, "ambiguous_checkout_with")
 
+    def test_quoted_duplicate_with_map_denied(self):
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            '          persist-credentials: false\n        "with": {}\n',
+        )
+        self.verify(bad, "ambiguous_checkout_with")
+
+    def test_single_quoted_with_block_denied(self):
+        bad = workflow().replace("        with:\n", '        "with":\n')
+        self.verify(bad, "opaque_checkout_with")
+
+    def test_explicit_complex_with_key_denied(self):
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            "          persist-credentials: false\n        ? with\n        : {}\n",
+        )
+        self.verify(bad, "opaque_checkout_with")
+
+    def test_merged_defaults_with_lookup_denied(self):
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            "          persist-credentials: false\n        <<: *defaults\n",
+        )
+        self.verify(bad, "opaque_checkout_merge")
+
     def test_single_inline_with_map_denied(self):
         bad = workflow(None).replace(
             f"      - uses: actions/checkout@{PIN}\n",
