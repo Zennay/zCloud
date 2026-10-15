@@ -1,0 +1,65 @@
+name: zCloud dashboard cache-bust monotonic gate (hosted)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "public/index.html"
+      - "public/app.js"
+      - "public/enhancements.css"
+      - "scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
+      - "tests/test_zcloud_dashboard_cache_bust_gate_20261015.py"
+      - ".github/workflows/zcloud-dashboard-cache-bust-gate-20261015.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-dashboard-cache-bust-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Immutable base vs head asset cache tokens (no VPS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable same-repository head without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+      - name: Deny foreign head or ambiguous exact-sha checkout
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "pull_request"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$GITHUB_BASE_REF" = "main"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "${#BASE_SHA}" -eq 40
+          test "${#HEAD_SHA}" -eq 40
+          test "$(git cat-file -t "$BASE_SHA")" = "commit"
+          test "$(git cat-file -t "$HEAD_SHA")" = "commit"
+      - name: Run exact-asset Git regression fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_dashboard_cache_bust_gate_20261015
+          python3 -m py_compile scripts/zcloud_dashboard_cache_bust_gate_20261015.py
+      - name: Refuse an asset change with unchanged cache pin
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_dashboard_cache_bust_gate_20261015.py \
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
