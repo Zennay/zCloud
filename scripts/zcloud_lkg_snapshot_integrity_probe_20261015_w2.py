@@ -60,29 +60,61 @@ def _regular(path: Path) -> os.stat_result:
     return info
 
 
-def _directory(path: Path) -> None:
+def _open_directory_nofollow(path: Path) -> int:
+    """Open every ancestor from filesystem root using directory descriptors.
+
+    Checking only the leaf path permits a swapped parent symlink to redirect
+    metadata reads. All components are required to be actual directories.
+    """
+    absolute = path.absolute()
+    parts = absolute.parts
+    if not parts or not absolute.is_absolute() or any(x in (".", "..") for x in parts[1:]):
+        raise Denied("noncanonical_directory")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    current = None
     try:
-        mode = path.lstat().st_mode
-    except (OSError, ValueError) as exc:
-        raise Denied("unreadable_path") from exc
-    if not stat.S_ISDIR(mode):
-        raise Denied("nonregular_directory")
+        current = os.open(parts[0], flags)
+        for component in parts[1:]:
+            following = os.open(component, flags, dir_fd=current)
+            os.close(current)
+            current = following
+        owned = current
+        current = None
+        return owned
+    except OSError as exc:
+        raise Denied("nonregular_directory") from exc
+    finally:
+        if current is not None:
+            os.close(current)
+
+
+def _directory(path: Path) -> None:
+    fd = _open_directory_nofollow(path)
+    os.close(fd)
 
 
 def _open_regular(path: Path):
     _regular(path)
+    parent_fd = _open_directory_nofollow(path.parent)
     try:
         fd = os.open(
-            path,
+            path.name,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_fd,
         )
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             os.close(fd)
             raise Denied("nonregular_file")
-        return os.fdopen(fd, "rb")
+        try:
+            return os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
     except OSError as exc:
         raise Denied("unreadable_path") from exc
+    finally:
+        os.close(parent_fd)
 
 
 def _open_snapshot_regular(root: Path, name: str):
@@ -97,7 +129,7 @@ def _open_snapshot_regular(root: Path, name: str):
     file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     parent_fd = None
     try:
-        parent_fd = os.open(root, directory_flags)
+        parent_fd = _open_directory_nofollow(root)
         parts = PurePosixPath(name).parts
         for component in parts[:-1]:
             next_fd = os.open(component, directory_flags, dir_fd=parent_fd)
@@ -175,7 +207,7 @@ def _iter_snapshot_entries(root: Path):
                     finally:
                         os.close(next_fd)
 
-    fd = os.open(root, flags)
+    fd = _open_directory_nofollow(root)
     try:
         yield from visit(fd, (), 0)
     finally:
@@ -318,13 +350,13 @@ def inspect(state: Path) -> dict:
         raise Denied("missing_snapshot_files")
     # A manifest can truthfully describe an empty managed directory. Check the
     # direct children as well, not just the nonempty file hash list.
-    roots = tuple(files.iterdir())
-    actual_roots = {entry.name for entry in roots}
+    with os.scandir(_open_directory_nofollow(files)) as root_entries:
+        roots = tuple((entry.name, entry.stat(follow_symlinks=False)) for entry in root_entries)
+    actual_roots = {name for name, _ in roots}
     if actual_roots != declared_roots:
         raise Denied("manifest_inventory_mismatch")
-    for root in roots:
-        mode = root.lstat().st_mode
-        if (root.name in DIRECTORY_ROOTS) != stat.S_ISDIR(mode):
+    for name, info in roots:
+        if (name in DIRECTORY_ROOTS) != stat.S_ISDIR(info.st_mode):
             raise Denied("managed_path_type_mismatch")
     # A source tree might be changed during a long scan. This second check
     # catches ordinary pointer/manifest churn; it is not a filesystem lock.
