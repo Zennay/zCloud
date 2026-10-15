@@ -379,6 +379,38 @@ jobs:
             self.assertEqual(2, check.returncode, check.stdout + check.stderr)
             self.assertFalse(json.loads(check.stdout)["inventory_complete"])
 
+    def test_global_repository_scan_is_not_hidden_behind_workflow_path_filter(self):
+        workflow = (ROOT / ".github/workflows" /
+                    "zcloud-container-digest-ratchet-20261015-w2.yml").read_text()
+        self.assertIn("  pull_request:\n    branches: [main]", workflow)
+        # Any changed path may be a symlink to an arbitrary local Action; do
+        # not suppress the guard simply because the symlink is named alias.
+        self.assertNotIn("    paths:", workflow.split("permissions:", 1)[0])
+
+    def test_real_git_arbitrary_action_alias_symlink_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, _workflow = self._init(root)
+            (root / "components").mkdir()
+            (root / "tools").mkdir()
+            (root / "tools" / "action-wrapper").symlink_to(
+                root / "components", target_is_directory=True
+            )
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "opaque action alias outside github")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(2, check.returncode, check.stdout + check.stderr)
+            self.assertFalse(json.loads(check.stdout)["inventory_complete"])
+
+    def test_same_file_non_image_change_demands_legacy_owner_review(self):
+        old = self.scan("jobs:\n  old:\n    container:\n      image: alpine:latest\n")
+        new = self.scan("jobs:\n  old:\n    timeout-minutes: 30\n    container:\n      image: alpine:latest\n")
+        self.assertEqual(1, guard.compare(old, new)["new_findings"])
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
