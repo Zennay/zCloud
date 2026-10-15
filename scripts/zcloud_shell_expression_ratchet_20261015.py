@@ -285,6 +285,28 @@ def snapshot(rev: str) -> dict[str, Counter[str]]:
     return result
 
 
+def risk_kind_counts(snapshot_risks: dict[str, Counter[str]]) -> list[dict[str, object]]:
+    """Return fixed, non-sensitive reason categories, never source expressions.
+
+    Risk keys deliberately contain normalized shell expressions or SHA hashes.
+    They must never be reflected in advisory output, including for malformed
+    or legacy sources.
+    """
+    kinds: Counter[str] = Counter()
+    for risks in snapshot_risks.values():
+        for fingerprint, count in risks.items():
+            if fingerprint.startswith("incomplete_expression|"):
+                kind = "incomplete_expression"
+            elif fingerprint.startswith("ambiguous_dynamic_property|"):
+                kind = "dynamic_property_ambiguity"
+            elif fingerprint.startswith("ambiguous_"):
+                kind = "yaml_structure_ambiguity"
+            else:
+                kind = "direct_interpolation"
+            kinds[kind] += count
+    return [{"kind": kind, "count": count} for kind, count in sorted(kinds.items())]
+
+
 def audit(base: str, head: str) -> dict:
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
         raise EvidenceError("invalid_commit_sha")
@@ -303,6 +325,8 @@ def audit(base: str, head: str) -> dict:
         "head_sha": head,
         "baseline_risks": sum(sum(x.values()) for x in before.values()),
         "candidate_risks": sum(sum(x.values()) for x in after.values()),
+        "baseline_risk_kinds": risk_kind_counts(before),
+        "candidate_risk_kinds": risk_kind_counts(after),
         # Only Git paths and bounded counts, never potentially malicious shell text.
         "baseline_risky_workflows": [
             {"path": path, "risk_count": sum(risks.values())}
