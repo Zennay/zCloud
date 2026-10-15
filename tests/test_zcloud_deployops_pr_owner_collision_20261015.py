@@ -169,6 +169,27 @@ class PRCollisionInventoryTests(unittest.TestCase):
         self.assertTrue(result["uncontested_pr_ids_truncated"])
         self.assertEqual(0, result["collision_count"])
 
+    def test_snapshot_fingerprint_is_stable_across_dictionary_key_order(self):
+        record = snapshot(pr(1, ["docs/a.md"]), pr(2, ["docs/b.md"]))
+        baseline = m.assess(record)["snapshot_sha256"]
+        self.assertRegex(baseline, r"^[0-9a-f]{64}$")
+        reordered = {
+            "pulls": [{key: value for key, value in reversed(list(item.items()))}
+                      for item in record["pulls"]],
+            "main_sha": record["main_sha"],
+            "repo": record["repo"],
+        }
+        self.assertEqual(baseline, m.assess(reordered)["snapshot_sha256"])
+        changed = snapshot(pr(1, ["docs/a.md"]), pr(2, ["docs/c.md"]))
+        self.assertNotEqual(baseline, m.assess(changed)["snapshot_sha256"])
+        self.assertFalse(m.assess(record)["release_authorized"])
+
+    def test_snapshot_fingerprint_is_sensitivity_to_main_revision(self):
+        record = snapshot(pr(1, ["docs/a.md"]))
+        baseline = m.assess(record)["snapshot_sha256"]
+        record["main_sha"] = "f" * 40
+        self.assertNotEqual(baseline, m.assess(record)["snapshot_sha256"])
+
     def test_stale_base_pr_still_owns_files(self):
         result = m.assess(snapshot(pr(1, ["docs/a.md"], base=B),
                                    pr(2, ["docs/a.md"])))
