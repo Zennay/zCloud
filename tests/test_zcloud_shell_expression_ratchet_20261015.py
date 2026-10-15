@@ -922,6 +922,49 @@ class RealGitTests(unittest.TestCase):
                           {"kind": "yaml_structure_ambiguity", "count": 1}],
                          report["new_risk_kinds"])
 
+    def test_tagged_plain_run_key_is_not_invisible(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - !!str run: echo ${{ inputs.payload }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_tagged_quoted_run_key_is_not_invisible(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - !!str 'run': echo ${{ env.PAYLOAD }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_anchored_run_key_is_not_invisible(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - &chosen_run run: echo ${{ github.event.issue.body }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_explicit_tagged_run_key_is_not_invisible(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - ? !!str run\n    : echo ${{ secrets.TOKEN }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_tagged_escaped_run_key_is_not_invisible(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        encoded = chr(92) + "u0072un"
+        head = self.commit('steps:\n  - !!str "' + encoded + '": echo ${{ vars.DATA }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_tagged_unrelated_key_remains_outside_run_tripwire(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - !!str name: safe title\n    run: echo safe\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_unchanged_legacy_tagged_run_key_is_baseline_only(self):
+        source = "steps:\n  - !!str run: echo safe\n"
+        base = self.commit(source)
+        head = self.commit(source)
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_legacy_tagged_run_key_anchor_edit_invalidates_waiver(self):
+        source = "steps:\n  - !!str run: echo safe\n"
+        base = self.commit(source)
+        head = self.commit(source.replace("echo safe", "echo changed"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
