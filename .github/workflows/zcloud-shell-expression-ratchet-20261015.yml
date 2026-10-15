@@ -100,5 +100,10 @@ jobs:
           assert payload['release_authorized'] is False
           assert payload['deployment_authorized'] is False
           assert payload['mutation_performed'] is False
+          # Show only redacted, bounded findings after passing exact-commit admission.
+          if os.environ.get('GITHUB_STEP_SUMMARY'):
+              from scripts.zcloud_shell_expression_ratchet_20261015 import markdown_summary
+              with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+                  summary.write(markdown_summary(payload))
           print('ZCLOUD_SHELL_EXPRESSION_NO_NEW_DEBT_GREEN=1')
           PY
