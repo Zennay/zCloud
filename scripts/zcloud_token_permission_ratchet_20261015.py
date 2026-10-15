@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from hashlib import sha256
 import json
 from pathlib import Path
 import re
@@ -95,6 +96,11 @@ def _uncomment(line: str) -> str:
     return line
 
 
+def _fingerprint(value: str) -> str:
+    # Internal scope-sensitive fingerprint, never log original YAML or secrets.
+    return sha256(value.encode("utf-8", "strict")).hexdigest()
+
+
 def _scalar(value: str) -> str:
     raw = value.strip().lower()
     if not raw:
@@ -149,7 +155,7 @@ def permission_debt(source: str, path: str) -> Counter[str]:
         if width == 0:
             in_jobs = bool(re.match(r"^jobs:\s*$", line))
             if re.match(r"^jobs\s*:\s*[{[]", line):
-                findings[f"{path}|opaque_job_structure|flow"] += 1
+                findings[f"{path}|opaque_job_structure|{_fingerprint(line)}"] += 1
             job = None
         elif in_jobs and width == 2:
             head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\s*", line)
@@ -163,7 +169,7 @@ def permission_debt(source: str, path: str) -> Counter[str]:
             or re.match(r"""^\s*['"].*\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}).*['"]\s*:""", line)
         )
         if ambiguous:
-            findings[f"{path}|opaque_yaml_key|ambiguous"] += 1
+            findings[f"{path}|opaque_yaml_key|{_fingerprint(line)}"] += 1
         match = re.match(r"""^\s*(?:permissions|['"]permissions['"])\s*:\s*(.*)$""", line)
         if not match:
             continue
@@ -191,6 +197,9 @@ def permission_debt(source: str, path: str) -> Counter[str]:
         else:
             risk = "opaque_permissions"
         if risk is not None:
+            if risk.startswith("opaque"):
+                sample = value if value else "\n".join(body)
+                risk += ":" + _fingerprint(sample)
             findings[f"{path}|{scope}|{risk}"] += 1
             if sum(findings.values()) > MAX_FINDINGS:
                 raise IncompleteSource("too_many_findings")
