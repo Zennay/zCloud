@@ -684,5 +684,83 @@ class HostedMainPushAuditTests(unittest.TestCase):
         self.assertNotEqual(self.execute(GITHUB_EVENT_NAME="pull_request").returncode, 0)
 
 
+class HostedMainPushSummaryTests(unittest.TestCase):
+    """The advisory main push summary must remain redacted and deny-only."""
+
+    @classmethod
+    def setUpClass(cls):
+        source = (Path(__file__).resolve().parents[1]
+                  / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
+                  ).read_text(encoding="utf-8")
+        section = source.split("name: Report outcome without creating any release authority", 1)[1]
+        block = section.split("        run: |\n", 1)[1]
+        cls.script = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in block.splitlines()
+        ) + "\n"
+
+    def summary(self, contents=None):
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / "main-pin-drift.json"
+            output = root / "summary.md"
+            if contents is not None:
+                payload.write_text(contents, encoding="utf-8")
+            env = dict(os.environ, RUNNER_TEMP=str(root),
+                       EVIDENCE=str(payload), GITHUB_STEP_SUMMARY=str(output))
+            proc = subprocess.run(["bash", "-c", self.script], cwd=root,
+                                  capture_output=True, text=True, env=env, timeout=25)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return output.read_text(encoding="utf-8")
+
+    @staticmethod
+    def report(**changes):
+        payload = {
+            "policy": "zcloud-actions-pin-no-new-debt-v1",
+            "base_unpinned": 72, "head_unpinned": 73,
+            "new_unpinned": 1, "ok": False,
+            "release_authorized": False,
+            "deployment_authorized": False,
+            "mutation_performed": False,
+        }
+        payload.update(changes)
+        return json.dumps(payload)
+
+    def test_main_push_advisory_valid_denial_clearly_visible(self):
+        result = self.summary(self.report())
+        self.assertIn("verwijzingen: 1", result)
+        self.assertIn("deployautorisatie: **Nee**", result)
+        self.assertIn("niet** geblokkeerd", result)
+
+    def test_missing_or_array_evidence_denied_without_summary_crash(self):
+        for raw in (None, '[]', '{"new_unpinned":1}', '{"new_unpinned":NaN}'):
+            with self.subTest(value=raw):
+                result = self.summary(raw)
+                self.assertIn("verwijzingen: onbekend", result)
+                self.assertIn("deployautorisatie: **Nee**", result)
+
+    def test_duplicate_json_key_or_forged_permission_redacted(self):
+        duplicated = self.report().replace(
+            '"release_authorized": false',
+            '"release_authorized": true, "release_authorized": false'
+        )
+        for raw in (duplicated, self.report(deployment_authorized=True),
+                    self.report(ok=True)):
+            with self.subTest(value=raw[:30]):
+                result = self.summary(raw)
+                self.assertIn("verwijzingen: onbekend", result)
+                self.assertNotIn("verwijzingen: 1", result)
+
+    def test_boolean_count_rejected_and_untrusted_text_never_echoed(self):
+        self.assertIn("verwijzingen: onbekend",
+                      self.summary(self.report(base_unpinned=True)))
+        dirty = self.report()
+        dirty = dirty.replace('"ok": false', '"notes":"MY_PRIVATE_TOKEN","ok": false')
+        result = self.summary(dirty)
+        self.assertIn("verwijzingen: 1", result)
+        self.assertNotIn("MY_PRIVATE_TOKEN", result)
+
+
 if __name__ == "__main__":
     unittest.main()
