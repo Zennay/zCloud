@@ -133,11 +133,22 @@ def refs(text: str, path: str, *, local_refs: list[str] | None = None) -> list[t
             raise Refusal("action_ref_oversize")
         if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
             raw = raw[1:-1]
+        # An empty or YAML folded/literal scalar is not a complete source
+        # reference. Comparing just '>' would mask changes to indented
+        # external action values across commits.
+        if not raw or re.fullmatch(r"[>|][-+0-9]*", raw):
+            raise Refusal("ambiguous_uses_value")
         if raw.startswith("./"):
-            if raw.startswith("../") or ".." in raw.split("/") or not re.fullmatch(r"\./[A-Za-z0-9_./-]+", raw):
+            # Refuse path-equivalent spellings before comparing against
+            # immutable Git-tree symlink ancestry; ././x and //x otherwise
+            # bypass the literal symlink-prefix proof.
+            if not re.fullmatch(r"\./[A-Za-z0-9_./-]+", raw):
                 raise Refusal("invalid_local_action")
+            segments = raw[2:].split("/")
+            if any(part in ("", ".", "..") for part in segments):
+                raise Refusal("ambiguous_local_action_path")
             if local_refs is not None:
-                local_refs.append(raw[2:].rstrip("/"))
+                local_refs.append("/".join(segments))
             continue
         if IMMUTABLE.fullmatch(raw) or re.fullmatch(r"docker://[^ ]+@sha256:[0-9a-fA-F]{64}", raw):
             continue
