@@ -523,6 +523,32 @@ class RatchetTests(unittest.TestCase):
         code, out = self.change("curl https://api.github.com/repos/org/repo/git/reflogs")
         self.assertEqual(code, 0, out)
 
+    def test_python_subprocess_git_push_argv_denied(self):
+        code, out = self.change("subprocess.run(['git', 'push', 'origin', 'HEAD:main'])")
+        self.assertEqual(code, 1, out)
+        self.assertIn("separate_argv_git_writer", out["findings"][0]["reasons"])
+
+    def test_python_subprocess_git_send_pack_argv_denied(self):
+        code, out = self.change('subprocess.check_call(["git", "send-pack", "origin"])')
+        self.assertEqual(code, 1, out)
+        self.assertIn("separate_argv_git_writer", out["findings"][0]["reasons"])
+
+    def test_js_actions_exec_git_push_argv_denied(self):
+        code, out = self.change('await exec.exec("git", ["push", "origin", "HEAD:main"])')
+        self.assertEqual(code, 1, out)
+        self.assertIn("separate_argv_git_writer", out["findings"][0]["reasons"])
+
+    def test_js_spawn_git_send_pack_argv_denied(self):
+        self.assertEqual(self.change("spawn('git', ['send-pack', 'origin'])")[0], 1)
+
+    def test_python_subprocess_read_only_argv_allowed(self):
+        code, out = self.change("subprocess.run(['git', 'status', '--short'])")
+        self.assertEqual(code, 0, out)
+
+    def test_js_actions_exec_read_only_argv_allowed(self):
+        code, out = self.change('await exec.exec("git", ["rev-parse", "HEAD"])')
+        self.assertEqual(code, 0, out)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, result = self.change("git push origin main # " + marker)
