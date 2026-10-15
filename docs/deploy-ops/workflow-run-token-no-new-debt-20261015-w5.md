@@ -15,3 +15,5 @@ This conservative source-only PR ratchet requires newly added or edited `workflo
 - GitHub-hosted pull-request check has only `contents: read`, pinned checkout and `persist-credentials: false`; foreign PRs fail **before** source checkout instead of skipping as successful.
 - This is not a complete YAML semantics parser, full GitHub token provenance proof, production admission, protected-main attestation, or evaluation of workflow_run payload/trigger trust. Ambiguous YAML may be denied conservatively.
 - Independent review and proper protected-main #922 remain prerequisites before integration. #1326 runner health, #1447 production writer locks, and #580/PWQ-41/#1089 release serialisation remain independently owned. Nothing is deployed or dispatched by this change.
+
+Hardening extension: job permission aliases (`*alias`), anchors (`&name`), tagged values (`!!str`) and quoted permission values are conservatively denied whenever `workflow_run` is present; these forms cannot be treated as independently verified read-only policy.
