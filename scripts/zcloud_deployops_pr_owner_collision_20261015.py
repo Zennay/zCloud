@@ -19,7 +19,7 @@ from pathlib import Path
 SHA = re.compile(r"^[a-f0-9]{40}$")
 PATH = re.compile(r"^[A-Za-z0-9_./@+ -]{1,320}$")
 MAX_PRS = 1000
-MAX_FILES = 99
+MAX_FILES = 300
 MAX_SNAPSHOT_BYTES = 4_000_000
 
 class InvalidInventory(ValueError):
