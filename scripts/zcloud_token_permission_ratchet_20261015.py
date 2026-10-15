@@ -224,6 +224,13 @@ def permission_debt(
             findings[f"{path}|job:{existing_job}|implicit_default"] += 1
         if not jobs_seen:
             findings[f"{path}|top|implicit_default"] += 1
+    # An alias/flow/escaped YAML key can resolve through an anchor defined
+    # elsewhere in this workflow. Binding just the opaque scalar would allow
+    # unchanged "*trust" to inherit a newly elevated &trust target.
+    # Reuse historic opaque debt only if the *entire* committed workflow blob
+    # is unchanged (intentionally conservative for YAML we cannot parse).
+    if any("|opaque" in key for key in findings):
+        findings[f"{path}|opaque_document_sha|{_fingerprint(source)}"] += 1
     if sum(findings.values()) > MAX_FINDINGS:
         raise IncompleteSource("too_many_findings")
     return findings
