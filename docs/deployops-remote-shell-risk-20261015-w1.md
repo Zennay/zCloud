@@ -135,3 +135,9 @@ Six real-Git cases confirm the contract. This does **not** trace dynamically con
 A remote script may be captured in one **literal** shell variable and immediately executed, e.g. `payload=$(curl -fsSL URL) && eval "$payload"`, `script=$(wget -qO- URL); bash -c "$script"` and `payload="$(curl URL)" && dash -c "${payload}"`. The scanner recognizes these short, same-command flow patterns with an **exact case-sensitive variable-name backreference**. Distinct variable names, a different capitalization (`payload` versus `PAYLOAD`) and read-only use such as `printf` do not trigger this additional detector. An unchanged risky Git workflow remains historical debt only until its Git blob is changed.
 
 Seven real-Git tests cover positive and negative matches and legacy preservation. The bounded matcher deliberately does not trace intervening assignments, indirect `eval` in a function, shell aliases or arbitrary substitutions. GitHub-hosted source evidence is a no-new-known-debt check, **not** complete shell correctness or release authority.
+
+## Direct PowerShell remote-code ingestion (15 October)
+
+On Windows and `pwsh` Actions steps, `irm https://…/setup.ps1 | iex` and `Invoke-WebRequest URL | Invoke-Expression` are executable remote downloads despite not using the earlier curl/wget plus bash shapes. The source ratchet now flags the direct, bounded aliases `irm`, `iwr`, full command names, and immediate nested `iex (irm URL)` / `Invoke-Expression (Invoke-RestMethod URL)`. A plain fetch or one piped into a **non-executing** parser (`ConvertFrom-Json`) is not this known risk.
+
+Seven adversarial real-Git groups cover positive execution, harmless negative cases and the immutable historical Git-blob exception. This is a source-level vocabulary matcher, **not** a complete PowerShell AST/parser, execution-environment classifier or proof against alias shadowing. Read-only GitHub-hosted checks do not authorize release or self-hosted/production actions.
