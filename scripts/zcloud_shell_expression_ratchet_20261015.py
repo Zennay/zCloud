@@ -15,6 +15,7 @@ import re
 import subprocess
 
 MAX_WORKFLOWS = 512
+MAX_TREE_ENTRIES = 16384
 MAX_BLOB_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_EXPRESSIONS = 8192
@@ -54,14 +55,16 @@ def git(*args: str) -> bytes:
 def tree_files(rev: str) -> dict[str, str]:
     if not SHA.fullmatch(rev):
         raise EvidenceError("invalid_commit_sha")
-    entries = git("ls-tree", "-rz", rev, "--", ".github/workflows")
+    # The same shell-injection boundary applies to local composite Actions.
+    # Enumerate the tree, then inspect only workflow and action metadata blobs.
+    entries = git("ls-tree", "-rz", rev)
     files: dict[str, str] = {}
     count = 0
     for entry in entries.split(b"\0"):
         if not entry:
             continue
         count += 1
-        if count > MAX_WORKFLOWS:
+        if count > MAX_TREE_ENTRIES:
             raise EvidenceError("too_many_tree_entries")
         try:
             meta, raw_path = entry.split(b"\t", 1)
@@ -69,10 +72,14 @@ def tree_files(rev: str) -> dict[str, str]:
             path = raw_path.decode("utf-8", "strict")
         except (ValueError, UnicodeError) as exc:
             raise EvidenceError("malformed_git_tree") from exc
-        if not path.startswith(".github/workflows/") or "/../" in path or "\x00" in path:
+        if path.startswith("/") or path.startswith("../") or "/../" in path or "\x00" in path:
             raise EvidenceError("unsafe_workflow_path")
-        if not (path.endswith(".yml") or path.endswith(".yaml")):
+        workflow = path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
+        action_metadata = path.rsplit("/", 1)[-1] in {"action.yml", "action.yaml"}
+        if not (workflow or action_metadata):
             continue
+        if len(files) >= MAX_WORKFLOWS:
+            raise EvidenceError("too_many_workflow_sources")
         if mode != "100644" or kind != "blob" or not SHA.fullmatch(blob):
             raise EvidenceError("non_regular_workflow")
         if path in files:
