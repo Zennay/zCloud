@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import hashlib
 import json
 import os
 import re
@@ -208,9 +209,11 @@ def _runner_targets(lines: list[str], jobs: list[int], jobs_end: int,
     return "safe"
 
 
-def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
+def inspect_workflow(root: Path, filename: str, job: str, scope: str,
+                     *, source_text: str | None = None) -> str:
     try:
-        lines = _read_regular(root, filename).splitlines()
+        lines = (source_text if source_text is not None else
+                 _read_regular(root, filename)).splitlines()
         # A YAML root field can legally appear after jobs. Restrict the job
         # enumeration to the real jobs block, never a later root section.
         # Exact root key matching is intentionally conservative.
@@ -261,13 +264,34 @@ def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
 
 
 def inventory(root: Path) -> dict:
+    """Bind every decision to the same bytes used to compute its digest.
+
+    SHA-256 proves only equality of captured source snapshots, never GitHub
+    origin, canonical-main provenance, a runtime lock or deployment authority.
+    """
     details = {}
     for name, (job, scope) in WRITERS.items():
-        result = inspect_workflow(root, name, job, scope)
+        digest = None
+        try:
+            source_text = _read_regular(root, name)
+            digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+            result = inspect_workflow(root, name, job, scope,
+                                      source_text=source_text)
+        except AmbiguousSource as exc:
+            result = str(exc)
         details[name] = {"mutation_job": job, "required_scope": scope,
-                         "source_result": result}
+                         "source_result": result, "source_sha256": digest}
     unsafe = sorted(name for name, item in details.items()
                     if item["source_result"] != "serialized_source")
+    complete = all(item["source_sha256"] is not None
+                   for item in details.values())
+    snapshot = None
+    if complete:
+        h = hashlib.sha256(b"zcloud-seven-writer-snapshot-v1\0")
+        for name in sorted(details):
+            h.update(name.encode("utf-8") + b"\0" +
+                     details[name]["source_sha256"].encode("ascii") + b"\n")
+        snapshot = h.hexdigest()
     return {
         "schema": "zcloud-writer-lock-source-v1",
         "group": PRODUCTION_GROUP,
@@ -275,6 +299,8 @@ def inventory(root: Path) -> dict:
         "source_serialized": len(WRITERS) - len(unsafe),
         "source_unverified": unsafe,
         "source_lock_complete": not unsafe,
+        "source_snapshot_complete": complete,
+        "source_snapshot_sha256": snapshot,
         "runtime_lock_verified": False,
         "release_authorized": False,
         "dispatch_authorized": False,
