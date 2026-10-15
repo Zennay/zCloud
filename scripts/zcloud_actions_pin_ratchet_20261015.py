@@ -171,10 +171,19 @@ def snapshot(root: Path, revision: str) -> dict[str, list[tuple[tuple[str, str],
     local_refs: list[str] = []
     output = {}
     for path, blob in sorted(tree.items()):
-        raw = git(root, "cat-file", "blob", blob)
-        total += len(raw)
-        if len(raw) > MAX_FILE or total > MAX_TOTAL:
+        # Git cat-file blob buffers stdout. Check the immutable object's
+        # reported byte size *before* loading it into memory. Reject both
+        # per-file and aggregate oversize inputs without fetching bytes.
+        size_raw = git(root, "cat-file", "-s", blob).strip()
+        if not size_raw.isdigit() or len(size_raw) > 20:
+            raise Refusal("invalid_blob_size")
+        blob_size = int(size_raw)
+        if blob_size > MAX_FILE or total + blob_size > MAX_TOTAL:
             raise Refusal("workflow_bytes_limit")
+        raw = git(root, "cat-file", "blob", blob)
+        if len(raw) != blob_size:
+            raise Refusal("git_blob_size_mismatch")
+        total += blob_size
         try:
             text = raw.decode("utf-8", "strict")
         except UnicodeError as exc:
