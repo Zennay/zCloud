@@ -467,6 +467,33 @@ jobs:
         with self.assertRaises(ValueError):
             guard.dutch_operator_summary(dict(clean, policy="unknown"), 0)
 
+    def test_docker_uses_digest_must_cover_entire_scalar(self):
+        digest = DIGEST
+        variants = (
+            f"      - uses: docker://alpine@sha256:{digest} untrusted-trailer\n",
+            f"      - uses: 'docker://alpine@sha256:{digest}' trailing-yaml\n",
+            f'      - uses: "docker://alpine@sha256:{digest} suffix"\n',
+            f"      - uses: docker://alpine@sha256:{digest}'\n",
+        )
+        for value in variants:
+            with self.subTest(value=value):
+                self.assertEqual(1, len(self.scan(value)))
+
+    def test_opaque_action_uses_alias_and_expression_are_denied(self):
+        opaque = (
+            "      - uses: *docker_action\n",
+            "      - uses: &container docker://alpine:latest\n",
+            "      - uses: ${{ inputs.step }}\n",
+            "      - uses: !yaml-tag docker://alpine:latest\n",
+            "      - uses: [docker://alpine:latest]\n",
+        )
+        for value in opaque:
+            with self.subTest(value=value):
+                self.assertEqual(1, len(self.scan(value)))
+        self.assertEqual([], self.scan(
+            "      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803\n"
+        ))
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
