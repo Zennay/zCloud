@@ -244,5 +244,43 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertTrue(check(self.root, old, self.commit("add-safe-job"))["ok"])
 
 
+    def test_legacy_alias_anchor_mutated_into_write_denied(self):
+        old = ("on: push\npermissions: *trust\n"
+               "x-permission-set: &trust\n  contents: read\njobs: {}\n")
+        new = old.replace("contents: read", "contents: write")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-alias")
+        self.put(".github/workflows/original.yml", new)
+        result = check(self.root, base, self.commit("mutated-anchor"))
+        self.assertFalse(result["ok"])
+
+    def test_job_alias_anchor_mutated_into_write_denied(self):
+        old = ("on: push\nx-permission-set: &trust\n  actions: read\n"
+               "jobs:\n  test:\n    permissions: *trust\n    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-job-alias")
+        self.put(".github/workflows/original.yml", old.replace("actions: read", "actions: write"))
+        self.assertFalse(check(self.root, base, self.commit("mutable-job-alias"))["ok"])
+
+    def test_unrelated_other_file_allowed_with_legacy_alias(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions: *trust\n"
+                 "x-permission-set: &trust\n  contents: read\njobs: {}\n")
+        base = self.commit("legacy-unmodified")
+        self.put("README.md", "no changes to YAML\n")
+        self.assertTrue(check(self.root, base, self.commit("docs-only"))["ok"])
+
+    def test_legacy_alias_changed_comment_fails_closed(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions: *trust\n"
+                 "x-permission-set: &trust\n  contents: read\njobs: {}\n")
+        base = self.commit("legacy-anchor")
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions: *trust\n"
+                 "x-permission-set: &trust\n  contents: read\n"
+                 "# candidate must prove unchanged opaque YAML\njobs: {}\n")
+        self.assertFalse(check(self.root, base, self.commit("comment-change"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
