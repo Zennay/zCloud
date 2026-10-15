@@ -319,6 +319,23 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, workflow)
 
+    def test_hosted_workflow_rechecks_canonical_main_after_snapshot(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        text = (root / ".github/workflows" /
+                "zcloud-pr-owner-collision-inventory-20261015.yml").read_text(
+                    encoding="utf-8")
+        self.assertGreaterEqual(text.count("ls-remote https://github.com/Zennay/zCloud.git"), 2)
+        first = text.find("Prove exact current main")
+        read = text.find("Fetch exact-main, fully paginated PR ownership")
+        report = text.find("Print bounded advisory result")
+        final = text.rfind("ls-remote https://github.com/Zennay/zCloud.git")
+        self.assertTrue(0 <= first < read < report < final)
+        self.assertIn("GIT_TERMINAL_PROMPT=0 timeout 20 git", text)
+        self.assertIn('test "$current" = "$GITHUB_SHA"', text[final:])
+        self.assertIn("Main snapshot SHA:", text)
+        self.assertIn('exit "$status"', text[final:])
+
     def test_no_release_or_runtime_mutation_codepaths(self):
         from pathlib import Path
         code = Path(s.__file__).read_text(encoding="utf-8")
