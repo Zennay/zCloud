@@ -6,8 +6,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
+from scripts import zcloud_checkout_credentials_ratchet_20261015_w1 as guard
 from scripts.zcloud_checkout_credentials_ratchet_20261015_w1 import Denied, inspect, main
 
 WORK = ".github/workflows"
@@ -177,6 +181,52 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         Path(WORK).rmdir()
         Path(WORK).symlink_to("../actions")
         with self.assertRaisesRegex(Denied, "unsupported_workflow_root"):
+            inspect(self.base, self.commit())
+
+    def test_unresponsive_git_stdout_stops_at_scan_deadline(self):
+        # A stalled stdout read used to hang forever before wait(timeout).
+        true_popen = subprocess.Popen
+        created = []
+        def launch(*args, **kwargs):
+            proc = true_popen([sys.executable, "-c", "import time; time.sleep(10)"], **kwargs)
+            created.append(proc)
+            return proc
+        start = time.monotonic()
+        with mock.patch.object(guard.subprocess, "Popen", side_effect=launch):
+            with self.assertRaisesRegex(Denied, "git_source_timeout"):
+                guard.git("cat-file", "-s", "deadbeef", deadline=time.monotonic() + 0.2)
+        self.assertLess(time.monotonic() - start, 3)
+        self.assertTrue(created)
+        self.assertIsNotNone(created[0].poll(), "timeout must kill/reap child")
+
+    def test_oversized_subprocess_stdout_stops_before_buffering(self):
+        true_popen = subprocess.Popen
+        created = []
+        def launch(*args, **kwargs):
+            proc = true_popen([sys.executable, "-c",
+                               "import sys; sys.stdout.buffer.write(b'x' * 131072)"], **kwargs)
+            created.append(proc)
+            return proc
+        with mock.patch.object(guard.subprocess, "Popen", side_effect=launch):
+            with self.assertRaisesRegex(Denied, "git_output_limit"):
+                guard.git("cat-file", "blob", "deadbeef", max_bytes=64)
+        self.assertTrue(created)
+        self.assertIsNotNone(created[0].poll(), "oversize must kill/reap child")
+
+    def test_invalid_subprocess_limit_never_launches(self):
+        with mock.patch.object(guard.subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(Denied, "invalid_git_output_budget"):
+                guard.git("rev-parse", "HEAD", max_bytes=True)
+            launch.assert_not_called()
+
+    def test_elapsed_global_scan_deadline_denied_before_git(self):
+        with mock.patch.object(guard, "MAX_SCAN_SECONDS", 0):
+            with self.assertRaisesRegex(Denied, "scan_deadline_exceeded"):
+                inspect(self.base, self.commit())
+
+    def test_oversized_workflow_content_denied(self):
+        self.write(f"{WORK}/added.yml", "x" * (guard.MAX_FILE_BYTES + 1))
+        with self.assertRaisesRegex(Denied, "oversized_source"):
             inspect(self.base, self.commit())
 
     def test_invalid_sha_denied(self):
