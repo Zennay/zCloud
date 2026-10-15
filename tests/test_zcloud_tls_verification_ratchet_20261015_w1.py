@@ -127,7 +127,8 @@ class SourcePatterns(unittest.TestCase):
     def test_indexed_git_config_cannot_cross_indices(self):
         text = ("env:\n  GIT_CONFIG_KEY_0: http.sslVerify\n"
                 "  GIT_CONFIG_VALUE_1: false\n")
-        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 0)
+        # VALUE_1 cannot make KEY_0 safe. Missing VALUE_0 is denied.
+        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 1)
 
     def test_conflicting_indexed_git_config_fails_closed(self):
         text = ("env:\n  GIT_CONFIG_KEY_0: http.sslVerify\n"
