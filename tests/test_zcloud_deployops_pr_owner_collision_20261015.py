@@ -72,6 +72,65 @@ class PRCollisionInventoryTests(unittest.TestCase):
         self.assertFalse(result["deployment_authorized"])
         self.assertFalse(result["mutation_performed"])
 
+    def test_file_directory_cross_pr_collision_without_exact_same_path(self):
+        result = m.assess(snapshot(
+            pr(1, ["docs/ops"]),
+            pr(2, ["docs/ops/report.md"]),
+            pr(3, ["docs/unrelated.txt"]),
+        ))
+        self.assertEqual(0, result["collision_count"])
+        self.assertEqual(1, result["hierarchy_collision_count"])
+        self.assertEqual([{
+            "ancestor": "docs/ops", "descendant": "docs/ops/report.md",
+            "pr_count": 2, "prs": [1, 2], "pr_ids_truncated": False,
+        }], result["hierarchy_collisions"])
+        self.assertEqual([{"pr_count": 2, "prs": [1, 2],
+                           "pr_ids_truncated": False}], result["conflict_groups"])
+        self.assertEqual([3], result["uncontested_pr_ids"])
+
+    def test_filename_prefix_without_slash_is_not_false_conflict(self):
+        result = m.assess(snapshot(
+            pr(1, ["docs/ops"]),
+            pr(2, ["docs/ops-old/report.md"]),
+        ))
+        self.assertEqual(0, result["hierarchy_collision_count"])
+        self.assertEqual([1, 2], result["uncontested_pr_ids"])
+
+    def test_file_to_folder_replacement_within_one_pr_is_not_cross_pr(self):
+        result = m.assess(snapshot(pr(1, [
+            "docs/legacy", "docs/legacy/report.md",
+        ])))
+        self.assertEqual(0, result["hierarchy_collision_count"])
+        self.assertEqual([], result["conflict_groups"])
+        self.assertEqual([1], result["uncontested_pr_ids"])
+
+    def test_file_hierarchy_edges_extend_exact_path_conflict_group(self):
+        result = m.assess(snapshot(
+            pr(1, ["docs/tree"]),
+            pr(2, ["docs/tree", "docs/tree/a.md"]),
+            pr(3, ["docs/tree/a.md"]),
+        ))
+        self.assertEqual(2, result["collision_count"])
+        self.assertEqual(1, result["hierarchy_collision_count"])
+        self.assertEqual([{"pr_count": 3, "prs": [1, 2, 3],
+                           "pr_ids_truncated": False}], result["conflict_groups"])
+
+    def test_hierarchy_only_collision_returns_cli_nonzero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot_path = Path(tmp) / "snapshot.json"
+            snapshot_path.write_text(json.dumps(snapshot(
+                pr(1, ["docs/ops"]), pr(2, ["docs/ops/data.json"]))),
+                encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--snapshot", str(snapshot_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(1, result.returncode, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(0, payload["collision_count"])
+            self.assertEqual(1, payload["hierarchy_collision_count"])
+            self.assertFalse(payload["release_authorized"])
+
     def test_uncontested_does_not_mean_reviewed_or_mergeable(self):
         s = snapshot(pr(10, ["tests/a.py"]), pr(20, ["tests/b.py"]))
         result = m.assess(s)
