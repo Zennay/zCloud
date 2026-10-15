@@ -138,6 +138,22 @@ class ManualDispatchPolicy(unittest.TestCase):
         body = workflow().decode().replace("  workflow_dispatch:", "  push:\n  workflow_dispatch:")
         self.assertDenied(body.encode())
 
+    def test_repairing_ambiguous_old_yaml_can_be_admitted_safely(self):
+        old = workflow().replace(b"  workflow_dispatch:", b"  workflow_dispatch: &unsafe")
+        repaired = workflow(if_statement=SAFE_IF)
+        good = guard.evaluate({WF: old}, {WF: repaired})
+        self.assertTrue(good["ok"])
+        self.assertEqual("changed_workflows_only", good["inventory_scope"])
+        self.assertEqual(1, good["ambiguous_touched_baseline_count"])
+        broken = guard.evaluate({WF: old}, {WF: workflow()})
+        self.assertFalse(broken["ok"])
+        self.assertEqual(1, broken["new_debt_count"])
+        still_ambiguous = workflow().replace(
+            b"  workflow_dispatch:", b"  workflow_dispatch: &newname",
+        )
+        with self.assertRaises(guard.RefError):
+            guard.evaluate({WF: old}, {WF: still_ambiguous})
+
     def test_unmodified_legacy_ambiguous_yaml_does_not_block_safe_changes(self):
         historical = workflow().replace(b"  workflow_dispatch:", b"  workflow_dispatch: &anchor")
         head = {WF: historical, ".github/workflows/new.yml": workflow(if_statement=SAFE_IF)}
