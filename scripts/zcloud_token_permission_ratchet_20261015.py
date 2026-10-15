@@ -149,6 +149,7 @@ def permission_debt(
     job = None
     jobs_seen: set[str] = set()
     jobs_header_count = 0
+    saw_root_key = False
     jobs_with_explicit_scopes: set[str] = set()
     safe_root_scope = False
     run_scalar_indent: int | None = None
@@ -159,6 +160,14 @@ def permission_debt(
         if "\t" in original[:len(original) - len(original.lstrip())]:
             raise IncompleteSource("tab_indentation")
         width = len(original) - len(original.lstrip(" "))
+        if not saw_root_key and not re.fullmatch(r"(?:---|\.\.\.|%YAML\s+.+)", line.strip()):
+            saw_root_key = True
+            if width != 0:
+                # A root mapping indented as a whole may be valid YAML. Our
+                # zero-indent top-level job parser would miss its new jobs
+                # inheriting repository write-token defaults. Bind every
+                # legacy noncanonical root to the full immutable YAML blob.
+                findings[f"{path}|opaque_indented_root|{_fingerprint(line)}"] += 1
         # Text beneath a literal/folded 'run:' script is inert YAML scalar
         # content, not workflow mapping keys. Do not mistake snippets like
         # "permissions: write-all" within examples or shell heredocs for a
