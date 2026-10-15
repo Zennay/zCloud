@@ -121,9 +121,11 @@ def manual_event(source: str) -> bool:
     # Glob wildcards in paths: are valid event filters, not YAML aliases.
     if re.search(r"(?m)^[ \t]*(?:<<:|[A-Za-z_-]+:[ \t]*[&*]|-[ \t]*[&*])", block):
         raise RefError("ambiguous_event_syntax")
-    return bool(re.search(r"(?m)^[ \t]+workflow_dispatch[ \t]*:", block)) or bool(
-        re.search(r"\bworkflow_dispatch\b", block) and block.lstrip().startswith("[")
-    )
+    # GitHub Actions accepts both block maps and block sequences, with either
+    # quoted or bare event names and any legal YAML indentation width.
+    map_event = r"""(?m)^[ \t]+(?:workflow_dispatch|['"]workflow_dispatch['"])[ \t]*:"""
+    list_event = r"""(?m)^[ \t]+-[ \t]+(?:workflow_dispatch|['"]workflow_dispatch['"])[ \t]*(?:#.*)?$"""
+    return bool(re.search(map_event, block) or re.search(list_event, block))
 
 def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
     source = body.decode("utf-8")
