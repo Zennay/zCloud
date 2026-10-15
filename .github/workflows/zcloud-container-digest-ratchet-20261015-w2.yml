@@ -53,12 +53,16 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
           test "$GITHUB_EVENT_NAME" = pull_request
+          test "$GITHUB_BASE_REF" = "main"
+          [[ "$GITHUB_HEAD_REF" =~ ^[A-Za-z0-9._/-]{1,200}$ ]]
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
           git fetch --no-tags --depth=1 origin refs/heads/main
           BASE_SHA="$(git rev-parse FETCH_HEAD)"
           test "$BASE_SHA" = "$EXPECTED_BASE"
+          remote_head="$(git ls-remote --exit-code origin "refs/heads/$GITHUB_HEAD_REF" | awk '{print $1}')"
+          test "$remote_head" = "$EXPECTED_HEAD"
           echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
           echo "HEAD_SHA=$EXPECTED_HEAD" >> "$GITHUB_ENV"
 
@@ -97,4 +101,6 @@ jobs:
               summary.write("**Alleen GitHub-broncontrole.** Geen VPS-herstel, productie-deploy of vrijgave.\n")
           PY
           test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          final_head="$(git ls-remote --exit-code origin "refs/heads/$GITHUB_HEAD_REF" | awk '{print $1}')"
+          test "$final_head" = "$HEAD_SHA"
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
