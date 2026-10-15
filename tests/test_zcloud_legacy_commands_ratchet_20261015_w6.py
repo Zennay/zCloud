@@ -444,7 +444,7 @@ class RealGitRatchetTests(unittest.TestCase):
                 gate.check_content(("name: " + escaped + "\n").encode("utf-8"))
 
     def test_escaped_unicode_format_controls_fail_closed(self):
-        with self.assertRaisesRegex(gate.Denied, "format controls"):
+        with self.assertRaisesRegex(gate.Denied, "control character"):
             gate.check_content(r"name: \u202e".encode("utf-8"))
 
     def test_excessively_nested_unicode_escapes_fail_closed(self):
