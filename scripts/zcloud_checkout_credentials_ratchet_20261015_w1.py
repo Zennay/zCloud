@@ -209,8 +209,8 @@ def checkout_risks(source: str) -> list[str]:
         #   - name: Checkout
         #     uses: actions/checkout@<full-SHA>
         #     with: ...
-        # Bind 'uses:' to exactly one sibling - name step, not an arbitrary
-        # nested YAML mapping that happens to have the same text.
+        # Bind uses to one direct step introduced by name, id or if.
+        # An arbitrary nested YAML mapping must never count as a step.
         named = STEP_USES.fullmatch(line)
         if not named:
             return ["ambiguous_checkout"]
@@ -223,7 +223,7 @@ def checkout_risks(source: str) -> list[str]:
         parent = active[leader]
         parent_indent = len(parent) - len(parent.lstrip(" "))
         if (uses_indent != parent_indent + 2 or
-                not re.fullmatch(r"\s*-\s+name\s*:\s*[^#\s].*", parent)):
+                not re.fullmatch(r"\s*-\s+(?:name|id|if)\s*:\s*[^#\s].*", parent)):
             return ["ambiguous_checkout"]
         uses.append((index, parent_indent, leader))
     problems = []
