@@ -308,6 +308,23 @@ generic parsers. This check is intentionally a fail-closed syntax guard,
 **not** proof that a tagged key is executable by Actions, nor a substitute
 for YAML semantic validation. No release, merge or VPS permission is granted.
 
+## Human-readable GitHub Actions summary
+
+After successful SHA-bound evidence admission, the hosted job writes a
+**Dutch, source-only summary** to its native GitHub Actions step summary.
+The view shows historical/candidate/new totals and, for rejected source,
+up to 15 newly risky workflow paths with category counts. No extra
+third-party Actions, credentials, VPS agents or filesystem writes outside
+the hosted job are needed.
+
+Names are treated as untrusted source: control characters, HTML and
+Markdown table delimiters are escaped or bounded before rendering.
+An oversized list is capped with an explicit omitted-file count.
+No expression bodies, secret values, full shell scripts, deploy tokens or
+release authorization flags are displayed as authority. A green message
+means only that the candidate introduced no new syntactic debt under
+this limited scanner, **not** that production or the VPS is safe.
+
 ## Exact-identity hosted admission
 
 The hosted read-only job validates the advisory JSON after computing it.
