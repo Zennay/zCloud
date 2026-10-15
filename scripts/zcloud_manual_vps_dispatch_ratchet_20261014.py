@@ -183,7 +183,9 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
             # Step-level "uses:" has deeper indentation and is not a
             # job-level reusable-workflow key. Inspect job keys even when
             # they occur AFTER a steps block: YAML mapping order is arbitrary.
-            if len(field.group("indent").expandtabs(8)) >= 8:
+            if "\t" in field.group("indent"):
+                raise RefError("unsupported_job_authority_syntax")
+            if len(field.group("indent")) >= 8:
                 continue
             literal = field.group(0)
             expected = "    " + field.group("key").strip("'\\\"") + ":"
