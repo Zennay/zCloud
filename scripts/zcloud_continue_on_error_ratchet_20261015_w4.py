@@ -72,6 +72,9 @@ def check_workflow(source: str) -> list[str]:
             # Only a direct YAML false scalar (with optional comment) is safe.
             if not re.fullmatch(r"false(?:[ \t]*#.*)?", value):
                 issues.append(f"line_{number}:continue_on_error_not_literal_false")
+        elif re.match(r"^[ \\t]*(?:-[ \\t]+)?name[ \\t]*:", line):
+            # Name is a non-authorizing display label, never a YAML policy key.
+            continue
         elif ":" in line and re.search(r"continue.{0,70}error", line, re.I):
             # Includes encoded YAML key or shadowed/malformed mapping forms.
             issues.append(f"line_{number}:ambiguous_continue_on_error")
