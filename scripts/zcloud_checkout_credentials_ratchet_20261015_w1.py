@@ -210,6 +210,14 @@ def checkout_risks(source: str) -> list[str]:
                 problems.append("opaque_checkout_with")
             if re.match(r"^\s*<<\s*:", line):
                 problems.append("opaque_checkout_merge")
+            # A YAML tag can redefine the same scalar 'with' key while
+            # hiding it behind !!str / !<tag:yaml.org,2002:str>.
+            # Escapes in a checkout step are similarly not safe to interpret
+            # with a lexical proof, even if the key name itself is encoded.
+            if re.match(r"^\s*(?:!![^\s:]+|!<[^>]+>)\s+with\s*:", line):
+                problems.append("opaque_checkout_with")
+            if ESCAPED_YAML.search(line):
+                problems.append("opaque_checkout_escape")
             cred = CREDENTIAL.fullmatch(line)
             if cred:
                 seen += 1
