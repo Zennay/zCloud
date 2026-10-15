@@ -138,16 +138,16 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
     def test_canonical_nested_cancel_true_refused_even_if_outer_false(self):
         name = "zcloud-vps-deploy.yml"
         self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
-                  "    concurrency:\\n      group: another-deploy\n"
-                  "      cancel-in-progress: true\\n    runs-on: [self-hosted, zcloud, vps]")
+                  "    concurrency:\n      group: another-deploy\n"
+                  "      cancel-in-progress: true\n    runs-on: [self-hosted, zcloud, vps]")
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "unexpected_nested_concurrency")
 
     def test_canonical_nested_identical_group_refused_to_avoid_deadlock(self):
         name = "zcloud-vps-deploy.yml"
         self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
-                  "    concurrency:\\n      group: zcloud-production-deploy\n"
-                  "      cancel-in-progress: false\\n    runs-on: [self-hosted, zcloud, vps]")
+                  "    concurrency:\n      group: zcloud-production-deploy\n"
+                  "      cancel-in-progress: false\n    runs-on: [self-hosted, zcloud, vps]")
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "unexpected_nested_concurrency")
 
