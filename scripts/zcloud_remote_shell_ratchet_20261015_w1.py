@@ -82,6 +82,18 @@ DOWNLOAD_THEN_EXEC = re.compile(
     + rf"(?:{SCRIPT_EXEC}|source\b|\.)" + r"\s+(?P=downloaded)(?![A-Za-z0-9._/-])",
     re.I,
 )
+# A shell stdout redirection is an alternative to -o/--output:
+# curl URL > local.sh && sh local.sh. Count only bounded literal identical
+# targets, without following aliases, variable substitution or file rewrites.
+REDIRECT_THEN_EXEC = re.compile(
+    r"\b(?:curl|wget)\b[^\n;|><]{0,512}?\s+>\s*"
+    r"(?P<redirected>(?:\./|/tmp/|/var/tmp/)?[A-Za-z0-9._/-]{1,180})"
+    r"[^;\n|><]{0,256}?"
+    r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*)"
+    + rf"(?:{SCRIPT_EXEC}|source\b|\.)"
+    + r"\s+(?P=redirected)(?![A-Za-z0-9._/-])",
+    re.I,
+)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
 # outside the narrow source reader. Conservatively reject newly introduced
@@ -323,6 +335,7 @@ def findings(data: bytes) -> int:
         matched += len(SHELL_COMMAND_SUBST.findall(command))
         matched += len(REMOTE_STDIN.findall(command))
         matched += len(DOWNLOAD_THEN_EXEC.findall(command))
+        matched += len(REDIRECT_THEN_EXEC.findall(command))
         matched += len(SHELL_EVAL_REMOTE.findall(command))
         matched += len(SHELL_SOURCE_PROCESS.findall(command))
         # YAML aliases/tags can hide a shell script outside the literal run scalar.
