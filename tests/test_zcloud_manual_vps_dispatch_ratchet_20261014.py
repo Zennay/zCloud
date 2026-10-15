@@ -51,6 +51,37 @@ class ManualDispatchPolicy(unittest.TestCase):
         self.assertFalse(out["mutation_performed"])
         self.assertFalse(out["production_mutation_authorized"])
 
+    def test_essential_ratchet_artifacts_are_regular_and_protected(self):
+        source = CI_WORKFLOW.read_text(encoding="utf-8")
+        paths = (
+            ".github/workflows/zcloud-manual-vps-dispatch-ratchet-20261014.yml",
+            "scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py",
+            "tests/test_zcloud_manual_vps_dispatch_ratchet_20261014.py",
+        )
+        for protected in paths:
+            self.assertIn(f'"{protected}"', source)
+        self.assertIn("git ls-tree", source)
+        self.assertIn("grep -Eq '^100644 blob [0-9a-f]{40}[[:space:]]'", source)
+        self.assertLess(source.index("for protected in"), source.index("policy_path="))
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            target = root / paths[0]
+            target.parent.mkdir(parents=True)
+            target.write_text("on: workflow_dispatch\n", encoding="utf-8")
+            sha = commit(root, workflow(if_statement=SAFE_IF))
+            tree = subprocess.check_output([
+                "git", "-C", str(root), "ls-tree", sha, "--", paths[0],
+            ], text=True)
+            self.assertTrue(tree.startswith("100644 blob "), tree)
+            target.unlink()
+            target.symlink_to("relative-target.yml")
+            after = commit(root, workflow(if_statement=SAFE_IF))
+            tree_symlink = subprocess.check_output([
+                "git", "-C", str(root), "ls-tree", after, "--", paths[0],
+            ], text=True)
+            self.assertTrue(tree_symlink.startswith("120000 blob "), tree_symlink)
+
     def test_hosted_policy_uses_immutable_baseline_after_bootstrap(self):
         workflow_source = CI_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn('git cat-file -e "${BASE_SHA}:${policy_path}"', workflow_source)
