@@ -1,0 +1,83 @@
+name: zCloud container image digest no-new-debt (hosted source only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_container_digest_ratchet_20261015_w2.py
+      - tests/test_zcloud_container_digest_ratchet_20261015_w2.py
+      - .github/workflows/zcloud-container-digest-ratchet-20261015-w2.yml
+      - docs/deploy-ops-container-digest-20261015-w2.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-container-digest-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    name: Read-only digest debt ratchet (GitHub-hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # No untrusted fork head, privileged event, VPS runner or production token.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event_name == 'pull_request' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository
+    steps:
+      - name: Checkout immutable PR revision without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify immutable HEAD and actual canonical main
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin refs/heads/main
+          BASE_SHA="$(git rev-parse FETCH_HEAD)"
+          test "$BASE_SHA" = "$EXPECTED_BASE"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$EXPECTED_HEAD" >> "$GITHUB_ENV"
+
+      - name: Run isolated real-Git and adversarial regression suite
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_container_digest_ratchet_20261015_w2
+          python3 -m py_compile scripts/zcloud_container_digest_ratchet_20261015_w2.py
+
+      - name: No newly unpinned container images between exact Git trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_container_digest_ratchet_20261015_w2.py \
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" > "$RUNNER_TEMP/container-digest.json"
+          REPORT="$RUNNER_TEMP/container-digest.json" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          data = json.loads(Path(os.environ["REPORT"]).read_text())
+          assert data["policy"] == "container-image-digest-no-new-debt-v1"
+          assert data["inventory_complete"] is True
+          assert data["new_findings"] == 0
+          for key in ("release_authorized", "deployment_authorized", "mutation_performed"):
+              assert data[key] is False
+          print("NO_NEW_CONTAINER_IMAGE_TAG_DEBT=1")
+          print("LEGACY_UNPINNED_IMAGE_RECORDS=" + str(data["baseline_findings"]))
+          PY
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
