@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts import zcloud_manual_vps_dispatch_ratchet_20261014 as guard
 
@@ -355,6 +356,19 @@ class ManualDispatchPolicy(unittest.TestCase):
                                      "--base-sha", "main", "--head-sha", head],
                                     text=True, capture_output=True, timeout=20, check=False)
             self.assertEqual("ref_must_be_immutable_sha", json.loads(denied.stdout)["reason"])
+
+    def test_git_manifest_rejects_oversized_workflow_inventory(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            sha = commit(root, workflow(if_statement=SAFE_IF))
+            self.assertEqual(1, len(guard.manifest(root, sha)))
+            with mock.patch.object(guard, "MAX_WORKFLOWS", 0):
+                with self.assertRaisesRegex(guard.RefError, "workflow_count_limit"):
+                    guard.manifest(root, sha)
+            with mock.patch.object(guard, "MAX_TOTAL_BYTES", 1):
+                with self.assertRaisesRegex(guard.RefError, "aggregate_workflow_bytes_limit"):
+                    guard.manifest(root, sha)
 
     def test_symlinked_workflow_fails_closed(self):
         with tempfile.TemporaryDirectory() as d:
