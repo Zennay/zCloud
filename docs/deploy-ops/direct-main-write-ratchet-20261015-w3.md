@@ -31,3 +31,9 @@ The first hosted proof was green on initial four-file HEAD. A subsequent source-
 ## Composite Actions coverage
 
 A further source-only extension also scans newly added/edited local composite Action metadata (nested directories supported). Safe composite Actions can pass, direct Git/Octokit writers fail, and symlinked Action paths or Action directories fail closed. Existing unchanged composite files remain legacy debt, not certified safe. A valid workflow inventory is always mandatory even if Actions exist. Six additional real-Git fixtures cover these conditions.
+
+## 15 October follow-up — immutable ancestry and dynamic GraphQL
+
+New direct-write paths can hide behind the GitHub GraphQL endpoint: `gh api graphql`, `github.graphql(...)`, `octokit.graphql(...)`, or direct `api.github.com/graphql` HTTP calls. This conservative source-only policy denies **all new or edited appearances** of these entrypoints because a static lexical checker cannot verify dynamic query bodies, including indirect query files. Legitimate read-only GraphQL is therefore a documented false positive requiring independent policy-owner review; unchanged old blobs remain legacy debt. Ordinary REST `gh api` GETs remain allowed.
+
+The scanner also demands that the `--base` commit is an actual ancestor of `--head`. A divergent but valid 40-character commit SHA can no longer launder unrelated historical workflow blobs as "unchanged" debt. The nine new temporary-Git fixtures cover divergent histories, valid ancestors, GraphQL CLI/Octokit/HTTP entrypoints, and a read-only REST negative control.
