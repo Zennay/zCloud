@@ -95,6 +95,33 @@ class RealGitCheckoutRatchet(unittest.TestCase):
                                  "          persist-credentials: false\n          persist-credentials: true\n")
         self.verify(bad, "persisted_credentials")
 
+    def test_duplicate_inline_empty_with_does_not_override_safe_false(self):
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            "          persist-credentials: false\n        with: {}\n",
+        )
+        self.verify(bad, "ambiguous_checkout_with")
+
+    def test_duplicate_aliased_with_does_not_override_safe_false(self):
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            "          persist-credentials: false\n        with: *defaults\n",
+        )
+        self.verify(bad, "ambiguous_checkout_with")
+
+    def test_single_inline_with_map_denied(self):
+        bad = workflow(None).replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - uses: actions/checkout@{PIN}\n"
+            "        with: {persist-credentials: false}\n",
+        )
+        self.verify(bad, "opaque_checkout_with")
+
+    def test_non_checkout_step_with_inline_map_is_not_credential_claim(self):
+        self.verify("name: safe\njobs:\n  smoke:\n    steps:\n"
+                    "      - uses: vendor/something@0123456789abcdef0123456789abcdef01234567\n"
+                    "        with: {option: value}\n")
+
     def test_quoted_uses_ambiguity_denied(self):
         self.verify(workflow().replace("- uses:", '- "uses":'), "ambiguous_checkout")
 
