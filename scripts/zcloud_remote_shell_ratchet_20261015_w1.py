@@ -40,6 +40,14 @@ ESCAPED_MAPPING_KEY = re.compile(
     r"""^\s*(?:-\s+)?["'][^"'\n]*\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})[^"'\n]*["']\s*:"""
 )
 EXPLICIT_RUN_KEY = re.compile(r"""^\s*(?:-\s+)?\?\s*(?:"run"|'run'|run)(?:\s*:|\s*$)""")
+# YAML double-quoted run scalars decode escapes before Actions executes shell.
+# A \u007c / \x7c can therefore become a real pipeline even if raw Git
+# bytes contain no literal '|'. Deny newly changed opaque execution source.
+# We deliberately flag other control escapes rather than trying to emulate
+# the whole YAML 1.2 scalar decoder with regexes.
+OPAQUE_QUOTED_ESCAPE = re.compile(
+    r"""\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[nrt0abefv\\])"""
+)
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES = 512, 1024 * 1024, 32 * 1024 * 1024
 
 
@@ -200,6 +208,9 @@ def findings(data: bytes) -> int:
         # YAML aliases/tags can hide a shell script outside the literal run scalar.
         # Never claim a new opaque run value is harmless on source evidence alone.
         matched += bool(OPAQUE_RUN.match(command))
+        # Only double-quoted YAML scalars interpret these escapes. Literal
+        # single-quoted YAML text is not silently upgraded to a shell pipe.
+        matched += bool(command.startswith('"') and OPAQUE_QUOTED_ESCAPE.search(command))
     return matched
 
 
