@@ -42,6 +42,12 @@ EXPLICIT_RUN_KEY = re.compile(
 )
 
 
+YAML_ALIAS_VALUE = re.compile(
+    r"""^\s*(?:-\s*)?(?:[A-Za-z_][\w.-]*|'[^']+'|"[^"]+")\s*:\s*\*[A-Za-z_][\w.-]*\s*(?:#.*)?$"""
+)
+YAML_ALIAS_ITEM = re.compile(r"^\s*-\s+\*[A-Za-z_][\w.-]*\s*(?:#.*)?$")
+
+
 class EvidenceError(ValueError):
     """The evidence is incomplete, invalid or ambiguous: deny."""
 
@@ -189,6 +195,11 @@ def fingerprint_risks(source: str) -> Counter[str]:
         # Conservatively bind the ambiguity to the full workflow blob.
         if EXPLICIT_RUN_KEY.match(line):
             out["ambiguous_explicit_run_key|workflow_sha256:" + workflow_digest] += 1
+        # GitHub Actions supports YAML aliases, including whole-job clones.
+        # A changed alias can instantiate an existing unsafe run without any
+        # change to that original scalar. Treat the whole source as ambiguous.
+        if YAML_ALIAS_VALUE.match(line) or YAML_ALIAS_ITEM.match(line):
+            out["ambiguous_yaml_alias|workflow_sha256:" + workflow_digest] += 1
         match = FLOW_RUN_KEY.search(line)
         # Braces *after* run: can simply be the normal ${{ expression }}
         # delimiters. Only a brace *before* the key indicates flow mapping.
