@@ -105,6 +105,20 @@ REMOTE_VARIABLE_EVAL = re.compile(
     r"""(?:eval\s+|(?:bash|sh|zsh|dash)\s+-c\s+)["']?\$\{?"""
     r"(?P=variable)" + r"""\}?["']?(?![A-Za-z0-9_])""",
 )
+# PowerShell has a separate direct download-and-evaluate vocabulary. Both
+# Invoke-RestMethod/Invoke-WebRequest and their literal aliases irm/iwr can
+# pipe remote text directly into iex (Invoke-Expression), or be nested inside
+# an iex call. No PowerShell AST or alias redefinition is inferred here.
+PS_DOWNLOAD = r"(?:Invoke-RestMethod|Invoke-WebRequest|irm|iwr)"
+PS_EVAL = r"(?:Invoke-Expression|iex)"
+POWERSHELL_PIPE_EVAL = re.compile(
+    rf"\b{PS_DOWNLOAD}\b[^\n;|]{{0,512}}\|\s*{PS_EVAL}\b",
+    re.I,
+)
+POWERSHELL_INVOKE_EVAL = re.compile(
+    rf"\b{PS_EVAL}\b\s*\(\s*{PS_DOWNLOAD}\b",
+    re.I,
+)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
 # outside the narrow source reader. Conservatively reject newly introduced
@@ -348,6 +362,8 @@ def findings(data: bytes) -> int:
         matched += len(DOWNLOAD_THEN_EXEC.findall(command))
         matched += len(REDIRECT_THEN_EXEC.findall(command))
         matched += len(REMOTE_VARIABLE_EVAL.findall(command))
+        matched += len(POWERSHELL_PIPE_EVAL.findall(command))
+        matched += len(POWERSHELL_INVOKE_EVAL.findall(command))
         matched += len(SHELL_EVAL_REMOTE.findall(command))
         matched += len(SHELL_SOURCE_PROCESS.findall(command))
         # YAML aliases/tags can hide a shell script outside the literal run scalar.
