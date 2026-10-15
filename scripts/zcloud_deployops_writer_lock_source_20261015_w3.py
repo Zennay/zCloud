@@ -65,13 +65,13 @@ def _read_regular(root: Path, filename: str) -> str:
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
             raise AmbiguousSource("not_bounded_regular_source")
         raw = os.read(leaf, MAX_BYTES + 1)
-        if len(raw) > MAX_BYTES or b"\\x00" in raw:
+        if len(raw) > MAX_BYTES or b"\x00" in raw:
             raise AmbiguousSource("invalid_source_bytes")
         try:
             data = raw.decode("utf-8")
         except UnicodeError as exc:
             raise AmbiguousSource("invalid_utf8") from exc
-        if "\\t" in data:
+        if "\t" in data:
             raise AmbiguousSource("tab_indentation_or_scalar")
         return data
     except OSError as exc:
