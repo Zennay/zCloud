@@ -79,6 +79,7 @@ jobs:
           ]
           if result.get("policy") == "zcloud-deployops-pr-owner-collision-v1":
               lines.extend([
+                  f"Main snapshot SHA: `{result['main_sha']}`",
                   f"Open PRs checked: {result['prs_scanned']}",
                   f"Changed files checked: {result['files_scanned']}",
                   f"Stale-base PRs: {result['stale_base_count']}",
@@ -109,4 +110,9 @@ jobs:
               lines.append("Inventory was refused; no completeness or ownership claim.")
           (Path(os.environ["GITHUB_STEP_SUMMARY"])).write_text("\n".join(lines) + "\n")
           PY
+          # Snapshot evidence cannot remain current after a new main commit.
+          # This final anonymous re-read is independent of the GitHub token.
+          current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test -n "$current"
+          test "$current" = "$GITHUB_SHA"
           exit "$status"
