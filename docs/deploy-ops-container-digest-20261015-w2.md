@@ -29,8 +29,11 @@ findings. The workflow targets same-repository owner PRs only and has
 - Require `@sha256:<64 hex>` to pin new literal container images, service
   images and `docker://` references. YAML alias, dynamic GitHub expressions,
   multiline image forms, explicit YAML mappings, encoded double-quoted YAML
-  keys and ambiguous flow-style map/\`docker://\` steps require independent
-  review and are refused as *new* risk.
+  keys, indirect `uses: *alias` / dynamic Action references, and ambiguous
+  flow-style map/`docker://` steps require independent review and are refused
+  as *new* risk. A `uses: docker://` value must consume the **entire** YAML
+  scalar, with no unexamined suffix; single- and double-quoted image values
+  require balanced quotes rather than stripping arbitrary quote characters.
 - Symlinked workflow/composite metadata, malformed UTF-8, missing Git objects
   or oversized scans **fail closed** rather than establishing false safety.
   Root and arbitrarily nested \`action.yml\` / \`action.yaml\` metadata are
