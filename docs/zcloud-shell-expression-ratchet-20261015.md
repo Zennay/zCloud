@@ -50,6 +50,21 @@ buffering and refuses symlinked workflow files, drifted/non-ancestor source,
 invalid SHAs, missing or incomplete source evidence. CLI exit codes:
 0 no new risk, 1 new risk, 2 missing/inconsistent evidence.
 
+## YAML double-quoted run escape ambiguity
+
+YAML double-quoted scalar syntax decodes `\xHH`, `\uHHHH` and
+`\UHHHHHHHH` before GitHub evaluates a workflow expression. A raw-source
+search for `${{ ... }}` can therefore miss `run: "echo \u0024{{ github.event.issue.title }}"`
+or an escaped property spelling such as `github.\u0065vent` inside a shell
+expression. The ratchet conservatively classifies **new** double-quoted
+`run:` scalars with hex/Unicode escapes as ambiguous. This is *not* YAML
+semantic decoding, so a harmless Unicode escape in a new quoted shell
+command may need rewriting as a block scalar (`run: |`) or an `env:` binding.
+The fingerprint includes the raw command and enclosing job-key context, so
+moving an existing escaped run scalar does not silently inherit a waiver.
+Single-quoted YAML strings and block-style scripts do not decode these escapes
+and are not caught by this specific additional ambiguity rule.
+
 ## Local composite Action shell coverage
 
 The guard now also scans committed `action.yml` and `action.yaml` files **at
