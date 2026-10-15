@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Office Relay
 // @namespace    https://github.com/Zennay/zCloud
-// @version      0.3.7
+// @version      0.3.8
 // @downloadURL  https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @updateURL    https://raw.githubusercontent.com/Zennay/zCloud/feature/virtual-ai-office-mvp-20261012/virtual-office/office-relay.user.js
 // @description  Explicitly connect one dedicated ChatGPT conversation to one Office employee.
@@ -42,6 +42,7 @@
   noah:'Je bent Noah, senior product-engineer met Supa als specialisme. Denk vanuit functionaliteit, UX, betrouwbare implementatie, regressietests en bestaande code. Beschrijf wat je werkelijk hebt gecontroleerd; zeg niet dat code is aangepast zonder bewijs. Antwoord doelgericht in het Nederlands.',
   lina:'Je bent Lina, kwaliteits- en securityexpert met LightUp als specialisme. Geef reproduceerbare testgevallen, veilige validatie, duidelijke risico-inschattingen en herstelstappen. Actieve securitytests alleen op expliciet geautoriseerde scope; neem geen toestemming aan. Antwoord helder in het Nederlands.'
  });
+ const EMPLOYEE_ID=/^[a-z][a-z0-9]{1,15}$/;   // the team is expandable: any expert id the Office server knows
  const CHAT_PATH=new RegExp('^/c/[0-9a-f-]{16,80}$','i');
  const currentChat=()=>CHAT_PATH.test(location.pathname)?'https://chatgpt.com'+location.pathname:'';
  const safeSavedOrigin=origin=>['http://127.0.0.1:3422','http://localhost:3422'].includes(String(origin||''));
@@ -70,10 +71,11 @@
  }
  function validSavedPairing(url,item){
   return !!url&&!!item&&safeSavedOrigin(item.origin)&&
-    ['maya','noah','lina'].includes(item.employee)&&
+    EMPLOYEE_ID.test(item.employee||'')&&
     typeof item.token==='string'&&item.token.length>=16&&item.token.length<=512;
  }
- const contextualInstruction=job=>EMPLOYEE_PROMPTS[config.employee]+
+ const personaFor=job=>(typeof job.persona==='string'&&job.persona.trim()?job.persona.trim().slice(0,1800):EMPLOYEE_PROMPTS[config.employee]||('Je bent '+config.employee+', een expert in het team van de eigenaar. Geef een onderbouwd oordeel en verzin geen resultaten.'));
+ const contextualInstruction=job=>personaFor(job)+
    '\\n\\nBericht van de eigenaar aan '+config.employee+':\\n'+String(job.instruction||'')+
    '\\n\\nAntwoord alsof je met de eigenaar spreekt, gebruik concrete bewijzen en claim geen uitgevoerde acties zonder verificatie.';
 
@@ -108,7 +110,7 @@
   if(u.protocol==='http:'&&!['127.0.0.1','localhost'].includes(u.hostname))return alert('VPS via publiek HTTP is onveilig. Start op je eigen pc: ssh -N -L 127.0.0.1:3422:127.0.0.1:3422 <ssh-gebruiker>@198.244.191.182 en gebruik http://127.0.0.1:3422, of gebruik een vertrouwde HTTPS-proxy.');
   status.textContent='Office Relay · Office-server controleren…';
   try{await checkOffice(u.origin)}catch(e){status.textContent='Office Relay · '+e.message;alert(e.message);return}
-  const employee=prompt('Medewerker: maya, noah of lina','maya');if(!['maya','noah','lina'].includes(employee))return;
+  const employee=(prompt('Medewerker-id (bijv. maya, noah, lina of de id van een nieuwe expert uit het Beheer-paneel)','maya')||'').trim().toLowerCase();if(!EMPLOYEE_ID.test(employee))return;
   const token=prompt('Office-toegangscode (alleen in geheugen van deze tab, behalve bij expliciet onthouden)');if(!token)return;
   const remember=confirm('AUTOMATISCH HERSTELLEN NA VPS FIREFOX-CRASH?\\n\\nJa = sla de Office-code lokaal en ONVERSLEUTELD op in Tampermonkey van dit vertrouwde Firefox-profiel. Bij browserherstart wordt uitsluitend DEZE ChatGPT-conversatie opnieuw gekoppeld.\\n\\nNee = alleen tijdelijk verbinden; code na herstart opnieuw invullen.\\n\\nGebruik Ja niet in een gedeeld of onveilig browserprofiel.');
   config={origin:u.origin,employee,token,conversation:'https://chatgpt.com'+location.pathname};
@@ -129,7 +131,7 @@
   if(!conversation)return alert('Open eerst een bestaande opgeslagen nieuwe ChatGPT-conversatie.');
   const previous=Object.values(savedPairings()).filter(item=>validSavedPairing(conversation,item));
   if(!previous.length)return alert('Geen onthouden medewerker. Verbind eerst één keer via Office Relay en kies expliciet Onthouden.');
-  const employee=prompt('Koppel deze nieuwe chat aan welke medewerker? maya, noah of lina',previous[0].employee);
+  const employee=prompt('Koppel deze nieuwe chat aan welke medewerker-id?',previous[0].employee);
   const pair=previous.find(item=>item.employee===employee);
   if(!pair)return alert('Geen opgeslagen code voor deze medewerker gevonden.');
   if(!confirm('Koppel deze chat aan '+employee+'? Dit vervangt na geslaagde verificatie de oude onthouden chat voor deze medewerker.'))return;

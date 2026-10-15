@@ -38,6 +38,44 @@ def bounded_text(value, name, limit, minimum=1):
         raise ValueError(name + " heeft een ongeldige lengte of inhoud")
     return value.strip()
 
+ACCENTS = {"gold", "teal", "rose", "violet", "slate"}
+LAYOUTS = {"title", "bullets", "stat", "quote", "split"}
+VISUALS = {"none", "bars", "steps"}
+
+def _short(value, limit):
+    return value.strip()[:limit] if isinstance(value, str) and "\x00" not in value else ""
+
+def clean_slide(slide):
+    """Title/body stay mandatory and backwards compatible; visual fields are optional and bounded."""
+    out = {"title": bounded_text(slide.get("title"), "Slidetitel", 120),
+           "body": bounded_text(slide.get("body", ""), "Slidetekst", 2000, 0)}
+    layout, accent, visual = slide.get("layout"), slide.get("accent"), slide.get("visual")
+    if layout in LAYOUTS:
+        out["layout"] = layout
+    if accent in ACCENTS:
+        out["accent"] = accent
+    if visual in VISUALS and visual != "none":
+        out["visual"] = visual
+    stat = slide.get("stat")
+    if isinstance(stat, dict) and _short(stat.get("value"), 24):
+        out["stat"] = {"value": _short(stat.get("value"), 24), "label": _short(stat.get("label"), 80)}
+    data = slide.get("data")
+    if isinstance(data, list):
+        points = []
+        for item in data[:8]:
+            if isinstance(item, dict) and isinstance(item.get("value"), (int, float)) \
+                    and not isinstance(item.get("value"), bool) and abs(item["value"]) < 1e12:
+                label = _short(item.get("label"), 40)
+                if label:
+                    points.append({"label": label, "value": item["value"]})
+        if points:
+            out["data"] = points
+    for key, limit in (("speaker", 700), ("quote_by", 80)):
+        text = _short(slide.get(key), limit)
+        if text:
+            out[key] = text
+    return out
+
 def save_deck(core, body):
     title = bounded_text(body.get("title"), "Titel", 120)
     slides = body.get("slides")
@@ -47,8 +85,7 @@ def save_deck(core, body):
     for slide in slides:
         if not isinstance(slide, dict):
             raise ValueError("Elke slide moet een object zijn")
-        clean.append({"title": bounded_text(slide.get("title"), "Slidetitel", 120),
-                      "body": bounded_text(slide.get("body", ""), "Slidetekst", 2000, 0)})
+        clean.append(clean_slide(slide))
     ident = body.get("id") or uuid.uuid4().hex
     if not isinstance(ident, str) or not re.fullmatch(r"[0-9a-f]{32}", ident):
         raise ValueError("Ongeldig presentatie-id")
@@ -150,7 +187,8 @@ def relay_poll(core, body):
                 if row:
                     claim = uuid.uuid4().hex
                     db.execute("UPDATE office_chat SET status='claimed',client_id=?,claim_token=?,updated_at=? WHERE id=?", (client, claim, core.timestamp(), row["id"]))
-                    job = {"id": row["id"], "instruction": row["instruction"], "claim_token": claim}
+                    job = {"id": row["id"], "instruction": row["instruction"], "claim_token": claim,
+                           "persona": str((core.PERSONAS.get(employee) or {}).get("persona_prompt") or "")[:1800]}
         db.execute("COMMIT")
     return {"ok": True, "job": job}
 
@@ -173,6 +211,12 @@ def relay_reply(core, body):
         if job["status"] != "claimed":
             raise ValueError("Gespreksbericht is niet geclaimd")
         db.execute("UPDATE office_chat SET status=?,reply=?,updated_at=? WHERE id=?", (state, reply, core.timestamp(), ident))
-        db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES(?,?,?,?)", (job["employee"], "assistant" if state == "done" else "system", reply, core.timestamp()))
+        kind = job["kind"] if "kind" in job.keys() else "chat"
+        if kind == "chat":
+            db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES(?,?,?,?)", (job["employee"], "assistant" if state == "done" else "system", reply, core.timestamp()))
         db.execute("COMMIT")
+        chat = dict(job)
+    if kind != "chat":
+        import office_game  # lazy: office_game imports this module
+        office_game.after_reply(core, chat, state, reply)
     return {"ok": True}

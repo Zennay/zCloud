@@ -13,12 +13,17 @@ import argparse
 import hmac
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
 import uuid
 import sys
 import office_features as features
+import office_game as game
+import office_staff as staff
+import office_control as control
+import office_experts as experts
 
 WAKE = threading.Event()
 from datetime import datetime, timezone
@@ -40,6 +45,10 @@ _parts = urlsplit(ZCLOUD_URL)
 if (_parts.scheme != "http" or _parts.hostname not in ("127.0.0.1", "localhost", "::1")
         or _parts.username or _parts.password or _parts.path or _parts.query or _parts.fragment):
     raise SystemExit("OFFICE_ZCLOUD_URL must be a localhost-only HTTP origin")
+
+# Browser modules the page may load, and the vendored three.js tree (exact-name allowlist, no directory listing).
+MODULES = ("scene.js", "slides.js", "game.js", "city.js", "post.js", "people.js", "materials.js", "interior.js", "walk.js", "layout.js", "panel.js")
+VENDOR_PATH = re.compile(r"/vendor/(three\.module\.min\.js|LICENSE-three\.txt|addons/[a-z]+/[A-Za-z]+\.js)")
 
 PERSONAS = {
     "maya": {"id": "maya", "name": "Maya", "title": "Projectmanager · zCloud",
@@ -107,12 +116,19 @@ def init_db() -> None:
         db.execute("UPDATE jobs SET status='queued' WHERE status='waiting_zcloud' AND remote_queue_id=''")
         # Dispatched jobs are idempotent by remote_queue_id; reconciliation is read-only.
         features.init(db)
+        game.init(db)
+        staff.init(db)
+        control.init(db)
+        experts.init(db)
+    staff.load(sys.modules[__name__])
 
 
-def zcloud(path: str, payload: dict | None = None, timeout: float = 3.5) -> dict:
+def zcloud(path: str, payload: dict | None = None, timeout: float = 3.5, actor: str = "") -> dict:
     url = ZCLOUD_URL + path
     data = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
     headers = {"Content-Type": "application/json"} if data is not None else {}
+    if actor:  # shows up in zCloud's config audit trail, next to dashboard changes
+        headers["X-ZCloud-Actor"] = actor
     request = Request(url, data=data, headers=headers, method="POST" if data is not None else "GET")
     try:
         with urlopen(request, timeout=timeout) as response:
@@ -156,7 +172,7 @@ def zcloud_health() -> dict:
 
 
 def enqueue(employee: str, kind: str, instruction: str) -> dict:
-    if employee not in PERSONAS:
+    if employee not in features.PROFILE_IDS:
         raise ValueError("Onbekende medewerker")
     if kind not in ("task", "chat"):
         raise ValueError("Onbekend opdrachttype")
@@ -249,6 +265,7 @@ def dispatch_once() -> bool:
         with connect() as db:
             db.execute("UPDATE jobs SET status='failed',error=?,updated_at=? WHERE id=? AND status='dispatching'",
                        (str(exc)[:450],timestamp(),job["id"]))
+            game.on_local_failure(db, job, exc)
     except (RuntimeError,ConnectionError) as exc:
         with connect() as db:
             db.execute("UPDATE jobs SET status='queued',error=?,updated_at=? WHERE id=? AND status='dispatching'",
@@ -275,6 +292,7 @@ def sync_remote() -> None:
                    "zCloud heeft deze opdracht laten vervallen." if mapped == "dropped" else "")
             db.execute("UPDATE jobs SET status=?,remote_status=?,output=?,updated_at=? WHERE id=?",
                        (mapped,remote_status,msg,timestamp(),job["id"]))
+            game.on_remote_item(db, job, item, mapped)
             if mapped in ("done","dropped") and job["status"] not in ("done","dropped"):
                 db.execute("INSERT INTO messages(employee,role,content,created_at) VALUES (?,?,?,?)",
                            (job["employee"],"system",msg,timestamp()))
@@ -286,9 +304,15 @@ def work_forever(stop: threading.Event | None = None) -> None:
             sync_remote()
             # Avoid starvation of retries when zCloud is down.
             dispatch_once()
+            game.queue_summaries(sys.modules[__name__])
         except Exception:
             # Keep service available and retry after backoff; never fabricate DONE.
             pass
+        for step in (control.sync_changes, experts.auto_review):
+            try:
+                step(sys.modules[__name__])
+            except Exception:
+                pass
         if stop:
             stop.wait(8)
         else:
@@ -364,6 +388,12 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return hmac.compare_digest(TOKEN.encode("utf-8"), supplied.encode("utf-8"))
 
+    def local_only(self)->bool:
+        if self.client_address[0] in ("127.0.0.1","::1"):
+            return True
+        self.json_reply(403,{"error":"Workers aanpassen kan alleen via de SSH-tunnel (de game) of op de VPS zelf."})
+        return False
+
     def require_auth(self)->bool:
         if not self.authorized():
             self.json_reply(401,{"error":"Voer de Office-toegangscode in. Werkopdrachten zijn niet publiek."})
@@ -372,15 +402,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self)->None:
         url=urlsplit(self.path)
-        static = {"/skyline.jpg": ("skyline.jpg", "image/jpeg"), "/scene.js": ("scene.js", "text/javascript; charset=utf-8"),
-                  "/office-relay.user.js": ("office-relay.user.js", "text/javascript; charset=utf-8")}
+        static = {"/office-relay.user.js": ("office-relay.user.js", "text/javascript; charset=utf-8")}
+        for module in MODULES:
+            static["/" + module] = (module, "text/javascript; charset=utf-8")
+        cache = "no-cache"
+        vendor = VENDOR_PATH.fullmatch(url.path)
+        if vendor:
+            # three.js is served from this server (not a CDN): offline-capable, pinned and testable.
+            target = (ROOT / url.path.lstrip("/")).resolve()
+            if not target.is_file() or ROOT / "vendor" not in target.parents:
+                return self.json_reply(404, {"error": "Niet gevonden"})
+            static[url.path] = (str(target.relative_to(ROOT)), "text/javascript; charset=utf-8" if url.path.endswith(".js") else "text/plain; charset=utf-8")
+            cache = "public, max-age=86400"
         if url.path in static:
             filename, mime = static[url.path]
+            if not (ROOT / filename).is_file():
+                return self.json_reply(404, {"error": "Niet gevonden"})
             body = (ROOT / filename).read_bytes()
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Cache-Control", cache)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(body)
@@ -392,7 +434,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length",str(len(body)))
             self.send_header("Cache-Control","no-store")
             self.send_header("X-Content-Type-Options","nosniff")
-            self.send_header("Content-Security-Policy","default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+            self.send_header("Content-Security-Policy","default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             self.end_headers();self.wfile.write(body);return
         if url.path=="/api/health":
             self.json_reply(200,{"online":True,"auth_required":bool(TOKEN),
@@ -402,9 +444,29 @@ class Handler(BaseHTTPRequestHandler):
         if url.path=="/api/employees":
             try:links=employee_chat_links()
             except (ConnectionError,RuntimeError,ValueError):links={k:"https://chatgpt.com/" for k in PERSONAS}
-            self.json_reply(200,{"employees":list(PERSONAS.values()),"chat_links":links})
+            self.json_reply(200,{"employees":[v for v in PERSONAS.values() if v.get("active",True)],"chat_links":links})
+        elif url.path=="/api/staff":
+            self.json_reply(200,{"staff":staff.list_staff(sys.modules[__name__]),"max":staff.MAX_STAFF})
+        elif url.path in ("/api/control/state","/api/control/log"):
+            if not self.local_only():return
+            core=sys.modules[__name__]
+            if url.path=="/api/control/log":self.json_reply(200,{"log":control.recent_log(core)})
+            else:
+                fresh=parse_qs(url.query).get("fresh",["0"])[0]=="1"
+                self.json_reply(200,control.overview(core,fresh=fresh))
+        elif url.path=="/api/proposals":
+            status=parse_qs(url.query).get("status",["pending"])[0]
+            if status not in ("pending","applied","rejected","failed"):return self.json_reply(400,{"error":"Ongeldige status"})
+            self.json_reply(200,experts.list_proposals(sys.modules[__name__],status))
         elif url.path=="/api/projects":
             self.json_reply(200, office_projects())
+        elif url.path=="/api/events":
+            query=parse_qs(url.query)
+            try:self.json_reply(200, game.list_events(sys.modules[__name__], query.get("since",["0"])[0], query.get("employee",[""])[0]))
+            except ValueError as exc:self.json_reply(400,{"error":str(exc)})
+        elif url.path.startswith("/api/jobs/") and url.path.endswith("/summary"):
+            result=game.summary_for(sys.modules[__name__], url.path.split("/")[-2])
+            self.json_reply(200 if result else 404, result or {"error":"Niet gevonden"})
         elif url.path=="/api/decks":
             self.json_reply(200, features.deck_list(sys.modules[__name__]))
         elif url.path.startswith("/api/decks/"):
@@ -438,6 +500,19 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(body,dict):raise ValueError("JSON object vereist")
             if url.path=="/api/jobs":
                 self.json_reply(201,enqueue(body.get("employee",""),body.get("kind","task"),body.get("instruction","")))
+            elif url.path=="/api/staff":
+                self.json_reply(201, staff.upsert(sys.modules[__name__], body))
+            elif url.path in ("/api/control/prepare","/api/control/confirm") or (url.path.startswith("/api/proposals/") and url.path.rsplit("/",1)[-1] in ("approve","reject")):
+                # Changing production workers is only possible from this machine / through the SSH tunnel.
+                if not self.local_only():return
+                core=sys.modules[__name__]
+                if url.path=="/api/control/prepare":self.json_reply(200,control.prepare(core,body))
+                elif url.path=="/api/control/confirm":self.json_reply(200,control.confirm(core,body.get("pending_id")))
+                else:self.json_reply(200,experts.decide(core,url.path.split("/")[-2],url.path.endswith("/approve")))
+            elif url.path=="/api/experts/review":
+                self.json_reply(201, experts.request_review(sys.modules[__name__], body))
+            elif url.path=="/api/decks/request":
+                self.json_reply(201, game.request_deck(sys.modules[__name__], body))
             elif url.path=="/api/decks":
                 self.json_reply(201, features.save_deck(sys.modules[__name__], body))
             elif url.path=="/api/workstation":

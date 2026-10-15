@@ -1,8 +1,9 @@
-# Skyline photograph
+# Assets and licences
 
-Midtown Manhattan skyline from the One World Observatory, New York City.
-Photographer: Christian David (Espandero). License: CC BY-SA 4.0.
-Source: https://commons.wikimedia.org/wiki/File:Midtown_Manhattan_skyline_from_the_One_World_Observatory,_New_York_City.jpg
-License: https://creativecommons.org/licenses/by-sa/4.0/
+**No external image, model, texture or font file is used.** The city, sky, materials, furniture, people, slides and icons are generated in code at load time.
 
-Deployed at 3840 pixels wide, unchanged image applied to flat backdrop planes. This is an aerial photographic backdrop, not a georeferenced 360-degree city model. Attribution is accessible from Office connection settings. The image retains CC BY-SA 4.0; no proprietary Google Maps imagery is used.
+The previous Wikimedia skyline photograph (CC BY-SA 4.0) has been removed from the repository, the deploy workflow and the server; its attribution is therefore no longer needed.
+
+## Third-party code
+- **three.js r170** and the add-ons used for post-processing (`EffectComposer`, `GTAOPass`, `UnrealBloomPass`, `OutputPass`, `RoundedBoxGeometry`) are vendored under `vendor/`. MIT licence, text in `vendor/LICENSE-three.txt`. Served from the Office server itself (importmap, allow-listed paths), never from a CDN.
+- The desktop app depends on Electron, `ssh2` and a Whisper runtime; see `desktop/package.json` and their own licences.

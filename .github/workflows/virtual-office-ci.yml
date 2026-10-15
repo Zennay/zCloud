@@ -20,7 +20,7 @@ jobs:
       - name: Compile + unit tests
         run: |
           test "$(hostname)" = "vps-bb300bba"
-          python3 -m py_compile virtual-office/server.py virtual-office/office_features.py
+          python3 -m py_compile virtual-office/server.py virtual-office/office_features.py virtual-office/office_game.py virtual-office/office_staff.py virtual-office/office_control.py virtual-office/office_experts.py virtual-office/tools/fake_zcloud.py
           python3 -m unittest discover -s virtual-office/tests -v
       - name: Parse module and check JS syntax
         run: |
@@ -32,9 +32,12 @@ jobs:
           Path("/tmp/virtual-office-ui.mjs").write_text(part)
           PY
           node --check /tmp/virtual-office-ui.mjs
-          cp virtual-office/scene.js /tmp/virtual-office-scene.mjs
-          node --check /tmp/virtual-office-scene.mjs
           node --check virtual-office/office-relay.user.js
+          for module in scene city interior people post materials panel walk layout slides game; do
+            cp "virtual-office/$module.js" "/tmp/virtual-office-$module.mjs"
+            node --check "/tmp/virtual-office-$module.mjs"
+          done
+          node --test virtual-office/tests/*.mjs
           bash -n virtual-office/office-relay-vps.sh
           test -s virtual-office/office-relay-vps.service
           python3 -m unittest discover -s virtual-office/tests -p test_penthouse.py -v
@@ -79,17 +82,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Fetch licensed high-altitude city photograph
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 2 --max-time 60 -A 'VirtualOffice/1.0 (Wikimedia attribution included)' 'https://thumb.wikimedia.org/wikipedia/commons/thumb/7/79/Midtown_Manhattan_skyline_from_the_One_World_Observatory%2C_New_York_City.jpg/3840px-Midtown_Manhattan_skyline_from_the_One_World_Observatory%2C_New_York_City.jpg' -o "$RUNNER_TEMP/office-skyline.jpg"
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          data=(Path(os.environ["RUNNER_TEMP"])/"office-skyline.jpg").read_bytes()
-          assert data[:3] == b"\xff\xd8\xff" and 100000 < len(data) < 30000000, "Invalid skyline asset"
-          PY
       - name: Install separate, always-on 3D Office service
         shell: bash
         env:
@@ -103,7 +95,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -f virtual-office/server.py
           test -f virtual-office/index.html
-          python3 -m py_compile virtual-office/server.py
+          test -f virtual-office/office_game.py
+          python3 -m py_compile virtual-office/server.py virtual-office/office_game.py virtual-office/office_staff.py virtual-office/office_control.py virtual-office/office_experts.py
           user="$(id -un)"
           group="$(id -gn)"
           sudo install -d -m 0755 -o "$user" -g "$group" /opt/virtual-office
@@ -115,10 +108,15 @@ jobs:
             unset secret
           fi
           sudo chmod 0600 /etc/virtual-office/office.env
-          sudo install -m 0644 "$RUNNER_TEMP/office-skyline.jpg" /opt/virtual-office/skyline.jpg
+          sudo rm -f /opt/virtual-office/skyline.jpg
           sudo install -m 0644 virtual-office/server.py /opt/virtual-office/server.py
           sudo install -m 0644 virtual-office/index.html /opt/virtual-office/index.html
-          sudo install -m 0644 virtual-office/office_features.py virtual-office/scene.js virtual-office/office-relay.user.js /opt/virtual-office/
+          sudo install -m 0644 virtual-office/office_features.py virtual-office/office_game.py virtual-office/office_staff.py virtual-office/office_control.py virtual-office/office_experts.py /opt/virtual-office/
+          sudo install -m 0644 virtual-office/scene.js virtual-office/city.js virtual-office/interior.js virtual-office/people.js virtual-office/post.js virtual-office/materials.js virtual-office/panel.js virtual-office/walk.js virtual-office/layout.js virtual-office/slides.js virtual-office/game.js virtual-office/office-relay.user.js /opt/virtual-office/
+          # three.js is vendored (pinned, offline-capable): no CDN at runtime
+          sudo rm -rf /opt/virtual-office/vendor
+          sudo cp -r virtual-office/vendor /opt/virtual-office/vendor
+          sudo chmod -R a+rX /opt/virtual-office/vendor
           # The new browser profile is isolated from the existing zCloud workers.
           # Install only; do not open an unauthenticated browser or alter the live
           # X11/Firefox worker session in an unattended CI deployment.
@@ -184,13 +182,13 @@ jobs:
               result = json.load(urllib.request.urlopen(req,timeout=8))
               assert result["source"] == "vps" and result["output"]
               print("Private VPS command verified:", command)
-          for path in ("/api/decks", "/api/relay/status", "/api/jobs"):
+          for path in ("/api/decks", "/api/relay/status", "/api/jobs", "/api/events"):
               try:
                   urllib.request.urlopen(root+path,timeout=5)
                   raise AssertionError("Private route exposed")
               except urllib.error.HTTPError as exc:
                   assert exc.code == 401
-          for path in ("/scene.js", "/office-relay.user.js"):
+          for path in ("/scene.js", "/city.js", "/interior.js", "/people.js", "/post.js", "/materials.js", "/panel.js", "/walk.js", "/layout.js", "/slides.js", "/game.js", "/vendor/three.module.min.js", "/vendor/addons/postprocessing/EffectComposer.js", "/office-relay.user.js"):
               response = urllib.request.urlopen(root+path,timeout=5)
               assert response.status == 200
           health = json.load(urllib.request.urlopen(root+"/api/health",timeout=12))
