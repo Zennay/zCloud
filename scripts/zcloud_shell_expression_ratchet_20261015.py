@@ -34,7 +34,10 @@ FLOW_RUN_KEY = re.compile(
     re.I,
 )
 
-EXPLICIT_RUN_KEY = re.compile(r'^\s*(?:-\s*)?\?\s*(?:run|["]run["]|[\x27]run[\x27])\s*(?:#.*)?$')
+EXPLICIT_RUN_KEY = re.compile(
+    r'^\s*(?:-\s*)?\?\s*(?:run|["]run["]|[\x27]run[\x27]|"(?:r|\\u0072|\\x72)(?:u|\\u0075|\\x75)(?:n|\\u006e|\\x6e)")\s*(?:#.*)?$',
+    re.I,
+)
 
 
 class EvidenceError(ValueError):
