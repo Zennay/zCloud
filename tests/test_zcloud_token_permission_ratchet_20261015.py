@@ -656,5 +656,35 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertTrue(check(self.root, baseline, self.commit("docs-only"))["ok"])
 
 
+    def test_tagged_unicode_escaped_permissions_mapping_key_denied(self):
+        candidate = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                     "  test:\n    !!str \"permiss\\u0069ons\": write-all\n"
+                     "    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(candidate)["ok"])
+
+    def test_anchored_unicode_escaped_permissions_mapping_key_denied(self):
+        candidate = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                     "  test:\n    &scope \"permiss\\u0069ons\": write-all\n"
+                     "    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(candidate)["ok"])
+
+    def test_encoded_tagged_jobs_key_new_unscoped_job_denied(self):
+        old = ("on: push\n!!str \"jo\\u0062s\":\n  old:\n"
+               "    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        baseline = self.commit("legacy-encoded-tagged-jobs")
+        self.put(".github/workflows/original.yml", old +
+                 "  new:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, baseline, self.commit("new-implicit-job"))["ok"])
+
+    def test_unchanged_encoded_tagged_jobs_allows_unrelated_edit(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\n!!str \"jo\\u0062s\":\n  old:\n"
+                 "    runs-on: ubuntu-latest\n")
+        baseline = self.commit("legacy-encoded-job")
+        self.put("README.md", "unrelated")
+        self.assertTrue(check(self.root, baseline, self.commit("safe-docs"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
