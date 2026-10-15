@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import subprocess
 import sys
 from html.parser import HTMLParser
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 ASSETS = ("public/app.js", "public/enhancements.css")
 INDEX = "public/index.html"
@@ -82,6 +83,10 @@ class Refs(HTMLParser):
         if len(attr_names) != len(set(attr_names)):
             raise ValueError("duplicate_html_attribute")
         values = dict(attrs)
+        # HTML base changes where absolute-path asset URLs resolve; URL-local evidence
+        # cannot prove browser cache scope after an origin-changing <base href>.
+        if tag == "base" and "href" in values:
+            raise ValueError("base_href_changes_asset_origin")
         if tag == "script":
             ref = values.get("src")
         elif tag == "link" and "stylesheet" in (values.get("rel") or "").lower().split():
@@ -91,9 +96,18 @@ class Refs(HTMLParser):
         if not ref:
             return
         parsed = urlsplit(ref)
-        path = "public" + parsed.path if parsed.path.startswith("/") else ""
+        try:
+            resolved_path = posixpath.normpath(unquote(parsed.path, errors="strict"))
+        except UnicodeError as exc:
+            raise ValueError("malformed_asset_path") from exc
+        # Encoded dots, encoded letters and /foo/../ traversal can resolve to
+        # the same protected file in browsers while evading literal ref counts.
+        # Reject aliases rather than guessing server percent-decoding rules.
+        path = "public" + resolved_path if resolved_path.startswith("/") else ""
         if path not in ASSETS:
             return
+        if parsed.path != resolved_path:
+            raise ValueError("noncanonical_asset_path")
         if self.inert_depth:
             raise ValueError("inert_asset_ref")
         if tag == "script" and (values.get("type") or "").lower() not in ("", "module", "application/javascript", "text/javascript"):
