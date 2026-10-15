@@ -140,6 +140,21 @@ class RealGitRatchetTests(unittest.TestCase):
         self.assertEqual(gate.scan(original, after), (0, 0))
 
 
+    def test_yaml_escaped_unsafe_command_denied(self):
+        examples = (
+            r"::set\u002doutput",
+            r"::set\x2denv",
+            r"::add\u002dpath",
+            r"ACTIONS_ALLOW_UNSECURE_COMM\u0041NDS",
+            r"::set\u005cu002doutput",
+        )
+        for value in examples:
+            with self.subTest(value=value):
+                self.git("reset", "--hard", self.base)
+                self.write(".github/workflows/old.yml", 'run: "echo ' + value + '"\n')
+                with self.assertRaises(gate.Denied):
+                    gate.scan(self.base, self.commit())
+
     def fake_git(self, program: str):
         bindir = Path(self.temp.name) / "fakebin"
         bindir.mkdir(exist_ok=True)
