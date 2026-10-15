@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -18,6 +20,7 @@ SHA = re.compile(r"^[a-f0-9]{40}$")
 PATH = re.compile(r"^[A-Za-z0-9_./@+ -]{1,320}$")
 MAX_PRS = 1000
 MAX_FILES = 99
+MAX_SNAPSHOT_BYTES = 4_000_000
 
 class InvalidInventory(ValueError):
     pass
@@ -39,7 +42,7 @@ def _path(value):
 
 
 def unique_json(raw):
-    if not isinstance(raw, str) or len(raw.encode("utf-8")) > 4_000_000:
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
         raise InvalidInventory("oversize_or_non_text_snapshot")
 
     def unique(pairs):
@@ -146,12 +149,36 @@ def assess(payload):
     }
 
 
+def read_snapshot(path):
+    """Read bounded regular UTF-8 bytes without following symlinks or FIFOs."""
+    if type(path) is not Path:
+        raise InvalidInventory("invalid_snapshot_path")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        with os.fdopen(os.open(path, flags), "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_SNAPSHOT_BYTES:
+                raise InvalidInventory("unsafe_or_oversized_snapshot")
+            data = stream.read(MAX_SNAPSHOT_BYTES + 1)
+            after = os.fstat(stream.fileno())
+            if (len(data) > MAX_SNAPSHOT_BYTES
+                    or before.st_dev != after.st_dev
+                    or before.st_ino != after.st_ino
+                    or before.st_size != after.st_size
+                    or before.st_mtime_ns != after.st_mtime_ns
+                    or len(data) != before.st_size):
+                raise InvalidInventory("changed_or_oversized_snapshot")
+        return data.decode("utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise InvalidInventory("snapshot_read_failed") from exc
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        raw = args.snapshot.read_text(encoding="utf-8")
+        raw = read_snapshot(args.snapshot)
         output = assess(unique_json(raw))
     except (OSError, UnicodeError, InvalidInventory) as exc:
         reason = str(exc) if isinstance(exc, InvalidInventory) else "snapshot_read_failed"
