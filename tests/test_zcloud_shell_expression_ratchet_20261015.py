@@ -142,6 +142,27 @@ class RealGitTests(unittest.TestCase):
         head = self.commit('steps:\n  - "run": echo ${{ github.event.issue.title }}\n')
         self.assertEqual(1, guard.audit(base, head)["new_risks"])
 
+    def test_inline_flow_mapping_run_expression_is_not_skipped(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - {name: guarded, run: echo ${{ github.event.issue.title }}}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_new_safe_inline_flow_run_is_fail_closed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - {name: probe, 'run': echo safe}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_replacing_existing_flow_run_does_not_hide_new_risk(self):
+        base = self.commit("steps:\n  - {run: echo original}\n")
+        head = self.commit("steps:\n  - {run: echo ${{ github.event.issue.body }}}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_unchanged_flow_run_does_not_create_debt(self):
+        source = "steps:\n  - {run: echo safe}\n"
+        base = self.commit(source)
+        head = self.commit(source + "# no new flow mappings\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
