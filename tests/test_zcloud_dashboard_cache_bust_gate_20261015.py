@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -225,6 +226,29 @@ class GitAssetCases(unittest.TestCase):
     def test_invalid_sha_never_reads_git(self) -> None:
         self.assertEqual(gate.evaluate("main", self.head)["reason"], "invalid_sha")
         self.assertEqual(gate.evaluate(self.base, "bad")["reason"], "invalid_sha")
+
+    def test_immutable_base_scanner_rejects_forged_green_pr_head(self) -> None:
+        # A candidate PR may replace its own scanner with an always-green stub.
+        # CI must execute the policy from base before head-supplied test code.
+        scanner = Path("scripts/zcloud_dashboard_cache_bust_gate_20261015.py")
+        scanner.parent.mkdir()
+        scanner.write_bytes(SCRIPT.read_bytes())
+        trusted_base = self.commit()
+        self.write("public/app.js", "console.log(2);")
+        scanner.write_text('print("{\\"ok\\":true}")\\n', encoding="utf-8")
+        malicious_head = self.commit()
+        base_scanner = run("show", f"{trusted_base}:scripts/zcloud_dashboard_cache_bust_gate_20261015.py")
+        executable = Path(self.tmp.name) / "trusted-base-policy.py"
+        executable.write_text(base_scanner, encoding="utf-8")
+        result = subprocess.run(
+            ["python3", "-I", str(executable), "--base-sha", trusted_base,
+             "--head-sha", malicious_head],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        self.assertEqual(result.returncode, 1, result.stderr)
+        verdict = json.loads(result.stdout)
+        self.assertEqual(verdict["reason"], "changed_asset_pin_unchanged")
+        self.assertFalse(verdict["release_authorized"])
 
     def test_no_repository_mutation(self) -> None:
         self.write("public/app.js", "console.log(2);")
