@@ -169,8 +169,15 @@ def permission_debt(
         if re.fullmatch(r"\s*(?:-\s*)?run\s*:\s*[|>][-+1-9]*\s*", line):
             run_scalar_indent = width
         if width == 0:
-            in_jobs = bool(re.match(r"^jobs:\s*$", line))
-            if re.match(r"^jobs\s*:\s*[{[]", line):
+            # GitHub Actions permits YAML variants of the 'jobs' mapping
+            # (quoted keys, aliases and nonstandard whitespace). We only
+            # model the conventional literal jobs key and two-space job keys.
+            # The rest may hide new jobs inheriting repository token defaults;
+            # freeze the entire source blob instead of reusing the old
+            # top-level implicit-default finding for every new job.
+            jobs_header = re.match(r"""^(?:jobs|['"]jobs['"])\s*:\s*(.*)$""", line)
+            in_jobs = bool(re.fullmatch(r"jobs:\s*", line))
+            if jobs_header and not in_jobs:
                 findings[f"{path}|opaque_job_structure|{_fingerprint(line)}"] += 1
             job = None
         elif in_jobs and width == 2:
@@ -182,6 +189,10 @@ def permission_debt(
                 # Inline flow jobs, aliases and nonliteral job keys can hide
                 # effective "permissions" that override a safe root policy.
                 findings[f"{path}|opaque_job_declaration|{_fingerprint(line)}"] += 1
+        elif in_jobs and width > 2 and job is None:
+            # Four-space initial job keys (or an exotic structure) are not
+            # safely identifiable by the two-space lexical job inventory.
+            findings[f"{path}|opaque_job_indentation|{_fingerprint(line)}"] += 1
         # Explicit YAML mapping keys, merge aliases and decoded mapping
         # keys are not proven safe by lexical checks. Conservatively deny new
         # instances, while preserving the exact source baseline as old debt.
