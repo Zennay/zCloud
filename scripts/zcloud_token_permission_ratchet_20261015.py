@@ -224,7 +224,11 @@ def permission_debt(
         # keys are not proven safe by lexical checks. Conservatively deny new
         # instances, while preserving the exact source baseline as old debt.
         ambiguous = (
-            re.match(r"^\s*\?\s*(?:permissions|['\"]permissions['\"])\b", line)
+            # Any explicit YAML complex mapping key can resolve to a
+            # permissions/job policy via quotes, escapes, tags or multiline
+            # scalar spelling. No lexical substring check can prove safety.
+            re.match(r"^\s*\?(?:\s|$)", line)
+            or re.match(r"^\s*\?\s*(?:permissions|['\"]permissions['\"])\b", line)
             or re.match(r"^\s*<<\s*:", line)
             or re.match(r"""^\s*['"].*\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}).*['"]\s*:""", line)
             or re.match(
