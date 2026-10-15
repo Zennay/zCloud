@@ -16,6 +16,7 @@ import selectors
 import subprocess
 import sys
 import time
+import unicodedata
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOWS = ".github/workflows/"
@@ -147,9 +148,18 @@ def blob(oid: str, deadline: float | None = None) -> str:
     if len(raw) != count:
         raise Denied("changed_blob")
     try:
-        return raw.decode("utf-8", "strict")
+        decoded = raw.decode("utf-8", "strict")
     except UnicodeError as exc:
         raise Denied("invalid_utf8") from exc
+    # Different YAML/Unicode libraries disagree about line separators,
+    # zero-width controls and bidirectional marks. Never let an invisible
+    # character rewrite the effective 'uses'/'with' key after scanning.
+    if any((ch in "\u0085\u2028\u2029"
+            or unicodedata.category(ch) in {"Cf", "Cs"}
+            or (ord(ch) < 32 and ch not in "\t\n\r")
+            or ord(ch) == 127) for ch in decoded):
+        raise Denied("ambiguous_source_control")
+    return decoded
 
 
 def workflow_active_lines(source: str) -> list[str]:
