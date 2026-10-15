@@ -84,12 +84,21 @@ def manifest(root: Path, commit: str) -> dict[str, bytes]:
             raise RefError("non_regular_workflow")
         if len(out) >= MAX_WORKFLOWS:
             raise RefError("workflow_count_limit")
-        body = git(root, "cat-file", "blob", oid)
-        if len(body) > MAX_BYTES:
+        # Reject oversized untrusted blobs BEFORE reading their bytes into
+        # Python. cat-file blob followed by a length check could allocate an
+        # attacker-controlled multi-GB file from a PR's Git object tree.
+        try:
+            declared_size = int(git(root, "cat-file", "-s", oid).strip())
+        except ValueError as exc:
+            raise RefError("invalid_workflow_blob_size") from exc
+        if declared_size < 0 or declared_size > MAX_BYTES:
             raise RefError("oversized_workflow")
-        accumulated_bytes += len(body)
-        if accumulated_bytes > MAX_TOTAL_BYTES:
+        if accumulated_bytes + declared_size > MAX_TOTAL_BYTES:
             raise RefError("aggregate_workflow_bytes_limit")
+        body = git(root, "cat-file", "blob", oid)
+        if len(body) != declared_size:
+            raise RefError("workflow_blob_size_mismatch")
+        accumulated_bytes += declared_size
         try:
             out[path] = body.decode("utf-8").encode("utf-8")
         except UnicodeError as exc:
