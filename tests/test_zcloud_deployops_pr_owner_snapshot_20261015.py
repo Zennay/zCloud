@@ -63,8 +63,10 @@ class FakeGitHub:
         if path.startswith("/pulls/"):
             number = int(path.split("/")[2])
             metadata, files = self.details[number]
-            if path.endswith("/files?per_page=100&page=1"):
-                return [] if self.truncate_files else copy.deepcopy(files)
+            if "/files?per_page=100&page=" in path:
+                page = int(path.rsplit("=", 1)[-1])
+                portion = files[(page - 1) * 100: page * 100]
+                return [] if self.truncate_files else copy.deepcopy(portion)
             self.detail_reads[number] = self.detail_reads.get(number, 0) + 1
             result = copy.deepcopy(metadata)
             if ((self.drift_head and self.detail_reads[number] > 1)
@@ -85,6 +87,38 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
         self.assertEqual("Zennay/zCloud", snapshot["repo"])
         self.assertTrue(all(call.startswith(("/pulls", "/branches/main"))
                             for call in api.calls))
+
+    def test_paginates_101_changed_paths_and_keeps_all_evidence(self):
+        api = FakeGitHub(1)
+        info, _ = api.details[1]
+        info["changed_files"] = 101
+        all_files = [{"filename": f"docs/p{index}.md", "status": "modified"}
+                     for index in range(101)]
+        api.details[1] = (info, all_files)
+        evidence = s.collect(api)
+        self.assertEqual(101, len(evidence["pulls"][0]["files"]))
+        self.assertEqual(101, assess(evidence)["files_scanned"])
+        self.assertIn("/pulls/1/files?per_page=100&page=2", api.calls)
+
+    def test_second_file_page_must_be_complete(self):
+        api = FakeGitHub(1)
+        info, _ = api.details[1]
+        info["changed_files"] = 101
+        api.details[1] = (info, [
+            {"filename": f"docs/{i}.md", "status": "modified"}
+            for i in range(100)])
+        with self.assertRaisesRegex(InvalidInventory, "incomplete_pr_files_page"):
+            s.collect(api)
+
+    def test_duplicate_second_file_page_rejected(self):
+        api = FakeGitHub(1)
+        info, _ = api.details[1]
+        info["changed_files"] = 101
+        api.details[1] = (info, [
+            {"filename": "docs/a.md", "status": "modified"}
+            for _ in range(101)])
+        with self.assertRaisesRegex(InvalidInventory, "unsafe_or_duplicate_file_path"):
+            s.collect(api)
 
     def test_rename_both_paths_propagate_to_collision_proof(self):
         api = FakeGitHub(2)
@@ -126,7 +160,7 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
         api.details[1][0]["changed_files"] = True
         with self.assertRaisesRegex(InvalidInventory, "incomplete_or_oversized_pr_files"):
             s.collect(api)
-        api.details[1][0]["changed_files"] = 100
+        api.details[1][0]["changed_files"] = 301
         with self.assertRaisesRegex(InvalidInventory, "incomplete_or_oversized_pr_files"):
             s.collect(api)
 
