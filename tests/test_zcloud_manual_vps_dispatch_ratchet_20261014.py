@@ -100,6 +100,12 @@ class ManualDispatchPolicy(unittest.TestCase):
         preflight = workflow_source.index('git cat-file -e "${HEAD_SHA}^{commit}"')
         self.assertGreater(workflow_source.index("timeout 20 git ls-remote"), preflight)
         self.assertEqual(2, workflow_source.count("timeout 20 git ls-remote"))
+        self.assertEqual(2, workflow_source.count(
+            "git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main",
+        ))
+        self.assertEqual(2, workflow_source.count('cd "$RUNNER_TEMP"'))
+        self.assertEqual(2, workflow_source.count("GIT_CONFIG_GLOBAL=/dev/null"))
+        self.assertNotIn("ls-remote --exit-code origin", workflow_source)
         self.assertEqual(2, workflow_source.count('test "$current_main" = "$BASE_SHA"'))
         self.assertEqual(1, workflow_source.count("python3 -m unittest discover"))
 
