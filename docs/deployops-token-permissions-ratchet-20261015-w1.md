@@ -20,7 +20,9 @@ De bestaande deploy-ops-gates bewaken workflow-events, runnergebruik, acties en 
 
 ## Leesbare GitHub Actions-uitkomst
 
-De hosted broncontrole schrijft een **Nederlandse, begrensde job summary** voor acceptatie én afwijzing. De samenvatting toont alleen geverifieerde niet-negatieve tellingen, laat workflowbron en foutdetails weg en vermeldt expliciet dat release, deployment en mutatie niet zijn toegestaan. Tegenspraak tussen success-status, tellers of enige bevoegdheidsvlag wordt afgewezen. Ook een mislukte schrijfactie naar de lokale summary maakt de controle rood. Regressies controleren de echte CLI zowel op succes, onvolledige bron als summary-schrijfproblemen.
+De hosted broncontrole schrijft een **Nederlandse, begrensde job summary** voor acceptatie én afwijzing. Bij succes wordt eerst een klein machineleesbaar resultaat in een tijdelijk bestand opgeslagen; pas als **beide remote SHA-identiteiten ná de scan** opnieuw zijn bevestigd, wordt de positieve gebruikerssamenvatting geschreven. Een mislukte scan of gewijzigde SHA levert een **vaste Nederlandse afwijzing via de Bash ERR-trap**, zonder de onbetrouwbare bron of foutdetails te interpoleren. Zo claimt de samenvatting niet voortijdig een groen resultaat als de eigenlijke GitHub-job alsnog rood wordt.
+
+De samenvatting toont alleen geverifieerde niet-negatieve tellingen, laat workflowbron en foutdetails weg en vermeldt expliciet dat release, deployment en mutatie niet zijn toegestaan. Tegenspraak tussen success-status, tellers of enige bevoegdheidsvlag wordt afgewezen. Ook een mislukte schrijfactie naar de lokale summary maakt de controle rood. De regressies bewaken zowel de echte CLI bij succes/afwijzing als het statische gehoste workflowcontract: PR-only, alleen GitHub-hosted, `contents: read`, SHA-pins en bronidentiteit vóór én na de scan.
 
 ## Nieuwe YAML-omzeilingen afgedekt (15 oktober, vervolg)
 
