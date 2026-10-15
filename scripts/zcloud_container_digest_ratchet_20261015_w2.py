@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
-DIGEST = re.compile(r"@sha256:[0-9a-fA-F]{64}(?=$|[\s#}])")
+DIGEST = re.compile(r"@sha256:[0-9a-fA-F]{64}(?=$|[\s#}\"'])")
 KEY = r"""(?:image|["']image["'])"""
 CONTAINER = r"""(?:container|["']container["'])"""
 USES = r"""(?:uses|["']uses["'])"""
