@@ -54,3 +54,9 @@ Deze beperkte contextverbetering maakt echte checkout-adoptie niet vrij: een ech
 
 Gerichte real-Git regressies onderscheiden een letterlijk en gevouwen shellvoorbeeld, een voorbeeld met YAML-escape in tekst en echte onveilige checkout-steps na de blokscalar. Ook na deze wijziging blijven onafhankelijke beveiligingsreview en main-protection verplicht.
 
+
+
+## Ondubbelzinnige Unicode YAML-bron (extra verificatie)
+De ongewijzigde code van een bestaande Git-blob blijft toegestaan als legacy-schuld, maar bij een nieuw of gewijzigd GitHub-workflowbestand mag de broncode niet afhankelijk zijn van onzichtbare Unicode-stuurtekens of afwijkende regelscheiding. Python `splitlines()`, YAML-interpreters en menselijke reviewers kunnen onderling verschillen over bijvoorbeeld U+0085, U+2028/U+2029, bidi-override U+202E en zero-width-formatters.
+
+De bronlezer weigert daarom na strikte UTF-8-decodering C0-tekens behalve tab/newline/carriage return, DEL, Unicode Cf/Cs en expliciete ambiguë regelseparatoren met vaste reden `ambiguous_source_control`. Normale zichtbare Unicode blijft bruikbaar; regressies toetsen een toegestane naam met `café` naast geweigerde null, next-line, line-separator en bidi-override. De scanner verandert nog altijd geen lokale of productiebron; dit is een PR-only fail-closed preflight, geen trusted YAML-parser of live VPS-acceptatie.
