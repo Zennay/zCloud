@@ -1,0 +1,56 @@
+name: zCloud seven-writer source-lock inventory (hosted)
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/zcloud-seven-writer-lock-audit-hosted-20261015-w3.yml"
+      - "scripts/zcloud_deployops_writer_lock_source_20261015_w3.py"
+      - "tests/test_zcloud_deployops_writer_lock_source_20261015_w3.py"
+      - "docs/deploy-ops/seven-writer-lock-source-inventory-20261015-w3.md"
+      - ".github/workflows/zcloud-vps-deploy.yml"
+      - ".github/workflows/zcloud-postsend-tab-preservation-live.yml"
+      - ".github/workflows/zcloud-safe-memory-reclaim-20261013.yml"
+      - ".github/workflows/zcloud-v2-activate-addon-in-place.yml"
+      - ".github/workflows/zcloud-worker-tab-guard.yml"
+      - ".github/workflows/zcloud-no-browser-churn-hotfix.yml"
+      - ".github/workflows/zcloud-emergency-addon-hot-reload.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Adversarial inventory tests (hosted, no VPS)
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_deployops_writer_lock_source_20261015_w3.py' -v
+      - name: Print non-authorizing source inventory
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deployops_writer_lock_source_20261015_w3.py --root . > "$RUNNER_TEMP/zcloud-writer-lock-source.json"
+          python3 - "$RUNNER_TEMP/zcloud-writer-lock-source.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert report["schema"] == "zcloud-writer-lock-source-v1"
+          assert report["total_writers"] == 7
+          assert not report["runtime_lock_verified"]
+          assert not report["dispatch_authorized"]
+          assert not report["release_authorized"]
+          assert not report["mutation_performed"]
+          msg = (
+              "### Read-only production writer source inventory\n"
+              f"- Serialized in source: {report['source_serialized']}/7\n"
+              f"- Still unverified in source: {', '.join(report['source_unverified']) or 'none'}\n"
+              "- **This is not live runner, lock, release or deployment proof.**\n"
+          )
+          print(msg)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write(msg)
+          PY
