@@ -130,8 +130,14 @@ class Refs(HTMLParser):
             raise ValueError("inert_asset_ref")
         if tag == "script" and (values.get("type") or "").lower() not in ("", "module", "application/javascript", "text/javascript"):
             raise ValueError("inactive_script_asset_ref")
+        if tag == "script" and "nomodule" in values:
+            # A nomodule script does not execute in modern module-capable browsers.
+            raise ValueError("conditional_script_asset_ref")
         if tag == "link" and "disabled" in values:
             raise ValueError("disabled_stylesheet_asset_ref")
+        if tag == "link" and (values.get("media") or "").strip().lower() not in ("", "all"):
+            # print/not-all media links cannot stand in for the active dashboard CSS.
+            raise ValueError("conditional_stylesheet_asset_ref")
         if parsed.scheme or parsed.netloc or parsed.fragment or not parsed.query:
             raise ValueError("invalid_asset_ref")
         try:
