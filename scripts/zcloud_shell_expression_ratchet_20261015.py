@@ -100,7 +100,10 @@ def fingerprint_risks(source: str) -> Counter[str]:
     # rather than silently claiming that no dangerous interpolation exists.
     # Digest the entire line so rewriting an existing flow-run also counts.
     for line in source.splitlines():
-        if "{" in line and FLOW_RUN_KEY.search(line):
+        match = FLOW_RUN_KEY.search(line)
+        # Braces *after* run: can simply be the normal ${{ expression }}
+        # delimiters. Only a brace *before* the key indicates flow mapping.
+        if match and "{" in line[:match.start()]:
             out["ambiguous_flow_run:" + hashlib.sha256(line.strip().encode("utf-8")).hexdigest()] += 1
     for scalar in run_shell_scalars(source):
         # A previously seen expression is not safe to move from a harmless
