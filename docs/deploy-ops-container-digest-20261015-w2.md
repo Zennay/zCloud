@@ -24,10 +24,14 @@ findings. The workflow targets same-repository owner PRs only and has
   Main is checked again after the read-only comparison.
 - Require `@sha256:<64 hex>` to pin new literal container images, service
   images and `docker://` references. YAML alias, dynamic GitHub expressions,
-  multiline image forms and ambiguous flow-style map definitions require
-  independent review and are refused as *new* risk.
+  multiline image forms, explicit YAML mappings, encoded double-quoted YAML
+  keys and ambiguous flow-style map/\`docker://\` steps require independent
+  review and are refused as *new* risk.
 - Symlinked workflow/composite metadata, malformed UTF-8, missing Git objects
   or oversized scans **fail closed** rather than establishing false safety.
+  Root and arbitrarily nested \`action.yml\` / \`action.yaml\` metadata are
+  included, not just \`.github/actions/**\`. The PR gate also triggers on those
+  paths at any directory depth.
 - Never place image scalar values, bearer tokens or shell bodies in output.
   Reports contain bounded paths, line numbers and categories only.
 
