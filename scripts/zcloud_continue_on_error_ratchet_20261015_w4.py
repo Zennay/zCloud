@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import selectors
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -21,16 +23,56 @@ ROOT = Path(__file__).resolve().parents[1]
 MAX_CHANGED = 250
 MAX_INVENTORY = 128 * 1024
 MAX_WORKFLOW = 1024 * 1024
+GIT_DEADLINE_SECONDS = 15
 
 
 def git(root: Path, *args: str, limit: int = MAX_WORKFLOW) -> bytes:
-    result = subprocess.run(
-        ["git", "-C", str(root), *args], check=True, capture_output=True,
-        timeout=20, env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
+    """Drain a subprocess with a hard elapsed deadline AND bounded stdout.
+
+    subprocess.run(capture_output=True) buffers arbitrary stdout before a
+    post-hoc size check. Git stderr is discarded to avoid credential leakage.
+    """
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("invalid_git_limit")
+    command = ["git", "-C", str(root), *args]
+    proc = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
     )
-    if len(result.stdout) > limit:
-        raise ValueError("git_output_limit")
-    return result.stdout
+    output = bytearray()
+    deadline = time.monotonic() + GIT_DEADLINE_SECONDS
+    try:
+        assert proc.stdout is not None
+        with selectors.DefaultSelector() as reader:
+            reader.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("git_elapsed_deadline")
+                ready = reader.select(remaining)
+                if not ready:
+                    raise TimeoutError("git_elapsed_deadline")
+                chunk = os.read(proc.stdout.fileno(), min(65536, limit + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > limit:
+                    raise ValueError("git_output_limit")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("git_elapsed_deadline")
+        status = proc.wait(timeout=remaining)
+        if status:
+            raise subprocess.CalledProcessError(status, command)
+        return bytes(output)
+    except BaseException:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def changed_workflows(root: Path, base: str, head: str) -> list[str]:
@@ -70,7 +112,9 @@ def check_workflow(source: str) -> list[str]:
     for number, line in enumerate(source.splitlines(), 1):
         stripped = line.lstrip(" ")
         indent = len(line) - len(stripped)
-        if "\\t" in line[:indent]:
+        # Count a tab as indentation only for detection: YAML tabs fail closed.
+        prefix = line[:len(line) - len(line.lstrip(" \t"))]
+        if "\t" in prefix:
             issues.append(f"line_{number}:tab_indent_unreviewed")
             continue
         if run_block_indent is not None:
