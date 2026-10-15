@@ -1,6 +1,7 @@
 """Real Git adversarial source checks; no live repository mutation."""
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -307,6 +308,44 @@ class RatchetTests(unittest.TestCase):
                 module.git("status")
             self.assertEqual(str(caught.exception), "scan_deadline_exceeded")
             spawn.assert_not_called()
+
+    def test_workflow_rechecks_remote_head_at_both_boundaries(self):
+        path = SCRIPT.parents[0] / ".github/workflows/zcloud-direct-main-write-ratchet-20261015-w3.yml"
+        source = path.read_text(encoding="utf-8")
+        self.assertEqual(source.count("HEAD_REF: "), 2)
+        self.assertEqual(source.count("ls-remote --exit-code https://github.com/Zennay/zCloud.git"), 2)
+        self.assertEqual(source.count('test "$remote_head" = '), 2)
+
+    def test_remote_branch_drift_changes_exact_head_proof(self):
+        bare = self.root / "upstream.git"
+        self.git("init", "--bare", str(bare))
+        self.git("branch", "-M", "owner-branch")
+        self.git("remote", "add", "origin", str(bare))
+        self.git("push", "origin", "owner-branch")
+        first = self.git("rev-parse", "HEAD")
+        command = (
+            'remote_head="$(git ls-remote --exit-code origin "refs/heads/$HEAD_REF")"; '
+            'test "$remote_head" = "$EVENT_HEAD"' + "
+        marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
+        _, r = self.change("git push origin main # " + marker)
+        self.assertNotIn(marker, json.dumps(r))
+
+
+if __name__ == "__main__":
+    unittest.main()
+\\t'" + '"refs/heads/$HEAD_REF"'
+        )
+        def check(expected):
+            env = os.environ.copy()
+            env.update(EVENT_HEAD=expected, HEAD_REF="owner-branch")
+            return subprocess.run(["bash", "-e", "-c", command], cwd=self.root,
+                                  env=env, capture_output=True, text=True).returncode
+        self.assertEqual(check(first), 0)
+        self.write(".github/workflows/new.yml", SAFE)
+        second = self.commit()
+        self.git("push", "origin", "owner-branch")
+        self.assertNotEqual(check(first), 0)
+        self.assertEqual(check(second), 0)
 
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
