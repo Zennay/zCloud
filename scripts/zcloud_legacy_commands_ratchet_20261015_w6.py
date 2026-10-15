@@ -150,8 +150,10 @@ def proper_file(commit: str, path: str) -> bool:
 
 def candidate(path: str, mode: str | None = None) -> bool:
     p = PurePosixPath(path)
-    if p.is_absolute() or ".." in p.parts or "\x00" in path:
-        raise Denied("Invalid workflow pathname")
+    if p.is_absolute() or ".." in p.parts or any(
+        unicodedata.category(ch) in ("Cf", "Cc") for ch in path
+    ):
+        raise Denied("Invalid or control-bearing workflow pathname")
     if len(p.parts) == 3 and p.parts[:2] == (".github", "workflows"):
         return p.suffix in (".yml", ".yaml")
     if len(p.parts) >= 3 and p.parts[:2] == (".github", "actions"):
@@ -164,6 +166,16 @@ def candidate(path: str, mode: str | None = None) -> bool:
                 or p.suffix.lower() in ACTION_CODE_EXTENSIONS
                 or mode == "100755")
     return False
+
+
+def require_clean_source(source: str) -> None:
+    """Reject ambiguous control bytes without breaking ordinary CRLF or tabs."""
+    if any(
+        unicodedata.category(ch) == "Cf"
+        or (unicodedata.category(ch) == "Cc" and ch not in "\\r\\n\\t")
+        for ch in source
+    ):
+        raise Denied("Hidden or invalid control character in changed source")
 
 
 def decoded_scalar_escapes(source: str) -> str:
@@ -183,8 +195,7 @@ def decoded_scalar_escapes(source: str) -> str:
         newer = ESCAPED_SCALAR.sub(expand, source)
         if newer == source:
             return source
-        if any(unicodedata.category(ch) == "Cf" for ch in newer):
-            raise Denied("Encoded Unicode format controls in workflow")
+        require_clean_source(newer)
         source = newer
     raise Denied("Excessively nested YAML scalar escapes")
 
@@ -196,8 +207,7 @@ def check_content(content: bytes) -> None:
         source = content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise Denied("Workflow blob is not UTF-8") from exc
-    if any(unicodedata.category(ch) == "Cf" for ch in source):
-        raise Denied("Unicode format controls in workflow source")
+    require_clean_source(source)
     if ENV.search(source) or COMMANDS.search(source):
         raise Denied("New or changed workflow uses legacy unsafe command syntax")
     expanded = decoded_scalar_escapes(source)
