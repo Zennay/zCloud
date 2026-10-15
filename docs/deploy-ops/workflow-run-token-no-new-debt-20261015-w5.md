@@ -10,7 +10,7 @@ This conservative source-only PR ratchet requires newly added or edited `workflo
 
 ## Evidence and limitations
 
-- Immutable SHA-checked Git source at exact base and head; ancestor check, workflow tree/mode preflight, bounded inventory and blob size, UTF-8-only. Symlink workflow files denied.
+- Immutable SHA-checked Git source at exact base and head; ancestor check, workflow tree/mode preflight, bounded inventory and blob size, **stdout capped while reading (not after capture) and a 15-second Git deadline with forced child cleanup**, UTF-8-only. Symlink workflow files denied.
 - Tests use genuine temporary Git repositories and include read-only-safe cases, missing defaults, write-all, job writes, aliases, quoted keys, inline/multiline trigger forms, legacy-grandfathering and symlinks.
 - GitHub-hosted pull-request check has only `contents: read`, pinned checkout and `persist-credentials: false`; foreign PRs fail **before** source checkout instead of skipping as successful.
 - This is not a complete YAML semantics parser, full GitHub token provenance proof, production admission, protected-main attestation, or evaluation of workflow_run payload/trigger trust. Ambiguous YAML may be denied conservatively.
