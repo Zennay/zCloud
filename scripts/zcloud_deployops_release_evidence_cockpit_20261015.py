@@ -482,11 +482,25 @@ def collect(api) -> dict:
     }
 
 
+WARNING_LABELS_NL = {
+    "production_not_success": "Geen bevestigde geslaagde productiestatus voor deze commit",
+    "production_observation_stale": "Laatste productiestatus is te oud of ontbreekt",
+    "deploy_run_inventory_incomplete": "Deploygeschiedenis is onvolledig (maximaal 500 runs)",
+    "runner_route_not_proven": "Toewijzing aan de vaste VPS-runner niet aangetoond",
+    "deploy_observation_stale_or_missing": "Deploybewijs is verouderd of ontbreekt",
+    "runner_job_not_success": "VPS-job is niet aantoonbaar geslaagd",
+    "deploy_run_not_success": "Deployworkflow is niet aantoonbaar geslaagd",
+}
+
+
 def render_html(snapshot: dict) -> str:
     def safe(value: object) -> str:
         return html.escape(str(value), quote=True)
     p, d = snapshot["production"], snapshot["deploy"]
-    warnings = "".join(f"<li>{safe(w)}</li>" for w in snapshot["warnings"])
+    warnings = "".join(
+        f"<li>{safe(WARNING_LABELS_NL.get(w, w))}</li>"
+        for w in snapshot["warnings"]
+    )
     next_checks = "".join(f"<li>{safe(c)}</li>" for c in snapshot["next_checks"])
     return """<!doctype html><html lang="nl"><meta charset="utf-8">
 <title>zCloud deploy-ops evidence</title>
@@ -501,7 +515,7 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <dt>Productie-status</dt><dd>""" + safe(p["state"]) + """</dd>
 <dt>Leeftijd productiestatus (seconden)</dt><dd>""" + safe(p["last_status_age_seconds"]) + """</dd>
 <dt>Laatste deploy (huidige SHA, begrensd volledig opgehaalde pagina's)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
-<dt>Doorgenomen deployruns</dt><dd>""" + safe(d["runs_scanned"]) + """ runs in """ + safe(d["run_pages_scanned"]) + """ pagina's · volledige historie: """ + safe(d["run_inventory_complete"]) + """</dd>
+<dt>Doorgenomen deployruns</dt><dd>""" + safe(d["runs_scanned"]) + """ runs in """ + safe(d["run_pages_scanned"]) + """ pagina's · volledige historie: """ + safe("JA" if d["run_inventory_complete"] else "NEE (gedeeltelijk)") + """</dd>
 <dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd>
 <dt>VPS-jobuitkomst</dt><dd>""" + safe(d["runner_job_result"]) + """</dd>
 <dt>Leeftijd laatste deploybewijs (seconden)</dt><dd>""" + safe(d["run_age_seconds"]) + """</dd></dl>
