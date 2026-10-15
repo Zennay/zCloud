@@ -1206,6 +1206,30 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(old.replace("permissions: read-all", "permissions: write-all"))
         self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
 
+    def test_four_space_job_indent_permission_escalation_denied(self):
+        old = ("jobs:\n    deploy:\n      permissions:\n        contents: read\n"
+               "      steps:\n        - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("contents: read", "contents: write"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_four_space_job_indent_runner_escalation_denied(self):
+        old = ("jobs:\n    deploy:\n      runs-on: ubuntu-latest\n"
+               "      steps:\n        - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("ubuntu-latest", "self-hosted"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_four_space_unrelated_job_metadata_does_not_invalidate_waiver(self):
+        old = ("jobs:\n    unsafe:\n      permissions: read-all\n"
+               "      steps:\n        - run: echo ${{ inputs.payload }}\n"
+               "    other:\n      permissions: read-all\n"
+               "      steps:\n        - run: echo safe\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("    other:\n      permissions: read-all",
+                                       "    other:\n      permissions: write-all"))
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
