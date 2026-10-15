@@ -1,0 +1,94 @@
+name: zCloud PR ownership collision inventory (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: zcloud-pr-owner-collision-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          clean: true
+
+      - name: Prove exact current main with canonical remote
+        shell: bash
+        env:
+          EXPECTED: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$(git rev-parse HEAD)" = "$EXPECTED"
+          current="$(timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test -n "$current"
+          test "$current" = "$EXPECTED"
+
+      - name: Run focused fail-closed tests (hosted only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_deployops_pr_owner_collision_20261015 tests.test_zcloud_deployops_pr_owner_snapshot_20261015
+
+      - name: Fetch exact-main, fully paginated PR ownership metadata without mutation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m scripts.zcloud_deployops_pr_owner_snapshot_20261015 > "$RUNNER_TEMP/zcloud-pr-ownership-input.json"
+
+      - name: Print bounded advisory result and fail on collisions or incomplete input
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python3 scripts/zcloud_deployops_pr_owner_collision_20261015.py \
+            --snapshot "$RUNNER_TEMP/zcloud-pr-ownership-input.json" > "$RUNNER_TEMP/zcloud-pr-ownership-result.json"
+          status="$?"
+          set -e
+          STATUS="$status" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads((Path(os.environ["RUNNER_TEMP"]) / "zcloud-pr-ownership-result.json").read_text())
+          lines = [
+              "## zCloud open-PR file ownership (advisory only)",
+              "No release, deployment or production authority. PR-less branches are NOT included.",
+              "This is a single-time GitHub read, not a durable ownership lock.",
+          ]
+          if result.get("policy") == "zcloud-deployops-pr-owner-collision-v1":
+              lines.extend([
+                  f"Open PRs checked: {result['prs_scanned']}",
+                  f"Changed files checked: {result['files_scanned']}",
+                  f"Stale-base PRs: {result['stale_base_count']}",
+                  f"Paths owned by multiple PRs: {result['collision_count']}",
+              ])
+              for row in result["collisions"][:20]:
+                  lines.append(f"- `{row['path']}`: " + ", ".join(
+                      f"#{n}" for n in row["prs"][:20]))
+          else:
+              lines.append("Inventory was refused; no completeness or ownership claim.")
+          (Path(os.environ["GITHUB_STEP_SUMMARY"])).write_text("\n".join(lines) + "\n")
+          PY
+          exit "$status"
