@@ -113,5 +113,47 @@ class RatchetTests(unittest.TestCase):
         self.assertNotIn(str(self.repo), s.getvalue())
 
 
+
+class WorkflowTrustTests(unittest.TestCase):
+    def setUp(self):
+        self.text = (HERE / ".github/workflows/zcloud-remote-shell-no-new-debt-20261015-w1.yml").read_text(encoding="utf-8")
+
+    def test_hosted_readonly_pr_only(self):
+        self.assertIn("pull_request:", self.text)
+        self.assertNotIn("workflow_dispatch:", self.text)
+        self.assertNotIn("pull_request_target:", self.text)
+        self.assertNotIn("workflow_run:", self.text)
+        self.assertIn("runs-on: ubuntu-latest", self.text)
+        self.assertNotIn("runs-on: [self-hosted", self.text)
+        self.assertIn("permissions:\n  contents: read", self.text)
+        self.assertNotIn("contents: write", self.text)
+        self.assertIn("cancel-in-progress: false", self.text)
+
+    def test_symmetric_owner_and_exact_head_guards(self):
+        for marker in (
+            "github.repository == 'Zennay/zCloud'",
+            "github.actor == 'Zennay'",
+            "github.triggering_actor == 'Zennay'",
+            "github.event.pull_request.head.repo.full_name == github.repository",
+            "ref: ${{ github.event.pull_request.head.sha }}",
+            "persist-credentials: false",
+            'test "$(git rev-parse HEAD)" = "$HEAD_SHA"',
+            "git ls-remote origin refs/heads/main",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.text)
+
+    def test_workflow_has_no_live_mutation_commands(self):
+        for forbidden in (
+            "systemctl ", "sudo ", "sqlite3 ", "ssh ",
+            "workflow_dispatch ", "gh workflow run", "git push",
+            "cancel-run", "POST /repos/", "zcloud-production-deploy",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.text)
+
+
+
+
 if __name__ == "__main__":
     unittest.main()
