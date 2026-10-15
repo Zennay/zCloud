@@ -46,12 +46,17 @@ jobs:
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git check-ref-format --branch "$EXPECTED_BRANCH"
+          test "$(git ls-remote --exit-code origin "refs/heads/$EXPECTED_BRANCH" | cut -f1)" = "$EXPECTED_HEAD"
           git fetch --no-tags origin main
-          test "$(git rev-parse origin/main)" = "$(git ls-remote origin refs/heads/main | cut -f1)"
-          git merge-base --is-ancestor "$(git rev-parse origin/main)" "$EXPECTED_HEAD"
+          base_sha="$(git rev-parse origin/main)"
+          test "$base_sha" = "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          git merge-base --is-ancestor "$base_sha" "$EXPECTED_HEAD"
+          echo "BASE_SHA=$base_sha" >> "$GITHUB_ENV"
       - name: Run adversarial offline source tests
         shell: bash
         run: |
@@ -62,11 +67,15 @@ jobs:
         shell: bash
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
           python3 scripts/zcloud_shell_expression_ratchet_20261015.py \
-            --base "$(git rev-parse origin/main)" --head "$EXPECTED_HEAD" \
+            --base "$BASE_SHA" --head "$EXPECTED_HEAD" \
             | tee shell-expression-evidence.json
+          # Two-point source freshness is a rejection gate, not an atomic snapshot.
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          test "$(git ls-remote --exit-code origin "refs/heads/$EXPECTED_BRANCH" | cut -f1)" = "$EXPECTED_HEAD"
           python3 - <<'PY'
           import json
           from pathlib import Path
