@@ -124,7 +124,7 @@ def insecure_occurrences(text):
             continue
         value = indexed_git_config.get((index, "VALUE"), "")
         if (re.fullmatch(r"http(?:\.[^\s=]+)?\.sslverify", key, re.I)
-                and value.lower() in {"false", "0"}):
+                and value.lower() not in {"true", "1"}):
             occurrences[("git_ssl_verify_environment",
                          f"GIT_CONFIG_KEY_{index}={key};GIT_CONFIG_VALUE_{index}={value}")] += 1
     return occurrences
