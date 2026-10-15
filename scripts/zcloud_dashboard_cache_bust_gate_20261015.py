@@ -88,14 +88,14 @@ class Refs(HTMLParser):
             self.inert_tags.pop()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in ("template", "noscript"):
-            if any(k.lower() != k for k, _ in attrs):
-                raise ValueError("invalid_inert_markup")
-            self.inert_tags.append(tag)
-            return
+        # Apply duplicate-attribute validation even to inert wrappers, so
+        # malformed <template> / <noscript> nodes cannot evade HTML checks.
         attr_names = [key.lower() for key, _ in attrs]
         if len(attr_names) != len(set(attr_names)):
             raise ValueError("duplicate_html_attribute")
+        if tag in ("template", "noscript"):
+            self.inert_tags.append(tag)
+            return
         values = dict(attrs)
         # HTML base changes where absolute-path asset URLs resolve; URL-local evidence
         # cannot prove browser cache scope after an origin-changing <base href>.
