@@ -46,6 +46,16 @@ class PRSnapshotDeltaTests(unittest.TestCase):
         self.assertFalse(result["mutation_performed"])
         self.assertFalse(result["includes_pr_less_branches"])
 
+    def test_different_snapshot_order_is_not_reported_as_identical_evidence(self):
+        before = inventory(pr(1, "docs/a.md"), pr(2, "docs/b.md"))
+        after = inventory(pr(2, "docs/b.md"), pr(1, "docs/a.md"))
+        result = delta.compare_snapshots(before, after)
+        self.assertEqual("changed", result["status"])
+        self.assertEqual(0, result["changed_prs"]["count"])
+        self.assertEqual(0, result["changed_path_ownership"]["count"])
+        self.assertNotEqual(result["previous_snapshot_sha256"],
+                            result["current_snapshot_sha256"])
+
     def test_new_removed_and_changed_prs_exact_paths_are_reported(self):
         before = inventory(pr(1, "docs/a.md"), pr(2, "docs/c.md"))
         current = inventory(pr(1, "docs/a.md", head=C),
