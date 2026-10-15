@@ -250,6 +250,41 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
 
+    def test_download_option_case_mismatched_filename_is_not_same_linux_file(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o installer.sh https://example.invalid/i && bash INSTALLER.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_stdout_redirect_case_mismatched_filename_is_not_same_linux_file(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl https://example.invalid/i > setup.sh && source SETUP.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_chmod_direct_execute_case_mismatched_filename_not_same_file(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -O install.sh https://example.invalid/i && chmod +x install.sh && ./INSTALL.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_case_preserving_filename_direct_exec_remains_protected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o Setup.sh https://example.invalid/i && chmod +x Setup.sh && ./Setup.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_case_preserving_filename_bash_execution_remains_protected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -O Setup.py https://example.invalid/i && python3 Setup.py\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
     def test_curl_download_then_bash_same_file_rejected(self):
         self.write(
             "jobs:\n  x:\n    steps:\n      - run: |\n"
