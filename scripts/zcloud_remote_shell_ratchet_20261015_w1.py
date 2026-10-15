@@ -179,9 +179,10 @@ def extract_run_scripts(yaml: str) -> list[str]:
                     raise SourceError("Unterminated quoted YAML run scalar")
                 blocks.append(" ".join(parts))
             else:
-                # Inline hash characters inside quoted YAML are not comments.
-                # Preserve the complete scalar to avoid hiding a source risk.
-                blocks.append(raw)
+                # A plain YAML run value terminates at a whitespace-prefixed
+                # '#'; fully quoted run values preserve that character. Avoid
+                # false source debt from a comment after a harmless command.
+                blocks.append(raw if raw[0] in ('"', "'") else raw.split(" #", 1)[0])
     return blocks
 
 
