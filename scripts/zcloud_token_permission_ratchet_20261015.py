@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Reject newly introduced elevated GitHub Actions token-permission declarations.
+
+Read-only Git object comparison. This is a bounded lexical ratchet, not a YAML
+interpreter, protection-rule replacement, or authorization to deploy.
+"""
+from __future__ import annotations
+
+import argparse
+from collections import Counter
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+SHA = re.compile(r"[0-9a-f]{40}\\Z")
+WORKFLOW = re.compile(r"\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml\\Z")
+KEY = re.compile(r"(?P<key>[A-Za-z][A-Za-z-]*|['\\\"][A-Za-z][A-Za-z-]*['\\\"])")
+MAX_FILES = 512
+MAX_FILE_BYTES = 1024 * 1024
+MAX_TOTAL_BYTES = 24 * MAX_FILE_BYTES
+MAX_FINDINGS = 4096
+
+
+class IncompleteSource(ValueError):
+    """Cannot prove the two immutable Git trees are complete and comparable."""
+
+
+def git(root: Path, *args: str, timeout: int = 15) -> bytes:
+    return subprocess.check_output(
+        ["git", *args], cwd=root, stderr=subprocess.DEVNULL, timeout=timeout
+    )
+
+
+def tree(root: Path, sha: str) -> dict[str, str]:
+    if not SHA.fullmatch(sha):
+        raise IncompleteSource("invalid_sha")
+    if git(root, "cat-file", "-t", sha).strip() != b"commit":
+        raise IncompleteSource("missing_commit")
+    if git(root, "cat-file", "-t", f"{sha}:.github/workflows").strip() != b"tree":
+        raise IncompleteSource("missing_workflow_tree")
+    raw = git(root, "ls-tree", "-r", "-z", sha, "--", ".github/workflows")
+    result: dict[str, str] = {}
+    total = 0
+    for record in raw.split(b"\\0"):
+        if not record:
+            continue
+        try:
+            meta, filename = record.split(b"\\t", 1)
+            mode, kind, blob = meta.decode("ascii").split(" ")
+            path = filename.decode("utf-8", "strict")
+        except (ValueError, UnicodeError) as exc:
+            raise IncompleteSource("bad_tree") from exc
+        if (mode != "100644" and mode != "100755") or kind != "blob":
+            raise IncompleteSource("symlink_or_gitlink")
+        if not WORKFLOW.fullmatch(path):
+            raise IncompleteSource("unexpected_workflow_path")
+        if path in result or len(result) >= MAX_FILES:
+            raise IncompleteSource("duplicate_or_oversized_tree")
+        size_raw = git(root, "cat-file", "-s", blob).strip()
+        if not size_raw.isdigit():
+            raise IncompleteSource("invalid_blob_size")
+        size = int(size_raw)
+        total += size
+        if size > MAX_FILE_BYTES or total > MAX_TOTAL_BYTES:
+            raise IncompleteSource("oversized_source")
+        source = git(root, "cat-file", "blob", blob)
+        if len(source) != size or b"\\0" in source:
+            raise IncompleteSource("invalid_blob_contents")
+        try:
+            result[path] = source.decode("utf-8", "strict")
+        except UnicodeError as exc:
+            raise IncompleteSource("non_utf8_workflow") from exc
+    if not result:
+        raise IncompleteSource("empty_workflows")
+    return result
+
+
+def _uncomment(line: str) -> str:
+    # Remove ordinary comments, but retain # characters inside quoted scalars.
+    quote = None
+    escaped = False
+    for n, char in enumerate(line):
+        if char == "\\\\" and quote == '"' and not escaped:
+            escaped = True
+            continue
+        if char in ("'", '"') and not escaped:
+            if quote == char:
+                quote = None
+            elif quote is None:
+                quote = char
+        if char == "#" and quote is None and (n == 0 or line[n - 1].isspace()):
+            return line[:n]
+        escaped = False
+    return line
+
+
+def _scalar(value: str) -> str:
+    return value.strip().strip("'\\\"").lower()
+
+
+def _mapping_risk(body: list[str], indent: int) -> str | None:
+    if not body:
+        return "opaque_permissions"
+    seen: set[str] = set()
+    risky = []
+    for line in body:
+        stripped = _uncomment(line).strip()
+        if not stripped:
+            continue
+        width = len(line) - len(line.lstrip(" "))
+        if width != indent + 2 or "\\t" in line[:width]:
+            return "opaque_permissions"
+        pair = re.fullmatch(r"([A-Za-z][A-Za-z-]*|['\\\"][A-Za-z][A-Za-z-]*['\\\"]):\\s*([^{}\\[\\],&*]+?)\\s*", stripped)
+        if not pair:
+            return "opaque_permissions"
+        key = _scalar(pair.group(1))
+        value = _scalar(pair.group(2))
+        if key in seen or value not in ("read", "write", "none"):
+            return "opaque_permissions"
+        seen.add(key)
+        if value == "write":
+            risky.append(key)
+    if not seen:
+        return "opaque_permissions"
+    return "write:" + ",".join(sorted(risky)) if risky else None
+
+
+def permission_debt(source: str, path: str) -> Counter[str]:
+    """Capture source-scoped risky declarations; unchanged legacy risk stays grandfathered."""
+    lines = source.splitlines()
+    findings: Counter[str] = Counter()
+    in_jobs = False
+    job = None
+    for i, original in enumerate(lines):
+        line = _uncomment(original)
+        if not line.strip():
+            continue
+        if "\\t" in original[:len(original) - len(original.lstrip())]:
+            raise IncompleteSource("tab_indentation")
+        width = len(original) - len(original.lstrip(" "))
+        if width == 0:
+            in_jobs = bool(re.match(r"^jobs:\\s*$", line))
+            job = None
+        elif in_jobs and width == 2:
+            head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\\s*", line)
+            job = head.group(1) if head else None
+        match = re.match(r"^\\s*(?:permissions|['\\\"]permissions['\\\"]):\\s*(.*)$", line)
+        if not match:
+            continue
+        scope = "top" if width == 0 else f"job:{job}" if width == 4 and in_jobs and job else "unsupported"
+        value = match.group(1).strip()
+        if not value:
+            body = []
+            for child in lines[i + 1:]:
+                clean = _uncomment(child)
+                if not clean.strip():
+                    continue
+                child_width = len(child) - len(child.lstrip(" "))
+                if child_width <= width:
+                    break
+                body.append(child)
+            risk = _mapping_risk(body, width)
+        elif _scalar(value) in ("read-all", "{}"):
+            risk = None
+        elif _scalar(value) == "write-all":
+            risk = "write-all"
+        elif value.startswith("{") and value.endswith("}"):
+            # Flow permissions are intentionally not parsed: unsafe to assume
+            # aliases, Unicode escapes, or mixed mappings are read-only.
+            risk = "opaque_flow_permissions"
+        else:
+            risk = "opaque_permissions"
+        if risk is not None:
+            findings[f"{path}|{scope}|{risk}"] += 1
+            if sum(findings.values()) > MAX_FINDINGS:
+                raise IncompleteSource("too_many_findings")
+    return findings
+
+
+def check(root: Path, base: str, head: str) -> dict[str, object]:
+    if not SHA.fullmatch(base) or not SHA.fullmatch(head) or base == head:
+        raise IncompleteSource("invalid_commit_pair")
+    try:
+        git(root, "merge-base", "--is-ancestor", base, head)
+        old = tree(root, base)
+        new = tree(root, head)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise IncompleteSource("git_source_unverifiable") from exc
+    before = sum((permission_debt(text, name) for name, text in old.items()), Counter())
+    after = sum((permission_debt(text, name) for name, text in new.items()), Counter())
+    introduced = after - before
+    # Do not print arbitrary workflow source, paths or permission values in CI.
+    return {
+        "policy": "zcloud-token-permission-no-new-debt-v1",
+        "baseline_risks": sum(before.values()),
+        "candidate_risks": sum(after.values()),
+        "new_risks": sum(introduced.values()),
+        "ok": not introduced,
+        "release_authorized": False,
+        "deployment_authorized": False,
+        "mutation_performed": False,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--head", required=True)
+    parser.add_argument("--root", type=Path, default=Path("."))
+    args = parser.parse_args(argv)
+    try:
+        result = check(args.root.resolve(), args.base, args.head)
+    except (IncompleteSource, OSError, subprocess.SubprocessError, UnicodeError):
+        result = {
+            "policy": "zcloud-token-permission-no-new-debt-v1",
+            "ok": False, "reason": "incomplete_git_source",
+            "release_authorized": False, "deployment_authorized": False,
+            "mutation_performed": False,
+        }
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
