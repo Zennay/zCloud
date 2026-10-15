@@ -27,3 +27,9 @@ Both commands are offline/read-only. The GitHub-hosted PR workflow also rechecks
 
 ## Extended adversarial source coverage
 The ratchet also conservatively denies newly changed workflow YAML with literal Unicode/hex escape sequences, even if they occur in otherwise benign strings. This avoids a false safe verdict from obfuscated `secrets` keys or `inherit` values; it may cause false positives requiring independent review. Complex YAML mapping keys split across `? secrets` and `: inherit` are also detected. Three additional real-Git negative fixtures enforce the behavior. Both changes are source-only and confer no deployment authority.
+
+## PR event integrity and workflow-directory preservation
+- The check runs on every pull request to main, not only a limited set of path triggers. A skipped job is not proof of approval.
+- Immutable GitHub main and pull-request-head remote refs (SHA **and** complete ref name) are verified both before and after tests. Changing the source branch while checks execute invalidates the evidence. A PR author must still not be considered an independent trusted reviewer.
+- The source scanner now requires both `.github` and `.github/workflows` to remain real Git tree objects at base and head. A symlink or deletion of that directory must not silently produce an empty, passing inventory.
+- Real-Git fixtures cover directory removal, workflows-root symlink, parent-root symlink, remote branch movement, and a valid directory. All operations remain source-only.
