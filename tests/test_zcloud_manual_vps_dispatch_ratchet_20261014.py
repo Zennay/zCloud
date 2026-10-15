@@ -190,6 +190,18 @@ class ManualDispatchPolicy(unittest.TestCase):
         )
         self.assertTrue(guard.evaluate({}, {WF: admitted})["ok"])
 
+    def test_valid_yaml_block_sequence_and_quoted_events_fail_closed(self):
+        for event in (
+            '  - workflow_dispatch',
+            '    - "workflow_dispatch"',
+            "   - 'workflow_dispatch'",
+            '  "workflow_dispatch":',
+            "    'workflow_dispatch':",
+        ):
+            with self.subTest(event=event):
+                body = workflow().replace(b"  workflow_dispatch:", event.encode())
+                self.assertDenied(body)
+
     def test_valid_nonstandard_event_indentation_cannot_hide_manual_dispatch(self):
         for indent in (" ", "   ", "    ", "      "):
             with self.subTest(indent=len(indent)):
