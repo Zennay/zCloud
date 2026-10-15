@@ -243,9 +243,9 @@ def dutch_operator_summary(report: dict[str, object], status: int) -> str:
         if report.get("inventory_complete") is not False:
             raise ValueError("invalid_incomplete_evidence")
         return (
-            "### Containerimages — bronbewijs incompleet\\n\\n"
-            "**Afgewezen:** Git-objecten of broninformatie ontbreken of zijn onveilig.\\n\\n"
-            "Dit geeft **geen** toestemming voor deployment, runnerherstel of wijzigingen.\\n"
+            "### Containerimages — bronbewijs incompleet\n\n"
+            "**Afgewezen:** Git-objecten of broninformatie ontbreken of zijn onveilig.\n\n"
+            "Dit geeft **geen** toestemming voor deployment, runnerherstel of wijzigingen.\n"
         )
     if status not in (0, 1) or report.get("inventory_complete") is not True:
         raise ValueError("inconsistent_source_report")
@@ -260,12 +260,12 @@ def dutch_operator_summary(report: dict[str, object], status: int) -> str:
         raise ValueError("status_finding_mismatch")
     verdict = "Geen nieuwe risico's gevonden" if status == 0 else "Afgewezen: nieuwe risico's gevonden"
     return (
-        f"### Containerimages — {verdict}\\n\\n"
-        "| Broncontrole | Aantal |\\n|---|---:|\\n"
-        f"| Bestaande aandachtspunten | {baseline} |\\n"
-        f"| Kandidaat-aandachtspunten | {candidate} |\\n"
-        f"| Nieuwe risico's | {added} |\\n\\n"
-        "**Alleen GitHub-broncontrole.** Geen VPS-herstel, productie-deploy of vrijgave.\\n"
+        f"### Containerimages — {verdict}\n\n"
+        "| Broncontrole | Aantal |\n|---|---:|\n"
+        f"| Bestaande aandachtspunten | {baseline} |\n"
+        f"| Kandidaat-aandachtspunten | {candidate} |\n"
+        f"| Nieuwe risico's | {added} |\n\n"
+        "**Alleen GitHub-broncontrole.** Geen VPS-herstel, productie-deploy of vrijgave.\n"
     )
 
 
