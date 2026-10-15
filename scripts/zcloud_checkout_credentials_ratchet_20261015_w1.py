@@ -33,7 +33,7 @@ WITH = re.compile(r"^(\s*)with\s*:\s*(?:#.*)?$")
 CREDENTIAL = re.compile(r"^(\s*)persist-credentials\s*:\s*(\S+)(?:\s*#.*)?$")
 NEW_STEP = re.compile(r"^(\s*)-\s+")
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
-ESCAPED_YAML = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}|/|[ \\t]*$)")
+ESCAPED_YAML = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}|/|[ \t]*$)")
 
 
 class Denied(Exception):
