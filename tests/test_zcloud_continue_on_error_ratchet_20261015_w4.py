@@ -219,6 +219,49 @@ class ContinueOnErrorGitTests(unittest.TestCase):
             "  information: |\n    continue-on-error: true\n"
         ))
 
+    def test_invalid_git_output_budget_fails_closed(self):
+        for limit in (0, -1, True, "10"):
+            with self.subTest(limit=limit):
+                with self.assertRaisesRegex(ValueError, "invalid_git_limit"):
+                    gate.git(self.root, "status", limit=limit)
+
+    def test_git_subprocess_output_is_bounded_while_reading(self):
+        with tempfile.TemporaryDirectory() as bindir:
+            binary = Path(bindir) / "git"
+            binary.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "sys.stdout.write('A' * 500000)\n",
+                encoding="utf-8",
+            )
+            binary.chmod(0o755)
+            from unittest.mock import patch
+            import os
+            with patch.dict(os.environ, {"PATH": bindir + os.pathsep + os.environ["PATH"]}):
+                with self.assertRaisesRegex(ValueError, "git_output_limit"):
+                    gate.git(self.root, "status", limit=1024)
+
+    def test_git_process_hanging_before_first_byte_times_out(self):
+        with tempfile.TemporaryDirectory() as bindir:
+            binary = Path(bindir) / "git"
+            binary.write_text(
+                "#!/usr/bin/env python3\n"
+                "import time\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            binary.chmod(0o755)
+            from unittest.mock import patch
+            import os
+            with patch.dict(os.environ, {"PATH": bindir + os.pathsep + os.environ["PATH"]}):
+                with patch.object(gate, "GIT_DEADLINE_SECONDS", 0.25):
+                    with self.assertRaisesRegex(TimeoutError, "git_elapsed_deadline"):
+                        gate.git(self.root, "status", limit=512)
+
+    def test_yaml_tab_indentation_is_rejected(self):
+        self.assertTrue(gate.check_workflow("\tcontinue-on-error: false\n"))
+        self.assertTrue(gate.check_workflow("  \t- name: nested\n"))
+
     def test_direct_source_key_matrix(self):
         for source, expected in (
             ("continue-on-error: true", True),
