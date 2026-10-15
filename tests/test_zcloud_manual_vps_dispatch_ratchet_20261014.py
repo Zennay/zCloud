@@ -553,6 +553,15 @@ class ManualDispatchPolicy(unittest.TestCase):
                                     text=True, capture_output=True, timeout=20, check=False)
             self.assertEqual("ref_must_be_immutable_sha", json.loads(denied.stdout)["reason"])
 
+    def test_git_stream_reader_preserves_wall_clock_deadline(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            sha = commit(root, workflow(if_statement=SAFE_IF))
+            with mock.patch.object(guard.time, "monotonic", side_effect=(0.0, 21.0)):
+                with self.assertRaisesRegex(guard.RefError, "git_read_timeout"):
+                    guard.git(root, "rev-parse", sha)
+
     def test_git_command_stdout_is_bounded_and_exit_status_verified(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
