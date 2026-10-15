@@ -73,6 +73,14 @@ untrusted data, and dynamic matrix values can originate from those outputs.
 The ratchet therefore refuses **new** direct shell interpolations of
 `steps.<step-id>.outputs.*`, `needs.<job-id>.outputs.*` and `matrix.*`,
 including bracket syntax for named jobs/steps and hyphenated names.
+Serializing the complete `steps` or `needs` context via `toJSON(steps)`
+or `toJSON(needs)` can also expose the same derived payloads. The
+scanner refuses **new** direct shell interpolation of these serialized
+objects. It also treats computed `steps[...]` or `needs[...]` property
+selection as ambiguous: a computed selector can resolve to an output
+that is not evident from the source. Fixed `steps.audit.outcome` and
+`needs.audit.result` metadata are not categorized as untrusted output
+payloads under this specific extension.
 This is intentionally conservative: some outputs or matrix elements are
 immutable and harmless, but the source-only tripwire cannot prove their
 upstream origin. Existing historical expressions remain scoped to their
