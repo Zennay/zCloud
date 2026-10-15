@@ -111,6 +111,39 @@ class RealGitRatchetTests(unittest.TestCase):
         with self.assertRaises(gate.Denied):
             gate.scan(self.base, self.commit())
 
+    def test_changed_local_action_implementation_sources_are_scanned(self):
+        unsafe = {
+            ".github/actions/tool/run.sh": "echo '::set-output name=X::Y'\\n",
+            ".github/actions/tool/src/index.js": "console.log('::add-path::/tmp/evil');\\n",
+            ".github/actions/tool/src/main.ts": "console.log('::save-state name=K::V');\\n",
+            ".github/actions/tool/Containerfile": "RUN echo '::set-env name=K::V'\\n",
+            ".github/actions/tool/script.py": "print('::set-env name=K::V')\\n",
+        }
+        for path, source in unsafe.items():
+            with self.subTest(path=path):
+                self.git("reset", "--hard", self.base)
+                self.write(path, source)
+                with self.assertRaisesRegex(gate.Denied, "legacy unsafe"):
+                    gate.scan(self.base, self.commit())
+
+    def test_safe_action_implementation_scripts_count_as_checked(self):
+        self.write(".github/actions/tool/src/index.js", "console.log('hello');\\n")
+        self.write(".github/actions/tool/run.sh", "echo safe\\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (2, 2))
+
+    def test_changed_action_scripts_fail_closed_when_oversized(self):
+        self.write(".github/actions/tool/run.sh", "x" * (gate.MAX_BLOB + 1))
+        with self.assertRaisesRegex(gate.Denied, "size limit"):
+            gate.scan(self.base, self.commit())
+
+    def test_deleted_action_implementation_does_not_reintroduce_debt(self):
+        self.write(".github/actions/tool/run.sh", "echo '::set-output name=K::V'\\n")
+        self.write(".github/actions/tool/readme.txt", "kept\\n")
+        original = self.commit()
+        Path(".github/actions/tool/run.sh").unlink()
+        after = self.commit()
+        self.assertEqual(gate.scan(original, after), (0, 0))
+
     def test_new_gitlink_under_actions_is_denied_even_without_metadata_file(self):
         # Gitlinks are opaque references: checking only action.yml names misses
         # newly introduced third-party execution sources.
