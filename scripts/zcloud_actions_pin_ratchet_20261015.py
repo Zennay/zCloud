@@ -54,7 +54,11 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
     for tree_part in (".github", ".github/workflows"):
         if git(root, "cat-file", "-t", revision + ":" + tree_part).strip() != b"tree":
             raise Refusal("workflow_root_not_directory")
-    raw = git(root, "ls-tree", "-rz", "--full-tree", revision, ".github/workflows")
+    # Composite Actions may themselves invoke floating third-party Actions.
+    # Include only their GitHub-recognised action.yml/action.yaml metadata;
+    # refuse symlinked action directories so the scan cannot miss their steps.
+    raw = git(root, "ls-tree", "-rz", "--full-tree", revision,
+              ".github/workflows", ".github/actions")
     paths: dict[str, str] = {}
     for entry in raw.split(b"\0"):
         if not entry:
@@ -65,10 +69,22 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
             path = filename.decode("utf-8", "strict")
         except (ValueError, UnicodeError) as exc:
             raise Refusal("invalid_tree_entry") from exc
-        if not (path.startswith(".github/workflows/") and
-                path.endswith((".yml", ".yaml"))):
+        is_workflow = (path.startswith(".github/workflows/") and
+                       path.endswith((".yml", ".yaml")))
+        is_action_source = path.startswith(".github/actions/")
+        is_action_meta = (is_action_source and
+                          path.rsplit("/", 1)[-1] in ("action.yml", "action.yaml"))
+        if path == ".github/actions" or (
+            is_action_source and (mode == "120000" or kind != "blob")
+        ):
+            raise Refusal("nonregular_composite_action_source")
+        if not is_workflow and not is_action_meta:
             continue
-        if "/" in path[len(".github/workflows/"):] or "\n" in path or "\r" in path:
+        if is_workflow and "/" in path[len(".github/workflows/"):]:
+            raise Refusal("unexpected_workflow_path")
+        if ("\n" in path or "\r" in path or "\0" in path or
+            ".." in path.split("/") or
+            (is_action_meta and len(path.split("/")) < 4)):
             raise Refusal("unexpected_workflow_path")
         if mode != "100644" or kind != "blob" or not SHA.fullmatch(blob):
             raise Refusal("nonregular_workflow")
