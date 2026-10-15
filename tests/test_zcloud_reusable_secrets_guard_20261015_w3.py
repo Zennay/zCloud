@@ -25,6 +25,7 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.git("config", "user.email", "tests@localhost")
         self.git("config", "user.name", "workflow-ratchet-tests")
         self.write("README.md", "baseline\n")
+        self.write(f"{ROOT}/baseline.yml", "name: baseline\n")
         self.commit()
         self.base = self.git("rev-parse", "HEAD").strip()
 
@@ -194,6 +195,36 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         updated = self.git("ls-remote", "--exit-code", "origin", "refs/heads/main").strip()
         self.assertNotEqual(updated, original)
         self.assertEqual(updated, new_head + "\trefs/heads/main")
+
+    def test_missing_workflow_directory_fails_closed(self):
+        Path(f"{ROOT}/baseline.yml").unlink()
+        Path(ROOT).rmdir()
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "missing_workflow_directory"):
+            inspect(self.base, head)
+
+    def test_symlinked_workflows_root_fails_closed(self):
+        Path(f"{ROOT}/baseline.yml").unlink()
+        Path(ROOT).rmdir()
+        os.symlink("../README.md", ROOT)
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "non_directory_workflow_root"):
+            inspect(self.base, head)
+
+    def test_symlinked_dotgithub_root_fails_closed(self):
+        Path(f"{ROOT}/baseline.yml").unlink()
+        Path(ROOT).rmdir()
+        Path(".github").rmdir()
+        os.symlink("README.md", ".github")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "non_directory_workflow_root"):
+            inspect(self.base, head)
+
+    def test_clean_directory_root_keeps_readonly_receipt(self):
+        self.write(f"{ROOT}/new.yaml", "name: additional\\n")
+        head = self.commit()
+        self.assertEqual(inspect(self.base, head)["workflows_examined"], 2)
+        self.assertFalse(inspect(self.base, head)["mutation_performed"])
 
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
