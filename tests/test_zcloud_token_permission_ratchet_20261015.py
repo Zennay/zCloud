@@ -282,5 +282,38 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertFalse(check(self.root, base, self.commit("comment-change"))["ok"])
 
 
+    def test_inline_job_flow_write_overrides_safe_root_denied(self):
+        result = self.check_file(
+            "on: push\npermissions:\n  contents: read\njobs:\n"
+            "  test: {permissions: {contents: write}, runs-on: ubuntu-latest}\n"
+        )
+        self.assertFalse(result["ok"])
+
+    def test_legacy_normal_job_replaced_with_inline_job_denied(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions:\n  contents: read\njobs:\n"
+                 "  test:\n    runs-on: ubuntu-latest\n")
+        base = self.commit("safe-ordinary-job")
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions:\n  contents: read\njobs:\n"
+                 "  test: {permissions: write-all, runs-on: ubuntu-latest}\n")
+        self.assertFalse(check(self.root, base, self.commit("inline-write-job"))["ok"])
+
+    def test_alias_job_can_override_safe_root_denied(self):
+        value = self.check_file(
+            "on: push\npermissions:\n  contents: read\n"
+            "x-job: &writer\n  permissions: write-all\njobs:\n  test: *writer\n"
+        )
+        self.assertFalse(value["ok"])
+
+    def test_unchanged_legacy_opaque_job_with_docs_only_allowed(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions:\n  contents: read\n"
+                 "jobs:\n  test: {runs-on: ubuntu-latest}\n")
+        base = self.commit("legacy-inline-job")
+        self.put("README.md", "harmless")
+        self.assertTrue(check(self.root, base, self.commit("harmless-docs"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
