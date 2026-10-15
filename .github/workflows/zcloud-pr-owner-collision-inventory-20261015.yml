@@ -98,7 +98,7 @@ jobs:
                   lines.append("More conflict groups omitted; see bounded JSON output.")
               for row in result["hierarchy_collisions"][:10]:
                   lines.append(
-                      f"- File/map: \`{row['ancestor']}\` ↔ \`{row['descendant']}\`"
+                      f"- File/map: `{row['ancestor']}` ↔ `{row['descendant']}`"
                       f" ({row['pr_count']} PRs)")
               if result["hierarchy_collision_report_truncated"]:
                   lines.append("More file/map collisions omitted.")
