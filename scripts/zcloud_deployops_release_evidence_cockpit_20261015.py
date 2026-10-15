@@ -178,6 +178,7 @@ def current_deploy(api, sha: str) -> dict:
             "run_id": None, "attempt": None, "status": "not_observed",
             "conclusion": None, "runner_route": "UNVERIFIED",
             "matching_deploys_in_first_page": 0, "run_age_seconds": None,
+            "runner_job_result": "NOT_OBSERVED",
         }
     run_id, attempt, status, conclusion, run_age_seconds = max(matching, key=lambda x: (x[0], x[1]))
     jobs_payload = api.get(
@@ -192,9 +193,19 @@ def current_deploy(api, sha: str) -> dict:
     if len(jobs) != total:
         raise EvidenceError("deploy_job_count_mismatch")
     found = []
+    outcomes = []
+    seen_job_ids = set()
     for job in jobs:
         if not isinstance(job, dict) or not isinstance(job.get("labels"), list):
             raise EvidenceError("malformed_job")
+        job_id = integer(job.get("id"))
+        if job_id in seen_job_ids:
+            raise EvidenceError("duplicate_deploy_job")
+        seen_job_ids.add(job_id)
+        if (type(job.get("run_id")) is not int or job["run_id"] != run_id or
+            type(job.get("run_attempt")) is not int or job["run_attempt"] != attempt or
+            job.get("head_sha") != sha):
+            raise EvidenceError("mismatched_deploy_job_identity")
         labels = job["labels"]
         if not all(isinstance(label, str) for label in labels):
             raise EvidenceError("malformed_runner_labels")
@@ -203,6 +214,18 @@ def current_deploy(api, sha: str) -> dict:
         job_status = job.get("status")
         if job_status not in ("queued", "in_progress", "completed", "waiting", "pending"):
             raise EvidenceError("unknown_job_status")
+        job_conclusion = job.get("conclusion")
+        if job_status == "completed":
+            if job_conclusion not in (
+                "success", "failure", "cancelled", "skipped", "timed_out",
+                "action_required", "neutral", "stale", "startup_failure",
+            ):
+                raise EvidenceError("invalid_terminal_job_conclusion")
+            outcomes.append("SUCCESS" if job_conclusion == "success" else "FAILED")
+        else:
+            if job_conclusion is not None:
+                raise EvidenceError("nonterminal_job_has_conclusion")
+            outcomes.append("NOT_TERMINAL")
         runner_id = job.get("runner_id")
         runner_name = job.get("runner_name")
         if runner_id is not None and (type(runner_id) is not int or runner_id < 0):
@@ -222,9 +245,18 @@ def current_deploy(api, sha: str) -> dict:
                 "UNVERIFIED", "ASSIGNED_TO_EXPECTED")
     runner_route = next((name for name in priority if name in found),
                         "NO_SELF_HOSTED_JOB")
+    if "FAILED" in outcomes:
+        runner_job_result = "FAILED"
+    elif "NOT_TERMINAL" in outcomes:
+        runner_job_result = "NOT_TERMINAL"
+    elif outcomes and all(x == "SUCCESS" for x in outcomes):
+        runner_job_result = "SUCCESS"
+    else:
+        runner_job_result = "NOT_OBSERVED"
     return {
         "run_id": run_id, "attempt": attempt, "status": status,
         "conclusion": conclusion, "runner_route": runner_route,
+        "runner_job_result": runner_job_result,
         "matching_deploys_in_first_page": len(matching),
         "run_age_seconds": run_age_seconds,
     }
@@ -242,6 +274,9 @@ def operator_next_checks(warnings: list[str]) -> list[str]:
         "deploy_observation_stale_or_missing":
             "Ververs eerst de alleen-lezen GitHub-observatie en vergelijk dezelfde "
             "main-SHA voordat je conclusies trekt.",
+        "runner_job_not_success":
+            "Controleer de afzonderlijke VPS-jobuitkomst op dezelfde run, poging "
+            "en commit; eerdere toewijzing alleen betekent geen geslaagde uitvoering.",
         "deploy_run_not_success":
             "Bekijk de exacte workflow-run en de afzonderlijke safe-idle- en "
             "database-logmarkers; leid geen oorzaak af uit één mislukte jobnaam.",
@@ -269,6 +304,8 @@ def collect(api) -> dict:
         warnings.append("runner_route_not_proven")
     if deploy["run_age_seconds"] is None or deploy["run_age_seconds"] > 900:
         warnings.append("deploy_observation_stale_or_missing")
+    if deploy["runner_job_result"] != "SUCCESS":
+        warnings.append("runner_job_not_success")
     if deploy["conclusion"] != "success":
         warnings.append("deploy_run_not_success")
     return {
@@ -302,6 +339,7 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <dt>Productie-status</dt><dd>""" + safe(p["state"]) + """</dd>
 <dt>Laatste deploy (huidige SHA, beperkte eerste pagina)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
 <dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd>
+<dt>VPS-jobuitkomst</dt><dd>""" + safe(d["runner_job_result"]) + """</dd>
 <dt>Leeftijd laatste deploybewijs (seconden)</dt><dd>""" + safe(d["run_age_seconds"]) + """</dd></dl>
 <h2>Ontbrekend of afwijkend bewijs</h2><ul>""" + (warnings or "<li>Geen lokale waarschuwingen; onafhankelijke releasepoort blijft verplicht.</li>") + """</ul>
 <h2>Veilige volgende controles</h2><ol>""" + next_checks + """</ol>
@@ -326,7 +364,7 @@ def main(argv: list[str] | None = None) -> int:
             "production": {"state": "unknown"},
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
                        "conclusion": None, "runner_route": "UNVERIFIED",
-                       "run_age_seconds": None},
+                       "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED"},
             "warnings": [str(exc)],
             "next_checks": [
                 "GitHub-bewijs is onvolledig of onbereikbaar: onderzoek uitsluitend "
