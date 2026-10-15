@@ -435,6 +435,42 @@ class RatchetTests(unittest.TestCase):
         code, out = self.change("GIT_TERMINAL_PROMPT: '0'")
         self.assertEqual(code, 0, out)
 
+    def test_gh_pr_merge_direct_denied(self):
+        code, r = self.change("gh pr merge 123 --squash")
+        self.assertEqual(code, 1, r)
+        self.assertIn("indirect_pr_merge_write", r["findings"][0]["reasons"])
+
+    def test_gh_pr_merge_with_repo_selector_denied(self):
+        code, r = self.change("gh --repo org/repo pr merge 123 --admin")
+        self.assertEqual(code, 1, r)
+
+    def test_gh_pr_merge_with_short_repo_selector_denied(self):
+        self.assertEqual(self.change("gh -R org/repo pr merge 123")[0], 1)
+
+    def test_octokit_pulls_merge_denied(self):
+        code, r = self.change("await github.rest.pulls.merge({pull_number: 42})")
+        self.assertEqual(code, 1, r)
+        self.assertIn("indirect_pr_merge_write", r["findings"][0]["reasons"])
+
+    def test_octokit_repos_merge_denied(self):
+        self.assertEqual(self.change("await octokit.rest.repos.merge({base: 'main'})")[0], 1)
+
+    def test_curl_rest_pulls_merge_denied(self):
+        code, r = self.change("curl -X PUT https://api.github.com/repos/org/repo/pulls/42/merge")
+        self.assertEqual(code, 1, r)
+        self.assertIn("rest_merge_write", r["findings"][0]["reasons"])
+
+    def test_curl_rest_merges_endpoint_denied(self):
+        self.assertEqual(self.change("curl -X POST https://api.github.com/repos/org/repo/merges")[0], 1)
+
+    def test_safe_gh_pr_view_allowed(self):
+        code, r = self.change("gh pr view 123")
+        self.assertEqual(code, 0, r)
+
+    def test_safe_octokit_pulls_get_allowed(self):
+        code, r = self.change("await github.rest.pulls.get({pull_number: 42})")
+        self.assertEqual(code, 0, r)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, result = self.change("git push origin main # " + marker)
