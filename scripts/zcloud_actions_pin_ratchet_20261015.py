@@ -98,8 +98,13 @@ def refs(text: str, path: str) -> list[tuple[tuple[str, str], int]]:
         if match_block:
             block_indent = len(match_block.group(1))
             continue
-        if re.match(r"^\s*(?:-\s*)?<<\s*:", line):
+        # GitHub Actions YAML anchors/aliases may duplicate complete steps
+        # without adding another literal uses: line. Refuse ambiguous reuse,
+        # including flow-map merges and aliases in flow sequences.
+        if re.search(r"(^|[\\s{,\\[])<<\\s*:", line):
             raise Refusal("yaml_merge_key")
+        if re.search(r"(^|[\\s\\[{,:-])\\*[A-Za-z_][A-Za-z0-9_-]*(?=$|[\\s,}\\]])", line):
+            raise Refusal("yaml_alias")
         if re.search(r'''(?<![A-Za-z0-9_])['"]?uses['"]?\s*:''', line) and not USES.match(line):
             raise Refusal("ambiguous_uses_syntax")
         match = USES.match(line)
