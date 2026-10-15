@@ -445,7 +445,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn("deploy_run_inventory_incomplete", data["warnings"])
         self.assertEqual(data["deploy"]["runner_route"], "UNVERIFIED")
         self.assertFalse(data["deployment_authorized"])
-        self.assertIn("volledige historie: False", cockpit.render_html(data))
+        self.assertIn("volledige historie: NEE (gedeeltelijk)", cockpit.render_html(data))
 
     def test_deploy_large_repo_partial_even_without_total_count(self):
         api = FakeAPI()
@@ -738,6 +738,27 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertNotIn("<script>", page)
         self.assertIn("&lt;script&gt;", page)
         self.assertIn("Bevoegd tot deploy: <strong>NEE</strong>", page)
+
+    def test_dutch_operator_warnings_without_losing_json_codes(self):
+        api = FakeAPI()
+        api.pages[STAT] = [[]]
+        api.pages[RUNS] = [{"workflow_runs": []}]
+        data = cockpit.collect(api)
+        self.assertIn("production_not_success", data["warnings"])
+        page = cockpit.render_html(data)
+        self.assertIn("Geen bevestigde geslaagde productiestatus", page)
+        self.assertNotIn("<li>production_not_success</li>", page)
+        self.assertIn("VPS-job is niet aantoonbaar geslaagd", page)
+        self.assertFalse(data["deployment_authorized"])
+
+    def test_incomplete_inventory_is_explained_in_dutch(self):
+        data = cockpit.collect(FakeAPI())
+        data["warnings"] = ["deploy_run_inventory_incomplete"]
+        data["deploy"]["run_inventory_complete"] = False
+        page = cockpit.render_html(data)
+        self.assertIn("Deploygeschiedenis is onvolledig", page)
+        self.assertIn("volledige historie: NEE (gedeeltelijk)", page)
+        self.assertFalse(data["release_authorized"])
 
     def test_next_checks_offer_read_only_steps_for_missing_proof(self):
         api = FakeAPI()
