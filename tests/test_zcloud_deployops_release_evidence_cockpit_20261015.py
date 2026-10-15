@@ -763,6 +763,28 @@ class ReleaseEvidenceTests(unittest.TestCase):
         page = cockpit.render_html(data)
         self.assertNotIn("actions/runs/True", page)
 
+    def test_incomplete_observation_keeps_artifact_before_red_ci(self):
+        workflow = (SOURCE.parents[1] / ".github/workflows" /
+                    "zcloud-release-evidence-cockpit-20261015.yml").read_text()
+        self.assertIn("id: observe", workflow)
+        self.assertIn("0|1|2) printf 'evidence_rc=%s", workflow)
+        self.assertIn("steps.observe.outputs.evidence_rc == '2'", workflow)
+        upload = workflow.index("Retain sanitized offline HTML and JSON for 1 day")
+        deny = workflow.index("Fail closed AFTER artifact for incomplete GitHub evidence")
+        self.assertLess(upload, deny)
+        self.assertIn("exit 2", workflow[deny:])
+        self.assertIn("if-no-files-found: error", workflow[upload:deny])
+
+    def test_observer_still_has_no_self_hosted_or_write_permissions(self):
+        workflow = (SOURCE.parents[1] / ".github/workflows" /
+                    "zcloud-release-evidence-cockpit-20261015.yml").read_text()
+        self.assertGreaterEqual(workflow.count("runs-on: ubuntu-latest"), 2)
+        self.assertNotIn("runs-on: self-hosted", workflow)
+        self.assertNotIn("contents: write", workflow)
+        self.assertNotIn("actions: write", workflow)
+        self.assertNotIn("statuses: write", workflow)
+        self.assertIn("retention-days: 1", workflow)
+
     def test_dutch_operator_warnings_without_losing_json_codes(self):
         api = FakeAPI()
         api.pages[STAT] = [[]]
