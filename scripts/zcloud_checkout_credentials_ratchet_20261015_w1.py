@@ -149,10 +149,15 @@ def checkout_risks(source: str) -> list[str]:
                 if with_indent is not None:
                     problems.append("ambiguous_checkout_with")
                 with_indent = len(m.group(1))
+                # A nested env.with/run.with is NOT checkout's direct with.
+                if with_indent != indent + 2:
+                    problems.append("nested_checkout_with")
             cred = CREDENTIAL.fullmatch(line)
             if cred:
                 seen += 1
-                if with_indent is None or len(cred.group(1)) <= with_indent:
+                # Require the option to be directly under the direct with.
+                # Noncanonical indentation is conservatively sent to review.
+                if with_indent is None or len(cred.group(1)) != with_indent + 2:
                     problems.append("credentials_outside_with")
                 if cred.group(2).strip("\"'").lower() == "false":
                     correct = True
