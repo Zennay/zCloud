@@ -160,6 +160,30 @@ def collect(read, *, max_pages=10):
             break
     if not second_complete or second_order != original_order:
         raise InvalidInventory("pr_inventory_changed_during_snapshot")
+    # A PR may advance while another PR's files are inspected without
+    # changing the numbered PR list or main. Reconfirm EVERY captured
+    # source identity before emitting a cross-PR ownership graph.
+    for proof in prs:
+        latest = read(f"/pulls/{proof['number']}")
+        if type(latest) is not dict:
+            raise InvalidInventory("pr_changed_before_snapshot_completed")
+        head, base = latest.get("head"), latest.get("base")
+        def identity(ref, field):
+            if type(ref) is not dict:
+                return None
+            if field == "sha":
+                return ref.get("sha")
+            origin = ref.get("repo")
+            return origin.get("full_name") if type(origin) is dict else None
+        if (type(latest.get("number")) is not int
+                or latest["number"] != proof["number"]
+                or latest.get("state") != proof["state"]
+                or latest.get("changed_files") != proof["changed_files"]
+                or identity(head, "sha") != proof["head_sha"]
+                or identity(base, "sha") != proof["base_sha"]
+                or identity(head, "repo") != proof["head_repo"]
+                or identity(base, "repo") != proof["base_repo"]):
+            raise InvalidInventory("pr_changed_before_snapshot_completed")
     main_after = _main_sha(read)
     if main_before != main_after:
         raise InvalidInventory("main_changed_during_snapshot")
