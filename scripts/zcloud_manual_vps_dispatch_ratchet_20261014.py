@@ -120,6 +120,11 @@ def manual_event(source: str) -> bool:
             raise RefError("ambiguous_event_syntax")
         return False
     rest = event.group(1)
+    # A trailing YAML comment does not change a block-form event mapping.
+    # Treat "on: # explanation" exactly like "on:"; otherwise a manual VPS
+    # workflow can disappear from the audit with a single innocent comment.
+    if rest.lstrip().startswith("#"):
+        rest = ""
     if rest.strip():
         # Folded/literal/tagged YAML may resolve an event string from later
         # lines. Never classify a multiline event as "not manual" by merely
