@@ -34,16 +34,17 @@ class GitAssetCases(unittest.TestCase):
         self.public = Path("public")
         self.public.mkdir()
         self.write("public/app.js", "console.log(1);")
+        self.write("public/enhancements.js", "console.log(101);")
         self.write("public/enhancements.css", "body{margin:0}")
         self.write("public/index.html", self.html("r8", "r5"))
         self.base = self.commit()
         self.head = self.base
 
     @staticmethod
-    def html(js: str, css: str) -> str:
-        return '<link rel="stylesheet" href="/enhancements.css?v=' + css + '">' + (
-            '<script src="/app.js?v=' + js + '"></script>'
-        )
+    def html(js: str, css: str, enhancements: str = "r2") -> str:
+        return ('<link rel="stylesheet" href="/enhancements.css?v=' + css + '">' +
+                '<script src="/app.js?v=' + js + '"></script>' +
+                '<script src="/enhancements.js?v=' + enhancements + '"></script>')
 
     def write(self, path: str, value: str) -> None:
         Path(path).write_text(value, encoding="utf-8")
@@ -101,6 +102,34 @@ class GitAssetCases(unittest.TestCase):
         self.assertEqual(result["reason"], "changed_asset_pin_unchanged")
         self.assertEqual(result["unbumped"], ["public/app.js"])
         self.assertEqual(result["asset_versions"]["public/app.js"], {"before": "r8", "after": "r8"})
+
+    def test_changed_enhancements_js_without_bump_denied(self) -> None:
+        self.write("public/enhancements.js", "console.log(102);")
+        self.head = self.commit()
+        report = gate.evaluate(self.base, self.head)
+        self.assertEqual(report["unbumped"], ["public/enhancements.js"])
+        self.assertEqual(report["asset_versions"]["public/enhancements.js"],
+                         {"before": "r2", "after": "r2"})
+
+    def test_changed_enhancements_js_requires_own_revision_bump(self) -> None:
+        self.write("public/enhancements.js", "console.log(102);")
+        self.write("public/index.html", self.html("r8", "r5", enhancements="r3"))
+        self.head = self.commit()
+        self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
+
+    def test_enhancements_js_revision_rollback_denied(self) -> None:
+        self.write("public/enhancements.js", "console.log(102);")
+        self.write("public/index.html", self.html("r8", "r5", enhancements="r1"))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["nonmonotonic"],
+                         ["public/enhancements.js"])
+
+    def test_enhancements_js_alias_ref_denied(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<script src="/enhancements%2Ejs?v=r3"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "noncanonical_asset_path")
 
     def test_changed_css_without_bump_denied(self) -> None:
         self.write("public/enhancements.css", "body{margin:1px}")
@@ -354,6 +383,7 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertIn('  push:\n    branches: [main]', workflow)
         self.assertEqual(workflow.count('      - "public/app.js"'), 2)
         self.assertEqual(workflow.count('      - "public/enhancements.css"'), 2)
+        self.assertEqual(workflow.count('      - "public/enhancements.js"'), 2)
         self.assertEqual(workflow.count('      - "public/index.html"'), 2)
         self.assertIn('github.event.pull_request.base.sha || github.event.before', workflow)
         self.assertIn('github.event.pull_request.head.sha || github.sha', workflow)
@@ -407,6 +437,7 @@ class WorkflowTrustCases(unittest.TestCase):
         code, content = self.run_bounded_summary(
             {"ok": True, "reason": "cache_bust_delta_ok", "changed": [],
              "asset_versions": {"public/app.js": {"before": "r8", "after": "r9"},
+                                "public/enhancements.js": {"before": "r2", "after": "r3"},
                                 "public/enhancements.css": {"before": "r5", "after": "r6"}}},
             event="pull_request",
         )
@@ -416,6 +447,7 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertIn("Geen bronwijziging", content)
         self.assertIn("r8 → r9", content)
         self.assertIn("r5 → r6", content)
+        self.assertIn("r2 → r3", content)
 
     def test_malformed_summary_report_fails_closed(self) -> None:
         for invalid in (
