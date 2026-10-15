@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 from collections import Counter
 import json
 import re
@@ -364,6 +365,52 @@ def audit(base: str, head: str) -> dict:
         "deployment_authorized": False,
         "mutation_performed": False,
     }
+
+
+def markdown_summary(report: dict) -> str:
+    """Safe, bounded human-friendly GitHub job summary; never a release receipt."""
+    if report.get("schema") != "zcloud-shell-expression-ratchet-v1":
+        raise EvidenceError("invalid_summary_schema")
+
+    def safe_cell(value: object) -> str:
+        # Workflow paths are committed source, not trusted Markdown or HTML.
+        value = re.sub(r"[\\x00-\\x1f\\x7f]", " ", str(value))[:240]
+        return html.escape(value, quote=True).replace("|", "&#124;")
+
+    lines = [
+        "### zCloud — alleen-lezen controle van workflow-shellcode",
+        "",
+        "| Controle | Aantal |",
+        "| --- | ---: |",
+        f"| Historische syntactische bevindingen | {int(report['baseline_risks'])} |",
+        f"| Bevindingen in kandidaat | {int(report['candidate_risks'])} |",
+        f"| Nieuwe risicovolle shellinvoegingen | {int(report['new_risks'])} |",
+        "",
+    ]
+    newly = int(report["new_risks"])
+    if newly == 0:
+        lines += ["**Geen nieuwe risicovolle shellinvoegingen.**", ""]
+    else:
+        lines += ["**Nieuwe broncode-risico's: wijziging afgewezen.**", "",
+                  "| Workflowbestand | Nieuwe risico's | Soort |",
+                  "| --- | ---: | --- |"]
+        rows = report["new_risky_workflows"]
+        for item in rows[:15]:
+            kinds = ", ".join(
+                f"{safe_cell(k['kind'])}: {int(k['count'])}"
+                for k in item.get("risk_kinds", [])
+            )
+            lines.append(f"| {safe_cell(item['path'])} | {int(item['risk_count'])} | {kinds} |")
+        if len(rows) > 15:
+            lines.append(f"| {len(rows) - 15} overige bestanden niet getoond | — | — |")
+        lines.append("")
+    lines += [
+        "**Broncontrole, geen productievrijgave.** Syntactische bevindingen "
+        "zijn geen bewezen exploits. Runner-, merge-, herstel- en "
+        "VPS-autoriteit blijven uitgeschakeld.",
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def main() -> int:
