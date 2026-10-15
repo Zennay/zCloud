@@ -7,6 +7,10 @@ Existing unmodified debt is NOT certified safe. No runtime/network mutations.
 """
 import argparse
 from collections import Counter
+import os
+import select
+import signal
+import time
 from pathlib import Path
 import re
 import subprocess
@@ -63,15 +67,53 @@ class Unverifiable(Exception):
     """The source cannot safely be established."""
 
 
-def git(root, *args):
+def git(root, *args, deadline_seconds=15.0):
+    """Bound Git wall time/output and kill its process group on failure.
+
+    Git's child processes may hold stdout open after Git exits. Never trust
+    subprocess.run(timeout=...) alone to clean up that inherited pipe.
+    """
+    limit = 220_000
     try:
-        cmd = subprocess.run(["git", *args], cwd=root, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, check=False, timeout=15)
-    except (OSError, subprocess.SubprocessError) as exc:
+        process = subprocess.Popen(["git", *args], cwd=root,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL,
+                                   start_new_session=True)
+    except OSError as exc:
         raise Unverifiable("git_unavailable") from exc
-    if cmd.returncode or len(cmd.stdout) > 220_000:
-        raise Unverifiable("git_read_failed")
-    return cmd.stdout
+    deadline = time.monotonic() + deadline_seconds
+    data = bytearray()
+    clean = False
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                raise Unverifiable("git_timeout")
+            chunk = os.read(process.stdout.fileno(),
+                            min(8192, limit + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+            if len(data) > limit:
+                raise Unverifiable("git_output_too_large")
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())):
+            raise Unverifiable("git_read_failed")
+        clean = True
+        return bytes(data)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Unverifiable("git_io_failed") from exc
+    finally:
+        if not clean:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.stdout.close()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
 
 
 def changed_paths(root, base, head):
