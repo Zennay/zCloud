@@ -241,6 +241,38 @@ class LkgSnapshotProbeTests(unittest.TestCase):
                 probe.audit_all(self.state)
         self.assertTrue(added[0])
 
+    def test_failed_snapshot_bytes_are_charged_to_global_batch_budget(self):
+        from unittest.mock import patch
+
+        historical = self._copy_historical_snapshot()
+        original = (historical / "files" / "server.py").read_bytes()
+        (historical / "files" / "server.py").write_bytes(
+            b"X" + original[1:]
+        )
+        # Historic snapshot is invalid. Its read must still be charged;
+        # otherwise the healthy current one would pass within this budget.
+        with patch.object(probe, "MAX_BATCH_BYTES", 2 * len(self.text) - 1):
+            with self.assertRaisesRegex(probe.Denied, "^batch_byte_limit$"):
+                probe.audit_all(self.state)
+
+    def test_single_bad_snapshot_above_batch_budget_is_terminal(self):
+        from unittest.mock import patch
+
+        historical = self._copy_historical_snapshot()
+        (historical / "files" / "server.py").write_bytes(b"X" * 30)
+        with patch.object(probe, "MAX_BATCH_BYTES", 20):
+            with self.assertRaisesRegex(probe.Denied, "^batch_byte_limit$"):
+                probe.audit_all(self.state)
+
+    def test_exact_batch_content_byte_limit_is_accepted(self):
+        from unittest.mock import patch
+
+        self._copy_historical_snapshot()
+        with patch.object(probe, "MAX_BATCH_BYTES", 2 * len(self.text)):
+            report = probe.audit_all(self.state)
+        self.assertTrue(report["ok"])
+        self.assertEqual(2, report["snapshot_count"])
+
     def test_batch_total_byte_budget_is_enforced(self):
         self._copy_historical_snapshot()
         from unittest.mock import patch
