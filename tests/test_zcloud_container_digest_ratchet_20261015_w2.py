@@ -203,6 +203,21 @@ jobs:
             self.assertEqual(2, check.returncode, check.stdout)
             self.assertFalse(json.loads(check.stdout)["inventory_complete"])
 
+    def test_hosted_no_new_debt_gate_runs_for_all_workflow_and_action_edits(self):
+        workflow = (ROOT / ".github/workflows" /
+                    "zcloud-container-digest-ratchet-20261015-w2.yml").read_text()
+        self.assertIn('".github/workflows/**"', workflow)
+        self.assertIn('".github/actions/**"', workflow)
+        self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertNotIn("runs-on: [self-hosted", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("fetch-depth: 1", workflow)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", workflow)
+        self.assertIn('git fetch --no-tags --depth=1 origin refs/heads/main', workflow)
+        self.assertIn('test "$BASE_SHA" = "$EXPECTED_BASE"', workflow)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', workflow)
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
