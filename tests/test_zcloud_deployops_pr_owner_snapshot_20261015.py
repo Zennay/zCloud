@@ -284,6 +284,41 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
             with self.assertRaisesRegex(InvalidInventory, "^github_read_failed$"):
                 reader("/branches/main")
 
+    def test_inventory_workflow_is_owner_main_only_and_hosted_readonly(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github/workflows" /
+                    "zcloud-pr-owner-collision-inventory-20261015.yml").read_text(
+                        encoding="utf-8")
+        for required in (
+            "workflow_dispatch:",
+            "contents: read",
+            "pull-requests: read",
+            "runs-on: ubuntu-latest",
+            "github.repository == 'Zennay/zCloud'",
+            "github.ref == 'refs/heads/main'",
+            "github.actor == 'Zennay'",
+            "github.triggering_actor == 'Zennay'",
+            "github.run_attempt == 1",
+            "persist-credentials: false",
+            "ref: ${{ github.sha }}",
+            "git -c credential.helper= ls-remote",
+            "zcloud_deployops_pr_owner_snapshot_20261015",
+            "zcloud_deployops_pr_owner_collision_20261015.py",
+            "set +e",
+            "exit \"$status\"",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, workflow)
+        for forbidden in (
+            "pull_request_target:", "workflow_run:", "push:", "schedule:",
+            "contents: write", "actions: write", "pull-requests: write",
+            "self-hosted", "systemctl", "sudo ", "git push",
+            "deploy:", "zcloud-production-deploy",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, workflow)
+
     def test_no_release_or_runtime_mutation_codepaths(self):
         from pathlib import Path
         code = Path(s.__file__).read_text(encoding="utf-8")
