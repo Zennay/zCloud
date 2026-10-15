@@ -90,6 +90,8 @@ jobs:
               "### VPS-schrijftaken: broncodecontrole (niet productie)\n"
               f"- Vergrendeld volgens broncode: **{report['source_serialized']} van 7**\n"
               f"- Nog te beoordelen: **{len(report['source_unverified'])} van 7**\n"
+              "- Alle zeven bronbestanden: **tweemaal identiek gelezen** "
+              "(geen atomair filesystemmoment)\n"
               f"- Broncodevingerafdruk (niet gevalideerde herkomst): `{report['source_snapshot_sha256']}`\n"
               "\n| Taak | Broncode | Reden |\n| --- | --- | --- |\n"
               + "\n".join(rows)
