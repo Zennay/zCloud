@@ -290,6 +290,22 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         with self.assertRaisesRegex(Denied, "unsupported_action_entry"):
             inspect(self.base, self.commit())
 
+    def test_bidi_override_in_changed_workflow_denied(self):
+        self.verify("name: safe" + chr(0x202e) + "\n", "ambiguous_source_control")
+
+    def test_unicode_line_separator_in_changed_workflow_denied(self):
+        self.verify("name: safe" + chr(0x2028) + "jobs: {}" + "\n",
+                    "ambiguous_source_control")
+
+    def test_unicode_next_line_control_denied(self):
+        self.verify("name: safe" + chr(0x85) + "\n", "ambiguous_source_control")
+
+    def test_null_byte_in_changed_workflow_denied(self):
+        self.verify("name: safe" + chr(0) + "\n", "ambiguous_source_control")
+
+    def test_accented_utf8_workflow_name_is_safe(self):
+        self.verify("name: café\njobs:\n  verify:\n    runs-on: ubuntu-latest\n")
+
     def test_binary_source_denied(self):
         path = Path(f"{WORK}/added.yml")
         path.write_bytes(b"name: \xff\n")
