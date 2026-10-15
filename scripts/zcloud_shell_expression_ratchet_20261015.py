@@ -91,8 +91,8 @@ def tree_files(rev: str) -> dict[str, str]:
     return files
 
 
-STEP_ITEM = re.compile(r"^( *)-\\s+\\S")
-STEP_PARENT = re.compile(r"^\\s*steps\\s*:")
+STEP_ITEM = re.compile(r"^( *)-\s+\S")
+STEP_PARENT = re.compile(r"^\s*steps\s*:")
 
 
 def step_scope(lines: list[str], run_row: int, run_indent: int) -> dict | None:
