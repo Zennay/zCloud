@@ -303,6 +303,23 @@ class OperatorSummaryTests(unittest.TestCase):
         with self.assertRaises(mod.SourceError):
             mod.operator_summary(self.payload(), 2)
 
+    def test_duplicate_report_keys_and_non_finite_numbers_denied(self):
+        for report in (
+            '{"policy":"x","policy":"zcloud-remote-shell-no-new-debt-v1"}',
+            '{"new_risky_workflows":NaN}',
+            '{"new_risky_workflows":Infinity}',
+            '{"new_risky_workflows":-Infinity}',
+        ):
+            with self.subTest(report=report):
+                with self.assertRaises(mod.SourceError):
+                    mod.parse_operator_result(report)
+
+    def test_oversized_result_and_untrusted_nested_payload_denied(self):
+        with self.assertRaises(mod.SourceError):
+            mod.parse_operator_result('{"payload":"' + "x" * 9000 + '"}')
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(mod.parse_operator_result('{"policy":{"unexpected":"object"}}'), 0)
+
     def test_unknown_fields_and_large_untrusted_values_denied(self):
         report = self.payload()
         report["unexpected"] = "do-not-publish"
