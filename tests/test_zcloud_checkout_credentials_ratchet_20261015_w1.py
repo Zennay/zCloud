@@ -251,6 +251,17 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         with self.assertRaisesRegex(Denied, "oversized_source"):
             inspect(self.base, self.commit())
 
+    def test_git_replace_ref_cannot_hide_unsafe_blob(self):
+        # An untrusted local refs/replace object must not alter SHA-bound source.
+        self.write(f"{WORK}/added.yml", workflow(None))
+        head = self.commit()
+        unsafe_oid = self.git("rev-parse", f"{head}:{WORK}/added.yml")
+        self.write("safe-blob.yml", workflow("false"))
+        safe_oid = self.git("hash-object", "-w", "safe-blob.yml")
+        self.git("replace", unsafe_oid, safe_oid)
+        with self.assertRaisesRegex(Denied, "missing_explicit_false"):
+            inspect(self.base, head)
+
     def test_invalid_sha_denied(self):
         with self.assertRaisesRegex(Denied, "invalid_commit_identity"):
             inspect("main", self.base)
