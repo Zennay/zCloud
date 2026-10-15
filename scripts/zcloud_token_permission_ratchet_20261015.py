@@ -150,6 +150,7 @@ def permission_debt(
     jobs_seen: set[str] = set()
     jobs_with_explicit_scopes: set[str] = set()
     safe_root_scope = False
+    run_scalar_indent: int | None = None
     for i, original in enumerate(lines):
         line = _uncomment(original)
         if not line.strip():
@@ -157,6 +158,16 @@ def permission_debt(
         if "\t" in original[:len(original) - len(original.lstrip())]:
             raise IncompleteSource("tab_indentation")
         width = len(original) - len(original.lstrip(" "))
+        # Text beneath a literal/folded 'run:' script is inert YAML scalar
+        # content, not workflow mapping keys. Do not mistake snippets like
+        # "permissions: write-all" within examples or shell heredocs for a
+        # real GitHub token grant. The first de-dented mapping resumes checks.
+        if run_scalar_indent is not None:
+            if width > run_scalar_indent:
+                continue
+            run_scalar_indent = None
+        if re.fullmatch(r"\s*(?:-\s*)?run\s*:\s*[|>][-+1-9]*\s*", line):
+            run_scalar_indent = width
         if width == 0:
             in_jobs = bool(re.match(r"^jobs:\s*$", line))
             if re.match(r"^jobs\s*:\s*[{[]", line):
