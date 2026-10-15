@@ -238,6 +238,36 @@ class ManualDispatchPolicy(unittest.TestCase):
         body += b"  another:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo safe\n"
         self.assertTrue(guard.evaluate({}, {WF: body})["ok"])
 
+    def test_quoted_root_jobs_with_quoted_runner_cannot_bypass_policy(self):
+        # YAML accepts these spellings, but a strict source analyzer must not
+        # turn an unparsed job into a harmless empty job list.
+        for replacement in (b'"jobs":', b"'jobs':", b"jobs :",
+                            b"jobs: {danger: {'runs-on': self-hosted}}"):
+            with self.subTest(root=replacement):
+                source = workflow().replace(b"jobs:", replacement)
+                with self.assertRaises(guard.RefError):
+                    guard.risky_manual_jobs(WF, source)
+
+    def test_quoted_and_alternate_job_authority_fields_fail_closed(self):
+        safe = workflow(if_statement=SAFE_IF)
+        for key in (b'runs-on :', b'"runs-on":', b"'runs-on':",
+                    b"uses :", b"'uses':", b'if :', b'"if":'):
+            with self.subTest(key=key):
+                needle = b"    runs-on:" if b"runs-on" in key else (b"    if:" if b"if" in key else b"    runs-on:")
+                value = key + (b" [self-hosted, zcloud, vps]" if b"runs-on" in key else
+                               b" " + SAFE_IF.encode() if b"if" in key else
+                               b" org/repo/.github/workflows/reuse.yml@main")
+                changed = safe.replace(needle, b"    " + value)
+                with self.assertRaises(guard.RefError):
+                    guard.risky_manual_jobs(WF, changed)
+
+    def test_alternate_runner_indentation_is_not_silently_skipped(self):
+        for count in (3, 5, 6):
+            with self.subTest(indent=count):
+                unsafe = workflow().replace(b"    runs-on:", b" " * count + b"runs-on:")
+                with self.assertRaises(guard.RefError):
+                    guard.risky_manual_jobs(WF, unsafe)
+
     def test_duplicate_job_authority_keys_denied(self):
         safe = workflow(if_statement=SAFE_IF)
         for key, addition in (
