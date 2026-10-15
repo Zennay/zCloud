@@ -117,6 +117,19 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         )
         self.verify(unsafe, "credentials_outside_with")
 
+    def test_yaml_unicode_encoded_checkout_at_sign_denied(self):
+        # GitHub YAML decoding can turn \u0040 into @ *after* text scanning.
+        encoded = workflow().replace("actions/checkout@", "actions/checkout" + chr(92) + "u0040")
+        self.verify(encoded, "opaque_escaped_yaml")
+
+    def test_yaml_unicode_encoded_checkout_name_denied(self):
+        encoded = workflow().replace("actions/checkout@", "actions/chec" + chr(92) + "u006bout@")
+        self.verify(encoded, "opaque_escaped_yaml")
+
+    def test_encoded_uses_mapping_key_denied(self):
+        encoded = workflow().replace("      - uses:", '      - "' + chr(92) + 'u0075ses":')
+        self.verify(encoded, "opaque_escaped_yaml")
+
     def test_checkout_in_comment_ignored(self):
         self.verify("# actions/checkout@v4\nname: simple\n")
 
