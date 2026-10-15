@@ -57,7 +57,11 @@ outcomes retain \`release_authorized=false\`,
 3. Main deploy runs from \`zcloud-vps-deploy.yml\` are inventoried across
    **all returned pages up to five pages of 100 runs**. Duplicate run IDs,
    malformed pages, missing/failed later pages or reaching the five-page cap
-   without a short terminal page **refuse the whole snapshot**. The first page
+   without a short terminal page **refuse the whole snapshot**. Where GitHub
+   provides `total_count`, it must be a nonnegative strict integer, occur
+   consistently on all pages, remain unchanged, and match the exact final
+   number of runs collected; otherwise the entire observation is denied.
+   The report marks whether this independent count was verified. The first page
    and **every other consumed page** are read a second time after job
    inspection; any changed page rejects the snapshot. Offset page reads are not transactionally atomic,
    and a completed bounded inventory does not replace release permission.
