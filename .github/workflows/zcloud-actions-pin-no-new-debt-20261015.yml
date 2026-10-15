@@ -1,0 +1,59 @@
+name: zCloud immutable action pin no-new-debt (hosted only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_actions_pin_ratchet_20261015.py"
+      - "tests/test_zcloud_actions_pin_ratchet_20261015.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-action-pin-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  immutable-action-refs:
+    name: Reject newly floating GitHub Action references
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Read exact PR tree without stored checkout credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+
+      - name: Run real-Git adversarial policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_actions_pin_ratchet_20261015
+          python3 -m py_compile scripts/zcloud_actions_pin_ratchet_20261015.py
+
+      - name: Compare exact base and head source trees read only
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_EVENT_NAME" = "pull_request"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git cat-file -e "$BASE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+          source_path="scripts/zcloud_actions_pin_ratchet_20261015.py"
+          if git cat-file -e "$BASE_SHA:$source_path" 2>/dev/null; then
+            git show "$BASE_SHA:$source_path" > "$RUNNER_TEMP/trusted-pin-scanner.py"
+            echo "Trusted base policy is selected, not PR-modified source."
+          else
+            cp "$source_path" "$RUNNER_TEMP/trusted-pin-scanner.py"
+            echo "::warning::Initial policy bootstrap is PR-supplied, not an independent trusted release admission."
+          fi
+          python3 "$RUNNER_TEMP/trusted-pin-scanner.py" --repo-root . --base "$BASE_SHA" --head "$HEAD_SHA"
