@@ -201,7 +201,7 @@ def inspect(base: str, head: str) -> dict[str, object]:
         # Verify the immutable Git blob SHA ourselves rather than accepting
         # any bytes returned by a replaced or corrupted object database.
         identity = hashlib.sha1(
-            b"blob " + str(len(blob)).encode("ascii") + b"\\0" + blob
+            b"blob " + str(len(blob)).encode("ascii") + b"\0" + blob
         ).hexdigest()
         if len(blob) != count or identity != oid:
             raise Denied("git_blob_integrity")
