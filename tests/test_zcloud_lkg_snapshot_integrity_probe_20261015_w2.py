@@ -189,6 +189,18 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             with self.assertRaisesRegex(probe.Denied, "too_many_paths"):
                 probe.inspect(self.state)
 
+    def test_malformed_dot_only_hash_name_denied_without_traceback(self):
+        self.hashes = {".": hashlib.sha256(self.text).hexdigest()}
+        self.save()
+        with self.assertRaisesRegex(probe.Denied, "invalid_hash_manifest"):
+            probe.inspect(self.state)
+
+    def test_pathological_json_nesting_is_denied_with_fixed_reason(self):
+        pointer = self.state / "last-known-good.json"
+        pointer.write_text("[" * 1300 + "0" + "]" * 1300, encoding="utf-8")
+        with self.assertRaisesRegex(probe.Denied, "invalid_json"):
+            probe.inspect(self.state)
+
     def test_cli_json_failure_is_sanitized_and_read_only(self):
         (self.files / "server.py").write_text("tampered", encoding="utf-8")
         script = Path(probe.__file__)
