@@ -14,7 +14,7 @@ import sys
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-ASSETS = ("public/app.js", "public/enhancements.css")
+ASSETS = ("public/app.js", "public/enhancements.js", "public/enhancements.css")
 INDEX = "public/index.html"
 SHA = re.compile(r"[0-9a-f]{40}")
 PIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
