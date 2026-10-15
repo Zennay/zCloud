@@ -34,3 +34,7 @@ Source guard now inspects immutable Git objects for both `.github/workflows/*.ym
 GitHub-hosted admission additionally verifies the remote PR branch ref before **and after** the exact-Git-source comparison; a moved PR head invalidates the source result. The original SHA and immutable main are still checked. Those checks do not grant merge or deploy authority.
 
 **Known limits:** full YAML key decoding (including escaped quoted keys and explicit `?` mappings), multiline flow-map parsing, templated scripts, downloaded intermediate files, third-party non-local actions, alternate download commands, unusual shell encodings and dynamically assembled code are not yet semantically modeled. Focused detection can produce false positives, and green scans must be reviewed alongside independent privileged-workflow checks. Separate #1464/#1465 owners handle interpolation and container-source trust; do not edit their files.
+
+## Multiline quoted YAML admission
+
+GitHub Actions `run: "..."` and `run: '...'` YAML scalars may continue on a later indented line; the command is folded with spaces. The scanner joins those quoted continuations before examining shell execution patterns. Unterminated or indentation-broken quoted `run` values cause fail-closed source-evidence rejection, not a clean result. Inline hashes inside quoted strings remain part of the command rather than being stripped as comments. This remains a **syntactic source check**, not a complete YAML parser or runtime verification.
