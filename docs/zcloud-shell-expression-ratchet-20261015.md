@@ -308,6 +308,21 @@ generic parsers. This check is intentionally a fail-closed syntax guard,
 **not** proof that a tagged key is executable by Actions, nor a substitute
 for YAML semantic validation. No release, merge or VPS permission is granted.
 
+## Job metadata with nonstandard YAML indentation
+
+YAML does not require two spaces per indentation level. A source file can
+use four-space job identifiers with six-space job metadata (or other
+consistent positive indentation). The conservative authority envelope
+now derives the job-level indentation from the shallowest key inside the
+`jobs:` section and separately derives the metadata-level indentation
+from the selected job's own keys. Changes in a different job must not
+invalidate an unchanged legacy shell finding.
+
+This is still heuristic: a programmatic YAML parse, owner-reviewed scope
+and protected-main checks remain necessary to treat the workflow as a
+production candidate. There is **no self-hosted execution** in the
+scanner or its tests.
+
 ## Quoted YAML execution authority keys
 
 GitHub Actions YAML allows key names to be single- or double-quoted.
