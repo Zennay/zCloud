@@ -54,12 +54,25 @@ jobs:
           set -euo pipefail
           python3 -m unittest -v tests.test_zcloud_dashboard_cache_bust_gate_20261015
           python3 -m py_compile scripts/zcloud_dashboard_cache_bust_gate_20261015.py
-      - name: Refuse an asset change with unchanged cache pin
+      - name: Immutable trusted-base scanner first; explicit bootstrap warning
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          python3 scripts/zcloud_dashboard_cache_bust_gate_20261015.py \
-            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          policy_path="scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
+          if git cat-file -e "$BASE_SHA:$policy_path" 2>/dev/null; then
+            mode="$(git ls-tree "$BASE_SHA" -- "$policy_path" | awk '{print $1 " " $2}')"
+            test "$mode" = "100644 blob"
+            git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
+            echo "POLICY_PROVENANCE=immutable_pr_base"
+            python3 -I "$RUNNER_TEMP/trusted-dashboard-cache-gate.py" \
+              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          else
+            # Bootstrap on the first installation only: the reviewed policy
+            # is not yet in main. Passing head code is NOT independent approval.
+            echo "::warning::POLICY_PROVENANCE=untrusted_bootstrap_review_required"
+            python3 -I "$policy_path" \
+              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          fi
