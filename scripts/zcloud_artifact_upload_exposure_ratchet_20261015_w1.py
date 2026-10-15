@@ -17,7 +17,7 @@ import unicodedata
 
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
-ACTION_MANIFEST = re.compile(r"(?:\.github/)?actions/(?:[A-Za-z0-9_.-]+/){0,6}action\.ya?ml\Z")
+ACTION_MANIFEST = re.compile(r"(?:\.github/)?actions/(?:[A-Za-z0-9_.-]+/)*action\.ya?ml\Z")
 USES = re.compile(r"^(\s*)-?\s*uses\s*:\s*['\"]?actions/upload-artifact@[^\s'\"]+['\"]?\s*(?:#.*)?$", re.I)
 WITH = re.compile(r"^(\s*)with\s*:\s*(?:#.*)?$", re.I)
 KEY = re.compile(r"^(\s*)([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$")
@@ -102,6 +102,8 @@ def workflow_paths(base: str, head: str) -> list[str]:
             name = raw.decode("ascii", "strict")
         except UnicodeError as e:
             raise Denied("ambiguous_workflow_path") from e
+        if len(name) > 512:
+            raise Denied("source_path_too_long")
         if name.startswith((".github/actions/", "actions/")):
             # Composite action manifests can declare additional upload-artifact
             # steps; unrelated local scripts are not YAML action entrypoints.
