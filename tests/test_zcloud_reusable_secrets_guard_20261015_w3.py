@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -532,6 +534,58 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.assertEqual(env["GIT_CONFIG_SYSTEM"], os.devnull)
         self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
         self.assertEqual(env["GIT_NO_LAZY_FETCH"], "1")
+
+    def test_pass_receipt_exposes_exact_unrescanned_legacy_count(self):
+        self.write(f"{ROOT}/new.yml", "name: clean\n")
+        head = self.commit()
+        receipt = inspect(self.base, head)
+        self.assertEqual(receipt["workflows_examined"], 2)
+        self.assertEqual(receipt["changed_workflows_checked"], 1)
+        self.assertEqual(receipt["legacy_workflows_not_rescanned"], 1)
+        self.assertEqual(receipt["source_scope"], "changed_workflows_only")
+        self.assertFalse(receipt["authorizes_merge"])
+
+    def test_legacy_risky_workflows_never_reported_as_scanned(self):
+        self.write(f"{ROOT}/historic.yml", "secrets: inherit\n")
+        self.base = self.commit()
+        self.write(f"{ROOT}/new.yml", "name: safe\n")
+        head = self.commit()
+        receipt = inspect(self.base, head)
+        self.assertEqual(receipt["changed_workflows_checked"], 1)
+        self.assertEqual(receipt["legacy_workflows_not_rescanned"], 2)
+
+    def test_multiple_unsafe_sources_emit_only_stable_path_fingerprints(self):
+        names = (f"{ROOT}/alpha.yml", f"{ROOT}/beta.yaml")
+        for name in names:
+            self.write(name, "jobs:\n  call:\n    secrets: inherit\n  note: SENSITIVE_TOKEN\n")
+        head = self.commit()
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink):
+            result = main(["--base", self.base, "--head", head])
+        self.assertEqual(result, 1)
+        output = sink.getvalue()
+        receipt = json.loads(output)
+        self.assertEqual(receipt["reason"], "modified_workflow_may_inherit_secrets")
+        self.assertEqual(receipt["suspect_workflow_path_sha256_prefixes"], [
+            hashlib.sha256(name.encode("utf-8")).hexdigest()[:24]
+            for name in names
+        ])
+        for name in names:
+            self.assertNotIn(name, output)
+        self.assertNotIn("SENSITIVE_TOKEN", output)
+        self.assertFalse(receipt["mutation_performed"])
+        self.assertFalse(receipt["authorizes_deploy"])
+
+    def test_non_inheritance_denial_never_discloses_path_or_content(self):
+        self.write(f"{ROOT}/too-large.yml", "CONFIDENTIAL_MARKER" * 30000)
+        head = self.commit()
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink):
+            self.assertEqual(main(["--base", self.base, "--head", head]), 1)
+        receipt = json.loads(sink.getvalue())
+        self.assertEqual(receipt["reason"], "oversized_workflow")
+        self.assertNotIn("suspect_workflow_path_sha256_prefixes", receipt)
+        self.assertNotIn("CONFIDENTIAL_MARKER", sink.getvalue())
 
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
