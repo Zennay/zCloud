@@ -210,6 +210,35 @@ class GitAssetCases(unittest.TestCase):
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "duplicate_html_attribute")
 
 
+    def test_template_slash_cannot_promote_inert_script_to_live_cache_pin(self) -> None:
+        self.write("public/app.js", "console.log(55);")
+        self.write("public/index.html",
+                   '<link rel="stylesheet" href="/enhancements.css?v=r5">' +
+                   '<script src="/enhancements.js?v=r2"></script>' +
+                   '<template/><script src="/app.js?v=r9"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "self_closing_nonvoid_markup")
+
+    def test_noscript_slash_fails_closed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") + "<noscript/>")
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "self_closing_nonvoid_markup")
+
+    def test_script_slash_fails_closed(self) -> None:
+        self.write("public/index.html",
+                   self.html("r8", "r5") + '<script src="/app.js?v=r9"/>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "self_closing_nonvoid_markup")
+
+    def test_link_void_selfclosing_does_not_create_false_alarm(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            '/enhancements.css?v=r5">', '/enhancements.css?v=r5"/>'))
+        self.head = self.commit()
+        self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
+
     def test_mismatched_inert_closer_cannot_produce_fake_live_js_pin(self) -> None:
         # Without a tag stack, </noscript> used to pop an open <template>.
         # The next script appeared live to the gate although browsers kept it inert.
