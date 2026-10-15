@@ -80,6 +80,7 @@ jobs:
           if result.get("policy") == "zcloud-deployops-pr-owner-collision-v1":
               lines.extend([
                   f"Main snapshot SHA: `{result['main_sha']}`",
+                  f"Evidence fingerprint (unverified SHA-256): `{result['snapshot_sha256']}`",
                   f"Open PRs checked: {result['prs_scanned']}",
                   f"Changed files checked: {result['files_scanned']}",
                   f"Stale-base PRs: {result['stale_base_count']}",
