@@ -135,6 +135,24 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.assertIn('"authorizes_deploy": false', sink.getvalue())
         self.assertNotIn("SENSITIVE_MARKER", sink.getvalue())
 
+    def test_complex_yaml_key_denied_from_real_git(self):
+        self.write(f"{ROOT}/complex.yml", "? secrets\n: inherit\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "inherit_secrets"):
+            inspect(self.base, head)
+
+    def test_unicode_escaped_key_denied_from_real_git(self):
+        self.write(f"{ROOT}/encoded.yaml", '"se\\u0063rets": "in\\u0068erit"\n')
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "inherit_secrets"):
+            inspect(self.base, head)
+
+    def test_unicode_escape_in_opaque_yaml_is_conservatively_denied(self):
+        self.write(f"{ROOT}/opaque.yml", 'name: "\\u0073ensitive"\n')
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "inherit_secrets"):
+            inspect(self.base, head)
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
