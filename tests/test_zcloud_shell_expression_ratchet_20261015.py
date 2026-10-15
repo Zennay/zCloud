@@ -199,6 +199,24 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: printf ${{ broken\n")
         self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
 
+    def test_yaml_unicode_escaped_run_key_is_not_bypass(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = chr(92) + "u0072un"
+        head = self.commit('steps:\n  - "' + key + '": echo ${{ github.event.issue.body }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_yaml_hex_escaped_run_key_is_not_bypass(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = chr(92) + "x72un"
+        head = self.commit('steps:\n  - "' + key + '": echo ${{ inputs.from_pr }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_safe_yaml_escaped_run_key_remains_no_new_interpolation(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = chr(92) + "u0072un"
+        head = self.commit('steps:\n  - "' + key + '": echo safe\n')
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
