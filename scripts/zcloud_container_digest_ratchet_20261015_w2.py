@@ -105,7 +105,7 @@ def _safe_literal(value: str) -> bool:
     # independent review even if they contain a literal digest substring.
     if "${{" in value or value.lstrip().startswith(("*", "&", "|", ">")):
         return False
-    candidate = value.strip().strip("'\"")
+    candidate = value.split("#", 1)[0].strip().strip("'\\\"")
     return bool(IMAGE_REF.fullmatch(candidate))
 
 
