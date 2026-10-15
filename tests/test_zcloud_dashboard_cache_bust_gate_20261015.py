@@ -69,6 +69,7 @@ class GitAssetCases(unittest.TestCase):
         self.assertFalse(decision["ok"])
         self.assertEqual(decision["reason"], "changed_asset_pin_unchanged")
         self.assertEqual(decision["changed"], ["public/app.js"])
+        self.assertEqual(decision["asset_versions"]["public/app.js"]["after"], "r8")
 
     def test_direct_main_push_with_correct_cache_bump_allowed(self) -> None:
         before = self.base
@@ -99,6 +100,7 @@ class GitAssetCases(unittest.TestCase):
         result = gate.evaluate(self.base, self.head)
         self.assertEqual(result["reason"], "changed_asset_pin_unchanged")
         self.assertEqual(result["unbumped"], ["public/app.js"])
+        self.assertEqual(result["asset_versions"]["public/app.js"], {"before": "r8", "after": "r8"})
 
     def test_changed_css_without_bump_denied(self) -> None:
         self.write("public/enhancements.css", "body{margin:1px}")
@@ -403,19 +405,25 @@ class WorkflowTrustCases(unittest.TestCase):
 
     def test_pr_success_renders_expected_summary(self) -> None:
         code, content = self.run_bounded_summary(
-            {"ok": True, "reason": "cache_bust_delta_ok", "changed": []},
+            {"ok": True, "reason": "cache_bust_delta_ok", "changed": [],
+             "asset_versions": {"public/app.js": {"before": "r8", "after": "r9"},
+                                "public/enhancements.css": {"before": "r5", "after": "r6"}}},
             event="pull_request",
         )
         self.assertEqual(code, 0)
         self.assertIn("GESLAAGD", content)
         self.assertIn("Pull request", content)
         self.assertIn("Geen bronwijziging", content)
+        self.assertIn("r8 → r9", content)
+        self.assertIn("r5 → r6", content)
 
     def test_malformed_summary_report_fails_closed(self) -> None:
         for invalid in (
             {"ok": 1, "reason": "cache_bust_delta_ok", "changed": []},
             {"ok": True, "reason": "cache_bust_delta_ok", "changed": ["<img src=x>"]},
             {"ok": True, "reason": "cache_bust_delta_ok", "changed": "public/app.js"},
+            {"ok": True, "reason": "cache_bust_delta_ok", "changed": [],
+             "asset_versions": {"public/app.js": {"before": "r8", "after": "<script>"}}},
         ):
             with self.subTest(invalid=invalid):
                 code, content = self.run_bounded_summary(invalid)
