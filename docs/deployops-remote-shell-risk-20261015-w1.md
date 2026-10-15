@@ -38,3 +38,11 @@ GitHub-hosted admission additionally verifies the remote PR branch ref before **
 ## Multiline quoted YAML admission
 
 GitHub Actions `run: "..."` and `run: '...'` YAML scalars may continue on a later indented line; the command is folded with spaces. The scanner joins those quoted continuations before examining shell execution patterns. Unterminated or indentation-broken quoted `run` values cause fail-closed source-evidence rejection, not a clean result. Inline hashes inside quoted strings remain part of the command rather than being stripped as comments. This remains a **syntactic source check**, not a complete YAML parser or runtime verification.
+
+## Bounded multi-stage shell ingestion and immutable directory integrity
+
+A remote download can still be executed after a pass-through or decoding pipeline, for example `curl ... | tee payload.sh | bash` or `wget ... | base64 -d | /bin/sh`. The scanner now checks up to **two** explicit intermediates drawn from `tee`, `cat`, `sed`, `base64`, `tr`, `awk`, `gunzip` and `gzip`. A download saved to a local file without a shell consumer is not classified as direct ingestion. This is intentionally a bounded syntactic ratchet; more elaborate stages or execution from a downloaded file still require separate review.
+
+Git-tree validation now refuses a symlink or gitlink replacing the exact `.github`, `.github/workflows`, or `.github/actions` directory, even when an unrelated composite Action exists and would otherwise make the source inventory nonempty. Existing per-file symlink checks remain intact. The scanner does not follow these links and never executes repository code during inventory.
+
+**Coordination (15 October):** changed-filename checks of 12 active related deploy-ops PRs (53 paths total) found no direct collision with this PR's four own add-only paths. This is **not** a complete 450+-PR or PR-less-branch semantic audit and cannot grant independent review, protected-branch merge or production authorization.
