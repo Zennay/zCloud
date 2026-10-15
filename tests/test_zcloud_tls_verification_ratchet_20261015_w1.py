@@ -64,6 +64,20 @@ class SourcePatterns(unittest.TestCase):
                 "  GIT_CONFIG_VALUE_7: '0'\n")
         self.assertEqual(self.count(text, "git_ssl_verify_environment"), 1)
 
+    def test_indexed_git_tls_override_unknown_value_denied(self):
+        text = ("env:\n  GIT_CONFIG_KEY_0: http.sslVerify\n"
+                "  GIT_CONFIG_VALUE_0: DYNAMIC_VALUE\n")
+        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 1)
+
+    def test_indexed_git_tls_override_missing_value_denied(self):
+        self.assertEqual(self.count("GIT_CONFIG_KEY_0: http.sslVerify",
+                                    "git_ssl_verify_environment"), 1)
+
+    def test_indexed_git_tls_override_explicit_true_allowed(self):
+        text = ("env:\n  GIT_CONFIG_KEY_0: http.sslVerify\n"
+                "  GIT_CONFIG_VALUE_0: 'true'\n")
+        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 0)
+
     def test_indexed_git_config_unrelated_false_does_not_trigger(self):
         text = ("env:\n  GIT_CONFIG_KEY_0: core.filemode\n"
                 "  GIT_CONFIG_VALUE_0: 'false'\n")
