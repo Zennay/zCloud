@@ -58,6 +58,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           git cat-file -e "$EXPECTED_BASE^{commit}"
           git cat-file -e "$EXPECTED_HEAD^{commit}"
+          remote_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$EXPECTED_BASE"
       - name: Run adversarial real-Git tests
         run: |
           set -euo pipefail
@@ -72,4 +74,6 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$HEAD"
           python3 scripts/zcloud_tls_verification_ratchet_20261015_w1.py --base "$BASE" --head "$HEAD"
+          remote_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$BASE"
           echo "Production mutation authorized: false"
