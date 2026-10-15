@@ -670,6 +670,36 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - env:\n      SAFE_SHA: ${{ github.sha }}\n      MATRIX_SIZE: ${{ matrix.size }}\n    run: echo $SAFE_SHA $MATRIX_SIZE\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_json_serialized_needs_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(needs) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_json_serialized_steps_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(steps) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_spaced_json_serialized_needs_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON ( needs ) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_dynamic_step_output_selector_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ steps[format('download')].outputs.payload }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_dynamic_needs_output_selector_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ needs[format('compile')].outputs.payload }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_safe_fixed_steps_status_access_remains_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ steps.lint.conclusion }} ${{ needs.test.result }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
