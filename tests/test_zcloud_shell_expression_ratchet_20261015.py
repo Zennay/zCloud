@@ -700,6 +700,21 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: echo ${{ steps.lint.conclusion }} ${{ needs.test.result }}\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_wildcard_needs_output_aggregation_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ join(needs.*.outputs.payload, ' ') }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_wildcard_steps_output_aggregation_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ join(steps.*.outputs.payload, ' ') }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_safe_wildcard_needs_results_not_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ join(needs.*.result, ' ') }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
