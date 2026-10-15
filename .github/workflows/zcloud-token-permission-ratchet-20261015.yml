@@ -68,7 +68,8 @@ jobs:
           test "$current_base" = "$BASE_SHA"
           test "$current_head" = "$EXPECTED_HEAD"
           python3 scripts/zcloud_token_permission_ratchet_20261015.py \
-            --root . --base "$BASE_SHA" --head "$EXPECTED_HEAD"
+            --root . --base "$BASE_SHA" --head "$EXPECTED_HEAD" \
+            --summary-to "$GITHUB_STEP_SUMMARY"
           # GitHub refs may advance while a multi-second full-tree proof runs.
           # Never report green unless the very same immutable source pair
           # remains at canonical main and at the PR owner's branch tip.
