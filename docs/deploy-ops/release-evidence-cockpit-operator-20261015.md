@@ -58,8 +58,8 @@ outcomes retain \`release_authorized=false\`,
    **all returned pages up to five pages of 100 runs**. Duplicate run IDs,
    malformed pages, missing/failed later pages or reaching the five-page cap
    without a short terminal page **refuse the whole snapshot**. The first page
-   is read a second time after job inspection; changed first-page data
-   rejects the snapshot. Offset page reads are not transactionally atomic,
+   and **every other consumed page** are read a second time after job
+   inspection; any changed page rejects the snapshot. Offset page reads are not transactionally atomic,
    and a completed bounded inventory does not replace release permission.
    The latest matching run for **the observed SHA** is identified by
    GitHub run ID and attempt.
@@ -84,7 +84,8 @@ outcomes retain \`release_authorized=false\`,
 **Limits:** The workflow-run view is now a fully scanned **bounded** page
 window (up to 500 entries); more than the cap is an error, never a success
 or a silently truncated empty history. Two matching first pages do not prove
-that unseen changes did not happen (ABA/offset race). The report cannot
+that unseen changes did not happen (ABA/offset race). Full-page re-reads
+still do not constitute a database snapshot or production permission. The report cannot
 confirm present VPS listener uptime, safe-idle, SQLite write access,
 browser activity, callback provenance, protection rules or effective deploy
 serialization. A green commit status or assigned historical job does not
