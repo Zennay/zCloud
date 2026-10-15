@@ -140,8 +140,8 @@ def evaluate(base: str, head: str) -> dict[str, object]:
         # Prevent a change from deliberately recycling an older browser cache key.
         # Require strictly increasing rN until a separately reviewed token-scheme migration.
         rollback = []
-        for name in changed:
-            if name in unbumped:
+        for name in ASSETS:
+            if before[name] == after[name]:
                 continue
             old_revision = REVISION.fullmatch(before[name])
             new_revision = REVISION.fullmatch(after[name])
