@@ -701,6 +701,14 @@ class HostedPinSummaryTests(unittest.TestCase):
         self.assertIn("Nee — ontbrekend of onbetrouwbaar",
                       self.summary(self.valid_report(ok=True)))
 
+    def test_deeply_nested_json_cannot_suppress_deny_only_summary(self):
+        # The runner must produce its denial summary even when json.loads
+        # refuses adversarial recursion depth.
+        hostile = "[" * 1800 + "0" + "]" * 1800
+        summary = self.summary(hostile)
+        self.assertIn("Nee — ontbrekend of onbetrouwbaar", summary)
+        self.assertIn("Productie- of mergeautorisatie | **Nee**", summary)
+
     def test_private_raw_strings_never_interpolated_to_summary(self):
         raw = self.valid_report()
         raw = raw.replace('"ok": false', '"examples": [{"path": "TOP_SECRET_TOKEN"}], "ok": false')
