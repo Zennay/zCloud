@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import selectors
 import subprocess
 import sys
+import time
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 ROOT = ".github/workflows/"
@@ -25,16 +28,62 @@ class Denied(Exception):
 
 
 def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
+    """Bound both captured output and wall time before trusting Git objects.
+
+    subprocess.run(stdout=PIPE) would first buffer the *entire* untrusted blob
+    in memory, making a post-hoc size check ineffective against large objects.
+    Read through a selector so an oversized producer is killed early.
+    """
+    if type(limit) is not int or limit < 0 or limit > MAX_TOTAL_BYTES:
+        raise Denied("invalid_source_budget")
+    deadline = time.monotonic() + 20
     try:
-        p = subprocess.run(
+        proc = subprocess.Popen(
             ["git", *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            timeout=20, check=True,
         )
-    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as exc:
+    except OSError as exc:
         raise Denied("git_source_unavailable") from exc
-    if len(p.stdout) > limit:
-        raise Denied("source_budget_exceeded")
-    return p.stdout
+    selector = selectors.DefaultSelector()
+    data = bytearray()
+    try:
+        assert proc.stdout is not None
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Denied("git_source_timeout")
+            ready = selector.select(timeout=remaining)
+            if not ready:
+                raise Denied("git_source_timeout")
+            for key, _ in ready:
+                # Even the last read is bounded: one byte beyond limit is
+                # sufficient to prove a violation and terminate the process.
+                chunk = os.read(key.fd, min(65536, limit + 1 - len(data)))
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                data.extend(chunk)
+                if len(data) > limit:
+                    raise Denied("source_budget_exceeded")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise Denied("git_source_timeout")
+        try:
+            code = proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired as exc:
+            raise Denied("git_source_timeout") from exc
+        if code != 0:
+            raise Denied("git_source_unavailable")
+        return bytes(data)
+    except OSError as exc:
+        raise Denied("git_source_unavailable") from exc
+    finally:
+        selector.close()
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def require_workflow_root(sha: str) -> None:
