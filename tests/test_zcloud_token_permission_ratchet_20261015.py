@@ -355,5 +355,40 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertNotIn(str(self.root), output.getvalue())
 
 
+    def test_permission_like_text_in_literal_shell_step_is_not_an_api_scope(self):
+        result = self.check_file(
+            "on: push\npermissions:\n  contents: read\njobs:\n  test:\n"
+            "    runs-on: ubuntu-latest\n    steps:\n      - run: |\n"
+            "          printf 'example'\n          permissions: write-all\n"
+        )
+        self.assertTrue(result["ok"])
+
+    def test_permission_like_text_in_folded_shell_step_is_not_an_api_scope(self):
+        result = self.check_file(
+            "on: push\npermissions:\n  contents: read\njobs:\n  test:\n"
+            "    runs-on: ubuntu-latest\n    steps:\n      - run: >-\n"
+            "          echo permissions: write-all\n"
+            "          permissions: write-all\n"
+        )
+        self.assertTrue(result["ok"])
+
+    def test_real_job_write_after_literal_shell_step_denied(self):
+        result = self.check_file(
+            "on: push\npermissions:\n  contents: read\njobs:\n  test:\n"
+            "    runs-on: ubuntu-latest\n    steps:\n      - run: |\n"
+            "          permissions: write-all\n"
+            "    permissions: write-all\n"
+        )
+        self.assertFalse(result["ok"])
+
+    def test_malformed_non_run_scalar_does_not_hide_new_write(self):
+        result = self.check_file(
+            "on: push\npermissions:\n  contents: read\njobs:\n  test:\n"
+            "    runs-on: ubuntu-latest\n    config: |\n"
+            "      permissions: write-all\n"
+        )
+        self.assertFalse(result["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
