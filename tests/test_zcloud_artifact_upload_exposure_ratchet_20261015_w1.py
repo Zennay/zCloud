@@ -85,6 +85,21 @@ class SourceTests(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 self.check(SAFE.replace("dist/result.log", "out/build." + suffix), True)
 
+    def test_duplicate_with_section_is_not_silently_accepted(self):
+        payload = SAFE.replace("include-hidden-files: false",
+                               "include-hidden-files: false\n        with:\n          path: .env")
+        self.check(payload, False)
+
+    def test_nested_yaml_path_is_not_an_action_input(self):
+        payload = SAFE.replace("path: dist/result.log",
+                               "meta:\n            path: dist/result.log")
+        self.check(payload, False)
+
+    def test_sibling_step_property_does_not_change_upload_input(self):
+        payload = SAFE.replace("include-hidden-files: false",
+                               "include-hidden-files: false\n        if: always()")
+        self.check(payload, True)
+
     def test_safe_normal_uses_action_not_rejected(self):
         self.check(SAFE.replace("actions/upload-artifact@v4",
                                 "actions/upload-artifact@v4.4.3"), True)
