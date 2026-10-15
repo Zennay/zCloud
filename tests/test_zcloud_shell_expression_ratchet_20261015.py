@@ -1070,6 +1070,46 @@ class RealGitTests(unittest.TestCase):
         self.assertIn("os.environ.get('GITHUB_STEP_SUMMARY')", workflow)
         self.assertIn("summary.write(markdown_summary(payload))", workflow)
 
+    def test_string_embedded_expression_closer_does_not_hide_github_event(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('}}', github.event.issue.title) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_string_embedded_expression_closer_does_not_hide_inputs(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('}}', inputs.payload) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_string_embedded_expression_closer_does_not_hide_step_outputs(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('}}', steps.fetch.outputs.data) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_string_embedded_expression_closer_does_not_hide_secret(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('}}', secrets.DEPLOY_TOKEN) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_string_embedded_expression_closer_with_doubled_quote(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('it''s }}', vars.COMMAND) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_string_embedded_expression_closer_safe_constant_not_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('}}', 'safe') }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_unterminated_expression_after_string_closer_is_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('}}', github.event.issue.body)\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_multiple_expressions_with_embedded_closer_do_not_hide_second(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ format('}}', 'safe') }} ${{ vars.NEW }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
