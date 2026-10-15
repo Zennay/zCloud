@@ -172,6 +172,52 @@ class RatchetTests(unittest.TestCase):
     def test_read_only_octokit_get_ref_allowed(self):
         self.assertEqual(self.change("await github.rest.git.getRef({ref: 'heads/main'})")[0], 0)
 
+    def test_new_safe_composite_action_passes(self):
+        self.write(".github/actions/verify/action.yml",
+                   "name: check\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: git fetch origin main\n")
+        self.commit()
+        code, receipt = self.audit()
+        self.assertEqual(code, 0, receipt)
+        self.assertEqual(receipt["changed_composites_checked"], 1)
+        self.assertEqual(receipt["changed_workflows_checked"], 0)
+
+    def test_new_writer_in_composite_action_denied(self):
+        self.write(".github/actions/publish/action.yaml",
+                   "name: unsafe\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: git push origin HEAD:main\n")
+        self.commit()
+        code, receipt = self.audit()
+        self.assertEqual(code, 1)
+        self.assertEqual(receipt["findings"][0]["reasons"], ["git_push"])
+
+    def test_unchanged_legacy_writer_composite_passes(self):
+        self.write(".github/actions/old/action.yml", "name: old\nrun: git push origin main\n")
+        base = self.commit()
+        self.write(".github/workflows/new.yml", SAFE)
+        head = self.commit()
+        code, r = self.audit(base, head)
+        self.assertEqual(code, 0, r)
+        self.assertEqual(r["legacy_composites_not_rescanned"], 1)
+
+    def test_symlinked_composite_action_denied(self):
+        link = self.root / ".github/actions/demo/action.yml"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to("/etc/passwd")
+        self.commit()
+        self.assertEqual(self.audit()[1]["reason"], "nonregular_action_tree")
+
+    def test_symlinked_composite_directory_denied(self):
+        link = self.root / ".github/actions/demo"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to("/tmp")
+        self.commit()
+        self.assertEqual(self.audit()[1]["reason"], "nonregular_action_tree")
+
+    def test_composite_cannot_replace_missing_workflow_inventory(self):
+        self.write(".github/actions/demo/action.yml", "name: demo\n")
+        (self.root / ".github/workflows/safe.yml").unlink()
+        self.commit()
+        self.assertEqual(self.audit()[1]["reason"], "missing_workflows")
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, r = self.change("git push origin main # " + marker)
