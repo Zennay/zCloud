@@ -56,7 +56,9 @@ outcomes retain \`release_authorized=false\`,
    Up to 100 returned jobs must be fully accounted for; self-hosted
    \`zcloud,vps\` jobs are classified as canonical-assigned, unexpected-runner,
    queued-unassigned or unverified. Each GitHub job ID must be unique, and every
-   job must belong to the selected *exact run, attempt and SHA*. A job that
+   job must belong to the selected *exact run, attempt and SHA*. A
+   `completed` workflow without a conclusion, or a queued/in-progress workflow
+   with an old terminal conclusion, is rejected as contradictory. A job that
    was assigned yet failed is reported separately from the runner assignment;
    an in-progress job never counts as completed success. After inspecting
    jobs the original run is fetched again, and any changed run, attempt,
