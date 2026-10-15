@@ -148,6 +148,7 @@ def permission_debt(
     in_jobs = False
     job = None
     jobs_seen: set[str] = set()
+    jobs_header_count = 0
     jobs_with_explicit_scopes: set[str] = set()
     safe_root_scope = False
     run_scalar_indent: int | None = None
@@ -176,6 +177,12 @@ def permission_debt(
             # freeze the entire source blob instead of reusing the old
             # top-level implicit-default finding for every new job.
             jobs_header = re.match(r"""^(?:jobs|['"]jobs['"])\s*:\s*(.*)$""", line)
+            if jobs_header:
+                jobs_header_count += 1
+                if jobs_header_count > 1:
+                    # Duplicate top-level jobs mappings can shadow a previous
+                    # job and revoke its explicit read-only token boundary.
+                    findings[f"{path}|opaque_duplicate_jobs_mapping|{_fingerprint(line)}"] += 1
             in_jobs = bool(re.fullmatch(r"jobs:\s*", line))
             if (jobs_header and not in_jobs) or re.fullmatch(
                 r"""\?\s*(?:jobs|['"]jobs['"])\s*""", line
@@ -188,6 +195,10 @@ def permission_debt(
             head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\s*", line)
             job = head.group(1) if head else None
             if job is not None:
+                if job in jobs_seen:
+                    # Duplicate job ids are parser-dependent; do not assume
+                    # that the first job's safe permissions still apply.
+                    findings[f"{path}|opaque_duplicate_job|{_fingerprint(line)}"] += 1
                 jobs_seen.add(job)
             else:
                 # Inline flow jobs, aliases and nonliteral job keys can hide
