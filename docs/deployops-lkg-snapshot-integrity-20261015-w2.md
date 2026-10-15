@@ -24,3 +24,16 @@ The probe performs a bounded 2 MiB JSON read, an enumeration capped at 150,000 p
 - A passing proof does not authenticate the manifest author: a forged snapshot and matching forged manifest are outside this checksum-only integrity contract. No new self-hosted runner job, dispatch, SQLite transaction, browser change or artifact upload.
 - Integration into the live rollback path is **separately owned** by #595 and remains intentionally unimplemented here. The preflight should be reviewed by that owner before any operational wiring.
 - Release gating remains #580 / PWQ-41 / #1089, branch protection #922, runner #1326 and writer locks #1447. A green hosted check alone cannot clear them.
+
+## Cross-field inventory proof (second implementation wave)
+
+The original `format_version=1` recovery manifest contains `managed_paths`, `persistent_paths_never_restored`, `present_paths` and `config_hashes` in addition to `hashes`. A checksum-only check could have accepted a contradictory set of these fields. The offline preflight now validates these as one coherent inventory:
+
+- Every declared managed root must be on the known restore allowlist, and the entrypoint must be declared and hashed.
+- Persistent exclusions must match the recovery contract exactly. Omissions, duplicates and unexpected entries are refused rather than silently ignored.
+- `present_paths` must be unique, known, contained within `managed_paths`, and equal to the actual direct children of the snapshot `files/` directory, including empty managed directories.
+- Each configured source file `projects.json`, `project-layout.json`, `resource-policy.json`, `project-contracts.json` must have exactly matching `config_hashes` and `hashes` entries; absent config files must not be invented in metadata.
+- File roots cannot pretend to be directories and directory roots cannot pretend to be files. Parent root types are checked in addition to individual hashes.
+- Pointer and manifest are re-read after verifying snapshot bytes to catch ordinary metadata drift during the scan. This is **not** a race-proof filesystem transaction: a privileged concurrent writer could still mutate contents between checks. Genuine release authority remains elsewhere.
+
+A missing or contradictory field produces a fixed denial code. These stricter metadata semantics may reject unusual historical snapshots; they do not automatically rewrite, delete, migrate or repair old snapshots. Operators should investigate and use the separately approved recovery process; do not override this guard based on a passing hosted CI check alone.
