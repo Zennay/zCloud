@@ -8,6 +8,7 @@ runner attestation, production/release approval, or full injection analysis.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections import Counter
 import json
 import re
@@ -23,6 +24,7 @@ EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|inputs\b)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
 DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs)\s*\[", re.I)
+FLOW_RUN_KEY = re.compile(r"(?<![A-Za-z0-9_])(?:run|[\'\"]run[\'\"])\s*:")
 
 
 class EvidenceError(ValueError):
@@ -93,6 +95,13 @@ def run_shell_scalars(source: str) -> list[str]:
 
 def fingerprint_risks(source: str) -> Counter[str]:
     out: Counter[str] = Counter()
+    # Flow-style YAML can put the run key after an inline brace, bypassing a
+    # newline-oriented scalar extractor. Treat new flow-run forms as ambiguous
+    # rather than silently claiming that no dangerous interpolation exists.
+    # Digest the entire line so rewriting an existing flow-run also counts.
+    for line in source.splitlines():
+        if "{" in line and FLOW_RUN_KEY.search(line):
+            out["ambiguous_flow_run:" + hashlib.sha256(line.strip().encode("utf-8")).hexdigest()] += 1
     for scalar in run_shell_scalars(source):
         value = scalar.lstrip()
         if value.startswith("*") or value.startswith("!") or value.startswith("&"):
