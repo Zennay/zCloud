@@ -134,8 +134,8 @@ def tree(commit: str) -> dict[str, str]:
 
 def shell_git_push(line: str) -> bool:
     """Conservative same-command token fallback for quoted Git option arguments."""
-    if GIT_PUSH.search(line):
-        return True
+    # Tokenize rather than short-circuiting on a raw regex: the latter
+    # mistakes 'alias.demo=echo push' inside a quoted -c value for a command.
     for match in re.finditer(r"(?i)(?<![\w-])git\s+", line):
         lexer = shlex.shlex(line[match.end():], posix=True, punctuation_chars=";&|")
         lexer.whitespace_split = True
