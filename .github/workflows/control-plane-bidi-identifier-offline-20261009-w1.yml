@@ -1,0 +1,27 @@
+name: Control-plane Unicode identifier offline reference
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/control_plane_bidi_identifier_offline_20261009_w1.py'
+      - 'tests/test_control_plane_bidi_identifier_offline_20261009_w1.py'
+      - '.github/workflows/control-plane-bidi-identifier-offline-20261009-w1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: control-plane-bidi-identifier-offline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-unicode-identifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run offline identifier unit tests
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_bidi_identifier_offline_20261009_w1.py' -v
