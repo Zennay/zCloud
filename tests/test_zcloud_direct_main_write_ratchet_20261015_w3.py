@@ -309,12 +309,13 @@ class RatchetTests(unittest.TestCase):
             self.assertEqual(str(caught.exception), "scan_deadline_exceeded")
             spawn.assert_not_called()
 
+
     def test_workflow_rechecks_remote_head_at_both_boundaries(self):
-        path = SCRIPT.parents[0] / ".github/workflows/zcloud-direct-main-write-ratchet-20261015-w3.yml"
-        source = path.read_text(encoding="utf-8")
-        self.assertEqual(source.count("HEAD_REF: "), 2)
-        self.assertEqual(source.count("ls-remote --exit-code https://github.com/Zennay/zCloud.git"), 2)
-        self.assertEqual(source.count('test "$remote_head" = '), 2)
+        workflow = SCRIPT.parents[0] / ".github/workflows/zcloud-direct-main-write-ratchet-20261015-w3.yml"
+        content = workflow.read_text(encoding="utf-8")
+        self.assertEqual(content.count("HEAD_REF: "), 2)
+        self.assertEqual(content.count("ls-remote --exit-code https://github.com/Zennay/zCloud.git"), 2)
+        self.assertEqual(content.count('test "$remote_head" = '), 2)
 
     def test_remote_branch_drift_changes_exact_head_proof(self):
         remote_tmp = tempfile.TemporaryDirectory()
@@ -325,22 +326,16 @@ class RatchetTests(unittest.TestCase):
         self.git("remote", "add", "origin", str(bare))
         self.git("push", "origin", "owner-branch")
         first = self.git("rev-parse", "HEAD")
-        command = (
+        check_script = (
             'remote_head="$(git ls-remote --exit-code origin "refs/heads/$HEAD_REF")"; '
-            'test "$remote_head" = "$EVENT_HEAD"' + "
-        marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
-        _, r = self.change("git push origin main # " + marker)
-        self.assertNotIn(marker, json.dumps(r))
-
-
-if __name__ == "__main__":
-    unittest.main()
-\\t'" + '"refs/heads/$HEAD_REF"'
+            'read -r remote_sha remote_ref <<< "$remote_head"; '
+            'test "$remote_sha" = "$EVENT_HEAD"; '
+            'test "$remote_ref" = "refs/heads/$HEAD_REF"'
         )
         def check(expected):
             env = os.environ.copy()
             env.update(EVENT_HEAD=expected, HEAD_REF="owner-branch")
-            return subprocess.run(["bash", "-e", "-c", command], cwd=self.root,
+            return subprocess.run(["bash", "-e", "-c", check_script], cwd=self.root,
                                   env=env, capture_output=True, text=True).returncode
         self.assertEqual(check(first), 0)
         self.write(".github/workflows/new.yml", SAFE)
@@ -351,8 +346,8 @@ if __name__ == "__main__":
 
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
-        _, r = self.change("git push origin main # " + marker)
-        self.assertNotIn(marker, json.dumps(r))
+        _, result = self.change("git push origin main # " + marker)
+        self.assertNotIn(marker, json.dumps(result))
 
 
 if __name__ == "__main__":
