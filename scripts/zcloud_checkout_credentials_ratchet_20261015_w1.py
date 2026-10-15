@@ -225,9 +225,9 @@ def checkout_risks(source: str) -> list[str]:
                 problems.append("ambiguous_credentials")
         if seen != 1 or not correct:
             problems.append("missing_explicit_false")
-    priority = {"persisted_credentials": 0, "opaque_checkout_with": 0,
-                "ambiguous_credentials": 1,
-                "ambiguous_checkout_with": 2, "credentials_outside_with": 3,
+    priority = {"persisted_credentials": 0, "ambiguous_checkout_with": 0,
+                "opaque_checkout_with": 1, "ambiguous_credentials": 2,
+                "credentials_outside_with": 3,
                 "missing_explicit_false": 4}
     return sorted(set(problems), key=lambda reason: (priority.get(reason, 5), reason))
 
