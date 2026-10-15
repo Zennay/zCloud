@@ -102,6 +102,41 @@ def blob(root: Path, revision: str, path: str) -> str | None:
         raise AdmissionError("invalid_workflow_encoding") from exc
 
 
+def strictly_bounded_step(step_source: str) -> bool:
+    """Validate retention only under the upload step's own literal with: map.
+
+    This intentionally denies aliases, duplicate/misplaced YAML keys,
+    expression values, and ambiguous inline maps instead of trusting the
+    first regex match made by the historical read-only inventory.
+    """
+    lines = step_source.splitlines()
+    if not lines:
+        return False
+    action = re.match(
+        r"^(?P<spaces> *)(?P<dash>- +)?uses: *actions/upload-artifact@[^\\s#]+",
+        lines[0],
+    )
+    if action is None:
+        return False
+    use_column = len(action.group("spaces")) + len(action.group("dash") or "")
+    seen_with = False
+    retention: list[str] = []
+    for line in lines[1:]:
+        raw = line.split("#", 1)[0].rstrip()
+        if re.fullmatch(r" *with:", raw):
+            if seen_with or len(raw) - len(raw.lstrip(" ")) != use_column:
+                return False
+            seen_with = True
+        match = re.match(r"^( *)(retention-days)\s*:\s*(.*?)\s*$", raw)
+        if match:
+            if not seen_with or len(match.group(1)) != use_column + 2:
+                return False
+            retention.append(match.group(3))
+    if len(retention) != 1 or not re.fullmatch(r"[1-9][0-9]?", retention[0]):
+        return False
+    return 1 <= int(retention[0]) <= 30
+
+
 def findings(path: str, content: str) -> Counter[str]:
     blocks = list(_step_blocks(content))
     if len(blocks) > LIMIT_STEPS:
@@ -115,7 +150,7 @@ def findings(path: str, content: str) -> Counter[str]:
         raise AdmissionError("audit_step_count_mismatch")
     unsafe: Counter[str] = Counter()
     for (_, step_source), row in zip(blocks, audited):
-        if row.status != "bounded":
+        if row.status != "bounded" or not strictly_bounded_step(step_source):
             unsafe[step_source] += 1
     return unsafe
 
