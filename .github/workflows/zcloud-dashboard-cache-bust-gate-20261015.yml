@@ -103,7 +103,11 @@ jobs:
           fi
           report="$RUNNER_TEMP/zcloud-cache-bust-policy.json"
           policy_result=0
-          python3 -I "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" > "$report" || policy_result=$?
+          timeout 90 python3 -I "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" > "$report" || policy_result=$?
+          # A malicious candidate scanner cannot flood hosted logs with an
+          # unbounded JSON report before the renderer's size validation.
+          test -s "$report"
+          test "$(wc -c < "$report")" -le 16384
           cat "$report"
           REPORT="$report" PROVENANCE="$provenance" python3 - <<'PY'
           import json
