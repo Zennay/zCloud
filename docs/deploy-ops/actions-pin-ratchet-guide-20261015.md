@@ -22,4 +22,10 @@ From a local Git repository with the base and candidate commits already fetched:
 
     python3 scripts/zcloud_actions_pin_ratchet_20261015.py --base BASE_40_HEX_SHA --head HEAD_40_HEX_SHA
 
+## Operatorbewijs bij succes én weigering
+
+De GitHub-hosted workflow toont een klein Nederlandstalig overzicht van oude en nieuwe niet-vastgepinde Actions, zonder broncode, ongefilterde verwijzingen of wachtwoorden. Bij code 1 (nieuwe schuld), code 2 (onbetrouwbare bron) of een ontbrekend rapport wordt het overzicht toch aangemaakt met duidelijke **geen autorisatie**. Ook bij een volledig groen rapport blijven release- en deploytoestemming altijd **Nee**. Dubbele JSON-sleutels, NaN, tegenstrijdige uitslagen, onverwachte bevoegdheid of buitensporige rapportgrootte maken het overzicht onbetrouwbaar. Deze samenvatting draait buiten de checkout vanuit een tijdelijke map om Python-importschaduw vanuit PR-bestanden te beperken.
+
+De echte GitHub-hosted regressies voeren zowel een lokaal Git origin-verplaatsingsscenario als ontbrekende origin, geslaagde origin, onbetrouwbare rapporten en een geheimhoudingscontrole uit. Het overzicht is uitsluitend een inspectiehulp; het mag niet als releasegoedkeuring worden ingezet.
+
 Keep the PR DRAFT and unmerged until exact-head full regression, owner/branch collision proof and independent policy review. A green hosted source result cannot authorize production promotion.
