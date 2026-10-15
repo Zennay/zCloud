@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 DANGERS = {
-    "curl_insecure": re.compile(r"\bcurl\s+[^\n]*(?:\s--insecure\b|\s-[A-Za-z]*k[A-Za-z]*\b)", re.I),
+    "curl_insecure": re.compile(r"\bcurl\b[^\n]*[ \t]+(?:--insecure\b|-[A-Za-z]*k[A-Za-z]*\b)", re.I),
     "wget_no_certificate": re.compile(r"\bwget\s+[^\n]*--no-check-certificate\b", re.I),
     "git_ssl_verify_disabled": re.compile(r"\bgit\s+-c\s+http\.sslverify\s*=\s*(?:false|0)\b", re.I),
     "git_ssl_no_verify": re.compile(r"\bGIT_SSL_NO_VERIFY\s*[:=]\s*['\"]?(?:1|true)\b", re.I),
@@ -48,7 +48,7 @@ def workflow_changes(root, base, head):
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
         raise Unverifiable("invalid_sha")
     data = git(root, "diff", "--name-status", "--no-renames",
-               "--diff-filter=AM", "-z", base, head, "--",
+               "--diff-filter=AMT", "-z", base, head, "--",
                ".github/workflows/")
     fields = data.split(b"\0")
     if fields[-1] != b"" or len(fields[:-1]) % 2:
@@ -62,7 +62,7 @@ def workflow_changes(root, base, head):
             path = raw.decode("ascii", "strict")
         except UnicodeDecodeError as exc:
             raise Unverifiable("non_ascii_path") from exc
-        if status not in (b"A", b"M") or not WORKFLOW.fullmatch(path):
+        if status not in (b"A", b"M", b"T") or not WORKFLOW.fullmatch(path):
             raise Unverifiable("unexpected_workflow_entry")
         found.append((status, path))
     if len({p for _, p in found}) != len(found):
