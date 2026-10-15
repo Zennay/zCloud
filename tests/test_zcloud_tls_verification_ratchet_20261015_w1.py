@@ -53,6 +53,52 @@ class SourcePatterns(unittest.TestCase):
         self.assertEqual(self.count("run: python -c 'requests.get(url, verify=False)'",
                                     "python_requests_bypass"), 1)
 
+    def test_persistent_git_ssl_disable(self):
+        self.assertEqual(self.count("run: git config --global http.sslVerify false",
+                                    "git_ssl_verify_disabled"), 1)
+
+    def test_origin_specific_git_ssl_disable(self):
+        self.assertEqual(self.count(
+            "run: git config --global http.https://github.com/.sslVerify false",
+            "git_ssl_verify_disabled"), 1)
+
+    def test_multiple_git_config_flags(self):
+        self.assertEqual(self.count(
+            "run: git -c core.filemode=true -c http.sslVerify=false fetch",
+            "git_ssl_verify_disabled"), 1)
+
+    def test_safe_git_settings(self):
+        self.assertEqual(self.count("run: git config --global user.name Builder",
+                                    "git_ssl_verify_disabled"), 0)
+
+    def test_powershell_iwr_bypass(self):
+        self.assertEqual(self.count(
+            "run: iwr https://example.org -SkipCertificateCheck",
+            "powershell_skip_certificate"), 1)
+
+    def test_powershell_invoke_web_request_bypass(self):
+        self.assertEqual(self.count(
+            "run: Invoke-WebRequest -SkipCertificateCheck https://example.org",
+            "powershell_skip_certificate"), 1)
+
+    def test_powershell_safe_download(self):
+        self.assertEqual(self.count("run: Invoke-WebRequest https://example.org",
+                                    "powershell_skip_certificate"), 0)
+
+    def test_node_reject_unauthorized_false(self):
+        self.assertEqual(self.count(
+            'run: node -e "https.get(url, { rejectUnauthorized: false })"',
+            "node_reject_unauthorized"), 1)
+
+    def test_python_ssl_cert_none(self):
+        self.assertEqual(self.count("run: python -c 'ctx.verify_mode = ssl.CERT_NONE'",
+                                    "python_ssl_cert_none"), 1)
+
+    def test_safe_node_certs(self):
+        self.assertEqual(self.count(
+            'run: node -e "https.get(url, { rejectUnauthorized: true })"',
+            "node_reject_unauthorized"), 0)
+
     def test_backslash_newline(self):
         self.assertEqual(self.count("run: curl \\\n  --insecure https://example.org",
                                     "curl_insecure"), 1)
@@ -116,6 +162,20 @@ class RealGitHistory(unittest.TestCase):
         self.wf.write_text("run: curl -k https://different.example.org\n", encoding="utf-8")
         self.commit()
         self.assertTrue(any("curl_insecure:new=1" in problem for problem in self.scan()[1]))
+
+    def test_new_persistent_git_config_disabled_denied(self):
+        self.wf.write_text(
+            "name: unsafe\nrun: git config --global http.sslVerify false\n",
+            encoding="utf-8")
+        self.commit()
+        self.assertTrue(any("git_ssl_verify_disabled" in finding for finding in self.scan()[1]))
+
+    def test_new_powershell_certificate_bypass_denied(self):
+        self.wf.write_text(
+            "name: unsafe\nrun: pwsh -Command 'iwr https://example.org -SkipCertificateCheck'\n",
+            encoding="utf-8")
+        self.commit()
+        self.assertTrue(any("powershell_skip_certificate" in finding for finding in self.scan()[1]))
 
     def test_new_duplicate_insecure_line_is_new_debt(self):
         self.wf.write_text("run: curl -k https://legacy.example.org\n", encoding="utf-8")
