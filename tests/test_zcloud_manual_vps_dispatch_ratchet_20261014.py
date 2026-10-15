@@ -65,6 +65,9 @@ class ManualDispatchPolicy(unittest.TestCase):
         untrusted_execute = workflow_source.index('python3 "$policy_path"')
         self.assertLess(trusted_start, trusted_execute)
         self.assertLess(trusted_execute, untrusted_execute)
+        unit_test = workflow_source.index("python3 -m unittest discover")
+        self.assertLess(trusted_execute, unit_test)
+        self.assertLess(untrusted_execute, unit_test)
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
             subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
