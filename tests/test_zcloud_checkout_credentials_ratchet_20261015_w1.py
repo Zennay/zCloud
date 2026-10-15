@@ -330,6 +330,37 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         encoded = workflow().replace("      - uses:", '      - "' + chr(92) + 'u0075ses":')
         self.verify(encoded, "opaque_escaped_yaml")
 
+    def test_quoted_checkout_yaml_solidus_escape_is_denied(self):
+        slash = chr(92) + "/"
+        encoded = workflow(None).replace(
+            f"actions/checkout@{PIN}", f'"actions{slash}checkout@{PIN}"',
+        )
+        self.verify(encoded, "opaque_escaped_yaml")
+
+    def test_quoted_checkout_yaml_joined_lines_are_denied(self):
+        backslash = chr(92)
+        encoded = workflow(None).replace(
+            f"actions/checkout@{PIN}",
+            f'"actions/chec{backslash}\n          kout@{PIN}"',
+        )
+        self.verify(encoded, "opaque_escaped_yaml")
+
+    def test_fully_escaped_tagged_uses_key_denied(self):
+        backslash = chr(92)
+        name = backslash + "u0075" + backslash + "u0073" + backslash + "u0065" + backslash + "u0073"
+        encoded = workflow(None).replace(
+            f"- uses: actions/checkout@{PIN}",
+            f'- !!str "{name}": "actions{backslash}/checkout@{PIN}"',
+        )
+        self.verify(encoded, "opaque_escaped_yaml")
+
+    def test_yaml_escaped_solidus_only_in_run_literal_is_inert(self):
+        backslash = chr(92)
+        source = ("jobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n"
+                  "      - run: |\n"
+                  f"          echo actions{backslash}/checkout@{PIN}\n")
+        self.verify(source)
+
     def test_checkout_in_comment_ignored(self):
         self.verify("# actions/checkout@v4\nname: simple\n")
 
