@@ -190,6 +190,16 @@ class ManualDispatchPolicy(unittest.TestCase):
         )
         self.assertTrue(guard.evaluate({}, {WF: admitted})["ok"])
 
+    def test_valid_nonstandard_event_indentation_cannot_hide_manual_dispatch(self):
+        for indent in (" ", "   ", "    ", "      "):
+            with self.subTest(indent=len(indent)):
+                body = workflow().replace(b"  workflow_dispatch:", (indent + "workflow_dispatch:").encode())
+                self.assertDenied(body)
+        guarded = workflow(if_statement=SAFE_IF).replace(
+            b"  workflow_dispatch:", b"    workflow_dispatch:",
+        )
+        self.assertTrue(guard.evaluate({}, {WF: guarded})["ok"])
+
     def test_unindented_comments_cannot_hide_manual_event(self):
         src = workflow().replace(b"  workflow_dispatch:", b"  push:\n# owner comment\n  workflow_dispatch:")
         self.assertDenied(src)
