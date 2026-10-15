@@ -33,6 +33,10 @@ class FakeGitHub:
         self.drift = False
         self.duplicate_page = False
         self.truncate_files = False
+        self.drift_head = False
+        self.drift_pr_list = False
+        self.list_pass = 0
+        self.detail_reads = {}
         self.details = {n: detail(n, path=f"docs/{n}.md")
                         for n in range(1, count + 1)}
 
@@ -43,6 +47,10 @@ class FakeGitHub:
             return {"commit": {"sha": B if self.drift and self.main_calls > 1 else A}}
         if path.startswith("/pulls?"):
             page = int(path.rsplit("=", 1)[-1])
+            if page == 1:
+                self.list_pass += 1
+            if self.drift_pr_list and self.list_pass > 1:
+                return []
             start = (page - 1) * 100 + 1
             batch = [{"number": n} for n in range(start, min(start + 100, self.count + 1))]
             if self.duplicate_page and page > 1:
@@ -53,7 +61,11 @@ class FakeGitHub:
             metadata, files = self.details[number]
             if path.endswith("/files?per_page=100&page=1"):
                 return [] if self.truncate_files else copy.deepcopy(files)
-            return copy.deepcopy(metadata)
+            self.detail_reads[number] = self.detail_reads.get(number, 0) + 1
+            result = copy.deepcopy(metadata)
+            if self.drift_head and self.detail_reads[number] > 1:
+                result["head"]["sha"] = "c" * 40
+            return result
         raise AssertionError(path)
 
 
@@ -111,6 +123,18 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
             s.collect(api)
         api.details[1][0]["changed_files"] = 100
         with self.assertRaisesRegex(InvalidInventory, "incomplete_or_oversized_pr_files"):
+            s.collect(api)
+
+    def test_head_moving_between_detail_and_files_denied(self):
+        api = FakeGitHub()
+        api.drift_head = True
+        with self.assertRaisesRegex(InvalidInventory, "pr_changed_during_snapshot"):
+            s.collect(api)
+
+    def test_open_pr_list_change_during_pagination_denied(self):
+        api = FakeGitHub()
+        api.drift_pr_list = True
+        with self.assertRaisesRegex(InvalidInventory, "pr_inventory_changed_during_snapshot"):
             s.collect(api)
 
     def test_current_main_drift_denied(self):
