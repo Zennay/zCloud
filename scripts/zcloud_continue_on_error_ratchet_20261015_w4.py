@@ -137,15 +137,16 @@ def check_workflow(source: str) -> list[str]:
             issues.append(f"line_{number}:encoded_yaml_key_unreviewed")
         if re.search(r"(^|[ {,])<<[ \t]*:", line):
             issues.append(f"line_{number}:yaml_merge_unreviewed")
+        # Display labels are never executable continue-on-error mappings;
+        # check this *before* searching their quoted text for policy syntax.
+        if re.match(r"^[ ]*(?:-[ ]+)?name[ ]*:", line):
+            continue
         match = KEY.search(line)
         if match:
             value = line[match.end():].strip()
             # Only a direct YAML false scalar (with optional comment) is safe.
             if not re.fullmatch(r"false(?:[ \t]+#.*)?", value):
                 issues.append(f"line_{number}:continue_on_error_not_literal_false")
-        elif re.match(r"^[ ]*(?:-[ ]+)?name[ ]*:", line):
-            # Name is a non-authorizing display label, never a YAML policy key.
-            continue
         elif ":" in line and re.search(r"continue.{0,70}error", line, re.I):
             # Includes encoded YAML key or shadowed/malformed mapping forms.
             issues.append(f"line_{number}:ambiguous_continue_on_error")
@@ -165,6 +166,10 @@ def scan(root: Path, base: str, head: str) -> dict[str, list[str]]:
         if b"\0" in raw:
             raise ValueError("nul_in_workflow")
         source = raw.decode("utf-8", "strict")
+        # Bidirectional/zero-width format marks can spoof apparently identical
+        # YAML keys. U+2028/U+2029 alter Python line splitting semantics.
+        if any(unicodedata.category(ch) == "Cf" or ch in "\\u2028\\u2029" for ch in source):
+            raise ValueError("invisible_or_directional_unicode")
         problems = check_workflow(source)
         if problems:
             findings[path] = problems
