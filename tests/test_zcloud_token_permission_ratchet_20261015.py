@@ -766,5 +766,26 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertIn('test "$final_head" = "$EXPECTED_HEAD"', workflow)
 
 
+    def test_hosted_summary_cannot_claim_success_before_final_ref_recheck(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-token-permission-ratchet-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        final_sha_recheck = workflow.index('test "$final_head" = "$EXPECTED_HEAD"')
+        assert_summary = workflow.index("format_ci_summary(report)")
+        self.assertGreater(assert_summary, final_sha_recheck)
+        self.assertNotIn('--summary-to "$GITHUB_STEP_SUMMARY"', workflow)
+
+    def test_hosted_source_report_is_bounded_before_summary(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-token-permission-ratchet-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("report_file=", workflow)
+        self.assertIn("read_bytes()", workflow)
+        self.assertIn("4096", workflow)
+        self.assertIn("format_ci_summary(report)", workflow)
+        self.assertIn('test "$final_base" = "$BASE_SHA"', workflow)
+        self.assertIn('test "$final_head" = "$EXPECTED_HEAD"', workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
