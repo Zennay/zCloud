@@ -147,6 +147,13 @@ class ContinueOnErrorGitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsafe_workflow_mode"):
             gate.scan(self.root, self.base, head)
 
+    def test_unicode_escaped_initial_key_denied(self):
+        self.assertTrue(self._reasons(SAFE + '\n"\\u0063ontinue-on-error": true\n'))
+        self.assertTrue(gate.check_workflow('{"\\u0063ontinue-on-error": true}'))
+
+    def test_explicit_yaml_mapping_key_denied(self):
+        self.assertTrue(self._reasons(SAFE + "\n? continue-on-error\n: true\n"))
+
     def test_display_names_with_policy_phrase_are_safe(self):
         self.assertEqual(self._reasons(SAFE.replace(
             "name: Safe", "name: zCloud continue-on-error no-new-debt ratchet"
