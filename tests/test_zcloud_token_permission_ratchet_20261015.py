@@ -469,5 +469,51 @@ class PermissionRatchetTests(unittest.TestCase):
                          "summary_evidence_failed")
 
 
+    def test_quoted_jobs_key_new_inherited_job_denied(self):
+        source = ("on: push\n'jobs':\n  legacy:\n"
+                  "    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", source)
+        before = self.commit("opaque-quoted-jobs")
+        self.put(".github/workflows/original.yml", source +
+                 "  new_job:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, before, self.commit("added-implicit-job"))["ok"])
+
+    def test_jobs_alias_anchor_expansion_denied(self):
+        source = ("on: push\nx-jobs: &collection\n  legacy:\n"
+                  "    runs-on: ubuntu-latest\njobs: *collection\n")
+        self.put(".github/workflows/original.yml", source)
+        before = self.commit("jobs-alias")
+        self.put(".github/workflows/original.yml", source.replace(
+            "jobs: *collection", "jobs: *collection").replace(
+            "jobs: *collection", "jobs: *collection\nx-extra: should-not-be-inherited\n"))
+        self.assertFalse(check(self.root, before, self.commit("anchor-changed"))["ok"])
+
+    def test_nonstandard_four_space_jobs_new_implicit_job_denied(self):
+        old = ("on: push\njobs:\n    old_job:\n"
+               "        runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        before = self.commit("legacy-nonstandard-indent")
+        self.put(".github/workflows/original.yml", old +
+                 "    new_job:\n        runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, before, self.commit("new-wide-job"))["ok"])
+
+    def test_ambiguous_legacy_jobs_structure_unchanged_docs_only_allowed(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\n'jobs':\n  legacy:\n    runs-on: ubuntu-latest\n")
+        before = self.commit("legacy-ambiguous-jobs")
+        self.put("README.md", "unrelated docs edit\n")
+        self.assertTrue(check(self.root, before, self.commit("docs-only"))["ok"])
+
+    def test_rewritten_jobs_alias_mapping_target_denied(self):
+        old = ("on: push\nx-jobs: &group\n  legacy:\n"
+               "    runs-on: ubuntu-latest\njobs: *group\n")
+        self.put(".github/workflows/original.yml", old)
+        before = self.commit("legacy-flow-jobs")
+        self.put(".github/workflows/original.yml", old.replace(
+            "runs-on: ubuntu-latest", "runs-on: ubuntu-latest\n"
+            "    permissions: write-all"))
+        self.assertFalse(check(self.root, before, self.commit("alias-target-write"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
