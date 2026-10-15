@@ -149,15 +149,35 @@ def production_status(api, sha: str) -> dict:
 
 
 def current_deploy(api, sha: str) -> dict:
-    payload = api.get(
+    run_url = (
         "/repos/Zennay/zCloud/actions/workflows/zcloud-vps-deploy.yml/runs"
-        "?branch=main&per_page=100&page=1"
+        "?branch=main&per_page=100&page="
     )
-    if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
-        raise EvidenceError("invalid_workflow_runs")
-    runs = payload["workflow_runs"]
-    if len(runs) > 100:
-        raise EvidenceError("oversized_workflow_page")
+    runs = []
+    seen_page_run_ids = set()
+    first_page = None
+    for page in range(1, 6):
+        payload = api.get(f"{run_url}{page}")
+        if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
+            raise EvidenceError("invalid_workflow_runs")
+        batch = payload["workflow_runs"]
+        if len(batch) > 100:
+            raise EvidenceError("oversized_workflow_page")
+        if first_page is None:
+            first_page = payload
+        for row in batch:
+            if not isinstance(row, dict):
+                raise EvidenceError("invalid_workflow_run")
+            run_id = integer(row.get("id"))
+            if run_id in seen_page_run_ids:
+                raise EvidenceError("duplicate_paginated_deploy_run")
+            seen_page_run_ids.add(run_id)
+            runs.append(row)
+        if len(batch) < 100:
+            break
+    else:
+        raise EvidenceError("deploy_run_pagination_cap")
+    pages_scanned = page
     matching = []
     seen_matching_runs = set()
     for row in runs:
@@ -199,11 +219,15 @@ def current_deploy(api, sha: str) -> dict:
             raise EvidenceError("future_deploy_evidence")
         matching.append((run_id, attempt, status, conclusion, max(0, int(age)), updated))
     if not matching:
+        if api.get(f"{run_url}1") != first_page:
+            raise EvidenceError("deploy_run_page_drift")
         return {
             "run_id": None, "attempt": None, "status": "not_observed",
             "conclusion": None, "runner_route": "UNVERIFIED",
-            "matching_deploys_in_first_page": 0, "run_age_seconds": None,
+            "matching_deploys_in_bounded_inventory": 0, "run_age_seconds": None,
             "runner_job_result": "NOT_OBSERVED",
+            "run_pages_scanned": pages_scanned,
+            "runs_scanned": len(runs),
         }
     run_id, attempt, status, conclusion, run_age_seconds, updated_at = max(matching, key=lambda x: (x[0], x[1]))
     jobs_payload = api.get(
@@ -294,11 +318,17 @@ def current_deploy(api, sha: str) -> dict:
         post.get("updated_at") != updated_at
     ):
         raise EvidenceError("deploy_run_changed_during_job_read")
+    # Offset pagination may shift while new Actions runs are created. A second
+    # first-page read catches first-page churn; it is not atomic proof.
+    if api.get(f"{run_url}1") != first_page:
+        raise EvidenceError("deploy_run_page_drift")
     return {
         "run_id": run_id, "attempt": attempt, "status": status,
         "conclusion": conclusion, "runner_route": runner_route,
         "runner_job_result": runner_job_result,
-        "matching_deploys_in_first_page": len(matching),
+        "matching_deploys_in_bounded_inventory": len(matching),
+        "run_pages_scanned": pages_scanned,
+        "runs_scanned": len(runs),
         "run_age_seconds": run_age_seconds,
     }
 
@@ -391,7 +421,8 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <dt>Exact geobserveerde main</dt><dd>""" + safe(snapshot["main_sha"]) + """</dd>
 <dt>Productie-status</dt><dd>""" + safe(p["state"]) + """</dd>
 <dt>Leeftijd productiestatus (seconden)</dt><dd>""" + safe(p["last_status_age_seconds"]) + """</dd>
-<dt>Laatste deploy (huidige SHA, beperkte eerste pagina)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
+<dt>Laatste deploy (huidige SHA, begrensd volledig opgehaalde pagina's)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
+<dt>Doorgenomen deployruns</dt><dd>""" + safe(d["runs_scanned"]) + """ runs in """ + safe(d["run_pages_scanned"]) + """ pagina's</dd>
 <dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd>
 <dt>VPS-jobuitkomst</dt><dd>""" + safe(d["runner_job_result"]) + """</dd>
 <dt>Leeftijd laatste deploybewijs (seconden)</dt><dd>""" + safe(d["run_age_seconds"]) + """</dd></dl>
@@ -420,7 +451,8 @@ def main(argv: list[str] | None = None) -> int:
                            "latest_status_id": None, "latest_status_at_utc": None},
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
                        "conclusion": None, "runner_route": "UNVERIFIED",
-                       "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED"},
+                       "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED",
+                       "run_pages_scanned": 0, "runs_scanned": 0},
             "warnings": [str(exc)],
             "next_checks": [
                 "GitHub-bewijs is onvolledig of onbereikbaar: onderzoek uitsluitend "
