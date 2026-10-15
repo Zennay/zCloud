@@ -30,6 +30,11 @@ YAML_QUOTED_ESCAPE = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA
 UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.action_ref\b|inputs\b|env\b|vars\b|secrets\b)", re.I)
 DERIVED_OUTPUT_UNTRUSTED = re.compile(r"\b(?:steps\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|needs\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|matrix\b)", re.I)
 ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*(?:github|steps|needs|env|vars|secrets)\s*\)", re.I)
+# Serializing a whole child job/step includes its outputs even if the
+# expression does not explicitly access .outputs.
+DERIVED_OBJECT_JSON = re.compile(
+    r"\btojson\s*\(\s*(?:steps|needs)\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\s*\)", re.I,
+)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]")
 DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs|steps|needs|env|vars|secrets)\s*\[", re.I)
 FLOW_RUN_KEY = re.compile(
@@ -238,7 +243,7 @@ def fingerprint_risks(source: str) -> Counter[str]:
             # inject through env: rather than embedding directly in run text.
             normalized = BRACKET_PROPERTY.sub(lambda m: "." + m.group(2), normalized)
             normalized = re.sub(r"\s*\.\s*", ".", normalized)
-            if UNTRUSTED.search(normalized) or DERIVED_OUTPUT_UNTRUSTED.search(normalized) or ROOT_CONTEXT_JSON.search(normalized):
+            if UNTRUSTED.search(normalized) or DERIVED_OUTPUT_UNTRUSTED.search(normalized) or ROOT_CONTEXT_JSON.search(normalized) or DERIVED_OBJECT_JSON.search(normalized):
                 out[normalized + "|run_sha256:" + scalar_digest] += 1
             elif DYNAMIC_PROPERTY.search(normalized):
                 # Unknown computed key might resolve to event or inputs.
