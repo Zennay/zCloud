@@ -400,6 +400,44 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         head = self.commit()
         self.assertEqual(inspect(self.base, head)["status"], "pass")
 
+    def test_inherited_git_config_and_trace_dropped_before_launch(self):
+        trace = Path(self.tmp.name) / "forbidden-git-trace.json"
+        actual = subprocess.Popen
+        captured = []
+
+        def observer(*args, **kwargs):
+            captured.append(kwargs["env"])
+            return actual(*args, **kwargs)
+
+        inherited = {
+            "GIT_TRACE2_EVENT": str(trace),
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "user.email",
+            "GIT_CONFIG_VALUE_0": "unexpected@example.org",
+            "GIT_OBJECT_DIRECTORY": "/does/not/exist",
+            "GIT_NO_REPLACE_OBJECTS": "0",
+        }
+        with mock.patch.dict(os.environ, inherited):
+            with mock.patch.object(guard.subprocess, "Popen", side_effect=observer):
+                self.assertEqual(len(git("rev-parse", "HEAD", limit=41)), 41)
+        self.assertEqual(len(captured), 1)
+        child = captured[0]
+        self.assertEqual(child["GIT_NO_REPLACE_OBJECTS"], "1")
+        self.assertEqual(child["GIT_OPTIONAL_LOCKS"], "0")
+        for key in inherited:
+            if key != "GIT_NO_REPLACE_OBJECTS":
+                self.assertNotIn(key, child)
+        self.assertFalse(trace.exists(), "read-only source scan wrote Git trace output")
+
+    def test_inherited_git_config_cannot_override_source_objects(self):
+        original = git("rev-parse", "HEAD", limit=41)
+        with mock.patch.dict(os.environ, {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.bare",
+            "GIT_CONFIG_VALUE_0": "true",
+        }):
+            self.assertEqual(git("rev-parse", "HEAD", limit=41), original)
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
