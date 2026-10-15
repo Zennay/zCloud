@@ -47,3 +47,7 @@ This safety measure addresses following the wrong path during a scan. It does **
 ## File identity drift during hashing
 
 For each source file, the probe now records `fstat()` identity (device, inode, size and nanosecond modification/change timestamps) before and after hashing, then compares the final pathname's `lstat()`. Content changed while scanning or a replaced pathname produces `source_changed_during_scan` even if the bytes that were read happened to match the expected hash. Two deterministic tests mutate mtime during read and replace the inode after read. This reduces ordinary scan-time inconsistency; it is explicitly not an atomic snapshot guarantee and never grants rollback authority.
+
+## Complete directory inventory: fail closed on unreadable subtrees
+
+On supported Linux deployments, the scanner enumerates the snapshot tree through explicitly opened directory descriptors, `os.scandir(fd)`, `O_DIRECTORY` and `O_NOFOLLOW`; it refuses path depth over 64 and inventory sizes beyond the configured cap. This replaces `pathlib.rglob`, which can suppress traversal errors and therefore allow a partial inventory to look complete. An unreadable subtree, an injected enumeration failure or a too-deep tree is a denial, never an implicit empty directory. Targeted adversarial tests cover both cases, and no new VPS permissions or mutation operations were introduced.
