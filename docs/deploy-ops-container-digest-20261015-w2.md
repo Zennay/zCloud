@@ -71,7 +71,9 @@ produces an explicit red "bronbewijs incompleet" message; even the scanner's
 original error string is omitted. The summary never includes image values,
 paths, repository secrets, branch names or shell scripts. The workflow
 preserves the scanner's failing exit code and rejects contradictory or
-forged-authority JSON rather than reporting an optimistic success.
+forged-authority JSON rather than reporting an optimistic success. Numeric
+counts must also agree with the bounded `new_risks` list (maximum 25 detail
+rows) and may never claim more new findings than candidate findings.
 The summary is observation evidence only: it does not open a release gate,
 prove a healthy VPS listener or authorize mutation.
 
