@@ -219,7 +219,7 @@ jobs:
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("persist-credentials: false", workflow)
         self.assertIn("fetch-depth: 1", workflow)
-        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", workflow)
+        self.assertIn('test "$HEAD_REPOSITORY" = "$SOURCE_REPOSITORY"', workflow)
         self.assertIn('git fetch --no-tags --depth=1 origin refs/heads/main', workflow)
         self.assertIn('test "$BASE_SHA" = "$EXPECTED_BASE"', workflow)
         self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', workflow)
