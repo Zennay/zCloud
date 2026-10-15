@@ -54,9 +54,15 @@ outcomes retain \`release_authorized=false\`,
    checks the latest status ID, timestamp, state and matching event count.
    If these change during observation, the entire snapshot is rejected.
    Two identical GETs do not establish a transactionally atomic snapshot.
-3. The first 100 most recently returned main deploy runs from
-   \`zcloud-vps-deploy.yml\` are inspected. The latest matching run
-   for **the observed SHA** is identified by GitHub run ID and attempt.
+3. Main deploy runs from \`zcloud-vps-deploy.yml\` are inventoried across
+   **all returned pages up to five pages of 100 runs**. Duplicate run IDs,
+   malformed pages, missing/failed later pages or reaching the five-page cap
+   without a short terminal page **refuse the whole snapshot**. The first page
+   is read a second time after job inspection; changed first-page data
+   rejects the snapshot. Offset page reads are not transactionally atomic,
+   and a completed bounded inventory does not replace release permission.
+   The latest matching run for **the observed SHA** is identified by
+   GitHub run ID and attempt.
    Up to 100 returned jobs must be fully accounted for; self-hosted
    \`zcloud,vps\` jobs are classified as canonical-assigned, unexpected-runner,
    queued-unassigned or unverified. Each GitHub job ID must be unique, and every
@@ -75,8 +81,10 @@ outcomes retain \`release_authorized=false\`,
 4. Canonical \`main\` is re-read at the end; SHA drift refuses the
    evidence snapshot. All malformed and over-limit inputs refuse proof.
 
-**Limits:** The workflow-run view is the *first page* of 100 and
-therefore a bounded, not all-time exhaustive, history. The report cannot
+**Limits:** The workflow-run view is now a fully scanned **bounded** page
+window (up to 500 entries); more than the cap is an error, never a success
+or a silently truncated empty history. Two matching first pages do not prove
+that unseen changes did not happen (ABA/offset race). The report cannot
 confirm present VPS listener uptime, safe-idle, SQLite write access,
 browser activity, callback provenance, protection rules or effective deploy
 serialization. A green commit status or assigned historical job does not
@@ -95,7 +103,8 @@ python3 -m unittest -v \
 
 Includes at least: main movement, stale production success, missing status,
 queue without runner, unexpected runner, multiple contradictory route
-signals, truncated jobs, mismatched job run/attempt/SHA, failed vs assigned,
+signals, truncated jobs, multi-page run overlap and timeout/drift,
+mismatched job run/attempt/SHA, failed vs assigned,
 post-read reruns/conclusion drift, stale/future/duplicate production status,
 bad provenance, bool masquerading as integer,
 duplicate JSON keys, NaN and XSS/HTML escaping. Production writer files
