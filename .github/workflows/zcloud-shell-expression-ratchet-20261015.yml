@@ -13,6 +13,10 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/**'
+      - '**/action.yml'
+      - '**/action.yaml'
+      - 'action.yml'
+      - 'action.yaml'
       - scripts/zcloud_shell_expression_ratchet_20261015.py
       - tests/test_zcloud_shell_expression_ratchet_20261015.py
       - .github/workflows/zcloud-shell-expression-ratchet-20261015.yml
