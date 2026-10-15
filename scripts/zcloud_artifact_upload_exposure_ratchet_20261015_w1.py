@@ -225,7 +225,15 @@ def ambiguous_artifact_path(value: str) -> bool:
     # A narrow filename can still be a private key or cloud credential.
     if re.search(r"\.(?:pem|p12|pfx|jks|keystore|key|asc)\Z", value, re.I):
         return True
-    if any(part.lower() in {".aws", ".kube", ".azure", ".gnupg", ".gcloud"} for part in value.split("/")):
+    # Credential stores that are easy to mistake for innocuous JSON/config
+    # when uploaded through a narrow, non-wildcard artifact file path.
+    protected_roots = {".aws", ".kube", ".azure", ".gnupg", ".gcloud",
+                       ".docker", ".terraform", ".npm", ".m2", ".config"}
+    parts = [part.lower() for part in value.split("/")]
+    if any(part in protected_roots for part in parts):
+        return True
+    if parts[-1] in {".netrc", ".pypirc", ".git-credentials",
+                     "id_ed25519", "id_ecdsa", "id_dsa", "gradle.properties"}:
         return True
     return False
 
