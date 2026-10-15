@@ -515,5 +515,31 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertFalse(check(self.root, before, self.commit("alias-target-write"))["ok"])
 
 
+    def test_explicit_yaml_jobs_mapping_key_new_implicit_job_denied(self):
+        old = ("on: push\n? jobs\n:\n  existing:\n"
+               "    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-explicit-jobs-key")
+        self.put(".github/workflows/original.yml",
+                 old + "  new_job:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, base, self.commit("new-job"))["ok"])
+
+    def test_explicit_yaml_quoted_jobs_key_new_implicit_job_denied(self):
+        old = ('on: push\n? "jobs"\n:\n  existing:\n'
+               '    runs-on: ubuntu-latest\n')
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-quoted-explicit-jobs")
+        self.put(".github/workflows/original.yml",
+                 old + "  new_job:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, base, self.commit("new-job"))["ok"])
+
+    def test_unchanged_legacy_explicit_jobs_mapping_docs_only_allowed(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\n? jobs\n:\n  original:\n    runs-on: ubuntu-latest\n")
+        base = self.commit("legacy-explicit-jobs")
+        self.put("README.md", "safe docs")
+        self.assertTrue(check(self.root, base, self.commit("docs-only"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
