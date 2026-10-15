@@ -895,6 +895,33 @@ class RealGitTests(unittest.TestCase):
         self.assertEqual(expected, report["candidate_risk_kinds"])
         self.assertEqual(0, report["new_risks"])
 
+    def test_new_risk_kinds_identify_only_added_findings(self):
+        source = "steps:\n  - run: echo ${{ env.OLD }}\n"
+        base = self.commit(source)
+        head = self.commit(source + "  - run: echo ${{ vars.NEW_TOKEN }}\n")
+        report = guard.audit(base, head)
+        self.assertEqual(1, report["new_risks"])
+        self.assertEqual([{"kind": "direct_interpolation", "count": 1}],
+                         report["new_risk_kinds"])
+        self.assertNotIn("NEW_TOKEN", json.dumps(report))
+
+    def test_new_risk_kinds_empty_on_no_new_debt(self):
+        source = "steps:\n  - run: echo ${{ env.OLD }}\n"
+        base = self.commit(source)
+        head = self.commit(source + "# same risk\n")
+        report = guard.audit(base, head)
+        self.assertEqual([], report["new_risk_kinds"])
+        self.assertEqual(0, report["new_risks"])
+
+    def test_new_risk_kinds_mixed_shell_and_ambiguity(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ inputs.NEW_SECRET }}\n  - run: *unsafe\n")
+        report = guard.audit(base, head)
+        self.assertEqual(2, report["new_risks"])
+        self.assertEqual([{"kind": "direct_interpolation", "count": 1},
+                          {"kind": "yaml_structure_ambiguity", "count": 1}],
+                         report["new_risk_kinds"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
