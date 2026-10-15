@@ -17,6 +17,10 @@ De bestaande deploy-ops-gates bewaken workflow-events, runnergebruik, acties en 
 - Adversariële echte Git-fixtures testen afwijkende SHA-volgorde, symlinks, gitlinks/submodules, NUL/ongeldige UTF-8 en te grote blobs; onvolledig bewijs mag nooit als goedkeuring worden uitgegeven.
 - PR-job draait uitsluitend GitHub-hosted met `contents: read`, exacte SHA-checks en herhaalde actuele `main`-/PR-head-checks, zonder secrets, VPS, SQLite, service-acties of artifactwrites.
 
+## Leesbare GitHub Actions-uitkomst
+
+De hosted broncontrole schrijft een **Nederlandse, begrensde job summary** voor acceptatie én afwijzing. De samenvatting toont alleen geverifieerde niet-negatieve tellingen, laat workflowbron en foutdetails weg en vermeldt expliciet dat release, deployment en mutatie niet zijn toegestaan. Tegenspraak tussen success-status, tellers of enige bevoegdheidsvlag wordt afgewezen. Ook een mislukte schrijfactie naar de lokale summary maakt de controle rood. Regressies controleren de echte CLI zowel op succes, onvolledige bron als summary-schrijfproblemen.
+
 ## Grenzen en vrijgave
 
 Dit is een bewust **lexicale** YAML-ratchet, geen volledige YAML-parser of semantische tokenprivilege-analyse. Ongebruikelijke mappingnotaties, expliciete mapping keys, anchors/aliases, duplicate-key shadowing en complexe inline constructies worden conservatief als risicobron behandeld en moeten onafhankelijk worden gereviewd; de scanner kan zowel omzeilingen als false positives kennen. Het maakt geen claims over effectieve GitHub-instellingen, omgevingsbescherming of de runtime. Bij een echte noodzaak voor een nieuwe write-scope moet een afzonderlijke eigenaar de wijziging onafhankelijk beoordelen; de ratchet verleent zelf nooit toestemming.
