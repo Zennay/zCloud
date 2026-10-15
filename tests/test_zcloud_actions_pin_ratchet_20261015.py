@@ -162,5 +162,20 @@ class ActionPinRatchetTests(unittest.TestCase):
             snapshot(self.root, self.command("rev-parse", "HEAD"))
 
 
+    def test_workflow_directory_symlink_refused(self):
+        self.command("rm", "-rq", ".github/workflows")
+        (self.root / ".github/workflows").symlink_to("/tmp/fake-workflows")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "symlink workflow directory")
+        with self.assertRaisesRegex(Refusal, "workflow_root_not_directory"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_missing_workflow_directory_refused(self):
+        self.command("rm", "-rq", ".github/workflows")
+        self.command("commit", "-qm", "remove all workflows")
+        with self.assertRaises(Refusal):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+
 if __name__ == "__main__":
     unittest.main()
