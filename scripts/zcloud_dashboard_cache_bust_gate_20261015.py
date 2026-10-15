@@ -103,7 +103,11 @@ class Refs(HTMLParser):
             return
         parsed = urlsplit(ref)
         try:
-            resolved_path = posixpath.normpath(unquote(parsed.path, errors="strict"))
+            # WHATWG special-scheme URLs (HTTP/HTTPS) treat backslashes as
+            # path separators. Reject such aliases instead of overlooking a
+            # second active reference to the exact same browser-fetched file.
+            decoded_path = unquote(parsed.path, errors="strict")
+            resolved_path = posixpath.normpath(decoded_path.replace("\\", "/"))
         except UnicodeError as exc:
             raise ValueError("malformed_asset_path") from exc
         # Encoded dots, encoded letters and /foo/../ traversal can resolve to
