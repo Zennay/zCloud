@@ -1,9 +1,12 @@
 """Real Git adversarial source checks; no live repository mutation."""
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
+from unittest import mock
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/zcloud_direct_main_write_ratchet_20261015_w3.py"
@@ -292,6 +295,18 @@ class RatchetTests(unittest.TestCase):
         code, receipt = self.change('actual="$(git push origin HEAD:main)"')
         self.assertEqual(code, 1, receipt)
         self.assertIn("git_push", receipt["findings"][0]["reasons"])
+
+    def test_shared_scan_deadline_expires_before_git_spawn(self):
+        spec = importlib.util.spec_from_file_location("source_ratchet_under_test", SCRIPT)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.SCAN_DEADLINE = time.monotonic() - 1
+        with mock.patch.object(module.subprocess, "Popen") as spawn:
+            with self.assertRaises(module.AdmissionError) as caught:
+                module.git("status")
+            self.assertEqual(str(caught.exception), "scan_deadline_exceeded")
+            spawn.assert_not_called()
 
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
