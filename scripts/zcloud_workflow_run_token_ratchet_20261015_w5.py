@@ -123,6 +123,10 @@ def classify_workflow(source: str) -> list[str]:
         elif root_perms is not None:
             root_perms = None
     for _indent, value in rows:
+        # YAML permission aliases/tags/encoded scalars may resolve to a write
+        # grant after expansion; do not infer read-only from raw text.
+        if re.match(r"(?:permissions|contents|actions|checks|issues|pull-requests|id-token)[ ]*:[ ]*(?:[*&]|!!|['\"]|\\\\u|\\\\x)", value):
+            return ["workflow_run_unreviewed_permission_alias"]
         if re.match(r"permissions[ ]*:[ ]*write-all\b", value):
             return ["workflow_run_write_permission"]
         if re.search(r"\b[a-z-]+[ ]*:[ ]*write\b", value):
