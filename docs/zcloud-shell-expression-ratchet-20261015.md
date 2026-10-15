@@ -14,8 +14,8 @@ any edit to a workflow that still contains a flow-style `run:` key. Previous
 line-only evidence could miss a multiline continuation edit, an anchor rewrite,
 or relocation of an identical flow command into another job. This strict
 fail-closed rule can flag harmless adjacent comment changes; use block-style
-steps instead. An entirely unchanged legacy flow workflow remains grandfathered. Quoted run keys using YAML's `\\u0072` or `\\x72`
-spelling for the initial `r` are also scanned, so re-encoding the key
+steps instead. An entirely unchanged legacy flow workflow remains grandfathered. Quoted run keys using YAML's `\\u0072`, `\\x72`, or eight-digit
+`\\U00000072` escaping (also in the `u` and `n` letters) are scanned, so re-encoding the key
 does not silently skip the shell-command check. A second unfinished `${{`
 after a valid closed expression is flagged; an earlier valid `}}` no
 longer hides the incomplete token.
