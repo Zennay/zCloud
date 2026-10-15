@@ -54,6 +54,26 @@ def nonfinite(_: str) -> object:
     raise EvidenceError("nonfinite_json_number")
 
 
+def reject_unpaired_unicode(value: object) -> object:
+    """Reject escaped surrogate codepoints anywhere in GitHub JSON evidence.
+
+    Python's JSON decoder accepts lone UTF-16 surrogate escapes, but they
+    cannot be safely encoded into a UTF-8 HTML artifact. Keep this check
+    bounded by MAX_BYTES, without ever including untrusted input in errors.
+    """
+    if isinstance(value, str):
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            raise EvidenceError("invalid_api_unicode")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            reject_unpaired_unicode(key)
+            reject_unpaired_unicode(item)
+    elif isinstance(value, list):
+        for item in value:
+            reject_unpaired_unicode(item)
+    return value
+
+
 class GitHubReadOnly:
     def __init__(self, token: str | None = None):
         self.token = token
@@ -82,8 +102,9 @@ class GitHubReadOnly:
         if len(raw) > MAX_BYTES:
             raise EvidenceError("oversized_api_response")
         try:
-            return json.loads(raw.decode("utf-8"), object_pairs_hook=unique_pairs,
-                              parse_constant=nonfinite)
+            parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_pairs,
+                                parse_constant=nonfinite)
+            return reject_unpaired_unicode(parsed)
         except (UnicodeError, ValueError, TypeError) as exc:
             raise EvidenceError("invalid_api_json") from exc
 
@@ -264,9 +285,8 @@ def current_deploy(api, sha: str) -> dict:
             "run_inventory_complete": inventory_complete,
         }
     run_id, attempt, status, conclusion, run_age_seconds, updated_at = max(matching, key=lambda x: (x[0], x[1]))
-    jobs_payload = api.get(
-        f"/repos/Zennay/zCloud/actions/runs/{run_id}/jobs?per_page=100&page=1"
-    )
+    job_url = f"/repos/Zennay/zCloud/actions/runs/{run_id}/jobs?per_page=100&page=1"
+    jobs_payload = api.get(job_url)
     if not isinstance(jobs_payload, dict) or not isinstance(jobs_payload.get("jobs"), list):
         raise EvidenceError("invalid_deploy_jobs")
     total = jobs_payload.get("total_count")
@@ -352,6 +372,11 @@ def current_deploy(api, sha: str) -> dict:
         post.get("updated_at") != updated_at
     ):
         raise EvidenceError("deploy_run_changed_during_job_read")
+    # The run may remain unchanged even while its jobs acquire a runner or
+    # finish. Re-read the exact selected job page after the run read; a mixed
+    # pre/post job snapshot must never appear as stable job evidence.
+    if api.get(job_url) != jobs_payload:
+        raise EvidenceError("deploy_job_changed_during_observation")
     # Revalidate every page before reporting one combined run snapshot.
     verify_paginated_run_snapshots()
     return {
