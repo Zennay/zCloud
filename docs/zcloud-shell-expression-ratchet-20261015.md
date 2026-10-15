@@ -308,6 +308,31 @@ generic parsers. This check is intentionally a fail-closed syntax guard,
 **not** proof that a tagged key is executable by Actions, nor a substitute
 for YAML semantic validation. No release, merge or VPS permission is granted.
 
+## Prevent legacy shell debt from silently gaining job authority
+
+A previously recorded unsafe direct interpolation is **not permanently
+waived** when its enclosing workflow or job becomes more powerful. The
+guard now binds each risky `run:` finding to a bounded, indentation-based
+execution-control envelope in addition to the existing step body and
+ancestor identity.
+
+Global source controls include event triggers (`on:`), workflow
+`permissions`, `env`, `defaults` and `concurrency`. Per-job controls
+include `if`, `runs-on`, job `permissions`, `environment`,
+`container`, `services`, `strategy`, `env`, `defaults`,
+`concurrency` and `timeout-minutes`. A source transition from
+read-only to write permissions, from `push` to `pull_request_target`,
+or from hosted to self-hosted runner is **new risk debt** when it inherits
+an existing direct expression-to-shell hazard, even if the shell text is
+byte-identical.
+
+A harmless change to a workflow's `name:` or to an unrelated job's
+permissions does not invalidate the waiver for the unchanged risky step.
+Metadata is recorded as source only; the scanner **does not infer**
+runtime permissions, YAML merge semantics, job execution, or trust based
+solely on a source field. Non-standard indentation can be ambiguous and
+requires review. This is a no-new-debt guard, never deployment authority.
+
 ## Quoted expression delimiters
 
 GitHub Actions expressions may contain the literal text `}}` inside a
