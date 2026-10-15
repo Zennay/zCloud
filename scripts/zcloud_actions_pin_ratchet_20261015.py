@@ -51,6 +51,9 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
         raise Refusal("invalid_revision")
     if git(root, "cat-file", "-t", revision).strip() != b"commit":
         raise Refusal("revision_not_commit")
+    for tree_part in (".github", ".github/workflows"):
+        if git(root, "cat-file", "-t", revision + ":" + tree_part).strip() != b"tree":
+            raise Refusal("workflow_root_not_directory")
     raw = git(root, "ls-tree", "-rz", "--full-tree", revision, ".github/workflows")
     paths: dict[str, str] = {}
     for entry in raw.split(b"\0"):
