@@ -14,7 +14,7 @@ import sys
 from dataclasses import dataclass
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
-DIGEST = re.compile(r"@sha256:[0-9a-fA-F]{64}(?=$|[\s#}\"'])")
+IMAGE_REF = re.compile(r"^[A-Za-z0-9_./:-]+@sha256:[0-9a-fA-F]{64}$")
 KEY = r"""(?:image|["']image["'])"""
 CONTAINER = r"""(?:container|["']container["'])"""
 USES = r"""(?:uses|["']uses["'])"""
@@ -106,7 +106,7 @@ def _safe_literal(value: str) -> bool:
     if "${{" in value or value.lstrip().startswith(("*", "&", "|", ">")):
         return False
     candidate = value.strip().strip("'\"")
-    return bool(DIGEST.search(candidate))
+    return bool(IMAGE_REF.fullmatch(candidate))
 
 
 def _scan(path: str, source: str) -> list[Finding]:
