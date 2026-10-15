@@ -109,6 +109,31 @@ def _lock(lines: list[str], indent: int, low: int, high: int):
     return "serialized_source"
 
 
+def _parent_cancel_status(lines: list[str], jobs_at: int) -> str:
+    """A workflow-level cancellation can defeat an otherwise safe job lock."""
+    roots = [i for i in range(jobs_at)
+             if (parsed := _key(lines[i], 0)) and parsed[0] == "concurrency"]
+    if not roots:
+        return "safe"
+    if len(roots) != 1:
+        return "ambiguous_parent_concurrency"
+    try:
+        start, end = _section(lines, "concurrency", 0, 0, jobs_at)
+    except AmbiguousSource:
+        return "ambiguous_parent_concurrency"
+    fields = {}
+    for line in lines[start + 1:end]:
+        parsed = _key(line, 2)
+        if parsed:
+            key, value = parsed
+            if key in fields:
+                return "ambiguous_parent_concurrency"
+            fields[key] = value
+    if fields.get("cancel-in-progress") != "false":
+        return "unsafe_parent_cancel_policy"
+    return "safe"
+
+
 def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
     try:
         lines = _read_regular(root, filename).splitlines()
@@ -124,6 +149,9 @@ def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
         job_end = next((i for i in jobs if i > at), len(lines))
         if scope == "workflow":
             return _lock(lines, 0, 0, jobs_at)
+        parent_status = _parent_cancel_status(lines, jobs_at)
+        if parent_status != "safe":
+            return parent_status
         return _lock(lines, 4, at + 1, job_end)
     except AmbiguousSource as exc:
         return str(exc)
