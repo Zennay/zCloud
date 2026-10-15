@@ -7,6 +7,7 @@ approval, or a proof that an existing workflow is safe. No GitHub/VPS mutation.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -196,6 +197,14 @@ def inspect(base: str, head: str) -> dict[str, object]:
         if total > MAX_TOTAL_BYTES:
             raise Denied("source_budget_exceeded")
         blob = git("cat-file", "blob", oid, limit=MAX_BYTES)
+        # Size and content identity are independent pieces of evidence.
+        # Verify the immutable Git blob SHA ourselves rather than accepting
+        # any bytes returned by a replaced or corrupted object database.
+        identity = hashlib.sha1(
+            b"blob " + str(len(blob)).encode("ascii") + b"\\0" + blob
+        ).hexdigest()
+        if len(blob) != count or identity != oid:
+            raise Denied("git_blob_integrity")
         try:
             workflow = blob.decode("utf-8", "strict")
         except UnicodeDecodeError as exc:
