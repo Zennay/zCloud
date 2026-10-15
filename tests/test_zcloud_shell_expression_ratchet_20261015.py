@@ -386,6 +386,69 @@ class RealGitTests(unittest.TestCase):
         head = self.commit('steps:\n  - ? "' + run_key + '"\n    : echo ${{ inputs.payload }}\n')
         self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
 
+    def test_composite_action_run_injection_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        action = Path(".github/actions/local/action.yml")
+        action.parent.mkdir(parents=True)
+        action.write_text("runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo \${{ github.event.issue.title }}\n")
+        head = self.commit()
+        report = guard.audit(base, head)
+        self.assertEqual(1, report["new_risks"])
+        self.assertEqual([str(action)], report["affected_workflows"])
+        self.assertEqual([{"path": str(action), "risk_count": 1}],
+                         report["candidate_risky_workflows"])
+
+    def test_nested_action_yaml_inputs_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        action = Path("packages/cli/action.yaml")
+        action.parent.mkdir(parents=True)
+        action.write_text("runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: printf '%s' '\${{ inputs.from_pr }}'\n")
+        head = self.commit()
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_composite_action_env_indirection_remains_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        action = Path(".github/actions/echo/action.yml")
+        action.parent.mkdir(parents=True)
+        action.write_text("runs:\n  using: composite\n  steps:\n    - shell: bash\n      env:\n        TITLE: \${{ github.event.issue.title }}\n      run: printf '%s' \"$TITLE\"\n")
+        head = self.commit()
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_legacy_composite_action_shell_edit_is_new_risk(self):
+        action = Path(".github/actions/legacy/action.yml")
+        action.parent.mkdir(parents=True)
+        action.write_text("runs:\n  using: composite\n  steps:\n    - run: echo \${{ github.event.issue.title }}\n      shell: bash\n")
+        base = self.commit("steps:\n  - run: echo safe\n")
+        action.write_text("runs:\n  using: composite\n  steps:\n    - run: printf \${{ github.event.issue.title }}\n      shell: bash\n")
+        head = self.commit()
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_deleted_composite_action_is_not_new_debt(self):
+        action = Path(".github/actions/legacy/action.yml")
+        action.parent.mkdir(parents=True)
+        action.write_text("runs:\n  using: composite\n  steps:\n    - run: echo \${{ github.ref }}\n      shell: bash\n")
+        base = self.commit("steps:\n  - run: echo safe\n")
+        action.unlink()
+        head = self.commit()
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_symlinked_action_metadata_fails_closed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        action = Path(".github/actions/unsafe/action.yml")
+        action.parent.mkdir(parents=True)
+        action.symlink_to("/tmp/secret")
+        head = self.commit()
+        with self.assertRaisesRegex(guard.EvidenceError, "non_regular_workflow"):
+            guard.audit(base, head)
+
+    def test_unrelated_yaml_file_not_scanned_as_action(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        action = Path("packages/cli/docs.yml")
+        action.parent.mkdir(parents=True)
+        action.write_text("run: echo \${{ github.event.issue.title }}\n")
+        head = self.commit()
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
