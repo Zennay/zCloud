@@ -129,6 +129,40 @@ def assess(payload):
         for path, numbers in sorted(owners.items())
         if len(numbers) > 1
     ]
+    # Show transitive file-ownership conflict groups, not just path pairs:
+    # PR 1 ↔ 2 on file A and PR 2 ↔ 3 on file B form one review group.
+    # File disjointness is strictly advisory; semantic and PR-less branch
+    # collisions are NOT covered, nor does a group grant merge authority.
+    parent = {number: number for number in seen_numbers}
+
+    def root(number):
+        while parent[number] != number:
+            parent[number] = parent[parent[number]]
+            number = parent[number]
+        return number
+
+    def join(left, right):
+        lroot, rroot = root(left), root(right)
+        if lroot != rroot:
+            parent[max(lroot, rroot)] = min(lroot, rroot)
+
+    conflicting = set()
+    for numbers in owners.values():
+        if len(numbers) > 1:
+            group = sorted(numbers)
+            conflicting.update(group)
+            for number in group[1:]:
+                join(group[0], number)
+    connected = defaultdict(list)
+    for number in sorted(conflicting):
+        connected[root(number)].append(number)
+    groups = sorted(connected.values(), key=lambda members: members[0])
+    conflict_groups = [
+        {"pr_count": len(members), "prs": members[:50],
+         "pr_ids_truncated": len(members) > 50}
+        for members in groups[:80]
+    ]
+    uncontested = sorted(seen_numbers - conflicting)
     return {
         "policy": "zcloud-deployops-pr-owner-collision-v1",
         "repo": payload["repo"],
@@ -140,6 +174,13 @@ def assess(payload):
         "stale_base_count": len(stale_bases),
         "stale_base_report_truncated": len(stale_bases) > 50,
         "collision_count": len(collisions),
+        "conflicted_pr_count": len(conflicting),
+        "conflict_group_count": len(groups),
+        "conflict_groups": conflict_groups,
+        "conflict_group_report_truncated": len(groups) > 80,
+        "uncontested_pr_count": len(uncontested),
+        "uncontested_pr_ids": uncontested[:80],
+        "uncontested_pr_ids_truncated": len(uncontested) > 80,
         "collisions": collisions[:200],
         "collision_report_truncated": len(collisions) > 200,
         "input_provenance": "unverified_snapshot",
