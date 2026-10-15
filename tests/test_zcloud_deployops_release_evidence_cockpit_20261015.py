@@ -380,6 +380,29 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(cockpit.EvidenceError, "invalid_workflow_runs"):
             cockpit.collect(api)
 
+    def test_deploy_second_page_changes_between_reads_denied(self):
+        api = FakeAPI()
+        first = [dict(run(sha=ALT_SHA), id=i + 1000) for i in range(100)]
+        original = {"workflow_runs": [run()]}
+        changed = {"workflow_runs": [dict(run(), id=4002)]}
+        api.pages[RUNS] = [{"workflow_runs": first}]
+        api.pages[RUNS_PREFIX + "2"] = [original, changed]
+        api.pages[RUN_DETAIL] = [run()]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_page_drift"):
+            cockpit.collect(api)
+        self.assertEqual(api.calls.count(RUNS_PREFIX + "2"), 2)
+
+    def test_deploy_second_page_stable_but_still_not_authorized(self):
+        api = FakeAPI()
+        first = [dict(run(sha=ALT_SHA), id=i + 1000) for i in range(100)]
+        api.pages[RUNS] = [{"workflow_runs": first}]
+        api.pages[RUNS_PREFIX + "2"] = [{"workflow_runs": [run()]}]
+        api.pages[RUN_DETAIL] = [run()]
+        data = cockpit.collect(api)
+        self.assertEqual(api.calls.count(RUNS_PREFIX + "2"), 2)
+        self.assertFalse(data["release_authorized"])
+        self.assertEqual(data["deploy"]["runner_job_result"], "SUCCESS")
+
     def test_deploy_page_two_timeout_denies(self):
         api = FakeAPI()
         api.pages[RUNS] = [
