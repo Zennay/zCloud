@@ -174,8 +174,9 @@ def insecure_occurrences(text):
 
 def insecure_counts(text):
     occurrences = insecure_occurrences(text)
+    keys = set(DANGERS) | {kind for kind, _ in occurrences}
     return Counter({name: sum(n for (kind, _), n in occurrences.items()
-                               if kind == name) for name in DANGERS})
+                               if kind == name) for name in keys})
 
 
 def evaluate(root, base, head):
