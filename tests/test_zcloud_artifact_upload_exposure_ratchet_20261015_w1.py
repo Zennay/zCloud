@@ -69,6 +69,22 @@ class SourceTests(unittest.TestCase):
         self.check(SAFE.replace("uses: actions/upload-artifact@v4",
                                 r'"u\u0073es": "actions/up\u006coad-artifact@v4"'), False)
 
+    def test_cloud_identity_folder_denied(self):
+        for path in ("reports/.aws/config", "out/.kube/config", "out/.azure/profile",
+                     "out/.gnupg/pubring", "out/.gcloud/settings"):
+            with self.subTest(path=path):
+                self.check(SAFE.replace("dist/result.log", path), False)
+
+    def test_private_key_container_extensions_denied(self):
+        for suffix in ("pem", "p12", "pfx", "key", "jks", "keystore", "asc"):
+            with self.subTest(suffix=suffix):
+                self.check(SAFE.replace("dist/result.log", "out/public." + suffix), False)
+
+    def test_normal_artifact_extension_preserved(self):
+        for suffix in ("txt", "log", "json", "xml"):
+            with self.subTest(suffix=suffix):
+                self.check(SAFE.replace("dist/result.log", "out/build." + suffix), True)
+
     def test_safe_normal_uses_action_not_rejected(self):
         self.check(SAFE.replace("actions/upload-artifact@v4",
                                 "actions/upload-artifact@v4.4.3"), True)
