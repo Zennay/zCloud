@@ -37,7 +37,7 @@ GitHub-hosted admission additionally verifies the remote PR branch ref before **
 
 ## Multiline quoted YAML admission
 
-GitHub Actions `run: "..."` and `run: '...'` YAML scalars may continue on a later indented line; the command is folded with spaces. The scanner joins those quoted continuations before examining shell execution patterns. Unterminated or indentation-broken quoted `run` values cause fail-closed source-evidence rejection, not a clean result. Inline hashes inside quoted strings remain part of the command rather than being stripped as comments. This remains a **syntactic source check**, not a complete YAML parser or runtime verification.
+GitHub Actions `run: "..."` and `run: '...'` YAML scalars may continue on a later indented line; the command is folded with spaces. The scanner joins those quoted continuations before examining shell execution patterns. Unterminated or indentation-broken quoted `run` values cause fail-closed source-evidence rejection, not a clean result. Inline hashes inside a wholly quoted YAML scalar remain part of the command, while a whitespace-prefixed `#` in a plain (unquoted) YAML scalar starts a YAML comment and is excluded from the script source. This avoids false positives from commented-out download snippets without suppressing real quoted execution. This remains a **syntactic source check**, not a complete YAML parser or runtime verification.
 
 ## Bounded multi-stage shell ingestion and immutable directory integrity
 
