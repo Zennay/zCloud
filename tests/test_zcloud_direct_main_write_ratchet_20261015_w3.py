@@ -218,6 +218,46 @@ class RatchetTests(unittest.TestCase):
         self.commit()
         self.assertEqual(self.audit()[1]["reason"], "missing_workflows")
 
+    def test_graphql_cli_mutation_unprovable_denied(self):
+        code, data = self.change("gh api graphql -f query='mutation {updateRef(input: {}) {clientMutationId}}'")
+        self.assertEqual(code, 1)
+        self.assertIn("dynamic_graphql_write_unverifiable", data["findings"][0]["reasons"])
+
+    def test_graphql_cli_external_query_unprovable_denied(self):
+        self.assertEqual(self.change("gh api graphql -F query=@request.graphql")[0], 1)
+
+    def test_graphql_cli_flags_before_endpoint_denied(self):
+        self.assertEqual(self.change("gh api --jq '.data' graphql -f query=@script.graphql")[0], 1)
+
+    def test_graphql_octokit_endpoint_denied(self):
+        self.assertEqual(self.change("await octokit.graphql(queryString)")[0], 1)
+
+    def test_graphql_github_endpoint_denied(self):
+        self.assertEqual(self.change("await github.graphql(queryString)")[0], 1)
+
+    def test_graphql_direct_http_endpoint_denied(self):
+        self.assertEqual(self.change("curl -X POST https://api.github.com/graphql -d @payload")[0], 1)
+
+    def test_rest_read_only_gh_get_api_allowed(self):
+        code, data = self.change("gh api repos/org/repo/commits/main")
+        self.assertEqual(code, 0, data)
+
+    def test_divergent_commit_history_rejected(self):
+        self.write(".github/workflows/first.yml", SAFE)
+        first = self.commit()
+        self.git("checkout", "-qb", "independent-sibling", self.base)
+        self.write(".github/workflows/second.yml", SAFE)
+        second = self.commit()
+        code, result = self.audit(base=first, head=second)
+        self.assertEqual(code, 1)
+        self.assertEqual(result["reason"], "unrelated_commit_history")
+
+    def test_ancestor_base_is_admitted(self):
+        self.write(".github/workflows/new.yml", SAFE)
+        head = self.commit()
+        code, result = self.audit(base=self.base, head=head)
+        self.assertEqual(code, 0, result)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, r = self.change("git push origin main # " + marker)
