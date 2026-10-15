@@ -244,6 +244,20 @@ class WorkflowRunTokenRatchetTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "invalid_git_limit"):
                     gate.git(self.root, "status", limit=bad)
 
+    def test_block_sequence_workflow_run_denies_implicit_write(self):
+        candidate = SAFE.replace(
+            "on:\n  workflow_run:\n    workflows: [lint]\n    types: [completed]",
+            "on:\n  - push\n  - workflow_run",
+        ).replace("permissions:\n  contents: read\n", "")
+        self.assertTrue(self.edit(candidate))
+
+    def test_quoted_block_sequence_workflow_run_denied(self):
+        candidate = SAFE.replace(
+            "on:\n  workflow_run:\n    workflows: [lint]\n    types: [completed]",
+            'on:\n  - "workflow_run"',
+        ).replace("permissions:\n  contents: read\n", "")
+        self.assertTrue(self.edit(candidate))
+
     def test_source_policy_matrix(self):
         for value, unsafe in [
             (SAFE, False),
