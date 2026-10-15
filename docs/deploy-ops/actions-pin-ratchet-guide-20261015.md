@@ -12,7 +12,8 @@ A workflow may use a mutable reference like actions/checkout@v4. An upstream tag
 * JSON output has only bounded path, line and hash prefix. It never includes raw action references. Exit 0: no new debt; 1: new debt; 2: incomplete/unsafe evidence. All outcomes permanently deny deployment and release authority.
 * Hosted-only PR workflow, contents:read, pinned credential-free checkout, no privileged dispatch, SSH or production write.
 * Initial PR bootstrap uses the candidate script because the trusted base does not contain this script yet. This is advisory bootstrap evidence, NOT independent security review or approval. After integration, subsequent PRs read the scanner from the exact base commit.
-* This is a source heuristic, not a full YAML semantics or GitHub Actions provenance validator: YAML anchors and inline mappings need separate review. A 40-character commit SHA is not by itself a publisher authorization.
+* Ambiguous YAML aliases, step reuse, inline flow-map merges, quoted uses-keys and non-regular workflow directory ancestry are now rejected rather than silently accepted. Inline shell literals and comments remain ignored where confidently distinguished. The source scanner is still not a complete YAML parser or publisher provenance validator; independent review remains required. A 40-character commit SHA is not by itself publisher authorization.
+* After the full scanner finishes, a separate GitHub-hosted shell gate rechecks the current canonical main SHA via a read-only remote Git query. If main advanced, disappeared or cannot be fetched, proof fails, rather than treating a stale green check as current acceptance. Three real temporary-Git integration cases cover unchanged, moved and missing main. This is still not a production authorization check.
 * This does not replace runner recovery #1326, three writer locks #1447, existing source owners, or serialized production gate #580/PWQ-41 and #1089.
 
 ## Operator usage
