@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -368,6 +369,60 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertIn('git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"', self.workflow)
         self.assertIn('EXPECTED_MAIN="$HEAD_SHA"', self.workflow)
         self.assertIn('test "$current_main" = "$EXPECTED_MAIN"', self.workflow)
+
+    def run_bounded_summary(self, payload: dict, *, event: str = "push") -> tuple[int, str]:
+        script = self.workflow.split('REPORT="$report" PROVENANCE="$provenance" python3 - <<\'PY\'', 1)[1]
+        script = script.split("\\n          PY", 1)[0]
+        script = textwrap.dedent(script)
+        with tempfile.TemporaryDirectory() as folder:
+            report = Path(folder) / "report.json"
+            summary = Path(folder) / "summary.md"
+            report.write_text(json.dumps(payload), encoding="utf-8")
+            env = dict(os.environ, REPORT=str(report), GITHUB_STEP_SUMMARY=str(summary),
+                       PROVENANCE="untrusted_bootstrap_review_required", GITHUB_EVENT_NAME=event)
+            result = subprocess.run(
+                ["python3", "-I", "-c", script], cwd=folder, env=env,
+                capture_output=True, text=True, check=False, timeout=10,
+            )
+            content = summary.read_text(encoding="utf-8") if summary.exists() else ""
+            return result.returncode, content
+
+    def test_direct_push_renders_bounded_human_friendly_summary(self) -> None:
+        code, content = self.run_bounded_summary(
+            {"ok": False, "reason": "changed_asset_pin_unchanged", "changed": ["public/app.js"]},
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("Directe wijziging op main", content)
+        self.assertIn("AFGEWEZEN", content)
+        self.assertIn("Dashboard JavaScript", content)
+        self.assertIn("geen toestemming voor deploy", content)
+        self.assertNotIn("<script", content)
+
+    def test_pr_success_renders_expected_summary(self) -> None:
+        code, content = self.run_bounded_summary(
+            {"ok": True, "reason": "cache_bust_delta_ok", "changed": []},
+            event="pull_request",
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("GESLAAGD", content)
+        self.assertIn("Pull request", content)
+        self.assertIn("Geen bronwijziging", content)
+
+    def test_malformed_summary_report_fails_closed(self) -> None:
+        for invalid in (
+            {"ok": 1, "reason": "cache_bust_delta_ok", "changed": []},
+            {"ok": True, "reason": "cache_bust_delta_ok", "changed": ["<img src=x>"]},
+            {"ok": True, "reason": "cache_bust_delta_ok", "changed": "public/app.js"},
+        ):
+            with self.subTest(invalid=invalid):
+                code, content = self.run_bounded_summary(invalid)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(content, "")
+
+    def test_policy_failure_status_is_preserved_after_summary(self) -> None:
+        self.assertIn('test "$policy_result" -eq 0', self.workflow)
+        self.assertIn('|| policy_result=$?', self.workflow)
+        self.assertIn('if type(payload.get("ok")) is not bool:', self.workflow)
 
     def test_hosted_read_only_and_no_automatic_deploy(self) -> None:
         self.assertIn('runs-on: ubuntu-latest', self.workflow)
