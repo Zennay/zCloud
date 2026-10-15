@@ -23,8 +23,12 @@ SCRIPT_EXEC = SCRIPT_WRAPPER + r"(?:/usr/local/bin/|/usr/bin/|/bin/)?(?:bash|sh|
 # Remote bytes may traverse bounded pass-through/decoder stages before a shell.
 # Keep the allowed stage names explicit to avoid spanning unrelated commands.
 PASS_THROUGH = r"(?:tee|cat|sed|base64|tr|awk|gunzip|gzip)\b[^\n|;]*\|\s*"
+# Bash/POSIX shell can execute pipeline consumers in a subshell or command
+# group. A pipe into '( bash )' or '{ sh; }' is still remote code execution.
+# Only an opening group *immediately before* the interpreter is admitted here.
+PIPE_GROUP = r"(?:\(\s*|\{\s*)?"
 REMOTE = re.compile(
-    r"\b(?:curl|wget)\b[^\n|;]*\|\s*" + rf"(?:{PASS_THROUGH}){{0,2}}" + SCRIPT_EXEC,
+    r"\b(?:curl|wget)\b[^\n|;]*\|\s*" + rf"(?:{PASS_THROUGH}){{0,2}}" + PIPE_GROUP + SCRIPT_EXEC,
     re.I,
 )
 SUBSTITUTION = re.compile(SCRIPT_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
