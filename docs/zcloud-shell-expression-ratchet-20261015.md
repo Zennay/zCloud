@@ -29,6 +29,14 @@ is therefore not silently grandfathered. This is deliberately conservative:
 even a harmless edit elsewhere in a workflow containing such an alias may
 require replacing the alias with an explicit shell command.
 
+The source ratchet also treats shell interpolation of `github.ref` and
+`github.base_ref` as potentially untrusted branch/ref text. Full GitHub
+context serialization such as `${{ toJSON(github) }}` is conservatively denied:
+the context can contain event-derived values even if the expression does not
+spell out `github.event`. Bracket variants (`github['ref']`) and spaces in the
+serialization function are covered. Direct `github.sha` is not marked as
+event-derived and remains allowed by this limited tripwire.
+
 Safer patterns put untrusted values into a step env binding and reference
 quoted shell variables; still validate the value according to its meaning.
 The scanner reads bounded regular UTF-8 Git blobs only, checks sizes before
