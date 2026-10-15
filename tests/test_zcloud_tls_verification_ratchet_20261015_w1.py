@@ -151,6 +151,35 @@ class RealGitHistory(unittest.TestCase):
         self.commit()
         self.assertEqual(self.scan(), ([], []))
 
+    def test_root_local_action_manifest_is_scanned(self):
+        action = self.root / "action.yaml"
+        action.write_text("runs:\n  using: composite\n  steps:\n    - run: curl -k https://example.org\n",
+                          encoding="utf-8")
+        self.commit()
+        changes, problems = self.scan()
+        self.assertIn((b"A", "action.yaml"), changes)
+        self.assertTrue(any("curl_insecure" in item for item in problems))
+
+    def test_deep_local_action_manifest_is_scanned(self):
+        parent = self.root.joinpath(*(["nested"] * 8))
+        parent.mkdir(parents=True)
+        action = parent / "action.yml"
+        action.write_text("runs:\n  using: composite\n  steps:\n    - run: wget --no-check-certificate https://example.org\n",
+                          encoding="utf-8")
+        self.commit()
+        changes, problems = self.scan()
+        self.assertTrue(any("nested/nested/nested/nested/" in path for _, path in changes))
+        self.assertTrue(any("wget_no_certificate" in item for item in problems))
+
+    def test_safe_local_action_manifest_allowed(self):
+        action = self.root / "action.yml"
+        action.write_text("runs:\n  using: composite\n  steps:\n    - run: curl -fsSL https://example.org\n",
+                          encoding="utf-8")
+        self.commit()
+        changes, problems = self.scan()
+        self.assertIn((b"A", "action.yml"), changes)
+        self.assertEqual(problems, [])
+
     def test_symlink_workflow_denied(self):
         self.wf.unlink()
         self.wf.symlink_to(self.root / "missing")
