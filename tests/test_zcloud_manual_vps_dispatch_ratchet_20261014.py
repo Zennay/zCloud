@@ -327,6 +327,18 @@ class ManualDispatchPolicy(unittest.TestCase):
             with self.subTest(changed=new[:95]):
                 self.assertDeniedDiff(old, new)
 
+    def test_global_display_anchor_mutation_invalidates_unsafe_job_waiver(self):
+        for display in (b"name:", b"run-name:"):
+            source = workflow().replace(b"name: proof", display + b" &shared ubuntu-latest")
+            source = source.replace(
+                b"runs-on: [self-hosted, zcloud, vps]", b"runs-on: *shared",
+            )
+            changed = source.replace(b"&shared ubuntu-latest", b"&shared self-hosted")
+            with self.subTest(display=display):
+                result = guard.evaluate({WF: source}, {WF: changed})
+                self.assertFalse(result["ok"])
+                self.assertEqual(1, result["new_debt_count"])
+
     def test_legacy_unguarded_job_allows_only_display_name_and_comment_edits(self):
         old = workflow()
         for updated in (
