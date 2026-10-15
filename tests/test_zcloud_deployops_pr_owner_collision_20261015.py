@@ -45,6 +45,16 @@ class PRCollisionInventoryTests(unittest.TestCase):
         self.assertFalse(result["deployment_authorized"])
         self.assertFalse(result["mutation_performed"])
         self.assertEqual("unverified_snapshot", result["input_provenance"])
+        self.assertEqual(6, result["files_scanned"])
+        self.assertEqual(4, result["unique_paths_scanned"])
+
+    def test_stale_base_pr_still_owns_files(self):
+        result = m.assess(snapshot(pr(1, ["docs/a.md"], base=B),
+                                   pr(2, ["docs/a.md"])))
+        self.assertEqual([1], result["stale_base_prs"])
+        self.assertEqual(1, result["stale_base_count"])
+        self.assertEqual(1, result["collision_count"])
+        self.assertFalse(result["release_authorized"])
 
     def test_file_disjoint_is_not_release_approval(self):
         result = m.assess(snapshot(pr(1, ["tests/x.py"]), pr(2, ["docs/y.md"])))
@@ -138,7 +148,7 @@ class PRCollisionInventoryTests(unittest.TestCase):
                 m.assess(s)
         for field, value in (
             ("state", "closed"), ("head_sha", "short"),
-            ("base_sha", B), ("head_repo", "malicious/repo"),
+            ("base_sha", "invalid"), ("head_repo", "malicious/repo"),
             ("base_repo", "malicious/repo"),
         ):
             s = snapshot(pr(1, ["a"]))
