@@ -72,6 +72,34 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inspect_workflow(self.root, name, "install", "job"),
                          "missing_concurrency")
 
+    def test_workflow_level_true_cancel_defeats_safe_job_lock(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n", "concurrency:\n  group: only-manual-group\n  cancel-in-progress: true\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsafe_parent_cancel_policy")
+        self.assertFalse(module.inventory(self.root)["release_authorized"])
+
+    def test_parent_cancel_expression_must_not_be_trusted(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n", "concurrency:\n  group: only-manual-group\n  cancel-in-progress: ${{ github.event_name == 'push' }}\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsafe_parent_cancel_policy")
+
+    def test_parent_non_cancel_group_does_not_replace_job_lock(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n", "concurrency:\n  group: manual-only-group\n  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "serialized_source")
+        self.edit(name, "      group: zcloud-production-deploy\n", "")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "wrong_group")
+
+    def test_duplicate_parent_concurrency_rejected(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n", "concurrency:\n  group: first\n  cancel-in-progress: false\nconcurrency:\n  group: second\n  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "ambiguous_parent_concurrency")
+
     def test_wrong_group_does_not_count(self):
         self.edit("zcloud-worker-tab-guard.yml",
                   "group: zcloud-production-deploy", "group: another-production-lock")
