@@ -86,12 +86,11 @@ def workflow_paths(base: str, head: str) -> list[str]:
         raise Denied("invalid_revision")
     if git("rev-parse", "HEAD").decode().strip() != head:
         raise Denied("head_mismatch")
-    try:
-        p = subprocess.run(["git", "merge-base", "--is-ancestor", base, head],
-                           timeout=10, stderr=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        raise Denied("invalid_ancestry") from e
-    if p.returncode:
+    # Apply the SAME bounded, no-replace-object Git reader to ancestry.
+    # A bare subprocess.run here otherwise inherits altered Git object
+    # replacement/configuration and lacks the streaming process-group guard.
+    ancestor = git("merge-base", base, head, cap=120).decode("ascii", "strict").strip()
+    if ancestor != base:
         raise Denied("invalid_ancestry")
     paths = []
     for raw in git("diff", "--name-only", "-z", "--diff-filter=ACMRT", base, head,
