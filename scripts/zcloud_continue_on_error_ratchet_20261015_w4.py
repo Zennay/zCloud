@@ -114,8 +114,8 @@ def check_workflow(source: str) -> list[str]:
     for number, line in enumerate(source.splitlines(), 1):
         stripped = line.lstrip(" ")
         indent = len(line) - len(stripped)
-        prefix = line[:len(line) - len(line.lstrip(" \\t"))]
-        if "\\t" in prefix:
+        prefix = line[:len(line) - len(line.lstrip(" " + chr(9)))]
+        if chr(9) in prefix:
             issues.append(f"line_{number}:tab_indent_unreviewed")
             continue
         if run_block_header is not None:
