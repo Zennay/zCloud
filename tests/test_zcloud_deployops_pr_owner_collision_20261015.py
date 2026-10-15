@@ -363,6 +363,53 @@ class PRCollisionInventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(m.InvalidInventory, "snapshot_read_failed"):
                 m.read_snapshot(invalid)
 
+    def test_snapshot_rejects_symlinked_ancestor_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "real"
+            real.mkdir()
+            source = real / "inventory.json"
+            source.write_text(json.dumps(snapshot(pr(1, ["docs/a.md"]))),
+                              encoding="utf-8")
+            symlink = root / "alias"
+            symlink.symlink_to(real, target_is_directory=True)
+            with self.assertRaisesRegex(m.InvalidInventory, "snapshot_read_failed"):
+                m.read_snapshot(symlink / "inventory.json")
+            self.assertEqual(source.read_text(encoding="utf-8"),
+                             m.read_snapshot(source))
+            # Nested ancestors must be protected individually.
+            nested = root / "nested"
+            nested.mkdir()
+            (nested / "second").symlink_to(real, target_is_directory=True)
+            with self.assertRaisesRegex(m.InvalidInventory, "snapshot_read_failed"):
+                m.read_snapshot(nested / "second" / "inventory.json")
+
+    def test_snapshot_rejects_parent_traversal_without_touching_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sub = root / "sub"
+            sub.mkdir()
+            source = root / "inventory.json"
+            source.write_text(json.dumps(snapshot(pr(1, ["docs/a.md"]))),
+                              encoding="utf-8")
+            before = source.read_bytes()
+            with self.assertRaisesRegex(m.InvalidInventory, "invalid_snapshot_path"):
+                m.read_snapshot(sub / ".." / "inventory.json")
+            self.assertEqual(before, source.read_bytes())
+
+    def test_snapshot_directory_chain_is_readonly_and_supports_nested_regular_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nested = root / "one" / "two"
+            nested.mkdir(parents=True)
+            source = nested / "inventory.json"
+            source.write_text(json.dumps(snapshot(pr(1, ["docs/a.md"]))),
+                              encoding="utf-8")
+            before = source.read_bytes()
+            self.assertEqual(source.read_text(encoding="utf-8"),
+                             m.read_snapshot(source))
+            self.assertEqual(before, source.read_bytes())
+
     def test_bounded_input_cli_refuses_symlink_without_writing(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
