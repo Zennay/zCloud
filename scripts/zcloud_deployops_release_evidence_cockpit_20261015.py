@@ -497,6 +497,22 @@ def render_html(snapshot: dict) -> str:
     def safe(value: object) -> str:
         return html.escape(str(value), quote=True)
     p, d = snapshot["production"], snapshot["deploy"]
+    source_links = []
+    # Source navigation is derived solely from canonical immutable identifiers.
+    # Never create links from remote workflow/job user-controlled strings.
+    sha = snapshot.get("main_sha")
+    if isinstance(sha, str) and SHA.fullmatch(sha):
+        source_links.append(
+            '<a href="https://github.com/Zennay/zCloud/commit/'
+            + safe(sha) + '">Geobserveerde main-commit</a>'
+        )
+    run_id = d.get("run_id")
+    if type(run_id) is int and run_id > 0:
+        source_links.append(
+            '<a href="https://github.com/Zennay/zCloud/actions/runs/'
+            + str(run_id) + '">GitHub-deployrun</a>'
+        )
+    evidence_links = " · ".join(source_links) or "Geen geverifieerde bronlink"
     warnings = "".join(
         f"<li>{safe(WARNING_LABELS_NL.get(w, w))}</li>"
         for w in snapshot["warnings"]
@@ -512,6 +528,7 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <p class="warning">Alleen lezen. Geen toestemming voor merge, restart of productie-deploy.</p>
 <dl>
 <dt>Exact geobserveerde main</dt><dd>""" + safe(snapshot["main_sha"]) + """</dd>
+<dt>Bronnen (alleen lezen)</dt><dd>""" + evidence_links + """</dd>
 <dt>Productie-status</dt><dd>""" + safe(p["state"]) + """</dd>
 <dt>Leeftijd productiestatus (seconden)</dt><dd>""" + safe(p["last_status_age_seconds"]) + """</dd>
 <dt>Laatste deploy (huidige SHA, begrensd volledig opgehaalde pagina's)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
