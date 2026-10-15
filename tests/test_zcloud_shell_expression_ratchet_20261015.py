@@ -600,6 +600,35 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - name: current\n    run: echo " + unsafe + "\n  - name: safe\n    run: echo harmless\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_new_alias_of_unsafe_job_denied(self):
+        unsafe = "$" + "{{ github.event.issue.body }}"
+        base_source = ("jobs:\n  base: &template\n    runs-on: ubuntu-latest\n"
+                       "    steps:\n      - run: echo " + unsafe + "\n")
+        base = self.commit(base_source)
+        head = self.commit(base_source + "  cloned: *template\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_alias_retarget_between_existing_job_anchors_denied(self):
+        unsafe = "$" + "{{ github.event.issue.body }}"
+        common = ("jobs:\n  a: &a\n    steps:\n      - run: echo " + unsafe + "\n"
+                  "  b: &b\n    steps:\n      - run: echo safe\n")
+        base = self.commit(common + "  copied: *b\n")
+        head = self.commit(common + "  copied: *a\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_unchanged_legacy_job_alias_no_new_debt(self):
+        unsafe = "$" + "{{ github.event.issue.body }}"
+        source = ("jobs:\n  base: &base\n    steps:\n      - run: echo " + unsafe
+                  + "\n  copied: *base\n")
+        base = self.commit(source)
+        head = self.commit(source)
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_shell_string_asterisk_does_not_create_yaml_alias_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: printf '*shell_literal'\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
