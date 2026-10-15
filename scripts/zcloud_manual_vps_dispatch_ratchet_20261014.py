@@ -278,6 +278,24 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         raise RefError("ambiguous_job_structure")
     return findings
 
+def workflow_authority_header(source: str) -> tuple[str, ...]:
+    """Track global permissions, triggers and other authority of unsafe jobs.
+
+    Workflow display names and YAML comments cannot change job authority.
+    Other global YAML edits can: they must not launder an unchanged unsafe
+    job through the no-new-debt grandfathering rule.
+    """
+    root = re.search(r"(?m)^jobs:[ \\t]*", source)
+    if root is None:
+        raise RefError("missing_or_ambiguous_jobs")
+    header = source[:root.start()]
+    return tuple(
+        line.rstrip() for line in header.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+        and not re.match(r"^(?:name|run-name):[ \\t]", line)
+    )
+
+
 def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object]:
     previous: set[tuple[str, str]] = set()
     candidate: set[tuple[str, str]] = set()
@@ -306,14 +324,21 @@ def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object
         if path not in base:
             continue
         try:
-            before_jobs = split_jobs(base[path].decode("utf-8"))
-            after_jobs = split_jobs(head[path].decode("utf-8"))
+            before_source = base[path].decode("utf-8")
+            after_source = head[path].decode("utf-8")
+            before_jobs = split_jobs(before_source)
+            after_jobs = split_jobs(after_source)
+            authority_changed = (
+                workflow_authority_header(before_source)
+                != workflow_authority_header(after_source)
+            )
         except UnicodeError as exc:
             raise RefError("invalid_workflow_encoding") from exc
         for key in previous & candidate:
             if key[0] != path:
                 continue
-            if before_jobs.get(key[1]) != after_jobs.get(key[1]):
+            if (before_jobs.get(key[1]) != after_jobs.get(key[1])
+                    or authority_changed):
                 changed_old_debt.add(key)
     additions = sorted((candidate - previous) | changed_old_debt)
     return {
