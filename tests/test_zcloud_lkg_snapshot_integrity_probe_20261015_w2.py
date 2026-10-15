@@ -48,6 +48,34 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_managed_restore_contract_must_match_full_restore_allowlist(self):
+        manifest = self.snap / "manifest.json"
+        for changed in (
+            ["server.py"],
+            sorted(probe.MANAGED_ROOTS - {"public"}),
+            sorted(probe.MANAGED_ROOTS) + ["server.py"],
+            sorted(probe.MANAGED_ROOTS) + ["history.db"],
+        ):
+            with self.subTest(managed_paths=changed):
+                self.save()
+                metadata = json.loads(manifest.read_text(encoding="utf-8"))
+                metadata["managed_paths"] = changed
+                manifest.write_text(json.dumps(metadata), encoding="utf-8")
+                with self.assertRaises(probe.Denied):
+                    probe.inspect(self.state)
+
+    def test_json_exponent_overflow_and_lone_surrogate_denied(self):
+        pointer = self.state / "last-known-good.json"
+        samples = (
+            ('{"snapshot_id":"' + self.snap_id + '","padding":1e999}', "nonfinite_json"),
+            ('{"snapshot_id":"' + self.snap_id + '","ignored":"\\\\ud800"}', "invalid_unicode"),
+        )
+        for payload, reason in samples:
+            with self.subTest(reason=reason):
+                pointer.write_text(payload, encoding="utf-8")
+                with self.assertRaisesRegex(probe.Denied, reason):
+                    probe.inspect(self.state)
+
     def test_symlink_in_metadata_ancestor_rejected_without_reading_outside(self):
         alias = Path(self.tmp.name) / "alias-state"
         alias.symlink_to(self.state, target_is_directory=True)
