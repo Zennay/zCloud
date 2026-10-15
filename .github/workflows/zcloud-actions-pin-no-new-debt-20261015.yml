@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/**"
+      - ".github/actions/**"
       - "scripts/zcloud_actions_pin_ratchet_20261015.py"
       - "tests/test_zcloud_actions_pin_ratchet_20261015.py"
 
