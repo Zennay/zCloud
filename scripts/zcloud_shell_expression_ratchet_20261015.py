@@ -152,7 +152,7 @@ def fingerprint_risks(source: str) -> Counter[str]:
         # Braces *after* run: can simply be the normal ${{ expression }}
         # delimiters. Only a brace *before* the key indicates flow mapping.
         if match and "{" in line[:match.start()]:
-            out["ambiguous_flow_run:" + hashlib.sha256(line.strip().encode("utf-8")).hexdigest()] += 1
+            out["ambiguous_flow_run|workflow_sha256:" + workflow_digest] += 1
     for scalar, context_digest in run_shell_scalars(source):
         # A previously seen expression is not safe to move from a harmless
         # command to a more dangerous one. Bind findings to their actual run
