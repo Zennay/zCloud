@@ -19,6 +19,8 @@ FLOW_RUN = re.compile(r"""(?:\{|,)\s*(?:run|["\x27]run["\x27])\s*:\s*(?P<script>
 SHELL_EXEC = r"(?:(?:sudo\s+(?:-[A-Za-z]+\s+)*|/usr/bin/env\s+))?(?:/usr/bin/|/bin/)?(?:bash|sh|zsh)\b"
 REMOTE = re.compile(r"\b(?:curl|wget)\b[^\n|;]*\|\s*" + SHELL_EXEC, re.I)
 SUBSTITUTION = re.compile(SHELL_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
+SHELL_COMMAND_SUBST = re.compile(SHELL_EXEC + r"""\s+-c\s+["\x27]?\$\(\s*(?:curl|wget)\b""", re.I)
+OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES = 512, 1024 * 1024, 32 * 1024 * 1024
 
 
@@ -126,6 +128,10 @@ def findings(data: bytes) -> int:
     for script in extract_run_scripts(text_value):
         command = re.sub(r"\\\s*\n\s*", " ", script)
         matched += len(REMOTE.findall(command)) + len(SUBSTITUTION.findall(command))
+        matched += len(SHELL_COMMAND_SUBST.findall(command))
+        # YAML aliases/tags can hide a shell script outside the literal run scalar.
+        # Never claim a new opaque run value is harmless on source evidence alone.
+        matched += bool(OPAQUE_RUN.match(command))
     return matched
 
 
