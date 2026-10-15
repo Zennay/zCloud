@@ -334,7 +334,10 @@ class PermissionRatchetTests(unittest.TestCase):
     def test_reject_gitlink_beneath_actions_workflows(self):
         self.git("update-index", "--add", "--cacheinfo",
                  f"160000,{self.base},.github/workflows/vendor")
-        head = self.commit("nested-gitlink")
+        # Commit the staged gitlink directly: git add -A would otherwise
+        # discard this synthetic gitlink because no worktree directory exists.
+        self.git("commit", "-qm", "nested-gitlink")
+        head = self.git("rev-parse", "HEAD")
         with self.assertRaises(IncompleteSource):
             check(self.root, self.base, head)
 
