@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -187,6 +188,33 @@ class RealGitRatchetTests(unittest.TestCase):
         for budget in (0, -1, gate.MAX_OUTPUT + 1):
             with self.subTest(budget=budget), self.assertRaises(gate.Denied):
                 gate.git("version", max_output=budget)
+
+
+    def test_shared_scan_budget_denies_before_excessive_git_invocations(self):
+        with mock.patch.object(gate, "MAX_SCAN_SECONDS", 0.001):
+            with self.assertRaises(gate.Denied):
+                gate.scan(self.base, self.base)
+        self.assertIsNone(gate._SCAN_DEADLINE.get())
+
+    def test_exhausted_scan_budget_does_not_launch_git(self):
+        token = gate._SCAN_DEADLINE.set(time.monotonic() - 1.0)
+        try:
+            with mock.patch.object(gate.subprocess, "Popen", side_effect=AssertionError("Git launched")):
+                with self.assertRaisesRegex(gate.Denied, "budget exhausted"):
+                    gate.git("status")
+        finally:
+            gate._SCAN_DEADLINE.reset(token)
+
+    def test_shared_scan_budget_validates_limits(self):
+        for limit in (0, -1, 3601):
+            with self.subTest(limit=limit), mock.patch.object(gate, "MAX_SCAN_SECONDS", limit):
+                with self.assertRaisesRegex(gate.Denied, "Invalid shared scan budget"):
+                    gate.scan(self.base, self.base)
+        self.assertIsNone(gate._SCAN_DEADLINE.get())
+
+    def test_successful_scan_restores_context_budget(self):
+        self.assertEqual(gate.scan(self.base, self.base), (0, 0))
+        self.assertIsNone(gate._SCAN_DEADLINE.get())
 
 
 if __name__ == "__main__":
