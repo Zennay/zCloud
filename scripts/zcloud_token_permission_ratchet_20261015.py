@@ -139,7 +139,9 @@ def _mapping_risk(body: list[str], indent: int) -> str | None:
     return "write:" + ",".join(sorted(risky)) if risky else None
 
 
-def permission_debt(source: str, path: str) -> Counter[str]:
+def permission_debt(
+    source: str, path: str, *, protected: Counter[str] | None = None
+) -> Counter[str]:
     """Capture source-scoped risky declarations; unchanged legacy risk stays grandfathered."""
     lines = source.splitlines()
     findings: Counter[str] = Counter()
@@ -196,6 +198,8 @@ def permission_debt(source: str, path: str) -> Counter[str]:
             risk = "opaque_flow_permissions"
         else:
             risk = "opaque_permissions"
+        if risk is None and protected is not None:
+            protected[f"{path}|{scope}"] += 1
         if risk is not None:
             if risk.startswith("opaque"):
                 sample = value if value else "\n".join(body)
@@ -215,16 +219,26 @@ def check(root: Path, base: str, head: str) -> dict[str, object]:
         new = tree(root, head)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise IncompleteSource("git_source_unverifiable") from exc
-    before = sum((permission_debt(text, name) for name, text in old.items()), Counter())
-    after = sum((permission_debt(text, name) for name, text in new.items()), Counter())
+    previous_safe: Counter[str] = Counter()
+    current_safe: Counter[str] = Counter()
+    before = sum(
+        (permission_debt(text, name, protected=previous_safe) for name, text in old.items()),
+        Counter(),
+    )
+    after = sum(
+        (permission_debt(text, name, protected=current_safe) for name, text in new.items()),
+        Counter(),
+    )
     introduced = after - before
+    removed_safe = previous_safe - current_safe
     # Do not print arbitrary workflow source, paths or permission values in CI.
     return {
         "policy": "zcloud-token-permission-no-new-debt-v1",
         "baseline_risks": sum(before.values()),
         "candidate_risks": sum(after.values()),
-        "new_risks": sum(introduced.values()),
-        "ok": not introduced,
+        "new_risks": sum(introduced.values()) + sum(removed_safe.values()),
+        "removed_safe_scopes": sum(removed_safe.values()),
+        "ok": not introduced and not removed_safe,
         "release_authorized": False,
         "deployment_authorized": False,
         "mutation_performed": False,
