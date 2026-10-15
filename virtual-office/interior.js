@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import {RoundedBoxGeometry} from 'three/addons/geometries/RoundedBoxGeometry.js';
 import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
 import {artCanvas, makeRng} from './materials.js';
+import {mergeStatic, pruneEmpty} from './merge.js';
 
 import {MAX_SLOTS, DESK_W, DESK_D, SEAT_OFFSET, deskForSlot, seatForSlot, BOARD_SPOT} from './layout.js';
 export {MAX_SLOTS, DESK_W, DESK_D, SEAT_OFFSET, deskForSlot, seatForSlot, BOARD_SPOT};
@@ -253,6 +254,12 @@ export function buildInterior({mats}) {
   // wall art along the glass at the work floor is replaced by city views: only the two end walls get art
   frame(-18.8, 2.4, -9.0, 1.4, 1.7, 6, Math.PI / 2);
 
+  // ------------------------------------------------------------------ static batching
+  // Furniture, shell and fittings never move: merge them per material (hundreds of meshes -> a few dozen draw calls).
+  // Clickable targets and the switchable decor stay separate objects.
+  const keep = new Set([decor.plush, decor.garden, ...targets]);
+  const mergedAway = mergeStatic(group, {keep}); pruneEmpty(group, keep);
+
   // ------------------------------------------------------------------ API
   function customize(style) {
     decor.plush.visible = style !== 'minimal'; decor.garden.visible = style === 'garden';
@@ -260,7 +267,7 @@ export function buildInterior({mats}) {
   }
   function dispose() {
     owned.geo.forEach((g) => g.dispose()); owned.tex.forEach((t) => t.dispose()); owned.mat.forEach((m) => m.dispose());
-    group.traverse((o) => { if (o.isInstancedMesh) o.dispose(); });
+    group.traverse((o) => { if (o.isInstancedMesh) o.dispose(); if (o.userData.merged) o.geometry.dispose(); });
   }
-  return {group, colliders, targets, lights, deskSlots, ops, exec: execScreen, creative: creativeScreen, board, boardPlane, customize, dispose, canvasTexture: tex, screenCanvas};
+  return {group, mergedAway, colliders, targets, lights, deskSlots, ops, exec: execScreen, creative: creativeScreen, board, boardPlane, customize, dispose, canvasTexture: tex, screenCanvas};
 }

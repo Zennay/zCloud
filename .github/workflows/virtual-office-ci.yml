@@ -33,7 +33,7 @@ jobs:
           PY
           node --check /tmp/virtual-office-ui.mjs
           node --check virtual-office/office-relay.user.js
-          for module in scene city interior people post materials panel walk layout slides game; do
+          for module in scene city interior people post materials panel walk layout slides game merge; do
             cp "virtual-office/$module.js" "/tmp/virtual-office-$module.mjs"
             node --check "/tmp/virtual-office-$module.mjs"
           done
@@ -112,7 +112,7 @@ jobs:
           sudo install -m 0644 virtual-office/server.py /opt/virtual-office/server.py
           sudo install -m 0644 virtual-office/index.html /opt/virtual-office/index.html
           sudo install -m 0644 virtual-office/office_features.py virtual-office/office_game.py virtual-office/office_staff.py virtual-office/office_control.py virtual-office/office_experts.py /opt/virtual-office/
-          sudo install -m 0644 virtual-office/scene.js virtual-office/city.js virtual-office/interior.js virtual-office/people.js virtual-office/post.js virtual-office/materials.js virtual-office/panel.js virtual-office/walk.js virtual-office/layout.js virtual-office/slides.js virtual-office/game.js virtual-office/office-relay.user.js /opt/virtual-office/
+          sudo install -m 0644 virtual-office/scene.js virtual-office/city.js virtual-office/interior.js virtual-office/people.js virtual-office/post.js virtual-office/materials.js virtual-office/panel.js virtual-office/walk.js virtual-office/layout.js virtual-office/slides.js virtual-office/game.js virtual-office/merge.js virtual-office/office-relay.user.js /opt/virtual-office/
           # three.js is vendored (pinned, offline-capable): no CDN at runtime
           sudo rm -rf /opt/virtual-office/vendor
           sudo cp -r virtual-office/vendor /opt/virtual-office/vendor
@@ -188,7 +188,7 @@ jobs:
                   raise AssertionError("Private route exposed")
               except urllib.error.HTTPError as exc:
                   assert exc.code == 401
-          for path in ("/scene.js", "/city.js", "/interior.js", "/people.js", "/post.js", "/materials.js", "/panel.js", "/walk.js", "/layout.js", "/slides.js", "/game.js", "/vendor/three.module.min.js", "/vendor/addons/postprocessing/EffectComposer.js", "/office-relay.user.js"):
+          for path in ("/scene.js", "/city.js", "/interior.js", "/people.js", "/post.js", "/materials.js", "/panel.js", "/walk.js", "/layout.js", "/slides.js", "/game.js", "/merge.js", "/vendor/three.module.min.js", "/vendor/addons/postprocessing/EffectComposer.js", "/office-relay.user.js"):
               response = urllib.request.urlopen(root+path,timeout=5)
               assert response.status == 200
           health = json.load(urllib.request.urlopen(root+"/api/health",timeout=12))

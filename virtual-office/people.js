@@ -1,6 +1,7 @@
 // One articulated character model used for seated, walking, speaking and presenting staff.
 // Pure three.js primitives (capsules, spheres), authored for this project. Colours come from the staff record.
 import * as THREE from 'three';
+import {mergeStatic} from './merge.js';
 
 const HEAD_Y = 1.52;
 
@@ -23,7 +24,7 @@ export function buildPerson(spec, {segments = 12} = {}) {
         lip = mat('#a8605a', 0.6), accent = mat(spec.color || '#d4b789', 0.6);
   const sphere = geo(new THREE.SphereGeometry(1, segments + 4, segments)), box = geo(new THREE.BoxGeometry(1, 1, 1));
   const capsule = (r, len) => geo(new THREE.CapsuleGeometry(r, len, 5, segments));
-  const add = (parent, g, m, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.scale.set(sx, sy, sz); o.castShadow = true; o.receiveShadow = true; parent.add(o); return o; };
+  const add = (parent, g, m, x = 0, y = 0, z = 0, sx = 1, sy = 1, sz = 1) => { const o = new THREE.Mesh(g, m); o.position.set(x, y, z); o.scale.set(sx, sy, sz); o.castShadow = Math.max(sx, sy, sz) > 0.04; o.receiveShadow = true; parent.add(o); return o; };
   const joint = (parent, x, y, z = 0) => { const j = new THREE.Group(); j.position.set(x, y, z); parent.add(j); return j; };
 
   const root = new THREE.Group(), body = joint(root, 0, 0.93), upper = joint(body, 0, 0);
@@ -73,6 +74,10 @@ export function buildPerson(spec, {segments = 12} = {}) {
   const tex = badgeTexture(spec.name, spec.title); owned.tex.push(tex);
   const spriteMat = new THREE.SpriteMaterial({map: tex, transparent: true, depthTest: true}); owned.mat.push(spriteMat);
   const badge = new THREE.Sprite(spriteMat); badge.position.set(0, 2.08, 0); badge.scale.set(1.0, 0.22, 1); root.add(badge);
+
+  // one draw call per material per joint instead of one per body part (eyes, brows, lapels... are all separate parts)
+  for (const j of [root, body, upper, head, ...legs.flatMap((l) => [l.hip, l.knee]), ...arms.flatMap((a) => [a.shoulder, a.elbow])]) mergeStatic(j, {deep: false});
+  root.traverse((o) => { if (o.userData.merged) owned.geo.push(o.geometry); });
 
   const SEATED = {y: 0.59, lean: 0.1, hip: -1.5, knee: 1.55, shoulder: -0.35, elbow: -1.4}, STANDING = {y: 0.93, lean: 0, hip: 0, knee: 0, shoulder: 0, elbow: -0.08};
   const mix = (a, b, k) => a + (b - a) * k;

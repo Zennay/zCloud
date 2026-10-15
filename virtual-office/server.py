@@ -47,7 +47,7 @@ if (_parts.scheme != "http" or _parts.hostname not in ("127.0.0.1", "localhost",
     raise SystemExit("OFFICE_ZCLOUD_URL must be a localhost-only HTTP origin")
 
 # Browser modules the page may load, and the vendored three.js tree (exact-name allowlist, no directory listing).
-MODULES = ("scene.js", "slides.js", "game.js", "city.js", "post.js", "people.js", "materials.js", "interior.js", "walk.js", "layout.js", "panel.js")
+MODULES = ("scene.js", "slides.js", "game.js", "city.js", "post.js", "people.js", "materials.js", "interior.js", "walk.js", "layout.js", "panel.js", "merge.js")
 VENDOR_PATH = re.compile(r"/vendor/(three\.module\.min\.js|LICENSE-three\.txt|addons/[a-z]+/[A-Za-z]+\.js)")
 
 PERSONAS = {

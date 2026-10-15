@@ -38,9 +38,11 @@ void main(){
   if (up > 0.015) {
     vec2 p = d.xz / (up + 0.18) * 1.15 + vec2(uTime * 0.004, uTime * 0.0017);
     float c = smoothstep(0.46, 0.78, fbm(p) * 0.78 + fbm(p * 2.7 + 3.0) * 0.32);
-    float lit = pow(sd, 3.0) * 0.8 + 0.25;
-    vec3 cc = mix(uCloudShade, uCloud, clamp(lit + fbm(p * 1.6) * 0.3, 0.0, 1.0));
-    col = mix(col, cc, c * smoothstep(0.015, 0.16, up) * 0.82);
+    if (c > 0.0) {   // the shading noise is only paid where there is a cloud
+      float lit = pow(sd, 3.0) * 0.8 + 0.25;
+      vec3 cc = mix(uCloudShade, uCloud, clamp(lit + fbm(p * 1.6) * 0.3, 0.0, 1.0));
+      col = mix(col, cc, c * smoothstep(0.015, 0.16, up) * 0.82);
+    }
   }
   // stars
   if (uNight > 0.3 && up > 0.0) {

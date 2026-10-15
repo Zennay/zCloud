@@ -30,6 +30,7 @@ export async function startOffice(ui) {
   const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(65, 1, 0.06, 3600);
   const renderer = new THREE.WebGLRenderer({antialias: true, powerPreference: 'high-performance'});
   renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false;   // the room is static: shadows are re-rendered only when someone moves (see the loop)
   renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
   ui.mount.append(renderer.domElement);
   const canvas = renderer.domElement; canvas.setAttribute('aria-label', 'Loop door je penthousekantoor'); canvas.tabIndex = 0;
@@ -72,28 +73,34 @@ export async function startOffice(ui) {
     interior.group.traverse((o) => { if (o.material === mats.glow) o.material.emissiveIntensity = 1.6 + 2.6 * P.night; });
     scene.environmentIntensity = 0.55 + 0.35 * (1 - P.night);
     post.setNight(P.night);
-    captureEnvironment();
+    captureEnvironment(); renderer.shadowMap.needsUpdate = true;
     return timeName;
   }
   const cycleTime = () => { const next = TIME_ORDER[(TIME_ORDER.indexOf(timeName) + 1) % TIME_ORDER.length]; setTime(next); return next; };
 
   // ---- quality ladder
-  let qualityName = '', forcedQuality = false;
+  let qualityName = '', forcedQuality = false, resScale = 1;
   function setQuality(name) {
     if (!QUALITY[name]) name = 'balanced';
     const Q = QUALITY[name]; qualityName = name;
-    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, Q.pixelRatio));
-    renderer.shadowMap.enabled = Q.shadow > 0; sun.castShadow = Q.shadow > 0;
+    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, Q.pixelRatio) * resScale);
+    const shadowToggled = renderer.shadowMap.enabled !== Q.shadow > 0;
+    renderer.shadowMap.enabled = Q.shadow > 0; sun.castShadow = Q.shadow > 0; renderer.shadowMap.needsUpdate = true;
     if (Q.shadow && sun.shadow.mapSize.x !== Q.shadow) { sun.shadow.mapSize.set(Q.shadow, Q.shadow); sun.shadow.map?.dispose(); sun.shadow.map = null; }
     post.set(Q.post); resize();
-    scene.traverse((o) => { if (o.material) { const list = Array.isArray(o.material) ? o.material : [o.material]; list.forEach((m) => { m.needsUpdate = true; }); } });
+    // recompiling every shader is a visible hitch; it is only needed when shadows switch on or off
+    if (shadowToggled) scene.traverse((o) => { if (o.material) { const list = Array.isArray(o.material) ? o.material : [o.material]; list.forEach((m) => { m.needsUpdate = true; }); } });
     ui.quality?.(name);
     return name;
   }
 
   // ---- screens
   const rr = (c, x, y, w, h, r) => { c.beginPath(); c.roundRect ? c.roundRect(x, y, w, h, r) : c.rect(x, y, w, h); c.fill(); };
-  function drawStaffScreen(slotScreen, spec, working, t = 0) {
+  // canvas screens are re-uploaded to the GPU only when what they show actually changed (polling runs every few seconds)
+  const screenKeys = new WeakMap();
+  const unchanged = (screen, key) => { if (screenKeys.get(screen) === key) return true; screenKeys.set(screen, key); return false; };
+  function drawStaffScreen(slotScreen, spec, working) {
+    if (unchanged(slotScreen, JSON.stringify([spec?.name, spec?.title, spec?.color, spec?.slot, !!working]))) return;
     const c = slotScreen.canvas.getContext('2d'), w = 512, h = 288;
     c.fillStyle = spec ? '#0f1e27' : '#0b1217'; c.fillRect(0, 0, w, h);
     if (!spec) { c.fillStyle = '#4d6670'; c.font = '600 22px sans-serif'; c.fillText('VRIJ BUREAU', 28, 120); c.font = '14px sans-serif'; c.fillText('Voeg een expert toe in het kantoor', 28, 148); }
@@ -120,11 +127,14 @@ export async function startOffice(ui) {
 
   let opsJobs = [], opsOnline = false, opsControl = null;
   function drawOps() {
+    const list = [...actors.values()].sort((a, b) => a.spec.slot - b.spec.slot);
+    const opsKey = JSON.stringify([opsOnline, list.map((a) => [a.spec.id, a.spec.name]), opsJobs.map((j) => [j.employee, j.status]),
+      opsControl && [opsControl.online, (opsControl.workers || []).map((w) => [w.name, w.project, w.active, w.state]), (opsControl.queue || []).length, opsControl.pending || 0]]);
+    if (unchanged(interior.ops, opsKey)) return;
     const c = interior.ops.canvas.getContext('2d'), W = 1024, H = 640;
     c.fillStyle = '#0f1e26'; c.fillRect(0, 0, W, H);
     c.fillStyle = '#e8decd'; c.font = '600 40px sans-serif'; c.fillText('The Penthouse · live', 48, 74);
     c.fillStyle = opsOnline ? '#9ed1ad' : '#d3b991'; c.font = '20px sans-serif'; c.fillText(opsOnline ? 'zCloud bereikbaar' : 'zCloud niet bevestigd', 48, 108);
-    const list = [...actors.values()].sort((a, b) => a.spec.slot - b.spec.slot);
     list.slice(0, 8).forEach((a, i) => {
       const col = i % 2, row = Math.floor(i / 2), x = 48 + col * 250, y = 140 + row * 74, mine = opsJobs.filter((j) => j.employee === a.spec.id), busy = mine.some((j) => busyStatus.includes(j.status));
       c.fillStyle = '#1b3038'; rr(c, x, y, 236, 62, 10);
@@ -157,6 +167,7 @@ export async function startOffice(ui) {
 
   // ---- camera
   let yaw = 0.65, pitch = -0.015, last = performance.now(), drag = null, lastHint = '';
+  const vel = {x: 0, z: 0};
   const rooms = {
     lounge: {p: [3.5, 1.68, 12.6], look: [-3, 1.7, 1], label: 'THE LOUNGE', title: 'A higher perspective.', desc: 'Je team, je projecten, je verdieping.'},
     team: {p: [-1.5, 1.9, -3.9], look: [-2, 1.1, -10.5], label: 'THE WORKFLOOR', title: 'Good things take a team.', desc: 'Je experts aan hun bureau. Het team groeit mee.'},
@@ -164,7 +175,7 @@ export async function startOffice(ui) {
     boardroom: {p: [11, 1.68, 12.5], look: [11, 2.5, 2], label: 'THE BOARDROOM', title: 'Ideas deserve a stage.', desc: 'Van een eerste slide naar je volgende grote plan.'},
     creative: {p: [11.2, 1.68, 0.4], look: [14.6, 1.1, -2.8], label: 'CREATIEF BUREAU', title: 'Jouw eigen plek.', desc: 'Planten, plushjes of een rustig bureau.'},
   };
-  function setLook(p, look) { camera.position.set(...p); const d = new THREE.Vector3(...look).sub(camera.position); yaw = Math.atan2(-d.x, -d.z); pitch = Math.atan2(d.y, Math.hypot(d.x, d.z)); camera.rotation.set(pitch, yaw, 0, 'YXZ'); }
+  function setLook(p, look) { vel.x = vel.z = 0; camera.position.set(...p); const d = new THREE.Vector3(...look).sub(camera.position); yaw = Math.atan2(-d.x, -d.z); pitch = Math.atan2(d.y, Math.hypot(d.x, d.z)); camera.rotation.set(pitch, yaw, 0, 'YXZ'); }
 
   // ---- staff
   const actors = new Map();
@@ -273,38 +284,67 @@ export async function startOffice(ui) {
   setStaff(DEFAULT_STAFF); setMonitor([], false);
   resize();
 
-  // adaptive quality: when frames stay slow the scene steps down a level instead of stuttering
+  // adaptive quality: hold ~60 fps. A slow stretch first trims the render resolution, then steps down the ladder
+  // (high -> balanced -> low). Long stalls (tab switch, GC, a dialog) are ignored so one hiccup does not degrade it.
+  const RES_STEPS = [1, 0.85];
   let frames = 0, acc = 0, slowWindows = 0;
   function adapt(dt) {
-    if (forcedQuality) return;
+    if (forcedQuality || dt > 0.25) return;
     frames++; acc += dt;
-    if (frames < 90) return;
+    if (frames < 60) return;
     const avg = acc / frames; frames = 0; acc = 0;
-    slowWindows = avg > 1 / 26 ? slowWindows + 1 : 0;
-    if (slowWindows >= 2) { slowWindows = 0; const next = qualityName === 'high' ? 'balanced' : qualityName === 'balanced' ? 'low' : ''; if (next) setQuality(next); }
+    slowWindows = avg > 1 / 48 ? slowWindows + 1 : 0;
+    if (slowWindows < 2) return;
+    slowWindows = 0;
+    const step = RES_STEPS.indexOf(resScale);
+    if (step < RES_STEPS.length - 1) { resScale = RES_STEPS[step + 1]; setQuality(qualityName); return; }
+    const next = qualityName === 'high' ? 'balanced' : qualityName === 'balanced' ? 'low' : '';
+    if (next) { resScale = 1; setQuality(next); }
   }
 
+  // compile every shader before the first frame instead of stalling on the first look around
+  try { await Promise.race([renderer.compileAsync(scene, camera), new Promise((r) => setTimeout(r, 4000))]); } catch { /* older drivers: compile lazily */ }
+
+  let hoverClock = 1, shadowClock = 0, hoverId = '';
   renderer.setAnimationLoop((t) => {
-    const raw = Math.max(0, (t - last) / 1000), dt = Math.min(0.035, raw); last = t;
+    const raw = Math.max(0, (t - last) / 1000), dt = Math.min(0.05, raw); last = t;
     if (document.hidden) return;
-    if (!ui.isUIOpen()) {
+    const uiOpen = ui.isUIOpen();
+    // movement eases in and out (no instant start/stop), collisions are resolved per axis so walls can be slid along
+    let wantX = 0, wantZ = 0;
+    if (!uiOpen) {
       const f = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0), s = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0);
-      const norm = Math.hypot(f, s) || 1, pace = (keys.has('shift') ? 5.8 : 3) * dt;
-      const dx = (-Math.sin(yaw) * f + Math.cos(yaw) * s) / norm * pace, dz = (-Math.cos(yaw) * f - Math.sin(yaw) * s) / norm * pace;
-      if (canMove(camera.position.x + dx, camera.position.z)) camera.position.x += dx;
-      if (canMove(camera.position.x, camera.position.z + dz)) camera.position.z += dz;
+      const norm = Math.hypot(f, s) || 1, speed = keys.has('shift') ? 5.8 : 3;
+      wantX = (-Math.sin(yaw) * f + Math.cos(yaw) * s) / norm * speed; wantZ = (-Math.cos(yaw) * f - Math.sin(yaw) * s) / norm * speed;
       if (keys.has('arrowleft')) yaw += dt; if (keys.has('arrowright')) yaw -= dt;
     }
+    const ease = 1 - Math.exp(-dt * (wantX || wantZ ? 14 : 10));
+    vel.x += (wantX - vel.x) * ease; vel.z += (wantZ - vel.z) * ease;
+    if (Math.abs(vel.x) < 1e-3) vel.x = 0; if (Math.abs(vel.z) < 1e-3) vel.z = 0;
+    const dx = vel.x * dt, dz = vel.z * dt;
+    if (dx && canMove(camera.position.x + dx, camera.position.z)) camera.position.x += dx; else if (dx) vel.x = 0;
+    if (dz && canMove(camera.position.x, camera.position.z + dz)) camera.position.z += dz; else if (dz) vel.z = 0;
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
+
     const ctx = {front: playerFront(), look: {x: camera.position.x, z: camera.position.z}};
+    let shadowEvery = 0.25;   // seconds between shadow refreshes: seated staff only make small movements
     for (const a of actors.values()) {
       const f = a.walker.update(dt, ctx);
+      if (f.moving || (f.blend > 0 && f.blend < 1)) shadowEvery = 0; else if (f.mode !== 'seated') shadowEvery = Math.min(shadowEvery, 0.1);
       a.person.root.position.set(f.x, 0, f.z); a.person.root.rotation.y = f.heading;
       a.person.animate({t, blend: f.blend, moving: f.moving, phase: f.phase, speaking: f.speaking, presenting: f.presenting, working: a.working});
       a.flag.visible = f.flag; if (f.flag) { const k = 0.42 + Math.sin(t * 0.006) * 0.05; a.flag.scale.set(k, k, 1); }
     }
+    // shadows: every frame while someone walks or stands up, a few times a second otherwise
+    shadowClock += dt;
+    if (renderer.shadowMap.enabled && shadowClock >= shadowEvery) { renderer.shadowMap.needsUpdate = true; shadowClock = 0; }
+
     interior.group.userData.t = t; city.update(t);
-    const id = ui.isUIOpen() ? '' : hitAt();
+    // the hover hint needs a raycast through every target; 10 times a second is plenty
+    hoverClock += dt;
+    if (uiOpen) hoverId = '';
+    else if (hoverClock > 0.1) { hoverClock = 0; hoverId = hitAt(); }
+    const id = hoverId;
     const hint = id ? (id === 'computer' ? 'E · Gebruik je VPS-computer' : id === 'board' ? 'E · Open presentaties' : id === 'monitor' ? 'E · Werk & workers beheren' : id === 'customize' ? 'E · Bureau inrichten' : actors.has(id) ? 'E · Praat met ' + actors.get(id).spec.name : '') : '';
     if (hint !== lastHint) { ui.hint(hint); lastHint = hint; }
     post.render(dt); adapt(raw);
