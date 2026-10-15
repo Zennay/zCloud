@@ -74,6 +74,7 @@ def collect(read, *, max_pages=10):
         raise InvalidInventory("invalid_page_budget")
     main_before = _main_sha(read)
     seen = set()
+    original_order = []
     prs = []
     completed = False
     for page in range(1, max_pages + 1):
@@ -88,6 +89,7 @@ def collect(read, *, max_pages=10):
                     or number in seen):
                 raise InvalidInventory("duplicate_or_invalid_pr_page")
             seen.add(number)
+            original_order.append(number)
             if len(seen) > MAX_PRS:
                 raise InvalidInventory("unbounded_pr_inventory")
             detail = read(f"/pulls/{number}")
@@ -114,17 +116,48 @@ def collect(read, *, max_pages=10):
                 if item.get("status") == "renamed":
                     file_info["previous_filename"] = item.get("previous_filename")
                 files.append(file_info)
-            prs.append({
+            proof = {
                 "number": number, "state": detail.get("state"),
                 "head_sha": ident(head), "base_sha": ident(base),
                 "head_repo": origin(head), "base_repo": origin(base),
                 "changed_files": changed, "files": files,
-            })
+            }
+            # Files endpoint is NOT head-SHA pinned. Re-read the PR
+            # immediately to reject a ref moving between the two GETs.
+            after = read(f"/pulls/{number}")
+            if type(after) is not dict or (
+                after.get("number"), after.get("state"),
+                after.get("changed_files"),
+                ident(after.get("head")), ident(after.get("base")),
+                origin(after.get("head")), origin(after.get("base")),
+            ) != (
+                number, proof["state"], changed, proof["head_sha"],
+                proof["base_sha"], proof["head_repo"], proof["base_repo"],
+            ):
+                raise InvalidInventory("pr_changed_during_snapshot")
+            prs.append(proof)
         if len(batch) < 100:
             completed = True
             break
     if not completed:
         raise InvalidInventory("incomplete_pr_pagination")
+    # Offset pagination can silently skip/duplicate PRs if an owner
+    # opens/closes a PR during the scan. Compare the full ordered list.
+    second_order = []
+    second_complete = False
+    for page in range(1, max_pages + 1):
+        batch = read(f"/pulls?state=open&per_page=100&page={page}")
+        if type(batch) is not list or len(batch) > 100:
+            raise InvalidInventory("invalid_pr_recheck_page")
+        for entry in batch:
+            if type(entry) is not dict or type(entry.get("number")) is not int:
+                raise InvalidInventory("invalid_pr_recheck_item")
+            second_order.append(entry["number"])
+        if len(batch) < 100:
+            second_complete = True
+            break
+    if not second_complete or second_order != original_order:
+        raise InvalidInventory("pr_inventory_changed_during_snapshot")
     main_after = _main_sha(read)
     if main_before != main_after:
         raise InvalidInventory("main_changed_during_snapshot")
