@@ -88,7 +88,7 @@ def _json(path: Path) -> dict:
         raise Denied("oversized_json")
     try:
         parsed = json.loads(data.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_constant)
-    except (UnicodeError, ValueError, TypeError) as exc:
+    except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
         if isinstance(exc, Denied):
             raise
         raise Denied("invalid_json") from exc
@@ -102,7 +102,8 @@ def _canonical_file(name: object) -> bool:
         return False
     p = PurePosixPath(name)
     return (
-        not p.is_absolute()
+        bool(p.parts)
+        and not p.is_absolute()
         and ".." not in p.parts
         and "." not in p.parts
         and name == p.as_posix()
