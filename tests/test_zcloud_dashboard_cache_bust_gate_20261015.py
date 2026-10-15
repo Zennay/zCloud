@@ -309,9 +309,10 @@ class WorkflowTrustCases(unittest.TestCase):
     def test_immutable_base_policy_has_precedence(self) -> None:
         data = self.workflow
         self.assertIn('git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', data)
-        self.assertIn('python3 -I "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', data)
-        self.assertLess(data.index('POLICY_PROVENANCE=immutable_pr_base'),
-                        data.index('POLICY_PROVENANCE=untrusted_bootstrap_review_required'))
+        self.assertIn('policy_path="$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', data)
+        self.assertIn('python3 -I "$policy_path" --base-sha "$BASE_SHA"', data)
+        self.assertLess(data.index('policy_path="$RUNNER_TEMP/trusted-dashboard-cache-gate.py"'),
+                        data.index('python3 -I "$policy_path" --base-sha "$BASE_SHA"'))
         self.assertIn('test "$mode" = "100644 blob"', data)
 
     def test_trusted_policy_runs_before_any_head_test_code(self) -> None:
@@ -319,10 +320,12 @@ class WorkflowTrustCases(unittest.TestCase):
             self.workflow.index("name: Immutable trusted-base scanner first"),
             self.workflow.index("name: Run exact-asset Git regression fixtures"),
         )
-        self.assertIn('python3 -I "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', self.workflow)
+        self.assertIn('policy_path="$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', self.workflow)
+        self.assertIn('python3 -I "$policy_path" --base-sha "$BASE_SHA"', self.workflow)
 
     def test_initial_policy_install_warns_untrusted(self) -> None:
-        self.assertIn('::warning::POLICY_PROVENANCE=untrusted_bootstrap_review_required', self.workflow)
+        self.assertIn('provenance="untrusted_bootstrap_review_required"', self.workflow)
+        self.assertIn('echo "::warning::POLICY_PROVENANCE=$provenance"', self.workflow)
         self.assertIn('python3 -I "$policy_path"', self.workflow)
         self.assertNotIn('POLICY_PROVENANCE=trusted_bootstrap', self.workflow)
 
