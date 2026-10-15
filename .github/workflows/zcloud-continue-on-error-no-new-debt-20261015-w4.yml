@@ -14,13 +14,25 @@ permissions:
 
 jobs:
   source-only:
-    if: >-
-      github.repository == 'Zennay/zCloud' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.repo.full_name == github.repository
+    # Do not skip an untrusted PR: a skipped required check appears successful.
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
+      - name: Reject untrusted pull request before checkout
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_KIND: ${{ github.event_name }}
+          EVENT_BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_KIND" = pull_request
+          test "$SOURCE_REPOSITORY" = Zennay/zCloud
+          test "$HEAD_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$BASE_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$EVENT_BASE" = main
       - name: Checkout exact PR SHA without credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
