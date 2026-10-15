@@ -209,6 +209,12 @@ jobs:
         self.assertIn('".github/workflows/**"', workflow)
         self.assertIn('".github/actions/**"', workflow)
         self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertIn("Reject untrusted PR provenance before checkout", workflow)
+        self.assertNotIn("    if: >-", workflow)
+        self.assertLess(
+            workflow.index("Reject untrusted PR provenance"),
+            workflow.index("Checkout immutable PR revision"),
+        )
         self.assertNotIn("runs-on: [self-hosted", workflow)
         self.assertIn("permissions:\n  contents: read", workflow)
         self.assertIn("persist-credentials: false", workflow)
