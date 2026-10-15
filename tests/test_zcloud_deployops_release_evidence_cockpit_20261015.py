@@ -546,6 +546,47 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(data["deploy"]["run_pages_scanned"], 1)
         self.assertFalse(data["release_authorized"])
 
+    def test_job_status_changes_after_first_read_denied(self):
+        api = FakeAPI()
+        old = job("queued", runner_id=0, runner_name=None)
+        new = job("in_progress", runner_id=21, runner_name="zcloud-vps-1")
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [old]},
+                           {"total_count": 1, "jobs": [new]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "deploy_job_changed_during_observation"):
+            cockpit.collect(api)
+        self.assertEqual(api.calls.count(JOBS), 2)
+
+    def test_job_conclusion_changes_after_first_read_denied(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job()]},
+                           {"total_count": 1, "jobs": [job(conclusion="failure")]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "deploy_job_changed_during_observation"):
+            cockpit.collect(api)
+
+    def test_new_job_inserted_after_first_read_denied(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job()]},
+                           {"total_count": 2, "jobs": [job(), job(job_id=11)]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "deploy_job_changed_during_observation"):
+            cockpit.collect(api)
+
+    def test_stable_job_snapshot_is_read_twice_and_never_authorizes(self):
+        api = FakeAPI()
+        data = cockpit.collect(api)
+        self.assertEqual(api.calls.count(JOBS), 2)
+        self.assertEqual(data["deploy"]["runner_job_result"], "SUCCESS")
+        self.assertFalse(data["release_authorized"])
+
+    def test_missing_second_job_snapshot_fails_closed(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job()]}, None]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "deploy_job_changed_during_observation"):
+            cockpit.collect(api)
+
     def test_missing_main_ref_is_denied(self):
         api = FakeAPI()
         api.pages[REF] = [{"object": {"sha": SHA, "type": "tree"}}]
@@ -570,6 +611,47 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_json_key"):
             json.loads('{"state": "success", "state": "failure"}',
                        object_pairs_hook=cockpit.unique_pairs)
+
+    def test_unicode_surrogates_denied_in_remote_values_and_keys(self):
+        for value in ('{"branch": "\\uD800"}',
+                      '{"\\uDC00": "unexpected"}',
+                      '["safe", {"value": "\\uDFFF"}]'):
+            with self.subTest(value=value):
+                decoded = json.loads(value)
+                with self.assertRaisesRegex(cockpit.EvidenceError,
+                                            "invalid_api_unicode"):
+                    cockpit.reject_unpaired_unicode(decoded)
+
+    def test_normal_multilingual_unicode_remains_supported(self):
+        data = {"text": "geslaagd ✓ — werkers en café ☕",
+                "nested": ["🚀", {"ä":"é"}]}
+        self.assertEqual(cockpit.reject_unpaired_unicode(data), data)
+
+    def test_remote_api_surrogate_in_response_denied_without_leak(self):
+        import io
+        from unittest.mock import patch
+
+        class FakeResponse:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, limit):
+                return b'{"branch": "\\uD800"}'
+
+        class FakeOpener:
+            def open(self, request, timeout):
+                self_request = request
+                assert self_request.get_method() == "GET"
+                assert timeout == 15
+                return FakeResponse()
+
+        with patch.object(cockpit.urllib.request, "build_opener",
+                          return_value=FakeOpener()):
+            with self.assertRaisesRegex(cockpit.EvidenceError,
+                                        "invalid_api_unicode"):
+                cockpit.GitHubReadOnly().get(REF)
 
     def test_nonfinite_json_denied(self):
         with self.assertRaisesRegex(cockpit.EvidenceError, "nonfinite"):
