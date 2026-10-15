@@ -94,6 +94,57 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "wrong_group")
 
+    def test_parent_cancel_after_jobs_is_denied(self):
+        name = "zcloud-worker-tab-guard.yml"
+        p = self.dir / name
+        with p.open("a", encoding="utf-8") as stream:
+            stream.write("concurrency:\n  group: zcloud-production-deploy\n"
+                         "  cancel-in-progress: true\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsafe_parent_cancel_policy")
+
+    def test_safe_parent_concurrency_after_jobs_is_allowed(self):
+        name = "zcloud-worker-tab-guard.yml"
+        p = self.dir / name
+        with p.open("a", encoding="utf-8") as stream:
+            stream.write("concurrency:\n  group: manual-only-group\n"
+                         "  cancel-in-progress: false\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "serialized_source")
+
+    def test_root_concurrency_before_and_after_jobs_is_ambiguous(self):
+        name = "zcloud-vps-deploy.yml"
+        p = self.dir / name
+        with p.open("a", encoding="utf-8") as stream:
+            stream.write("concurrency:\n  group: unsafe-separate-group\n"
+                         "  cancel-in-progress: true\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "ambiguous_concurrency")
+
+    def test_job_outside_jobs_block_cannot_supply_missing_lock(self):
+        name = "zcloud-worker-tab-guard.yml"
+        p = self.dir / name
+        text = p.read_text(encoding="utf-8")
+        text = text.replace("  install:\n", "  removed:\n", 1)
+        text += ("extra:\n  install:\n    concurrency:\n"
+                 "      group: zcloud-production-deploy\n"
+                 "      cancel-in-progress: false\n")
+        p.write_text(text, encoding="utf-8")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "missing_or_duplicate_mutation_job")
+
+    def test_workflow_concurrency_after_jobs_is_honored_for_canonical(self):
+        name = "zcloud-vps-deploy.yml"
+        p = self.dir / name
+        text = p.read_text(encoding="utf-8")
+        text = text.replace("concurrency:\n  group: zcloud-production-deploy\n"
+                            "  cancel-in-progress: false\n", "", 1)
+        text += ("concurrency:\n  group: zcloud-production-deploy\n"
+                 "  cancel-in-progress: false\n")
+        p.write_text(text, encoding="utf-8")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "serialized_source")
+
     def test_duplicate_parent_concurrency_rejected(self):
         name = "zcloud-worker-tab-guard.yml"
         self.edit(name, "jobs:\n", "concurrency:\n  group: first\n  cancel-in-progress: false\nconcurrency:\n  group: second\n  cancel-in-progress: false\njobs:\n")
