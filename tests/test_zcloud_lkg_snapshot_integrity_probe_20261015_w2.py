@@ -224,6 +224,56 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             with patch.object(probe, "MAX_SNAPSHOTS", 1):
                 probe.audit_all(self.state)
 
+    def test_single_snapshot_detects_files_directory_replacement(self):
+        import shutil
+        from unittest.mock import patch
+
+        original = probe._json
+        seen = [0]
+
+        def swap_after_manifest_read(path):
+            result = original(path)
+            if path.name == "manifest.json":
+                seen[0] += 1
+                if seen[0] == 2:
+                    temporary = self.snap / "files-original"
+                    self.files.rename(temporary)
+                    shutil.copytree(temporary, self.files)
+                    shutil.rmtree(temporary)
+            return result
+
+        with patch.object(probe, "_json", side_effect=swap_after_manifest_read):
+            with self.assertRaisesRegex(
+                probe.Denied, "^snapshot_changed_during_scan$",
+            ):
+                probe.inspect(self.state)
+        self.assertEqual(2, seen[0])
+
+    def test_single_snapshot_detects_replaced_snapshot_directory(self):
+        import shutil
+        from unittest.mock import patch
+
+        original = probe._json
+        seen = [0]
+
+        def swap_after_manifest_read(path):
+            result = original(path)
+            if path.name == "manifest.json":
+                seen[0] += 1
+                if seen[0] == 2:
+                    temporary = self.snapshots / "replaced-original"
+                    self.snap.rename(temporary)
+                    shutil.copytree(temporary, self.snap)
+                    shutil.rmtree(temporary)
+            return result
+
+        with patch.object(probe, "_json", side_effect=swap_after_manifest_read):
+            with self.assertRaisesRegex(
+                probe.Denied, "^snapshot_changed_during_scan$",
+            ):
+                probe.inspect(self.state)
+        self.assertEqual(2, seen[0])
+
     def test_batch_denies_same_named_snapshot_directory_replacement(self):
         import shutil
         from unittest.mock import patch
