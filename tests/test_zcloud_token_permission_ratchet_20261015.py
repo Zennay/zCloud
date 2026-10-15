@@ -408,7 +408,7 @@ class PermissionRatchetTests(unittest.TestCase):
                        release_authorized=False, deployment_authorized=False,
                        mutation_performed=False)
         summary = format_ci_summary(payload)
-        self.assertIn("afgewezen", summary)
+        self.assertIn("Afgewezen", summary)
         self.assertNotIn("SECRET", summary)
         self.assertIn("Geen productievrijgave", summary)
 
