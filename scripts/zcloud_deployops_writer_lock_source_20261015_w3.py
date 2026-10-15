@@ -183,16 +183,21 @@ def _parent_cancel_status(lines: list[str]) -> str:
     # repository-wide group namespace. A parent competing for the same
     # production lock is not independent non-cancelling write evidence.
     group = fields.get("group")
-    if not group:
+    if not group or "#" in group:
+        # Inline YAML comments can change a plain scalar's actual group;
+        # this narrow source reader cannot prove comment semantics.
         return "ambiguous_parent_group"
-    if group == PRODUCTION_GROUP:
+    group = group.strip().casefold()
+    canonical = PRODUCTION_GROUP.casefold()
+    # GitHub concurrency group names are case-insensitive, unlike ordinary
+    # YAML scalars. Strip YAML's insignificant trailing whitespace as well.
+    if group == canonical:
         return "parent_shares_production_group"
     if "${{" in group:
-        # A fixed prefix that differs from the production group is safe
-        # against exact name equality; an expression-only parent or one
-        # that could complete the production group is not.
+        # A fixed nonmatching prefix is disjoint. If an expression might
+        # complete the canonical group, do not infer independent locking.
         prefix = group.split("${{", 1)[0]
-        if not prefix or PRODUCTION_GROUP.startswith(prefix):
+        if not prefix or canonical.startswith(prefix):
             return "ambiguous_parent_group"
     return "safe"
 
