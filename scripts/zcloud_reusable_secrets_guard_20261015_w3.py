@@ -56,6 +56,12 @@ def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
                 "GIT_TERMINAL_PROMPT": "0",
                 "GIT_OPTIONAL_LOCKS": "0",
                 "GIT_PAGER": "cat",
+                # Inspection must not inherit machine-wide gitconfig and
+                # partial clones must not fetch missing objects implicitly.
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_NO_LAZY_FETCH": "1",
                 # A local refs/replace entry can otherwise make cat-file and
                 # ls-tree return bytes from another object for the SAME SHA.
                 # Immutable SHA evidence must inspect the original object.
