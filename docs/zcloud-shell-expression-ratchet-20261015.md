@@ -107,6 +107,20 @@ step-boundary heuristic, not a complete Actions YAML semantic parser.
 Changing unrelated metadata **within the risky step** can therefore
 produce false positives and requires an independent source review.
 
+## Whole-job YAML aliases and copied shell risk
+
+GitHub Actions can use YAML anchors and aliases to reuse an entire job, not
+just environment variables. Adding `copied: *template` can therefore create
+another instance of a risky shell command without editing its original
+`run:` scalar. The source checker now fingerprints the **entire workflow**
+whenever a mapping or list uses a YAML alias value. New, retargeted or
+relocated aliases are rejected as structural ambiguity. Existing files
+with unchanged alias bindings retain their baseline. This source-level
+refusal intentionally does not attempt to decide which alias points at
+an exploitable job; even harmless alias edits can require manual review.
+Only YAML-like mapping/list alias values are examined by this rule, not
+literal asterisks embedded in shell command strings.
+
 ## Read-only workflow risk inventory
 
 A successful or rejected **complete** source audit contains
