@@ -146,7 +146,7 @@ def _scan(path: str, source: str) -> list[Finding]:
             continue
         # An unpinned image, even if introduced by an opaque YAML flow map,
         # cannot silently become new source debt.
-        if kind != "ambiguous_flow_image" and _safe_literal(value):
+        if kind not in ("ambiguous_flow_image",) and "{" not in value and "[" not in value and _safe_literal(value):
             continue
         fingerprint = hashlib.sha256(line.encode("utf-8")).hexdigest()
         findings.append(Finding(path, number, kind, fingerprint))
