@@ -753,6 +753,41 @@ class RealGitTests(unittest.TestCase):
         next_head = self.commit(unsafe.replace("echo", "eval"))
         self.assertEqual(1, guard.audit(base, next_head)["new_risks"])
 
+    def test_direct_secret_in_shell_is_new_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ secrets.RELEASE_TOKEN }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_direct_repository_variable_in_shell_is_new_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: eval ${{ vars.DYNAMIC_COMMAND }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracketed_secret_expression_in_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ secrets['DEPLOY-TOKEN'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracketed_repository_variable_in_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ vars['PROBE-FLAG'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_dynamic_secret_lookup_is_ambiguous_shell_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ secrets[format('TOKEN')] }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_serialized_vars_or_secrets_context_in_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(vars) }} ${{ toJSON(secrets) }}\n")
+        self.assertEqual(2, guard.audit(base, head)["new_risks"])
+
+    def test_secret_env_indirection_remains_outside_direct_shell_guard(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - env:\n      TOKEN: ${{ secrets.RELEASE_TOKEN }}\n    run: test -n \"$TOKEN\"\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
