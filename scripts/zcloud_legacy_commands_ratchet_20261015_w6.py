@@ -38,6 +38,9 @@ def git(*args: str, max_output: int = MAX_OUTPUT) -> bytes:
     """Read Git's output with an active byte limit and a monotonic deadline."""
     if not 0 < max_output <= MAX_OUTPUT:
         raise Denied("Invalid Git output budget")
+    shared = _SCAN_DEADLINE.get()
+    if shared is not None and time.monotonic() >= shared:
+        raise Denied("Shared Git scan budget exhausted")
     try:
         proc = subprocess.Popen(
             ["git", "--no-replace-objects", *args],
