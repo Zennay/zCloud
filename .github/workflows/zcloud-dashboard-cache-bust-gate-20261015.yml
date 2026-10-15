@@ -6,6 +6,7 @@ on:
     paths:
       - "public/index.html"
       - "public/app.js"
+      - "public/enhancements.js"
       - "public/enhancements.css"
       - "scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
       - "tests/test_zcloud_dashboard_cache_bust_gate_20261015.py"
@@ -16,6 +17,7 @@ on:
     paths:
       - "public/index.html"
       - "public/app.js"
+      - "public/enhancements.js"
       - "public/enhancements.css"
       - "scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
       - "tests/test_zcloud_dashboard_cache_bust_gate_20261015.py"
@@ -125,7 +127,7 @@ jobs:
               raise SystemExit("cache_report_missing_verdict")
           reason = payload.get("reason")
           description = reasons.get(reason, "Bronbewijs geweigerd of onvolledig.")
-          names = {"public/app.js": "Dashboard JavaScript", "public/enhancements.css": "Dashboard CSS"}
+          names = {"public/app.js": "Dashboard JavaScript", "public/enhancements.js": "Dashboard enhancements", "public/enhancements.css": "Dashboard CSS"}
           changed = payload.get("changed", [])
           if not isinstance(changed, list) or any(k not in names for k in changed):
               raise SystemExit("cache_report_invalid_paths")
