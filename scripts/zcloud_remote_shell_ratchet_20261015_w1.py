@@ -16,7 +16,10 @@ from pathlib import Path
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SCALAR = re.compile(r"""^(?P<indent>\s*)(?:-\s+)?(?P<key>run|["\x27]run["\x27])\s*:\s*(?P<value>.*)$""")
 FLOW_RUN = re.compile(r"""(?:\{|,)\s*(?:run|["\x27]run["\x27])\s*:\s*(?P<script>"(?:\\.|[^"])*"|\x27(?:\x27\x27|[^\x27])*\x27|[^,}\]]+)""")
-SCRIPT_EXEC = r"(?:(?:sudo\s+(?:-[A-Za-z]+\s+)*|/usr/bin/env\s+))?(?:/usr/local/bin/|/usr/bin/|/bin/)?(?:bash|sh|zsh|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|ruby|perl|php)\b"
+# Wrappers can change the process name without changing remote-code execution.
+# Bounded, explicit prefixes keep this a conservative source-pattern check.
+SCRIPT_WRAPPER = r"(?:(?:sudo(?:\s+-[A-Za-z]+)*|(?:/usr/bin/)?env(?:\s+-[A-Za-z]+)*|(?:/usr/bin/)?timeout\s+[0-9]+(?:\.[0-9]+)?|nohup|command)\s+){0,3}"
+SCRIPT_EXEC = SCRIPT_WRAPPER + r"(?:/usr/local/bin/|/usr/bin/|/bin/)?(?:bash|sh|zsh|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|ruby|perl|php)\b"
 # Remote bytes may traverse bounded pass-through/decoder stages before a shell.
 # Keep the allowed stage names explicit to avoid spanning unrelated commands.
 PASS_THROUGH = r"(?:tee|cat|sed|base64|tr|awk|gunzip|gzip)\b[^\n|;]*\|\s*"
