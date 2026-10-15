@@ -251,6 +251,13 @@ class WorkflowTrustCases(unittest.TestCase):
                         data.index('POLICY_PROVENANCE=untrusted_bootstrap_review_required'))
         self.assertIn('test "$mode" = "100644 blob"', data)
 
+    def test_trusted_policy_runs_before_any_head_test_code(self) -> None:
+        self.assertLess(
+            self.workflow.index("name: Immutable trusted-base scanner first"),
+            self.workflow.index("name: Run exact-asset Git regression fixtures"),
+        )
+        self.assertIn('python3 -I "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', self.workflow)
+
     def test_initial_policy_install_warns_untrusted(self) -> None:
         self.assertIn('::warning::POLICY_PROVENANCE=untrusted_bootstrap_review_required', self.workflow)
         self.assertIn('python3 -I "$policy_path"', self.workflow)
