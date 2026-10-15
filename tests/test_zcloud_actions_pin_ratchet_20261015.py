@@ -219,6 +219,39 @@ class ActionPinRatchetTests(unittest.TestCase):
         self.command("commit", "-qm", "pinned reusable action")
         self.assertTrue(self.evaluate()["ok"])
 
+    def test_local_action_symlink_direct_denied(self):
+        link = self.root / "tools/external"
+        link.parent.mkdir()
+        link.symlink_to("/tmp/untrusted-action")
+        self.command("add", "tools")
+        self.commit(self.path.read_text() + "      - uses: ./tools/external\n")
+        with self.assertRaisesRegex(Refusal, "symlink_local_action"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_local_action_symlink_ancestor_denied(self):
+        parent = self.root / "tools"
+        parent.symlink_to("/tmp/untrusted-actions")
+        self.command("add", "tools")
+        self.commit(self.path.read_text() + "      - uses: ./tools/subdir\n")
+        with self.assertRaisesRegex(Refusal, "symlink_local_action"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_unrelated_symlink_ignored(self):
+        link = self.root / "docs/latest"
+        link.parent.mkdir()
+        link.symlink_to("/tmp/unrelated")
+        self.command("add", "docs")
+        self.commit(self.path.read_text() + "      - uses: ./tools/safe\n")
+        self.assertEqual(self.evaluate()["new_unpinned"], 0)
+
+    def test_local_action_directory_not_symlink_allowed(self):
+        local = self.root / "tools/safe/action.yml"
+        local.parent.mkdir(parents=True)
+        local.write_text("runs:\n  using: composite\n  steps: []\n")
+        self.command("add", "tools")
+        self.commit(self.path.read_text() + "      - uses: ./tools/safe\n")
+        self.assertEqual(self.evaluate()["new_unpinned"], 0)
+
     def test_invalid_revision_refused(self):
         with self.assertRaisesRegex(Refusal, "invalid_revision"):
             workflow_tree(self.root, "main; rm -rf /")
