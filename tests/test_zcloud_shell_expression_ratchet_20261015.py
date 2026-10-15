@@ -310,6 +310,32 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: echo ${{ github.sha }}\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_spaced_serialized_github_context_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: printf '%s' '${{ toJSON ( github ) }}'\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracket_base_ref_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github['base_ref'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_safe_event_ref_in_environment_not_counted_as_shell(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - env:\n      BRANCH: ${{ github.ref }}\n    run: printf '%s' \"$BRANCH\"\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_existing_ref_risk_stays_grandfathered_only_when_unchanged(self):
+        old = "steps:\n  - run: echo ${{ github.ref }}\n"
+        base = self.commit(old)
+        head = self.commit(old + "  - run: echo safe\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_safe_github_sha_serialization_not_whole_context(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(github.sha) }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
