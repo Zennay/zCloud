@@ -183,6 +183,42 @@ class ContinueOnErrorGitTests(unittest.TestCase):
         )), {})
         self.assertEqual(gate.check_workflow("- name: explain continue-on-error risk"), [])
 
+    def test_literal_run_block_examples_are_inert(self):
+        candidate = SAFE + (
+            "\n      - run: |\n"
+            "          printf 'continue-on-error: true\\n'\n"
+            "          echo '# continue-on-error: true'\n"
+        )
+        self.assertEqual(self._reasons(candidate), {})
+
+    def test_folded_run_block_examples_are_inert(self):
+        candidate = SAFE + (
+            "\n      - run: >-\n"
+            "          echo 'continue-on-error: true'\n"
+            "          echo 'reference only'\n"
+        )
+        self.assertEqual(self._reasons(candidate), {})
+
+    def test_checkout_after_literal_block_still_denied(self):
+        candidate = SAFE + (
+            "\n      - run: |-\n"
+            "          echo 'continue-on-error: true'\n"
+            "      - name: actual fail-open check\n"
+            "        continue-on-error: true\n"
+            "        run: false\n"
+        )
+        self.assertTrue(self._reasons(candidate))
+
+    def test_nested_run_block_does_not_hide_sibling_key(self):
+        self.assertTrue(gate.check_workflow(
+            "  run: |\n    echo harmless\n  continue-on-error: true\n"
+        ))
+
+    def test_ambiguous_custom_block_key_not_skipped(self):
+        self.assertTrue(gate.check_workflow(
+            "  information: |\n    continue-on-error: true\n"
+        ))
+
     def test_direct_source_key_matrix(self):
         for source, expected in (
             ("continue-on-error: true", True),
