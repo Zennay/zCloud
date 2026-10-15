@@ -46,7 +46,7 @@ def git(root: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def workflow_tree(root: Path, revision: str) -> dict[str, str]:
+def workflow_tree(root: Path, revision: str, *, symlinks: set[str] | None = None) -> dict[str, str]:
     if not SHA.fullmatch(revision):
         raise Refusal("invalid_revision")
     if git(root, "cat-file", "-t", revision).strip() != b"commit":
@@ -69,6 +69,8 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
             path = filename.decode("utf-8", "strict")
         except (ValueError, UnicodeError) as exc:
             raise Refusal("invalid_tree_entry") from exc
+        if symlinks is not None and mode == "120000":
+            symlinks.add(path)
         is_workflow = (path.startswith(".github/workflows/") and
                        path.endswith((".yml", ".yaml")))
         is_action_source = path.startswith(".github/actions/")
@@ -96,7 +98,7 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
     return paths
 
 
-def refs(text: str, path: str) -> list[tuple[tuple[str, str], int]]:
+def refs(text: str, path: str, *, local_refs: list[str] | None = None) -> list[tuple[tuple[str, str], int]]:
     result: list[tuple[tuple[str, str], int]] = []
     block_indent: int | None = None
     for lineno, line in enumerate(text.splitlines(), 1):
@@ -134,6 +136,8 @@ def refs(text: str, path: str) -> list[tuple[tuple[str, str], int]]:
         if raw.startswith("./"):
             if raw.startswith("../") or ".." in raw.split("/") or not re.fullmatch(r"\./[A-Za-z0-9_./-]+", raw):
                 raise Refusal("invalid_local_action")
+            if local_refs is not None:
+                local_refs.append(raw[2:].rstrip("/"))
             continue
         if IMMUTABLE.fullmatch(raw) or re.fullmatch(r"docker://[^ ]+@sha256:[0-9a-fA-F]{64}", raw):
             continue
@@ -148,8 +152,10 @@ def refs(text: str, path: str) -> list[tuple[tuple[str, str], int]]:
 
 
 def snapshot(root: Path, revision: str) -> dict[str, list[tuple[tuple[str, str], int]]]:
-    tree = workflow_tree(root, revision)
+    symlinks: set[str] = set()
+    tree = workflow_tree(root, revision, symlinks=symlinks)
     total = 0
+    local_refs: list[str] = []
     output = {}
     for path, blob in sorted(tree.items()):
         raw = git(root, "cat-file", "blob", blob)
@@ -160,7 +166,13 @@ def snapshot(root: Path, revision: str) -> dict[str, list[tuple[tuple[str, str],
             text = raw.decode("utf-8", "strict")
         except UnicodeError as exc:
             raise Refusal("workflow_non_utf8") from exc
-        output[path] = refs(text, path)
+        output[path] = refs(text, path, local_refs=local_refs)
+    # Git symlinks can redirect ./local-action references to unscanned
+    # metadata. Refuse only a referenced symlink or symlink ancestor; an
+    # unrelated documentation symlink must not break the monotonic gate.
+    for local in local_refs:
+        if any(local == link or local.startswith(link + "/") for link in symlinks):
+            raise Refusal("symlink_local_action")
     return output
 
 
