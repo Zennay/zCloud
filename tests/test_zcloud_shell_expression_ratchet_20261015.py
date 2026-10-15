@@ -132,6 +132,16 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: echo ${{ github . event . issue . title }}\n")
         self.assertEqual(1, guard.audit(base, head)["new_risks"])
 
+    def test_single_quoted_run_key_is_detected(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - 'run': echo ${{ github.event.issue.title }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_double_quoted_run_key_is_detected(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit('steps:\n  - "run": echo ${{ github.event.issue.title }}\n')
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
