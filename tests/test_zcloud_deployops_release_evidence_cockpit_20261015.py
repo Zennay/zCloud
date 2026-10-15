@@ -304,6 +304,18 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_deploy_run_identity"):
             cockpit.collect(api)
 
+    def test_completed_run_missing_conclusion_is_denied(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [{"workflow_runs": [run(conclusion=None)]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "completed_deploy_missing_conclusion"):
+            cockpit.collect(api)
+
+    def test_queued_run_with_old_success_conclusion_is_denied(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [{"workflow_runs": [run(state="queued", conclusion="success")]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "nonterminal_deploy_has_conclusion"):
+            cockpit.collect(api)
+
     def test_missing_main_ref_is_denied(self):
         api = FakeAPI()
         api.pages[REF] = [{"object": {"sha": SHA, "type": "tree"}}]
