@@ -142,6 +142,21 @@ class RatchetTests(unittest.TestCase):
         self.commit()
         self.assertEqual(self.audit()[0], 0)
 
+    def test_git_global_no_pager_push_denied(self):
+        self.assertEqual(self.change("git --no-pager push origin main")[0], 1)
+
+    def test_single_quoted_push_argument_denied(self):
+        self.assertEqual(self.change("git 'push' origin main")[0], 1)
+
+    def test_double_quoted_push_argument_denied(self):
+        self.assertEqual(self.change('git "push" origin main')[0], 1)
+
+    def test_git_configuration_prefix_denied(self):
+        self.assertEqual(self.change("git -c safe.directory=/tmp push origin main")[0], 1)
+
+    def test_non_writer_git_global_option_allowed(self):
+        self.assertEqual(self.change("git --no-pager status")[0], 0)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, r = self.change("git push origin main # " + marker)
