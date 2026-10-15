@@ -157,6 +157,21 @@ class RatchetTests(unittest.TestCase):
     def test_non_writer_git_global_option_allowed(self):
         self.assertEqual(self.change("git --no-pager status")[0], 0)
 
+    def test_shell_backslash_newline_push_denied(self):
+        self.assertEqual(self.change("git \\\n        push origin HEAD:main")[0], 1)
+
+    def test_octokit_update_git_ref_denied(self):
+        self.assertEqual(self.change("await github.rest.git.updateRef({owner: 'x', ref: 'heads/main'})")[0], 1)
+
+    def test_octokit_create_git_ref_denied(self):
+        self.assertEqual(self.change("await octokit.rest.git.createRef({ref: 'refs/heads/main'})")[0], 1)
+
+    def test_octokit_delete_git_ref_denied(self):
+        self.assertEqual(self.change("await octokit.git.deleteRef({ref: 'heads/main'})")[0], 1)
+
+    def test_read_only_octokit_get_ref_allowed(self):
+        self.assertEqual(self.change("await github.rest.git.getRef({ref: 'heads/main'})")[0], 0)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, r = self.change("git push origin main # " + marker)
