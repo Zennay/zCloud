@@ -160,14 +160,26 @@ def current_deploy(api, sha: str) -> dict:
             "action_required", "neutral", "stale", "startup_failure",
         ):
             raise EvidenceError("unrecognized_deploy_conclusion")
-        matching.append((run_id, attempt, status, conclusion))
+        updated = row.get("updated_at")
+        if not isinstance(updated, str) or not re.fullmatch(
+            r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", updated
+        ):
+            raise EvidenceError("invalid_deploy_updated_at")
+        try:
+            updated_time = dt.datetime.fromisoformat(updated.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise EvidenceError("invalid_deploy_updated_at") from exc
+        age = (dt.datetime.now(dt.timezone.utc) - updated_time).total_seconds()
+        if age < -60:
+            raise EvidenceError("future_deploy_evidence")
+        matching.append((run_id, attempt, status, conclusion, max(0, int(age))))
     if not matching:
         return {
             "run_id": None, "attempt": None, "status": "not_observed",
             "conclusion": None, "runner_route": "UNVERIFIED",
-            "matching_deploys_in_first_page": 0,
+            "matching_deploys_in_first_page": 0, "run_age_seconds": None,
         }
-    run_id, attempt, status, conclusion = max(matching, key=lambda x: (x[0], x[1]))
+    run_id, attempt, status, conclusion, run_age_seconds = max(matching, key=lambda x: (x[0], x[1]))
     jobs_payload = api.get(
         f"/repos/Zennay/zCloud/actions/runs/{run_id}/jobs?per_page=100&page=1"
     )
@@ -214,6 +226,7 @@ def current_deploy(api, sha: str) -> dict:
         "run_id": run_id, "attempt": attempt, "status": status,
         "conclusion": conclusion, "runner_route": runner_route,
         "matching_deploys_in_first_page": len(matching),
+        "run_age_seconds": run_age_seconds,
     }
 
 
@@ -229,6 +242,8 @@ def collect(api) -> dict:
         warnings.append("production_not_success")
     if deploy["runner_route"] != "ASSIGNED_TO_EXPECTED":
         warnings.append("runner_route_not_proven")
+    if deploy["run_age_seconds"] is None or deploy["run_age_seconds"] > 900:
+        warnings.append("deploy_observation_stale_or_missing")
     if deploy["conclusion"] != "success":
         warnings.append("deploy_run_not_success")
     return {
@@ -259,7 +274,8 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <dt>Exact geobserveerde main</dt><dd>""" + safe(snapshot["main_sha"]) + """</dd>
 <dt>Productie-status</dt><dd>""" + safe(p["state"]) + """</dd>
 <dt>Laatste deploy (huidige SHA, beperkte eerste pagina)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
-<dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd></dl>
+<dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd>
+<dt>Leeftijd laatste deploybewijs (seconden)</dt><dd>""" + safe(d["run_age_seconds"]) + """</dd></dl>
 <h2>Ontbrekend of afwijkend bewijs</h2><ul>""" + (warnings or "<li>Geen lokale waarschuwingen; onafhankelijke releasepoort blijft verplicht.</li>") + """</ul>
 <p>Geen live healthcheck van Firefox, SQLite, workers of VPS verricht. 
 Groene GitHub-status is geen bewijs van actuele runtimegezondheid.</p>
@@ -281,7 +297,8 @@ def main(argv: list[str] | None = None) -> int:
                 dt.timezone.utc).isoformat(),
             "production": {"state": "unknown"},
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
-                       "conclusion": None, "runner_route": "UNVERIFIED"},
+                       "conclusion": None, "runner_route": "UNVERIFIED",
+                       "run_age_seconds": None},
             "warnings": [str(exc)], "observation": "INCOMPLETE_EVIDENCE",
             "release_authorized": False, "deployment_authorized": False,
             "mutations_performed": False,
