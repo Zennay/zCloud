@@ -157,12 +157,18 @@ def current_deploy(api, sha: str) -> dict:
     seen_page_run_ids = set()
     page_snapshots = []
     reported_total = None
+    total_count_field_present = None
     for page in range(1, 6):
         payload = api.get(f"{run_url}{page}")
         if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
             raise EvidenceError("invalid_workflow_runs")
         batch = payload["workflow_runs"]
-        if "total_count" in payload:
+        has_total = "total_count" in payload
+        if total_count_field_present is None:
+            total_count_field_present = has_total
+        elif has_total != total_count_field_present:
+            raise EvidenceError("inconsistent_deploy_total_count_presence")
+        if has_total:
             count_value = payload["total_count"]
             if type(count_value) is not int or count_value < 0:
                 raise EvidenceError("invalid_deploy_total_count")
