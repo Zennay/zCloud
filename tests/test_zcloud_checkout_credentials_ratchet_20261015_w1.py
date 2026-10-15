@@ -154,6 +154,18 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         with self.assertRaisesRegex(Denied, "unsupported_source_type"):
             inspect(self.base, self.commit())
 
+    def test_deleted_workflow_root_denied(self):
+        Path(f"{WORK}/existing.yml").unlink()
+        with self.assertRaisesRegex(Denied, "missing_workflow_root"):
+            inspect(self.base, self.commit())
+
+    def test_workflow_root_symlink_denied(self):
+        Path(f"{WORK}/existing.yml").unlink()
+        Path(WORK).rmdir()
+        Path(WORK).symlink_to("../actions")
+        with self.assertRaisesRegex(Denied, "unsupported_workflow_root"):
+            inspect(self.base, self.commit())
+
     def test_invalid_sha_denied(self):
         with self.assertRaisesRegex(Denied, "invalid_commit_identity"):
             inspect("main", self.base)
