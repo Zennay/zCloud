@@ -96,7 +96,14 @@ def _uncomment(line: str) -> str:
 
 
 def _scalar(value: str) -> str:
-    return value.strip().strip("'\"").lower()
+    raw = value.strip().lower()
+    if not raw:
+        return "__opaque__"
+    if raw.startswith(("'", '"')) or raw.endswith(("'", '"')):
+        if len(raw) < 2 or raw[0] != raw[-1]:
+            return "__opaque__"
+        return raw[1:-1]
+    return raw
 
 
 def _mapping_risk(body: list[str], indent: int) -> str | None:
@@ -141,11 +148,23 @@ def permission_debt(source: str, path: str) -> Counter[str]:
         width = len(original) - len(original.lstrip(" "))
         if width == 0:
             in_jobs = bool(re.match(r"^jobs:\s*$", line))
+            if re.match(r"^jobs\s*:\s*[{[]", line):
+                findings[f"{path}|opaque_job_structure|flow"] += 1
             job = None
         elif in_jobs and width == 2:
             head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\s*", line)
             job = head.group(1) if head else None
-        match = re.match(r"""^\s*(?:permissions|['"]permissions['"]):\s*(.*)$""", line)
+        # Explicit YAML mapping keys, merge aliases and decoded mapping
+        # keys are not proven safe by lexical checks. Conservatively deny new
+        # instances, while preserving the exact source baseline as old debt.
+        ambiguous = (
+            re.match(r"^\s*\?\s*(?:permissions|['\"]permissions['\"])\b", line)
+            or re.match(r"^\s*<<\s*:", line)
+            or re.match(r"""^\s*['"].*\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}).*['"]\s*:""", line)
+        )
+        if ambiguous:
+            findings[f"{path}|opaque_yaml_key|ambiguous"] += 1
+        match = re.match(r"""^\s*(?:permissions|['"]permissions['"])\s*:\s*(.*)$""", line)
         if not match:
             continue
         scope = "top" if width == 0 else f"job:{job}" if width == 4 and in_jobs and job else "unsupported"
