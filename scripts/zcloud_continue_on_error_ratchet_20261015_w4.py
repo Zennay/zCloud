@@ -12,6 +12,7 @@ import re
 import selectors
 import subprocess
 import time
+import unicodedata
 import sys
 from pathlib import Path
 
