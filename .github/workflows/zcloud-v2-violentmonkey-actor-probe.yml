@@ -9,12 +9,14 @@ on:
       - .github/workflows/zcloud-v2-violentmonkey-actor-probe.yml
       - scripts/zcloud_vm_actor_readonly_probe_20261014.py
       - tests/test_zcloud_vm_actor_readonly_probe_20261014.py
+      - tests/test_zcloud_vm_probe_hosted_admission_20261015_w10.py
   push:
     branches: [main]
     paths:
       - .github/workflows/zcloud-v2-violentmonkey-actor-probe.yml
       - scripts/zcloud_vm_actor_readonly_probe_20261014.py
       - tests/test_zcloud_vm_actor_readonly_probe_20261014.py
+      - tests/test_zcloud_vm_probe_hosted_admission_20261015_w10.py
   workflow_dispatch:
     inputs:
       confirm_sha:
@@ -31,7 +33,19 @@ concurrency:
 
 jobs:
   hosted-proof:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    # PR source tests use the exact head SHA, but must never execute a
+    # foreign/untrusted PR source (even on a GitHub-hosted runner).
+    # Existing trusted main push verification remains automatic/hosted.
+    if: >-
+      (github.event_name == 'pull_request' &&
+       github.repository == 'Zennay/zCloud' &&
+       github.actor == 'Zennay' &&
+       github.triggering_actor == 'Zennay' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'push' &&
+       github.repository == 'Zennay/zCloud' &&
+       github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -50,7 +64,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           python3 -m py_compile scripts/zcloud_vm_actor_readonly_probe_20261014.py
-          python3 -m unittest -v tests.test_zcloud_vm_actor_readonly_probe_20261014
+          python3 -m unittest -v tests.test_zcloud_vm_actor_readonly_probe_20261014 tests.test_zcloud_vm_probe_hosted_admission_20261015_w10
 
   inspect:
     if: >-
