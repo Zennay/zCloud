@@ -288,6 +288,39 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "inactive_script_asset_ref")
 
+    def test_nomodule_script_cannot_replace_active_js_ref(self) -> None:
+        self.write("public/app.js", "console.log(42);")
+        self.write("public/index.html",
+                   '<link rel="stylesheet" href="/enhancements.css?v=r5">' +
+                   '<script src="/app.js?v=r9" nomodule></script>' +
+                   '<script src="/enhancements.js?v=r2"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "conditional_script_asset_ref")
+
+    def test_print_media_stylesheet_cannot_replace_active_css_ref(self) -> None:
+        self.write("public/enhancements.css", "body{display:none}")
+        self.write("public/index.html",
+                   '<link rel="stylesheet" media="print" href="/enhancements.css?v=r6">' +
+                   '<script src="/app.js?v=r8"></script>' +
+                   '<script src="/enhancements.js?v=r2"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "conditional_stylesheet_asset_ref")
+
+    def test_screen_only_css_requires_separate_review(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'rel="stylesheet"', 'rel="stylesheet" media="screen"'))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "conditional_stylesheet_asset_ref")
+
+    def test_explicit_all_media_css_is_active(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'rel="stylesheet"', 'rel="stylesheet" media="all"'))
+        self.head = self.commit()
+        self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
+
     def test_disabled_stylesheet_ref_rejected(self) -> None:
         self.write("public/index.html", '<script src="/app.js?v=r8"></script>' +
                    '<link rel="stylesheet" disabled href="/enhancements.css?v=r6">')
