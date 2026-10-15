@@ -90,18 +90,38 @@ def tree_files(rev: str) -> dict[str, str]:
     return files
 
 
-def run_shell_scalars(source: str) -> list[str]:
-    """Extract run scalar lines conservatively, not a claim of full YAML parsing."""
+def run_shell_scalars(source: str) -> list[tuple[str, str]]:
+    """Extract bounded run scalars with best-effort YAML ancestor identities.
+
+    Binding a risky shell snippet only to its bytes lets an unchanged
+    interpolation move from a read-only job into a privileged job without
+    creating new debt. Structural mapping keys supply a conservative,
+    indentation-based context; this is still not a full YAML parser.
+    """
+    structural = re.compile(r"""^( *)(?:-\s*)?(?:([A-Za-z0-9_.-]+)|'([^']+)'|"([^"]+)")\s*:\s*(?:#.*)?$""")
     lines = source.splitlines()
-    scalars = []
+    scalars: list[tuple[str, str]] = []
+    ancestors: list[tuple[int, str]] = []
     i = 0
     while i < len(lines):
-        match = RUN.match(lines[i]) or RUN_ESCAPED_KEY.match(lines[i])
+        line = lines[i]
+        if not line.strip() or line.lstrip().startswith("#"):
+            i += 1
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        while ancestors and ancestors[-1][0] >= indent:
+            ancestors.pop()
+        match = RUN.match(line) or RUN_ESCAPED_KEY.match(line)
         if not match:
+            key = structural.match(line)
+            if key:
+                ancestors.append((indent, key.group(2) or key.group(3) or key.group(4)))
             i += 1
             continue
         indent = len(match.group(1))
         payload = [match.group(2)]
+        context = json.dumps([key for _, key in ancestors], ensure_ascii=False, separators=(",", ":"))
+        context_digest = hashlib.sha256(context.encode("utf-8")).hexdigest()
         i += 1
         while i < len(lines):
             current = lines[i]
@@ -109,7 +129,7 @@ def run_shell_scalars(source: str) -> list[str]:
                 break
             payload.append(current)
             i += 1
-        scalars.append("\n".join(payload))
+        scalars.append(("\n".join(payload), context_digest))
     return scalars
 
 
@@ -133,11 +153,11 @@ def fingerprint_risks(source: str) -> Counter[str]:
         # delimiters. Only a brace *before* the key indicates flow mapping.
         if match and "{" in line[:match.start()]:
             out["ambiguous_flow_run:" + hashlib.sha256(line.strip().encode("utf-8")).hexdigest()] += 1
-    for scalar in run_shell_scalars(source):
+    for scalar, context_digest in run_shell_scalars(source):
         # A previously seen expression is not safe to move from a harmless
         # command to a more dangerous one. Bind findings to their actual run
         # scalar contents, not solely to the expression spelling.
-        scalar_digest = hashlib.sha256(scalar.encode("utf-8")).hexdigest()
+        scalar_digest = hashlib.sha256((scalar + "\x00" + context_digest).encode("utf-8")).hexdigest()
         value = scalar.lstrip()
         if value.startswith("*") or value.startswith("!") or value.startswith("&"):
             out["ambiguous_yaml_run_scalar|workflow_sha256:" + workflow_digest] += 1
