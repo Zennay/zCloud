@@ -1,5 +1,7 @@
 """Real-Git and adversarial offline source checks. No external network required."""
 import importlib.util
+import json
+import sys
 import os
 from pathlib import Path
 import subprocess
@@ -249,6 +251,39 @@ class RealGitTests(unittest.TestCase):
         base = self.commit("steps:\n  - ? run\n    : echo safe\n")
         head = self.commit("steps:\n  - ? run\n    : echo riskier\n")
         self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def cli(self, base, head):
+        return subprocess.run([sys.executable, str(MODULE), "--base", base, "--head", head],
+                              capture_output=True, text=True, timeout=10, check=False)
+
+    def test_cli_safe_commit_exits_zero_without_authority(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo safer\n")
+        response = self.cli(base, head)
+        report = json.loads(response.stdout)
+        self.assertEqual(0, response.returncode)
+        self.assertTrue(report["inventory_complete"])
+        self.assertEqual(0, report["new_risks"])
+        self.assertFalse(report["deployment_authorized"])
+
+    def test_cli_new_untrusted_interpolation_exits_one(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.event.issue.body }}\n")
+        response = self.cli(base, head)
+        report = json.loads(response.stdout)
+        self.assertEqual(1, response.returncode)
+        self.assertEqual(1, report["new_risks"])
+        self.assertFalse(report["release_authorized"])
+
+    def test_cli_missing_git_commit_exits_two_and_denies_authority(self):
+        self.commit("steps:\n  - run: echo safe\n")
+        response = self.cli("0" * 40, "1" * 40)
+        report = json.loads(response.stdout)
+        self.assertEqual(2, response.returncode)
+        self.assertFalse(report["inventory_complete"])
+        self.assertEqual("base_not_head_ancestor", report["error"])
+        self.assertFalse(report["release_authorized"])
+        self.assertFalse(report["deployment_authorized"])
 
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
