@@ -103,6 +103,10 @@ def fingerprint_risks(source: str) -> Counter[str]:
         if "{" in line and FLOW_RUN_KEY.search(line):
             out["ambiguous_flow_run:" + hashlib.sha256(line.strip().encode("utf-8")).hexdigest()] += 1
     for scalar in run_shell_scalars(source):
+        # A previously seen expression is not safe to move from a harmless
+        # command to a more dangerous one. Bind findings to their actual run
+        # scalar contents, not solely to the expression spelling.
+        scalar_digest = hashlib.sha256(scalar.encode("utf-8")).hexdigest()
         value = scalar.lstrip()
         if value.startswith("*") or value.startswith("!") or value.startswith("&"):
             out["ambiguous_yaml_run_scalar"] += 1
@@ -117,7 +121,7 @@ def fingerprint_risks(source: str) -> Counter[str]:
             normalized = BRACKET_PROPERTY.sub(lambda m: "." + m.group(2), normalized)
             normalized = re.sub(r"\s*\.\s*", ".", normalized)
             if UNTRUSTED.search(normalized):
-                out[normalized] += 1
+                out[normalized + "|run_sha256:" + scalar_digest] += 1
             elif DYNAMIC_PROPERTY.search(normalized):
                 # Unknown computed key might resolve to event or inputs.
                 out["ambiguous_dynamic_property"] += 1
