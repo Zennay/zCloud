@@ -99,9 +99,11 @@ class ActionPinRatchetTests(unittest.TestCase):
         self.assertEqual(self.evaluate()["new_unpinned"], 1)
 
     def test_deleted_debt_allowed(self):
+        replacement = self.path.parent / "safe.yml"
+        replacement.write_text("steps:\n - uses: actions/checkout@" + "a" * 40 + "\n")
         self.path.unlink()
-        self.command("add", "-u")
-        self.command("commit", "-qm", "removed")
+        self.command("add", "-A", ".github")
+        self.command("commit", "-qm", "remove legacy while keeping workflow directory")
         self.assertEqual(self.evaluate()["new_unpinned"], 0)
 
     def test_duplicate_same_tag_increase_denied(self):
@@ -164,6 +166,7 @@ class ActionPinRatchetTests(unittest.TestCase):
 
     def test_workflow_directory_symlink_refused(self):
         self.command("rm", "-rq", ".github/workflows")
+        (self.root / ".github").mkdir(exist_ok=True)
         (self.root / ".github/workflows").symlink_to("/tmp/fake-workflows")
         self.command("add", ".github")
         self.command("commit", "-qm", "symlink workflow directory")
