@@ -217,6 +217,17 @@ class RealGitTests(unittest.TestCase):
         head = self.commit('steps:\n  - "' + key + '": echo safe\n')
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_run_alias_anchor_edit_is_new_ambiguous_debt(self):
+        base = self.commit("steps:\n  - env:\n      VALUE: &cmd echo safe\n    run: *cmd\n")
+        head = self.commit("steps:\n  - env:\n      VALUE: &cmd echo ${{ github.event.issue.body }}\n    run: *cmd\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_unmodified_alias_source_is_not_new_debt(self):
+        source = "steps:\n  - env:\n      VALUE: &cmd echo safe\n    run: *cmd\n"
+        base = self.commit(source)
+        head = self.commit(source)
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
