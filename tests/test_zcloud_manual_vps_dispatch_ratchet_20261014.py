@@ -318,6 +318,12 @@ class ManualDispatchPolicy(unittest.TestCase):
                 with self.assertRaises(guard.RefError):
                     guard.risky_manual_jobs(WF, source)
 
+    def test_tab_indented_runner_authority_is_not_silently_ignored(self):
+        source = workflow(if_statement=SAFE_IF, runner="ubuntu-latest")
+        source += b"\truns-on: [self-hosted, zcloud, vps]\n"
+        with self.assertRaisesRegex(guard.RefError, "unsupported_job_authority_syntax"):
+            guard.risky_manual_jobs(WF, source)
+
     def test_job_authority_after_steps_is_still_scanned(self):
         safe = workflow(if_statement=SAFE_IF, runner="ubuntu-latest")
         for extra in (b"    runs-on : [self-hosted, zcloud, vps]\n",
