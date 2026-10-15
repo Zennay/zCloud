@@ -67,8 +67,16 @@ class Refs(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.refs: dict[str, list[str]] = {name: [] for name in ASSETS}
+        self.inert_depth = 0
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("template", "noscript"):
+            self.inert_depth = max(0, self.inert_depth - 1)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("template", "noscript"):
+            self.inert_depth += 1
+            return
         attr_names = [key.lower() for key, _ in attrs]
         if len(attr_names) != len(set(attr_names)):
             raise ValueError("duplicate_html_attribute")
@@ -85,6 +93,12 @@ class Refs(HTMLParser):
         path = "public" + parsed.path if parsed.path.startswith("/") else ""
         if path not in ASSETS:
             return
+        if self.inert_depth:
+            raise ValueError("inert_asset_ref")
+        if tag == "script" and (values.get("type") or "").lower() not in ("", "module", "application/javascript", "text/javascript"):
+            raise ValueError("inactive_script_asset_ref")
+        if tag == "link" and "disabled" in values:
+            raise ValueError("disabled_stylesheet_asset_ref")
         if parsed.scheme or parsed.netloc or parsed.fragment or not parsed.query:
             raise ValueError("invalid_asset_ref")
         try:
