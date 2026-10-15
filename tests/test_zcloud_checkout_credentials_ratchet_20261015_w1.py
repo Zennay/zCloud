@@ -103,17 +103,17 @@ class RealGitCheckoutRatchet(unittest.TestCase):
 
     def test_nested_env_with_cannot_spoof_credentials(self):
         unsafe = workflow(None).replace(
-            f"      - uses: actions/checkout@{PIN}\\n",
-            f"      - uses: actions/checkout@{PIN}\\n"
-            "        env:\\n          with:\\n            persist-credentials: false\\n",
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - uses: actions/checkout@{PIN}\n"
+            "        env:\n          with:\n            persist-credentials: false\n",
         )
         self.verify(unsafe, "nested_checkout_with")
 
     def test_nested_setting_cannot_spoof_direct_checkout_option(self):
         unsafe = workflow(None).replace(
-            f"      - uses: actions/checkout@{PIN}\\n",
-            f"      - uses: actions/checkout@{PIN}\\n"
-            "        with:\\n          misleading:\\n            persist-credentials: false\\n",
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - uses: actions/checkout@{PIN}\n"
+            "        with:\n          misleading:\n            persist-credentials: false\n",
         )
         self.verify(unsafe, "credentials_outside_with")
 
