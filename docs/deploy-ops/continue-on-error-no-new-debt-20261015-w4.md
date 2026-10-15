@@ -11,7 +11,7 @@ This is intentionally stricter than a normal YAML semantic parser: unproven enco
 ## Admission boundaries
 
 - Exact 40-hex base/head, SHA-bound current checkout, proven Git ancestry, changed-only paths from immutable Git history.
-- At most 250 workflow paths; bounded Git outputs; UTF-8 source and normal executable/non-executable blob modes only; no workflow symlink.
+- At most 250 workflow paths; immutable workflow-root tree (not a symlink), blob size preflight before read, replace-ref-resistant Git reads, bounded Git outputs; UTF-8 source and normal executable/non-executable blob modes only; no workflow symlink.
 - New CI runs only on GitHub-hosted ubuntu, PR events, same-repository/main base, pinned checkout without persisted credentials, read-only token; verifies exact SHA before and after tests.
 - Tests use real temporary Git repositories and cover altered historical blobs, rename, false, true, expressions, duplicate keys, YAML merge, encoded keys, comments, malformed SHA and symlinks.
 - As a PR-defined check, this is **not independent trusted review**. It must be reviewed and integrated under #922 with appropriate branch protection to prevent PR tampering. Do not conflate success with #1326 runner repair, #1447 writer serialization, or #580/PWQ-41/#1089 release approval.
