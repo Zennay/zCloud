@@ -24,7 +24,7 @@ ENV = re.compile(r"actions_allow_unsecure_commands", re.I)
 ESCAPED_SCALAR = re.compile(r"\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8}))")
 SHELL_CONTINUATION = re.compile(r"\\\r?\n[ \t]*")
 ACTION_CODE_EXTENSIONS = frozenset({".js", ".cjs", ".mjs", ".ts", ".sh", ".bash", ".ps1", ".py", ".cmd", ".bat", ".zsh", ".rb", ".pl"})
-ACTION_ENTRYPOINT_NAMES = frozenset({"entrypoint", "run", "start", "bootstrap", "Makefile", "GNUmakefile"})
+ACTION_ENTRYPOINT_NAMES = frozenset({"entrypoint", "run", "start", "bootstrap", "Makefile", "GNUmakefile", "package.json"})
 MAX_CHANGED = 250
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 1024 * 1024
@@ -208,6 +208,11 @@ def check_content(content: bytes) -> None:
     joined = SHELL_CONTINUATION.sub("", expanded)
     if ENV.search(joined) or COMMANDS.search(joined):
         raise Denied("Shell-continued legacy unsafe command syntax")
+    # Windows cmd.exe removes caret escaping before interpreting echo output.
+    # Conservatively test the joined form for changed local Action scripts.
+    cmd_joined = re.sub(r"\^(?=[A-Za-z_-])", "", joined)
+    if ENV.search(cmd_joined) or COMMANDS.search(cmd_joined):
+        raise Denied("CMD caret-escaped legacy unsafe command syntax")
 
 
 def scan(base: str, head: str) -> tuple[int, int]:
