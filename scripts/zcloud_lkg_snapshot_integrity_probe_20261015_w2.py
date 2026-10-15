@@ -450,17 +450,25 @@ def audit_all(state: Path) -> dict:
         raise Denied("no_snapshots")
 
     results: list[dict[str, object]] = []
+    verified_config_hashes: dict[str, dict[str, str]] = {}
     total = 0
     for name, is_dir in sorted(snapshots):
         if not _snapshot_id_valid(name) or not is_dir:
             entry = {"snapshot_id": None, "ok": False, "reason": "invalid_snapshot_entry"}
         else:
             try:
+                manifest_path = state / "snapshots" / name / "manifest.json"
+                manifest_before = _json(manifest_path)
                 evidence = inspect(state, snapshot_id=name)
+                if manifest_before != _json(manifest_path):
+                    raise Denied("manifest_changed_during_scan")
             except (Denied, OSError) as exc:
                 reason = str(exc) if isinstance(exc, Denied) else "io_error"
                 entry = {"snapshot_id": name, "ok": False, "reason": reason}
             else:
+                # Only snapshots which passed the complete file/manifest proof
+                # may contribute to the advisory config comparison.
+                verified_config_hashes[name] = dict(manifest_before["config_hashes"])
                 entry = {
                     "snapshot_id": name, "ok": True,
                     "file_count": evidence["file_count"],
@@ -478,6 +486,21 @@ def audit_all(state: Path) -> dict:
     ids = {name for name, _ in snapshots}
     if current not in ids:
         raise Denied("current_snapshot_missing")
+    active_config = verified_config_hashes.get(current)
+    if active_config is not None:
+        for item in results:
+            historic = verified_config_hashes.get(item["snapshot_id"])
+            if historic is None:
+                continue
+            old_names, current_names = set(historic), set(active_config)
+            item["config_drift_from_current"] = {
+                "changed": sorted(
+                    name for name in old_names & current_names
+                    if historic[name] != active_config[name]
+                ),
+                "only_in_snapshot": sorted(old_names - current_names),
+                "only_in_current": sorted(current_names - old_names),
+            }
     return {
         "ok": all(item["ok"] for item in results),
         "snapshot_count": len(snapshots),
