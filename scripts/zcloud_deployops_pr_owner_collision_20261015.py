@@ -71,6 +71,8 @@ def assess(payload):
         raise InvalidInventory("missing_or_unbounded_pr_inventory")
     owners: dict[str, set[int]] = defaultdict(set)
     seen_numbers = set()
+    stale_bases = []
+    files_examined = 0
     for pr in pulls:
         required = {"number", "state", "head_sha", "base_sha", "head_repo",
                     "base_repo", "changed_files", "files"}
@@ -85,13 +87,16 @@ def assess(payload):
                 or pr["head_repo"] != payload["repo"]
                 or pr["base_repo"] != payload["repo"]):
             raise InvalidInventory("untrusted_or_foreign_pr")
+        # Stale-base PRs still own their changed paths and MUST remain in the
+        # conflict graph. Record drift rather than silently omitting them.
         if pr["base_sha"] != payload["main_sha"]:
-            raise InvalidInventory("stale_pr_base")
+            stale_bases.append(number)
         files = pr["files"]
         count = pr["changed_files"]
         if (type(files) is not list or type(count) is not int
                 or not 1 <= count <= MAX_FILES or len(files) != count):
             raise InvalidInventory("incomplete_changed_file_inventory")
+        files_examined += count
         paths = set()
         for item in files:
             if type(item) is not dict or set(item) != {"filename", "status"}:
@@ -114,7 +119,11 @@ def assess(payload):
         "repo": payload["repo"],
         "main_sha": payload["main_sha"],
         "prs_scanned": len(pulls),
-        "files_scanned": sum(len(v) for v in owners.values()),
+        "files_scanned": files_examined,
+        "unique_paths_scanned": len(owners),
+        "stale_base_prs": sorted(stale_bases)[:50],
+        "stale_base_count": len(stale_bases),
+        "stale_base_report_truncated": len(stale_bases) > 50,
         "collision_count": len(collisions),
         "collisions": collisions[:200],
         "collision_report_truncated": len(collisions) > 200,
