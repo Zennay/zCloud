@@ -176,8 +176,8 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         name = "zcloud-worker-tab-guard.yml"
         p = self.dir / name
         with p.open("a", encoding="utf-8") as stream:
-            stream.write("  surprise-live-writer:\\n"
-                         "    runs-on: [self-hosted, zcloud, vps]\\n")
+            stream.write("  surprise-live-writer:\n"
+                         "    runs-on: [self-hosted, zcloud, vps]\n")
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "unexpected_companion_runner_target")
 
@@ -185,14 +185,14 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         name = "zcloud-vps-deploy.yml"
         p = self.dir / name
         text = p.read_text(encoding="utf-8")
-        text += "  extra:\\n    runs-on: self-hosted\\n"
+        text += "  extra:\n    runs-on: self-hosted\n"
         p.write_text(text, encoding="utf-8")
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "unexpected_companion_runner_target")
 
     def test_missing_target_runner_is_refused_even_if_lock_present(self):
         name = "zcloud-worker-tab-guard.yml"
-        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]\\n", "")
+        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]\n", "")
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "missing_or_duplicate_runner_target")
 
@@ -206,7 +206,7 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
     def test_duplicate_runner_selection_on_mutation_job_refused(self):
         name = "zcloud-worker-tab-guard.yml"
         self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
-                  "    runs-on: [self-hosted, zcloud, vps]\\n"
+                  "    runs-on: [self-hosted, zcloud, vps]\n"
                   "    runs-on: ubuntu-latest")
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "missing_or_duplicate_runner_target")
