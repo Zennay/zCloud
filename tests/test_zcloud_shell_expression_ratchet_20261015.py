@@ -1004,6 +1004,30 @@ class RealGitTests(unittest.TestCase):
                            "risk_kinds": [{"kind": "direct_interpolation", "count": 1}]}],
                          report["new_risky_workflows"])
 
+    def test_hosted_admission_checks_exact_git_report_identity(self):
+        source = (MODULE.parents[1] / ".github/workflows/zcloud-shell-expression-ratchet-20261015.yml").read_text()
+        for check in (
+            "assert payload['schema'] == 'zcloud-shell-expression-ratchet-v1'",
+            "assert payload['base_sha'] == os.environ['BASE_SHA']",
+            "assert payload['head_sha'] == os.environ['EXPECTED_HEAD']",
+            "assert payload['new_risk_kinds'] == []",
+            "assert payload['new_risky_workflows'] == []",
+            "assert payload['affected_workflows'] == []",
+        ):
+            with self.subTest(check=check):
+                self.assertIn(check, source)
+
+    def test_hosted_admission_checks_inventory_count_integrity(self):
+        source = (MODULE.parents[1] / ".github/workflows/zcloud-shell-expression-ratchet-20261015.yml").read_text()
+        self.assertIn("sum(item['risk_count'] for item in payload['baseline_risky_workflows'])",
+                      source)
+        self.assertIn("sum(item['risk_count'] for item in payload['candidate_risky_workflows'])",
+                      source)
+        self.assertIn("sum(item['count'] for item in payload['baseline_risk_kinds'])",
+                      source)
+        self.assertIn("sum(item['count'] for item in payload['candidate_risk_kinds'])",
+                      source)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
