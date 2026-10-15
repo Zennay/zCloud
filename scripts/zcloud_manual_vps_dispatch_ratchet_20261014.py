@@ -231,9 +231,17 @@ def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object
     # Isolate new exposure to modified/additive workflows. Legacy ambiguous
     # YAML outside this PR must not prevent independent safe changes.
     modified = {p for p in head if base.get(p) != head[p]}
+    ambiguous_base_count = 0
     for path in sorted(modified):
         if path in base:
-            previous |= risky_manual_jobs(path, base[path])
+            try:
+                previous |= risky_manual_jobs(path, base[path])
+            except RefError:
+                # An older ambiguous workflow must be repairable without a
+                # blanket baseline waiver. Any unguarded candidate job still
+                # incurs NEW debt, while a fully parseable guarded replacement
+                # is safe to admit for review.
+                ambiguous_base_count += 1
         candidate |= risky_manual_jobs(path, head[path])
     # Grandfather only the identical unsafe job identity. A modified job with
     # unchanged debt remains visible as debt, not as evidence of safety.
@@ -260,6 +268,8 @@ def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object
         "ok": not additions,
         "legacy_debt_count": len(previous),
         "candidate_debt_count": len(candidate),
+        "ambiguous_touched_baseline_count": ambiguous_base_count,
+        "inventory_scope": "changed_workflows_only",
         "new_debt_count": len(additions),
         "new_debt": [{"workflow": path, "job": job} for path, job in additions[:25]],
         "evidence_truncated": len(additions) > 25,
