@@ -414,6 +414,27 @@ class RatchetTests(unittest.TestCase):
         self.assertEqual(code, 0, receipt)
         self.assertEqual(receipt["legacy_workflows_not_rescanned"], 1)
 
+    def test_environment_config_count_denied(self):
+        code, out = self.change("GIT_CONFIG_COUNT: '1'")
+        self.assertEqual(code, 1, out)
+        self.assertIn("git_environment_config_injection", out["findings"][0]["reasons"])
+
+    def test_environment_config_key_denied(self):
+        code, out = self.change("GIT_CONFIG_KEY_0: alias.ship")
+        self.assertEqual(code, 1, out)
+
+    def test_environment_config_value_denied(self):
+        code, out = self.change("GIT_CONFIG_VALUE_0: push")
+        self.assertEqual(code, 1, out)
+
+    def test_environment_config_lowercase_denied(self):
+        code, out = self.change("export git_config_count=2")
+        self.assertEqual(code, 1, out)
+
+    def test_ordinary_git_environment_allowed(self):
+        code, out = self.change("GIT_TERMINAL_PROMPT: '0'")
+        self.assertEqual(code, 0, out)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, result = self.change("git push origin main # " + marker)
