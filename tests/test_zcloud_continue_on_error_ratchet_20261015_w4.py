@@ -73,7 +73,7 @@ class ContinueOnErrorGitTests(unittest.TestCase):
         self.assertTrue(self._reasons(LEGACY, name="new.yml"))
 
     def test_expression_denied(self):
-        self.assertTrue(self._reasons(SAFE.replace("false", "\${{ inputs.allow_failure }}")))
+        self.assertTrue(self._reasons(SAFE.replace("false", "${{ inputs.allow_failure }}")))
 
     def test_quoted_key_denied(self):
         self.assertTrue(self._reasons(SAFE.replace("continue-on-error: false", '"continue-on-error": true')))
@@ -147,13 +147,19 @@ class ContinueOnErrorGitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsafe_workflow_mode"):
             gate.scan(self.root, self.base, head)
 
+    def test_display_names_with_policy_phrase_are_safe(self):
+        self.assertEqual(self._reasons(SAFE.replace(
+            "name: Safe", "name: zCloud continue-on-error no-new-debt ratchet"
+        )), {})
+        self.assertEqual(gate.check_workflow("- name: explain continue-on-error risk"), [])
+
     def test_direct_source_key_matrix(self):
         for source, expected in (
             ("continue-on-error: true", True),
             ("continue-on-error: false", False),
             ("continue-on-error: FALSE", True),
             ("continue-on-error: 0", True),
-            ("continue-on-error: \${{ true }}", True),
+            ("continue-on-error: ${{ true }}", True),
             ("'continue-on-error': false", False),
             ("continue-on-error: false # note", False),
             ("  # continue-on-error: true", False),
