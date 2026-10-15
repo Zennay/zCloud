@@ -44,3 +44,28 @@ python3 -m unittest -v \
 ```
 
 No credentials are needed for the offline tests. Do not rerun a production deploy or restart the self-hosted runner to make a source-only audit go green.
+
+## Compare two full frozen inventories offline (review aid, not permission)
+
+The paired snapshot diff is useful when coordinating #1204: it makes new,
+removed and updated PR identities visible **even when the total number of
+conflicting files is unchanged**. Both files must contain complete collector
+JSON and describe the **same canonical main SHA**. An old snapshot has no
+special authority just because a later snapshot shares its SHA; neither is
+signed or a lock on future GitHub changes.
+
+```bash
+python3 -m scripts.zcloud_deployops_pr_owner_delta_20261015 \\
+  --baseline /safe/path/baseline.json \\
+  --snapshot /safe/path/new-snapshot.json
+python3 -m unittest -v tests.test_zcloud_deployops_pr_owner_delta_20261015
+```
+
+Exit **0** means byte-normalized evidence is identical in the two supplied
+snapshots (not that live PR ownership is safe); **1** means any reported
+difference requires operator review; **2** refuses invalid, incomplete,
+symlinked or unequal-main evidence. The JSON report contains bounded PR-ID
+lists, changed file-owner paths, new or resolved exact-path collisions,
+changed file-vs-directory conflict edges, before/after counts and both SHA-256
+snapshot fingerprints. Truncation flags preserve honest full counts. There
+is **no PR-less branch coverage, semantic merge proof, approval or write path**.
