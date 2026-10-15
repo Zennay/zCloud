@@ -1,5 +1,6 @@
 """Adversarial offline regressions for the add-only deploy-ops evidence cockpit."""
 import importlib.util
+import datetime as dt
 import json
 import pathlib
 import unittest
@@ -24,7 +25,8 @@ def ref(sha=SHA):
 
 def run(sha=SHA, state="completed", conclusion="success"):
     return {"id": 92, "run_attempt": 1, "head_sha": sha, "head_branch": "main",
-            "event": "workflow_run", "status": state, "conclusion": conclusion}
+            "event": "workflow_run", "status": state, "conclusion": conclusion,
+            "updated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 def job(status="completed", runner_id=21, runner_name="zcloud-vps-1"):
@@ -71,6 +73,32 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(cockpit.EvidenceError, "main_moved"):
             cockpit.collect(api)
         self.assertEqual(api.calls.count(REF), 2)
+
+    def test_stale_historical_runner_does_not_look_fresh(self):
+        api = FakeAPI()
+        old = run()
+        old["updated_at"] = "2020-01-01T00:00:00Z"
+        api.pages[RUNS] = [{"workflow_runs": [old]}]
+        data = cockpit.collect(api)
+        self.assertGreater(data["deploy"]["run_age_seconds"], 900)
+        self.assertIn("deploy_observation_stale_or_missing", data["warnings"])
+        self.assertFalse(data["deployment_authorized"])
+
+    def test_future_dated_deploy_report_denied(self):
+        api = FakeAPI()
+        future = run()
+        future["updated_at"] = "2099-01-01T00:00:00Z"
+        api.pages[RUNS] = [{"workflow_runs": [future]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "future_deploy_evidence"):
+            cockpit.collect(api)
+
+    def test_invalid_calendar_timestamp_denied(self):
+        api = FakeAPI()
+        invalid = run()
+        invalid["updated_at"] = "2026-13-44T00:00:00Z"
+        api.pages[RUNS] = [{"workflow_runs": [invalid]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "invalid_deploy_updated_at"):
+            cockpit.collect(api)
 
     def test_missing_production_status_is_a_warning(self):
         api = FakeAPI()
