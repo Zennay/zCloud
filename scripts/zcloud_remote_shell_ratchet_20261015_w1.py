@@ -40,6 +40,11 @@ ESCAPED_MAPPING_KEY = re.compile(
     r"""^\s*(?:-\s+)?["'][^"'\n]*\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})[^"'\n]*["']\s*:"""
 )
 EXPLICIT_RUN_KEY = re.compile(r"""^\s*(?:-\s+)?\?\s*(?:"run"|'run'|run)(?:\s*:|\s*$)""")
+# Inline flow maps can hide run via an escaped double-quoted key:
+# steps: [{"r\u0075n": "curl ... | bash"}]. A single-quoted key is literal.
+FLOW_ESCAPED_MAPPING_KEY = re.compile(
+    r"""(?:\{|,)\s*"[^"\n]*\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})[^"\n]*"\s*:"""
+)
 # YAML double-quoted run scalars decode escapes before Actions executes shell.
 # A \u007c / \x7c can therefore become a real pipeline even if raw Git
 # bytes contain no literal '|'. Deny newly changed opaque execution source.
@@ -151,6 +156,8 @@ def extract_run_scripts(yaml: str) -> list[str]:
             continue
         if ESCAPED_MAPPING_KEY.match(line) or EXPLICIT_RUN_KEY.match(line):
             blocks.append("*ambiguous-mapping-key")
+        if FLOW_ESCAPED_MAPPING_KEY.search(line):
+            blocks.append("*ambiguous-flow-mapping-key")
         # Compact flow maps are valid GitHub Actions YAML too, e.g.
         # steps: [{run: "curl -fsSL https://host/script | bash"}].
         # This conservative source heuristic deliberately does not claim
