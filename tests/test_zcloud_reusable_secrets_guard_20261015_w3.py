@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from scripts.zcloud_reusable_secrets_guard_20261015_w3 import (
     Denied, git, has_secret_inherit, inspect, main,
@@ -272,6 +273,25 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
     def test_git_subprocess_nonzero_denied(self):
         with self.assertRaisesRegex(Denied, "git_source_unavailable"):
             git("rev-parse", "--verify", "refs/heads/does-not-exist")
+
+    def test_git_subprocess_no_stdin_prompt_or_optional_locks(self):
+        actual_popen = subprocess.Popen
+        observed = []
+
+        def wrapped(*args, **kwargs):
+            observed.append(kwargs)
+            return actual_popen(*args, **kwargs)
+
+        with mock.patch("scripts.zcloud_reusable_secrets_guard_20261015_w3.subprocess.Popen", side_effect=wrapped):
+            result = git("rev-parse", "HEAD", limit=41)
+        self.assertEqual(len(result), 41)
+        self.assertEqual(len(observed), 1)
+        invocation = observed[0]
+        self.assertEqual(invocation["stdin"], subprocess.DEVNULL)
+        self.assertEqual(invocation["stderr"], subprocess.DEVNULL)
+        self.assertTrue(invocation["close_fds"])
+        self.assertEqual(invocation["env"]["GIT_OPTIONAL_LOCKS"], "0")
+        self.assertEqual(invocation["env"]["GIT_TERMINAL_PROMPT"], "0")
 
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
