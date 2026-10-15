@@ -35,6 +35,21 @@ findings. The workflow targets same-repository owner PRs only and has
 - Never place image scalar values, bearer tokens or shell bodies in output.
   Reports contain bounded paths, line numbers and categories only.
 
+## Legacy risk relocation and opaque Git trees
+
+Old unpinned references remain tolerated **only when the complete committed
+workflow/Action metadata file is byte-identical**. Moving a legacy tagged image
+to another job, changing its runner, permissions, triggers, or even editing
+unrelated text in the same risky file requires review and fails the ratchet.
+This deliberately prefers false positives over inadvertently treating a
+production privilege escalation as unchanged legacy risk.
+
+Local Actions may be invoked from arbitrary repository directories, and a Git
+symlink or gitlink can hide their actual executable metadata. The bounded
+Git-tree scan therefore fails closed for **any** symlink or submodule entry
+instead of assuming that arbitrary aliases are harmless. No production
+service, Git branch protection or local checkout is mutated by this scan.
+
 ## Hosted CI operator summary
 
 Each successful source check writes a Dutch GitHub Actions step summary with
