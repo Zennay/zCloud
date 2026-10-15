@@ -147,6 +147,9 @@ def permission_debt(
     findings: Counter[str] = Counter()
     in_jobs = False
     job = None
+    jobs_seen: set[str] = set()
+    jobs_with_explicit_scopes: set[str] = set()
+    safe_root_scope = False
     for i, original in enumerate(lines):
         line = _uncomment(original)
         if not line.strip():
@@ -162,6 +165,8 @@ def permission_debt(
         elif in_jobs and width == 2:
             head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\s*", line)
             job = head.group(1) if head else None
+            if job is not None:
+                jobs_seen.add(job)
         # Explicit YAML mapping keys, merge aliases and decoded mapping
         # keys are not proven safe by lexical checks. Conservatively deny new
         # instances, while preserving the exact source baseline as old debt.
@@ -198,6 +203,10 @@ def permission_debt(
             risk = "opaque_flow_permissions"
         else:
             risk = "opaque_permissions"
+        if scope == "top" and risk is None:
+            safe_root_scope = True
+        if scope.startswith("job:"):
+            jobs_with_explicit_scopes.add(scope[4:])
         if risk is None and protected is not None:
             protected[f"{path}|{scope}"] += 1
         if risk is not None:
@@ -207,6 +216,16 @@ def permission_debt(
             findings[f"{path}|{scope}|{risk}"] += 1
             if sum(findings.values()) > MAX_FINDINGS:
                 raise IncompleteSource("too_many_findings")
+    # A new workflow/job without an explicit scope may inherit a broader
+    # repository or root workflow default. Track this per job and path so
+    # merely appending a new implicit job cannot reuse old debt.
+    if not safe_root_scope:
+        for existing_job in sorted(jobs_seen - jobs_with_explicit_scopes):
+            findings[f"{path}|job:{existing_job}|implicit_default"] += 1
+        if not jobs_seen:
+            findings[f"{path}|top|implicit_default"] += 1
+    if sum(findings.values()) > MAX_FINDINGS:
+        raise IncompleteSource("too_many_findings")
     return findings
 
 
