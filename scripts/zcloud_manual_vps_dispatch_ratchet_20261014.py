@@ -292,7 +292,10 @@ def workflow_authority_header(source: str) -> tuple[str, ...]:
     return tuple(
         line.rstrip() for line in header.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
-        and not re.match(r"^(?:name|run-name):[ \t]", line)
+        and not (
+            re.match(r"^(?:name|run-name):[ \t]", line)
+            and not re.search(r"(?<![A-Za-z0-9_])[&*][A-Za-z_][A-Za-z0-9_-]*", line)
+        )
     )
 
 
