@@ -99,6 +99,9 @@ def insecure_occurrences(text):
     # Replacing an old curl -k destination with a new one is new debt.
     joined = re.sub(r"\\\r?\n[ \t]*", "", text)
     occurrences = Counter()
+    # Git honors GIT_CONFIG_KEY_N + GIT_CONFIG_VALUE_N pairs as an alternative
+    # to command-line -c/config. Check the same index, not an unrelated value.
+    indexed_git_config = {}
     for line in joined.splitlines():
         statement = line.strip()
         if not statement or statement.startswith("#"):
@@ -107,6 +110,23 @@ def insecure_occurrences(text):
             number = len(pattern.findall(statement))
             if number:
                 occurrences[(name, statement)] += number
+        assignment = re.search(
+            r"\bGIT_CONFIG_(KEY|VALUE)_([0-9]{1,3})\s*[:=]\s*['\"]?([^'\"\s#]+)",
+            statement, re.I)
+        if assignment:
+            kind, index, value = assignment.groups()
+            key = (index, kind.upper())
+            if key in indexed_git_config and indexed_git_config[key] != value:
+                raise Unverifiable("ambiguous_git_config_env")
+            indexed_git_config[key] = value
+    for (index, kind), key in indexed_git_config.items():
+        if kind != "KEY":
+            continue
+        value = indexed_git_config.get((index, "VALUE"), "")
+        if (re.fullmatch(r"http(?:\.[^\s=]+)?\.sslverify", key, re.I)
+                and value.lower() in {"false", "0"}):
+            occurrences[("git_ssl_verify_environment",
+                         f"GIT_CONFIG_KEY_{index}={key};GIT_CONFIG_VALUE_{index}={value}")] += 1
     return occurrences
 
 
