@@ -146,6 +146,50 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         )
         self.verify(body, "missing_explicit_false")
 
+    def test_checkout_step_introduced_by_id_passes(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - id: cloned\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body)
+
+    def test_checkout_step_introduced_by_if_passes(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - if: success()\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body)
+
+    def test_checkout_id_step_omitting_false_is_denied(self):
+        body = workflow(None).replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - id: cloned\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "missing_explicit_false")
+
+    def test_checkout_if_step_with_true_is_denied(self):
+        body = workflow("true").replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - if: success()\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "persisted_credentials")
+
+    def test_checkout_under_nested_env_is_not_a_step(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - env: foo\n        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "ambiguous_checkout")
+
+    def test_duplicate_checkout_uses_under_id_denied(self):
+        body = workflow().replace(
+            f"      - uses: actions/checkout@{PIN}\n",
+            f"      - id: cloned\n"
+            f"        uses: example/something@{PIN}\n"
+            f"        uses: actions/checkout@{PIN}\n",
+        )
+        self.verify(body, "ambiguous_step_uses")
+
     def test_no_checkout_safe(self):
         self.verify("name: simple\njobs:\n  smoke:\n    runs-on: ubuntu-latest\n")
 
