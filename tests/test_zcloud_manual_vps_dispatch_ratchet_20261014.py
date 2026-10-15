@@ -125,6 +125,14 @@ class ManualDispatchPolicy(unittest.TestCase):
     def test_no_dispatch_event_is_not_in_scope(self):
         self.assertTrue(guard.evaluate({}, {WF: workflow(event="push:")})["ok"])
 
+    def test_on_mapping_with_inline_comment_cannot_hide_manual_vps(self):
+        for inline in ("on: # a note about the event", "on:\t# configured events"):
+            with self.subTest(inline=inline):
+                body = workflow().replace(b"on:", inline.encode(), 1)
+                self.assertDenied(body)
+                guarded = workflow(if_statement=SAFE_IF).replace(b"on:", inline.encode(), 1)
+                self.assertTrue(guard.evaluate({}, {WF: guarded})["ok"])
+
     def test_dispatch_after_push_is_not_ignored(self):
         body = workflow().decode().replace("  workflow_dispatch:", "  push:\n  workflow_dispatch:")
         self.assertDenied(body.encode())
