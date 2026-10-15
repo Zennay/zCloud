@@ -53,8 +53,32 @@ jobs:
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           base_sha="$(git rev-parse refs/remotes/origin/main)"
           test "$base_sha" = "$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          report="$RUNNER_TEMP/zcloud-remote-shell-source-result.json"
+          set +e
           python3 scripts/zcloud_remote_shell_ratchet_20261015_w1.py \
-            --repo . --base "$base_sha" --head "$HEAD_SHA"
+            --repo . --base "$base_sha" --head "$HEAD_SHA" > "$report"
+          scan_exit=$?
+          set -e
+          SCAN_EXIT="$scan_exit" SOURCE_REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          from scripts.zcloud_remote_shell_ratchet_20261015_w1 import SourceError, operator_summary
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          try:
+              report = json.loads(Path(os.environ["SOURCE_REPORT"]).read_text(encoding="utf-8"))
+              scan_exit = int(os.environ["SCAN_EXIT"])
+              summary = operator_summary(report, scan_exit)
+          except (ValueError, OSError, SourceError, TypeError):
+              summary = ("### zCloud broncontrole — Onbetrouwbaar bewijs\n\n"
+                         "Geen productieautorisatie. Bronbewijs onvolledig of tegenstrijdig.\n")
+              summary_path.open("a", encoding="utf-8").write(summary)
+              sys.exit(2)
+          summary_path.open("a", encoding="utf-8").write(summary)
+          PY
+          test "$scan_exit" -eq 0
           test "$base_sha" = "$(git ls-remote origin refs/heads/main | awk '{print $1}')"
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           test "$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')" = "$HEAD_SHA"
