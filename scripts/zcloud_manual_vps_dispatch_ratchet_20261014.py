@@ -144,8 +144,25 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         raise RefError("ambiguous_workflow_structure")
     if not manual_event(source):
         return set()
+    # Manual YAML with unsupported/quoted/inline jobs must not be treated as
+    # "no risky jobs". An absent valid jobs mapping is an unknown authority
+    # boundary, not evidence that no self-hosted work can run.
+    if not jobs:
+        raise RefError("missing_or_ambiguous_jobs")
     findings: set[tuple[str, str]] = set()
     for job, block in jobs.items():
+        # Alternate YAML spellings of job authority keys are real mappings,
+        # but our strict reader would otherwise skip them (e.g. runs-on : or
+        # "runs-on":). Detect before checking whether a runner is hosted.
+        prelude = re.split(r"(?m)^    steps[ \\t]*:", block, maxsplit=1)[0]
+        for field in re.finditer(
+            r"""(?m)^(?P<indent>[ \\t]+)(?P<key>['"]?(?:runs-on|uses|if)['"]?)[ \\t]*:""",
+            prelude,
+        ):
+            literal = field.group(0)
+            expected = "    " + field.group("key").strip("'\\\"") + ":"
+            if literal != expected:
+                raise RefError("unsupported_job_authority_syntax")
         # YAML permits repeated mapping keys; some parsers use the first value,
         # others the last. Duplicate job-local runner/if/uses keys must never
         # launder a risky manual VPS step through a benign earlier field.
