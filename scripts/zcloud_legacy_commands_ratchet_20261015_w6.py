@@ -137,7 +137,7 @@ def candidate(path: str) -> bool:
         raise Denied("Invalid workflow pathname")
     if len(p.parts) == 3 and p.parts[:2] == (".github", "workflows"):
         return p.suffix in (".yml", ".yaml")
-    if len(p.parts) >= 4 and p.parts[:2] == (".github", "actions"):
+    if len(p.parts) >= 3 and p.parts[:2] == (".github", "actions"):
         return p.name in ("action.yml", "action.yaml")
     return False
 
