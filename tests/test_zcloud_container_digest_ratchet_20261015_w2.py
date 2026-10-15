@@ -129,7 +129,6 @@ jobs:
             run_git(root, "commit", "-qm", "tag drift")
             head = run_git(root, "rev-parse", "HEAD")
             before = path.read_bytes()
-            self.assertEqual([], guard.inventory(base) if False else [])
             self.assertEqual("inline_container", guard._scan(path.as_posix(), path.read_text())[0].kind)
             check = subprocess.run(
                 [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
