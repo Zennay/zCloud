@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 from scripts.zcloud_token_permission_ratchet_20261015 import (
-    IncompleteSource, check, main, permission_debt,
+    IncompleteSource, check, format_ci_summary, main, permission_debt,
 )
 
 
@@ -388,6 +388,49 @@ class PermissionRatchetTests(unittest.TestCase):
             "      permissions: write-all\n"
         )
         self.assertFalse(result["ok"])
+
+
+    def test_human_summary_good_has_bounded_counts_and_no_authority(self):
+        payload = dict(policy="zcloud-token-permission-no-new-debt-v1",
+                       baseline_risks=119, candidate_risks=119, new_risks=0,
+                       removed_safe_scopes=0, ok=True,
+                       release_authorized=False, deployment_authorized=False,
+                       mutation_performed=False)
+        summary = format_ci_summary(payload)
+        self.assertIn("119", summary)
+        self.assertIn("Nieuwe risico", summary)
+        self.assertIn("Geen productievrijgave", summary)
+        self.assertNotIn("release_authorized=true", summary)
+
+    def test_human_summary_red_report_is_fail_closed_and_redacted(self):
+        payload = dict(policy="zcloud-token-permission-no-new-debt-v1",
+                       ok=False, reason="SECRET=unexpected",
+                       release_authorized=False, deployment_authorized=False,
+                       mutation_performed=False)
+        summary = format_ci_summary(payload)
+        self.assertIn("afgewezen", summary)
+        self.assertNotIn("SECRET", summary)
+        self.assertIn("Geen productievrijgave", summary)
+
+    def test_human_summary_rejects_forged_mutation_permission(self):
+        payload = dict(policy="zcloud-token-permission-no-new-debt-v1",
+                       ok=False, release_authorized=True,
+                       deployment_authorized=False, mutation_performed=False)
+        with self.assertRaises(IncompleteSource):
+            format_ci_summary(payload)
+
+    def test_human_summary_rejects_noninteger_or_contradictory_counts(self):
+        source = dict(policy="zcloud-token-permission-no-new-debt-v1",
+                      baseline_risks=119, candidate_risks=119,
+                      new_risks=0, removed_safe_scopes=0, ok=True,
+                      release_authorized=False, deployment_authorized=False,
+                      mutation_performed=False)
+        for update in ({"new_risks": True}, {"new_risks": -1},
+                       {"candidate_risks": 1_000_000_000},
+                       {"new_risks": 1}, {"removed_safe_scopes": 1}):
+            payload = dict(source, **update)
+            with self.subTest(update=update), self.assertRaises(IncompleteSource):
+                format_ci_summary(payload)
 
 
 if __name__ == "__main__":
