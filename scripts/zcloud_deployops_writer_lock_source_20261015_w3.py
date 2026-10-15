@@ -179,6 +179,21 @@ def _parent_cancel_status(lines: list[str]) -> str:
             fields[key] = value
     if fields.get("cancel-in-progress") != "false":
         return "unsafe_parent_cancel_policy"
+    # Workflow-level and job-level concurrency groups share GitHub's
+    # repository-wide group namespace. A parent competing for the same
+    # production lock is not independent non-cancelling write evidence.
+    group = fields.get("group")
+    if not group:
+        return "ambiguous_parent_group"
+    if group == PRODUCTION_GROUP:
+        return "parent_shares_production_group"
+    if "${{" in group:
+        # A fixed prefix that differs from the production group is safe
+        # against exact name equality; an expression-only parent or one
+        # that could complete the production group is not.
+        prefix = group.split("${{", 1)[0]
+        if not prefix or PRODUCTION_GROUP.startswith(prefix):
+            return "ambiguous_parent_group"
     return "safe"
 
 
