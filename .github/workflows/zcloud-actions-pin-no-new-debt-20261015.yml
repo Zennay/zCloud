@@ -265,14 +265,18 @@ jobs:
                   raise ValueError("nonfinite")
               data = json.loads(raw.decode("utf-8"), object_pairs_hook=unique,
                                 parse_constant=deny_constant)
-              n = data.get("new_unpinned")
+              if type(data) is not dict:
+                  raise ValueError("invalid_payload")
+              totals = [data.get(key) for key in
+                        ("base_unpinned", "head_unpinned", "new_unpinned")]
               if (data.get("policy") == "zcloud-actions-pin-no-new-debt-v1" and
-                  type(n) is int and 0 <= n <= 200000 and
+                  all(type(n) is int and 0 <= n <= 200000 for n in totals) and
                   all(data.get(k) is False for k in
                       ("release_authorized", "deployment_authorized", "mutation_performed")) and
-                  data.get("ok") is (n == 0)):
-                  count = n
-          except (OSError, UnicodeError, TypeError, ValueError):
+                  type(data.get("ok")) is bool and
+                  data["ok"] is (totals[2] == 0)):
+                  count = totals[2]
+          except (OSError, UnicodeError, TypeError, ValueError, RecursionError):
               pass
           lines = [
               "### GitHub Actions - directe main-wijziging",
