@@ -25,6 +25,8 @@ FLOW_IMAGE = re.compile(r"""(?<![\w])(?:image|["']image["'])\s*:""")
 FLOW_DOCKER = re.compile(r"""^\s*-\s*\{.*(?:uses|["']uses["'])\s*:\s*["']?docker://""")
 EXPLICIT_IMAGE_KEY = re.compile(r"""^\s*\?\s*(?:image|container|uses|["']image["']|["']container["']|["']uses["'])\s*(?:#.*)?$""")
 ESCAPED_DOUBLE_QUOTED_KEY = re.compile(r"""^\s*(?:-\s*)?"(?:\\.|[^"\\])*"\s*:""")
+ENCODED_FLOW_DOCKER = re.compile(r"""^\s*-\s*\{[^}]*\\(?:x|u|U)[0-9a-fA-F]+[^}]*docker://""")
+BLOCK_USES = re.compile(r"""^\s*(?:-\s*)?(?:uses|["']uses["'])\s*:\s*[|>][-+0-9]*\s*(?:#.*)?$""")
 MAX_BLOB = 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
 MAX_FILES = 512
@@ -149,6 +151,10 @@ def _scan(path: str, source: str) -> list[Finding]:
             value, kind = line, "ambiguous_explicit_key"
         elif FLOW_DOCKER.match(line):
             value, kind = line, "ambiguous_flow_docker"
+        elif ENCODED_FLOW_DOCKER.match(line):
+            value, kind = line, "ambiguous_encoded_flow_docker"
+        elif BLOCK_USES.match(line):
+            value, kind = line, "ambiguous_uses_block"
         match = IMAGE_LINE.match(line) if value is None else None
         if match:
             value, kind = match.group(1), "image"
