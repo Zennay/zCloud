@@ -26,7 +26,6 @@ RUN_ESCAPED_KEY = re.compile(
     r'^( *)(?:-\s*)?"(?:r|\\u0072|\\x72|\\U00000072)(?:u|\\u0075|\\x75|\\U00000075)(?:n|\\u006e|\\x6e|\\U0000006e)"\s*:\s*(.*)$',
     re.I,
 )
-EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 YAML_QUOTED_ESCAPE = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
 UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.workflow\b|github\.token\b|github\.action_ref\b|inputs\b|env\b|vars\b|secrets\b)", re.I)
 DERIVED_OUTPUT_UNTRUSTED = re.compile(r"\b(?:steps\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|needs\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|matrix\b)", re.I)
@@ -200,6 +199,40 @@ def run_shell_scalars(source: str) -> list[tuple[str, str]]:
     return scalars
 
 
+def expressions_outside_quoted_closers(scalar: str) -> tuple[list[str], bool]:
+    """Extract GitHub expressions without treating '}}' in strings as a closer.
+
+    Actions single-quoted literals escape apostrophes as two single quotes.
+    This is deliberately a bounded lexical check, not a full evaluator.
+    A nested opener or unmatched expression is conservatively flagged.
+    """
+    expressions: list[str] = []
+    malformed = False
+    offset = 0
+    while (start := scalar.find("${{", offset)) >= 0:
+        i = start + 3
+        inside_literal = False
+        while i < len(scalar):
+            if scalar[i] == "'":
+                if inside_literal and scalar[i:i + 2] == "''":
+                    i += 2
+                    continue
+                inside_literal = not inside_literal
+                i += 1
+                continue
+            if not inside_literal and scalar.startswith("${{", i):
+                malformed = True
+            if not inside_literal and scalar.startswith("}}", i):
+                expressions.append(scalar[start + 3:i])
+                offset = i + 2
+                break
+            i += 1
+        else:
+            malformed = True
+            break
+    return expressions, malformed
+
+
 def fingerprint_risks(source: str) -> Counter[str]:
     out: Counter[str] = Counter()
     # A run alias can inherit code from an anchor elsewhere in its workflow.
@@ -244,10 +277,10 @@ def fingerprint_risks(source: str) -> Counter[str]:
         # all YAML syntax. Single-quoted and block values are unaffected.
         if value.startswith('"') and YAML_QUOTED_ESCAPE.search(value):
             out["ambiguous_yaml_escaped_quoted_run|run_sha256:" + scalar_digest] += 1
-        expressions = EXPR.findall(scalar)
-        # A well-formed first expression must not conceal a *second*
-        # unfinished interpolation in the same shell scalar.
-        if scalar.count("${{") != len(expressions):
+        expressions, malformed = expressions_outside_quoted_closers(scalar)
+        # Quote characters within expression string literals cannot close the
+        # expression. A missing real terminator or nested opener is ambiguous.
+        if malformed:
             out["incomplete_expression|run_sha256:" + scalar_digest] += 1
         for expr in expressions:
             normalized = " ".join(expr.split()).lower()
