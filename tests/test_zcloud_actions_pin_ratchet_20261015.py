@@ -309,6 +309,54 @@ class ActionPinRatchetTests(unittest.TestCase):
         self.commit(self.path.read_text() + "      - uses: ./tools/safe\n")
         self.assertTrue(self.evaluate()["ok"])
 
+    def test_oversized_git_blob_refused_before_buffering(self):
+        from unittest.mock import patch
+        import scripts.zcloud_actions_pin_ratchet_20261015 as scanner
+        self.path.write_bytes(b"name: oversized\n" + b"x" * (scanner.MAX_FILE + 1))
+        self.command("add", ".github")
+        self.command("commit", "-qm", "large workflow")
+        original = scanner.git
+        blob_reads = []
+
+        def source_only(root, *args):
+            if args[:2] == ("cat-file", "blob"):
+                blob_reads.append(args)
+                raise AssertionError("oversize blob was read before size check")
+            return original(root, *args)
+
+        with patch.object(scanner, "git", side_effect=source_only):
+            with self.assertRaisesRegex(Refusal, "workflow_bytes_limit"):
+                snapshot(self.root, self.command("rev-parse", "HEAD"))
+        self.assertEqual(blob_reads, [])
+
+    def test_immutable_git_object_length_mismatch_refused(self):
+        from unittest.mock import patch
+        import scripts.zcloud_actions_pin_ratchet_20261015 as scanner
+        original = scanner.git
+
+        def wrong_length(root, *args):
+            if args[:2] == ("cat-file", "-s"):
+                return b"1\n"
+            return original(root, *args)
+
+        with patch.object(scanner, "git", side_effect=wrong_length):
+            with self.assertRaisesRegex(Refusal, "git_blob_size_mismatch"):
+                snapshot(self.root, self.base)
+
+    def test_non_numeric_git_object_size_refused(self):
+        from unittest.mock import patch
+        import scripts.zcloud_actions_pin_ratchet_20261015 as scanner
+        original = scanner.git
+
+        def corrupted_length(root, *args):
+            if args[:2] == ("cat-file", "-s"):
+                return b"invalid\n"
+            return original(root, *args)
+
+        with patch.object(scanner, "git", side_effect=corrupted_length):
+            with self.assertRaisesRegex(Refusal, "invalid_blob_size"):
+                snapshot(self.root, self.base)
+
     def test_invalid_revision_refused(self):
         with self.assertRaisesRegex(Refusal, "invalid_revision"):
             workflow_tree(self.root, "main; rm -rf /")
