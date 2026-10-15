@@ -1199,6 +1199,13 @@ class RealGitTests(unittest.TestCase):
                                       '  "other":\n    permissions: write-all'))
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_quoted_jobs_root_job_authority_change_denied(self):
+        old = ("'jobs':\n  'deploy':\n    permissions: read-all\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("permissions: read-all", "permissions: write-all"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
