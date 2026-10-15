@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only no-new-debt check for disabled TLS verification in changed workflows.
+"""Read-only no-new-debt check for disabled TLS verification in changed workflows and local Actions.
 
 This is an offline source ratchet, NOT a deployment authorization, runtime
 inspection, GitHub branch-protection rule, or proof that legacy debt is safe.
@@ -13,7 +13,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
-WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
+WORKFLOW = re.compile(r"(?:\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml|(?:[A-Za-z0-9_.-]+/)*action\.ya?ml)\Z")
 DANGERS = {
     "curl_insecure": re.compile(r"\bcurl\b[^\n]*[ \t]+(?:--insecure\b|-[A-Za-z]*k[A-Za-z]*\b)", re.I),
     "wget_no_certificate": re.compile(r"\bwget\s+[^\n]*--no-check-certificate\b", re.I),
@@ -49,7 +49,8 @@ def workflow_changes(root, base, head):
         raise Unverifiable("invalid_sha")
     data = git(root, "diff", "--name-status", "--no-renames",
                "--diff-filter=AMT", "-z", base, head, "--",
-               ".github/workflows/")
+               ".github/workflows/", ":(glob)**/action.yml",
+               ":(glob)**/action.yaml")
     fields = data.split(b"\0")
     if fields[-1] != b"" or len(fields[:-1]) % 2:
         raise Unverifiable("invalid_diff_inventory")
