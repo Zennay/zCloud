@@ -374,7 +374,7 @@ def markdown_summary(report: dict) -> str:
 
     def safe_cell(value: object) -> str:
         # Workflow paths are committed source, not trusted Markdown or HTML.
-        value = re.sub(r"[\\x00-\\x1f\\x7f]", " ", str(value))[:240]
+        value = re.sub(r"[\x00-\x1f\x7f]", " ", str(value))[:240]
         return html.escape(value, quote=True).replace("|", "&#124;")
 
     lines = [
