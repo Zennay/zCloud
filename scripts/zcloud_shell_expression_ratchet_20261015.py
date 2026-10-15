@@ -21,7 +21,9 @@ MAX_EXPRESSIONS = 8192
 SHA = re.compile(r"^[0-9a-f]{40}$")
 RUN = re.compile(r"^( *)(?:-\s*)?(?:run|['\"]run['\"])\s*:\s*(.*)$")
 RUN_ESCAPED_KEY = re.compile(
-    r'^( *)(?:-\s*)?"(?:r|\\u0072|\\x72)(?:u|\\u0075|\\x75)(?:n|\\u006e|\\x6e)"\s*:\s*(.*)
+    r'^( *)(?:-\s*)?"(?:r|\\u0072|\\x72)(?:u|\\u0075|\\x75)(?:n|\\u006e|\\x6e)"\s*:\s*(.*)$',
+    re.I,
+)
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|inputs\b)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
