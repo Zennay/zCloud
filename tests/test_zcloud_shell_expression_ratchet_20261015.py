@@ -367,6 +367,25 @@ class RealGitTests(unittest.TestCase):
         self.assertEqual([], report["baseline_risky_workflows"])
         self.assertEqual([], report["candidate_risky_workflows"])
 
+    def test_explicit_escaped_yaml_run_key_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        run_key = chr(92) + "u0072un"
+        head = self.commit('steps:\n  - ? "' + run_key + '"\n    : echo ${{ github.ref }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_explicit_escaped_yaml_run_key_legacy_unchanged_allowed(self):
+        run_key = chr(92) + "u0072un"
+        source = 'steps:\n  - ? "' + run_key + '"\n    : echo safe\n'
+        base = self.commit(source)
+        head = self.commit(source)
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_explicit_escaped_yaml_run_key_edit_denied(self):
+        run_key = chr(92) + "x72un"
+        base = self.commit('steps:\n  - ? "' + run_key + '"\n    : echo safe\n')
+        head = self.commit('steps:\n  - ? "' + run_key + '"\n    : echo ${{ inputs.payload }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
