@@ -146,6 +146,22 @@ an encoding boundary, **not** automatic authorization for deployments or
 arbitrary execution. Existing legacy expressions are reported without being
 treated as newly introduced debt unless their shell/body context changes.
 
+## Nested step/job JSON shell interpolation
+
+A direct `toJSON(steps.download)` or `toJSON(needs.build)` may serialize
+the object's `outputs` without spelling `.outputs` in the expression.
+An untrusted downstream output can then become literal shell script text.
+The no-new-debt checker now matches whole named children of `steps`
+and `needs` when directly JSON-serialized into `run:`. Quoted bracket
+fields and wildcard child selectors are covered. This also closes a gap
+where `toJSON(needs['build-test'])` evaded earlier exact-root checks.
+
+Scalar status metadata such as `toJSON(needs.build.result)` or
+`toJSON(steps.lint.outcome)` remains outside the new rule. Matching is a
+conservative syntax contract, not a complete GitHub Actions expression
+interpreter. For potentially untrusted outputs, bind the expression to
+a step `env:` property and consume it as a quoted, validated shell value.
+
 ## Local composite Action shell coverage
 
 The guard now also scans committed `action.yml` and `action.yaml` files **at
