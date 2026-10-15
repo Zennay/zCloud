@@ -189,5 +189,25 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertFalse(check(self.root, old, self.commit("expression-new"))["ok"])
 
 
+    def test_removing_explicit_read_only_repo_policy_denied(self):
+        value = self.check_file("on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(value["ok"])
+
+    def test_removing_safe_job_permissions_denied(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\njobs:\n  test:\n    permissions:\n      contents: read\n    runs-on: ubuntu-latest\n")
+        old = self.commit("safe-job")
+        self.put(".github/workflows/original.yml",
+                 "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, old, self.commit("removed-scope"))["ok"])
+
+    def test_allow_safer_read_to_none_with_same_scope(self):
+        value = self.check_file(
+            "on: push\npermissions:\n  contents: none\n"
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )
+        self.assertTrue(value["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
