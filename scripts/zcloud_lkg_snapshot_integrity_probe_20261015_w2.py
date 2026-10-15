@@ -432,14 +432,17 @@ def inspect(
     }
 
 
-def _snapshot_entries(state: Path) -> list[tuple[str, bool]]:
-    """Bounded nofollow inventory suitable for before/after set comparisons."""
+def _snapshot_entries(state: Path) -> list[tuple[str, bool, int, int]]:
+    """Bounded identity inventory; detect same-name directory replacements."""
     directory_fd = _open_directory_nofollow(state / "snapshots")
     try:
         with os.scandir(directory_fd) as iterator:
             snapshots = []
             for item in iterator:
-                snapshots.append((item.name, item.is_dir(follow_symlinks=False)))
+                info = item.stat(follow_symlinks=False)
+                snapshots.append((
+                    item.name, stat.S_ISDIR(info.st_mode), info.st_dev, info.st_ino,
+                ))
                 if len(snapshots) > MAX_SNAPSHOTS:
                     raise Denied("too_many_snapshots")
     finally:
@@ -463,7 +466,7 @@ def audit_all(state: Path) -> dict:
     results: list[dict[str, object]] = []
     verified_config_hashes: dict[str, dict[str, str]] = {}
     batch_bytes = [0]
-    for name, is_dir in sorted(snapshots):
+    for name, is_dir, _device, _inode in snapshots:
         if not _snapshot_id_valid(name) or not is_dir:
             entry = {"snapshot_id": None, "ok": False, "reason": "invalid_snapshot_entry"}
         else:
@@ -497,7 +500,7 @@ def audit_all(state: Path) -> dict:
         raise Denied("pointer_changed_during_scan")
     if _snapshot_entries(state) != snapshots:
         raise Denied("snapshot_inventory_changed")
-    ids = {name for name, _ in snapshots}
+    ids = {name for name, *_identity in snapshots}
     if current not in ids:
         raise Denied("current_snapshot_missing")
     active_config = verified_config_hashes.get(current)
