@@ -167,6 +167,10 @@ def permission_debt(
             job = head.group(1) if head else None
             if job is not None:
                 jobs_seen.add(job)
+            else:
+                # Inline flow jobs, aliases and nonliteral job keys can hide
+                # effective "permissions" that override a safe root policy.
+                findings[f"{path}|opaque_job_declaration|{_fingerprint(line)}"] += 1
         # Explicit YAML mapping keys, merge aliases and decoded mapping
         # keys are not proven safe by lexical checks. Conservatively deny new
         # instances, while preserving the exact source baseline as old debt.
