@@ -16,6 +16,7 @@ import shlex
 import subprocess
 import sys
 import time
+import unicodedata
 
 HEX = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOW = re.compile(r"^\.github/workflows/[^/\x00]+\.(?:yml|yaml)$")
@@ -240,7 +241,11 @@ def audit(base: str, head: str) -> dict[str, object]:
             content = blob.decode("utf-8", "strict")
         except UnicodeDecodeError as exc:
             raise AdmissionError("invalid_workflow_encoding") from exc
-        if any(ord(ch) in (0x2028, 0x2029) for ch in content):
+        # Invisible format controls (RTL overrides, ZWJ, bidi isolates, etc.)
+        # can make a reviewed workflow appear different from the Git blob.
+        # Preserve ordinary non-ASCII letters: only invisible controls deny.
+        if any(ord(ch) in (0x2028, 0x2029) or
+               unicodedata.category(ch) == "Cf" for ch in content):
             raise AdmissionError("opaque_workflow_encoding")
         reasons = suspicious_lines(content)
         if reasons:
