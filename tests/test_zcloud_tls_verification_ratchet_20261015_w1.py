@@ -110,6 +110,20 @@ class RealGitHistory(unittest.TestCase):
         self.commit()
         self.assertEqual(self.scan()[1], [])
 
+    def test_replacing_legacy_insecure_target_is_new_debt(self):
+        self.wf.write_text("run: curl -k https://legacy.example.org\n", encoding="utf-8")
+        self.base = self.commit()
+        self.wf.write_text("run: curl -k https://different.example.org\n", encoding="utf-8")
+        self.commit()
+        self.assertTrue(any("curl_insecure:new=1" in problem for problem in self.scan()[1]))
+
+    def test_new_duplicate_insecure_line_is_new_debt(self):
+        self.wf.write_text("run: curl -k https://legacy.example.org\n", encoding="utf-8")
+        self.base = self.commit()
+        self.wf.write_text("run: curl -k https://legacy.example.org\nrun: curl -k https://legacy.example.org\n", encoding="utf-8")
+        self.commit()
+        self.assertTrue(any("curl_insecure:new=1" in problem for problem in self.scan()[1]))
+
     def test_existing_debt_growth_denied(self):
         self.wf.write_text("run: curl -k https://legacy.example.org\n", encoding="utf-8")
         self.base = self.commit()
