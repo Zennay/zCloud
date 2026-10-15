@@ -230,10 +230,22 @@ class ManualDispatchPolicy(unittest.TestCase):
         self.assertTrue(guard.evaluate({}, {WF: trusted})["ok"])
 
     def test_flow_push_only_with_trailing_comment_does_not_incur_debt(self):
-        source = workflow().replace(
-            b"on:\n  workflow_dispatch:", b"on: [push] # no manual jobs",
-        )
-        self.assertTrue(guard.evaluate({}, {WF: source})["ok"])
+        for declaration in ("on: [push] # workflow_dispatch is not configured",
+                            "on: push # workflow_dispatch was removed"):
+            with self.subTest(declaration=declaration):
+                source = workflow().replace(
+                    b"on:\n  workflow_dispatch:", declaration.encode(),
+                )
+                self.assertTrue(guard.evaluate({}, {WF: source})["ok"])
+
+    def test_inline_comment_does_not_hide_actual_dispatch_value(self):
+        for declaration in ("on: workflow_dispatch # allowed manually",
+                            "on: [push, workflow_dispatch] # both events"):
+            with self.subTest(declaration=declaration):
+                source = workflow().replace(
+                    b"on:\n  workflow_dispatch:", declaration.encode(),
+                )
+                self.assertDenied(source)
 
     def test_flow_dispatch_event_detected(self):
         body = workflow().decode().replace("on:\n  workflow_dispatch:", "on: [workflow_dispatch]")
