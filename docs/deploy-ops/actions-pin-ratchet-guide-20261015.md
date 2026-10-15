@@ -1,13 +1,13 @@
 # GitHub Actions pin-drift gate — 15 October 2026
 
-Scope: #633, source-only independent deploy-ops slice. The new policy only compares immutable Git trees of GitHub Actions workflows. It does not edit existing workflows, invoke VPS jobs, cancel other runs, merge PRs or authorize a release.
+Scope: #633, source-only independent deploy-ops slice. The new policy compares immutable Git trees of GitHub Actions workflow YAML and composite Action metadata (`action.yml` or `action.yaml`) anywhere in the repository, including the root directory. It does not edit existing workflows, invoke VPS jobs, cancel other runs, merge PRs or authorize a release.
 
 ## Problem and behavior
 
 A workflow may use a mutable reference like actions/checkout@v4. An upstream tag can be changed later. This ratchet allows existing debt in the immutable base revision but refuses newly introduced references whose exact token is not pinned to a 40-character Git SHA. A floating reference changed to another floating tag counts as new debt. Local repository actions (./...) and Docker SHA-256 digests are exempt; Docker tags and unknown/dynamic expressions remain debt.
 
 * Baseline: github.event.pull_request.base.sha. Candidate: github.event.pull_request.head.sha. Both are exact commits, not moving branches.
-* Sources are read from Git objects, not a mutable worktree. Symlink/nonregular workflows, invalid bytes, excessive files and ambiguous evidence are refused.
+* Sources are read from complete Git tree objects, not a mutable worktree. Workflow YAML and composite Action metadata are checked; the latter includes nested custom directories, so a local Action moved outside `.github/actions/` does not evade the pinning policy. The hosted check triggers on tracked `action.yml`/`action.yaml` changes as well as workflow changes. Symlink/nonregular metadata, symlinked `.github/actions` directories, invalid bytes, excessive files and ambiguous evidence are refused.
 * Debt identity is a multiset of workflow path, classification and SHA-256 of the raw reference. Duplicate actions are counted, so an additional unpinned invocation is not concealed by a matching old one.
 * JSON output has only bounded path, line and hash prefix. It never includes raw action references. Exit 0: no new debt; 1: new debt; 2: incomplete/unsafe evidence. All outcomes permanently deny deployment and release authority.
 * Hosted-only PR workflow, contents:read, pinned credential-free checkout, no privileged dispatch, SSH or production write.
