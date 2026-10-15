@@ -54,6 +54,7 @@ def git(*args: str, max_output: int = MAX_OUTPUT) -> bytes:
     chunks: list[bytes] = []
     total = 0
     deadline = time.monotonic() + TIMEOUT
+    completed_ok = False
     shared = _SCAN_DEADLINE.get()
     if shared is not None:
         deadline = min(deadline, shared)
@@ -79,11 +80,15 @@ def git(*args: str, max_output: int = MAX_OUTPUT) -> bytes:
             raise Denied("Git process exceeded deadline")
         if proc.wait(timeout=remaining) != 0:
             raise Denied("Git source proof failed")
+        completed_ok = True
         return b"".join(chunks)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Denied("Git source proof unavailable") from exc
     finally:
-        if proc.poll() is None:
+        # A Git wrapper may fork, exit successfully, and leave descendants
+        # holding our stdout pipe. Kill the entire session on *any* failure,
+        # even after the parent has already exited.
+        if not completed_ok:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
