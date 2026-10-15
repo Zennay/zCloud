@@ -49,6 +49,10 @@ def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
                 "GIT_TERMINAL_PROMPT": "0",
                 "GIT_OPTIONAL_LOCKS": "0",
                 "GIT_PAGER": "cat",
+                # A local refs/replace entry can otherwise make cat-file and
+                # ls-tree return bytes from another object for the SAME SHA.
+                # Immutable SHA evidence must inspect the original object.
+                "GIT_NO_REPLACE_OBJECTS": "1",
             },
         )
     except OSError as exc:
