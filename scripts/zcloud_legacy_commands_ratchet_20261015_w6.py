@@ -14,7 +14,7 @@ import unicodedata
 from pathlib import PurePosixPath
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
-COMMANDS = re.compile(r"::\\s*(?:set-env|add-path|set-output|save-state)\\b", re.I)
+COMMANDS = re.compile(r"::\s*(?:set-env|add-path|set-output|save-state)\b", re.I)
 ENV = re.compile(r"actions_allow_unsecure_commands", re.I)
 MAX_CHANGED = 250
 MAX_BLOB = 512 * 1024
@@ -55,11 +55,11 @@ def entry(commit: str, path: str) -> tuple[str, str] | None:
     raw = git("ls-tree", "-z", commit, "--", path)
     if not raw:
         return None
-    records = [r for r in raw.split(b"\\0") if r]
+    records = [r for r in raw.split(b"\0") if r]
     if len(records) != 1:
         raise Denied("Ambiguous tree path")
     try:
-        metadata, name = records[0].split(b"\\t", 1)
+        metadata, name = records[0].split(b"\t", 1)
         mode, kind, _oid = metadata.decode("ascii").split()
         if name.decode("utf-8") != path:
             raise Denied("Unexpected Git tree path")
@@ -88,7 +88,7 @@ def proper_file(commit: str, path: str) -> bool:
 
 def candidate(path: str) -> bool:
     p = PurePosixPath(path)
-    if p.is_absolute() or ".." in p.parts or "\\x00" in path:
+    if p.is_absolute() or ".." in p.parts or "\x00" in path:
         raise Denied("Invalid workflow pathname")
     if len(p.parts) == 3 and p.parts[:2] == (".github", "workflows"):
         return p.suffix in (".yml", ".yaml")
@@ -126,7 +126,7 @@ def scan(base: str, head: str) -> tuple[int, int]:
     raw = git("diff", "--no-ext-diff", "--no-renames", "--name-only", "-z",
               "--diff-filter=ACMRT", base, head, "--", ".github/workflows", ".github/actions")
     try:
-        changed = [p.decode("utf-8") for p in raw.split(b"\\0") if p]
+        changed = [p.decode("utf-8") for p in raw.split(b"\0") if p]
     except UnicodeDecodeError as exc:
         raise Denied("Non-UTF8 Git changed path") from exc
     if len(changed) > MAX_CHANGED:
