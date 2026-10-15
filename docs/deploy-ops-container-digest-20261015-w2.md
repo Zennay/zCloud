@@ -47,8 +47,12 @@ production privilege escalation as unchanged legacy risk.
 Local Actions may be invoked from arbitrary repository directories, and a Git
 symlink or gitlink can hide their actual executable metadata. The bounded
 Git-tree scan therefore fails closed for **any** symlink or submodule entry
-instead of assuming that arbitrary aliases are harmless. No production
-service, Git branch protection or local checkout is mutated by this scan.
+instead of assuming that arbitrary aliases are harmless. Accordingly the
+GitHub-hosted PR proof deliberately **has no path filter**: any changed
+file could become an opaque local-Action alias. A name-restricted path
+trigger would otherwise silently skip the scanner on exactly that PR.
+No production service, Git branch protection or local checkout is mutated
+by this scan.
 
 ## Hosted CI operator summary
 
