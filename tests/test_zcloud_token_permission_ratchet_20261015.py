@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import redirect_stdout
+from io import StringIO
+import json
 import subprocess
 import tempfile
 import unittest
 
 from scripts.zcloud_token_permission_ratchet_20261015 import (
-    IncompleteSource, check, permission_debt,
+    IncompleteSource, check, main, permission_debt,
 )
 
 
@@ -313,6 +316,40 @@ class PermissionRatchetTests(unittest.TestCase):
         base = self.commit("legacy-inline-job")
         self.put("README.md", "harmless")
         self.assertTrue(check(self.root, base, self.commit("harmless-docs"))["ok"])
+
+
+    def test_reject_nonutf8_workflow_git_blob(self):
+        path = self.root / ".github/workflows/original.yml"
+        path.write_bytes(b"on: push\npermissions: \xff\njobs: {}\n")
+        head = self.commit("non-utf8")
+        with self.assertRaises(IncompleteSource):
+            check(self.root, self.base, head)
+
+    def test_reject_oversized_workflow_blob(self):
+        self.put(".github/workflows/original.yml", "on: push\n" + ("x" * (1024 * 1024 + 1)))
+        head = self.commit("oversized-blob")
+        with self.assertRaises(IncompleteSource):
+            check(self.root, self.base, head)
+
+    def test_reject_gitlink_beneath_actions_workflows(self):
+        self.git("update-index", "--add", "--cacheinfo",
+                 f"160000,{self.base},.github/workflows/vendor")
+        head = self.commit("nested-gitlink")
+        with self.assertRaises(IncompleteSource):
+            check(self.root, self.base, head)
+
+    def test_cli_rejects_invalid_source_without_leaking_paths(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            result = main(["--root", str(self.root), "--base", "not-a-sha", "--head", self.base])
+        report = json.loads(output.getvalue())
+        self.assertEqual(result, 1)
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["reason"], "incomplete_git_source")
+        self.assertFalse(report["release_authorized"])
+        self.assertFalse(report["deployment_authorized"])
+        self.assertFalse(report["mutation_performed"])
+        self.assertNotIn(str(self.root), output.getvalue())
 
 
 if __name__ == "__main__":
