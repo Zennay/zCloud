@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -586,6 +587,38 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.assertEqual(receipt["reason"], "oversized_workflow")
         self.assertNotIn("suspect_workflow_path_sha256_prefixes", receipt)
         self.assertNotIn("CONFIDENTIAL_MARKER", sink.getvalue())
+
+    def test_expired_entire_scan_budget_denies_before_launch(self):
+        self.write(f"{ROOT}/new.yml", "name: safe\n")
+        head = self.commit()
+        with mock.patch.object(guard, "SCAN_BUDGET_SECONDS", -1):
+            with mock.patch.object(guard.subprocess, "Popen") as popen:
+                with self.assertRaisesRegex(Denied, "source_scan_timeout"):
+                    inspect(self.base, head)
+                popen.assert_not_called()
+
+    def test_expired_subprocess_deadline_denies_before_launch(self):
+        expired = time.monotonic() - 1
+        with mock.patch.object(guard.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(Denied, "source_scan_timeout"):
+                git("rev-parse", "HEAD", limit=41, overall_deadline=expired)
+            popen.assert_not_called()
+
+    def test_every_git_inspection_shares_one_global_deadline(self):
+        self.write(f"{ROOT}/new.yml", "name: safe\n")
+        head = self.commit()
+        reader = guard.git
+        observed = []
+
+        def record(*args, **kwargs):
+            observed.append(kwargs.get("overall_deadline"))
+            return reader(*args, **kwargs)
+
+        with mock.patch.object(guard, "git", side_effect=record):
+            self.assertEqual(inspect(self.base, head)["status"], "pass")
+        self.assertGreaterEqual(len(observed), 9)
+        self.assertTrue(all(isinstance(t, float) for t in observed))
+        self.assertEqual(len(set(observed)), 1)
 
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
