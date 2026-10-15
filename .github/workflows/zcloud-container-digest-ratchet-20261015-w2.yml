@@ -4,6 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
       - scripts/zcloud_container_digest_ratchet_20261015_w2.py
       - tests/test_zcloud_container_digest_ratchet_20261015_w2.py
       - .github/workflows/zcloud-container-digest-ratchet-20261015-w2.yml
@@ -35,7 +37,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Verify immutable HEAD and actual canonical main
         shell: bash
@@ -49,7 +51,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
-          git fetch --no-tags origin refs/heads/main
+          git fetch --no-tags --depth=1 origin refs/heads/main
           BASE_SHA="$(git rev-parse FETCH_HEAD)"
           test "$BASE_SHA" = "$EXPECTED_BASE"
           echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
