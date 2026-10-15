@@ -282,8 +282,10 @@ class HostedPinRatchetTrustTests(unittest.TestCase):
         final_check = text.index('name: Refuse a stale main revision')
         self.assertLess(scan, final_check)
         self.assertIn("timeout 20 git ls-remote --exit-code origin refs/heads/main", text)
+        self.assertIn('timeout 20 git ls-remote --exit-code origin "refs/heads/$HEAD_REF"', text)
+        self.assertIn('if test "$HEAD_REPO" != "$GITHUB_REPOSITORY"; then', text)
         self.assertIn('if test "$current_main" != "$BASE_SHA"; then', text)
-        self.assertIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", text)
+        self.assertIn("ACTION_PIN_MAIN_AND_HEAD_CURRENT=1", text)
         self.assertIn("exit 1", text[final_check:])
 
 
@@ -309,10 +311,11 @@ class HostedCurrentMainShellTests(unittest.TestCase):
         self.base = self.git("rev-parse", "HEAD")
         self.git("remote", "add", "origin", str(self.remote))
         self.git("push", "-q", "origin", "HEAD:refs/heads/main")
+        self.git("push", "-q", "origin", "HEAD:refs/heads/topic")
         source = (Path(__file__).resolve().parents[1]
                   / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
                   ).read_text(encoding="utf-8")
-        check = source.split("name: Refuse a stale main revision after the full source scan", 1)[1]
+        check = source.split("name: Refuse stale canonical main and same-repository PR head after scan", 1)[1]
         script = check.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
         self.script = "\n".join(
             line[10:] if line.startswith("          ") else line
@@ -323,16 +326,18 @@ class HostedCurrentMainShellTests(unittest.TestCase):
         return subprocess.run(["git", "-C", str(self.repo), *args],
                               text=True, check=True, capture_output=True).stdout.strip()
 
-    def execute(self):
+    def execute(self, **override):
         env = dict(self.os.environ, GITHUB_REPOSITORY="Zennay/zCloud",
-                   BASE_SHA=self.base, HEAD_SHA=self.base)
+                   BASE_SHA=self.base, HEAD_SHA=self.base,
+                   HEAD_REPO="Zennay/zCloud", HEAD_REF="topic")
+        env.update(override)
         return subprocess.run(["bash", "-c", self.script], cwd=self.repo,
                               env=env, text=True, capture_output=True, timeout=25)
 
     def test_exact_current_main_remains_eligible_for_source_proof(self):
         result = self.execute()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", result.stdout)
+        self.assertIn("ACTION_PIN_MAIN_AND_HEAD_CURRENT=1", result.stdout)
 
     def test_main_movement_after_checkout_denied(self):
         (self.repo / "README.md").write_text("main rev 2\n")
@@ -344,13 +349,37 @@ class HostedCurrentMainShellTests(unittest.TestCase):
         result = self.execute()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Canonical main advanced", result.stdout)
-        self.assertNotIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", result.stdout)
+        self.assertNotIn("ACTION_PIN_MAIN_AND_HEAD_CURRENT=1", result.stdout)
 
     def test_missing_canonical_main_denied(self):
         self.git("push", "-q", "origin", ":refs/heads/main")
         result = self.execute()
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", result.stdout)
+        self.assertNotIn("ACTION_PIN_MAIN_AND_HEAD_CURRENT=1", result.stdout)
+
+
+    def test_head_movement_after_checkout_denied(self):
+        (self.repo / "README.md").write_text("topic rev 2\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "new PR head")
+        self.git("push", "-q", "origin", "HEAD:refs/heads/topic")
+        self.git("reset", "--hard", self.base)
+        result = self.execute()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Pull request head moved", result.stdout)
+        self.assertNotIn("ACTION_PIN_MAIN_AND_HEAD_CURRENT=1", result.stdout)
+
+    def test_missing_pr_head_denied(self):
+        self.git("push", "-q", "origin", ":refs/heads/topic")
+        result = self.execute()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("ACTION_PIN_MAIN_AND_HEAD_CURRENT=1", result.stdout)
+
+    def test_foreign_pr_head_denied_without_remote_contact(self):
+        result = self.execute(HEAD_REPO="external/fork")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Foreign PR head", result.stdout)
+        self.assertNotIn("ACTION_PIN_MAIN_AND_HEAD_CURRENT=1", result.stdout)
 
 
 class HostedPinSummaryTests(unittest.TestCase):
