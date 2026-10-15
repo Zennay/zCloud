@@ -8,10 +8,13 @@ and incomplete expression fragments as suspicious. Existing risks are inventorie
 but not grandfathered if replaced with a *different* unsafe expression; the
 comparison uses path, normalized expression and whole run-scalar SHA-256 fingerprints, not
 just counts. Moving a legacy expression into another shell command is new risk.
-The deliberately conservative flow-mapping tripwire fingerprints inline YAML
-`{run: ...}` forms by line and **rejects new flow-style run mappings even when
-they look harmless**, because the syntax is not fully parsed. Prefer block-style
-steps instead. Quoted run keys using YAML's `\\u0072` or `\\x72`
+The deliberately conservative flow-mapping tripwire fingerprints every
+inline YAML `{run: ...}` form using the **whole workflow Git blob**, rejecting
+any edit to a workflow that still contains a flow-style `run:` key. Previous
+line-only evidence could miss a multiline continuation edit, an anchor rewrite,
+or relocation of an identical flow command into another job. This strict
+fail-closed rule can flag harmless adjacent comment changes; use block-style
+steps instead. An entirely unchanged legacy flow workflow remains grandfathered. Quoted run keys using YAML's `\\u0072` or `\\x72`
 spelling for the initial `r` are also scanned, so re-encoding the key
 does not silently skip the shell-command check. A second unfinished `${{`
 after a valid closed expression is flagged; an earlier valid `}}` no
