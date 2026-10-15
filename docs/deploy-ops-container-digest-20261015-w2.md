@@ -21,7 +21,11 @@ findings. The workflow targets same-repository owner PRs only and has
   hexadecimal SHA values are valid, with bounded object and report sizes.
 - GitHub Actions checkout uses the immutable PR head, disabled persisted
   credentials, and requires canonical main SHA to agree with the PR's base.
-  Main is checked again after the read-only comparison.
+  Main is checked again after the read-only comparison. The current
+  PR source branch is likewise checked at both boundaries: its remote
+  commit must still equal the checkout's immutable expected SHA before
+  executing scanner code and after the final evidence is emitted. This
+  two-point check is not an atomic source lock or merge authorization.
 - Require `@sha256:<64 hex>` to pin new literal container images, service
   images and `docker://` references. YAML alias, dynamic GitHub expressions,
   multiline image forms, explicit YAML mappings, encoded double-quoted YAML
