@@ -109,25 +109,36 @@ def changed_workflows(root: Path, base: str, head: str) -> list[str]:
 
 def check_workflow(source: str) -> list[str]:
     issues = []
-    run_block_indent: int | None = None
+    run_block_header: int | None = None
+    run_block_content: int | None = None
     for number, line in enumerate(source.splitlines(), 1):
         stripped = line.lstrip(" ")
         indent = len(line) - len(stripped)
-        # Count a tab as indentation only for detection: YAML tabs fail closed.
-        prefix = line[:len(line) - len(line.lstrip(" \t"))]
-        if "\t" in prefix:
+        prefix = line[:len(line) - len(line.lstrip(" \\t"))]
+        if "\\t" in prefix:
             issues.append(f"line_{number}:tab_indent_unreviewed")
             continue
-        if run_block_indent is not None:
-            # Literal/folded shell body is YAML data, not a workflow mapping.
-            if not stripped or indent > run_block_indent:
+        if run_block_header is not None:
+            # YAML infers a block scalar's indentation from the FIRST nonempty
+            # body line, not from the 'run: |' header. A mapping sibling can
+            # indent farther than the header but less than the literal body.
+            if not stripped:
                 continue
-            run_block_indent = None
+            if run_block_content is None:
+                if indent > run_block_header:
+                    run_block_content = indent
+                    continue
+            elif indent >= run_block_content:
+                continue
+            run_block_header = None
+            run_block_content = None
         if stripped.startswith("#"):
             continue
-        # Recognize only the unambiguous unquoted YAML shell block form.
-        if re.fullmatch(r"(?:- +)?run:[ ]*[|>][-+0-9]*(?:[ ]+#.*)?", stripped):
-            run_block_indent = indent
+        # Only plain | and > with an optional chomping indicator are supported.
+        # Explicit block indentation indicators remain fail-closed.
+        if re.fullmatch(r"(?:- +)?run:[ ]*[|>]-?(?:[ ]+#.*)?", stripped):
+            run_block_header = indent
+            run_block_content = None
             continue
         # Merges/aliases can hide a fail-open key from textual detection.
         if re.match(r"^[ ]*\?[ ]*['\"]?continue-on-error", line, re.I):
