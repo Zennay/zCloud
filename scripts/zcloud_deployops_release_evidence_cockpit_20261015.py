@@ -494,8 +494,11 @@ def main(argv: list[str] | None = None) -> int:
     Path(args.json).write_text(json.dumps(data, indent=2, sort_keys=True) + "\n",
                                encoding="utf-8")
     Path(args.html).write_text(render_html(data), encoding="utf-8")
+    # Only fixed internal error codes are emitted, never raw API payloads,
+    # authenticated URLs or HTTP exception text.
+    reason = data["warnings"][0] if status == 2 else "none"
     print(f"zCloud deploy-ops evidence: {data['main_sha']} "
-          f"warnings={len(data['warnings'])} authorized=false")
+          f"warnings={len(data['warnings'])} reason={reason} authorized=false")
     return status
 
 
