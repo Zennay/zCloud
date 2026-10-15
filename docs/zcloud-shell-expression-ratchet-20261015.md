@@ -179,6 +179,24 @@ The change is a source-level no-new-debt policy, not a guarantee that tokens
 are masked at runtime. Keep permissions narrow, avoid printing credentials,
 and use an environment variable only when authenticated access is necessary.
 
+## Safe reason categories in the advisory receipt
+
+The JSON evidence contains `baseline_risk_kinds` and
+`candidate_risk_kinds`, each a sorted list of `{"kind": "...",
+"count": N}` entries. Only **four fixed labels** are ever emitted:
+`direct_interpolation`, `dynamic_property_ambiguity`,
+`incomplete_expression` and `yaml_structure_ambiguity`. Each category
+counts findings in immutable Git blobs; it is **not** a count of confirmed
+vulnerabilities or a release authorization.
+
+Reason categories support human-readable backlog triage without copying
+the source shell expressions, secret names, tokens, embedded expressions
+or full command hashes into a report. The lists summarize all scanned
+sources; existing per-workflow summaries still provide only path and total.
+The exact input/output path and count snapshots remain available for
+independent review. A missing Git object fails closed rather than emitting
+an apparently complete advisory.
+
 ## Local composite Action shell coverage
 
 The guard now also scans committed `action.yml` and `action.yaml` files **at
