@@ -592,5 +592,64 @@ jobs:
         self.assertFalse(data["inventory_complete"])
 
 
+    def test_flow_sequence_docker_uses_is_never_ignored(self):
+        # Previously only "- {uses: docker://...}" was found. A whole
+        # sequence in a YAML flow mapping can hide the same Docker image.
+        samples = (
+            "steps: [{uses: docker://alpine:latest}]\\n",
+            "steps: [{ 'uses': 'docker://alpine:latest' }]\\n",
+            'steps: [{ "uses": "docker://alpine:latest" }]\\n',
+            f"steps: [{{uses: docker://alpine@sha256:{DIGEST}}}]\\n",
+        )
+        for source in samples:
+            with self.subTest(source=source):
+                risks = self.scan(source)
+                self.assertEqual(1, len(risks), risks)
+                self.assertEqual("ambiguous_flow_uses", risks[0].kind)
+
+    def test_flow_job_container_cannot_hide_tag(self):
+        samples = (
+            "jobs: {build: {container: alpine:latest}}\\n",
+            'jobs: {build: {"container": "alpine:latest"}}\\n',
+            f"jobs: {{build: {{container: alpine@sha256:{DIGEST}}}}}\\n",
+        )
+        for source in samples:
+            with self.subTest(source=source):
+                risks = self.scan(source)
+                self.assertEqual(1, len(risks), risks)
+                self.assertEqual("ambiguous_flow_container", risks[0].kind)
+        # The flow image key still gets separately classified.
+        self.assertEqual("ambiguous_flow_image",
+                         self.scan("services: {redis: {image: redis:latest}}\\n")[0].kind)
+
+    def test_run_block_flow_text_does_not_claim_execution_image(self):
+        shell = ("jobs:\\n  build:\\n    steps:\\n      - run: |\\n"
+                 "          echo 'steps: [{uses: docker://alpine:latest}]'\\n"
+                 "          echo 'jobs: {build: {container: alpine:latest}}'\\n")
+        self.assertEqual([], self.scan(shell))
+
+    def test_real_git_flow_sequence_docker_tag_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, workflow = self._init(root)
+            workflow.write_text(
+                "jobs:\\n  build:\\n    runs-on: ubuntu-latest\\n"
+                "    steps: [{uses: docker://alpine:latest}]\\n", encoding="utf-8",
+            )
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "flow shorthand adds mutable docker action")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(1, check.returncode, check.stdout + check.stderr)
+            result = json.loads(check.stdout)
+            self.assertEqual(1, result["new_findings"])
+            self.assertEqual("ambiguous_flow_uses", result["new_risks"][0]["kind"])
+            self.assertFalse(result["deployment_authorized"])
+            self.assertFalse(result["mutation_performed"])
+
+
 if __name__ == "__main__":
     unittest.main()
