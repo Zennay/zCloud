@@ -28,6 +28,7 @@ MAX_SCAN_SECONDS = 120
 MAX_GIT_SECONDS = 15
 STEP = re.compile(r"^(\s*)-\s+uses\s*:\s*['\"]?actions/checkout@([0-9a-f]{40})(?:['\"])?(?:\s*(?:#.*)?)?$")
 ANY_CHECKOUT = re.compile(r"actions/checkout\s*@", re.I)
+STEP_USES = re.compile(r"^(\s+)uses\s*:\s*[\x27\x22]?actions/checkout@([0-9a-f]{40})(?:[\x27\x22])?(?:\s*(?:#.*)?)?$")
 WITH = re.compile(r"^(\s*)with\s*:\s*(?:#.*)?$")
 CREDENTIAL = re.compile(r"^(\s*)persist-credentials\s*:\s*(\S+)(?:\s*#.*)?$")
 NEW_STEP = re.compile(r"^(\s*)-\s+")
@@ -198,15 +199,35 @@ def checkout_risks(source: str) -> list[str]:
             return ["opaque_escaped_yaml"]
     uses = []
     for index, line in enumerate(active):
-        if ANY_CHECKOUT.search(line):
-            match = STEP.fullmatch(line)
-            if not match:
-                # Folded/flow/aliased/multiline or quoted-key YAML must not
-                # bypass inspection. Inert shell text may need manual review.
-                return ["ambiguous_checkout"]
-            uses.append((index, len(match.group(1))))
+        if not ANY_CHECKOUT.search(line):
+            continue
+        match = STEP.fullmatch(line)
+        if match:
+            uses.append((index, len(match.group(1)), index))
+            continue
+        # Canonical GitHub Actions also permits:
+        #   - name: Checkout
+        #     uses: actions/checkout@<full-SHA>
+        #     with: ...
+        # Bind 'uses:' to exactly one sibling - name step, not an arbitrary
+        # nested YAML mapping that happens to have the same text.
+        named = STEP_USES.fullmatch(line)
+        if not named:
+            return ["ambiguous_checkout"]
+        uses_indent = len(named.group(1))
+        leader = next((n for n in range(index - 1, -1, -1)
+                       if active[n].strip() and
+                       len(active[n]) - len(active[n].lstrip(" ")) < uses_indent), None)
+        if leader is None:
+            return ["ambiguous_checkout"]
+        parent = active[leader]
+        parent_indent = len(parent) - len(parent.lstrip(" "))
+        if (uses_indent != parent_indent + 2 or
+                not re.fullmatch(r"\s*-\s+name\s*:\s*[^#\s].*", parent)):
+            return ["ambiguous_checkout"]
+        uses.append((index, parent_indent, leader))
     problems = []
-    for index, indent in uses:
+    for index, indent, leader in uses:
         end = len(active)
         for n in range(index + 1, len(active)):
             next_line = active[n]
@@ -215,6 +236,18 @@ def checkout_risks(source: str) -> list[str]:
                 break
         # Separate steps can share the indentation of the checkout list item.
         step = active[index + 1:end]
+        # Duplicate YAML step 'uses:' can shadow the checkout value (or vice
+        # versa) depending on which YAML reader accepts the mapping. A
+        # lexical check must never certify the resulting step as unambiguous.
+        all_step = active[leader:end]
+        direct_uses = sum(
+            bool(re.fullmatch(r"\s*uses\s*:\s*.*", row)) and
+            len(row) - len(row.lstrip(" ")) == indent + 2
+            for row in all_step
+        )
+        short_use = int(bool(re.fullmatch(r"\s*-\s+uses\s*:\s*.*", active[leader])))
+        if direct_uses + short_use != 1:
+            problems.append("ambiguous_step_uses")
         with_indent = None
         correct = False
         seen = 0
