@@ -125,6 +125,15 @@ def read_workflow(commit: str, path: str) -> str:
 def examine(text: str) -> None:
     if any(ord(c) < 32 and c not in "\r\n\t" for c in text):
         raise Denied("unsafe_workflow_bytes")
+    # YAML double-quoted escapes are resolved before GitHub identifies an Action.
+    # Detect encoded uses values even when the source lacks the literal action name.
+    encoded = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
+    for line in text.splitlines():
+        m = re.match(r"^\s*(?:-\s*)?(?:uses|['\"]uses['\"])\s*:\s*(.*)$", line, re.I)
+        if m and encoded.search(m.group(1)):
+            raise Denied("encoded_action_reference")
+        if re.match(r'^\s*(?:-\s*)?"[^"\n]*\\(?:x|u|U)[^"\n]*"\s*:', line):
+            raise Denied("encoded_mapping_key")
     if "upload-artifact" not in text.lower():
         return
     if re.search(r"(?m)^\s*(?:<<\s*:|(?:[\w-]+\s*:\s*)?[&*!]{1,2}[\w-]+)", text):
