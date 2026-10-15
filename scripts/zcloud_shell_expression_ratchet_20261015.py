@@ -159,8 +159,8 @@ JOB_EXECUTION_CONTROLS = frozenset({
     "if", "permissions", "runs-on", "environment", "container", "services",
     "defaults", "strategy", "concurrency", "timeout-minutes", "env",
 })
-SECTION_HEADER = re.compile(r"^([A-Za-z_][\\w.-]*)\\s*:")
-JOB_HEADER = re.compile(r"^ {2}([A-Za-z_][\\w.-]*)\\s*:")
+SECTION_HEADER = re.compile(r"^([A-Za-z_][\w.-]*)\s*:")
+JOB_HEADER = re.compile(r"^ {2}([A-Za-z_][\w.-]*)\s*:")
 
 
 def execution_sections(lines: list[str], start: int, stop: int,
@@ -193,7 +193,7 @@ def execution_control_context(lines: list[str], run_row: int) -> dict:
         lines, 0, len(lines), 0, ROOT_EXECUTION_CONTROLS
     )
     jobs_root = next(
-        (i for i in range(run_row - 1, -1, -1) if re.match(r"^jobs\\s*:", lines[i])),
+        (i for i in range(run_row - 1, -1, -1) if re.match(r"^jobs\s*:", lines[i])),
         None,
     )
     if jobs_root is None:
