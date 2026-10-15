@@ -204,6 +204,47 @@ class WorkflowRunTokenRatchetTests(unittest.TestCase):
         src = SAFE.replace("permissions:\n  contents: read", "permissions: {contents: read, actions: write}")
         self.assertTrue(self.edit(src))
 
+    def test_git_output_is_limited_during_streaming(self):
+        from unittest.mock import patch
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            fake_git = Path(directory) / "git"
+            fake_git.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                "sys.stdout.write('A'*150000)\n", encoding="utf-8"
+            )
+            fake_git.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": directory + os.pathsep + os.environ["PATH"]}):
+                with self.assertRaisesRegex(ValueError, "git_output_limit"):
+                    gate.git(self.root, "status", limit=1024)
+
+    def test_hung_git_subprocess_fails_closed_and_is_killed(self):
+        from unittest.mock import patch
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            fake_git = Path(directory) / "git"
+            fake_git.write_text(
+                "#!/usr/bin/env python3\n"
+                "import time\n"
+                "time.sleep(60)\n", encoding="utf-8"
+            )
+            fake_git.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": directory + os.pathsep + os.environ["PATH"]}):
+                with patch.object(gate.time, "monotonic", side_effect=None):
+                    # Simulate a monotonic elapsed deadline without waiting
+                    # for 15 seconds of CI wall time.
+                    initial = gate.time.monotonic()
+                    with patch.object(gate.time, "monotonic", side_effect=[initial, initial + 16]):
+                        with self.assertRaisesRegex(TimeoutError, "git_elapsed_deadline"):
+                            gate.git(self.root, "status", limit=512)
+
+    def test_invalid_git_output_limit_fails_closed(self):
+        for bad in (0, -1, True, "1024"):
+            with self.subTest(bad=bad):
+                with self.assertRaisesRegex(ValueError, "invalid_git_limit"):
+                    gate.git(self.root, "status", limit=bad)
+
     def test_source_policy_matrix(self):
         for value, unsafe in [
             (SAFE, False),
