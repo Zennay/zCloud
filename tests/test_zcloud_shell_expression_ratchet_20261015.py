@@ -163,6 +163,22 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(source + "# no new flow mappings\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_risky_expression_same_name_changed_shell_body_denied(self):
+        base = self.commit("steps:\n  - run: echo ${{ github.event.issue.title }}\n")
+        head = self.commit("steps:\n  - run: printf dangerous ${{ github.event.issue.title }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_risky_expression_in_new_step_denied_even_if_legacy_exists(self):
+        base = self.commit("steps:\n  - run: echo ${{ github.event.issue.title }}\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.event.issue.title }}\n  - run: printf ${{ github.event.issue.title }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_same_legacy_run_with_adjacent_safe_step_remains_baseline(self):
+        expression = "steps:\n  - run: echo ${{ github.event.issue.title }}\n"
+        base = self.commit(expression)
+        head = self.commit(expression + "  - run: echo separately safe\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
