@@ -38,7 +38,10 @@ SCRIPT_WRAPPER = (
     rf"(?:(?:{SUDO_WRAPPER}|{ENV_WRAPPER}|"
     r"(?:/usr/bin/)?timeout\s+[0-9]+(?:\.[0-9]+)?|nohup|command)\s+){0,3}"
 )
-SCRIPT_EXEC = SCRIPT_WRAPPER + r"(?:/usr/local/bin/|/usr/bin/|/bin/)?(?:bash|sh|zsh|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|ruby|perl|php)\b"
+# Include alternate POSIX-compatible shells and BusyBox applets that read
+# downloaded stdin as executable instructions (not merely bash/sh/zsh).
+SHELL_CONSUMERS = r"(?:busybox\s+(?:sh|ash)|bash|sh|zsh|dash|ksh|mksh|ash|fish)"
+SCRIPT_EXEC = SCRIPT_WRAPPER + r"(?:/usr/local/bin/|/usr/bin/|/bin/)?(?:" + SHELL_CONSUMERS + r"|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|ruby|perl|php)\b"
 # Remote bytes may traverse bounded pass-through/decoder stages before a shell.
 # Keep the allowed stage names explicit to avoid spanning unrelated commands.
 PASS_THROUGH = r"(?:tee|cat|sed|base64|tr|awk|gunzip|gzip)\b[^\n|;]*\|\s*"
