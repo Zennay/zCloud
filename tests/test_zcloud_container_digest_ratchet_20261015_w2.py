@@ -224,6 +224,57 @@ jobs:
         self.assertIn('test "$BASE_SHA" = "$EXPECTED_BASE"', workflow)
         self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', workflow)
 
+    def test_action_metadata_selection_in_repo_root_and_nested_paths(self):
+        self.assertTrue(guard._selected("action.yml"))
+        self.assertTrue(guard._selected("ci/local/action.yaml"))
+        self.assertTrue(guard._selected("tools/deploy/action.yml"))
+        self.assertFalse(guard._selected("tools/not-an-action.yml"))
+        self.assertFalse(guard._selected("src/example.py"))
+
+    def test_real_git_nested_action_docker_tag_drift_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, _workflow = self._init(root)
+            action = root / "tools" / "local-probe" / "action.yaml"
+            action.parent.mkdir(parents=True)
+            action.write_text(
+                f"name: local\nruns:\n  using: docker\n  image: example/probe@sha256:{DIGEST}\n",
+                encoding="utf-8",
+            )
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "pinned action")
+            pinned = run_git(root, "rev-parse", "HEAD")
+            action.write_text("name: local\nruns:\n  using: docker\n  image: example/probe:latest\n", encoding="utf-8")
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "mutable action tag")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", pinned, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(1, check.returncode, check.stdout + check.stderr)
+            payload = json.loads(check.stdout)
+            self.assertEqual(1, payload["new_findings"])
+            self.assertEqual("tools/local-probe/action.yaml", payload["new_risks"][0]["path"])
+            self.assertFalse(payload["mutation_performed"])
+
+    def test_real_git_new_root_action_unpinned_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, _workflow = self._init(root)
+            (root / "action.yml").write_text(
+                "name: Root action\nruns:\n  using: docker\n  image: alpine:latest\n", encoding="utf-8"
+            )
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "root action added")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(1, check.returncode, check.stdout + check.stderr)
+            self.assertEqual("action.yml", json.loads(check.stdout)["new_risks"][0]["path"])
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
