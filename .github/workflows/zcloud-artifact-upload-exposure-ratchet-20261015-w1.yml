@@ -1,17 +1,9 @@
 name: Deploy-ops artifact upload exposure ratchet
 
+# Run on every PR. GitHub's changed-path trigger filters can omit relevant
+# manifests in large diffs; the SHA-bound scanner skips unrelated source.
 on:
   pull_request:
-    paths:
-      - ".github/workflows/**"
-      - ".github/actions/**"
-      - "actions/**"
-      - "**/action.yml"
-      - "**/action.yaml"
-      - "action.yml"
-      - "action.yaml"
-      - "scripts/zcloud_artifact_upload_exposure_ratchet_20261015_w1.py"
-      - "tests/test_zcloud_artifact_upload_exposure_ratchet_20261015_w1.py"
 
 permissions:
   contents: read
