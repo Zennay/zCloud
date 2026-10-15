@@ -259,6 +259,10 @@ jobs:
         self.assertIn('git fetch --no-tags --depth=1 origin refs/heads/main', workflow)
         self.assertIn('test "$BASE_SHA" = "$EXPECTED_BASE"', workflow)
         self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', workflow)
+        self.assertIn('GITHUB_STEP_SUMMARY', workflow)
+        self.assertIn('Container-images: nieuwe risico', workflow)
+        self.assertIn('Geen VPS-herstel, productie-deploy of vrijgave', workflow)
+        self.assertIn('type(data[field]) is int', workflow)
 
     def test_action_metadata_selection_in_repo_root_and_nested_paths(self):
         self.assertTrue(guard._selected("action.yml"))
