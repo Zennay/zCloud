@@ -433,5 +433,41 @@ class PermissionRatchetTests(unittest.TestCase):
                 format_ci_summary(payload)
 
 
+    def test_real_cli_emits_successful_dutch_summary_without_vps_authority(self):
+        self.put("README.md", "source-only test")
+        head = self.commit("safe-candidate")
+        target = self.root / "summary.md"
+        output = StringIO()
+        with redirect_stdout(output):
+            rc = main(["--root", str(self.root), "--base", self.base,
+                       "--head", head, "--summary-to", str(target)])
+        self.assertEqual(rc, 0)
+        self.assertTrue(json.loads(output.getvalue())["ok"])
+        text = target.read_text(encoding="utf-8")
+        self.assertIn("Broncontrole geslaagd", text)
+        self.assertIn("Geen productievrijgave", text)
+
+    def test_real_cli_emits_redacted_denial_summary(self):
+        target = self.root / "summary.md"
+        output = StringIO()
+        with redirect_stdout(output):
+            rc = main(["--root", str(self.root), "--base", "not-a-sha",
+                       "--head", self.base, "--summary-to", str(target)])
+        self.assertEqual(rc, 1)
+        self.assertIn("Afgewezen", target.read_text(encoding="utf-8"))
+        self.assertNotIn(str(self.root), target.read_text(encoding="utf-8"))
+
+    def test_real_cli_summary_write_failure_denies_even_safe_source(self):
+        self.put("README.md", "safe candidate")
+        head = self.commit("safe")
+        output = StringIO()
+        with redirect_stdout(output):
+            rc = main(["--root", str(self.root), "--base", self.base,
+                       "--head", head, "--summary-to", str(self.root)])
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(output.getvalue())["reason"],
+                         "summary_evidence_failed")
+
+
 if __name__ == "__main__":
     unittest.main()
