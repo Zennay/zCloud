@@ -203,6 +203,24 @@ jobs:
             self.assertEqual(2, check.returncode, check.stdout)
             self.assertFalse(json.loads(check.stdout)["inventory_complete"])
 
+    def test_flow_style_docker_steps_must_not_escape_image_pin_gate(self):
+        self.assertEqual(1, len(self.scan("    - {uses: docker://alpine:latest}\n")))
+        self.assertEqual(1, len(self.scan("    - {'uses': 'docker://alpine:latest'}\n")))
+        self.assertEqual(1, len(self.scan('    - {"uses": "docker://alpine:latest"}\n')))
+
+    def test_escaped_double_quoted_yaml_keys_need_review(self):
+        for key in (
+            r'"\u0069mage"', r'"\x69mage"', r'"\U00000069mage"',
+            r'"\u0063ontainer"', r'"\u0075ses"',
+            r'"\u0069\u006d\u0061\u0067\u0065"',
+        ):
+            with self.subTest(key=key):
+                self.assertEqual(1, len(self.scan(f"    {key}: alpine:latest\n")))
+
+    def test_explicit_yaml_mapping_keys_need_review(self):
+        self.assertEqual(1, len(self.scan("    ? image\n    : alpine:latest\n")))
+        self.assertEqual(1, len(self.scan("    ? 'uses'\n    : docker://alpine:latest\n")))
+
     def test_hosted_no_new_debt_gate_runs_for_all_workflow_and_action_edits(self):
         workflow = (ROOT / ".github/workflows" /
                     "zcloud-container-digest-ratchet-20261015-w2.yml").read_text()
