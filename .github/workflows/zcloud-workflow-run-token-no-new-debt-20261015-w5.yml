@@ -22,7 +22,6 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
           EXACT_BASE: ${{ github.event.pull_request.base.sha }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -47,6 +46,7 @@ jobs:
         env:
           EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
           EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         shell: bash
         run: |
           set -euo pipefail
