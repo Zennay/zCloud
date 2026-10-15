@@ -105,6 +105,17 @@ class ManualDispatchPolicy(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertDenied(workflow(runner=label))
 
+    def test_private_runner_cannot_disguise_itself_as_an_arbitrary_os_version(self):
+        for label in ("ubuntu-24.04-personal", "ubuntu-27.1", "windows-2099",
+                      "macos-15-acme", "windows-2022-custom"):
+            with self.subTest(label=label):
+                self.assertDenied(workflow(runner=label))
+
+    def test_official_hosted_label_with_yaml_comment_remains_allowed(self):
+        self.assertTrue(guard.evaluate(
+            {}, {WF: workflow(runner="ubuntu-24.04 # hosted runner")},
+        )["ok"])
+
     def test_known_hosted_runner_images_remain_allowed(self):
         for label in ("ubuntu-latest", "ubuntu-24.04", "windows-latest", "macos-15"):
             with self.subTest(label=label):
