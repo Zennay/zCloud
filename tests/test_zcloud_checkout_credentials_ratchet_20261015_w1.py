@@ -134,6 +134,30 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         )
         self.verify(bad, "opaque_checkout_merge")
 
+    def test_tagged_duplicate_with_key_denied(self):
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            "          persist-credentials: false\n        !!str with: {}\n",
+        )
+        self.verify(bad, "opaque_checkout_with")
+
+    def test_yaml_tag_uri_duplicate_with_key_denied(self):
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            "          persist-credentials: false\n"
+            "        !<tag:yaml.org,2002:str> with: {}\n",
+        )
+        self.verify(bad, "opaque_checkout_with")
+
+    def test_fully_escaped_tagged_with_key_denied(self):
+        encoded = "w" + chr(92) + "u0069th"
+        bad = workflow().replace(
+            "          persist-credentials: false\n",
+            '          persist-credentials: false\n'
+            '        !!str "' + encoded + '": {}\n',
+        )
+        self.verify(bad, "opaque_checkout_escape")
+
     def test_single_inline_with_map_denied(self):
         bad = workflow(None).replace(
             f"      - uses: actions/checkout@{PIN}\n",
