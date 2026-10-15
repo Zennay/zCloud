@@ -403,6 +403,64 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertFalse(data["release_authorized"])
         self.assertEqual(data["deploy"]["runner_job_result"], "SUCCESS")
 
+    def test_deploy_total_count_matches_full_paginated_run_inventory(self):
+        api = FakeAPI()
+        first = [dict(run(sha=ALT_SHA), id=1000 + i) for i in range(100)]
+        api.pages[RUNS] = [{"total_count": 101, "workflow_runs": first}]
+        api.pages[RUNS_PREFIX + "2"] = [
+            {"total_count": 101, "workflow_runs": [run()]}
+        ]
+        api.pages[RUN_DETAIL] = [run()]
+        data = cockpit.collect(api)
+        self.assertTrue(data["deploy"]["run_inventory_count_verified"])
+        self.assertEqual(data["deploy"]["runs_scanned"], 101)
+        self.assertFalse(data["deployment_authorized"])
+
+    def test_inconsistent_deploy_total_count_after_last_page_denied(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [{"total_count": 10, "workflow_runs": [run()]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "inconsistent_deploy_total_count"):
+            cockpit.collect(api)
+
+    def test_boolean_total_count_denied(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [{"total_count": True, "workflow_runs": [run()]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "invalid_deploy_total_count"):
+            cockpit.collect(api)
+
+    def test_changing_total_count_between_pages_denied(self):
+        api = FakeAPI()
+        older = [dict(run(sha=ALT_SHA), id=1000 + i) for i in range(100)]
+        api.pages[RUNS] = [{"total_count": 101, "workflow_runs": older}]
+        api.pages[RUNS_PREFIX + "2"] = [
+            {"total_count": 102, "workflow_runs": [run()]}
+        ]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "changing_deploy_total_count"):
+            cockpit.collect(api)
+
+    def test_missing_second_page_total_count_denied(self):
+        api = FakeAPI()
+        older = [dict(run(sha=ALT_SHA), id=1000 + i) for i in range(100)]
+        api.pages[RUNS] = [{"total_count": 101, "workflow_runs": older}]
+        api.pages[RUNS_PREFIX + "2"] = [{"workflow_runs": [run()]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "inconsistent_deploy_total_count_presence"):
+            cockpit.collect(api)
+
+    def test_new_second_page_count_when_first_missing_denied(self):
+        api = FakeAPI()
+        older = [dict(run(sha=ALT_SHA), id=1000 + i) for i in range(100)]
+        api.pages[RUNS] = [{"workflow_runs": older}]
+        api.pages[RUNS_PREFIX + "2"] = [
+            {"total_count": 101, "workflow_runs": [run()]}
+        ]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "inconsistent_deploy_total_count_presence"):
+            cockpit.collect(api)
+
     def test_deploy_page_two_timeout_denies(self):
         api = FakeAPI()
         api.pages[RUNS] = [
