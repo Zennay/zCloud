@@ -311,7 +311,7 @@ class RatchetTests(unittest.TestCase):
 
 
     def test_workflow_rechecks_remote_head_at_both_boundaries(self):
-        workflow = SCRIPT.parents[0] / ".github/workflows/zcloud-direct-main-write-ratchet-20261015-w3.yml"
+        workflow = SCRIPT.parents[1] / ".github/workflows/zcloud-direct-main-write-ratchet-20261015-w3.yml"
         content = workflow.read_text(encoding="utf-8")
         self.assertEqual(content.count("HEAD_REF: "), 2)
         self.assertEqual(content.count("ls-remote --exit-code https://github.com/Zennay/zCloud.git"), 2)
