@@ -100,6 +100,7 @@ def main_sha(api) -> str:
 def production_status(api, sha: str) -> dict:
     latest = None
     count = 0
+    seen_status_ids = set()
     for page in range(1, 6):
         payload = api.get(
             f"/repos/Zennay/zCloud/commits/{sha}/statuses?per_page=100&page={page}"
@@ -120,15 +121,29 @@ def production_status(api, sha: str) -> dict:
             ):
                 raise EvidenceError("invalid_production_timestamp")
             status_id = integer(row.get("id"))
-            key = (stamp, status_id)
+            if status_id in seen_status_ids:
+                raise EvidenceError("duplicate_production_status_id")
+            seen_status_ids.add(status_id)
+            try:
+                timestamp = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise EvidenceError("invalid_production_timestamp") from exc
+            age = (dt.datetime.now(dt.timezone.utc) - timestamp).total_seconds()
+            if age < -60:
+                raise EvidenceError("future_production_evidence")
+            key = (timestamp, status_id)
             if latest is None or key > latest[0]:
-                latest = (key, state)
+                latest = (key, state, max(0, int(age)))
             count += 1
         if len(payload) < 100:
             break
     else:
         raise EvidenceError("production_status_pagination_cap")
-    return {"state": latest[1] if latest else "missing", "matching_events": count}
+    return {
+        "state": latest[1] if latest else "missing",
+        "matching_events": count,
+        "last_status_age_seconds": latest[2] if latest else None,
+    }
 
 
 def current_deploy(api, sha: str) -> dict:
@@ -268,6 +283,9 @@ def operator_next_checks(warnings: list[str]) -> list[str]:
         "production_not_success":
             "Controleer de exacte main-SHA productiestatus en de bijbehorende "
             "deploylog; herstart of herbewapen niets automatisch.",
+        "production_observation_stale":
+            "De laatste productie-statusmelding is oud of ontbreekt; vergelijk de "
+            "huidige main-SHA met een nieuwe onafhankelijke bronobservatie.",
         "runner_route_not_proven":
             "Controleer in GitHub de repository-toegang, runnerlabels en "
             "jobtoewijzing; een oude of wachtrij-job bewijst geen actieve listener.",
@@ -300,6 +318,8 @@ def collect(api) -> dict:
     warnings = []
     if not healthy_production_observed:
         warnings.append("production_not_success")
+    if prod["last_status_age_seconds"] is None or prod["last_status_age_seconds"] > 900:
+        warnings.append("production_observation_stale")
     if deploy["runner_route"] != "ASSIGNED_TO_EXPECTED":
         warnings.append("runner_route_not_proven")
     if deploy["run_age_seconds"] is None or deploy["run_age_seconds"] > 900:
@@ -337,6 +357,7 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <dl>
 <dt>Exact geobserveerde main</dt><dd>""" + safe(snapshot["main_sha"]) + """</dd>
 <dt>Productie-status</dt><dd>""" + safe(p["state"]) + """</dd>
+<dt>Leeftijd productiestatus (seconden)</dt><dd>""" + safe(p["last_status_age_seconds"]) + """</dd>
 <dt>Laatste deploy (huidige SHA, beperkte eerste pagina)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
 <dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd>
 <dt>VPS-jobuitkomst</dt><dd>""" + safe(d["runner_job_result"]) + """</dd>
@@ -361,7 +382,8 @@ def main(argv: list[str] | None = None) -> int:
             "schema": "zcloud-deploy-ops-evidence-v1", "repository": REPO,
             "main_sha": "UNVERIFIED", "observed_utc": dt.datetime.now(
                 dt.timezone.utc).isoformat(),
-            "production": {"state": "unknown"},
+            "production": {"state": "unknown", "matching_events": 0,
+                           "last_status_age_seconds": None},
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
                        "conclusion": None, "runner_route": "UNVERIFIED",
                        "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED"},
