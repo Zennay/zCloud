@@ -292,8 +292,10 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertNotIn('POLICY_PROVENANCE=trusted_bootstrap', self.workflow)
 
     def test_current_main_is_rechecked_through_canonical_remote_twice(self) -> None:
-        url = "git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main"
+        url = "git -C / ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main"
         self.assertEqual(self.workflow.count(url), 2)
+        self.assertEqual(self.workflow.count("env -i PATH=/usr/bin:/bin HOME=/nonexistent"), 2)
+        self.assertEqual(self.workflow.count("GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null"), 2)
         self.assertEqual(self.workflow.count('test "$current_main" = "$BASE_SHA"'), 2)
         self.assertNotIn("git ls-remote origin refs/heads/main", self.workflow)
         self.assertLess(
