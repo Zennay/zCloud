@@ -198,7 +198,9 @@ def fingerprint_risks(source: str) -> Counter[str]:
         # GitHub Actions supports YAML aliases, including whole-job clones.
         # A changed alias can instantiate an existing unsafe run without any
         # change to that original scalar. Treat the whole source as ambiguous.
-        if YAML_ALIAS_VALUE.match(line) or YAML_ALIAS_ITEM.match(line):
+        alias_run = RUN.match(line) or RUN_ESCAPED_KEY.match(line)
+        already_covered_run_alias = bool(alias_run and alias_run.group(2).lstrip().startswith("*"))
+        if (YAML_ALIAS_VALUE.match(line) or YAML_ALIAS_ITEM.match(line)) and not already_covered_run_alias:
             out["ambiguous_yaml_alias|workflow_sha256:" + workflow_digest] += 1
         match = FLOW_RUN_KEY.search(line)
         # Braces *after* run: can simply be the normal ${{ expression }}
