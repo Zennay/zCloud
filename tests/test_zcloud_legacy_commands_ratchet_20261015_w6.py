@@ -185,21 +185,31 @@ class RealGitRatchetTests(unittest.TestCase):
                 gate.git("version", max_output=128)
 
     def test_git_forked_descendant_cannot_hold_stdout_open_after_parent_exits(self):
-        # Parent Git wrapper exits while a forked descendant inherits stdout.
-        # Timeout must kill the session even when direct parent's poll() is zero.
+        # Parent Git wrapper exits but a descendant inherits stdout. Even
+        # after that parent exits, the group must die before writing a marker.
+        marker = Path(self.temp.name) / "orphan-survived"
         path = self.fake_git(
             "import os, time\n"
             "if os.fork() == 0:\n"
-            "    time.sleep(10)\n"
+            "    time.sleep(0.7)\n"
+            "    open(os.environ['GATE_MARKER_PATH'], 'w').write('survived')\n"
             "    os._exit(0)\n"
             "os._exit(0)\n"
         )
-        with (mock.patch.dict(os.environ, {"PATH": path}),
+        with (mock.patch.dict(os.environ, {"PATH": path, "GATE_MARKER_PATH": str(marker)}),
               mock.patch.object(gate, "TIMEOUT", 0.2),
               mock.patch.object(gate.os, "killpg", wraps=gate.os.killpg) as killed):
             with self.assertRaises(gate.Denied):
                 gate.git("version", max_output=128)
             self.assertTrue(killed.called, "orphaned Git process group must be killed")
+        time.sleep(0.8)
+        self.assertFalse(marker.exists(), "Git descendant survived aborted source proof")
+
+    def test_successful_git_read_never_kills_process_group(self):
+        with mock.patch.object(gate.os, "killpg", wraps=gate.os.killpg) as kill_group:
+            version = gate.git("--version")
+            self.assertIn(b"git version", version)
+            kill_group.assert_not_called()
 
     def test_invalid_output_budget_is_denied(self):
         for budget in (0, -1, gate.MAX_OUTPUT + 1):
