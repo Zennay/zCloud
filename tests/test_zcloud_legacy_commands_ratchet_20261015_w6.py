@@ -96,6 +96,37 @@ class RealGitRatchetTests(unittest.TestCase):
         with self.assertRaises(gate.Denied):
             gate.scan(self.base, self.commit())
 
+    def test_raw_ascii_controls_in_changed_source_are_denied(self):
+        for control in (b"\x00", b"\x01", b"\x07", b"\x08", b"\x1b", b"\x7f"):
+            with self.subTest(control=control):
+                self.git("reset", "--hard", self.base)
+                self.write(".github/workflows/old.yml", b"name: safe" + control + b"label\n")
+                with self.assertRaisesRegex(gate.Denied, "control character"):
+                    gate.scan(self.base, self.commit())
+
+    def test_yaml_unicode_escaped_controls_are_denied(self):
+        for value in (r"\x00", r"\u0001", r"\u001b", r"\u007f", r"\u0085"):
+            with self.subTest(value=value):
+                self.git("reset", "--hard", self.base)
+                self.write(".github/workflows/old.yml", 'name: "safe' + value + 'label"\n')
+                with self.assertRaisesRegex(gate.Denied, "control character"):
+                    gate.scan(self.base, self.commit())
+
+    def test_safe_line_breaks_tabs_and_crlf_remain_valid(self):
+        self.write(".github/workflows/old.yml",
+                   "name: safe\r\non: push\r\nrun: |\r\n\t echo normal\r\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_changed_workflow_path_with_control_character_denied(self):
+        self.write(".github/workflows/bad\x01name.yml", "name: safe\n")
+        with self.assertRaisesRegex(gate.Denied, "control-bearing workflow pathname"):
+            gate.scan(self.base, self.commit())
+
+    def test_changed_action_path_with_unicode_format_control_denied(self):
+        self.write(".github/actions/tool/\u202eaction.yml", "name: safe\n")
+        with self.assertRaisesRegex(gate.Denied, "control-bearing workflow pathname"):
+            gate.scan(self.base, self.commit())
+
     def test_non_utf8_denied(self):
         self.write(".github/workflows/old.yml", b"name: \xff\n")
         with self.assertRaises(gate.Denied):
