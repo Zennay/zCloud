@@ -739,6 +739,30 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", page)
         self.assertIn("Bevoegd tot deploy: <strong>NEE</strong>", page)
 
+    def test_html_contains_only_safe_canonical_source_links(self):
+        data = cockpit.collect(FakeAPI())
+        page = cockpit.render_html(data)
+        self.assertIn("https://github.com/Zennay/zCloud/commit/" + SHA, page)
+        self.assertIn("https://github.com/Zennay/zCloud/actions/runs/92", page)
+        self.assertIn("Bronnen (alleen lezen)", page)
+        self.assertFalse(data["release_authorized"])
+
+    def test_html_rejects_untrusted_ids_for_source_navigation(self):
+        data = cockpit.collect(FakeAPI())
+        data["main_sha"] = "<script>alert(1)</script>"
+        data["deploy"]["run_id"] = "javascript:alert(1)"
+        page = cockpit.render_html(data)
+        self.assertIn("Geen geverifieerde bronlink", page)
+        self.assertNotIn("<script>", page)
+        self.assertNotIn('href="javascript:', page)
+        self.assertNotIn("https://github.com/Zennay/zCloud/actions/runs/javascript", page)
+
+    def test_html_never_uses_boolean_run_id_as_link(self):
+        data = cockpit.collect(FakeAPI())
+        data["deploy"]["run_id"] = True
+        page = cockpit.render_html(data)
+        self.assertNotIn("actions/runs/True", page)
+
     def test_dutch_operator_warnings_without_losing_json_codes(self):
         api = FakeAPI()
         api.pages[STAT] = [[]]
