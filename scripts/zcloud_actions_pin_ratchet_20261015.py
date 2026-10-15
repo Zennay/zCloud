@@ -95,9 +95,9 @@ def refs(text: str, path: str) -> list[tuple[tuple[str, str], int]]:
         if match_block:
             block_indent = len(match_block.group(1))
             continue
-        if re.match(r"^\\s*(?:-\\s*)?<<\\s*:", line):
+        if re.match(r"^\s*(?:-\s*)?<<\s*:", line):
             raise Refusal("yaml_merge_key")
-        if re.search(r"(?<![A-Za-z0-9_])['\\\"]?uses['\\\"]?\\s*:", line) and not USES.match(line):
+        if re.search(r'''(?<![A-Za-z0-9_])['"]?uses['"]?\s*:''', line) and not USES.match(line):
             raise Refusal("ambiguous_uses_syntax")
         match = USES.match(line)
         if not match:
