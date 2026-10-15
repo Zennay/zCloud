@@ -302,6 +302,55 @@ class ContinueOnErrorGitTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "invisible_or_directional_unicode"):
                         gate.scan(temp, base, head)
 
+    def test_sibling_mapping_after_run_block_cannot_hide_failure(self):
+        source = (
+            "jobs:\n  job:\n    steps:\n"
+            "      - run: |\n"
+            "          echo ordinary\n"
+            "        continue-on-error: true\n"
+        )
+        self.assertTrue(gate.check_workflow(source))
+
+    def test_sibling_mapping_after_folded_run_block_cannot_hide_failure(self):
+        source = (
+            "jobs:\n  job:\n    steps:\n"
+            "      - run: >-\n"
+            "          echo shell\n"
+            "        continue-on-error: true\n"
+        )
+        self.assertTrue(gate.check_workflow(source))
+
+    def test_sibling_policy_at_same_indent_as_run_header_denied(self):
+        source = (
+            "      - run: |\n"
+            "          echo harmless\n"
+            "      continue-on-error: true\n"
+        )
+        self.assertTrue(gate.check_workflow(source))
+
+    def test_sibling_mapping_with_false_stays_allowed(self):
+        source = (
+            "      - run: |\n"
+            "          echo ordinary\n"
+            "        continue-on-error: false\n"
+        )
+        self.assertEqual(gate.check_workflow(source), [])
+
+    def test_nested_shell_body_is_inert_after_first_indent(self):
+        source = (
+            "      - run: |\n"
+            "          echo 'continue-on-error: true'\n"
+            "            continue-on-error: true\n"
+        )
+        self.assertEqual(gate.check_workflow(source), [])
+
+    def test_explicit_indent_indicator_never_skips_policy_syntax(self):
+        self.assertTrue(gate.check_workflow(
+            "      - run: |2\n"
+            "          echo 'continue-on-error: true'\n"
+            "        continue-on-error: true\n"
+        ))
+
     def test_hosted_pr_admission_fails_instead_of_skipping(self):
         source = (Path(__file__).resolve().parents[1] /
                   ".github/workflows/zcloud-continue-on-error-no-new-debt-20261015-w4.yml"
