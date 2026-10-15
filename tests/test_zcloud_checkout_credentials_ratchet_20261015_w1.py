@@ -160,6 +160,26 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         self.verify("actions/checkout@v4\n", path="docs/example.md")
         self.assertEqual(inspect(self.base, self.git("rev-parse", "HEAD"))["changed_sources_checked"], 0)
 
+    def test_valid_local_composite_action_tree_allowed(self):
+        local_action = ("name: safe composite\nruns:\n  using: composite\n  steps:\n"
+                        f"    - uses: actions/checkout@{PIN}\n"
+                        "      with:\n        persist-credentials: false\n")
+        self.verify(local_action, path=".github/actions/isolated/action.yml")
+
+    def test_composite_action_root_symlink_denied(self):
+        directory = Path(".github/actions")
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        directory.symlink_to("../workflows")
+        with self.assertRaisesRegex(Denied, "unsupported_action_root"):
+            inspect(self.base, self.commit())
+
+    def test_composite_action_subdir_symlink_denied(self):
+        directory = Path(".github/actions")
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "demo").symlink_to("../../workflows")
+        with self.assertRaisesRegex(Denied, "unsupported_action_entry"):
+            inspect(self.base, self.commit())
+
     def test_binary_source_denied(self):
         path = Path(f"{WORK}/added.yml")
         path.write_bytes(b"name: \xff\n")
