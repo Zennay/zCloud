@@ -6,6 +6,10 @@ on:
     paths:
       - ".github/workflows/**"
       - ".github/actions/**"
+      - "**/action.yml"
+      - "**/action.yaml"
+      - "action.yml"
+      - "action.yaml"
       - "scripts/zcloud_actions_pin_ratchet_20261015.py"
       - "tests/test_zcloud_actions_pin_ratchet_20261015.py"
 
