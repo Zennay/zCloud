@@ -48,6 +48,75 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def _copy_historical_snapshot(self, historical="20261014T100000Z-deadbeef"):
+        import shutil
+        path = self.snapshots / historical
+        shutil.copytree(self.snap, path)
+        manifest = path / "manifest.json"
+        obj = json.loads(manifest.read_text(encoding="utf-8"))
+        obj["snapshot_id"] = historical
+        manifest.write_text(json.dumps(obj), encoding="utf-8")
+        return path
+
+    def test_batch_inventory_verifies_current_and_historical_without_writes(self):
+        historical = self._copy_historical_snapshot()
+        before_pointer = (self.state / "last-known-good.json").read_bytes()
+        before_manifest = (historical / "manifest.json").read_bytes()
+        evidence = probe.audit_all(self.state)
+        self.assertTrue(evidence["ok"])
+        self.assertEqual(2, evidence["snapshot_count"])
+        self.assertEqual([False, True], [row["is_current"] for row in evidence["results"]])
+        self.assertTrue(all(row["ok"] for row in evidence["results"]))
+        self.assertFalse(evidence["authorizes_rollback"])
+        self.assertFalse(evidence["mutation_performed"])
+        self.assertEqual(before_pointer, (self.state / "last-known-good.json").read_bytes())
+        self.assertEqual(before_manifest, (historical / "manifest.json").read_bytes())
+
+    def test_batch_marks_corrupt_history_but_does_not_reselect_pointer(self):
+        historical = self._copy_historical_snapshot()
+        (historical / "files" / "server.py").write_bytes(b"corrupted backup")
+        before_pointer = (self.state / "last-known-good.json").read_bytes()
+        report = probe.audit_all(self.state)
+        self.assertFalse(report["ok"])
+        self.assertEqual(
+            ["hash_mismatch", None],
+            [row.get("reason") for row in report["results"]],
+        )
+        self.assertEqual(before_pointer, (self.state / "last-known-good.json").read_bytes())
+
+    def test_batch_rejects_unexpected_entry_and_excessive_snapshot_count(self):
+        unknown = self.snapshots / "non-snapshot-secret-directory"
+        unknown.mkdir()
+        result = probe.audit_all(self.state)
+        self.assertFalse(result["ok"])
+        self.assertEqual("invalid_snapshot_entry", result["results"][-1]["reason"])
+        with self.assertRaisesRegex(probe.Denied, "too_many_snapshots"):
+            from unittest.mock import patch
+            with patch.object(probe, "MAX_SNAPSHOTS", 1):
+                probe.audit_all(self.state)
+
+    def test_batch_denies_removed_active_snapshot_without_mutation(self):
+        self._copy_historical_snapshot()
+        import shutil
+        shutil.rmtree(self.snap)
+        with self.assertRaisesRegex(probe.Denied, "current_snapshot_missing"):
+            probe.audit_all(self.state)
+
+    def test_batch_cli_emits_machine_readable_no_authority_evidence(self):
+        result = subprocess.run(
+            [
+                sys.executable, str(Path(probe.__file__)), "--state-dir",
+                str(self.state), "--all-snapshots",
+            ],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(1, output["snapshot_count"])
+        self.assertFalse(output["mutation_performed"])
+        self.assertFalse(output["authorizes_rollback"])
+        self.assertFalse(output["authorizes_deploy"])
+
     def test_managed_restore_contract_must_match_full_restore_allowlist(self):
         manifest = self.snap / "manifest.json"
         for changed in (
