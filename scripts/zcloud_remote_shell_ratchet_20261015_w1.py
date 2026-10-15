@@ -80,7 +80,6 @@ DOWNLOAD_THEN_EXEC = re.compile(
     r"[^\n;|]{0,512}?"
     r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*)"
     + rf"(?:{SCRIPT_EXEC}|source\b|\.)" + r"\s+(?P=downloaded)(?![A-Za-z0-9._/-])",
-    re.I,
 )
 # A shell stdout redirection is an alternative to -o/--output:
 # curl URL > local.sh && sh local.sh. Count only bounded literal identical
@@ -92,7 +91,6 @@ REDIRECT_THEN_EXEC = re.compile(
     r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*)"
     + rf"(?:{SCRIPT_EXEC}|source\b|\.)"
     + r"\s+(?P=redirected)(?![A-Za-z0-9._/-])",
-    re.I,
 )
 # Literal shell variable populated from remote substitution and immediately
 # evaluated as code is remote execution too: payload=$(curl URL) && eval "$payload".
@@ -132,7 +130,6 @@ DOWNLOADED_DIRECT_EXEC = re.compile(
     r"(?:chmod\s+[A-Za-z0-9+,-]{1,16}\s+(?P=executable)"
     r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*))?"
     r"(?:\./)?(?P=executable)(?![A-Za-z0-9._/-])",
-    re.I,
 )
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
