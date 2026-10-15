@@ -51,6 +51,37 @@ class ManualDispatchPolicy(unittest.TestCase):
         self.assertFalse(out["mutation_performed"])
         self.assertFalse(out["production_mutation_authorized"])
 
+    def test_hosted_policy_uses_immutable_baseline_after_bootstrap(self):
+        workflow_source = CI_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn('git cat-file -e "${BASE_SHA}:${policy_path}"', workflow_source)
+        self.assertIn('git show "${BASE_SHA}:${policy_path}"', workflow_source)
+        self.assertIn("POLICY_PROVENANCE=trusted_base_sha", workflow_source)
+        self.assertIn("POLICY_PROVENANCE=untrusted_bootstrap_review_required", workflow_source)
+        trusted_start = workflow_source.index('git show "${BASE_SHA}:${policy_path}"')
+        trusted_execute = workflow_source.index('python3 "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py"')
+        untrusted_execute = workflow_source.index('python3 "$policy_path"')
+        self.assertLess(trusted_start, trusted_execute)
+        self.assertLess(trusted_execute, untrusted_execute)
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            file = root / "scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py"
+            file.parent.mkdir(parents=True)
+            file.write_text("print('TRUSTED')\n", encoding="utf-8")
+            base = commit(root, workflow(if_statement=SAFE_IF))
+            file.write_text("print('PR_REPLACEMENT')\n", encoding="utf-8")
+            head = commit(root, workflow(if_statement=SAFE_IF))
+            trusted = subprocess.check_output([
+                "git", "-C", str(root), "show",
+                base + ":scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py",
+            ], text=True)
+            current = subprocess.check_output([
+                "git", "-C", str(root), "show",
+                head + ":scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py",
+            ], text=True)
+            self.assertEqual("print('TRUSTED')\n", trusted)
+            self.assertNotEqual(trusted, current)
+
     def test_hosted_proof_rejects_forks_before_checkout_and_main_drift(self):
         workflow_source = CI_WORKFLOW.read_text(encoding="utf-8")
         denial = workflow_source.index("Deny foreign PR source before any checkout")
