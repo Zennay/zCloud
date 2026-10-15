@@ -22,6 +22,9 @@ IMAGE_LINE = re.compile(r"^\s*" + KEY + r"\s*:\s*(.*)$")
 CONTAINER_LINE = re.compile(r"^\s*" + CONTAINER + r"\s*:\s*(.*)$")
 DOCKER_USE = re.compile(r"^\s*(?:-\s*)?" + USES + r"\s*:\s*['\"]?docker://([^\s'\"#]+)")
 FLOW_IMAGE = re.compile(r"""(?<![\w])(?:image|["']image["'])\s*:""")
+FLOW_DOCKER = re.compile(r"""^\s*-\s*\{.*(?:uses|["']uses["'])\s*:\s*["']?docker://""")
+EXPLICIT_IMAGE_KEY = re.compile(r"""^\s*\?\s*(?:image|container|uses|["']image["']|["']container["']|["']uses["'])\s*(?:#.*)?$""")
+ESCAPED_DOUBLE_QUOTED_KEY = re.compile(r"""^\s*(?:-\s*)?"(?:\\.|[^"\\])*"\s*:""")
 MAX_BLOB = 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
 MAX_FILES = 512
@@ -137,24 +140,33 @@ def _scan(path: str, source: str) -> list[Finding]:
             continue
         value: str | None = None
         kind: str | None = None
-        match = IMAGE_LINE.match(line)
+        # Fail closed for YAML mapping escape syntax: a quoted key can
+        # evaluate to image, container or uses without containing those bytes.
+        encoded_key = ESCAPED_DOUBLE_QUOTED_KEY.match(line)
+        if encoded_key and "\\" in encoded_key.group(0):
+            value, kind = line, "ambiguous_escaped_key"
+        elif EXPLICIT_IMAGE_KEY.match(line):
+            value, kind = line, "ambiguous_explicit_key"
+        elif FLOW_DOCKER.match(line):
+            value, kind = line, "ambiguous_flow_docker"
+        match = IMAGE_LINE.match(line) if value is None else None
         if match:
             value, kind = match.group(1), "image"
         else:
-            match = DOCKER_USE.match(line)
+            match = DOCKER_USE.match(line) if value is None else None
             if match:
                 value, kind = match.group(1), "docker_uses"
             else:
-                match = CONTAINER_LINE.match(line)
+                match = CONTAINER_LINE.match(line) if value is None else None
                 if match and match.group(1).strip():
                     value, kind = match.group(1), "inline_container"
-                elif "{" in line and FLOW_IMAGE.search(line):
+                elif value is None and "{" in line and FLOW_IMAGE.search(line):
                     value, kind = line, "ambiguous_flow_image"
         if value is None or kind is None:
             continue
         # An unpinned image, even if introduced by an opaque YAML flow map,
         # cannot silently become new source debt.
-        if kind not in ("ambiguous_flow_image",) and "{" not in value and "[" not in value and _safe_literal(value):
+        if not kind.startswith("ambiguous_") and "{" not in value and "[" not in value and _safe_literal(value):
             continue
         fingerprint = hashlib.sha256(line.encode("utf-8")).hexdigest()
         findings.append(Finding(path, number, kind, fingerprint))
