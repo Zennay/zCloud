@@ -274,6 +274,74 @@ class RatchetTests(unittest.TestCase):
                    "      - run: echo changed\n")
         self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
 
+    def test_download_into_dash_shell_is_executable(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/bootstrap | /bin/dash\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_into_ksh_mksh_ash_shells_is_executable(self):
+        for shell in ("ksh", "mksh", "ash"):
+            with self.subTest(shell=shell):
+                self.write(
+                    "jobs:\n  x:\n    steps:\n"
+                    f"      - run: wget -qO- https://example.invalid/bootstrap | {shell}\n"
+                )
+                r = mod.audit(self.repo, self.base, self.commit())
+                self.assertEqual(r.new_risky_workflows, 1)
+                self.assertFalse(r.deployment_authorized)
+
+    def test_download_into_fish_shell_is_executable(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/bootstrap | fish\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_into_busybox_sh_applet_is_executable(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/bootstrap | busybox sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_into_absolute_busybox_ash_applet_is_executable(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -qO- https://example.invalid/bootstrap | /bin/busybox ash\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_file_then_dash_directly_is_executable(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o local.sh https://example.invalid/bootstrap && dash local.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_safe_cat_and_jq_not_misidentified_as_busybox_shell(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/bootstrap | jq .\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_busybox_shell_legacy_blob_is_not_new_debt(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/bootstrap | busybox sh\n"
+        )
+        legacy = self.commit()
+        self.assertEqual(mod.audit(self.repo, legacy, legacy).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, legacy, legacy).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/bootstrap | busybox sh\n"
+            "      - run: echo changed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
+
     def test_timeout_wrapped_interpreter_pipe_rejected(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/i | timeout 30 bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
