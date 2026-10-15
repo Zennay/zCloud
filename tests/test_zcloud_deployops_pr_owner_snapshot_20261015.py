@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import copy
+from email.message import Message
 import unittest
+from unittest.mock import patch
+from urllib.error import URLError
 
 from scripts import zcloud_deployops_pr_owner_snapshot_20261015 as s
 from scripts.zcloud_deployops_pr_owner_collision_20261015 import InvalidInventory, assess
@@ -165,6 +168,66 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
                 InvalidInventory
             ):
                 s.github_reader(token)
+
+    def test_github_reader_exact_origin_json_mime_and_get_only(self):
+        class Response:
+            def __init__(self, *, body=b'{"commit":{"sha":"a"}}',
+                         url=s.API + "/branches/main", mime="application/json"):
+                self.data = body
+                self.url = url
+                self.headers = Message()
+                self.headers["Content-Type"] = mime
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def geturl(self):
+                return self.url
+            def read(self, limit):
+                return self.data[:limit]
+
+        class Opener:
+            def __init__(self, response):
+                self.response = response
+                self.requests = []
+            def open(self, request, timeout=None):
+                self.requests.append(request)
+                return self.response
+
+        for response, error in (
+            (Response(), None),
+            (Response(url="https://malicious.invalid/repos/x"), "untrusted_github_response"),
+            (Response(mime="text/html"), "untrusted_github_response"),
+            (Response(body=b'{"a":1,"a":2}'), "duplicate_json_key"),
+            (Response(body=b"x" * 2_000_001), "oversize_github_response"),
+        ):
+            with self.subTest(error=error):
+                opener = Opener(response)
+                with patch.object(s, "build_opener", return_value=opener):
+                    get = s.github_reader("read-only-test")
+                    if error is None:
+                        self.assertEqual({"commit": {"sha": "a"}},
+                                         get("/branches/main"))
+                    else:
+                        with self.assertRaisesRegex(InvalidInventory, error):
+                            get("/branches/main")
+                self.assertEqual(1, len(opener.requests))
+                self.assertEqual("GET", opener.requests[0].get_method())
+                self.assertEqual(s.API + "/branches/main",
+                                 opener.requests[0].full_url)
+
+    def test_reader_never_redirects_token_and_redacts_transport_errors(self):
+        handler = s.DenyRedirect()
+        with self.assertRaisesRegex(InvalidInventory, "github_redirect_denied"):
+            handler.redirect_request(None, None, 302, "redirect", {},
+                                     "https://malicious.invalid/steal")
+        class FailingOpener:
+            def open(self, request, timeout=None):
+                raise URLError("sensitive-token-value")
+        with patch.object(s, "build_opener", return_value=FailingOpener()):
+            reader = s.github_reader("read-only-test")
+            with self.assertRaisesRegex(InvalidInventory, "^github_read_failed$"):
+                reader("/branches/main")
 
     def test_no_release_or_runtime_mutation_codepaths(self):
         from pathlib import Path
