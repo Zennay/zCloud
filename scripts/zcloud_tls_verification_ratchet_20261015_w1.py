@@ -6,6 +6,10 @@ inspection, GitHub branch-protection rule, or proof that legacy debt is safe.
 """
 import argparse
 from collections import Counter
+import os
+import select
+import signal
+import time
 from pathlib import Path
 import re
 import subprocess
@@ -39,17 +43,55 @@ class Unverifiable(Exception):
     pass
 
 
-def git(root, *args):
+def git(root, *args, deadline_seconds=15.0):
+    """Bound both Git output and wall time, reaping inherited stdout holders.
+
+    A subprocess can exit while its child keeps stdout open. Killing only that
+    parent leaves an orphan and blocks communicate(). Use a new process group,
+    short bounded pipe reads, and a monotonic deadline to fail closed.
+    """
+    limit = 210_000
     try:
-        p = subprocess.run(
+        process = subprocess.Popen(
             ["git", *args], cwd=root, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, timeout=15, check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
+            stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
         raise Unverifiable("git_unavailable") from exc
-    if p.returncode or len(p.stdout) > 210_000:
-        raise Unverifiable("git_read_failed")
-    return p.stdout
+    deadline = time.monotonic() + deadline_seconds
+    output = bytearray()
+    success = False
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Unverifiable("git_timeout")
+            if not select.select([process.stdout], [], [], remaining)[0]:
+                raise Unverifiable("git_timeout")
+            chunk = os.read(process.stdout.fileno(),
+                            min(8192, limit + 1 - len(output)))
+            if not chunk:
+                break
+            output.extend(chunk)
+            if len(output) > limit:
+                raise Unverifiable("git_output_too_large")
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())):
+            raise Unverifiable("git_read_failed")
+        success = True
+        return bytes(output)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise Unverifiable("git_read_failed") from exc
+    finally:
+        if not success:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.stdout.close()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
 
 
 def workflow_changes(root, base, head):
