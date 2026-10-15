@@ -26,7 +26,10 @@ MAX_TOTAL_BYTES = 16 * 1024 * 1024
 
 
 class Denied(Exception):
-    pass
+    def __init__(self, reason: str, *, path_fingerprints: tuple[str, ...] = ()):
+        super().__init__(reason)
+        # Only deterministic hex digests, never filenames or YAML content.
+        self.path_fingerprints = path_fingerprints
 
 
 def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
@@ -221,7 +224,7 @@ def inspect(base: str, head: str) -> dict[str, object]:
     deny_new_confusable_workflow_names(base_tree, head_tree)
     changed = sorted(path for path in head_tree if base_tree.get(path) != head_tree[path])
     total = 0
-    denied_paths = 0
+    denied_paths: list[str] = []
     for path in changed:
         # Read immutable Git blobs, NOT mutable filesystem checkout paths.
         oid = head_tree[path][1]
@@ -251,15 +254,24 @@ def inspect(base: str, head: str) -> dict[str, object]:
         if "\0" in workflow:
             raise Denied("invalid_workflow_content")
         if has_secret_inherit(workflow):
-            denied_paths += 1
+            denied_paths.append(path)
     if denied_paths:
-        raise Denied("modified_workflow_may_inherit_secrets")
+        fingerprints = tuple(
+            hashlib.sha256(path.encode("utf-8")).hexdigest()[:24]
+            for path in sorted(denied_paths)
+        )
+        raise Denied(
+            "modified_workflow_may_inherit_secrets",
+            path_fingerprints=fingerprints,
+        )
     return {
         "status": "pass",
         "base": base,
         "head": head,
         "workflows_examined": len(head_tree),
         "changed_workflows_checked": len(changed),
+        "legacy_workflows_not_rescanned": len(head_tree) - len(changed),
+        "source_scope": "changed_workflows_only",
         "mutation_performed": False,
         "authorizes_deploy": False,
         "authorizes_merge": False,
@@ -276,10 +288,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, sort_keys=True))
         return 0
     except Denied as exc:
-        print(json.dumps({
+        receipt = {
             "status": "deny", "reason": str(exc), "mutation_performed": False,
             "authorizes_deploy": False, "authorizes_merge": False,
-        }, sort_keys=True))
+        }
+        if exc.path_fingerprints:
+            receipt["suspect_workflow_path_sha256_prefixes"] = (
+                list(exc.path_fingerprints)
+            )
+        print(json.dumps(receipt, sort_keys=True))
         return 1
 
 
