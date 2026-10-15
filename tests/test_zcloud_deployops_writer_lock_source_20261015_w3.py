@@ -164,6 +164,22 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.dir.symlink_to(target, target_is_directory=True)
         self.assertEqual(module.inventory(self.root)["source_serialized"], 0)
 
+    def test_symlink_root_ancestor_refused(self):
+        alias = self.root.parent / (self.root.name + "-source-alias")
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.addCleanup(alias.unlink)
+        evidence = module.inventory(alias)
+        self.assertEqual(evidence["source_serialized"], 0)
+        self.assertTrue(all(item["source_result"] == "symlink_source"
+                            for item in evidence["writers"].values()))
+
+    def test_no_follow_directory_reads_normal_regular_files(self):
+        # The same inspector works with dirfd-anchored reads on an ordinary tree.
+        for filename, (job, scope) in module.WRITERS.items():
+            with self.subTest(filename=filename):
+                self.assertEqual(module.inspect_workflow(self.root, filename, job, scope),
+                                 "serialized_source")
+
     def test_oversized_file_rejected(self):
         path = self.dir / "zcloud-worker-tab-guard.yml"
         path.write_text("x" * (module.MAX_BYTES + 1), encoding="utf-8")
