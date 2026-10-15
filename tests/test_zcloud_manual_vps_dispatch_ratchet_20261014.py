@@ -181,6 +181,18 @@ class ManualDispatchPolicy(unittest.TestCase):
         body = workflow().decode().replace("  workflow_dispatch:", "  push:\n  workflow_dispatch:")
         self.assertDenied(body.encode())
 
+    def test_repair_of_legacy_quoted_jobs_root_does_not_require_parsable_old_header(self):
+        safe = workflow(if_statement=SAFE_IF)
+        previous = workflow().replace(b"jobs:", b"'jobs':")
+        previous2 = workflow().replace(b"jobs:", b'"jobs":')
+        for old in (previous, previous2):
+            with self.subTest(old=old[:80]):
+                new = guard.evaluate({WF: old}, {WF: safe})
+                self.assertTrue(new["ok"])
+                self.assertEqual(1, new["ambiguous_touched_baseline_count"])
+                with self.assertRaises(guard.RefError):
+                    guard.evaluate({WF: old}, {WF: old.replace(b"self-hosted", b"vps")})
+
     def test_repairing_ambiguous_old_yaml_can_be_admitted_safely(self):
         old = workflow().replace(b"  workflow_dispatch:", b"  workflow_dispatch: &unsafe")
         repaired = workflow(if_statement=SAFE_IF)
