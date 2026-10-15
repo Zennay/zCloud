@@ -134,6 +134,74 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
 
+    def test_curl_download_then_bash_same_file_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n      - run: |\n"
+            "          curl -fsSL https://example.invalid/install.sh -o install.sh && bash install.sh\n"
+        )
+        r = mod.audit(self.repo, self.base, self.commit())
+        self.assertEqual(r.new_risky_workflows, 1)
+        self.assertFalse(r.release_authorized)
+
+    def test_wget_output_then_sh_same_file_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n      - run: |\n"
+            "          wget -qO /tmp/install.sh https://example.invalid/i; sh /tmp/install.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_curl_long_output_then_python_next_line_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n      - run: |\n"
+            "          curl --output=./setup.py https://example.invalid/i\n"
+            "          python3 ./setup.py\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_then_node_same_file_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -O temp/setup.js https://example.invalid/i && node temp/setup.js\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_curl_download_to_file_without_execute_remains_unflagged(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o install.sh https://example.invalid/i && echo inspected\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_different_file_does_not_prove_direct_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o first.sh https://example.invalid/i && bash other.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_same_prefix_but_other_file_remains_unflagged(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o first.sh https://example.invalid/i && bash first.sh.bak\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_to_execute_unchanged_legacy_remains_only_historical(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o local.sh https://example.invalid/i && bash local.sh\n"
+        )
+        old = self.commit()
+        baseline = mod.audit(self.repo, old, old)
+        self.assertEqual(baseline.baseline_findings, 1)
+        self.assertEqual(baseline.new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o local.sh https://example.invalid/i && bash local.sh\n"
+            "      - run: echo changed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_download_to_jq_without_execution_not_blocked(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/config.json | jq .\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
