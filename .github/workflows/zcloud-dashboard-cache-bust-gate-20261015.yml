@@ -82,20 +82,67 @@ jobs:
         run: |
           set -euo pipefail
           policy_path="scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
+          provenance="untrusted_bootstrap_review_required"
           if git cat-file -e "$BASE_SHA:$policy_path" 2>/dev/null; then
             mode="$(git ls-tree "$BASE_SHA" -- "$policy_path" | awk '{print $1 " " $2}')"
             test "$mode" = "100644 blob"
             git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
-            echo "POLICY_PROVENANCE=immutable_pr_base"
-            python3 -I "$RUNNER_TEMP/trusted-dashboard-cache-gate.py" \
-              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+            policy_path="$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
+            provenance="immutable_pr_base"
+            echo "POLICY_PROVENANCE=$provenance"
           else
-            # Bootstrap on the first installation only: the reviewed policy
-            # is not yet in main. Passing head code is NOT independent approval.
-            echo "::warning::POLICY_PROVENANCE=untrusted_bootstrap_review_required"
-            python3 -I "$policy_path" \
-              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+            # First installation: candidate source can demonstrate tests but
+            # cannot independently approve its own new policy.
+            echo "::warning::POLICY_PROVENANCE=$provenance"
           fi
+          report="$RUNNER_TEMP/zcloud-cache-bust-policy.json"
+          policy_result=0
+          python3 -I "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" > "$report" || policy_result=$?
+          cat "$report"
+          REPORT="$report" PROVENANCE="$provenance" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["REPORT"])
+          raw = path.read_bytes()
+          if not raw or len(raw) > 16384:
+              raise SystemExit("bounded_cache_report_missing_or_invalid")
+          try:
+              payload = json.loads(raw)
+          except (ValueError, UnicodeError) as exc:
+              raise SystemExit("cache_report_invalid_json") from exc
+          if not isinstance(payload, dict):
+              raise SystemExit("cache_report_not_object")
+          reasons = {
+              "cache_bust_delta_ok": "Cacheversies sluiten aan op de wijziging.",
+              "changed_asset_pin_unchanged": "Dashboardbestand gewijzigd zonder nieuwe cacheversie.",
+              "nonmonotonic_cache_pin": "Cacheversie is teruggezet of hergebruikt.",
+          }
+          result = payload.get("ok") is True
+          if payload.get("ok") not in (True, False):
+              raise SystemExit("cache_report_missing_verdict")
+          reason = payload.get("reason")
+          description = reasons.get(reason, "Bronbewijs geweigerd of onvolledig.")
+          names = {"public/app.js": "Dashboard JavaScript", "public/enhancements.css": "Dashboard CSS"}
+          changed = payload.get("changed", [])
+          if not isinstance(changed, list) or any(k not in names for k in changed):
+              raise SystemExit("cache_report_invalid_paths")
+          scope = ", ".join(names[n] for n in changed) if changed else "Geen bronwijziging aan bewaakte assets"
+          event = "Directe wijziging op main" if os.environ.get("GITHUB_EVENT_NAME") == "push" else "Pull request"
+          lines = [
+              "### Dashboard-cachecontrole",
+              f"- Gebeurtenis: {event}",
+              f"- Uitkomst: {'GESLAAGD' if result else 'AFGEWEZEN'}",
+              f"- Uitleg: {description}",
+              f"- Gecontroleerde wijziging: {scope}",
+              f"- Scannerbron: {os.environ['PROVENANCE']}",
+              "- Dit is uitsluitend broncontrole; geen toestemming voor deploy of VPS-herstel.",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\\n".join(lines) + "\\n")
+          PY
+          test "$policy_result" -eq 0
 
       - name: Run exact-asset Git regression fixtures
         shell: bash
