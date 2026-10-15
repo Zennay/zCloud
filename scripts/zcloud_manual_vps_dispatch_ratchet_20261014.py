@@ -140,6 +140,13 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         return set()
     findings: set[tuple[str, str]] = set()
     for job, block in jobs.items():
+        # YAML permits repeated mapping keys; some parsers use the first value,
+        # others the last. Duplicate job-local runner/if/uses keys must never
+        # launder a risky manual VPS step through a benign earlier field.
+        for critical in ("runs-on", "if", "uses", "permissions"):
+            pattern = rf"(?m)^    {critical}[ \t]*:"
+            if len(re.findall(pattern, block)) > 1:
+                raise RefError("duplicate_job_authority_key")
         runner = re.search(r"(?m)^    runs-on:\s*(.*)$", block)
         reuse = re.search(r"(?m)^    uses:\s*(.*)$", block)
         if not runner and not reuse:
