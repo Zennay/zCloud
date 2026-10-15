@@ -534,6 +534,42 @@ class RealGitTests(unittest.TestCase):
         head = self.commit('steps:\n  - ? "' + key + '"\n    : echo ${{ inputs.value }}\n')
         self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
 
+    def test_yaml_quoted_escape_dollar_denied(self):
+        """YAML decoding can produce an expression token absent from raw source."""
+        base = self.commit("steps:\n  - run: echo safe\n")
+        value = "\\u0024" + "{{ github.event.issue.title }}"
+        head = self.commit('steps:\n  - run: "echo ' + value + '"\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_yaml_quoted_hex_escape_dollar_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        value = "\\x24" + "{{ inputs.pr_data }}"
+        head = self.commit('steps:\n  - run: "echo ' + value + '"\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_yaml_quoted_long_unicode_escaped_expression_delimiters_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        value = "\\U00000024\\U0000007b\\U0000007b github.event.issue.body }}"
+        head = self.commit('steps:\n  - run: "echo ' + value + '"\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_yaml_quoted_escaped_property_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        value = "$" + "{{ github.\\u0065vent.issue.title }}"
+        head = self.commit('steps:\n  - run: "echo ' + value + '"\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_yaml_single_quoted_literal_escape_not_interpolated(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        value = "\\u0024" + "{{ github.event.issue.title }}"
+        head = self.commit("steps:\n  - run: 'echo " + value + "'\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_yaml_double_quoted_safe_plain_run_preserved(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit('steps:\n  - run: "printf safe"\n')
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
