@@ -66,9 +66,23 @@ def changed_workflows(root: Path, base: str, head: str) -> list[str]:
 
 def check_workflow(source: str) -> list[str]:
     issues = []
+    run_block_indent: int | None = None
     for number, line in enumerate(source.splitlines(), 1):
-        stripped = line.lstrip()
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+        if "\\t" in line[:indent]:
+            issues.append(f"line_{number}:tab_indent_unreviewed")
+            continue
+        if run_block_indent is not None:
+            # Literal/folded shell body is YAML data, not a workflow mapping.
+            if not stripped or indent > run_block_indent:
+                continue
+            run_block_indent = None
         if stripped.startswith("#"):
+            continue
+        # Recognize only the unambiguous unquoted YAML shell block form.
+        if re.fullmatch(r"(?:- +)?run:[ ]*[|>][-+0-9]*(?:[ ]+#.*)?", stripped):
+            run_block_indent = indent
             continue
         # Merges/aliases can hide a fail-open key from textual detection.
         if re.match(r"^[ ]*\?[ ]*['\"]?continue-on-error", line, re.I):
