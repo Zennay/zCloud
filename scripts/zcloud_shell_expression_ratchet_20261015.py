@@ -27,11 +27,11 @@ RUN_ESCAPED_KEY = re.compile(
 )
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 YAML_QUOTED_ESCAPE = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
-UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.action_ref\b|inputs\b)", re.I)
+UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.action_ref\b|inputs\b|env\b)", re.I)
 DERIVED_OUTPUT_UNTRUSTED = re.compile(r"\b(?:steps\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|needs\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|matrix\b)", re.I)
-ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*(?:github|steps|needs)\s*\)", re.I)
+ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*(?:github|steps|needs|env)\s*\)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_-]*)\1\s*\]")
-DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs|steps|needs)\s*\[", re.I)
+DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs|steps|needs|env)\s*\[", re.I)
 FLOW_RUN_KEY = re.compile(
     r'(?<![A-Za-z0-9_])(?:run|["]run["]|[\x27]run[\x27]|"(?:r|\\u0072|\\x72|\\U00000072)(?:u|\\u0075|\\x75|\\U00000075)(?:n|\\u006e|\\x6e|\\U0000006e)")\s*:',
     re.I,
@@ -233,7 +233,7 @@ def fingerprint_risks(source: str) -> Counter[str]:
             if len(normalized) > 4096:
                 raise EvidenceError("expression_too_large")
             # GitHub expressions allow github['event']['issue'] as well as
-            # github.event.issue. Both must hit the same trust policy.
+            # github.event.issue. The env context is similarly unsafe for direct\n            # shell interpolation: a prior step or workflow may fill it with\n            # attacker-controlled text; env: injection + quoted shell use is safer.
             normalized = BRACKET_PROPERTY.sub(lambda m: "." + m.group(2), normalized)
             normalized = re.sub(r"\s*\.\s*", ".", normalized)
             if UNTRUSTED.search(normalized) or DERIVED_OUTPUT_UNTRUSTED.search(normalized) or ROOT_CONTEXT_JSON.search(normalized):
