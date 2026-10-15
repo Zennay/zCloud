@@ -145,6 +145,39 @@ class SourceTests(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 self.check(SAFE.replace("dist/result.log", "out/build." + suffix), True)
 
+    def test_named_upload_step_sibling_with_is_valid(self):
+        named = SAFE.replace("      - uses: actions/upload-artifact@v4",
+                             "      - name: Upload report\n"
+                             "        uses: actions/upload-artifact@v4")
+        self.check(named, True)
+
+    def test_named_upload_step_unsafe_artifact_denied(self):
+        named = SAFE.replace("      - uses: actions/upload-artifact@v4",
+                             "      - name: Upload report\n"
+                             "        uses: actions/upload-artifact@v4")
+        self.check(named.replace("dist/result.log", ".ssh/id_ed25519"), False)
+
+    def test_nested_env_with_does_not_satisfy_upload_inputs(self):
+        replaced = SAFE.replace(
+            "        with:\n          path: dist/result.log\n"
+            "          include-hidden-files: false",
+            "        env:\n          with:\n"
+            "            path: dist/result.log\n"
+            "            include-hidden-files: false")
+        self.check(replaced, False)
+
+    def test_named_upload_step_nested_with_is_denied(self):
+        named = SAFE.replace("      - uses: actions/upload-artifact@v4",
+                             "      - name: Upload report\n"
+                             "        uses: actions/upload-artifact@v4")
+        nested = named.replace(
+            "        with:\n          path: dist/result.log\n"
+            "          include-hidden-files: false",
+            "        env:\n          with:\n"
+            "            path: dist/result.log\n"
+            "            include-hidden-files: false")
+        self.check(nested, False)
+
     def test_duplicate_with_section_is_not_silently_accepted(self):
         payload = SAFE.replace("include-hidden-files: false",
                                "include-hidden-files: false\n        with:\n          path: .env")
