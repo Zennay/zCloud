@@ -32,7 +32,7 @@ more restrictive). The token, if used, needs only read access to repository
 metadata, commit statuses, Actions runs and jobs. Store token externally;
 **never** pass it as a CLI argument or embed it in a generated artifact.
 
-Open the resulting HTML locally. It includes bounded **Veilige volgende controles** (next safe observations) tied to missing production, runner, deploy or timestamp evidence; it never suggests an automatic restart or declares authorization. Both outputs remain local in manual mode; no upload, workflow dispatch, branch update or production mutation is performed by the script. The separately admitted hosted-only CI workflow intentionally uploads the sanitized report as a short-lived artifact.
+Open the resulting HTML locally. It includes bounded **Veilige volgende controles** (next safe observations) tied to missing production, runner, deploy or timestamp evidence; it never suggests an automatic restart or declares authorization. Human-readable Dutch warning labels are shown in HTML; the JSON warnings remain stable machine-readable codes. Both outputs remain local in manual mode; no upload, workflow dispatch, branch update or production mutation is performed by the script. The separately admitted hosted-only CI workflow intentionally uploads the sanitized report as a short-lived artifact.
 
 Exit codes: \`0\` means the requested GitHub snapshot was read without
 local warnings (NOT approved); \`1\` means the snapshot was valid but at least
@@ -52,8 +52,11 @@ outcomes retain \`release_authorized=false\`,
    *historical* and emits a freshness warning; it is never runtime health.
    After reading deploy/jobs, a **second exact-SHA production-status GET**
    checks the latest status ID, timestamp, state and matching event count.
-   If these change during observation, the entire snapshot is rejected.
-   Two identical GETs do not establish a transactionally atomic snapshot.
+   The second read checks a SHA-256 fingerprint of **all matching
+   status-event tuples** as well as the latest ID/time/state and count. Even
+   an older event changing without changing the latest status now refuses
+   evidence. Two identical GETs still do not establish transactionally
+   atomic GitHub state.
 3. Main deploy runs from \`zcloud-vps-deploy.yml\` are inventoried across
    **all returned pages up to five pages of 100 runs**. Duplicate run IDs,
    malformed pages and missing/failed later pages **refuse the snapshot**.
@@ -80,6 +83,9 @@ outcomes retain \`release_authorized=false\`,
    an in-progress job never counts as completed success. After inspecting
    jobs the original run is fetched again, and any changed run, attempt,
    conclusion, SHA, event or updated timestamp refuses the entire snapshot.
+   The selected job-list endpoint is also **read twice** and must match
+   exactly: queued/assigned/completed transitions and newly added jobs
+   cannot silently combine two different instants into one report.
    Each matching run's GitHub `updated_at`
    is validated; observations over 15 minutes old receive a stale-evidence
    warning, future-dated or malformed timestamps are rejected. Even fresh
@@ -117,7 +123,9 @@ signals, truncated jobs, multi-page run overlap and timeout/drift,
 mismatched job run/attempt/SHA, failed vs assigned,
 post-read reruns/conclusion drift, stale/future/duplicate production status,
 bad provenance, bool masquerading as integer,
-duplicate JSON keys, NaN and XSS/HTML escaping. Production writer files
+duplicate JSON keys, NaN, UTF-16 surrogate escapes, deeply nested JSON,
+and XSS/HTML escaping. JSON parsing uses bounded bytes and iterative Unicode
+validation; unexpected errors are reported only with static safe reason codes. Production writer files
 and other workers' PR-owned paths are deliberately untouched.
 
 **Ownership:** isolated add-only files on
