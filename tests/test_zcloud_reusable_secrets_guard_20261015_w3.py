@@ -182,7 +182,7 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.assertNotIn("contents: write", workflow)
 
     def test_exact_remote_ref_receipt_does_not_accept_moving_branch(self):
-        remote = Path(self.tmp.name) / "remote.git"
+        remote = Path(self.tmp.name) / ".git" / "proof-remote.git"
         subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
         self.git("remote", "add", "origin", str(remote))
         self.git("push", "-q", "origin", self.base + ":refs/heads/main")
