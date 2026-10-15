@@ -54,3 +54,9 @@ The hosted-only PR job writes a **bounded Dutch operator summary** to the normal
 Before publishing the summary, source JSON is limited to **8 KiB**, parsed with duplicate JSON key rejection and rejection of `NaN` / infinities, and checked for complete/consistent schema, strict integer types, monotonic finding counts and scan exit status. Contradictory or forged data is **not** printed to the operator: the job emits a fixed warning and fails. Unavailable Git evidence is explicitly marked **Onvolledig bewijs**, never as approval. All report content stays local in GitHub-hosted temporary storage; no artifact upload, API write, personal information, workflow dispatch, runner execution or VPS mutation is added.
 
 The scanner and summary are evidence only. A green result means no **new detected source risk within this narrow heuristic**, not verified shell safety, healthy zCloud workers, a recovered VPS listener or permission to merge/deploy.
+
+## Additional remote interpreter execution exposure
+
+Directly piped remote code is not restricted to shell interpreters. The same supply-chain risk applies to source fetched over a network and executed immediately by `python`/`python3` (including versioned Python binaries), `node`/`nodejs`, `ruby`, `perl`, `php` and `pypy`. The source ratchet now identifies these command consumers, including bounded `tee`/`base64` pipeline intermediates and absolute interpreter binaries under `/bin`, `/usr/bin` or `/usr/local/bin`. A read-only fetch piped into `jq` is not treated as interpreter execution.
+
+This remains **heuristic detection only**. Encoded scripts, unsupported interpreters, shell aliases, downloaded source files executed later, Docker build steps and scripts generated from templates may escape detection. The extra coverage neither makes previous workflows safe nor authorizes live execution.
