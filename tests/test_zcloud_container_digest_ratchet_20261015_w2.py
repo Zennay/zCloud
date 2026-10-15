@@ -315,6 +315,70 @@ jobs:
             self.assertEqual(1, check.returncode, check.stdout + check.stderr)
             self.assertEqual("action.yml", json.loads(check.stdout)["new_risks"][0]["path"])
 
+    def test_legacy_unpinned_image_cannot_move_between_jobs_unchanged(self):
+        previous = """jobs:
+  harmless:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+  privileged:
+    runs-on: ubuntu-latest
+"""
+        candidate = """jobs:
+  harmless:
+    runs-on: ubuntu-latest
+  privileged:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+"""
+        original = self.scan(previous)
+        changed = self.scan(candidate)
+        self.assertEqual(1, len(original))
+        self.assertEqual(1, len(changed))
+        self.assertEqual(1, guard.compare(original, changed)["new_findings"])
+
+    def test_legacy_unpinned_image_changed_job_trust_context_fails_closed(self):
+        previous = "jobs:\n  build:\n    runs-on: ubuntu-latest\n    container:\n      image: alpine:latest\n"
+        candidate = "jobs:\n  build:\n    runs-on: [self-hosted, zcloud, vps]\n    container:\n      image: alpine:latest\n"
+        self.assertEqual(1, guard.compare(self.scan(previous), self.scan(candidate))["new_findings"])
+
+    def test_real_git_nested_action_directory_symlink_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, _workflow = self._init(root)
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "action.yml").write_text(
+                "name: injected\nruns:\n  using: docker\n  image: alpine:latest\n",
+                encoding="utf-8",
+            )
+            (root / ".github" / "actions").mkdir()
+            (root / ".github" / "actions" / "nested").symlink_to(outside, target_is_directory=True)
+            run_git(root, "add", "-A")
+            run_git(root, "commit", "-qm", "nested action directory symlink")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(2, check.returncode, check.stdout + check.stderr)
+            self.assertFalse(json.loads(check.stdout)["inventory_complete"])
+
+    def test_real_git_submodule_in_local_actions_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, _workflow = self._init(root)
+            run_git(root, "update-index", "--add", "--cacheinfo", f"160000,{base},.github/actions/opaque")
+            run_git(root, "commit", "-qm", "opaque gitlink under actions")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(2, check.returncode, check.stdout + check.stderr)
+            self.assertFalse(json.loads(check.stdout)["inventory_complete"])
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
