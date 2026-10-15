@@ -179,6 +179,10 @@ def current_deploy(api, sha: str) -> dict:
             "action_required", "neutral", "stale", "startup_failure",
         ):
             raise EvidenceError("unrecognized_deploy_conclusion")
+        if status == "completed" and conclusion is None:
+            raise EvidenceError("completed_deploy_missing_conclusion")
+        if status != "completed" and conclusion is not None:
+            raise EvidenceError("nonterminal_deploy_has_conclusion")
         updated = row.get("updated_at")
         if not isinstance(updated, str) or not re.fullmatch(
             r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", updated
