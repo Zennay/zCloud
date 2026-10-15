@@ -510,6 +510,30 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: echo ${{ github.workflow_sha }}\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_yaml_long_unicode_escaped_run_key_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = chr(92) + "U00000072un"
+        head = self.commit('steps:\n  - "' + key + '": echo ${{ github.event.issue.body }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_yaml_long_unicode_second_letter_escaped_run_key_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = "r" + chr(92) + "U00000075n"
+        head = self.commit('steps:\n  - "' + key + '": echo ${{ inputs.value }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_flow_style_long_unicode_escaped_run_key_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = chr(92) + "U00000072un"
+        head = self.commit('steps:\n  - {name: audit, "' + key + '": echo ${{ github.event.issue.body }}}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_explicit_long_unicode_escaped_run_key_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = chr(92) + "U00000072un"
+        head = self.commit('steps:\n  - ? "' + key + '"\n    : echo ${{ inputs.value }}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
