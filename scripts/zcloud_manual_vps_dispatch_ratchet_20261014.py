@@ -83,7 +83,7 @@ def split_jobs(source: str) -> dict[str, str]:
     if jobs is None:
         return {}
     text = source[jobs.end():]
-    next_top = re.search(r"(?m)^\S", text)
+    next_top = re.search(r"(?m)^(?!#)\S", text)
     if next_top:
         text = text[:next_top.start()]
     matches = list(JOB.finditer(text))
@@ -115,7 +115,7 @@ def manual_event(source: str) -> bool:
             raise RefError("ambiguous_event_syntax")
         return bool(re.search(r"\bworkflow_dispatch\b", rest))
     tail = source[event.end():]
-    end = re.search(r"(?m)^\S", tail)
+    end = re.search(r"(?m)^(?!#)\S", tail)
     block = tail[:end.start()] if end else tail
     # Glob wildcards in paths: are valid event filters, not YAML aliases.
     if re.search(r"(?m)^[ \t]*(?:<<:|[A-Za-z_-]+:[ \t]*[&*]|-[ \t]*[&*])", block):
