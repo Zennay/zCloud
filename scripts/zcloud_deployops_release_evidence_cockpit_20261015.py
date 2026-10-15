@@ -157,6 +157,7 @@ def current_deploy(api, sha: str) -> dict:
     if len(runs) > 100:
         raise EvidenceError("oversized_workflow_page")
     matching = []
+    seen_matching_runs = set()
     for row in runs:
         if not isinstance(row, dict):
             raise EvidenceError("invalid_workflow_run")
@@ -166,6 +167,9 @@ def current_deploy(api, sha: str) -> dict:
             raise EvidenceError("unexpected_deploy_provenance")
         run_id = integer(row.get("id"))
         attempt = integer(row.get("run_attempt"))
+        if (run_id, attempt) in seen_matching_runs:
+            raise EvidenceError("duplicate_deploy_run_identity")
+        seen_matching_runs.add((run_id, attempt))
         status = row.get("status")
         conclusion = row.get("conclusion")
         if status not in ("queued", "in_progress", "completed", "waiting", "pending", "requested"):
@@ -187,7 +191,7 @@ def current_deploy(api, sha: str) -> dict:
         age = (dt.datetime.now(dt.timezone.utc) - updated_time).total_seconds()
         if age < -60:
             raise EvidenceError("future_deploy_evidence")
-        matching.append((run_id, attempt, status, conclusion, max(0, int(age))))
+        matching.append((run_id, attempt, status, conclusion, max(0, int(age)), updated))
     if not matching:
         return {
             "run_id": None, "attempt": None, "status": "not_observed",
@@ -195,7 +199,7 @@ def current_deploy(api, sha: str) -> dict:
             "matching_deploys_in_first_page": 0, "run_age_seconds": None,
             "runner_job_result": "NOT_OBSERVED",
         }
-    run_id, attempt, status, conclusion, run_age_seconds = max(matching, key=lambda x: (x[0], x[1]))
+    run_id, attempt, status, conclusion, run_age_seconds, updated_at = max(matching, key=lambda x: (x[0], x[1]))
     jobs_payload = api.get(
         f"/repos/Zennay/zCloud/actions/runs/{run_id}/jobs?per_page=100&page=1"
     )
@@ -268,6 +272,22 @@ def current_deploy(api, sha: str) -> dict:
         runner_job_result = "SUCCESS"
     else:
         runner_job_result = "NOT_OBSERVED"
+    # A job-list GET can race with a new attempt or with the workflow finishing.
+    # Re-fetch the exact run after every job has been inspected, never silently
+    # combine a stale list conclusion with newer job state.
+    post = api.get(f"/repos/Zennay/zCloud/actions/runs/{run_id}")
+    if not isinstance(post, dict) or (
+        type(post.get("id")) is not int or post["id"] != run_id or
+        type(post.get("run_attempt")) is not int or
+        post["run_attempt"] != attempt or
+        post.get("head_sha") != sha or
+        post.get("head_branch") != "main" or
+        post.get("event") != "workflow_run" or
+        post.get("status") != status or
+        post.get("conclusion") != conclusion or
+        post.get("updated_at") != updated_at
+    ):
+        raise EvidenceError("deploy_run_changed_during_job_read")
     return {
         "run_id": run_id, "attempt": attempt, "status": status,
         "conclusion": conclusion, "runner_route": runner_route,
