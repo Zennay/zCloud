@@ -118,7 +118,7 @@ def tree(commit: str) -> dict[str, str]:
         if path in result:
             raise AdmissionError("duplicate_workflow_path")
         result[path] = oid
-    if not result:
+    if not any(WORKFLOW.fullmatch(path) for path in result):
         raise AdmissionError("missing_workflows")
     return result
 
