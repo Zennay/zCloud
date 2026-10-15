@@ -210,6 +210,43 @@ class GitAssetCases(unittest.TestCase):
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "duplicate_html_attribute")
 
 
+    def test_mismatched_inert_closer_cannot_produce_fake_live_js_pin(self) -> None:
+        # Without a tag stack, </noscript> used to pop an open <template>.
+        # The next script appeared live to the gate although browsers kept it inert.
+        self.write("public/app.js", "console.log(999);")
+        malicious_html = (
+            '<link rel="stylesheet" href="/enhancements.css?v=r5">'
+            '<script src="/enhancements.js?v=r2"></script>'
+            '<template></noscript><script src="/app.js?v=r9"></script></template>'
+        )
+        self.write("public/index.html", malicious_html)
+        self.head = self.commit()
+        result = gate.evaluate(self.base, self.head)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "unbalanced_inert_markup")
+
+    def test_stray_inert_close_after_complete_valid_refs_fails_closed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") + "</template>")
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "unbalanced_inert_markup")
+
+    def test_unclosed_template_after_valid_refs_fails_closed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") + "<template>inert data")
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "unclosed_inert_markup")
+
+    def test_balanced_nested_template_noscript_without_assets_is_allowed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   "<template><noscript><span>nothing cached</span></noscript></template>")
+        self.head = self.commit()
+        self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
+
+    def test_improper_crossed_inert_closers_fail(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   "<template><noscript></template></noscript>")
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "unbalanced_inert_markup")
+
     def test_inert_template_ref_never_counts_as_live_script(self) -> None:
         self.write("public/index.html", '<template><script src="/app.js?v=r9"></script></template>' +
                    '<link rel="stylesheet" href="/enhancements.css?v=r5">')
