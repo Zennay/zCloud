@@ -48,8 +48,8 @@ jobs:
           test "${#HEAD_SHA}" -eq 40
           test "$(git cat-file -t "$BASE_SHA")" = "commit"
           test "$(git cat-file -t "$HEAD_SHA")" = "commit"
-          # Bypass PR-local origin config: only the canonical public GitHub ref is trusted.
-          current_main="$(timeout 15 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          # Ignore PR-local and global Git url.insteadOf rewrites: use / as cwd,\n          # empty Git environment, disabled Git config and the literal canonical URL.
+          current_main="$(timeout 15 env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C / ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
           test "$current_main" = "$BASE_SHA"
       - name: Immutable trusted-base scanner first; explicit bootstrap warning
         shell: bash
@@ -88,5 +88,5 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
-          current_main="$(timeout 15 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          current_main="$(timeout 15 env -i PATH=/usr/bin:/bin HOME=/nonexistent GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git -C / ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
           test "$current_main" = "$BASE_SHA"
