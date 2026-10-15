@@ -135,6 +135,57 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
 
+    def test_curl_stdout_redirect_then_bash_same_file_is_risk(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/setup > setup.sh && bash setup.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_stdout_redirect_then_source_same_file_is_risk(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -qO- https://example.invalid/setup > ./bootstrap.sh; source ./bootstrap.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_curl_stdout_redirect_then_python_next_line_is_risk(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n      - run: |\n"
+            "          curl -fsSL https://example.invalid/setup > /tmp/setup.py\n"
+            "          python3 /tmp/setup.py\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_stdout_redirect_different_script_is_not_proven_risk(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/setup > setup.sh && bash other.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_stdout_redirect_stored_and_read_only_is_not_shell_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/data > local.json && jq . local.json\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_stdout_redirect_legacy_blob_is_only_grandfathered_if_unchanged(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl https://example.invalid/setup > setup.sh && sh setup.sh\n"
+        )
+        old = self.commit()
+        self.assertEqual(mod.audit(self.repo, old, old).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, old, old).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl https://example.invalid/setup > setup.sh && sh setup.sh\n"
+            "      - run: echo changed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_curl_download_then_bash_same_file_rejected(self):
         self.write(
             "jobs:\n  x:\n    steps:\n      - run: |\n"
