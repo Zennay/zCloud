@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -48,6 +49,28 @@ def _pairs(items: list[tuple[str, object]]) -> dict:
 
 def _constant(_value: str) -> None:
     raise Denied("nonfinite_json")
+
+
+def _finite_float(raw: str) -> float:
+    number = float(raw)
+    if not math.isfinite(number):
+        raise Denied("nonfinite_json")
+    return number
+
+
+def _valid_unicode_tree(document: object) -> None:
+    """Reject unpaired JSON surrogate escapes, including in ignored metadata."""
+    pending = [document]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            if any(0xD800 <= ord(ch) <= 0xDFFF for ch in value):
+                raise Denied("invalid_unicode")
+        elif isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
 
 
 def _regular(path: Path) -> os.stat_result:
@@ -158,7 +181,11 @@ def _json(path: Path) -> dict:
     if len(data) > MAX_JSON:
         raise Denied("oversized_json")
     try:
-        parsed = json.loads(data.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_constant)
+        parsed = json.loads(
+            data.decode("utf-8"), object_pairs_hook=_pairs,
+            parse_constant=_constant, parse_float=_finite_float,
+        )
+        _valid_unicode_tree(parsed)
     except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
         if isinstance(exc, Denied):
             raise
@@ -230,8 +257,8 @@ def _verify_manifest_metadata(manifest: dict, expected: dict[str, str]) -> set[s
     managed = _string_set(
         manifest.get("managed_paths"), kind="managed_paths", allowed=MANAGED_ROOTS,
     )
-    if "server.py" not in managed:
-        raise Denied("missing_managed_entrypoint")
+    if managed != MANAGED_ROOTS:
+        raise Denied("managed_contract_drift")
     persistent = _string_set(
         manifest.get("persistent_paths_never_restored"),
         kind="persistent_paths", allowed=PERSISTENT,
