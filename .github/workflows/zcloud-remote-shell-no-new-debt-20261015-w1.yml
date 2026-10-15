@@ -33,6 +33,7 @@ jobs:
         shell: bash
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
@@ -42,10 +43,13 @@ jobs:
         shell: bash
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          git check-ref-format "refs/heads/$HEAD_REF"
+          test "$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')" = "$HEAD_SHA"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           base_sha="$(git rev-parse refs/remotes/origin/main)"
           test "$base_sha" = "$(git ls-remote origin refs/heads/main | awk '{print $1}')"
@@ -53,3 +57,4 @@ jobs:
             --repo . --base "$base_sha" --head "$HEAD_SHA"
           test "$base_sha" = "$(git ls-remote origin refs/heads/main | awk '{print $1}')"
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')" = "$HEAD_SHA"
