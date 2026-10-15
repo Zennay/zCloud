@@ -481,6 +481,19 @@ class ManualDispatchPolicy(unittest.TestCase):
                                     text=True, capture_output=True, timeout=20, check=False)
             self.assertEqual("ref_must_be_immutable_sha", json.loads(denied.stdout)["reason"])
 
+    def test_git_blob_size_is_checked_before_untrusted_blob_is_loaded(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            sha = commit(root, workflow(if_statement=SAFE_IF))
+            with mock.patch.object(guard, "MAX_BYTES", 8):
+                with mock.patch.object(guard, "git", wraps=guard.git) as spy:
+                    with self.assertRaisesRegex(guard.RefError, "oversized_workflow"):
+                        guard.manifest(root, sha)
+                    calls = [c.args[1:] for c in spy.call_args_list]
+                    self.assertTrue(any(args[:2] == ("cat-file", "-s") for args in calls))
+                    self.assertFalse(any(args[:2] == ("cat-file", "blob") for args in calls))
+
     def test_git_manifest_rejects_oversized_workflow_inventory(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
