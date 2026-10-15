@@ -541,5 +541,42 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertTrue(check(self.root, base, self.commit("docs-only"))["ok"])
 
 
+    def test_duplicate_job_key_can_shadow_existing_readonly_scope_denied(self):
+        old = ("on: push\npermissions: write-all\njobs:\n  test:\n"
+               "    permissions:\n      contents: read\n"
+               "    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-safe-job-unsafe-root")
+        self.put(".github/workflows/original.yml",
+                 old + "  test:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, base, self.commit("duplicate-shadowed-job"))["ok"])
+
+    def test_duplicate_top_level_jobs_mapping_denied(self):
+        old = ("on: push\npermissions: write-all\njobs:\n"
+               "  test:\n    permissions:\n      contents: read\n"
+               "    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-safe-job")
+        self.put(".github/workflows/original.yml",
+                 old + "jobs:\n  test:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, base, self.commit("duplicate-jobs-top"))["ok"])
+
+    def test_unchanged_legacy_duplicate_job_key_docs_only_allowed(self):
+        old = ("on: push\npermissions: write-all\njobs:\n"
+               "  test:\n    permissions:\n      contents: read\n"
+               "    runs-on: ubuntu-latest\n"
+               "  test:\n    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-duplicate-job")
+        self.put("README.md", "docs")
+        self.assertTrue(check(self.root, base, self.commit("docs-only"))["ok"])
+
+    def test_distinct_new_readonly_job_with_safe_root_still_allowed(self):
+        candidate = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                     "  test:\n    runs-on: ubuntu-latest\n"
+                     "  second:\n    runs-on: ubuntu-latest\n")
+        self.assertTrue(self.check_file(candidate)["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
