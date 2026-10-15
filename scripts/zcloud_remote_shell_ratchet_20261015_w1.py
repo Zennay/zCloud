@@ -29,6 +29,9 @@ REMOTE = re.compile(
 )
 SUBSTITUTION = re.compile(SCRIPT_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
 SHELL_COMMAND_SUBST = re.compile(SCRIPT_EXEC + r"""\s+-c\s+["\x27]?\$\(\s*(?:curl|wget)\b""", re.I)
+REMOTE_STDIN = re.compile(
+    SCRIPT_EXEC + r"""(?:\s+-s|\s+-)?\s*(?:<\s*<\(|<<<\s*["\x27]?\s*\$\()\s*(?:curl|wget)\b""", re.I
+)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
 # outside the narrow source reader. Conservatively reject newly introduced
@@ -193,6 +196,7 @@ def findings(data: bytes) -> int:
         command = re.sub(r"\\\s*\n\s*", " ", script)
         matched += len(REMOTE.findall(command)) + len(SUBSTITUTION.findall(command))
         matched += len(SHELL_COMMAND_SUBST.findall(command))
+        matched += len(REMOTE_STDIN.findall(command))
         # YAML aliases/tags can hide a shell script outside the literal run scalar.
         # Never claim a new opaque run value is harmless on source evidence alone.
         matched += bool(OPAQUE_RUN.match(command))
