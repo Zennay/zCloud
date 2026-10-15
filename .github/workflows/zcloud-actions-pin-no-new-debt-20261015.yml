@@ -58,11 +58,13 @@ jobs:
           fi
           python3 "$RUNNER_TEMP/trusted-pin-scanner.py" --repo-root . --base "$BASE_SHA" --head "$HEAD_SHA" | tee "$RUNNER_TEMP/zcloud-actions-pin-evidence.json"
 
-      - name: Refuse a stale main revision after the full source scan
+      - name: Refuse stale canonical main and same-repository PR head after scan
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
@@ -73,7 +75,18 @@ jobs:
             echo "::error::Canonical main advanced during this source proof; rerun against the latest base."
             exit 1
           fi
-          echo "ACTION_PIN_BASE_IS_CURRENT_MAIN=1"
+          if test "$HEAD_REPO" != "$GITHUB_REPOSITORY"; then
+            echo "::error::Foreign PR head is outside this same-repository source-attestation policy."
+            exit 1
+          fi
+          git check-ref-format "refs/heads/$HEAD_REF"
+          current_head="$(timeout 20 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test -n "$current_head"
+          if test "$current_head" != "$HEAD_SHA"; then
+            echo "::error::Pull request head moved during source proof; rerun against the current commit."
+            exit 1
+          fi
+          echo "ACTION_PIN_MAIN_AND_HEAD_CURRENT=1"
 
       - name: Publish bounded Dutch evidence even when the source gate refuses
         if: always()
