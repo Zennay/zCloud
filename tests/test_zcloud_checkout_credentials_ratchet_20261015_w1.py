@@ -79,7 +79,7 @@ class RealGitCheckoutRatchet(unittest.TestCase):
         self.verify(workflow("'true'"), "persisted_credentials")
 
     def test_expression_denied(self):
-        self.verify(workflow("$" + "{{ inputs.persist }}"), "persisted_credentials")
+        self.verify(workflow("$" + "{{ inputs.persist }}"), "ambiguous_credentials")
 
     def test_two_checkouts_both_must_disable(self):
         bad = workflow().replace("      - run: echo done\n",
