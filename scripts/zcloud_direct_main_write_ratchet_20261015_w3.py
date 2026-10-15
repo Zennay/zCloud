@@ -143,8 +143,19 @@ def shell_git_push(line: str) -> bool:
         try:
             pieces = list(lexer)
         except ValueError:
-            # Unmatched quoting after an executable Git invocation is opaque.
-            return True
+            # Example: actual_head="$(git rev-parse HEAD)" is well-quoted
+            # as an entire shell line, but its suffix from "git" onwards
+            # has an unmatched closing quote. Do not falsely deny reads.
+            try:
+                full = shlex.shlex(line, posix=True, punctuation_chars=";&|")
+                full.whitespace_split = True
+                full.commenters = ""
+                list(full)
+            except ValueError:
+                return True
+            if GIT_PUSH.search(line):
+                return True
+            continue
         for part in pieces[:16]:
             if part in (";", "&&", "||", "|", "&"):
                 break
