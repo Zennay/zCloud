@@ -85,8 +85,12 @@ jobs:
           set -euo pipefail
           policy_path="scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
           provenance="untrusted_bootstrap_review_required"
-          if git cat-file -e "$BASE_SHA:$policy_path" 2>/dev/null; then
-            mode="$(git ls-tree "$BASE_SHA" -- "$policy_path" | awk '{print $1 " " $2}')"
+          # The exact immutable base tree is authoritative. Only a genuinely
+          # absent policy may use the visibly untrusted first-install path.
+          # Never turn a failed Git probe into an implicit bootstrap bypass.
+          policy_entry="$(git ls-tree "$BASE_SHA" -- "$policy_path")"
+          if [ -n "$policy_entry" ]; then
+            mode="$(printf '%s\\n' "$policy_entry" | awk '{print $1 " " $2}')"
             test "$mode" = "100644 blob"
             git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
             policy_path="$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
