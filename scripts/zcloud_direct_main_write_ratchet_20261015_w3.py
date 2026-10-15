@@ -25,6 +25,14 @@ GH_REF_WRITE = re.compile(r"(?i)\bgh\s+api\b.{0,200}(?:\b(?:PATCH|POST|DELETE|PU
 OCTOKIT_REF_WRITE = re.compile(
     r"(?i)\b(?:github|octokit)\.(?:rest\.)?git\.(?:updateRef|createRef|deleteRef)\s*\("
 )
+
+# GraphQL can update refs with a POST to /graphql and no git/refs URL.
+# Conservatively deny dynamic GraphQL entrypoints in newly edited sources.
+GRAPHQL_ENDPOINT = re.compile(
+    r"(?i)(?:\bgh\s+api\b[^\n]{0,256}\bgraphql\b"
+    r"|\b(?:github|octokit)\.graphql\s*\("
+    r"|https?://api\.github\.com/graphql\b)"
+)
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
 MAX_PATHS = 2000
@@ -145,6 +153,8 @@ def suspicious_lines(source: str) -> list[str]:
             findings.append("gh_api_write")
         if OCTOKIT_REF_WRITE.search(line):
             findings.append("octokit_git_refs_write")
+        if GRAPHQL_ENDPOINT.search(line):
+            findings.append("dynamic_graphql_write_unverifiable")
         if len(findings) >= 15:
             break
     return sorted(set(findings))
@@ -153,6 +163,9 @@ def suspicious_lines(source: str) -> list[str]:
 def audit(base: str, head: str) -> dict[str, object]:
     validate_commit(base)
     validate_commit(head)
+    # Unrelated histories must not be used to launder historic unsafe blobs.
+    if git("merge-base", base, head).strip() != base.encode("ascii"):
+        raise AdmissionError("unrelated_commit_history")
     base_tree = tree(base)
     head_tree = tree(head)
     changed = sorted(p for p in head_tree if base_tree.get(p) != head_tree[p])
