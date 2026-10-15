@@ -276,6 +276,20 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "unbalanced_inert_markup")
 
+    def test_template_duplicate_attributes_fail_closed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<template id="first" id="second"></template>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "duplicate_html_attribute")
+
+    def test_noscript_duplicate_attributes_fail_closed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<noscript id="first" ID="second"></noscript>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "duplicate_html_attribute")
+
     def test_inert_template_ref_never_counts_as_live_script(self) -> None:
         self.write("public/index.html", '<template><script src="/app.js?v=r9"></script></template>' +
                    '<link rel="stylesheet" href="/enhancements.css?v=r5">')
