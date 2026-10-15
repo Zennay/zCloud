@@ -146,5 +146,21 @@ class ActionPinRatchetTests(unittest.TestCase):
             refs("steps:\n - uses: " + "a" * 513, "proof.yml")
 
 
+    def test_flow_mapping_uses_refused(self):
+        self.commit("steps:\n - {uses: actions/cache@v4}\n")
+        with self.assertRaisesRegex(Refusal, "ambiguous_uses_syntax"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_quoted_uses_key_refused(self):
+        self.commit("steps:\n - 'uses': actions/cache@v4\n")
+        with self.assertRaisesRegex(Refusal, "ambiguous_uses_syntax"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_yaml_merge_alias_refused(self):
+        self.commit("steps:\n - <<: *shared-action\n")
+        with self.assertRaisesRegex(Refusal, "yaml_merge_key"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+
 if __name__ == "__main__":
     unittest.main()
