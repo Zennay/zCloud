@@ -158,6 +158,17 @@ class WorkflowRunTokenRatchetTests(unittest.TestCase):
         candidate = SAFE.replace("    runs-on:", "    permissions: &privileged\n    runs-on:")
         self.assertTrue(self.edit(candidate))
 
+    def test_workflow_revalidates_both_live_refs_before_and_after(self):
+        p = (Path(__file__).resolve().parents[1] /
+             ".github/workflows/zcloud-workflow-run-token-no-new-debt-20261015-w5.yml")
+        workflow = p.read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("git ls-remote --exit-code"), 4)
+        self.assertEqual(workflow.count('test "$remote_main" = "$EXACT_BASE"'), 2)
+        self.assertEqual(workflow.count('test "$remote_head" = "$EXACT_HEAD"'), 2)
+        self.assertLess(workflow.index('test "$remote_main" = "$EXACT_BASE"'),
+                        workflow.index("Checkout immutable PR source"))
+        self.assertIn('timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF"', workflow)
+
     def test_source_policy_matrix(self):
         for value, unsafe in [
             (SAFE, False),
