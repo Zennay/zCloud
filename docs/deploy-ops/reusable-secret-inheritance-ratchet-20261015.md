@@ -24,3 +24,6 @@ This patch is separate from current owners: PR #1463 (Action ref pins), PR #1464
 `python3 scripts/zcloud_reusable_secrets_guard_20261015_w3.py --base <40-hex-main-sha> --head <40-hex-pr-head-sha>`
 
 Both commands are offline/read-only. The GitHub-hosted PR workflow also rechecks current main on both sides of these commands.
+
+## Extended adversarial source coverage
+The ratchet also conservatively denies newly changed workflow YAML with literal Unicode/hex escape sequences, even if they occur in otherwise benign strings. This avoids a false safe verdict from obfuscated `secrets` keys or `inherit` values; it may cause false positives requiring independent review. Complex YAML mapping keys split across `? secrets` and `: inherit` are also detected. Three additional real-Git negative fixtures enforce the behavior. Both changes are source-only and confer no deployment authority.
