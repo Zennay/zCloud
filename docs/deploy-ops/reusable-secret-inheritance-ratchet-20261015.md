@@ -33,3 +33,6 @@ The ratchet also conservatively denies newly changed workflow YAML with literal 
 - Immutable GitHub main and pull-request-head remote refs (SHA **and** complete ref name) are verified both before and after tests. Changing the source branch while checks execute invalidates the evidence. A PR author must still not be considered an independent trusted reviewer.
 - The source scanner now requires both `.github` and `.github/workflows` to remain real Git tree objects at base and head. A symlink or deletion of that directory must not silently produce an empty, passing inventory.
 - Real-Git fixtures cover directory removal, workflows-root symlink, parent-root symlink, remote branch movement, and a valid directory. All operations remain source-only.
+
+## Empty YAML inventory denial
+Merely preserving `.github/workflows/` with only a README does not preserve GitHub Actions execution. The scanner therefore rejects a base or candidate Git tree with **zero** recognized `.yml`/`.yaml` workflows, while still permitting removal of an individual retired workflow when another actual workflow remains. This is source-only fail-closed evidence, not an authorization to keep or delete workflows. Two real-Git regression fixtures protect the distinction.
