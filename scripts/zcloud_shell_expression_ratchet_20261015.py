@@ -27,7 +27,7 @@ RUN_ESCAPED_KEY = re.compile(
 )
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 YAML_QUOTED_ESCAPE = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
-UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.action_ref\b|inputs\b|env\b|vars\b|secrets\b)", re.I)
+UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.workflow\b|github\.token\b|github\.action_ref\b|inputs\b|env\b|vars\b|secrets\b)", re.I)
 DERIVED_OUTPUT_UNTRUSTED = re.compile(r"\b(?:steps\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|needs\.(?:[A-Za-z_][A-Za-z0-9_-]*|\*)\.outputs\b|matrix\b)", re.I)
 ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*(?:github|steps|needs|env|vars|secrets)\s*\)", re.I)
 # Serializing a whole child job/step includes its outputs even if the
@@ -239,6 +239,8 @@ def fingerprint_risks(source: str) -> Counter[str]:
                 raise EvidenceError("expression_too_large")
             # GitHub expressions allow github['event']['issue'] as well as
             # github.event.issue. The env context is similarly unsafe for direct\n            # shell interpolation: a prior step or workflow may fill it with\n            # attacker-controlled text; env: injection + quoted shell use is safer.
+            # Workflow display titles may contain shell syntax; github.token
+            # is a secret-bearing context and must not appear in run text.
             # Configured vars and secrets can also contain shell metacharacters;
             # inject through env: rather than embedding directly in run text.
             normalized = BRACKET_PROPERTY.sub(lambda m: "." + m.group(2), normalized)
