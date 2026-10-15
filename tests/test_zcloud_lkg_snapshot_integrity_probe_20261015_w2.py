@@ -257,6 +257,20 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             with self.assertRaisesRegex(probe.Denied, "source_changed_during_scan"):
                 probe.inspect(self.state)
 
+    def test_directory_enumeration_failure_denies_instead_of_skipping(self):
+        from unittest.mock import patch
+        with patch.object(probe.os, "scandir", side_effect=PermissionError("hidden")):
+            with self.assertRaisesRegex(probe.Denied, "invalid_snapshot_tree"):
+                probe.inspect(self.state)
+
+    def test_deep_snapshot_tree_is_bounded(self):
+        nested = self.files
+        for _ in range(66):
+            nested = nested / "d"
+            nested.mkdir()
+        with self.assertRaisesRegex(probe.Denied, "snapshot_tree_too_deep"):
+            probe.inspect(self.state)
+
     def test_real_recovery_capture_format_is_accepted_without_live_mutation(self):
         from unittest.mock import patch
         from scripts import zcloud_recovery as production_capture
