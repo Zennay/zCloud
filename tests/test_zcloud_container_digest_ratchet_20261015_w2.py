@@ -171,6 +171,38 @@ jobs:
             self.assertEqual(2, check.returncode)
             self.assertFalse(json.loads(check.stdout)["inventory_complete"])
 
+    def test_real_git_deleted_workflow_tree_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, workflow = self._init(root)
+            workflow.unlink()
+            run_git(root, "add", "-A")
+            run_git(root, "commit", "-qm", "deleted all workflows")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(2, check.returncode, check.stdout)
+            self.assertFalse(json.loads(check.stdout)["inventory_complete"])
+
+    def test_real_git_symlinked_actions_directory_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, _workflow = self._init(root)
+            (root / "other").mkdir()
+            (root / "other" / "action.yml").write_text("name: untrusted\n")
+            (root / ".github" / "actions").symlink_to(root / "other")
+            run_git(root, "add", ".github")
+            run_git(root, "commit", "-qm", "replace actions directory with symlink")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(2, check.returncode, check.stdout)
+            self.assertFalse(json.loads(check.stdout)["inventory_complete"])
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
