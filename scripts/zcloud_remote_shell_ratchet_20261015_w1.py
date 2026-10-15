@@ -76,8 +76,8 @@ def committed_workflows(repo: Path, sha: str) -> dict[str, bytes]:
         action_source = path in ("action.yml", "action.yaml") or path.endswith(("/action.yml", "/action.yaml"))
         workflow_source = workflow_tree and path.endswith((".yml", ".yaml"))
         # A symlink in Actions control source is never a trusted local entrypoint.
-        if mode == "120000" and (workflow_tree or action_source or path.startswith(".github/actions/")):
-            raise SourceError("Symlinked Actions source rejected")
+        if mode in ("120000", "160000") and (workflow_tree or action_source or path.startswith(".github/actions/")):
+            raise SourceError("Symlinked or gitlinked Actions source rejected")
         if not workflow_source and not action_source:
             continue
         if mode not in ("100644", "100755") or typ != "blob" or not SHA.fullmatch(object_id):
