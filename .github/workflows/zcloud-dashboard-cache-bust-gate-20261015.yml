@@ -48,6 +48,9 @@ jobs:
           test "${#HEAD_SHA}" -eq 40
           test "$(git cat-file -t "$BASE_SHA")" = "commit"
           test "$(git cat-file -t "$HEAD_SHA")" = "commit"
+          # Bypass PR-local origin config: only the canonical public GitHub ref is trusted.
+          current_main="$(timeout 15 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$BASE_SHA"
       - name: Immutable trusted-base scanner first; explicit bootstrap warning
         shell: bash
         env:
@@ -77,3 +80,13 @@ jobs:
           set -euo pipefail
           python3 -m unittest -v tests.test_zcloud_dashboard_cache_bust_gate_20261015
           python3 -m py_compile scripts/zcloud_dashboard_cache_bust_gate_20261015.py
+      - name: Recheck immutable current main after policy and PR tests
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$BASE_SHA"
