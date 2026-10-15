@@ -48,6 +48,20 @@ GOVERNANCE_API = re.compile(
     r"updateRepoRuleset|deleteRepoRuleset)\s*\("
 )
 
+# A PR merge is an indirect write to the protected branch, even without
+# git push or the Git refs REST endpoint being present in workflow source.
+GH_PR_MERGE = re.compile(
+    r"(?i)\bgh\s+(?:(?:(?:-R|--repo)\s+\S+\s+)?pr\s+merge)\b"
+)
+OCTOKIT_PR_MERGE = re.compile(
+    r"(?i)\b(?:github|octokit)\.(?:rest\.)?"
+    r"(?:pulls\.merge|repos\.merge)\s*\("
+)
+REST_MERGE_PATH = re.compile(
+    r"(?i)\brepos/[^/\s'\"<>]+/[^/\s'\"<>]+/"
+    r"(?:merges\b|pulls/[^/\s'\"<>]+/merge\b)"
+)
+
 # GraphQL can update refs with a POST to /graphql and no git/refs URL.
 # Conservatively deny dynamic GraphQL entrypoints in newly edited sources.
 GRAPHQL_ENDPOINT = re.compile(
@@ -217,6 +231,13 @@ def suspicious_lines(source: str) -> list[str]:
             findings.append("git_environment_config_injection")
         if GOVERNANCE_API.search(line):
             findings.append("octokit_repository_governance_write")
+        if GH_PR_MERGE.search(line) or OCTOKIT_PR_MERGE.search(line):
+            findings.append("indirect_pr_merge_write")
+        if REST_MERGE_PATH.search(line) and (
+            re.search(r"(?i)\b(?:gh\s+api|curl|wget)\b", line)
+            or "api.github.com" in line.lower()
+        ):
+            findings.append("rest_merge_write")
         if GRAPHQL_ENDPOINT.search(line):
             findings.append("dynamic_graphql_write_unverifiable")
         if len(findings) >= 15:
