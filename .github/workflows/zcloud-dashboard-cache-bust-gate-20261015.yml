@@ -120,7 +120,7 @@ jobs:
               "nonmonotonic_cache_pin": "Cacheversie is teruggezet of hergebruikt.",
           }
           result = payload.get("ok") is True
-          if payload.get("ok") not in (True, False):
+          if type(payload.get("ok")) is not bool:
               raise SystemExit("cache_report_missing_verdict")
           reason = payload.get("reason")
           description = reasons.get(reason, "Bronbewijs geweigerd of onvolledig.")
@@ -140,7 +140,7 @@ jobs:
               "- Dit is uitsluitend broncontrole; geen toestemming voor deploy of VPS-herstel.",
           ]
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
-              handle.write("\\n".join(lines) + "\\n")
+              handle.write("\n".join(lines) + "\n")
           PY
           test "$policy_result" -eq 0
 
