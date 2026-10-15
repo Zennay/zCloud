@@ -41,7 +41,8 @@ def job(status="completed", runner_id=21, runner_name="zcloud-vps-1", *,
 
 def status(state="success"):
     return [{"context": "zcloud/vps-production", "id": 20,
-             "created_at": "2026-10-15T03:00:00Z", "state": state}]
+             "created_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "state": state}]
 
 
 class FakeAPI:
@@ -121,6 +122,41 @@ class ReleaseEvidenceTests(unittest.TestCase):
              "id": 2, "created_at": "2026-10-15T04:00:00Z"},
         ]]
         self.assertEqual(cockpit.collect(api)["production"]["state"], "failure")
+
+    def test_production_old_success_warns_not_fresh(self):
+        api = FakeAPI()
+        api.pages[STAT] = [[{"context": "zcloud/vps-production",
+                            "created_at": "2020-01-01T00:00:00Z",
+                            "id": 55, "state": "success"}]]
+        data = cockpit.collect(api)
+        self.assertEqual(data["production"]["state"], "success")
+        self.assertGreater(data["production"]["last_status_age_seconds"], 900)
+        self.assertIn("production_observation_stale", data["warnings"])
+        self.assertIn("Leeftijd productiestatus", cockpit.render_html(data))
+        self.assertFalse(data["release_authorized"])
+
+    def test_production_invalid_calendar_timestamp_denied(self):
+        api = FakeAPI()
+        api.pages[STAT] = [[{"context": "zcloud/vps-production",
+                            "created_at": "2026-19-44T00:00:00Z",
+                            "id": 55, "state": "success"}]]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "invalid_production_timestamp"):
+            cockpit.collect(api)
+
+    def test_production_future_timestamp_denied(self):
+        api = FakeAPI()
+        api.pages[STAT] = [[{"context": "zcloud/vps-production",
+                            "created_at": "2099-01-01T00:00:00Z",
+                            "id": 55, "state": "success"}]]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "future_production_evidence"):
+            cockpit.collect(api)
+
+    def test_production_repeated_id_denied(self):
+        api = FakeAPI()
+        repeated = dict(status()[0])
+        api.pages[STAT] = [[repeated, dict(repeated)]]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_production_status_id"):
+            cockpit.collect(api)
 
     def test_queued_job_with_runner_zero_is_not_proof(self):
         api = FakeAPI()
