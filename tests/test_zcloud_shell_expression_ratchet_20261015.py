@@ -570,6 +570,36 @@ class RealGitTests(unittest.TestCase):
         head = self.commit('steps:\n  - run: "printf safe"\n')
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_legacy_risky_step_condition_relaxed_denied(self):
+        unsafe = "$" + "{{ github.event.issue.body }}"
+        base = self.commit("jobs:\n  x:\n    steps:\n      - name: gated\n        if: false\n        run: echo " + unsafe + "\n")
+        head = self.commit("jobs:\n  x:\n    steps:\n      - name: gated\n        if: true\n        run: echo " + unsafe + "\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_legacy_risky_step_shell_changed_denied(self):
+        unsafe = "$" + "{{ inputs.from_pr }}"
+        base = self.commit("jobs:\n  x:\n    steps:\n      - name: guarded\n        shell: bash\n        run: echo " + unsafe + "\n")
+        head = self.commit("jobs:\n  x:\n    steps:\n      - name: guarded\n        shell: pwsh\n        run: echo " + unsafe + "\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_identical_unsafe_step_moved_past_safe_step_denied(self):
+        unsafe = "$" + "{{ github.event.issue.title }}"
+        base = self.commit("steps:\n  - run: echo " + unsafe + "\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo safe\n  - run: echo " + unsafe + "\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_identical_unsafe_step_renamed_denied(self):
+        unsafe = "$" + "{{ github.event.issue.title }}"
+        base = self.commit("steps:\n  - name: guarded\n    run: echo " + unsafe + "\n")
+        head = self.commit("steps:\n  - name: privileged\n    run: echo " + unsafe + "\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_legacy_unsafe_step_append_safe_step_allowed(self):
+        unsafe = "$" + "{{ github.event.issue.title }}"
+        base = self.commit("steps:\n  - name: current\n    run: echo " + unsafe + "\n")
+        head = self.commit("steps:\n  - name: current\n    run: echo " + unsafe + "\n  - name: safe\n    run: echo harmless\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
