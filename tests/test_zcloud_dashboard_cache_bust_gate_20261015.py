@@ -235,7 +235,7 @@ class GitAssetCases(unittest.TestCase):
         scanner.write_bytes(SCRIPT.read_bytes())
         trusted_base = self.commit()
         self.write("public/app.js", "console.log(2);")
-        scanner.write_text("raise SystemExit(0)\\n", encoding="utf-8")
+        scanner.write_text("raise SystemExit(0)\n", encoding="utf-8")
         malicious_head = self.commit()
         self.assertEqual(
             subprocess.run(["python3", "-I", str(scanner)], capture_output=True,
