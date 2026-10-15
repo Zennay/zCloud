@@ -134,6 +134,51 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.Denied, "oversized_json"):
             probe.inspect(self.state)
 
+    def test_extra_validly_hashed_unmanaged_top_level_file_is_denied(self):
+        rogue = b"do not restore"
+        (self.files / "unmanaged.py").write_bytes(rogue)
+        self.hashes["unmanaged.py"] = hashlib.sha256(rogue).hexdigest()
+        self.save()
+        with self.assertRaisesRegex(probe.Denied, "invalid_hash_manifest"):
+            probe.inspect(self.state)
+
+    def test_symlinked_snapshot_root_and_hardlinked_file_are_denied(self):
+        original = self.snap
+        renamed = self.snapshots / "real-snapshot"
+        original.rename(renamed)
+        original.symlink_to(renamed, target_is_directory=True)
+        with self.assertRaisesRegex(probe.Denied, "nonregular_directory"):
+            probe.inspect(self.state)
+        original.unlink()
+        renamed.rename(original)
+        alternate = Path(self.tmp.name) / "hardlinked-source"
+        alternate.hardlink_to(self.files / "server.py")
+        with self.assertRaisesRegex(probe.Denied, "nonregular_file"):
+            probe.inspect(self.state)
+
+    def test_special_file_is_denied_before_open(self):
+        import os
+        fifo = self.files / "named-pipe"
+        os.mkfifo(fifo)
+        with self.assertRaisesRegex(probe.Denied, "special_file_in_snapshot"):
+            probe.inspect(self.state)
+
+    def test_boolean_format_version_is_not_accepted_as_integer_one(self):
+        manifest = self.snap / "manifest.json"
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        payload["format_version"] = True
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(probe.Denied, "manifest_identity_mismatch"):
+            probe.inspect(self.state)
+
+    def test_directory_enumeration_is_bounded_before_sorting(self):
+        from unittest.mock import patch
+        for index in range(15):
+            (self.files / f"extra-{index}.txt").write_text("x", encoding="utf-8")
+        with patch.object(probe, "MAX_FILES", 4):
+            with self.assertRaisesRegex(probe.Denied, "too_many_paths"):
+                probe.inspect(self.state)
+
     def test_cli_json_failure_is_sanitized_and_read_only(self):
         (self.files / "server.py").write_text("tampered", encoding="utf-8")
         script = Path(probe.__file__)
