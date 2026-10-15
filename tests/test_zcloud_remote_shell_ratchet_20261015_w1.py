@@ -221,12 +221,19 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
 
-    def test_download_chmod_other_file_not_proven_direct_execution(self):
+    def test_download_chmod_other_file_and_execute_other_is_not_download_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o installer https://example.invalid/i && chmod +x different && ./different\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_download_chmod_other_file_but_exec_download_still_risky(self):
         self.write(
             "jobs:\n  x:\n    steps:\n"
             "      - run: curl -o installer https://example.invalid/i && chmod +x different && ./installer\n"
         )
-        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
     def test_download_exec_same_prefix_different_file_remains_unflagged(self):
         self.write(
