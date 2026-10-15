@@ -298,5 +298,15 @@
     "eligible": true,
     "completion_criteria": "Make a material code, configuration, or test change in Zennay/zGuard that improves browser runtime reliability, privacy, recovery, popup handling, or the TV-friendly UX. Completion requires deterministic tests and VPS workflow evidence when runtime validation is needed.",
     "source_url": "https://app.notion.com/p/3ef9e19ac9558156b449c37142ed8e34"
+  },
+  {
+    "queue_id": "tradengine-m0-fundamentals-foundation",
+    "project_id": "tradengine",
+    "title": "Bootstrap TradeEngine point-in-time fundamentals and deterministic scoring",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Build a small, tested independent equity research foundation in Zennay/tradengine: point-in-time fundamentals with publication timestamps/provenance, explainable value-quality-growth scoring, missing-data safety, bias regression tests, and repeatable fixture-based validation. No real orders, broker credentials, or FTMO integration. Check existing PRs and avoid conflicting work.",
+    "source_url": "https://app.notion.com/p/3fa9e19ac955813280b9e2a4395c2137"
   }
 ]

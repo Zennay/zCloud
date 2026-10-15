@@ -30,6 +30,7 @@ PROJECT_UNITS = {
     "ulab": [],
     "zssh": ["zssh.service"],
     "lightup": [],
+    "tradengine": [],  # Research-only, no managed systemd trading service.
 }
 _RESOURCE_PREV = {}
 _RESOURCE_HOST_PREV = None

@@ -191,6 +191,23 @@
         "priority": "normal",
         "protected": false
       }
+    },
+    "tradengine": {
+      "queue_mode": "execution",
+      "lane_profile": "research-validation",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "ai_worker",
+        "auto_start": true
+      },
+      "compute": {
+        "class": "research-build",
+        "pool": "build",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 1536,
+        "priority": "background",
+        "protected": false
+      }
     }
   }
 }

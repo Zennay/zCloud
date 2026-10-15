@@ -1,6 +1,7 @@
 {
   "order": [
     "ftmo",
+    "tradengine",
     "raiseai",
     "supa",
     "cloud",
