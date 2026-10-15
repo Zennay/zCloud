@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 SOURCE = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_legacy_commands_ratchet_20261015_w6.py"
 SPEC = importlib.util.spec_from_file_location("legacy_command_gate", SOURCE)
@@ -137,6 +138,32 @@ class RealGitRatchetTests(unittest.TestCase):
         Path(".github/workflows/old.yml").unlink()
         after = self.commit()
         self.assertEqual(gate.scan(original, after), (0, 0))
+
+
+    def fake_git(self, program: str):
+        bindir = Path(self.temp.name) / "fakebin"
+        bindir.mkdir(exist_ok=True)
+        target = bindir / "git"
+        target.write_text("#!/usr/bin/env python3\\n" + program)
+        target.chmod(0o755)
+        return str(bindir) + os.pathsep + os.environ["PATH"]
+
+    def test_git_stdout_flood_is_killed_within_budget(self):
+        path = self.fake_git("import sys\\nsys.stdout.buffer.write(b'x' * 4096)\\n")
+        with mock.patch.dict(os.environ, {"PATH": path}):
+            with self.assertRaises(gate.Denied):
+                gate.git("version", max_output=128)
+
+    def test_git_hang_is_killed_after_timeout(self):
+        path = self.fake_git("import time\\ntime.sleep(10)\\n")
+        with mock.patch.dict(os.environ, {"PATH": path}), mock.patch.object(gate, "TIMEOUT", 0.2):
+            with self.assertRaises(gate.Denied):
+                gate.git("version", max_output=128)
+
+    def test_invalid_output_budget_is_denied(self):
+        for budget in (0, -1, gate.MAX_OUTPUT + 1):
+            with self.subTest(budget=budget), self.assertRaises(gate.Denied):
+                gate.git("version", max_output=budget)
 
 
 if __name__ == "__main__":
