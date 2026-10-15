@@ -50,6 +50,10 @@ outcomes retain \`release_authorized=false\`,
    newer failure, and a missing status is not success. IDs must be unique,
    timestamps real and not future-dated. A success older than 15 minutes is
    *historical* and emits a freshness warning; it is never runtime health.
+   After reading deploy/jobs, a **second exact-SHA production-status GET**
+   checks the latest status ID, timestamp, state and matching event count.
+   If these change during observation, the entire snapshot is rejected.
+   Two identical GETs do not establish a transactionally atomic snapshot.
 3. The first 100 most recently returned main deploy runs from
    \`zcloud-vps-deploy.yml\` are inspected. The latest matching run
    for **the observed SHA** is identified by GitHub run ID and attempt.
