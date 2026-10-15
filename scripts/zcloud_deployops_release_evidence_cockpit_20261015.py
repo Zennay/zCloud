@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import html
+import hashlib
 import json
 import os
 import re
@@ -126,6 +127,7 @@ def production_status(api, sha: str) -> dict:
     latest = None
     count = 0
     seen_status_ids = set()
+    status_events = []
     for page in range(1, 6):
         payload = api.get(
             f"/repos/Zennay/zCloud/commits/{sha}/statuses?per_page=100&page={page}"
@@ -149,6 +151,7 @@ def production_status(api, sha: str) -> dict:
             if status_id in seen_status_ids:
                 raise EvidenceError("duplicate_production_status_id")
             seen_status_ids.add(status_id)
+            status_events.append((status_id, stamp, state))
             try:
                 timestamp = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
             except ValueError as exc:
@@ -170,6 +173,12 @@ def production_status(api, sha: str) -> dict:
         "last_status_age_seconds": latest[2] if latest else None,
         "latest_status_id": latest[0][1] if latest else None,
         "latest_status_at_utc": latest[0][0].isoformat() if latest else None,
+        # Bind the entire observed context set, not only the newest event:
+        # older failures/pending statuses may shift without changing "latest".
+        "status_events_digest": hashlib.sha256(
+            json.dumps(sorted(status_events), separators=(",", ":"))
+            .encode("utf-8")
+        ).hexdigest(),
     }
 
 
@@ -439,7 +448,8 @@ def collect(api) -> dict:
     # A second GET is not an atomic transaction, but changing status-event
     # identities or counts must invalidate the entire evidence snapshot.
     prod_final = production_status(api, sha)
-    stable = ("state", "matching_events", "latest_status_id", "latest_status_at_utc")
+    stable = ("state", "matching_events", "latest_status_id", "latest_status_at_utc",
+              "status_events_digest")
     if any(prod[key] != prod_final[key] for key in stable):
         raise EvidenceError("production_status_changed_during_observation")
     if main_sha(api) != sha:
@@ -517,7 +527,8 @@ def main(argv: list[str] | None = None) -> int:
                 dt.timezone.utc).isoformat(),
             "production": {"state": "unknown", "matching_events": 0,
                            "last_status_age_seconds": None,
-                           "latest_status_id": None, "latest_status_at_utc": None},
+                           "latest_status_id": None, "latest_status_at_utc": None,
+                           "status_events_digest": None},
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
                        "conclusion": None, "runner_route": "UNVERIFIED",
                        "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED",
