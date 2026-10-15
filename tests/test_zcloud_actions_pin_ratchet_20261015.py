@@ -391,6 +391,10 @@ class HostedPinRatchetTrustTests(unittest.TestCase):
     def test_hosted_read_only_pr_admission(self):
         text = self.source
         self.assertIn("pull_request:", text)
+        self.assertIn("push:", text)
+        self.assertIn("branches: [main]", text)
+        self.assertIn("github.event_name == 'push'", text)
+        self.assertIn("name: Report outcome without creating any release authority", text)
         self.assertIn('".github/actions/**"', text)
         self.assertIn('"**/action.yml"', text)
         self.assertIn('"**/action.yaml"', text)
@@ -528,7 +532,7 @@ class HostedPinSummaryTests(unittest.TestCase):
                   / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
                   ).read_text(encoding="utf-8")
         src = source.split("name: Publish bounded Dutch evidence even when the source gate refuses", 1)[1]
-        block = src.split("        run: |\n", 1)[1]
+        block = src.split("        run: |\n", 1)[1].split("\n  audit-pushed-main:", 1)[0]
         cls.script = "\n".join(
             line[10:] if line.startswith("          ") else line
             for line in block.splitlines()
@@ -598,6 +602,86 @@ class HostedPinSummaryTests(unittest.TestCase):
         summary = self.summary(raw)
         self.assertNotIn("TOP_SECRET_TOKEN", summary)
         self.assertIn("Nieuw gevonden risico | 1", summary)
+
+
+class HostedMainPushAuditTests(unittest.TestCase):
+    """Run the exact main-push audit shell against real detached Git commits."""
+
+    def setUp(self):
+        import os
+        import shutil
+        self.os = os
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.remote = self.root / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(self.remote)], check=True)
+        self.command("init", "-q")
+        self.command("config", "user.name", "hosted pin test")
+        self.command("config", "user.email", "pin@example.invalid")
+        target = self.repo / ".github/workflows/example.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text("jobs:\n demo:\n  steps:\n   - uses: actions/checkout@v4\n")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "baseline")
+        self.base = self.command("rev-parse", "HEAD")
+        scanner = self.repo / "scripts/zcloud_actions_pin_ratchet_20261015.py"
+        scanner.parent.mkdir()
+        shutil.copyfile(Path(__file__).resolve().parents[1] / "scripts/zcloud_actions_pin_ratchet_20261015.py", scanner)
+        self.command("add", "scripts")
+        self.command("commit", "-qm", "scanner candidate")
+        self.head = self.command("rev-parse", "HEAD")
+        self.command("remote", "add", "origin", str(self.remote))
+        self.command("push", "-q", "origin", "HEAD:refs/heads/main")
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        section = workflow.split("name: Compare exact before and after commit tree read only", 1)[1]
+        shell = section.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
+        self.shell = "\n".join(line[10:] if line.startswith("          ") else line
+                               for line in shell.splitlines()) + "\n"
+
+    def command(self, *cmd):
+        return subprocess.run(["git", "-C", str(self.repo), *cmd],
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def execute(self, **updates):
+        env = dict(self.os.environ,
+                   GITHUB_REPOSITORY="Zennay/zCloud",
+                   GITHUB_EVENT_NAME="push",
+                   GITHUB_REF="refs/heads/main",
+                   BEFORE_SHA=self.base, HEAD_SHA=self.head,
+                   RUNNER_TEMP=str(self.root))
+        env.update(updates)
+        return subprocess.run(["bash", "-c", self.shell], cwd=self.repo,
+                              env=env, text=True, capture_output=True, timeout=30)
+
+    def test_clean_main_push_passes_no_new_debt(self):
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        report = json.loads((self.root / "main-pin-drift.json").read_text())
+        self.assertEqual(report["new_unpinned"], 0)
+        self.assertFalse(report["deployment_authorized"])
+
+    def test_direct_main_push_with_new_floating_action_is_denied_with_evidence(self):
+        target = self.repo / ".github/workflows/example.yml"
+        target.write_text(target.read_text() + "   - uses: actions/cache@v4\n")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "unsafe direct push")
+        self.command("push", "-q", "origin", "HEAD:refs/heads/main")
+        result = self.execute(HEAD_SHA=self.command("rev-parse", "HEAD"))
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        report = json.loads((self.root / "main-pin-drift.json").read_text())
+        self.assertEqual(report["new_unpinned"], 1)
+        self.assertFalse(report["release_authorized"])
+        self.assertFalse(report["mutation_performed"])
+
+    def test_unknown_before_or_non_main_event_denied(self):
+        self.assertNotEqual(self.execute(BEFORE_SHA="0" * 40).returncode, 0)
+        self.assertNotEqual(self.execute(GITHUB_REF="refs/heads/other").returncode, 0)
+        self.assertNotEqual(self.execute(GITHUB_EVENT_NAME="pull_request").returncode, 0)
 
 
 if __name__ == "__main__":
