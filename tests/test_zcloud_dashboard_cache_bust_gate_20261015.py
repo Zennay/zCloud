@@ -366,6 +366,56 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
 
+    def test_alternate_css_does_not_stand_in_for_active_stylesheet(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'rel="stylesheet"', 'rel="alternate stylesheet"'))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "alternate_stylesheet_asset_ref")
+
+    def test_alternate_css_reversed_rel_tokens_rejected(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'rel="stylesheet"', 'rel="stylesheet alternate"'))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "alternate_stylesheet_asset_ref")
+
+    def test_non_css_mime_type_does_not_count_as_active_link(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'rel="stylesheet"', 'rel="stylesheet" type="text/plain"'))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "inactive_stylesheet_type")
+
+    def test_explicit_css_mime_type_is_valid(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'rel="stylesheet"', 'rel="stylesheet" type="text/css"'))
+        self.head = self.commit()
+        self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
+
+    def test_titled_css_does_not_replace_unconditional_stylesheet(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'rel="stylesheet"', 'rel="stylesheet" title="Night"'))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "conditional_stylesheet_asset_ref")
+
+    def test_source_only_js_sri_claim_needs_independent_review(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            '<script src="/app.js?v=r8"',
+            '<script src="/app.js?v=r8" integrity="sha256-invalid"'))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "unverified_integrity_asset_ref")
+
+    def test_source_only_css_sri_claim_needs_independent_review(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5").replace(
+            'href="/enhancements.css?v=r5"',
+            'href="/enhancements.css?v=r5" integrity="sha256-invalid"'))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "unverified_integrity_asset_ref")
+
     def test_disabled_stylesheet_ref_rejected(self) -> None:
         self.write("public/index.html", '<script src="/app.js?v=r8"></script>' +
                    '<link rel="stylesheet" disabled href="/enhancements.css?v=r6">')
