@@ -162,6 +162,23 @@ conservative syntax contract, not a complete GitHub Actions expression
 interpreter. For potentially untrusted outputs, bind the expression to
 a step `env:` property and consume it as a quoted, validated shell value.
 
+## Mutable workflow display title and token context
+
+Unlike the immutable `github.workflow_sha`, `github.workflow` is a
+human-readable workflow title. Its spelling comes from workflow source and
+may include shell-significant characters. Newly inserting it directly into
+`run:` therefore crosses the same expression-to-shell trust boundary as
+other non-literal strings. `github['workflow']` is equivalent. Use an
+`env:` binding and quoted shell variable when a command needs the title.
+
+`github.token` is a credential-bearing context. Although a token's ordinary
+characters may be shell-safe, inline insertion risks needless exposure in
+generated script text and command diagnostics. The guard now denies **new**
+`github.token` and `github['token']` direct shell substitutions.
+The change is a source-level no-new-debt policy, not a guarantee that tokens
+are masked at runtime. Keep permissions narrow, avoid printing credentials,
+and use an environment variable only when authenticated access is necessary.
+
 ## Local composite Action shell coverage
 
 The guard now also scans committed `action.yml` and `action.yaml` files **at
