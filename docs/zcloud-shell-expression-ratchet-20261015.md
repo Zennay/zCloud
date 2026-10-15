@@ -191,8 +191,12 @@ vulnerabilities or a release authorization.
 
 Reason categories support human-readable backlog triage without copying
 the source shell expressions, secret names, tokens, embedded expressions
-or full command hashes into a report. The lists summarize all scanned
-sources; existing per-workflow summaries still provide only path and total.
+or full command hashes into a report. The baseline and candidate lists summarize all scanned sources.
+A separate `new_risk_kinds` list summarizes **only** findings newly
+introduced relative to the immutable base, so a rejected PR can show
+which type of debt caused the failure without publishing raw expressions.
+A clean candidate emits `new_risk_kinds: []` even when baseline findings
+remain. Existing per-workflow summaries still provide only path and total.
 The exact input/output path and count snapshots remain available for
 independent review. A missing Git object fails closed rather than emitting
 an apparently complete advisory.
