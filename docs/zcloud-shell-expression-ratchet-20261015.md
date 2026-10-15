@@ -308,6 +308,21 @@ generic parsers. This check is intentionally a fail-closed syntax guard,
 **not** proof that a tagged key is executable by Actions, nor a substitute
 for YAML semantic validation. No release, merge or VPS permission is granted.
 
+## Quoted YAML execution authority keys
+
+GitHub Actions YAML allows key names to be single- or double-quoted.
+The execution-control envelope must therefore recognise `'on':`,
+`"permissions":`, `'jobs':` and quoted job identifiers such as
+`"deploy":` or `'deploy':`. Otherwise, changing job permissions
+or event triggers could raise a legacy shell command's authority
+without changing its existing fingerprint.
+
+This control uses bounded source spelling and indentation, not a YAML
+parser. A permission change in an **unrelated** quoted job is not new
+debt for the untouched risky job. Exact source fingerprints still
+require independent review before integration; runtime permissions
+and the legitimacy of a workflow trigger must be checked separately.
+
 ## Prevent legacy shell debt from silently gaining job authority
 
 A previously recorded unsafe direct interpolation is **not permanently
