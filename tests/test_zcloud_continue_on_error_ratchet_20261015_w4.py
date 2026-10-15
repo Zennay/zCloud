@@ -262,6 +262,46 @@ class ContinueOnErrorGitTests(unittest.TestCase):
         self.assertTrue(gate.check_workflow("\tcontinue-on-error: false\n"))
         self.assertTrue(gate.check_workflow("  \t- name: nested\n"))
 
+    def test_quoted_display_label_with_policy_example_is_inert(self):
+        changed = SAFE.replace("name: Safe", 'name: "continue-on-error: true"')
+        self.assertEqual(self._reasons(changed), {})
+        self.assertEqual(
+            gate.check_workflow('      - name: "continue-on-error: true"'), []
+        )
+
+    def test_invisible_bidi_and_line_separators_rejected(self):
+        for text in ("\u202e", "\u200b", "\u2028", "\u2029", "\ufeff"):
+            with self.subTest(codepoint=ord(text)):
+                # Reuse the same file only for a separate fresh temp Git test:
+                # each variant must be rejected at the read boundary.
+                with tempfile.TemporaryDirectory() as directory:
+                    temp = Path(directory)
+                    subprocess.run(["git", "init", "-q", "-b", "main", str(temp)],
+                                   check=True, capture_output=True)
+                    subprocess.run(["git", "-C", str(temp), "config", "user.email",
+                                    "ci@example.invalid"], check=True)
+                    subprocess.run(["git", "-C", str(temp), "config", "user.name",
+                                    "CI"], check=True)
+                    workflows = temp / ".github/workflows"
+                    workflows.mkdir(parents=True)
+                    (workflows / "check.yml").write_text(SAFE, encoding="utf-8")
+                    subprocess.run(["git", "-C", str(temp), "add", "."], check=True)
+                    subprocess.run(["git", "-C", str(temp), "commit", "-qm", "base"],
+                                   check=True)
+                    base = subprocess.check_output(
+                        ["git", "-C", str(temp), "rev-parse", "HEAD"]
+                    ).decode().strip()
+                    (workflows / "check.yml").write_text(SAFE + "# " + text + "\n",
+                                                          encoding="utf-8")
+                    subprocess.run(["git", "-C", str(temp), "add", "."], check=True)
+                    subprocess.run(["git", "-C", str(temp), "commit", "-qm", "changed"],
+                                   check=True)
+                    head = subprocess.check_output(
+                        ["git", "-C", str(temp), "rev-parse", "HEAD"]
+                    ).decode().strip()
+                    with self.assertRaisesRegex(ValueError, "invisible_or_directional_unicode"):
+                        gate.scan(temp, base, head)
+
     def test_hosted_pr_admission_fails_instead_of_skipping(self):
         source = (Path(__file__).resolve().parents[1] /
                   ".github/workflows/zcloud-continue-on-error-no-new-debt-20261015-w4.yml"
