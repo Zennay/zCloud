@@ -81,7 +81,7 @@ def _open_regular(path: Path):
             os.close(fd)
             raise Denied("nonregular_file")
         return os.fdopen(fd, "rb")
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         raise Denied("unreadable_path") from exc
 
 
