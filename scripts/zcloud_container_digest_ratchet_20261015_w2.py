@@ -22,6 +22,8 @@ IMAGE_LINE = re.compile(r"^\s*" + KEY + r"\s*:\s*(.*)$")
 CONTAINER_LINE = re.compile(r"^\s*" + CONTAINER + r"\s*:\s*(.*)$")
 USES_SCALAR = re.compile(r"^\s*(?:-\s*)?" + USES + r"\s*:\s*(.*)$")
 FLOW_IMAGE = re.compile(r"""(?<![\w])(?:image|["']image["'])\s*:""")
+FLOW_USES = re.compile(r"""(?<![\w])(?:uses|["']uses["'])\s*:""")
+FLOW_CONTAINER = re.compile(r"""(?<![\w])(?:container|["']container["'])\s*:""")
 FLOW_DOCKER = re.compile(r"""^\s*-\s*\{.*(?:uses|["']uses["'])\s*:\s*["']?docker://""")
 EXPLICIT_IMAGE_KEY = re.compile(r"""^\s*\?\s*(?:image|container|uses|["']image["']|["']container["']|["']uses["'])\s*(?:#.*)?$""")
 ESCAPED_DOUBLE_QUOTED_KEY = re.compile(r"""^\s*(?:-\s*)?"(?:\\.|[^"\\])*"\s*:""")
@@ -186,8 +188,16 @@ def _scan(path: str, source: str) -> list[Finding]:
                 match = CONTAINER_LINE.match(line)
                 if match and match.group(1).strip():
                     value, kind = match.group(1), "inline_container"
-                elif value is None and "{" in line and FLOW_IMAGE.search(line):
-                    value, kind = line, "ambiguous_flow_image"
+                elif value is None and "{" in line:
+                    # A YAML flow map can contain a step or complete job on
+                    # one line; block-only matchers cannot see those keys.
+                    # Treat source as opaque instead of accepting tag drift.
+                    if FLOW_USES.search(line):
+                        value, kind = line, "ambiguous_flow_uses"
+                    elif FLOW_CONTAINER.search(line):
+                        value, kind = line, "ambiguous_flow_container"
+                    elif FLOW_IMAGE.search(line):
+                        value, kind = line, "ambiguous_flow_image"
         if value is None or kind is None:
             continue
         # An unpinned image, even if introduced by an opaque YAML flow map,
