@@ -72,6 +72,19 @@ class ContainerDigestGuardTests(unittest.TestCase):
         self.assertEqual(1, len(self.scan("    'image': redis:latest\n")))
         self.assertEqual(1, len(self.scan('    "container": alpine:latest\n')))
 
+    def test_digest_only_in_yaml_comment_must_not_pin_tag(self):
+        self.assertEqual(1, len(self.scan(
+            f"    image: redis:latest # old@sha256:{DIGEST}\\n"
+        )))
+
+    def test_digest_must_cover_entire_image_reference(self):
+        self.assertEqual(1, len(self.scan(
+            f"    image: redis@sha256:{DIGEST} unexpected\\n"
+        )))
+        self.assertEqual([], self.scan(
+            f"    image: 'redis@sha256:{DIGEST}' # tracked source\\n"
+        ))
+
     def test_quoted_pinned_image_is_valid(self):
         self.assertEqual([], self.scan(f"      image: 'redis@sha256:{DIGEST}'\n"))
 
