@@ -177,7 +177,11 @@ def permission_debt(
             # top-level implicit-default finding for every new job.
             jobs_header = re.match(r"""^(?:jobs|['"]jobs['"])\s*:\s*(.*)$""", line)
             in_jobs = bool(re.fullmatch(r"jobs:\s*", line))
-            if jobs_header and not in_jobs:
+            if (jobs_header and not in_jobs) or re.fullmatch(
+                r"""\?\s*(?:jobs|['"]jobs['"])\s*""", line
+            ):
+                # Explicit YAML complex mapping keys can hide the 'jobs'
+                # mapping, even when its child lines are ordinary job ids.
                 findings[f"{path}|opaque_job_structure|{_fingerprint(line)}"] += 1
             job = None
         elif in_jobs and width == 2:
