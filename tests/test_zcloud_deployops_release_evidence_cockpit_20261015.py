@@ -29,9 +29,14 @@ def run(sha=SHA, state="completed", conclusion="success"):
             "updated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
-def job(status="completed", runner_id=21, runner_name="zcloud-vps-1"):
-    return {"labels": ["self-hosted", "zcloud", "vps"], "status": status,
-            "runner_id": runner_id, "runner_name": runner_name}
+def job(status="completed", runner_id=21, runner_name="zcloud-vps-1", *,
+        job_id=10, run_id=92, run_attempt=1, head_sha=SHA, conclusion=None):
+    if conclusion is None and status == "completed":
+        conclusion = "success"
+    return {"id": job_id, "run_id": run_id, "run_attempt": run_attempt,
+            "head_sha": head_sha,
+            "labels": ["self-hosted", "zcloud", "vps"], "status": status,
+            "conclusion": conclusion, "runner_id": runner_id, "runner_name": runner_name}
 
 
 def status(state="success"):
@@ -132,7 +137,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
     def test_ambiguous_multiple_runner_jobs_prioritizes_queue(self):
         api = FakeAPI()
         api.pages[JOBS] = [{"total_count": 2, "jobs": [
-            job(), job("queued", 0, None)]}]
+            job(), job("queued", 0, None, job_id=11)]}]
         self.assertEqual(cockpit.collect(api)["deploy"]["runner_route"], "QUEUED_UNASSIGNED")
 
     def test_incomplete_job_pagination_denied(self):
@@ -160,6 +165,70 @@ class ReleaseEvidenceTests(unittest.TestCase):
         bad["head_branch"] = "feature/evil"
         api.pages[RUNS] = [{"workflow_runs": [bad]}]
         with self.assertRaisesRegex(cockpit.EvidenceError, "unexpected_deploy_provenance"):
+            cockpit.collect(api)
+
+    def test_cross_run_job_misattribution_denied(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job(run_id=93)]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "mismatched_deploy_job_identity"):
+            cockpit.collect(api)
+
+    def test_cross_attempt_job_misattribution_denied(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job(run_attempt=2)]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "mismatched_deploy_job_identity"):
+            cockpit.collect(api)
+
+    def test_cross_sha_job_misattribution_denied(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job(head_sha=ALT_SHA)]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "mismatched_deploy_job_identity"):
+            cockpit.collect(api)
+
+    def test_boolean_run_id_in_job_denied(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job(run_id=True)]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "mismatched_deploy_job_identity"):
+            cockpit.collect(api)
+
+    def test_duplicate_job_id_denied(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 2, "jobs": [job(), job()]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_deploy_job"):
+            cockpit.collect(api)
+
+    def test_assigned_but_failed_runner_is_not_success(self):
+        api = FakeAPI()
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job(conclusion="failure")]}]
+        data = cockpit.collect(api)
+        self.assertEqual(data["deploy"]["runner_route"], "ASSIGNED_TO_EXPECTED")
+        self.assertEqual(data["deploy"]["runner_job_result"], "FAILED")
+        self.assertIn("runner_job_not_success", data["warnings"])
+        self.assertFalse(data["deployment_authorized"])
+        self.assertIn("VPS-jobuitkomst", cockpit.render_html(data))
+
+    def test_queued_runner_job_is_not_completed(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [{"workflow_runs": [run(state="in_progress", conclusion=None)]}]
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [job("queued", 0, None)]}]
+        data = cockpit.collect(api)
+        self.assertEqual(data["deploy"]["runner_job_result"], "NOT_TERMINAL")
+        self.assertIn("runner_job_not_success", data["warnings"])
+
+    def test_nonterminal_job_with_conclusion_denied(self):
+        api = FakeAPI()
+        pending = job("queued", 0, None)
+        pending["conclusion"] = "success"
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [pending]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "nonterminal_job_has_conclusion"):
+            cockpit.collect(api)
+
+    def test_finished_job_without_conclusion_denied(self):
+        api = FakeAPI()
+        finished = job()
+        finished["conclusion"] = None
+        api.pages[JOBS] = [{"total_count": 1, "jobs": [finished]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "invalid_terminal_job_conclusion"):
             cockpit.collect(api)
 
     def test_missing_main_ref_is_denied(self):
