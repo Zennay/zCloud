@@ -99,15 +99,27 @@ def assess(payload):
         files_examined += count
         paths = set()
         for item in files:
-            if type(item) is not dict or set(item) != {"filename", "status"}:
+            if type(item) is not dict or "status" not in item:
                 raise InvalidInventory("invalid_file_shape")
-            if item["status"] not in ("added", "modified", "removed", "renamed"):
+            status = item["status"]
+            if status not in ("added", "modified", "removed", "renamed"):
                 raise InvalidInventory("unknown_change_status")
-            name = item["filename"]
-            if not _path(name) or name in paths:
+            expected_fields = ({"filename", "status", "previous_filename"}
+                               if status == "renamed" else {"filename", "status"})
+            if set(item) != expected_fields:
+                raise InvalidInventory("invalid_file_shape")
+            names = [item["filename"]]
+            if status == "renamed":
+                # GitHub changed_files counts a rename once. Both path
+                # identities must nevertheless block a competing PR.
+                names.append(item["previous_filename"])
+            if any(not _path(name) or name in paths for name in names):
                 raise InvalidInventory("unsafe_or_duplicate_file_path")
-            paths.add(name)
-            owners[name].add(number)
+            if len(set(names)) != len(names):
+                raise InvalidInventory("duplicate_rename_path")
+            for name in names:
+                paths.add(name)
+                owners[name].add(number)
 
     collisions = [
         {"path": path, "prs": sorted(numbers)}
