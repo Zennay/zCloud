@@ -372,7 +372,7 @@ class WorkflowTrustCases(unittest.TestCase):
 
     def run_bounded_summary(self, payload: dict, *, event: str = "push") -> tuple[int, str]:
         script = self.workflow.split('REPORT="$report" PROVENANCE="$provenance" python3 - <<\'PY\'', 1)[1]
-        script = script.split("\\n          PY", 1)[0]
+        script = script.split("\n          PY", 1)[0]
         script = textwrap.dedent(script)
         with tempfile.TemporaryDirectory() as folder:
             report = Path(folder) / "report.json"
