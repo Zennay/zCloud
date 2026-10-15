@@ -1,0 +1,71 @@
+name: zCloud artifact retention no-new-debt (hosted)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_artifact_retention_ratchet_20261015_w7.py"
+      - "tests/test_artifact_retention_ratchet_20261015_w7.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifact-retention-ratchet-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Reject untrusted PR origins before checkout
+        env:
+          SOURCE_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "pull_request"
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$SOURCE_REPO" = "Zennay/zCloud"
+          [[ "$SOURCE_HEAD" =~ ^[0-9a-f]{40}$ ]]
+      - name: Checkout immutable same-repo PR head, no stored credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify unchanged canonical main and exact PR source
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$BASE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+      - name: Run real-Git monotonic retention regressions
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_artifact_retention_ratchet_20261015_w7
+          python3 -m py_compile scripts/zcloud_artifact_retention_ratchet_20261015_w7.py
+      - name: Check changed workflows without writing any artifacts
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_artifact_retention_ratchet_20261015_w7.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Reject checkout or main drift after testing
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$BASE_SHA"
