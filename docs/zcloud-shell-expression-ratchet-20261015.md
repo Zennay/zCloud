@@ -272,6 +272,22 @@ run mapping: it conservatively fingerprints the whole workflow whenever an
 escaped explicit key might hide the command. Keep shell script steps as
 ordinary `- run: ...` fields where possible.
 
+## Which workflow was blocked?
+
+The advisory JSON includes `new_risky_workflows`: a deterministic,
+lexicographically sorted list of new-debt paths with a total `risk_count`
+and a per-path `risk_kinds` breakdown. It is deliberately separate
+from the historical `baseline_risky_workflows` and full-candidate list.
+A workflow with unchanged legacy findings contributes **zero** to this
+delta list. Each finding's detailed shell expression is never included,
+so operators can route remediation to the owning workflow without
+putting secret identifiers or attacker-supplied expressions in logs.
+
+A complete report with `new_risks=0` must have
+`new_risky_workflows: []`; any nonempty entry is **source debt** and does
+not grant release or mutation authority. The output remains advisory
+until the independent PR review and protected-main admission gates.
+
 ## Tagged and anchored YAML run keys
 
 A mapping key can be prefixed with a YAML scalar tag (`!!str run:`)
