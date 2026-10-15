@@ -125,7 +125,6 @@ class RealGitRatchetTests(unittest.TestCase):
 
     def test_disconnected_base_denied(self):
         self.git("checkout", "--orphan", "unrelated")
-        self.git("rm", "-qr", ".")
         self.write(".github/workflows/new.yml", "name: other\n")
         other = self.commit()
         with self.assertRaises(gate.Denied):
