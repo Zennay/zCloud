@@ -331,7 +331,7 @@ class WorkflowTrustCases(unittest.TestCase):
         # A direct push cannot be blocked retroactively, but must produce
         # a real hosted red check for unbumped assets after integration.
         workflow = self.workflow
-        self.assertIn('  push:\\n    branches: [main]', workflow)
+        self.assertIn('  push:\n    branches: [main]', workflow)
         self.assertEqual(workflow.count('      - "public/app.js"'), 2)
         self.assertEqual(workflow.count('      - "public/enhancements.css"'), 2)
         self.assertEqual(workflow.count('      - "public/index.html"'), 2)
