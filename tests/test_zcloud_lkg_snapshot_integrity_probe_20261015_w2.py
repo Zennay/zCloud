@@ -491,6 +491,26 @@ class LkgSnapshotProbeTests(unittest.TestCase):
                 with self.assertRaisesRegex(probe.Denied, "invalid_snapshot_id"):
                     probe.inspect(self.state)
 
+    def test_snapshot_contract_constants_match_real_recovery_source(self):
+        """Tripwire: fail CI if the independently owned recovery API changes."""
+        from scripts import zcloud_recovery
+        self.assertEqual(set(zcloud_recovery.MANAGED_PATHS), probe.MANAGED_ROOTS)
+        self.assertEqual(set(zcloud_recovery.PERSISTENT_PATHS), probe.PERSISTENT)
+        self.assertGreaterEqual(probe.MAX_SNAPSHOTS, zcloud_recovery.RECOVERY_SNAPSHOT_RETENTION)
+        self.assertEqual(zcloud_recovery.FORMAT_VERSION, 1)
+
+    def test_offline_scanner_reports_no_production_authority_in_both_modes(self):
+        for all_snapshots in (False, True):
+            with self.subTest(all_snapshots=all_snapshots):
+                result = (
+                    probe.audit_all(self.state) if all_snapshots
+                    else probe.inspect(self.state)
+                )
+                self.assertTrue(result["ok"])
+                self.assertIs(result["mutation_performed"], False)
+                self.assertIs(result["authorizes_rollback"], False)
+                self.assertIs(result["authorizes_deploy"], False)
+
     def test_real_recovery_capture_format_is_accepted_without_live_mutation(self):
         from unittest.mock import patch
         from scripts import zcloud_recovery as production_capture
