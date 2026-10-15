@@ -7,9 +7,13 @@ Historical unchanged workflow blobs are grandfathered, not certified safe.
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import selectors
+import signal
 import subprocess
 import sys
+import time
 import unicodedata
 from pathlib import PurePosixPath
 
@@ -27,20 +31,60 @@ class Denied(ValueError):
 
 
 def git(*args: str, max_output: int = MAX_OUTPUT) -> bytes:
+    """Read Git's output with an active byte limit and a monotonic deadline."""
+    if not 0 < max_output <= MAX_OUTPUT:
+        raise Denied("Invalid Git output budget")
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             ["git", "--no-replace-objects", *args],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            timeout=TIMEOUT,
-            check=False,
+            start_new_session=True,
         )
+    except OSError as exc:
+        raise Denied("Git source proof unavailable") from exc
+    chunks: list[bytes] = []
+    total = 0
+    deadline = time.monotonic() + TIMEOUT
+    try:
+        assert proc.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Denied("Git process exceeded deadline")
+                if not selector.select(remaining):
+                    raise Denied("Git process stalled")
+                chunk = os.read(proc.stdout.fileno(), min(65536, max_output + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > max_output:
+                    raise Denied("Git output exceeds budget")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise Denied("Git process exceeded deadline")
+        if proc.wait(timeout=remaining) != 0:
+            raise Denied("Git source proof failed")
+        return b"".join(chunks)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Denied("Git source proof unavailable") from exc
-    if proc.returncode != 0 or len(proc.stdout) > max_output:
-        raise Denied("Git source proof invalid or too large")
-    return proc.stdout
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def require_sha(value: str) -> str:
