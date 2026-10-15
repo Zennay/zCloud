@@ -17,7 +17,15 @@ WORKFLOW = re.compile(r"(?:\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml|(?:[A-Za-z0
 DANGERS = {
     "curl_insecure": re.compile(r"\bcurl\b[^\n]*[ \t]+(?:--insecure\b|-[A-Za-z]*k[A-Za-z]*\b)", re.I),
     "wget_no_certificate": re.compile(r"\bwget\s+[^\n]*--no-check-certificate\b", re.I),
-    "git_ssl_verify_disabled": re.compile(r"\bgit\s+-c\s+http\.sslverify\s*=\s*(?:false|0)\b", re.I),
+    # Match both one-shot -c and persistent git config overrides, including
+    # per-origin http.<url>.sslVerify (may appear after unrelated git flags).
+    "git_ssl_verify_disabled": re.compile(
+        r"\bgit\b[^\n]*?(?:http(?:\.[^\s=]+)?\.sslverify\s*=\s*(?:false|0)\b|"
+        r"\bconfig\s+(?:--[a-z-]+\s+)*http(?:\.[^\s=]+)?\.sslverify\s+(?:false|0)\b)", re.I),
+    "powershell_skip_certificate": re.compile(
+        r"\b(?:Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b[^\n]*?-SkipCertificateCheck\b", re.I),
+    "node_reject_unauthorized": re.compile(r"\brejectUnauthorized\s*[:=]\s*false\b", re.I),
+    "python_ssl_cert_none": re.compile(r"\b(?:ssl\.)?CERT_NONE\b", re.I),
     "git_ssl_no_verify": re.compile(r"\bGIT_SSL_NO_VERIFY\s*[:=]\s*['\"]?(?:1|true)\b", re.I),
     "node_tls_bypass": re.compile(r"\bNODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*['\"]?0\b", re.I),
     "python_tls_bypass": re.compile(r"\bPYTHONHTTPSVERIFY\s*[:=]\s*['\"]?0\b", re.I),
