@@ -23,15 +23,25 @@ jobs:
     name: Read-only digest debt ratchet (GitHub-hosted)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # No untrusted fork head, privileged event, VPS runner or production token.
-    if: >-
-      github.repository == 'Zennay/zCloud' &&
-      github.event_name == 'pull_request' &&
-      github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.repo.full_name == github.repository
+    # An untrusted PR must FAIL admission rather than SKIP a required job.
     steps:
+      - name: Reject untrusted PR provenance before checkout
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          SOURCE_ACTOR: ${{ github.actor }}
+          RESTART_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$SOURCE_REPOSITORY" = Zennay/zCloud
+          test "$HEAD_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$BASE_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$SOURCE_ACTOR" = Zennay
+          test "$RESTART_ACTOR" = Zennay
+
       - name: Checkout immutable PR revision without persisted credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
