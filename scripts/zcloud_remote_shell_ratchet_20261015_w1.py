@@ -94,6 +94,18 @@ REDIRECT_THEN_EXEC = re.compile(
     + r"\s+(?P=redirected)(?![A-Za-z0-9._/-])",
     re.I,
 )
+# Literal shell variable populated from remote substitution and immediately
+# evaluated as code is remote execution too: payload=$(curl URL) && eval "$payload".
+# Only an unmodified exact literal variable can match; this is not shell
+# data-flow analysis and cannot infer aliases, exports or interim mutations.
+REMOTE_VARIABLE_EVAL = re.compile(
+    r"\b(?P<variable>[A-Za-z_][A-Za-z0-9_]{0,63})\s*=\s*"
+    r"""["']?\$\(\s*(?:curl|wget)\b[^)\n;]{0,512}\)["']?"""
+    r"\s*(?:&&|;|\n)\s*"
+    r"""(?:eval\s+|(?:bash|sh|zsh|dash)\s+-c\s+)["']?\$\{?"""
+    r"(?P=variable)" + r"""\}?["']?(?![A-Za-z0-9_])""",
+    re.I,
+)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
 # outside the narrow source reader. Conservatively reject newly introduced
@@ -336,6 +348,7 @@ def findings(data: bytes) -> int:
         matched += len(REMOTE_STDIN.findall(command))
         matched += len(DOWNLOAD_THEN_EXEC.findall(command))
         matched += len(REDIRECT_THEN_EXEC.findall(command))
+        matched += len(REMOTE_VARIABLE_EVAL.findall(command))
         matched += len(SHELL_EVAL_REMOTE.findall(command))
         matched += len(SHELL_SOURCE_PROCESS.findall(command))
         # YAML aliases/tags can hide a shell script outside the literal run scalar.
