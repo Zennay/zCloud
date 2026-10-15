@@ -15,6 +15,7 @@ import selectors
 import subprocess
 import sys
 import time
+import unicodedata
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 ROOT = ".github/workflows/"
@@ -133,11 +134,7 @@ def paths_and_modes(sha: str) -> dict[str, tuple[str, str]]:
         # Git allows filenames with embedded newlines/control codes and
         # bidirectional overrides. Such names make security audits and CI
         # provenance logs ambiguous even when the blob itself is harmless.
-        if any(
-            ord(ch) < 0x20 or ord(ch) == 0x7f or
-            ch in "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
-            for ch in path
-        ):
+        if any(unicodedata.category(ch) in {"Cc", "Cf", "Cs"} for ch in path):
             raise Denied("ambiguous_workflow_path")
         if path in result:
             raise Denied("duplicate_path")
@@ -149,6 +146,27 @@ def paths_and_modes(sha: str) -> dict[str, tuple[str, str]]:
         if len(result) > MAX_FILES:
             raise Denied("too_many_workflows")
     return result
+
+
+def deny_new_confusable_workflow_names(
+    base_tree: dict[str, tuple[str, str]],
+    head_tree: dict[str, tuple[str, str]],
+) -> None:
+    """Deny new cross-platform NFC/casefold collisions, not legacy debt.
+
+    Git treats differently cased or composed names as distinct, but humans
+    and common filesystems may not. Untouched old collisions are grandfathered
+    strictly by names and immutable blob/mode identities.
+    """
+    groups: dict[str, list[str]] = {}
+    for path in head_tree:
+        normalized = unicodedata.normalize("NFC", path).casefold()
+        groups.setdefault(normalized, []).append(path)
+    for paths in groups.values():
+        if len(paths) < 2:
+            continue
+        if any(base_tree.get(path) != head_tree[path] for path in paths):
+            raise Denied("new_confusable_workflow_paths")
 
 
 def has_secret_inherit(text: str) -> bool:
@@ -194,6 +212,7 @@ def inspect(base: str, head: str) -> dict[str, object]:
     # look like an empty, passing inventory after disabling all CI.
     if not base_tree or not head_tree:
         raise Denied("empty_workflow_inventory")
+    deny_new_confusable_workflow_names(base_tree, head_tree)
     changed = sorted(path for path in head_tree if base_tree.get(path) != head_tree[path])
     total = 0
     denied_paths = 0
