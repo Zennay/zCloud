@@ -206,7 +206,14 @@ def git(repo: Path, *argv: str) -> bytes:
     finally:
         if process.poll() is None:
             process.kill()
-        process.wait()
+        try:
+            process.wait()
+        finally:
+            # Popen stdout is a Python-owned buffered file descriptor;
+            # selector.unregister does not close it. Close on success,
+            # nonzero exit, timeout and over-limit exception alike.
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 def verify_commit(repo: Path, sha: str) -> None:
