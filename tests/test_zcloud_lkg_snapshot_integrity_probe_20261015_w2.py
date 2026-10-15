@@ -195,6 +195,68 @@ class LkgSnapshotProbeTests(unittest.TestCase):
                 probe.inspect(self.state)
         self.assertTrue(swapped[0])
 
+    def test_inflight_file_mtime_change_fails_closed_even_if_bytes_match(self):
+        import os
+        from unittest.mock import patch
+
+        original = probe._open_snapshot_regular
+        target = self.files / "server.py"
+
+        class ChangedDuringRead:
+            def __init__(self, handle):
+                self.handle = handle
+                self.touched = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return self.handle.__exit__(*args)
+
+            def fileno(self):
+                return self.handle.fileno()
+
+            def read(self, length):
+                data = self.handle.read(length)
+                if data and not self.touched:
+                    self.touched = True
+                    before = target.stat()
+                    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+                return data
+
+        def instrument(root, name):
+            file = original(root, name)
+            return ChangedDuringRead(file) if name == "server.py" else file
+
+        with patch.object(probe, "_open_snapshot_regular", side_effect=instrument):
+            with self.assertRaisesRegex(probe.Denied, "source_changed_during_scan"):
+                probe.inspect(self.state)
+
+    def test_pathname_swap_after_open_fails_closed(self):
+        from unittest.mock import patch
+
+        target = self.files / "server.py"
+        original = probe._open_snapshot_regular
+
+        class ReplacedPath:
+            def __init__(self, handle):
+                self.handle = handle
+            def __enter__(self):
+                return self.handle.__enter__()
+            def __exit__(self, *args):
+                result = self.handle.__exit__(*args)
+                target.unlink()
+                target.write_bytes(b"new inode same path")
+                return result
+
+        def substitute(root, name):
+            handle = original(root, name)
+            return ReplacedPath(handle) if name == "server.py" else handle
+
+        with patch.object(probe, "_open_snapshot_regular", side_effect=substitute):
+            with self.assertRaisesRegex(probe.Denied, "source_changed_during_scan"):
+                probe.inspect(self.state)
+
     def test_real_recovery_capture_format_is_accepted_without_live_mutation(self):
         from unittest.mock import patch
         from scripts import zcloud_recovery as production_capture
