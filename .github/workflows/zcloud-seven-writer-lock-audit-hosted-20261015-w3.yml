@@ -91,7 +91,10 @@ jobs:
               f"- Broncodevingerafdruk (niet gevalideerde herkomst): `{report['source_snapshot_sha256']}`\n"
               "\n| Taak | Broncode | Reden |\n| --- | --- | --- |\n"
               + "\n".join(rows)
-              + "\n\n**Dit verleent geen toestemming voor deploy, runnerherstel of mutaties.**\n"
+              + "\n\n**Let op:** GitHub kan een wachtende run in dezelfde concurrency-groep vervangen. "
+              + "\`cancel-in-progress: false\` beschermt lopende runs; dit is geen garantie "
+              + "dat wachtende runs behouden blijven.\n"
+              + "**Dit verleent geen toestemming voor deploy, runnerherstel of mutaties.**\n"
           )
           print(msg)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
