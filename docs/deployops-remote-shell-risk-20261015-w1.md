@@ -46,3 +46,11 @@ A remote download can still be executed after a pass-through or decoding pipelin
 Git-tree validation now refuses a symlink or gitlink replacing the exact `.github`, `.github/workflows`, or `.github/actions` directory, even when an unrelated composite Action exists and would otherwise make the source inventory nonempty. Existing per-file symlink checks remain intact. The scanner does not follow these links and never executes repository code during inventory.
 
 **Coordination (15 October):** changed-filename checks of 12 active related deploy-ops PRs (56 paths total) found no direct collision with this PR's four own add-only paths. This is **not** a complete 450+-PR or PR-less-branch semantic audit and cannot grant independent review, protected-branch merge or production authorization.
+
+## Dutch GitHub-hosted decision summary
+
+The hosted-only PR job writes a **bounded Dutch operator summary** to the normal GitHub Actions step summary for both successful and rejected scans. The summary has only fixed wording and bounded counts. Its authoritative fields always remain `release_authorized=false`, `deployment_authorized=false`, and `mutation_performed=false`.
+
+Before publishing the summary, source JSON is limited to **8 KiB**, parsed with duplicate JSON key rejection and rejection of `NaN` / infinities, and checked for complete/consistent schema, strict integer types, monotonic finding counts and scan exit status. Contradictory or forged data is **not** printed to the operator: the job emits a fixed warning and fails. Unavailable Git evidence is explicitly marked **Onvolledig bewijs**, never as approval. All report content stays local in GitHub-hosted temporary storage; no artifact upload, API write, personal information, workflow dispatch, runner execution or VPS mutation is added.
+
+The scanner and summary are evidence only. A green result means no **new detected source risk within this narrow heuristic**, not verified shell safety, healthy zCloud workers, a recovered VPS listener or permission to merge/deploy.
