@@ -106,6 +106,14 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
 
+    def test_pin_only_downgrade_is_rejected(self) -> None:
+        self.write("public/index.html", self.html("r7", "r5"))
+        self.head = self.commit()
+        result = gate.evaluate(self.base, self.head)
+        self.assertEqual(result["changed"], [])
+        self.assertEqual(result["reason"], "nonmonotonic_cache_pin")
+        self.assertEqual(result["nonmonotonic"], ["public/app.js"])
+
     def test_pin_only_change_allowed(self) -> None:
         self.write("public/index.html", self.html("r9", "r6"))
         self.head = self.commit()
