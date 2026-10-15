@@ -238,12 +238,7 @@ jobs:
     def test_hosted_no_new_debt_gate_runs_for_all_workflow_and_action_edits(self):
         workflow = (ROOT / ".github/workflows" /
                     "zcloud-container-digest-ratchet-20261015-w2.yml").read_text()
-        self.assertIn('".github/workflows/**"', workflow)
-        self.assertIn('".github/actions/**"', workflow)
-        self.assertIn('"**/action.yml"', workflow)
-        self.assertIn('"**/action.yaml"', workflow)
-        self.assertIn('"action.yml"', workflow)
-        self.assertIn('"action.yaml"', workflow)
+        self.assertNotIn("    paths:", workflow.split("permissions:", 1)[0])
         self.assertIn("runs-on: ubuntu-latest", workflow)
         self.assertIn("Reject untrusted PR provenance before checkout", workflow)
         self.assertNotIn("    if: >-", workflow)
