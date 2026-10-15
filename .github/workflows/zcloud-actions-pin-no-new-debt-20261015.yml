@@ -134,8 +134,8 @@ jobs:
           ]
           if valid:
               lines.extend([
-                  f"| Bestaande onveranderlijke-baseline schuld | {baseline} |",
-                  f"| Kandidaat onveranderlijke-baseline schuld | {new_total} |",
+                  f"| Niet-vastgepinde Actions vóór wijziging | {baseline} |",
+                  f"| Niet-vastgepinde Actions na wijziging | {new_total} |",
                   f"| Nieuw gevonden risico | {introduced} |",
               ])
           lines.extend([
