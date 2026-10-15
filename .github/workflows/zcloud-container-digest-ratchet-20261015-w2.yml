@@ -92,8 +92,18 @@ jobs:
           assert data["new_findings"] == 0
           for key in ("release_authorized", "deployment_authorized", "mutation_performed"):
               assert data[key] is False
+          for field in ("baseline_findings", "candidate_findings", "new_findings"):
+              assert type(data[field]) is int and 0 <= data[field] <= 8192
           print("NO_NEW_CONTAINER_IMAGE_TAG_DEBT=1")
           print("LEGACY_UNPINNED_IMAGE_RECORDS=" + str(data["baseline_findings"]))
+          # Operator-friendly, safe numeric-only hosted source evidence.
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+              summary.write("### Container-images: nieuwe risico's geweigerd\n\n")
+              summary.write("| Bewijs (broncode) | Aantal |\n|---|---:|\n")
+              summary.write(f"| Bestaande aandachtspunten | {data['baseline_findings']} |\n")
+              summary.write(f"| Kandidaat-aandachtspunten | {data['candidate_findings']} |\n")
+              summary.write(f"| Nieuw toegelaten risico | {data['new_findings']} |\n\n")
+              summary.write("**Alleen GitHub-broncontrole.** Geen VPS-herstel, productie-deploy of vrijgave.\n")
           PY
           test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
