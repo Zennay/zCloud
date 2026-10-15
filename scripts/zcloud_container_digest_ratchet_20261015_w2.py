@@ -20,7 +20,7 @@ CONTAINER = r"""(?:container|["']container["'])"""
 USES = r"""(?:uses|["']uses["'])"""
 IMAGE_LINE = re.compile(r"^\s*" + KEY + r"\s*:\s*(.*)$")
 CONTAINER_LINE = re.compile(r"^\s*" + CONTAINER + r"\s*:\s*(.*)$")
-DOCKER_USE = re.compile(r"^\s*(?:-\s*)?" + USES + r"\s*:\s*['\"]?docker://([^\s'\"#]+)")
+USES_SCALAR = re.compile(r"^\s*(?:-\s*)?" + USES + r"\s*:\s*(.*)$")
 FLOW_IMAGE = re.compile(r"""(?<![\w])(?:image|["']image["'])\s*:""")
 FLOW_DOCKER = re.compile(r"""^\s*-\s*\{.*(?:uses|["']uses["'])\s*:\s*["']?docker://""")
 EXPLICIT_IMAGE_KEY = re.compile(r"""^\s*\?\s*(?:image|container|uses|["']image["']|["']container["']|["']uses["'])\s*(?:#.*)?$""")
@@ -117,11 +117,18 @@ def _read(sha: str) -> str:
 
 
 def _safe_literal(value: str) -> bool:
-    # Dynamic expressions, YAML alias/merge and multi-line strings require
-    # independent review even if they contain a literal digest substring.
+    # Only a complete, balanced YAML scalar can count as an image digest.
+    # Aliases, expressions, block strings and malformed quotes are denied.
     if "${{" in value or value.lstrip().startswith(("*", "&", "|", ">")):
         return False
-    candidate = value.split("#", 1)[0].strip().strip("'\\\"")
+    candidate = value.split("#", 1)[0].strip()
+    if candidate.startswith(("'", '"')):
+        quote = candidate[0]
+        if len(candidate) < 2 or not candidate.endswith(quote):
+            return False
+        candidate = candidate[1:-1]
+    elif any(char in candidate for char in ("'", '"', "\\")):
+        return False
     return bool(IMAGE_REF.fullmatch(candidate))
 
 
@@ -167,11 +174,16 @@ def _scan(path: str, source: str) -> list[Finding]:
         if match:
             value, kind = match.group(1), "image"
         else:
-            match = DOCKER_USE.match(line) if value is None else None
+            match = USES_SCALAR.match(line) if value is None else None
             if match:
-                value, kind = match.group(1), "docker_uses"
-            else:
-                match = CONTAINER_LINE.match(line) if value is None else None
+                scalar = match.group(1).strip()
+                # Inspect the complete scalar, never just a digest prefix.
+                if scalar.lstrip("'\"").startswith("docker://"):
+                    value, kind = scalar.replace("docker://", "", 1), "docker_uses"
+                elif not scalar or scalar.startswith(("*", "&", "!", "[", "{", "${{")):
+                    value, kind = line, "ambiguous_uses_reference"
+            if value is None:
+                match = CONTAINER_LINE.match(line)
                 if match and match.group(1).strip():
                     value, kind = match.group(1), "inline_container"
                 elif value is None and "{" in line and FLOW_IMAGE.search(line):
