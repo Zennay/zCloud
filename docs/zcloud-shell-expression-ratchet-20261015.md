@@ -6,7 +6,12 @@ refuses **new** direct GitHub event, head-ref, ref-name and workflow input expre
 interpolated into a workflow run-shell command. It treats new YAML run aliases/tags
 and incomplete expression fragments as suspicious. Existing risks are inventoried
 but not grandfathered if replaced with a *different* unsafe expression; the
-comparison uses path and normalized expression fingerprints, not just counts.
+comparison uses path, normalized expression and whole run-scalar SHA-256 fingerprints, not
+just counts. Moving a legacy expression into another shell command is new risk.
+The deliberately conservative flow-mapping tripwire fingerprints inline YAML
+`{run: ...}` forms by line and **rejects new flow-style run mappings even when
+they look harmless**, because the syntax is not fully parsed. Prefer block-style
+steps instead.
 
 Safer patterns put untrusted values into a step env binding and reference
 quoted shell variables; still validate the value according to its meaning.
@@ -17,6 +22,10 @@ invalid SHAs, missing or incomplete source evidence. CLI exit codes:
 
 ## Limitations and safety boundary
 
+- The hosted workflow separately checks the exact remote `main` and branch
+  commit before and after the source scan. Two matching reads detect observed
+  drift but **do not constitute an atomic repository snapshot**; no automatic
+  release or merge authority results from these checks.
 - This is **not a complete YAML parser**, a semantic CodeQL engine, a runner
   attestation or proof that an expression is exploitable. It is a monotone
   guard against a clearly defined subset of direct run-shell interpolation.
