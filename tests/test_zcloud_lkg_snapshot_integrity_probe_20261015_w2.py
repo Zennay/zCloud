@@ -95,6 +95,45 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             with patch.object(probe, "MAX_SNAPSHOTS", 1):
                 probe.audit_all(self.state)
 
+    def test_batch_denies_snapshots_added_during_inventory(self):
+        from unittest.mock import patch
+        original = probe.inspect
+        added = [False]
+
+        def add_second_snapshot(state, *, snapshot_id=None):
+            result = original(state, snapshot_id=snapshot_id)
+            if not added[0]:
+                added[0] = True
+                self._copy_historical_snapshot()
+            return result
+
+        with patch.object(probe, "inspect", side_effect=add_second_snapshot):
+            with self.assertRaisesRegex(probe.Denied, "snapshot_inventory_changed"):
+                probe.audit_all(self.state)
+        self.assertTrue(added[0])
+
+    def test_batch_total_byte_budget_is_enforced(self):
+        self._copy_historical_snapshot()
+        from unittest.mock import patch
+        with patch.object(probe, "MAX_BATCH_BYTES", len(self.text)):
+            with self.assertRaisesRegex(probe.Denied, "batch_byte_limit"):
+                probe.audit_all(self.state)
+
+    def test_batch_cli_denial_does_not_leak_unknown_names(self):
+        secret_dir_name = "this-name-may-contain-a-private-value"
+        (self.snapshots / secret_dir_name).mkdir()
+        process = subprocess.run(
+            [sys.executable, str(Path(probe.__file__)),
+             "--state-dir", str(self.state), "--all-snapshots"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(2, process.returncode)
+        self.assertNotIn(secret_dir_name, process.stdout)
+        payload = json.loads(process.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["mutation_performed"])
+        self.assertFalse(payload["authorizes_rollback"])
+
     def test_batch_denies_removed_active_snapshot_without_mutation(self):
         self._copy_historical_snapshot()
         import shutil
