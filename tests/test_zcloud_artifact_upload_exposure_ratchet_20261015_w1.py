@@ -69,6 +69,39 @@ class SourceTests(unittest.TestCase):
         self.check(SAFE.replace("uses: actions/upload-artifact@v4",
                                 r'"u\u0073es": "actions/up\u006coad-artifact@v4"'), False)
 
+    def test_quoted_multiline_upload_action_escape_denied(self):
+        # Double-quoted YAML backslash-newline concatenates the two tokens.
+        # The original source lacks the complete 'upload-artifact' substring.
+        payload = SAFE.replace("uses: actions/upload-artifact@v4",
+                               "uses: \"actions/upload-\\\n          artifact@v4\"")
+        self.assertNotIn("upload-artifact", payload)
+        self.check(payload, False)
+
+    def test_folded_uses_action_reference_denied_without_literal(self):
+        payload = SAFE.replace("uses: actions/upload-artifact@v4",
+                               "uses: >-\n          actions/upload-\n          artifact@v4")
+        self.assertNotIn("upload-artifact", payload)
+        self.check(payload, False)
+
+    def test_uses_alias_and_anchor_denied_without_literal(self):
+        for value in ("*uploadref", "&uploadref actions/checkout@v4",
+                      "!custom actions/checkout@v4", "{foo: bar}", "[foo]"):
+            with self.subTest(value=value):
+                payload = SAFE.replace("uses: actions/upload-artifact@v4",
+                                       "uses: " + value)
+                self.assertNotIn("upload-artifact", payload)
+                self.check(payload, False)
+
+    def test_safe_explicit_quoted_action_reference_preserved(self):
+        for value in ('"actions/upload-artifact@v4"',
+                      "'actions/upload-artifact@v4'",
+                      "actions/upload-artifact@v4 # an explanatory comment"):
+            with self.subTest(value=value):
+                self.check(SAFE.replace("uses: actions/upload-artifact@v4",
+                                        "uses: " + value), True)
+        self.check("name: smoke\njobs:\n  test:\n    steps:\n"
+                   "      - uses: actions/checkout@v4\n", True)
+
     def test_workflow_unicode_controls_and_separators_fail_closed(self):
         for char in ("\u0085", "\u200b", "\u202e", "\u2066",
                      "\ufeff", "\u2028", "\u2029", "\ud800"):
