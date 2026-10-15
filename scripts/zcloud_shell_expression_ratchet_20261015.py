@@ -48,6 +48,19 @@ EXPLICIT_RUN_KEY = re.compile(
 )
 
 
+# A YAML scalar tag or key anchor can precede a mapping key that resolves
+# to "run" without starting the line with that spelling. We intentionally
+# fingerprint the entire committed workflow rather than parsing tags/anchors.
+# This can reject benign additions; it must not silently approve new scripts.
+RUN_TAGGED_OR_ANCHORED_KEY = re.compile(
+    r'''^\s*(?:-\s*)?(?:\?\s*)?
+        (?:(?:!![A-Za-z][\w.-]*|![^\s]+|&[A-Za-z_][\w.-]*)\s+)+
+        (?:run|['"]run['"]|"(?:r|\\u0072|\\x72|\\U00000072)(?:u|\\u0075|\\x75|\\U00000075)(?:n|\\u006e|\\x6e|\\U0000006e)")
+        \s*(?::|(?:\#.*)?$)''',
+    re.I | re.X,
+)
+
+
 YAML_ALIAS_VALUE = re.compile(
     r"""^\s*(?:-\s*)?(?:[A-Za-z_][\w.-]*|'[^']+'|"[^"]+")\s*:\s*\*[A-Za-z_][\w.-]*\s*(?:#.*)?$"""
 )
@@ -197,6 +210,8 @@ def fingerprint_risks(source: str) -> Counter[str]:
     # rather than silently claiming that no dangerous interpolation exists.
     # Digest the entire line so rewriting an existing flow-run also counts.
     for line in source.splitlines():
+        if RUN_TAGGED_OR_ANCHORED_KEY.match(line):
+            out["ambiguous_prefixed_run_key|workflow_sha256:" + workflow_digest] += 1
         # YAML's '? run' mapping splits the key from the value.
         # Conservatively bind the ambiguity to the full workflow blob.
         if EXPLICIT_RUN_KEY.match(line):
