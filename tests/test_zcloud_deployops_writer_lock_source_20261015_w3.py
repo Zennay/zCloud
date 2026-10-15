@@ -135,6 +135,22 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "missing_or_duplicate_mutation_job")
 
+    def test_canonical_nested_cancel_true_refused_even_if_outer_false(self):
+        name = "zcloud-vps-deploy.yml"
+        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
+                  "    concurrency:\\n      group: another-deploy\n"
+                  "      cancel-in-progress: true\\n    runs-on: [self-hosted, zcloud, vps]")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unexpected_nested_concurrency")
+
+    def test_canonical_nested_identical_group_refused_to_avoid_deadlock(self):
+        name = "zcloud-vps-deploy.yml"
+        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
+                  "    concurrency:\\n      group: zcloud-production-deploy\n"
+                  "      cancel-in-progress: false\\n    runs-on: [self-hosted, zcloud, vps]")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unexpected_nested_concurrency")
+
     def test_workflow_concurrency_after_jobs_is_honored_for_canonical(self):
         name = "zcloud-vps-deploy.yml"
         p = self.dir / name
