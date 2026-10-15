@@ -155,7 +155,7 @@ def current_deploy(api, sha: str) -> dict:
     )
     runs = []
     seen_page_run_ids = set()
-    first_page = None
+    page_snapshots = []
     for page in range(1, 6):
         payload = api.get(f"{run_url}{page}")
         if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
@@ -163,8 +163,7 @@ def current_deploy(api, sha: str) -> dict:
         batch = payload["workflow_runs"]
         if len(batch) > 100:
             raise EvidenceError("oversized_workflow_page")
-        if first_page is None:
-            first_page = payload
+        page_snapshots.append(payload)
         for row in batch:
             if not isinstance(row, dict):
                 raise EvidenceError("invalid_workflow_run")
@@ -178,6 +177,15 @@ def current_deploy(api, sha: str) -> dict:
     else:
         raise EvidenceError("deploy_run_pagination_cap")
     pages_scanned = page
+
+    def verify_paginated_run_snapshots():
+        # Offset pagination can shift as runs arrive: require every page to
+        # re-read identically, not only page 1. This is still not an atomic
+        # GitHub snapshot, so no release authority can follow from equality.
+        for number, original in enumerate(page_snapshots, 1):
+            if api.get(f"{run_url}{number}") != original:
+                raise EvidenceError("deploy_run_page_drift")
+
     matching = []
     seen_matching_runs = set()
     for row in runs:
@@ -219,8 +227,7 @@ def current_deploy(api, sha: str) -> dict:
             raise EvidenceError("future_deploy_evidence")
         matching.append((run_id, attempt, status, conclusion, max(0, int(age)), updated))
     if not matching:
-        if api.get(f"{run_url}1") != first_page:
-            raise EvidenceError("deploy_run_page_drift")
+        verify_paginated_run_snapshots()
         return {
             "run_id": None, "attempt": None, "status": "not_observed",
             "conclusion": None, "runner_route": "UNVERIFIED",
@@ -318,10 +325,8 @@ def current_deploy(api, sha: str) -> dict:
         post.get("updated_at") != updated_at
     ):
         raise EvidenceError("deploy_run_changed_during_job_read")
-    # Offset pagination may shift while new Actions runs are created. A second
-    # first-page read catches first-page churn; it is not atomic proof.
-    if api.get(f"{run_url}1") != first_page:
-        raise EvidenceError("deploy_run_page_drift")
+    # Revalidate every page before reporting one combined run snapshot.
+    verify_paginated_run_snapshots()
     return {
         "run_id": run_id, "attempt": attempt, "status": status,
         "conclusion": conclusion, "runner_route": runner_route,
