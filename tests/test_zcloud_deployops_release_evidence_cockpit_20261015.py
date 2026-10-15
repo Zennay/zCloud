@@ -719,9 +719,13 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
         with patch.object(cockpit.urllib.request, "build_opener",
                           return_value=FakeOpener()):
-            with self.assertRaisesRegex(cockpit.EvidenceError,
-                                        "invalid_api_json"):
-                cockpit.GitHubReadOnly().get(REF)
+            # Python runtime recursion limits differ across CI environments.
+            # Force decoder failure to exercise the exact sanitized boundary.
+            with patch.object(cockpit.json, "loads",
+                              side_effect=RecursionError("untrusted depth")):
+                with self.assertRaisesRegex(cockpit.EvidenceError,
+                                            "^invalid_api_json$"):
+                    cockpit.GitHubReadOnly().get(REF)
 
     def test_nonfinite_json_denied(self):
         with self.assertRaisesRegex(cockpit.EvidenceError, "nonfinite"):
