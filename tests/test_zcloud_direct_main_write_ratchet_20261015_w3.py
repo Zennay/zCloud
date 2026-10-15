@@ -344,6 +344,46 @@ class RatchetTests(unittest.TestCase):
         self.assertNotEqual(check(first), 0)
         self.assertEqual(check(second), 0)
 
+    def test_inline_git_alias_to_push_denied(self):
+        code, out = self.change("git -c 'alias.ship=push' ship origin HEAD:main")
+        self.assertEqual(code, 1, out)
+        self.assertIn("git_alias_indirect_write", out["findings"][0]["reasons"])
+
+    def test_inline_git_shell_alias_to_push_denied(self):
+        code, out = self.change("git -c 'alias.ship=!git push origin HEAD:main' ship")
+        self.assertEqual(code, 1, out)
+        self.assertIn("git_alias_indirect_write", out["findings"][0]["reasons"])
+
+    def test_git_shell_alias_to_indirect_script_denied(self):
+        code, out = self.change("git -c 'alias.ship=!bash ./publisher.sh' ship")
+        self.assertEqual(code, 1, out)
+        self.assertIn("git_alias_indirect_write", out["findings"][0]["reasons"])
+
+    def test_git_configuration_read_only_alias_allowed(self):
+        code, out = self.change("git -c 'alias.demo=echo safe' status")
+        self.assertEqual(code, 0, out)
+
+    def test_git_alias_value_with_push_as_argument_allowed(self):
+        code, out = self.change("git -c 'alias.demo=echo push' status")
+        self.assertEqual(code, 0, out)
+
+    def test_octokit_branch_protection_mutation_denied(self):
+        code, out = self.change("await github.rest.repos.updateBranchProtection({})")
+        self.assertEqual(code, 1, out)
+        self.assertIn("octokit_repository_governance_write", out["findings"][0]["reasons"])
+
+    def test_octokit_ruleset_create_denied(self):
+        code, out = self.change("await octokit.rest.repos.createRepoRuleset({})")
+        self.assertEqual(code, 1, out)
+
+    def test_octokit_ruleset_delete_denied(self):
+        code, out = self.change("await github.repos.deleteRepoRuleset({})")
+        self.assertEqual(code, 1, out)
+
+    def test_octokit_read_branch_protection_allowed(self):
+        code, out = self.change("await octokit.rest.repos.getBranchProtection({})")
+        self.assertEqual(code, 0, out)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, result = self.change("git push origin main # " + marker)
