@@ -23,6 +23,7 @@ SUFFIXES = (".yml", ".yaml")
 MAX_FILES = 400
 MAX_BYTES = 524288
 MAX_TOTAL_BYTES = 16 * 1024 * 1024
+SCAN_BUDGET_SECONDS = 180
 
 
 class Denied(Exception):
@@ -32,7 +33,8 @@ class Denied(Exception):
         self.path_fingerprints = path_fingerprints
 
 
-def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
+def git(*args: str, limit: int = MAX_TOTAL_BYTES,
+        overall_deadline: float | None = None) -> bytes:
     """Bound both captured output and wall time before trusting Git objects.
 
     subprocess.run(stdout=PIPE) would first buffer the *entire* untrusted blob
@@ -41,7 +43,10 @@ def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
     """
     if type(limit) is not int or limit < 0 or limit > MAX_TOTAL_BYTES:
         raise Denied("invalid_source_budget")
-    deadline = time.monotonic() + 20
+    now = time.monotonic()
+    if overall_deadline is not None and now >= overall_deadline:
+        raise Denied("source_scan_timeout")
+    deadline = min(now + 20, overall_deadline) if overall_deadline is not None else now + 20
     try:
         proc = subprocess.Popen(
             ["git", *args],
@@ -116,20 +121,22 @@ def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
             proc.stdout.close()
 
 
-def require_workflow_root(sha: str) -> None:
+def require_workflow_root(sha: str, *, deadline: float | None = None) -> None:
     # Listing a path beneath a symlink or absent directory may return an
     # empty file set. Never mistake a missing workflows directory for safety.
     for root in (".github", ".github/workflows"):
         try:
-            kind = git("cat-file", "-t", f"{sha}:{root}", limit=32).strip()
+            kind = git("cat-file", "-t", f"{sha}:{root}", limit=32,
+                       overall_deadline=deadline).strip()
         except Denied as exc:
             raise Denied("missing_workflow_directory") from exc
         if kind != b"tree":
             raise Denied("non_directory_workflow_root")
 
 
-def paths_and_modes(sha: str) -> dict[str, tuple[str, str]]:
-    records = git("ls-tree", "-r", "-z", sha, "--", ROOT).split(b"\0")
+def paths_and_modes(sha: str, *, deadline: float | None = None) -> dict[str, tuple[str, str]]:
+    records = git("ls-tree", "-r", "-z", sha, "--", ROOT,
+                  overall_deadline=deadline).split(b"\0")
     result: dict[str, tuple[str, str]] = {}
     for rec in records:
         if not rec:
@@ -211,12 +218,14 @@ def has_secret_inherit(text: str) -> bool:
 def inspect(base: str, head: str) -> dict[str, object]:
     if not SHA.fullmatch(base) or not SHA.fullmatch(head) or base == head:
         raise Denied("invalid_commit_identity")
-    if not git("merge-base", "--is-ancestor", base, head, limit=0) == b"":
+    deadline = time.monotonic() + SCAN_BUDGET_SECONDS
+    if not git("merge-base", "--is-ancestor", base, head, limit=0,
+               overall_deadline=deadline) == b"":
         raise Denied("invalid_commit_graph")
-    require_workflow_root(base)
-    require_workflow_root(head)
-    base_tree = paths_and_modes(base)
-    head_tree = paths_and_modes(head)
+    require_workflow_root(base, deadline=deadline)
+    require_workflow_root(head, deadline=deadline)
+    base_tree = paths_and_modes(base, deadline=deadline)
+    head_tree = paths_and_modes(head, deadline=deadline)
     # A present directory holding only non-workflow files can otherwise
     # look like an empty, passing inventory after disabling all CI.
     if not base_tree or not head_tree:
@@ -228,7 +237,8 @@ def inspect(base: str, head: str) -> dict[str, object]:
     for path in changed:
         # Read immutable Git blobs, NOT mutable filesystem checkout paths.
         oid = head_tree[path][1]
-        size = git("cat-file", "-s", oid, limit=20)
+        size = git("cat-file", "-s", oid, limit=20,
+                   overall_deadline=deadline)
         try:
             count = int(size.strip())
         except ValueError as exc:
@@ -238,7 +248,8 @@ def inspect(base: str, head: str) -> dict[str, object]:
         total += count
         if total > MAX_TOTAL_BYTES:
             raise Denied("source_budget_exceeded")
-        blob = git("cat-file", "blob", oid, limit=MAX_BYTES)
+        blob = git("cat-file", "blob", oid, limit=MAX_BYTES,
+                   overall_deadline=deadline)
         # Size and content identity are independent pieces of evidence.
         # Verify the immutable Git blob SHA ourselves rather than accepting
         # any bytes returned by a replaced or corrupted object database.
