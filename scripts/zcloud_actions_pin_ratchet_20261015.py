@@ -46,7 +46,7 @@ def git(root: Path, *args: str) -> bytes:
     return result.stdout
 
 
-def workflow_tree(root: Path, revision: str, *, symlinks: set[str] | None = None) -> dict[str, str]:
+def workflow_tree(root: Path, revision: str, *, untrusted_roots: set[str] | None = None) -> dict[str, str]:
     if not SHA.fullmatch(revision):
         raise Refusal("invalid_revision")
     if git(root, "cat-file", "-t", revision).strip() != b"commit":
@@ -69,8 +69,10 @@ def workflow_tree(root: Path, revision: str, *, symlinks: set[str] | None = None
             path = filename.decode("utf-8", "strict")
         except (ValueError, UnicodeError) as exc:
             raise Refusal("invalid_tree_entry") from exc
-        if symlinks is not None and mode == "120000":
-            symlinks.add(path)
+        # Both symlinks and Git submodules (gitlinks) can redirect a
+        # local Action to a source outside the checked immutable tree.
+        if untrusted_roots is not None and mode in ("120000", "160000"):
+            untrusted_roots.add(path)
         is_workflow = (path.startswith(".github/workflows/") and
                        path.endswith((".yml", ".yaml")))
         is_action_source = path.startswith(".github/actions/")
@@ -163,8 +165,8 @@ def refs(text: str, path: str, *, local_refs: list[str] | None = None) -> list[t
 
 
 def snapshot(root: Path, revision: str) -> dict[str, list[tuple[tuple[str, str], int]]]:
-    symlinks: set[str] = set()
-    tree = workflow_tree(root, revision, symlinks=symlinks)
+    untrusted_roots: set[str] = set()
+    tree = workflow_tree(root, revision, untrusted_roots=untrusted_roots)
     total = 0
     local_refs: list[str] = []
     output = {}
@@ -178,12 +180,12 @@ def snapshot(root: Path, revision: str) -> dict[str, list[tuple[tuple[str, str],
         except UnicodeError as exc:
             raise Refusal("workflow_non_utf8") from exc
         output[path] = refs(text, path, local_refs=local_refs)
-    # Git symlinks can redirect ./local-action references to unscanned
-    # metadata. Refuse only a referenced symlink or symlink ancestor; an
-    # unrelated documentation symlink must not break the monotonic gate.
+    # Git symlinks and submodule gitlinks can redirect ./local-action
+    # references outside the exact reviewed source tree. Refuse only a
+    # referenced link or its ancestor; unrelated links remain allowed.
     for local in local_refs:
-        if any(local == link or local.startswith(link + "/") for link in symlinks):
-            raise Refusal("symlink_local_action")
+        if any(local == link or local.startswith(link + "/") for link in untrusted_roots):
+            raise Refusal("nonregular_local_action_source")
     return output
 
 
