@@ -45,6 +45,14 @@ class SourceTests(unittest.TestCase):
     def test_bad_anchor(self): self.check(SAFE.replace("dist/result.log", "&anchor dist/result.log"), False)
     def test_bad_duplicate(self): self.check(SAFE.replace("path: dist/result.log", "path: dist/result.log\n          path: build.txt"), False)
     def test_bad_alias(self): self.check(SAFE.replace("uses: actions/upload-artifact@v4", "uses: *upload # upload-artifact"), False)
+    def test_single_glob(self): self.check(SAFE.replace("dist/result.log", "dist/*.log"), False)
+    def test_yaml_backslash_escape(self): self.check(SAFE.replace("dist/result.log", "dist/\\u002eenv"), False)
+    def test_url_encoded_dotenv(self): self.check(SAFE.replace("dist/result.log", "dist/%2eenv"), False)
+    def test_token_report_filename(self): self.check(SAFE.replace("dist/result.log", "dist/token-report.log"), False)
+    def test_secret_basename(self): self.check(SAFE.replace("dist/result.log", "dist/secret_backup.log"), False)
+    def test_unicode_path(self): self.check(SAFE.replace("dist/result.log", "dist/résumé.log"), False)
+    def test_directory_upload_denied(self): self.check(SAFE.replace("dist/result.log", "dist/reports/"), False)
+
     def test_unrelated_safe(self): self.check("name: safe\njobs:\n  build:\n    run: echo hi", True)
 
     def test_git_diff_real_and_head_guard(self):
