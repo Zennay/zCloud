@@ -234,6 +234,29 @@ class RealGitRatchetTests(unittest.TestCase):
         self.assertIsNone(gate._SCAN_DEADLINE.get())
 
 
+    def test_shell_continued_deprecated_command_is_denied(self):
+        self.write(".github/workflows/old.yml",
+                   'run: |\n  echo "::set-\\\n    output name=KEY::value"\n')
+        with self.assertRaisesRegex(gate.Denied, "Shell-continued"):
+            gate.scan(self.base, self.commit())
+
+    def test_shell_continued_command_with_crlf_is_denied(self):
+        self.write(".github/workflows/old.yml",
+                   'run: |\r\n  echo "::save-\\\r\n    state name=KEY::value"\r\n')
+        with self.assertRaisesRegex(gate.Denied, "Shell-continued"):
+            gate.scan(self.base, self.commit())
+
+    def test_yaml_escaped_shell_continuation_is_denied(self):
+        self.write(".github/workflows/old.yml",
+                   r'run: "echo ::set-\u005c' + '\n    env name=KEY::value"\n')
+        with self.assertRaisesRegex(gate.Denied, "Shell-continued"):
+            gate.scan(self.base, self.commit())
+
+    def test_benign_shell_continuation_is_allowed(self):
+        self.write(".github/workflows/old.yml",
+                   'run: |\n  echo "safe-\\\n    output"\n')
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
     def test_invalid_unicode_scalar_escapes_fail_closed(self):
         for escaped in (r"\U00110000", r"\UFFFFFFFF", r"\uD800", r"\uDC00"):
             with self.subTest(escaped=escaped), self.assertRaises(gate.Denied):
