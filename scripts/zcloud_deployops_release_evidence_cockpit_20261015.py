@@ -156,11 +156,21 @@ def current_deploy(api, sha: str) -> dict:
     runs = []
     seen_page_run_ids = set()
     page_snapshots = []
+    reported_total = None
     for page in range(1, 6):
         payload = api.get(f"{run_url}{page}")
         if not isinstance(payload, dict) or not isinstance(payload.get("workflow_runs"), list):
             raise EvidenceError("invalid_workflow_runs")
         batch = payload["workflow_runs"]
+        if "total_count" in payload:
+            count_value = payload["total_count"]
+            if type(count_value) is not int or count_value < 0:
+                raise EvidenceError("invalid_deploy_total_count")
+            if reported_total is not None and reported_total != count_value:
+                raise EvidenceError("changing_deploy_total_count")
+            reported_total = count_value
+        elif reported_total is not None:
+            raise EvidenceError("missing_deploy_total_count")
         if len(batch) > 100:
             raise EvidenceError("oversized_workflow_page")
         page_snapshots.append(payload)
@@ -177,6 +187,8 @@ def current_deploy(api, sha: str) -> dict:
     else:
         raise EvidenceError("deploy_run_pagination_cap")
     pages_scanned = page
+    if reported_total is not None and reported_total != len(runs):
+        raise EvidenceError("inconsistent_deploy_total_count")
 
     def verify_paginated_run_snapshots():
         # Offset pagination can shift as runs arrive: require every page to
@@ -235,6 +247,7 @@ def current_deploy(api, sha: str) -> dict:
             "runner_job_result": "NOT_OBSERVED",
             "run_pages_scanned": pages_scanned,
             "runs_scanned": len(runs),
+            "run_inventory_count_verified": reported_total is not None,
         }
     run_id, attempt, status, conclusion, run_age_seconds, updated_at = max(matching, key=lambda x: (x[0], x[1]))
     jobs_payload = api.get(
@@ -334,6 +347,7 @@ def current_deploy(api, sha: str) -> dict:
         "matching_deploys_in_bounded_inventory": len(matching),
         "run_pages_scanned": pages_scanned,
         "runs_scanned": len(runs),
+        "run_inventory_count_verified": reported_total is not None,
         "run_age_seconds": run_age_seconds,
     }
 
@@ -457,7 +471,8 @@ def main(argv: list[str] | None = None) -> int:
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
                        "conclusion": None, "runner_route": "UNVERIFIED",
                        "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED",
-                       "run_pages_scanned": 0, "runs_scanned": 0},
+                       "run_pages_scanned": 0, "runs_scanned": 0,
+                       "run_inventory_count_verified": False},
             "warnings": [str(exc)],
             "next_checks": [
                 "GitHub-bewijs is onvolledig of onbereikbaar: onderzoek uitsluitend "
