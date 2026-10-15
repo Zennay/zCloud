@@ -23,6 +23,7 @@ COMMANDS = re.compile(r"::\s*(?:set-env|add-path|set-output|save-state)\b", re.I
 ENV = re.compile(r"actions_allow_unsecure_commands", re.I)
 ESCAPED_SCALAR = re.compile(r"\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8}))")
 SHELL_CONTINUATION = re.compile(r"\\\r?\n[ \t]*")
+ACTION_CODE_EXTENSIONS = frozenset({".js", ".cjs", ".mjs", ".ts", ".sh", ".bash", ".ps1", ".py"})
 MAX_CHANGED = 250
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 1024 * 1024
@@ -153,7 +154,12 @@ def candidate(path: str) -> bool:
     if len(p.parts) == 3 and p.parts[:2] == (".github", "workflows"):
         return p.suffix in (".yml", ".yaml")
     if len(p.parts) >= 3 and p.parts[:2] == (".github", "actions"):
-        return p.name in ("action.yml", "action.yaml")
+        # Action metadata alone is insufficient: locally executed JavaScript,
+        # shell, and Python can emit legacy workflow commands without editing
+        # any action.yml file. Treat these changed implementation blobs as
+        # source too; unchanged historical files remain grandfathered.
+        return (p.name in ("action.yml", "action.yaml", "Dockerfile", "Containerfile")
+                or p.suffix.lower() in ACTION_CODE_EXTENSIONS)
     return False
 
 
