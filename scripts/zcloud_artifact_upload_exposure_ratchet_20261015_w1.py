@@ -178,8 +178,18 @@ def examine(text: str) -> None:
     for i in uploads:
         m = USES.match(lines[i])
         assert m
-        step_indent = len(m.group(1))
+        uses_indent = len(m.group(1))
+        # A step may start "- uses: ..." or "- name: ...\n  uses: ...".
+        # In the named-step form, "with:" is a sibling of "uses:", not a
+        # deeper child. Treat the enclosing '-' list item as the boundary.
+        direct_with_indent = None
+        if lines[i].lstrip().startswith("-"):
+            step_indent = uses_indent
+        else:
+            step_indent = uses_indent - 1
+            direct_with_indent = uses_indent
         with_indent = None
+        before_with_indent = None
         field_indent = None
         fields = {}
         for line in lines[i+1:]:
@@ -190,9 +200,22 @@ def examine(text: str) -> None:
                 break
             with_match = WITH.match(line)
             if with_match and with_indent is None:
-                with_indent = len(with_match.group(1))
+                candidate_indent = len(with_match.group(1))
+                if (direct_with_indent is not None and
+                        candidate_indent != direct_with_indent):
+                    raise Denied("nested_upload_with")
+                if (before_with_indent is not None and
+                        candidate_indent != before_with_indent):
+                    raise Denied("nested_upload_with")
+                with_indent = candidate_indent
                 continue
             if with_indent is None:
+                # A later 'with' nested inside env/defaults is not a top-level
+                # Action input; only a direct sibling may satisfy path.
+                prior = KEY.match(line)
+                if prior and indent > step_indent:
+                    before_with_indent = (indent if before_with_indent is None
+                                          else min(indent, before_with_indent))
                 continue
             if with_match:
                 # Duplicate YAML mappings can replace the earlier safe values.
