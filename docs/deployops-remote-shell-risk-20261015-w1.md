@@ -80,3 +80,12 @@ This deliberately trades some false positives for no false-green claim on newly 
 ## Encoded flow-map run keys
 
 A compact YAML step can encode a key such as `"r\u0075n"`, `"r\x75n"` or `"r\U00000075n"` inside a flow map. YAML then decodes that key to `run`, while a literal key search would miss the execution-bearing value. The source-only scanner now treats new/modified flow mappings with double-quoted escaped keys as opaque until independently reviewed. Single-quoted mappings preserve escape text literally and do not inherit this special risk. Three adversarial real-Git groups prove escaped variants, inert single-quoted controls and unchanged historical source identity. This is not a complete YAML parser; no release or runtime permission is inferred.
+
+## Bounded direct execution after shell grouping or local download (15 October)
+
+Two additional source-execution patterns are covered by the existing **same-file, read-only** gate:
+
+- A fetched stream piped into a shell **subshell** (`curl ... | ( bash )`) or a shell **command group** (`wget ... | { sh; }`) is still immediate remote-code execution. The source matcher allows one literal opening group directly before the interpreter; `curl ... | ( jq . )` is a safe negative control for this narrow check.
+- A fetched script saved using literal `curl -o file`, `curl --output=file`, or `wget -O file` and immediately passed to a script interpreter via `&&`, `;`, or the next line is also counted. This path uses an **identical literal filename backreference**; a different filename, a longer similarly prefixed name, or a download merely saved for later does not trigger it. Bounded file names are limited to a conservative ASCII shape; variable/quoted paths, chmod chains and indirect execution remain outside this heuristic.
+
+Real-Git tests include positive and negative cases and verify unchanged risky Git blobs remain historical debt, whereas modifications reactivate admission failure. The reported counts are **source observations only**, not proof of complete shell coverage, pipeline safety, release eligibility or runtime deployment. Source CI stays GitHub-hosted without production credentials, self-hosted runner execution, manual dispatch, SQLite writes or VPS changes.
