@@ -57,3 +57,20 @@ jobs:
             echo "::warning::Initial policy bootstrap is PR-supplied, not an independent trusted release admission."
           fi
           python3 "$RUNNER_TEMP/trusted-pin-scanner.py" --repo-root . --base "$BASE_SHA" --head "$HEAD_SHA"
+
+      - name: Refuse a stale main revision after the full source scan
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current_main"
+          if test "$current_main" != "$BASE_SHA"; then
+            echo "::error::Canonical main advanced during this source proof; rerun against the latest base."
+            exit 1
+          fi
+          echo "ACTION_PIN_BASE_IS_CURRENT_MAIN=1"
