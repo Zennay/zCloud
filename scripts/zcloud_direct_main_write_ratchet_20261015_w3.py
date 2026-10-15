@@ -37,6 +37,8 @@ GRAPHQL_ENDPOINT = re.compile(
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
 MAX_PATHS = 2000
+# End-to-end budget bounds large inventories across every child Git call.
+SCAN_DEADLINE = time.monotonic() + 120
 
 
 class AdmissionError(ValueError):
@@ -49,6 +51,8 @@ def git(*args: str) -> bytes:
     env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_CONFIG_NOSYSTEM="1",
                GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0",
                GIT_NO_LAZY_FETCH="1")
+    if time.monotonic() >= SCAN_DEADLINE:
+        raise AdmissionError("scan_deadline_exceeded")
     p = None
     selector = selectors.DefaultSelector()
     chunks: list[bytes] = []
@@ -59,7 +63,7 @@ def git(*args: str) -> bytes:
                              stderr=subprocess.DEVNULL, bufsize=0)
         assert p.stdout is not None
         selector.register(p.stdout, selectors.EVENT_READ)
-        deadline = time.monotonic() + 15
+        deadline = min(time.monotonic() + 15, SCAN_DEADLINE)
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
