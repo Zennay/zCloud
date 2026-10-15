@@ -218,8 +218,19 @@ def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
             jobs_at, jobs_end = _section(lines, "jobs", 0, 0, len(lines))
         except AmbiguousSource:
             return "ambiguous_jobs"
-        jobs = [i for i in range(jobs_at + 1, jobs_end)
-                if JOB.fullmatch(lines[i])]
+        jobs = []
+        for i in range(jobs_at + 1, jobs_end):
+            line = lines[i]
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            indent = len(line) - len(line.lstrip(" "))
+            if indent == 2:
+                # Inline/anchored/flow job declarations are not covered by
+                # the simple runner parser. Without this refusal a new
+                # unguarded VPS writer could be invisible in a safe report.
+                if not JOB.fullmatch(line):
+                    return "unsupported_job_mapping"
+                jobs.append(i)
         selected = [i for i in jobs if JOB.fullmatch(lines[i]).group(1) == job]
         if len(selected) != 1:
             return "missing_or_duplicate_mutation_job"
