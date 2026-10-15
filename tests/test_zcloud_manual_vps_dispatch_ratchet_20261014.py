@@ -203,6 +203,35 @@ class ManualDispatchPolicy(unittest.TestCase):
         )
         self.assertTrue(guard.evaluate({}, {WF: body.encode()})["ok"])
 
+    def test_multiline_flow_events_fail_closed_even_when_dispatch_is_later(self):
+        for events in (
+            "on: [push,\n  workflow_dispatch]",
+            "on: [\n push,\n workflow_dispatch\n]",
+            "on: [push, # path note\n workflow_dispatch]",
+        ):
+            with self.subTest(events=events):
+                source = workflow().replace(b"on:\n  workflow_dispatch:", events.encode())
+                with self.assertRaisesRegex(guard.RefError, "ambiguous_event_syntax"):
+                    guard.risky_manual_jobs(WF, source)
+
+    def test_valid_single_line_flow_dispatch_is_still_checked(self):
+        source = workflow().replace(
+            b"on:\n  workflow_dispatch:",
+            b"on: [push, 'workflow_dispatch']",
+        )
+        self.assertDenied(source)
+        trusted = workflow(if_statement=SAFE_IF).replace(
+            b"on:\n  workflow_dispatch:",
+            b"on: [push, 'workflow_dispatch']",
+        )
+        self.assertTrue(guard.evaluate({}, {WF: trusted})["ok"])
+
+    def test_flow_push_only_with_trailing_comment_does_not_incur_debt(self):
+        source = workflow().replace(
+            b"on:\n  workflow_dispatch:", b"on: [push] # no manual jobs",
+        )
+        self.assertTrue(guard.evaluate({}, {WF: source})["ok"])
+
     def test_flow_dispatch_event_detected(self):
         body = workflow().decode().replace("on:\n  workflow_dispatch:", "on: [workflow_dispatch]")
         self.assertDenied(body.encode())
