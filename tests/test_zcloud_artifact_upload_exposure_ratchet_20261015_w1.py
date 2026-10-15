@@ -243,6 +243,36 @@ class SourceTests(unittest.TestCase):
             finally:
                 os.chdir(old)
 
+    def test_root_actions_composite_action_yaml_exposure(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            anchor = Path(d) / "README.md"
+            anchor.write_text("repo\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            action = Path(d) / "actions/archive/action.yaml"
+            action.parent.mkdir(parents=True)
+            action.write_text("name: Local\nruns:\n  using: composite\n  steps:\n" +
+                              "    - uses: actions/upload-artifact@v4\n" +
+                              "      with:\n        path: secrets.env\n")
+            git("add", ".")
+            git("commit", "-qm", "bad manifest")
+            head = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                self.assertEqual(gate.workflow_paths(base, head),
+                                 ["actions/archive/action.yaml"])
+                self.assertEqual(gate.main(["--base", base, "--head", head]), 2)
+            finally:
+                os.chdir(old)
+
     def test_composite_non_manifest_script_not_source_entrypoint(self):
         with tempfile.TemporaryDirectory() as d:
             def git(*args):
