@@ -229,8 +229,10 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         original = probe.inspect
         added = [False]
 
-        def add_second_snapshot(state, *, snapshot_id=None):
-            result = original(state, snapshot_id=snapshot_id)
+        def add_second_snapshot(state, *, snapshot_id=None, _batch_bytes=None):
+            result = original(
+                state, snapshot_id=snapshot_id, _batch_bytes=_batch_bytes,
+            )
             if not added[0]:
                 added[0] = True
                 self._copy_historical_snapshot()
