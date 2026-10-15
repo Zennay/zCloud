@@ -92,7 +92,7 @@ jobs:
               "\n| Taak | Broncode | Reden |\n| --- | --- | --- |\n"
               + "\n".join(rows)
               + "\n\n**Let op:** GitHub kan een wachtende run in dezelfde concurrency-groep vervangen. "
-              + "\`cancel-in-progress: false\` beschermt lopende runs; dit is geen garantie "
+              + "`cancel-in-progress: false` beschermt lopende runs; dit is geen garantie "
               + "dat wachtende runs behouden blijven.\n"
               + "**Dit verleent geen toestemming voor deploy, runnerherstel of mutaties.**\n"
           )
