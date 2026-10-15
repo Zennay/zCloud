@@ -135,8 +135,8 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
     jobs = split_jobs(source)
     # Duplicate top-level keys are YAML-loader dependent and can replace an
     # apparently safe event or job with a dangerous second definition.
-    if (len(re.findall(r"(?m)^on:[ \\t]*", source)) != 1 or
-            len(re.findall(r"(?m)^jobs:[ \\t]*", source)) != 1):
+    if (len(re.findall(r"(?m)^on:[ \t]*", source)) != 1 or
+            len(re.findall(r"(?m)^jobs:[ \t]*", source)) != 1):
         raise RefError("duplicate_or_missing_authority_keys")
     # Detect unsupported constructs that could hide runner/jobs/event authority.
     if (re.search(r"(?m)^['\"]?(?:jobs|on)['\"]?:\s*[&*{]", source)
@@ -154,9 +154,9 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         # Alternate YAML spellings of job authority keys are real mappings,
         # but our strict reader would otherwise skip them (e.g. runs-on : or
         # "runs-on":). Detect before checking whether a runner is hosted.
-        prelude = re.split(r"(?m)^    steps[ \\t]*:", block, maxsplit=1)[0]
+        prelude = re.split(r"(?m)^    steps[ \t]*:", block, maxsplit=1)[0]
         for field in re.finditer(
-            r"""(?m)^(?P<indent>[ \\t]+)(?P<key>['"]?(?:runs-on|uses|if)['"]?)[ \\t]*:""",
+            r"""(?m)^(?P<indent>[ \t]+)(?P<key>['"]?(?:runs-on|uses|if)['"]?)[ \t]*:""",
             prelude,
         ):
             literal = field.group(0)
