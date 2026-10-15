@@ -112,6 +112,52 @@ def _canonical_file(name: object) -> bool:
     )
 
 
+def _string_set(value: object, *, kind: str, allowed: set[str]) -> set[str]:
+    """Deny ambiguous metadata, duplicates and unrecognized managed roots."""
+    if (
+        not isinstance(value, list)
+        or not all(isinstance(item, str) for item in value)
+        or len(value) != len(set(value))
+        or any(item not in allowed for item in value)
+    ):
+        raise Denied("invalid_" + kind)
+    return set(value)
+
+
+def _verify_manifest_metadata(manifest: dict, expected: dict[str, str]) -> set[str]:
+    managed = _string_set(
+        manifest.get("managed_paths"), kind="managed_paths", allowed=MANAGED_ROOTS,
+    )
+    if "server.py" not in managed:
+        raise Denied("missing_managed_entrypoint")
+    persistent = _string_set(
+        manifest.get("persistent_paths_never_restored"),
+        kind="persistent_paths", allowed=PERSISTENT,
+    )
+    if persistent != PERSISTENT:
+        raise Denied("persistent_contract_drift")
+    present = _string_set(
+        manifest.get("present_paths"), kind="present_paths", allowed=MANAGED_ROOTS,
+    )
+    if not present.issubset(managed) or not {key.split("/", 1)[0] for key in expected}.issubset(present):
+        raise Denied("manifest_inventory_mismatch")
+    config = manifest.get("config_hashes")
+    config_names = {
+        "projects.json", "project-layout.json", "resource-policy.json",
+        "project-contracts.json",
+    }
+    if not isinstance(config, dict) or set(config) != (set(expected) & config_names):
+        raise Denied("config_inventory_mismatch")
+    if any(
+        not isinstance(value, str)
+        or SHA_RE.fullmatch(value) is None
+        or expected[name] != value
+        for name, value in config.items()
+    ):
+        raise Denied("config_hash_mismatch")
+    return present
+
+
 def inspect(state: Path) -> dict:
     """Verify pointer, manifest, tree shape and exact SHA256 contents; do not restore."""
     _directory(state)
@@ -138,6 +184,7 @@ def inspect(state: Path) -> dict:
     # candidate even if its empty hash inventory is self-consistent.
     if "server.py" not in expected:
         raise Denied("missing_required_source")
+    declared_roots = _verify_manifest_metadata(manifest, expected)
     count, size = 0, 0
     seen = set()
     # Bound the directory enumeration *before* sorting it. A malicious tree
@@ -184,6 +231,17 @@ def inspect(state: Path) -> dict:
         seen.add(name)
     if seen != set(expected):
         raise Denied("missing_snapshot_files")
+    # A manifest can truthfully describe an empty managed directory. Check the
+    # direct children as well, not just the nonempty file hash list.
+    actual_roots = {entry.name for entry in files.iterdir()}
+    if actual_roots != declared_roots:
+        raise Denied("manifest_inventory_mismatch")
+    # A source tree might be changed during a long scan. This second check
+    # catches ordinary pointer/manifest churn; it is not a filesystem lock.
+    if _json(state / "last-known-good.json") != ptr:
+        raise Denied("pointer_changed_during_scan")
+    if _json(snapshot / "manifest.json") != manifest:
+        raise Denied("manifest_changed_during_scan")
     return {
         "ok": True, "snapshot_id": snap_id, "file_count": count,
         "verified_bytes": size, "mutation_performed": False,
