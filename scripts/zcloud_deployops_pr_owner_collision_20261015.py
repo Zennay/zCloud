@@ -151,7 +151,9 @@ def assess(payload):
 
 def read_snapshot(path):
     """Read bounded regular UTF-8 bytes without following symlinks or FIFOs."""
-    if type(path) is not Path:
+    # pathlib.Path returns platform-specific concrete subclasses (PosixPath).
+    # Reject non-Path inputs, not valid concrete Path implementations.
+    if not isinstance(path, Path):
         raise InvalidInventory("invalid_snapshot_path")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
