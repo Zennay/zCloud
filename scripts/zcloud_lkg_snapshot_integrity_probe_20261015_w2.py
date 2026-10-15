@@ -19,6 +19,12 @@ MAX_FILES = 50000
 MAX_BYTES = 512 * 1024 * 1024
 SNAPSHOT_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-(?:[a-f0-9]{8}|working-tree)(?:-[0-9]+)?$")
 SHA_RE = re.compile(r"^[a-f0-9]{64}$")
+MANAGED_ROOTS = {
+    "server.py", "project_runtime.py", "lane_generator.py", "enhancements.py",
+    "projects.json", "project-layout.json", "resource-policy.json",
+    "project-contracts.json", "portfolio_queue.seed.json", "public",
+    "firefox-extension", "deploy", "scripts",
+}
 PERSISTENT = {
     "history.db", "history.db-wal", "history.db-shm", ".watch-token",
     ".action-allowed-ips", "watch-tls.crt", "watch-tls.key",
@@ -100,6 +106,7 @@ def _canonical_file(name: object) -> bool:
         and ".." not in p.parts
         and "." not in p.parts
         and name == p.as_posix()
+        and p.parts[0] in MANAGED_ROOTS
         and p.parts[0] not in PERSISTENT
     )
 
@@ -117,7 +124,7 @@ def inspect(state: Path) -> dict:
     _directory(snapshot)
     _directory(files)
     manifest = _json(snapshot / "manifest.json")
-    if manifest.get("format_version") != 1 or manifest.get("snapshot_id") != snap_id:
+    if type(manifest.get("format_version")) is not int or manifest["format_version"] != 1 or manifest.get("snapshot_id") != snap_id:
         raise Denied("manifest_identity_mismatch")
     expected = manifest.get("hashes")
     if not isinstance(expected, dict) or any(
@@ -128,13 +135,19 @@ def inspect(state: Path) -> dict:
         raise Denied("invalid_hash_manifest")
     count, size = 0, 0
     seen = set()
+    # Bound the directory enumeration *before* sorting it. A malicious tree
+    # must not exhaust CI/VPS memory by presenting millions of entries.
+    entries = []
     try:
-        entries = sorted(files.rglob("*"))
+        for entry in files.rglob("*"):
+            entries.append(entry)
+            if len(entries) > MAX_FILES * 3:
+                raise Denied("too_many_paths")
     except (OSError, RuntimeError, ValueError) as exc:
+        if isinstance(exc, Denied):
+            raise
         raise Denied("invalid_snapshot_tree") from exc
-    if len(entries) > MAX_FILES * 3:
-        raise Denied("too_many_paths")
-    for path in entries:
+    for path in sorted(entries):
         if path.is_symlink():
             raise Denied("symlink_in_snapshot")
         try:
