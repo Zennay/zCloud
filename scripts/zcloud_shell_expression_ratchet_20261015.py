@@ -33,6 +33,8 @@ FLOW_RUN_KEY = re.compile(
     re.I,
 )
 
+EXPLICIT_RUN_KEY = re.compile(r'^\s*(?:-\s*)?\?\s*(?:run|["]run["]|[\x27]run[\x27])\s*(?:#.*)?$')
+
 
 class EvidenceError(ValueError):
     """The evidence is incomplete, invalid or ambiguous: deny."""
@@ -111,6 +113,10 @@ def fingerprint_risks(source: str) -> Counter[str]:
     # rather than silently claiming that no dangerous interpolation exists.
     # Digest the entire line so rewriting an existing flow-run also counts.
     for line in source.splitlines():
+        # YAML's '? run' mapping splits the key from the value.
+        # Conservatively bind the ambiguity to the full workflow blob.
+        if EXPLICIT_RUN_KEY.match(line):
+            out["ambiguous_explicit_run_key|workflow_sha256:" + workflow_digest] += 1
         match = FLOW_RUN_KEY.search(line)
         # Braces *after* run: can simply be the normal ${{ expression }}
         # delimiters. Only a brace *before* the key indicates flow mapping.
