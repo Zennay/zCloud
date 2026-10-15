@@ -26,3 +26,11 @@ Exit: **0** = complete source proof and no *new matched* risks; **1** = matched 
 - No automatic merge or direct-main mutation. Keep draft pending independent review and exact-head full hosted regression.
 
 Owners should review changed PR file inventory and current main before integration, and never treat these counters as permission to retry production.
+
+## Extended admission coverage (15 October)
+
+Source guard now detects quoted `run` mapping keys, compact flow-map steps, folded YAML `run: >` blocks, direct remote scripts executed through absolute-path shell binaries, shell `-c "$(curl ...)"` and `sh -c '$(wget ...)'` forms. An opaque `run: *alias` or `run: !tag` is **not assumed safe**, even when no literal remote command appears at the use site. This is intentional conservative rejection of newly edited workflows, not proof that every alias is malicious.
+
+GitHub-hosted admission additionally verifies the remote PR branch ref before **and after** the exact-Git-source comparison; a moved PR head invalidates the source result. The original SHA and immutable main are still checked. Those checks do not grant merge or deploy authority.
+
+**Known limits:** full YAML key decoding (including escaped quoted keys and explicit `?` mappings), multiline flow-map parsing, templated scripts, downloaded intermediate files, alternate download commands, unusual shell encodings and dynamically assembled code are not yet semantically modeled. Focused detection can produce false positives, and green scans must be reviewed alongside independent privileged-workflow checks. Separate #1464/#1465 owners handle interpolation and container-source trust; do not edit their files.
