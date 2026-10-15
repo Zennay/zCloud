@@ -72,6 +72,7 @@ class Refs(HTMLParser):
         # HTMLParser does not enforce balanced markup. An unmatched </noscript>
         # must never pop an open <template> and count inert asset refs as live.
         self.inert_tags: list[str] = []
+        self.open_script = False
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         # HTML syntax ignores a self-closing slash on non-void elements.
@@ -82,6 +83,10 @@ class Refs(HTMLParser):
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "script":
+            if not self.open_script:
+                raise ValueError("unbalanced_script_markup")
+            self.open_script = False
         if tag in ("template", "noscript"):
             if not self.inert_tags or self.inert_tags[-1] != tag:
                 raise ValueError("unbalanced_inert_markup")
@@ -96,6 +101,10 @@ class Refs(HTMLParser):
         if tag in ("template", "noscript"):
             self.inert_tags.append(tag)
             return
+        if tag == "script":
+            if self.open_script:
+                raise ValueError("unbalanced_script_markup")
+            self.open_script = True
         values = dict(attrs)
         # HTML base changes where absolute-path asset URLs resolve; URL-local evidence
         # cannot prove browser cache scope after an origin-changing <base href>.
@@ -155,6 +164,8 @@ def pins(html: bytes) -> dict[str, str]:
     parser.close()
     if parser.inert_tags:
         raise ValueError("unclosed_inert_markup")
+    if parser.open_script:
+        raise ValueError("unclosed_script_markup")
     if any(len(parser.refs[name]) != 1 for name in ASSETS):
         raise ValueError("missing_or_duplicate_asset_ref")
     return {name: parser.refs[name][0] for name in ASSETS}
