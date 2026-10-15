@@ -210,5 +210,39 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertTrue(value["ok"])
 
 
+    def test_new_workflow_without_explicit_token_permissions_denied(self):
+        value = self.check_file(
+            "on: push\njobs:\n  new:\n    runs-on: ubuntu-latest\n",
+            ".github/workflows/unscoped.yml",
+        )
+        self.assertFalse(value["ok"])
+
+    def test_new_job_in_legacy_implicit_workflow_denied(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\njobs:\n  legacy:\n    runs-on: ubuntu-latest\n")
+        old = self.commit("legacy-default")
+        self.put(".github/workflows/original.yml",
+                 "on: push\njobs:\n  legacy:\n    runs-on: ubuntu-latest\n"
+                 "  added:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, old, self.commit("add-job"))["ok"])
+
+    def test_explicit_readonly_new_workflow_allowed(self):
+        value = self.check_file(
+            "on: push\npermissions:\n  contents: read\n"
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n",
+            ".github/workflows/read-only.yml",
+        )
+        self.assertTrue(value["ok"])
+
+    def test_new_job_with_explicit_read_only_in_legacy_allowed(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\njobs:\n  legacy:\n    runs-on: ubuntu-latest\n")
+        old = self.commit("legacy-default")
+        self.put(".github/workflows/original.yml",
+                 "on: push\njobs:\n  legacy:\n    runs-on: ubuntu-latest\n"
+                 "  new:\n    permissions:\n      contents: read\n    runs-on: ubuntu-latest\n")
+        self.assertTrue(check(self.root, old, self.commit("add-safe-job"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
