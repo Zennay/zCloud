@@ -79,6 +79,33 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
 
+
+    def test_changed_js_cannot_reuse_older_version(self) -> None:
+        self.write("public/app.js", "console.log(2);")
+        self.write("public/index.html", self.html("r7", "r5"))
+        self.head = self.commit()
+        report = gate.evaluate(self.base, self.head)
+        self.assertEqual(report["reason"], "nonmonotonic_cache_pin")
+        self.assertEqual(report["nonmonotonic"], ["public/app.js"])
+
+    def test_changed_css_cannot_rewind_version(self) -> None:
+        self.write("public/enhancements.css", "body{color:red}")
+        self.write("public/index.html", self.html("r8", "r4"))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["nonmonotonic"], ["public/enhancements.css"])
+
+    def test_changed_js_requires_review_for_nonnumeric_token_scheme(self) -> None:
+        self.write("public/app.js", "console.log(2);")
+        self.write("public/index.html", self.html("digestabcd", "r5"))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "nonmonotonic_cache_pin")
+
+    def test_changed_js_accepts_strict_numeric_increase(self) -> None:
+        self.write("public/app.js", "console.log(2);")
+        self.write("public/index.html", self.html("r20", "r5"))
+        self.head = self.commit()
+        self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
+
     def test_pin_only_change_allowed(self) -> None:
         self.write("public/index.html", self.html("r9", "r6"))
         self.head = self.commit()
