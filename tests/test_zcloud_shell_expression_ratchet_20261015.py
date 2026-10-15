@@ -715,6 +715,44 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: echo ${{ join(needs.*.result, ' ') }}\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_direct_env_shell_interpolation_is_new_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ env.PR_TITLE }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracket_env_shell_interpolation_is_new_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ env['PR-BODY'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_spaced_env_shell_interpolation_is_new_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ env . CONTENT }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_computed_env_property_is_new_ambiguous_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ env[format('PAYLOAD')] }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_serialized_entire_env_shell_interpolation_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(env) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_literal_shell_env_variable_stays_safe(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - env:\n      PR_TITLE: ${{ github.event.issue.title }}\n    run: printf '%s' \"$PR_TITLE\"\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_existing_unsafe_env_shell_interpolation_is_grandfathered_only_unchanged(self):
+        unsafe = "steps:\n  - run: echo ${{ env.PR_TITLE }}\n"
+        base = self.commit(unsafe)
+        head = self.commit(unsafe + "# harmless extra comment\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+        next_head = self.commit(unsafe.replace("echo", "eval"))
+        self.assertEqual(1, guard.audit(base, next_head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
