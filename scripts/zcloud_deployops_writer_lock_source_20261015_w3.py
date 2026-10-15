@@ -134,16 +134,16 @@ def _lock(lines: list[str], indent: int, low: int, high: int):
     return "serialized_source"
 
 
-def _parent_cancel_status(lines: list[str], jobs_at: int) -> str:
-    """A workflow-level cancellation can defeat an otherwise safe job lock."""
-    roots = [i for i in range(jobs_at)
+def _parent_cancel_status(lines: list[str]) -> str:
+    """Workflow concurrency applies regardless of YAML key order."""
+    roots = [i for i in range(len(lines))
              if (parsed := _key(lines[i], 0)) and parsed[0] == "concurrency"]
     if not roots:
         return "safe"
     if len(roots) != 1:
         return "ambiguous_parent_concurrency"
     try:
-        start, end = _section(lines, "concurrency", 0, 0, jobs_at)
+        start, end = _section(lines, "concurrency", 0, 0, len(lines))
     except AmbiguousSource:
         return "ambiguous_parent_concurrency"
     fields = {}
@@ -162,19 +162,23 @@ def _parent_cancel_status(lines: list[str], jobs_at: int) -> str:
 def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
     try:
         lines = _read_regular(root, filename).splitlines()
-        roots = [i for i, line in enumerate(lines) if line == "jobs:"]
-        if len(roots) != 1:
+        # A YAML root field can legally appear after jobs. Restrict the job
+        # enumeration to the real jobs block, never a later root section.
+        # Exact root key matching is intentionally conservative.
+        try:
+            jobs_at, jobs_end = _section(lines, "jobs", 0, 0, len(lines))
+        except AmbiguousSource:
             return "ambiguous_jobs"
-        jobs_at = roots[0]
-        jobs = [i for i in range(jobs_at + 1, len(lines)) if JOB.fullmatch(lines[i])]
+        jobs = [i for i in range(jobs_at + 1, jobs_end)
+                if JOB.fullmatch(lines[i])]
         selected = [i for i in jobs if JOB.fullmatch(lines[i]).group(1) == job]
         if len(selected) != 1:
             return "missing_or_duplicate_mutation_job"
         at = selected[0]
-        job_end = next((i for i in jobs if i > at), len(lines))
+        job_end = next((i for i in jobs if i > at), jobs_end)
         if scope == "workflow":
-            return _lock(lines, 0, 0, jobs_at)
-        parent_status = _parent_cancel_status(lines, jobs_at)
+            return _lock(lines, 0, 0, len(lines))
+        parent_status = _parent_cancel_status(lines)
         if parent_status != "safe":
             return parent_status
         return _lock(lines, 4, at + 1, job_end)
