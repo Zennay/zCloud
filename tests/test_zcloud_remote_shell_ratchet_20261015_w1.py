@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1]
 SRC = HERE / "scripts" / "zcloud_remote_shell_ratchet_20261015_w1.py"
@@ -681,6 +682,46 @@ class RatchetTests(unittest.TestCase):
         head = self.commit()
         with self.assertRaises(mod.SourceError):
             mod.audit(self.repo, self.base, head)
+
+    def test_git_bounded_capture_allows_ordinary_sha(self):
+        with patch.object(mod, "MAX_GIT_OUTPUT_BYTES", 48):
+            result = mod.git(self.repo, "rev-parse", "HEAD").decode().strip()
+        self.assertEqual(result, self.base)
+
+    def test_git_bounded_capture_rejects_large_tree_before_parsing(self):
+        # A tiny artificial limit proves the pipe is bounded independently of
+        # MAX_FILES and MAX_FILE_BYTES in the tree parser.
+        with patch.object(mod, "MAX_GIT_OUTPUT_BYTES", 50):
+            with self.assertRaises(mod.SourceError):
+                mod.git(self.repo, "ls-tree", "-r", "-z", self.base)
+
+    def test_git_large_blob_does_not_return_unbounded_data(self):
+        target = self.repo / "large-safe-fixture.txt"
+        target.write_text("x" * 8192, encoding="utf-8")
+        blob_sha = call(self.repo, "hash-object", "-w", str(target))
+        with patch.object(mod, "MAX_GIT_OUTPUT_BYTES", 64):
+            with self.assertRaises(mod.SourceError):
+                mod.git(self.repo, "cat-file", "blob", blob_sha)
+
+    def test_git_subprocess_failure_does_not_leak_stderr(self):
+        with self.assertRaisesRegex(mod.SourceError, "Git evidence unavailable"):
+            mod.git(self.repo, "rev-parse", "nonexistent-secret-ref")
+
+    def test_git_capture_error_refuses_false_green_cli_admission(self):
+        stream = io.StringIO()
+        with patch.object(mod, "MAX_GIT_OUTPUT_BYTES", 50):
+            with redirect_stdout(stream):
+                exit_code = mod.main([
+                    "--repo", str(self.repo), "--base", self.base,
+                    "--head", self.base,
+                ])
+        report = json.loads(stream.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertIs(report["source_complete"], False)
+        self.assertIsNone(report["new_risky_workflows"])
+        self.assertFalse(report["release_authorized"])
+        self.assertFalse(report["deployment_authorized"])
+        self.assertFalse(report["mutation_performed"])
 
     def test_missing_sha_and_wrong_ancestry_denied(self):
         with self.assertRaises(mod.SourceError):
