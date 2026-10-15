@@ -153,6 +153,48 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         with self.assertRaisesRegex(Denied, "inherit_secrets"):
             inspect(self.base, head)
 
+    def test_ci_runs_for_every_main_pr_without_path_filter(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/zcloud-reusable-secret-inheritance-ratchet-20261015.yml").read_text()
+        event = workflow.split("permissions:", 1)[0]
+        self.assertIn("pull_request:", event)
+        self.assertIn("branches: [main]", event)
+        self.assertNotIn("    paths:", event)
+        self.assertNotIn("    paths-ignore:", event)
+
+    def test_ci_binds_both_remote_refs_before_and_after_scan(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/zcloud-reusable-secret-inheritance-ratchet-20261015.yml").read_text()
+        exact_main = """git ls-remote --exit-code origin refs/heads/main)"""
+        exact_head = """git ls-remote --exit-code origin "refs/heads/$HEAD_REF")"""
+        self.assertEqual(workflow.count(exact_main), 2)
+        self.assertEqual(workflow.count(exact_head), 2)
+        self.assertEqual(workflow.count("refs/heads/$HEAD_REF"), 4)
+        self.assertIn("git check-ref-format --branch", workflow)
+        self.assertIn("HEAD_REF: ${{ github.event.pull_request.head.ref }}", workflow)
+        self.assertIn("git rev-parse HEAD", workflow)
+
+    def test_ci_is_hosted_readonly_never_promotes(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/zcloud-reusable-secret-inheritance-ratchet-20261015.yml").read_text()
+        self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertNotIn("self-hosted", workflow)
+        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertNotIn("contents: write", workflow)
+
+    def test_exact_remote_ref_receipt_does_not_accept_moving_branch(self):
+        remote = Path(self.tmp.name) / "remote.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+        self.git("remote", "add", "origin", str(remote))
+        self.git("push", "-q", "origin", self.base + ":refs/heads/main")
+        original = self.git("ls-remote", "--exit-code", "origin", "refs/heads/main").strip()
+        self.assertEqual(original, self.base + "\trefs/heads/main")
+        self.write("README.md", "revision moved\n")
+        new_head = self.commit()
+        self.git("push", "-q", "origin", new_head + ":refs/heads/main")
+        updated = self.git("ls-remote", "--exit-code", "origin", "refs/heads/main").strip()
+        self.assertNotEqual(updated, original)
+        self.assertEqual(updated, new_head + "\trefs/heads/main")
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
