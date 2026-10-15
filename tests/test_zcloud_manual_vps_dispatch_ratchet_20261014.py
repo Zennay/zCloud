@@ -160,6 +160,24 @@ class ManualDispatchPolicy(unittest.TestCase):
         body = workflow().decode().replace("    steps:", "  other:\n    runs-on: [self-hosted, zcloud, vps]\n    steps:", 1)
         self.assertDenied(body.encode(), expected=2)
 
+    def test_duplicate_job_authority_keys_denied(self):
+        safe = workflow(if_statement=SAFE_IF)
+        for key, addition in (
+            ("runs-on", b"    runs-on: ubuntu-latest\n"),
+            ("if", b"    if: true\n"),
+            ("permissions", b"    permissions: write-all\n"),
+        ):
+            with self.subTest(key=key):
+                base = safe
+                if key == "permissions":
+                    base = safe.replace(b"    runs-on:", b"    permissions: contents: read\n    runs-on:")
+                changed = base.replace(b"    steps:\n", addition + b"    steps:\n")
+                with self.assertRaises(guard.RefError):
+                    guard.risky_manual_jobs(WF, changed)
+        reused = b"on:\n  workflow_dispatch:\njobs:\n  reuse:\n    uses: org/repo/.github/workflows/proof.yml@main\n"
+        with self.assertRaises(guard.RefError):
+            guard.risky_manual_jobs(WF, reused + b"    uses: org/repo/.github/workflows/other.yml@main\n")
+
     def test_ambiguous_job_identifiers_and_duplicates_denied(self):
         samples = (
             ("quoted", workflow().replace(b"  prove:", b'  "prove":')),
