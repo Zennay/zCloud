@@ -62,6 +62,12 @@ across selected sources. A missing or oversized inventory fails closed.
 Legacy composite Action risks are counted as baseline, and changing an unsafe
 shell command creates new debt even when the expression itself is unchanged.
 Step-level `env:` indirection remains outside this direct run-shell check.
+The guard now also binds each unsafe `run:` scalar fingerprint to a hash of its
+best-effort YAML ancestor mapping keys. Relocating an unchanged unsafe command
+from one named job to another creates new debt, while adding an unrelated job
+does not. Indentation-derived ancestry is intentionally **not a full YAML
+semantic model**: permissions, inherited defaults, matrix routing, and every
+possible change to the effective trust context are not proven safe by this test.
 The existing JSON field `candidate_risky_workflows` may now include local
 Action metadata paths for backwards compatibility; it is not a list of deployed
 or proven-exploitable workflows.
