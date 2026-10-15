@@ -73,6 +73,14 @@ class Refs(HTMLParser):
         # must never pop an open <template> and count inert asset refs as live.
         self.inert_tags: list[str] = []
 
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # HTML syntax ignores a self-closing slash on non-void elements.
+        # HTMLParser would close <template/> or <noscript/> immediately and
+        # incorrectly count the following browser-inert script as executable.
+        if tag in ("template", "noscript", "script"):
+            raise ValueError("self_closing_nonvoid_markup")
+        self.handle_starttag(tag, attrs)
+
     def handle_endtag(self, tag: str) -> None:
         if tag in ("template", "noscript"):
             if not self.inert_tags or self.inert_tags[-1] != tag:
