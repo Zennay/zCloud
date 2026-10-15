@@ -74,7 +74,7 @@ jobs:
               reason = item["source_result"]
               assert reason in expected_results
               status = "Broncode vergrendeld" if reason == "serialized_source" else "Nog niet bewezen"
-              rows.append(f"| {label} | {status} | \`{reason}\` |")
+              rows.append(f"| {label} | {status} | `{reason}` |")
           msg = (
               "### VPS-schrijftaken: broncodecontrole (niet productie)\n"
               f"- Vergrendeld volgens broncode: **{report['source_serialized']} van 7**\n"
