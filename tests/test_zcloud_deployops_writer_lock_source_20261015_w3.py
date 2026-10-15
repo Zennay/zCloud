@@ -1,6 +1,8 @@
 """Adversarial regression for the read-only zCloud seven-writer lock inventory."""
 import importlib.util
 import json
+import os
+from unittest.mock import patch
 import subprocess
 import sys
 import tempfile
@@ -230,6 +232,42 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 self.assertEqual(module.inspect_workflow(self.root, filename, job, scope),
                                  "serialized_source")
+
+    def test_nonregular_fifo_never_hangs_or_counts_as_safe(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("POSIX FIFO required")
+        path = self.dir / "zcloud-worker-tab-guard.yml"
+        path.unlink()
+        os.mkfifo(path)
+        # Run in a child with an explicit 2s timeout: malicious FIFO must
+        # never wait forever at open(), even without a writer.
+        run = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.root)],
+            text=True, capture_output=True, timeout=2, check=False,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        report = json.loads(run.stdout)
+        self.assertEqual(report["writers"][path.name]["source_result"],
+                         "not_bounded_regular_source")
+
+    def test_short_source_read_is_denied_instead_of_partial_success(self):
+        # A short read on a regular file is legal; never accept just an
+        # apparent safe YAML prefix when the remainder is unobserved.
+        with patch.object(module.os, "read", return_value=b""):
+            evidence = module.inventory(self.root)
+        self.assertEqual(evidence["source_serialized"], 0)
+        self.assertEqual(evidence["writers"]["zcloud-vps-deploy.yml"]["source_result"],
+                         "source_changed_during_read")
+
+    def test_partial_reads_continue_until_complete(self):
+        actual_read = module.os.read
+
+        def short_read(fd, length):
+            return actual_read(fd, min(length, 7))
+
+        with patch.object(module.os, "read", side_effect=short_read):
+            evidence = module.inventory(self.root)
+        self.assertEqual(evidence["source_serialized"], 7)
 
     def test_oversized_file_rejected(self):
         path = self.dir / "zcloud-worker-tab-guard.yml"
