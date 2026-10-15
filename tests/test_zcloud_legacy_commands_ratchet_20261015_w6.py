@@ -82,6 +82,14 @@ class RealGitRatchetTests(unittest.TestCase):
         self.write(".github/actions/tool/action.yml", "name: safe\nruns:\n  using: composite\n  steps: []\n")
         self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
 
+    def test_composite_action_at_actions_root_is_checked(self):
+        self.write(".github/actions/action.yml", "name: safe\n")
+        safe = self.commit()
+        self.assertEqual(gate.scan(self.base, safe), (1, 1))
+        self.write(".github/actions/action.yml", "run: echo '::set-env name=x::y'\n")
+        with self.assertRaises(gate.Denied):
+            gate.scan(safe, self.commit())
+
     def test_unsafe_composite_action_denied(self):
         self.write(".github/actions/tool/action.yaml", "run: echo '::set-output name=X::Y'\n")
         with self.assertRaises(gate.Denied):
