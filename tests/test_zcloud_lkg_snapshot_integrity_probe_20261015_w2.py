@@ -37,6 +37,31 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_real_recovery_capture_format_is_accepted_without_live_mutation(self):
+        from unittest.mock import patch
+        from scripts import zcloud_recovery as production_capture
+
+        root = Path(self.tmp.name) / "actual-capture-root"
+        state = Path(self.tmp.name) / "actual-capture-state"
+        root.mkdir()
+        (root / "server.py").write_text("real managed file\\n", encoding="utf-8")
+        (root / "public").mkdir()
+        (root / "public" / "app.js").write_text("/* release */\\n", encoding="utf-8")
+        with patch.object(
+            production_capture, "git_meta", return_value={"head": "deadbeef"}
+        ):
+            manifest = production_capture.capture(
+                root, state, "synthetic offline integration",
+                require_health=False,
+                service_state={"active_state": "active"},
+                browser_state={"active_state": "active"},
+            )
+        result = probe.inspect(state)
+        self.assertTrue(result["ok"])
+        self.assertEqual(manifest["snapshot_id"], result["snapshot_id"])
+        self.assertEqual(2, result["file_count"])
+        self.assertFalse(result["authorizes_rollback"])
+
     def test_valid_snapshot_produces_proof_but_no_authority(self):
         result = probe.inspect(self.state)
         self.assertTrue(result["ok"])
