@@ -221,6 +221,20 @@ jobs:
         self.assertEqual(1, len(self.scan("    ? image\n    : alpine:latest\n")))
         self.assertEqual(1, len(self.scan("    ? 'uses'\n    : docker://alpine:latest\n")))
 
+    def test_encoded_flow_docker_uses_key_cannot_hide_tag(self):
+        for key in (r'"\u0075ses"', r'"\x75ses"', r'"\U00000075ses"'):
+            with self.subTest(key=key):
+                self.assertEqual(1, len(
+                    self.scan(f'    - {{{key}: "docker://alpine:latest"}}\n')
+                ))
+
+    def test_multiline_uses_block_requires_review(self):
+        for style in (">", ">-", "|", "|-"):
+            with self.subTest(style=style):
+                self.assertEqual(1, len(
+                    self.scan(f"      - uses: {style}\n          docker://alpine:latest\n")
+                ))
+
     def test_hosted_no_new_debt_gate_runs_for_all_workflow_and_action_edits(self):
         workflow = (ROOT / ".github/workflows" /
                     "zcloud-container-digest-ratchet-20261015-w2.yml").read_text()
