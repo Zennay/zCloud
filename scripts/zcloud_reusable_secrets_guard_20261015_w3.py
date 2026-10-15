@@ -112,6 +112,10 @@ def inspect(base: str, head: str) -> dict[str, object]:
     require_workflow_root(head)
     base_tree = paths_and_modes(base)
     head_tree = paths_and_modes(head)
+    # A present directory holding only non-workflow files can otherwise
+    # look like an empty, passing inventory after disabling all CI.
+    if not base_tree or not head_tree:
+        raise Denied("empty_workflow_inventory")
     changed = sorted(path for path in head_tree if base_tree.get(path) != head_tree[path])
     total = 0
     denied_paths = 0
