@@ -14,9 +14,9 @@ import re
 import subprocess
 import sys
 
-SHA = re.compile(r"[0-9a-f]{40}\\Z")
-WORKFLOW = re.compile(r"\\.github/workflows/[A-Za-z0-9_.-]+\\.ya?ml\\Z")
-KEY = re.compile(r"(?P<key>[A-Za-z][A-Za-z-]*|['\\\"][A-Za-z][A-Za-z-]*['\\\"])")
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
+KEY = re.compile(r"(?P<key>[A-Za-z][A-Za-z-]*|['\\"][A-Za-z][A-Za-z-]*['\\"])")
 MAX_FILES = 512
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 24 * MAX_FILE_BYTES
@@ -43,11 +43,11 @@ def tree(root: Path, sha: str) -> dict[str, str]:
     raw = git(root, "ls-tree", "-r", "-z", sha, "--", ".github/workflows")
     result: dict[str, str] = {}
     total = 0
-    for record in raw.split(b"\\0"):
+    for record in raw.split(b"\0"):
         if not record:
             continue
         try:
-            meta, filename = record.split(b"\\t", 1)
+            meta, filename = record.split(b"\t", 1)
             mode, kind, blob = meta.decode("ascii").split(" ")
             path = filename.decode("utf-8", "strict")
         except (ValueError, UnicodeError) as exc:
@@ -66,7 +66,7 @@ def tree(root: Path, sha: str) -> dict[str, str]:
         if size > MAX_FILE_BYTES or total > MAX_TOTAL_BYTES:
             raise IncompleteSource("oversized_source")
         source = git(root, "cat-file", "blob", blob)
-        if len(source) != size or b"\\0" in source:
+        if len(source) != size or b"\0" in source:
             raise IncompleteSource("invalid_blob_contents")
         try:
             result[path] = source.decode("utf-8", "strict")
@@ -82,7 +82,7 @@ def _uncomment(line: str) -> str:
     quote = None
     escaped = False
     for n, char in enumerate(line):
-        if char == "\\\\" and quote == '"' and not escaped:
+        if char == "\\" and quote == '"' and not escaped:
             escaped = True
             continue
         if char in ("'", '"') and not escaped:
@@ -97,7 +97,7 @@ def _uncomment(line: str) -> str:
 
 
 def _scalar(value: str) -> str:
-    return value.strip().strip("'\\\"").lower()
+    return value.strip().strip("'\\"").lower()
 
 
 def _mapping_risk(body: list[str], indent: int) -> str | None:
@@ -110,9 +110,9 @@ def _mapping_risk(body: list[str], indent: int) -> str | None:
         if not stripped:
             continue
         width = len(line) - len(line.lstrip(" "))
-        if width != indent + 2 or "\\t" in line[:width]:
+        if width != indent + 2 or "\t" in line[:width]:
             return "opaque_permissions"
-        pair = re.fullmatch(r"([A-Za-z][A-Za-z-]*|['\\\"][A-Za-z][A-Za-z-]*['\\\"]):\\s*([^{}\\[\\],&*]+?)\\s*", stripped)
+        pair = re.fullmatch(r"([A-Za-z][A-Za-z-]*|['\\"][A-Za-z][A-Za-z-]*['\\"]):\s*([^{}\[\],&*]+?)\s*", stripped)
         if not pair:
             return "opaque_permissions"
         key = _scalar(pair.group(1))
@@ -137,16 +137,16 @@ def permission_debt(source: str, path: str) -> Counter[str]:
         line = _uncomment(original)
         if not line.strip():
             continue
-        if "\\t" in original[:len(original) - len(original.lstrip())]:
+        if "\t" in original[:len(original) - len(original.lstrip())]:
             raise IncompleteSource("tab_indentation")
         width = len(original) - len(original.lstrip(" "))
         if width == 0:
-            in_jobs = bool(re.match(r"^jobs:\\s*$", line))
+            in_jobs = bool(re.match(r"^jobs:\s*$", line))
             job = None
         elif in_jobs and width == 2:
-            head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\\s*", line)
+            head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\s*", line)
             job = head.group(1) if head else None
-        match = re.match(r"^\\s*(?:permissions|['\\\"]permissions['\\\"]):\\s*(.*)$", line)
+        match = re.match(r"^\s*(?:permissions|['\\"]permissions['\\"]):\s*(.*)$", line)
         if not match:
             continue
         scope = "top" if width == 0 else f"job:{job}" if width == 4 and in_jobs and job else "unsupported"
