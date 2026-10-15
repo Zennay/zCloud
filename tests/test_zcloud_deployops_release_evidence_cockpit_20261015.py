@@ -398,14 +398,33 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_paginated_deploy_run"):
             cockpit.collect(api)
 
-    def test_deploy_fifth_full_page_fails_closed(self):
+    def test_deploy_large_repo_is_explicitly_partial_not_healthy(self):
+        api = FakeAPI()
+        for page in range(1, 6):
+            batch = [dict(run(sha=ALT_SHA), id=page * 1000 + i)
+                     for i in range(100)]
+            api.pages[RUNS_PREFIX + str(page)] = [
+                {"workflow_runs": batch, "total_count": 1200}
+            ]
+        data = cockpit.collect(api)
+        self.assertEqual(data["deploy"]["runs_scanned"], 500)
+        self.assertEqual(data["deploy"]["run_pages_scanned"], 5)
+        self.assertFalse(data["deploy"]["run_inventory_complete"])
+        self.assertFalse(data["deploy"]["run_inventory_count_verified"])
+        self.assertIn("deploy_run_inventory_incomplete", data["warnings"])
+        self.assertEqual(data["deploy"]["runner_route"], "UNVERIFIED")
+        self.assertFalse(data["deployment_authorized"])
+        self.assertIn("volledige historie: False", cockpit.render_html(data))
+
+    def test_deploy_large_repo_partial_even_without_total_count(self):
         api = FakeAPI()
         for page in range(1, 6):
             batch = [dict(run(sha=ALT_SHA), id=page * 1000 + i)
                      for i in range(100)]
             api.pages[RUNS_PREFIX + str(page)] = [{"workflow_runs": batch}]
-        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_pagination_cap"):
-            cockpit.collect(api)
+        data = cockpit.collect(api)
+        self.assertIn("deploy_run_inventory_incomplete", data["warnings"])
+        self.assertFalse(data["release_authorized"])
 
     def test_deploy_page_two_missing_or_malformed_denies(self):
         api = FakeAPI()
