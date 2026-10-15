@@ -146,6 +146,18 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(InvalidInventory, "main_changed_during_snapshot"):
             s.collect(api)
 
+    def test_invalid_main_shape_fails_closed(self):
+        for candidate in (None, True, [], {"sha": True}, {"sha": "short"}):
+            with self.subTest(candidate=candidate):
+                with self.assertRaisesRegex(InvalidInventory, "untrusted_main_revision"):
+                    s.collect(lambda _: {"commit": candidate})
+
+    def test_boolean_pr_detail_number_is_not_accepted(self):
+        api = FakeGitHub()
+        api.details[1][0]["number"] = True
+        with self.assertRaisesRegex(InvalidInventory, "wrong_pr_detail"):
+            s.collect(api)
+
     def test_wrong_pr_identity_denied(self):
         api = FakeGitHub()
         api.details[1][0]["number"] = 999
