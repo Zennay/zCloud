@@ -99,6 +99,10 @@ def run_shell_scalars(source: str) -> list[str]:
 
 def fingerprint_risks(source: str) -> Counter[str]:
     out: Counter[str] = Counter()
+    # A run alias can inherit code from an anchor elsewhere in its workflow.
+    # Since this is deliberately not a YAML parser, any edit to that workflow
+    # must be treated as new ambiguity while such a run alias is present.
+    workflow_digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
     # Flow-style YAML can put the run key after an inline brace, bypassing a
     # newline-oriented scalar extractor. Treat new flow-run forms as ambiguous
     # rather than silently claiming that no dangerous interpolation exists.
@@ -116,7 +120,7 @@ def fingerprint_risks(source: str) -> Counter[str]:
         scalar_digest = hashlib.sha256(scalar.encode("utf-8")).hexdigest()
         value = scalar.lstrip()
         if value.startswith("*") or value.startswith("!") or value.startswith("&"):
-            out["ambiguous_yaml_run_scalar|run_sha256:" + scalar_digest] += 1
+            out["ambiguous_yaml_run_scalar|workflow_sha256:" + workflow_digest] += 1
         expressions = EXPR.findall(scalar)
         # A well-formed first expression must not conceal a *second*
         # unfinished interpolation in the same shell scalar.
