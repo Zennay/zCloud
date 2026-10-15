@@ -46,7 +46,12 @@ def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
             stderr=subprocess.DEVNULL,
             close_fds=True,
             env={
-                **os.environ,
+                # Strip inherited Git overrides, including GIT_CONFIG_COUNT,
+                # object-directory substitutions, tracing destinations and
+                # Git-specific executable/config paths. Those must not
+                # redirect a source-only inspection into other state.
+                **{key: val for key, val in os.environ.items()
+                   if not key.startswith("GIT_")},
                 "GIT_TERMINAL_PROMPT": "0",
                 "GIT_OPTIONAL_LOCKS": "0",
                 "GIT_PAGER": "cat",
