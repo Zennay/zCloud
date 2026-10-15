@@ -54,11 +54,11 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
     for tree_part in (".github", ".github/workflows"):
         if git(root, "cat-file", "-t", revision + ":" + tree_part).strip() != b"tree":
             raise Refusal("workflow_root_not_directory")
-    # Composite Actions may themselves invoke floating third-party Actions.
-    # Include only their GitHub-recognised action.yml/action.yaml metadata;
-    # refuse symlinked action directories so the scan cannot miss their steps.
-    raw = git(root, "ls-tree", "-rz", "--full-tree", revision,
-              ".github/workflows", ".github/actions")
+    # A local composite Action can live anywhere in the repository, not
+    # just under .github/actions. Enumerate the entire immutable Git tree,
+    # but read only workflow files and recognised action.yml/action.yaml
+    # metadata. Refuse symlinked .github/actions sources and metadata blobs.
+    raw = git(root, "ls-tree", "-rz", "--full-tree", revision)
     paths: dict[str, str] = {}
     for entry in raw.split(b"\0"):
         if not entry:
@@ -72,8 +72,7 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
         is_workflow = (path.startswith(".github/workflows/") and
                        path.endswith((".yml", ".yaml")))
         is_action_source = path.startswith(".github/actions/")
-        is_action_meta = (is_action_source and
-                          path.rsplit("/", 1)[-1] in ("action.yml", "action.yaml"))
+        is_action_meta = path.rsplit("/", 1)[-1] in ("action.yml", "action.yaml")
         if path == ".github/actions" or (
             is_action_source and (mode == "120000" or kind != "blob")
         ):
@@ -84,7 +83,8 @@ def workflow_tree(root: Path, revision: str) -> dict[str, str]:
             raise Refusal("unexpected_workflow_path")
         if ("\n" in path or "\r" in path or "\0" in path or
             ".." in path.split("/") or
-            (is_action_meta and len(path.split("/")) < 4)):
+            (is_action_meta and path.startswith(".github/actions/") and
+             len(path.split("/")) < 4)):
             raise Refusal("unexpected_workflow_path")
         if mode != "100644" or kind != "blob" or not SHA.fullmatch(blob):
             raise Refusal("nonregular_workflow")
