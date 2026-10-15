@@ -195,6 +195,9 @@ def permission_debt(
             in_jobs = bool(re.fullmatch(r"jobs:\s*", line))
             if (jobs_header and not in_jobs) or re.fullmatch(
                 r"""\?\s*(?:jobs|['"]jobs['"])\s*""", line
+            ) or re.match(
+                r"""^(?:\?\s*)?(?:(?:!![\w:-]+|!\S+|&[\w-]+)\s+)+(?:jobs|['"]jobs['"])\s*(?::|$)""",
+                line,
             ):
                 # Explicit YAML complex mapping keys can hide the 'jobs'
                 # mapping, even when its child lines are ordinary job ids.
@@ -224,6 +227,10 @@ def permission_debt(
             re.match(r"^\s*\?\s*(?:permissions|['\"]permissions['\"])\b", line)
             or re.match(r"^\s*<<\s*:", line)
             or re.match(r"""^\s*['"].*\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}).*['"]\s*:""", line)
+            or re.match(
+                r"""^\s*(?:\?\s*)?(?:(?:!![\w:-]+|!\S+|&[\w-]+)\s+)+(?:permissions|['"]permissions['"])\s*(?::|$)""",
+                line,
+            )
         )
         if ambiguous:
             findings[f"{path}|opaque_yaml_key|{_fingerprint(line)}"] += 1
