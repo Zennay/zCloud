@@ -121,6 +121,55 @@
     "handoff_url": "https://app.notion.com/p/3db9e19ac9558151bb4debd3d9057322"
   },
   {
+    "id": "tradengine",
+    "name": "TradeEngine",
+    "eyebrow": "FUNDAMENTAL EQUITY RESEARCH",
+    "goal": "Research undervalued public companies through explainable, point-in-time value, quality and growth signals.",
+    "icon": "chart",
+    "accent": "#e8c277",
+    "repo_url": "https://github.com/Zennay/tradengine",
+    "notion_url": "https://app.notion.com/p/3fa9e19ac95581fcb67ecc956eee60d6",
+    "handoff_url": "https://app.notion.com/p/3fa9e19ac955813280b9e2a4395c2137",
+    "phase": "M0 · fundamental research engine genesis",
+    "status": "active",
+    "priority": "low",
+    "next_step": "Build a reproducible point-in-time financial-data contract and deterministic company screening baseline with unit tests; no live trading.",
+    "milestone_revision": "tradengine-m0-genesis-v1",
+    "progress_basis": "Evidence-backed engineering checkpoints only; no profitability or investment-performance claims.",
+    "milestones": [
+      {
+        "title": "M0 · Repository foundation and zCloud registration",
+        "done": false,
+        "progress": 15
+      },
+      {
+        "title": "M1 · Point-in-time fundamentals and data provenance",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M2 · Explainable value, quality and growth screening",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M3 · Bias-aware historical backtesting",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M4 · Independent out-of-sample validation",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M5 · Paper portfolio and monitored research reports",
+        "done": false,
+        "progress": 0
+      }
+    ]
+  },
+  {
     "id": "cloud",
     "name": "zCloud",
     "eyebrow": "PROJECT COMMAND CENTER",
