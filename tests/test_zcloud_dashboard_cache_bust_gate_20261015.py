@@ -281,6 +281,37 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "base_href_changes_asset_origin")
 
+    def test_browser_backslash_js_ref_denied(self) -> None:
+        # Browsers using HTTP(S) normalize backslashes to forward slashes.
+        alias = chr(92) + "app.js"
+        self.write("public/index.html", self.html("r8", "r5") +
+                   f'<script src="{alias}?v=r9"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "noncanonical_asset_path")
+
+    def test_browser_backslash_js_traversal_denied(self) -> None:
+        alias = "/scratch" + chr(92) + ".." + chr(92) + "app.js"
+        self.write("public/index.html", self.html("r8", "r5") +
+                   f'<script src="{alias}?v=r9"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "noncanonical_asset_path")
+
+    def test_percent_encoded_backslash_js_ref_denied(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<script src="%5Capp.js?v=r9"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "noncanonical_asset_path")
+
+    def test_percent_encoded_backslash_css_traversal_denied(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<link rel="stylesheet" href="/tmp%5C..%5Cenhancements.css?v=r9">')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "noncanonical_asset_path")
+
     def test_percent_encoded_js_alias_cannot_hide_second_asset(self) -> None:
         self.write("public/index.html", self.html("r8", "r5") +
                    '<script src="/app%2Ejs?v=r9"></script>')
