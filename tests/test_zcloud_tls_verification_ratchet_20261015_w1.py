@@ -1,5 +1,8 @@
 """Adversarial offline tests for deploy-ops TLS-verification no-new-debt gate."""
 import io
+import os
+import time
+from unittest.mock import patch
 from pathlib import Path
 import subprocess
 import tempfile
@@ -324,6 +327,42 @@ class RealGitHistory(unittest.TestCase):
             status = gate.main(["--root", str(self.root), "--base", self.base, "--head", head])
         self.assertEqual(status, 1)
         self.assertIn("PRODUCTION_MUTATION_AUTHORIZED=false", stream.getvalue())
+
+    def test_git_output_cap_kills_overproducing_process(self):
+        fake = self.root / "git"
+        fake.write_text("#!/usr/bin/env python3\nimport sys\n"
+                        "sys.stdout.write('x'*250000)\n", encoding="utf-8")
+        fake.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaises(gate.Unverifiable):
+                gate.git(self.root, "status", deadline_seconds=1.0)
+
+    def test_git_bounded_timeout(self):
+        fake = self.root / "git"
+        fake.write_text("#!/usr/bin/env python3\nimport time\n"
+                        "time.sleep(3)\n", encoding="utf-8")
+        fake.chmod(0o755)
+        started = time.monotonic()
+        with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaises(gate.Unverifiable):
+                gate.git(self.root, "status", deadline_seconds=0.2)
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    def test_git_orphan_inherited_stdout_cannot_write_after_timeout(self):
+        fake = self.root / "git"
+        marker = self.root / "orphan-marker"
+        code = ("import time\n"
+                "time.sleep(0.7)\n"
+                f"open({str(marker)!r}, 'w').write('orphan')\n")
+        fake.write_text("#!/usr/bin/env python3\nimport subprocess, sys\n"
+                        f"subprocess.Popen([sys.executable, '-c', {code!r}])\n",
+                        encoding="utf-8")
+        fake.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaises(gate.Unverifiable):
+                gate.git(self.root, "status", deadline_seconds=0.2)
+        time.sleep(0.85)
+        self.assertFalse(marker.exists(), "Git child escaped timeout cleanup")
 
     def test_unverifiable_blob_fails_closed(self):
         self.wf.write_bytes(b"\xff\xfe")
