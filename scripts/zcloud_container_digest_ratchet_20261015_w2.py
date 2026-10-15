@@ -227,6 +227,48 @@ def compare(base: list[Finding], candidate: list[Finding]) -> dict[str, object]:
     }
 
 
+def dutch_operator_summary(report: dict[str, object], status: int) -> str:
+    """Produce bounded, non-secret, non-authorizing source evidence for CI.
+
+    Unknown/malformed results raise rather than displaying an optimistic green.
+    No image names, YAML text, paths, branch names or error strings are emitted.
+    """
+    if not isinstance(report, dict) or report.get("policy") != "container-image-digest-no-new-debt-v1":
+        raise ValueError("invalid_report_policy")
+    if any(report.get(flag) is not False for flag in (
+        "release_authorized", "deployment_authorized", "mutation_performed"
+    )):
+        raise ValueError("source_report_claims_authority")
+    if status == 2:
+        if report.get("inventory_complete") is not False:
+            raise ValueError("invalid_incomplete_evidence")
+        return (
+            "### Containerimages — bronbewijs incompleet\\n\\n"
+            "**Afgewezen:** Git-objecten of broninformatie ontbreken of zijn onveilig.\\n\\n"
+            "Dit geeft **geen** toestemming voor deployment, runnerherstel of wijzigingen.\\n"
+        )
+    if status not in (0, 1) or report.get("inventory_complete") is not True:
+        raise ValueError("inconsistent_source_report")
+    counts = []
+    for key in ("baseline_findings", "candidate_findings", "new_findings"):
+        count = report.get(key)
+        if type(count) is not int or not 0 <= count <= MAX_FINDINGS:
+            raise ValueError("invalid_finding_count")
+        counts.append(count)
+    baseline, candidate, added = counts
+    if (status == 0) != (added == 0):
+        raise ValueError("status_finding_mismatch")
+    verdict = "Geen nieuwe risico's gevonden" if status == 0 else "Afgewezen: nieuwe risico's gevonden"
+    return (
+        f"### Containerimages — {verdict}\\n\\n"
+        "| Broncontrole | Aantal |\\n|---|---:|\\n"
+        f"| Bestaande aandachtspunten | {baseline} |\\n"
+        f"| Kandidaat-aandachtspunten | {candidate} |\\n"
+        f"| Nieuwe risico's | {added} |\\n\\n"
+        "**Alleen GitHub-broncontrole.** Geen VPS-herstel, productie-deploy of vrijgave.\\n"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--base-sha", required=True)
