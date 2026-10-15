@@ -258,6 +258,7 @@ def inspect(state: Path) -> dict:
             raise Denied("too_many_files")
         digest = hashlib.sha256()
         with _open_snapshot_regular(files, name) as f:
+            before = os.fstat(f.fileno())
             while True:
                 chunk = f.read(1024 * 1024)
                 if not chunk:
@@ -266,6 +267,20 @@ def inspect(state: Path) -> dict:
                 if size > MAX_BYTES:
                     raise Denied("oversized_snapshot")
                 digest.update(chunk)
+            after = os.fstat(f.fileno())
+        identity = lambda st: (
+            st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns,
+        )
+        if identity(before) != identity(after):
+            raise Denied("source_changed_during_scan")
+        # Catch ordinary replacement of the pathname after the descriptor was
+        # opened. The descriptor scan itself already follows no symlink.
+        try:
+            current = path.lstat()
+        except OSError as exc:
+            raise Denied("source_changed_during_scan") from exc
+        if identity(before) != identity(current) or not stat.S_ISREG(current.st_mode):
+            raise Denied("source_changed_during_scan")
         if digest.hexdigest() != expected[name]:
             raise Denied("hash_mismatch")
         seen.add(name)
