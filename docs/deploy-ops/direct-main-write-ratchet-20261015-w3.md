@@ -75,3 +75,7 @@ A new or edited workflow can write to `main` without spelling `git push`: `gh pr
 ## Low-level Git transport writers (`send-pack`)
 
 `git send-pack` can update remote refs without running the high-level `git push` verb. New/changed workflows and composite Actions using this command, including `git -c 'user.name=...' send-pack` and line continuations, are rejected as `git_send_pack`. An inline `alias.<name>=send-pack` also fails. Words in plain output (`printf 'send-pack'`) and read-only `git -c 'alias.demo=echo send-pack' status` are permitted. Source tokenization remains conservative; execution through generated scripts or system Git configuration is out of scope. Six adversarial real-Git fixtures establish these boundaries.
+
+## Complete Git refs REST endpoint namespace
+
+Create-reference API requests often POST to the GitHub REST **collection** `repos/<owner>/<repo>/git/refs`, with no trailing `heads/` component. A tag/notes ref write can target `git/refs/tags/...` or `git/refs/notes/...`. All these paths are relevant to repository write safety. The source-only matching now recognizes the whole `git/refs` namespace, including a URL-encoded slash (`%2f`) or literal escaped Unicode slash (`\\u002f`), when coupled with a visible GitHub API/curl/wget context. A non-ref `git/reflogs` request remains outside this rule. The lexical check may also flag read-only Git refs API reads: conservative over-denial is intentional until a trusted parser can distinguish their verbs. Six temporary-Git tests exercise these cases.
