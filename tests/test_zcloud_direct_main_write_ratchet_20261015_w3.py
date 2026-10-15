@@ -471,6 +471,33 @@ class RatchetTests(unittest.TestCase):
         code, r = self.change("await github.rest.pulls.get({pull_number: 42})")
         self.assertEqual(code, 0, r)
 
+    def test_git_send_pack_direct_write_denied(self):
+        code, receipt = self.change("git send-pack origin HEAD:refs/heads/main")
+        self.assertEqual(code, 1, receipt)
+        self.assertIn("git_send_pack", receipt["findings"][0]["reasons"])
+
+    def test_git_send_pack_quoted_arguments_denied(self):
+        code, receipt = self.change("git -c 'user.name=Safe Tester' send-pack origin HEAD:refs/heads/main")
+        self.assertEqual(code, 1, receipt)
+        self.assertIn("git_send_pack", receipt["findings"][0]["reasons"])
+
+    def test_git_send_pack_shell_continuation_denied(self):
+        code, receipt = self.change("git \\\n        send-pack origin HEAD:main")
+        self.assertEqual(code, 1, receipt)
+
+    def test_git_send_pack_alias_denied(self):
+        code, receipt = self.change("git -c 'alias.ship=send-pack' ship origin HEAD:main")
+        self.assertEqual(code, 1, receipt)
+        self.assertIn("git_alias_indirect_write", receipt["findings"][0]["reasons"])
+
+    def test_git_send_pack_without_git_command_allowed(self):
+        code, receipt = self.change("printf 'send-pack' > report.txt")
+        self.assertEqual(code, 0, receipt)
+
+    def test_safe_git_send_pack_in_quoted_config_value_allowed(self):
+        code, receipt = self.change("git -c 'alias.demo=echo send-pack' status")
+        self.assertEqual(code, 0, receipt)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, result = self.change("git push origin main # " + marker)
