@@ -144,9 +144,23 @@ class Refs(HTMLParser):
             raise ValueError("conditional_script_asset_ref")
         if tag == "link" and "disabled" in values:
             raise ValueError("disabled_stylesheet_asset_ref")
-        if tag == "link" and (values.get("media") or "").strip().lower() not in ("", "all"):
-            # print/not-all media links cannot stand in for the active dashboard CSS.
-            raise ValueError("conditional_stylesheet_asset_ref")
+        if tag == "link":
+            rel_tokens = (values.get("rel") or "").lower().split()
+            if rel_tokens != ["stylesheet"]:
+                # rel="alternate stylesheet" is not an enabled default stylesheet.
+                raise ValueError("alternate_stylesheet_asset_ref")
+            if (values.get("type") or "").strip().lower() not in ("", "text/css"):
+                raise ValueError("inactive_stylesheet_type")
+            if (values.get("media") or "").strip().lower() not in ("", "all"):
+                # print/not-all media links cannot stand in for active dashboard CSS.
+                raise ValueError("conditional_stylesheet_asset_ref")
+            if (values.get("title") or "").strip():
+                # Titled alternate/preferred style sets are not unconditional.
+                raise ValueError("conditional_stylesheet_asset_ref")
+        if "integrity" in values:
+            # SRI affects whether the browser executes/loads the asset. This
+            # source-only cache policy cannot verify delivered-byte digests.
+            raise ValueError("unverified_integrity_asset_ref")
         if parsed.scheme or parsed.netloc or parsed.fragment or not parsed.query:
             raise ValueError("invalid_asset_ref")
         try:
