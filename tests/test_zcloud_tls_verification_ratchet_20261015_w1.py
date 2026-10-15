@@ -12,6 +12,44 @@ from contextlib import redirect_stdout
 from scripts import zcloud_tls_verification_ratchet_20261015_w1 as gate
 
 
+class HostedWorkflowTrust(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (Path(__file__).resolve().parents[1] /
+                      ".github/workflows/zcloud-tls-verification-ratchet-20261015-w1.yml"
+                      ).read_text(encoding="utf-8")
+
+    def test_hosted_only_with_read_permissions(self):
+        self.assertEqual(self.source.count("runs-on: ubuntu-latest"), 2)
+        for denied in ("runs-on: self-hosted", "runs-on: [self-hosted",
+                       "contents: write", "actions: write", "sudo ",
+                       "systemctl restart", "workflow_dispatch:"):
+            self.assertNotIn(denied, self.source)
+
+    def test_immutable_checkout_and_no_cached_credentials(self):
+        self.assertIn("uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803", self.source)
+        self.assertIn("persist-credentials: false", self.source)
+        self.assertIn("ref: "+chr(36)+"{{ github.event.pull_request.head.sha }}", self.source)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"', self.source)
+
+    def test_exact_current_main_before_and_after_tests(self):
+        probe = "timeout 15 git ls-remote --exit-code origin refs/heads/main"
+        self.assertEqual(self.source.count(probe), 2)
+        self.assertIn('test "$remote_main" = "$EXPECTED_BASE"', self.source)
+        self.assertIn('test "$remote_main" = "$BASE"', self.source)
+
+    def test_same_repo_and_main_target_preflight(self):
+        for check in ('test "$REPOSITORY" = "Zennay/zCloud"',
+                      'test "$HEAD_REPOSITORY" = "$REPOSITORY"',
+                      'test "$BASE_REPOSITORY" = "$REPOSITORY"',
+                      'test "$BASE_BRANCH" = "main"'):
+            self.assertIn(check, self.source)
+
+    def test_no_authorizing_output(self):
+        self.assertIn("Production mutation authorized: false", self.source)
+        self.assertNotIn("PRODUCTION_MUTATION_AUTHORIZED=true", self.source)
+
+
 class SourcePatterns(unittest.TestCase):
     def count(self, text, key):
         return gate.insecure_counts(text)[key]
