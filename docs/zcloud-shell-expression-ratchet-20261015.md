@@ -44,6 +44,21 @@ buffering and refuses symlinked workflow files, drifted/non-ancestor source,
 invalid SHAs, missing or incomplete source evidence. CLI exit codes:
 0 no new risk, 1 new risk, 2 missing/inconsistent evidence.
 
+## Read-only workflow risk inventory
+
+A successful or rejected **complete** source audit contains
+`baseline_risks`, `candidate_risks`, `new_risks`, and two bounded lists:
+`baseline_risky_workflows` and `candidate_risky_workflows`. Each item has
+only `path` and `risk_count`; entries are sorted by Git path. Neither
+expression source nor shell command text is copied into the machine report.
+The inventory is a **lead for independent source review**, not confirmation
+that a historical interpolation is exploitable or approved.
+
+The detector additionally handles YAML's explicit `? "\\u0072un"`
+run mapping: it conservatively fingerprints the whole workflow whenever an
+escaped explicit key might hide the command. Keep shell script steps as
+ordinary `- run: ...` fields where possible.
+
 ## Limitations and safety boundary
 
 - The hosted workflow separately checks the exact remote `main` and branch
