@@ -535,6 +535,52 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertIn('python3 -I "$policy_path"', self.workflow)
         self.assertNotIn('POLICY_PROVENANCE=trusted_bootstrap', self.workflow)
 
+    def test_policy_bootstrap_requires_actual_absence_in_exact_base_tree(self) -> None:
+        policy = self.workflow
+        self.assertIn('policy_entry="$(git ls-tree "$BASE_SHA" -- "$policy_path")"', policy)
+        self.assertIn('if [ -n "$policy_entry" ]; then', policy)
+        self.assertIn('test "$mode" = "100644 blob"', policy)
+        self.assertNotIn('if git cat-file -e "$BASE_SHA:$policy_path"', policy)
+        self.assertLess(policy.index('policy_entry="$(git ls-tree "$BASE_SHA"'),
+                        policy.index('provenance="immutable_pr_base"'))
+        self.assertIn('git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', policy)
+
+    def test_forged_head_policy_does_not_affect_bootstrap_decision(self) -> None:
+        # Main source absent and candidate PR source present is still a bootstrap,
+        # never a claimed immutable-pr-base policy.
+        with tempfile.TemporaryDirectory() as workdir:
+            subprocess.run(["git", "init", "-q", workdir], check=True)
+            subprocess.run(["git", "-C", workdir, "config", "user.email", "bot@example.invalid"], check=True)
+            subprocess.run(["git", "-C", workdir, "config", "user.name", "Bot"], check=True)
+            (Path(workdir) / "README.md").write_text("base", encoding="utf-8")
+            subprocess.run(["git", "-C", workdir, "add", "."], check=True)
+            subprocess.run(["git", "-C", workdir, "commit", "-qm", "base"], check=True)
+            base = subprocess.check_output(["git", "-C", workdir, "rev-parse", "HEAD"], text=True).strip()
+            path = "scripts/zcloud_dashboard_cache_bust_gate_20261015.py"
+            tree_path = Path(workdir) / path
+            tree_path.parent.mkdir()
+            tree_path.write_text("raise SystemExit(0)\\n", encoding="utf-8")
+            subprocess.run(["git", "-C", workdir, "add", "."], check=True)
+            subprocess.run(["git", "-C", workdir, "commit", "-qm", "candidate"], check=True)
+            head = subprocess.check_output(["git", "-C", workdir, "rev-parse", "HEAD"], text=True).strip()
+            def entry(revision: str) -> str:
+                return subprocess.check_output(
+                    ["git", "-C", workdir, "ls-tree", revision, "--", path],
+                    text=True,
+                ).strip()
+            self.assertEqual(entry(base), "")
+            self.assertIn("100644 blob", entry(head))
+
+    def test_cache_report_is_limited_before_cat_and_renderer(self) -> None:
+        text = self.workflow
+        self.assertIn('timeout 90 python3 -I "$policy_path"', text)
+        self.assertIn('test -s "$report"', text)
+        self.assertIn('test "$(wc -c < "$report")" -le 16384', text)
+        self.assertLess(text.index('test "$(wc -c < "$report")" -le 16384'),
+                        text.index('cat "$report"'))
+        self.assertLess(text.index('cat "$report"'),
+                        text.index('REPORT="$report" PROVENANCE="$provenance" python3'))
+
     def test_current_main_is_rechecked_through_canonical_remote_twice(self) -> None:
         url = "git -C / ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main"
         self.assertEqual(self.workflow.count(url), 2)
