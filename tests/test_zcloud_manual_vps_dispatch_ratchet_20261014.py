@@ -481,6 +481,18 @@ class ManualDispatchPolicy(unittest.TestCase):
                                     text=True, capture_output=True, timeout=20, check=False)
             self.assertEqual("ref_must_be_immutable_sha", json.loads(denied.stdout)["reason"])
 
+    def test_git_command_stdout_is_bounded_and_exit_status_verified(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            sha = commit(root, workflow(if_statement=SAFE_IF))
+            self.assertEqual(sha.encode(), guard.git(root, "rev-parse", "HEAD").strip())
+            with mock.patch.object(guard, "MAX_GIT_STDOUT_BYTES", 8):
+                with self.assertRaisesRegex(guard.RefError, "git_output_size_limit"):
+                    guard.git(root, "rev-parse", "HEAD")
+            with self.assertRaisesRegex(guard.RefError, "unreadable_git_object"):
+                guard.git(root, "does-not-exist")
+
     def test_git_blob_size_is_checked_before_untrusted_blob_is_loaded(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
