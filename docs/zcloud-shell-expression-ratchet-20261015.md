@@ -73,6 +73,10 @@ untrusted data, and dynamic matrix values can originate from those outputs.
 The ratchet therefore refuses **new** direct shell interpolations of
 `steps.<step-id>.outputs.*`, `needs.<job-id>.outputs.*` and `matrix.*`,
 including bracket syntax for named jobs/steps and hyphenated names.
+Wildcard aggregation (`needs.*.outputs.value` or `steps.*.outputs.value`)
+can likewise propagate untrusted downstream outputs, even through
+functions such as `join(...)`. This syntax is covered; status-only
+wildcards like `needs.*.result` remain outside the new rule.
 Serializing the complete `steps` or `needs` context via `toJSON(steps)`
 or `toJSON(needs)` can also expose the same derived payloads. The
 scanner refuses **new** direct shell interpolation of these serialized
