@@ -23,7 +23,8 @@ COMMANDS = re.compile(r"::\s*(?:set-env|add-path|set-output|save-state)\b", re.I
 ENV = re.compile(r"actions_allow_unsecure_commands", re.I)
 ESCAPED_SCALAR = re.compile(r"\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8}))")
 SHELL_CONTINUATION = re.compile(r"\\\r?\n[ \t]*")
-ACTION_CODE_EXTENSIONS = frozenset({".js", ".cjs", ".mjs", ".ts", ".sh", ".bash", ".ps1", ".py"})
+ACTION_CODE_EXTENSIONS = frozenset({".js", ".cjs", ".mjs", ".ts", ".sh", ".bash", ".ps1", ".py", ".cmd", ".bat", ".zsh", ".rb", ".pl"})
+ACTION_ENTRYPOINT_NAMES = frozenset({"entrypoint", "run", "start", "bootstrap", "Makefile", "GNUmakefile"})
 MAX_CHANGED = 250
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 1024 * 1024
@@ -147,7 +148,7 @@ def proper_file(commit: str, path: str) -> bool:
     return True
 
 
-def candidate(path: str) -> bool:
+def candidate(path: str, mode: str | None = None) -> bool:
     p = PurePosixPath(path)
     if p.is_absolute() or ".." in p.parts or "\x00" in path:
         raise Denied("Invalid workflow pathname")
@@ -159,7 +160,9 @@ def candidate(path: str) -> bool:
         # any action.yml file. Treat these changed implementation blobs as
         # source too; unchanged historical files remain grandfathered.
         return (p.name in ("action.yml", "action.yaml", "Dockerfile", "Containerfile")
-                or p.suffix.lower() in ACTION_CODE_EXTENSIONS)
+                or p.name in ACTION_ENTRYPOINT_NAMES
+                or p.suffix.lower() in ACTION_CODE_EXTENSIONS
+                or mode == "100755")
     return False
 
 
@@ -250,7 +253,7 @@ def _scan(base: str, head: str) -> tuple[int, int]:
                 ("100644", "blob"), ("100755", "blob"), ("040000", "tree")
             ):
                 raise Denied("Changed Actions source uses unsafe Git tree entry")
-        if not candidate(path):
+        if not candidate(path, node[0] if node is not None else None):
             continue
         if not proper_file(head, path):
             continue  # A deleted file cannot introduce a new unsafe command.
