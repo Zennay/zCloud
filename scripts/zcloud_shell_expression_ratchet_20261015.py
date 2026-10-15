@@ -22,7 +22,7 @@ MAX_EXPRESSIONS = 8192
 SHA = re.compile(r"^[0-9a-f]{40}$")
 RUN = re.compile(r"^( *)(?:-\s*)?(?:run|['\"]run['\"])\s*:\s*(.*)$")
 RUN_ESCAPED_KEY = re.compile(
-    r'^( *)(?:-\s*)?"(?:r|\\u0072|\\x72)(?:u|\\u0075|\\x75)(?:n|\\u006e|\\x6e)"\s*:\s*(.*)$',
+    r'^( *)(?:-\s*)?"(?:r|\\u0072|\\x72|\\U00000072)(?:u|\\u0075|\\x75|\\U00000075)(?:n|\\u006e|\\x6e|\\U0000006e)"\s*:\s*(.*)$',
     re.I,
 )
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
@@ -31,12 +31,12 @@ ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*github\s*\)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
 DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs)\s*\[", re.I)
 FLOW_RUN_KEY = re.compile(
-    r'(?<![A-Za-z0-9_])(?:run|["]run["]|[\x27]run[\x27]|"(?:r|\\u0072|\\x72)(?:u|\\u0075|\\x75)(?:n|\\u006e|\\x6e)")\s*:',
+    r'(?<![A-Za-z0-9_])(?:run|["]run["]|[\x27]run[\x27]|"(?:r|\\u0072|\\x72|\\U00000072)(?:u|\\u0075|\\x75|\\U00000075)(?:n|\\u006e|\\x6e|\\U0000006e)")\s*:',
     re.I,
 )
 
 EXPLICIT_RUN_KEY = re.compile(
-    r'^\s*(?:-\s*)?\?\s*(?:run|["]run["]|[\x27]run[\x27]|"(?:r|\\u0072|\\x72)(?:u|\\u0075|\\x75)(?:n|\\u006e|\\x6e)")\s*(?:#.*)?$',
+    r'^\s*(?:-\s*)?\?\s*(?:run|["]run["]|[\x27]run[\x27]|"(?:r|\\u0072|\\x72|\\U00000072)(?:u|\\u0075|\\x75|\\U00000075)(?:n|\\u006e|\\x6e|\\U0000006e)")\s*(?:#.*)?$',
     re.I,
 )
 
