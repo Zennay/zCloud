@@ -11,7 +11,17 @@ just counts. Moving a legacy expression into another shell command is new risk.
 The deliberately conservative flow-mapping tripwire fingerprints inline YAML
 `{run: ...}` forms by line and **rejects new flow-style run mappings even when
 they look harmless**, because the syntax is not fully parsed. Prefer block-style
-steps instead.
+steps instead. Quoted run keys using YAML's `\\u0072` or `\\x72`
+spelling for the initial `r` are also scanned, so re-encoding the key
+does not silently skip the shell-command check. A second unfinished `${{`
+after a valid closed expression is flagged; an earlier valid `}}` no
+longer hides the incomplete token.
+
+For legacy run aliases, the guard binds the ambiguity fingerprint to the
+entire workflow Git blob. Changing an anchor referenced by `run: *alias`
+is therefore not silently grandfathered. This is deliberately conservative:
+even a harmless edit elsewhere in a workflow containing such an alias may
+require replacing the alias with an explicit shell command.
 
 Safer patterns put untrusted values into a step env binding and reference
 quoted shell variables; still validate the value according to its meaning.
