@@ -1,5 +1,6 @@
 """Adversarial regression for the read-only zCloud seven-writer lock inventory."""
 import importlib.util
+import hashlib
 import json
 import os
 from unittest.mock import patch
@@ -53,6 +54,76 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         for field in ("runtime_lock_verified", "release_authorized",
                       "dispatch_authorized", "mutation_performed"):
             self.assertFalse(output[field])
+
+    def test_snapshot_repeated_read_is_deterministic_and_complete(self):
+        first = module.inventory(self.root)
+        second = module.inventory(self.root)
+        self.assertEqual(first["source_snapshot_sha256"], second["source_snapshot_sha256"])
+        self.assertTrue(first["source_snapshot_complete"])
+        self.assertEqual(64, len(first["source_snapshot_sha256"]))
+        for name in module.WRITERS:
+            expected = hashlib.sha256((self.dir / name).read_bytes()).hexdigest()
+            self.assertEqual(first["writers"][name]["source_sha256"], expected)
+        self.assertFalse(first["release_authorized"])
+
+    def test_single_source_byte_change_changes_only_its_file_digest(self):
+        first = module.inventory(self.root)
+        name = "zcloud-worker-tab-guard.yml"
+        path = self.dir / name
+        path.write_text(path.read_text(encoding="utf-8") + "# trace-only\n",
+                        encoding="utf-8")
+        second = module.inventory(self.root)
+        self.assertNotEqual(first["source_snapshot_sha256"],
+                            second["source_snapshot_sha256"])
+        self.assertEqual(first["source_serialized"], second["source_serialized"])
+        self.assertTrue(second["source_snapshot_complete"])
+        self.assertNotEqual(first["writers"][name]["source_sha256"],
+                            second["writers"][name]["source_sha256"])
+        for other in module.WRITERS:
+            if other != name:
+                self.assertEqual(first["writers"][other]["source_sha256"],
+                                 second["writers"][other]["source_sha256"])
+
+    def test_missing_file_never_produces_complete_snapshot(self):
+        (self.dir / "zcloud-worker-tab-guard.yml").unlink()
+        report = module.inventory(self.root)
+        self.assertFalse(report["source_snapshot_complete"])
+        self.assertIsNone(report["source_snapshot_sha256"])
+        self.assertIsNone(report["writers"]["zcloud-worker-tab-guard.yml"]["source_sha256"])
+        self.assertFalse(report["release_authorized"])
+
+    def test_unparseable_regular_source_is_hashed_but_not_accepted(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "      group: zcloud-production-deploy",
+                  "      group: unsafe-group")
+        report = module.inventory(self.root)
+        self.assertTrue(report["source_snapshot_complete"])
+        self.assertIsNotNone(report["source_snapshot_sha256"])
+        self.assertEqual(report["writers"][name]["source_result"], "wrong_group")
+        self.assertFalse(report["source_lock_complete"])
+        self.assertFalse(report["dispatch_authorized"])
+
+    def test_rejected_binary_file_never_gets_a_sha(self):
+        name = "zcloud-worker-tab-guard.yml"
+        (self.dir / name).write_bytes(b"invalid:\x00\n")
+        report = module.inventory(self.root)
+        self.assertFalse(report["source_snapshot_complete"])
+        self.assertIsNone(report["source_snapshot_sha256"])
+        self.assertIsNone(report["writers"][name]["source_sha256"])
+
+    def test_exact_source_used_for_classification_is_the_hashed_source(self):
+        counter = []
+        original = module._read_regular
+
+        def read_once(root, name):
+            counter.append(name)
+            return original(root, name)
+
+        with patch.object(module, "_read_regular", side_effect=read_once):
+            report = module.inventory(self.root)
+        self.assertEqual(set(counter), set(module.WRITERS))
+        self.assertEqual(len(counter), len(module.WRITERS))
+        self.assertEqual(report["source_serialized"], 7)
 
     def test_known_existing_three_debts_have_independent_job_scopes(self):
         for name in ("zcloud-worker-tab-guard.yml",
