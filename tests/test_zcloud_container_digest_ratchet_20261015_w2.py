@@ -557,6 +557,30 @@ jobs:
             self.assertEqual(0, same.returncode, same.stdout + same.stderr)
             self.assertEqual(0, json.loads(same.stdout)["new_findings"])
 
+    def test_operator_report_rejects_inconsistent_risk_inventory_sizes(self):
+        clean = guard.compare([], [])
+        invalid = [
+            dict(clean, baseline_findings=0, candidate_findings=0, new_findings=1,
+                 new_risks=[{"path": "x", "line": 1, "kind": "image"}]),
+            dict(clean, baseline_findings=0, candidate_findings=1, new_findings=1,
+                 new_risks=[]),
+            dict(clean, baseline_findings=0, candidate_findings=0, new_findings=0,
+                 new_risks=[{"path": "x", "line": 1, "kind": "image"}]),
+            dict(clean, new_risks="spoofed-array"),
+        ]
+        for payload in invalid:
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                guard.dutch_operator_summary(payload, 1 if payload["new_findings"] else 0)
+
+    def test_operator_report_denial_can_include_only_bounded_count(self):
+        risks = self.scan("  image: alpine:latest\n") * 26
+        report = guard.compare([], risks)
+        self.assertEqual(26, report["new_findings"])
+        self.assertEqual(25, len(report["new_risks"]))
+        rendered = guard.dutch_operator_summary(report, 1)
+        self.assertIn("| Nieuwe risico's | 26 |", rendered)
+        self.assertNotIn("alpine", rendered)
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
