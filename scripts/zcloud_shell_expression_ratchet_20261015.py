@@ -25,7 +25,8 @@ RUN_ESCAPED_KEY = re.compile(
     re.I,
 )
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
-UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|inputs\b)", re.I)
+UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|inputs\b)", re.I)
+ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*github\s*\)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
 DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs)\s*\[", re.I)
 FLOW_RUN_KEY = re.compile(
@@ -143,7 +144,7 @@ def fingerprint_risks(source: str) -> Counter[str]:
             # github.event.issue. Both must hit the same trust policy.
             normalized = BRACKET_PROPERTY.sub(lambda m: "." + m.group(2), normalized)
             normalized = re.sub(r"\s*\.\s*", ".", normalized)
-            if UNTRUSTED.search(normalized):
+            if UNTRUSTED.search(normalized) or ROOT_CONTEXT_JSON.search(normalized):
                 out[normalized + "|run_sha256:" + scalar_digest] += 1
             elif DYNAMIC_PROPERTY.search(normalized):
                 # Unknown computed key might resolve to event or inputs.
