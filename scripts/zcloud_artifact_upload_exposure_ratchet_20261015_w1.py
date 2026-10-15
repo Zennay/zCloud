@@ -144,8 +144,16 @@ def examine(text: str) -> None:
     encoded = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
     for line in text.splitlines():
         m = re.match(r"^\s*(?:-\s*)?(?:uses|['\"]uses['\"])\s*:\s*(.*)$", line, re.I)
-        if m and encoded.search(m.group(1)):
-            raise Denied("encoded_action_reference")
+        if m:
+            raw = m.group(1).split(" #", 1)[0].strip()
+            if encoded.search(raw):
+                raise Denied("encoded_action_reference")
+            # YAML folds block scalars and double-quoted backslash-newline
+            # continuations before resolving the action name. A literal-only
+            # scan could miss an upload-artifact name split across lines.
+            if (not raw or raw[0] in ">|&*!{[" or "\\" in raw or
+                    (raw[0] in "'\"" and (len(raw) < 2 or raw[-1] != raw[0]))):
+                raise Denied("ambiguous_action_reference")
         if re.match(r'^\s*(?:-\s*)?"[^"\n]*\\(?:x|u|U)[^"\n]*"\s*:', line):
             raise Denied("encoded_mapping_key")
     if "upload-artifact" not in text.lower():
