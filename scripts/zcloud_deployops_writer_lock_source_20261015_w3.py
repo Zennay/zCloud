@@ -192,7 +192,18 @@ def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
         at = selected[0]
         job_end = next((i for i in jobs if i > at), jobs_end)
         if scope == "workflow":
-            return _lock(lines, 0, 0, len(lines))
+            source_result = _lock(lines, 0, 0, len(lines))
+            if source_result != "serialized_source":
+                return source_result
+            # The canonical deploy uses one workflow-level non-cancelling lock.
+            # A nested lock on the live job could cancel the transaction or
+            # deadlock against the already-held shared group.
+            nested = [i for i in range(at + 1, job_end)
+                      if (parsed := _key(lines[i], 4))
+                      and parsed[0] == "concurrency"]
+            if nested:
+                return "unexpected_nested_concurrency"
+            return source_result
         parent_status = _parent_cancel_status(lines)
         if parent_status != "safe":
             return parent_status
