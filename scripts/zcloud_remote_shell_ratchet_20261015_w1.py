@@ -104,7 +104,8 @@ def extract_run_scripts(yaml: str) -> list[str]:
                 if nxt.strip() and not nxt.lstrip().startswith("#"):
                     body.append(nxt.strip())
                 i += 1
-            blocks.append("\n".join(body))
+            # Folded YAML (>) joins line breaks into spaces; literal (|) keeps them.
+            blocks.append(" ".join(body) if raw.startswith(">") else "\n".join(body))
         elif raw:
             blocks.append(raw.split(" #", 1)[0])
     return blocks
