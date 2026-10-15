@@ -10,7 +10,7 @@ import tempfile
 import unittest
 
 from scripts.zcloud_reusable_secrets_guard_20261015_w3 import (
-    Denied, has_secret_inherit, inspect, main,
+    Denied, git, has_secret_inherit, inspect, main,
 )
 
 ROOT = ".github/workflows"
@@ -241,6 +241,37 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         result = inspect(self.base, head)
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["workflows_examined"], 1)
+
+    def test_git_output_budget_rejects_large_real_blob_early(self):
+        self.write(f"{ROOT}/size.yml", "z" * 150000)
+        self.commit()
+        oid = self.git("rev-parse", "HEAD:.github/workflows/size.yml").strip()
+        with self.assertRaisesRegex(Denied, "source_budget_exceeded"):
+            git("cat-file", "blob", oid, limit=32)
+        # A terminated oversized command must not poison later evidence reads.
+        self.assertEqual(git("rev-parse", "HEAD", limit=41).decode().strip(),
+                         self.git("rev-parse", "HEAD").strip())
+
+    def test_git_budget_zero_allows_successful_empty_output(self):
+        head = self.git("rev-parse", "HEAD").strip()
+        self.assertEqual(git("merge-base", "--is-ancestor", head, head, limit=0), b"")
+        with self.assertRaisesRegex(Denied, "source_budget_exceeded"):
+            git("rev-parse", "HEAD", limit=0)
+
+    def test_git_budget_exact_output_boundary(self):
+        self.assertEqual(len(git("rev-parse", "HEAD", limit=41)), 41)
+        with self.assertRaisesRegex(Denied, "source_budget_exceeded"):
+            git("rev-parse", "HEAD", limit=40)
+
+    def test_git_budget_invalid_parameters_fail_closed(self):
+        for budget in (-1, 1.5, True, 16 * 1024 * 1024 + 1):
+            with self.subTest(budget=budget):
+                with self.assertRaisesRegex(Denied, "invalid_source_budget"):
+                    git("rev-parse", "HEAD", limit=budget)
+
+    def test_git_subprocess_nonzero_denied(self):
+        with self.assertRaisesRegex(Denied, "git_source_unavailable"):
+            git("rev-parse", "--verify", "refs/heads/does-not-exist")
 
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
