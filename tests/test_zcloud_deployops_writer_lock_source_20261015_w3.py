@@ -172,6 +172,59 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "missing_or_duplicate_mutation_job")
 
+    def test_extra_self_hosted_writer_cannot_hide_beside_locked_job(self):
+        name = "zcloud-worker-tab-guard.yml"
+        p = self.dir / name
+        with p.open("a", encoding="utf-8") as stream:
+            stream.write("  surprise-live-writer:\\n"
+                         "    runs-on: [self-hosted, zcloud, vps]\\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unexpected_companion_runner_target")
+
+    def test_extra_self_hosted_job_denied_with_different_label_style(self):
+        name = "zcloud-vps-deploy.yml"
+        p = self.dir / name
+        text = p.read_text(encoding="utf-8")
+        text += "  extra:\\n    runs-on: self-hosted\\n"
+        p.write_text(text, encoding="utf-8")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unexpected_companion_runner_target")
+
+    def test_missing_target_runner_is_refused_even_if_lock_present(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]\\n", "")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "missing_or_duplicate_runner_target")
+
+    def test_target_runner_cannot_be_redirected_to_hosted(self):
+        name = "zcloud-vps-deploy.yml"
+        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
+                  "    runs-on: ubuntu-latest")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unexpected_mutation_runner_target")
+
+    def test_duplicate_runner_selection_on_mutation_job_refused(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
+                  "    runs-on: [self-hosted, zcloud, vps]\\n"
+                  "    runs-on: ubuntu-latest")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "missing_or_duplicate_runner_target")
+
+    def test_companion_runner_cannot_be_promoted_to_vps(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "    runs-on: ubuntu-latest",
+                  "    runs-on: [self-hosted, zcloud, vps]")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unexpected_companion_runner_target")
+
+    def test_dynamic_runner_expression_fails_closed(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
+                  "    runs-on: ${{ fromJSON(vars.DEPLOY_RUNNER) }}")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unexpected_mutation_runner_target")
+
     def test_canonical_nested_cancel_true_refused_even_if_outer_false(self):
         name = "zcloud-vps-deploy.yml"
         self.edit(name, "    runs-on: [self-hosted, zcloud, vps]",
