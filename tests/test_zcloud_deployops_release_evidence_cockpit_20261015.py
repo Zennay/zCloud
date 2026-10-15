@@ -14,6 +14,7 @@ SHA = "a" * 40
 ALT_SHA = "b" * 40
 REF = "/repos/Zennay/zCloud/git/ref/heads/main"
 STAT = f"/repos/Zennay/zCloud/commits/{SHA}/statuses?per_page=100&page=1"
+STAT2 = f"/repos/Zennay/zCloud/commits/{SHA}/statuses?per_page=100&page=2"
 RUNS = ("/repos/Zennay/zCloud/actions/workflows/zcloud-vps-deploy.yml/runs"
         "?branch=main&per_page=100&page=1")
 JOBS = "/repos/Zennay/zCloud/actions/runs/92/jobs?per_page=100&page=1"
@@ -187,6 +188,41 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertEqual(data["production"]["latest_status_id"], 20)
         self.assertTrue(data["production"]["latest_status_at_utc"])
         self.assertFalse(data["deployment_authorized"])
+
+    def test_production_status_pages_include_second_page_failure(self):
+        api = FakeAPI()
+        now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        batch = [{"context": "zcloud/vps-production", "id": 1000 + i,
+                  "created_at": "2020-01-01T00:00:00Z", "state": "success"}
+                 for i in range(100)]
+        api.pages[STAT] = [batch]
+        api.pages[STAT2] = [[{"context": "zcloud/vps-production",
+                              "id": 3001, "created_at": now, "state": "failure"}]]
+        data = cockpit.collect(api)
+        self.assertEqual(data["production"]["matching_events"], 101)
+        self.assertEqual(data["production"]["state"], "failure")
+        self.assertEqual(api.calls.count(STAT2), 2)
+        self.assertFalse(data["release_authorized"])
+
+    def test_production_status_page_two_duplicate_event_id_denied(self):
+        api = FakeAPI()
+        now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        batch = [{"context": "zcloud/vps-production", "id": 1000 + i,
+                  "created_at": now, "state": "success"} for i in range(100)]
+        api.pages[STAT] = [batch]
+        api.pages[STAT2] = [[dict(batch[0])]]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "duplicate_production_status_id"):
+            cockpit.collect(api)
+
+    def test_production_status_page_two_missing_denies(self):
+        api = FakeAPI()
+        now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        api.pages[STAT] = [[{"context": "zcloud/vps-production", "id": i + 1000,
+                             "created_at": now, "state": "pending"}
+                            for i in range(100)]]
+        with self.assertRaises(cockpit.EvidenceError):
+            cockpit.collect(api)
 
     def test_queued_job_with_runner_zero_is_not_proof(self):
         api = FakeAPI()
