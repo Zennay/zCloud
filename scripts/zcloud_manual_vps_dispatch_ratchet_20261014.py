@@ -20,6 +20,7 @@ HEX_SHA = re.compile(r"^[0-9a-f]{40}$")
 FILENAME = re.compile(r"^[A-Za-z0-9._-]+\.ya?ml$")
 JOB = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$", re.M)
 TRUST = (
+    r"github\.event_name\s*==\s*['\"]workflow_dispatch['\"]",
     r"github\.repository\s*==\s*['\"]Zennay/zCloud['\"]",
     r"github\.ref\s*==\s*['\"]refs/heads/main['\"]",
     r"github\.actor\s*==\s*['\"]Zennay['\"]",
@@ -170,7 +171,7 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
             value = value.split("\n", 1)[-1].strip()
         if value.startswith("$" + "{{") and value.endswith("}}"):
             value = value[3:-2].strip()
-        # Exact positive conjunctions only. Merely mentioning the five trusted
+        # Exact positive conjunctions only. Merely mentioning the six trusted
         # strings inside a literal, function or OR clause is not authorization.
         clauses = [part.strip() for part in value.split("&&")]
         allowed = [any(re.fullmatch(rule, part) for rule in TRUST) for part in clauses]
