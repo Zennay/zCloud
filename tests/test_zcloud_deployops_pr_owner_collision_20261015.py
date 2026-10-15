@@ -239,7 +239,7 @@ class PRCollisionInventoryTests(unittest.TestCase):
             with self.assertRaisesRegex(m.InvalidInventory, "unsafe_or_oversized_snapshot"):
                 m.read_snapshot(huge)
             invalid = root / "invalid-utf8.json"
-            invalid.write_bytes(b"\\xff")
+            invalid.write_bytes(bytes([0xff]))
             with self.assertRaisesRegex(m.InvalidInventory, "snapshot_read_failed"):
                 m.read_snapshot(invalid)
 
