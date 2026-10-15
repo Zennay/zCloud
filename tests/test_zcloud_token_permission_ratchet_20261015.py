@@ -578,5 +578,38 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertTrue(self.check_file(candidate)["ok"])
 
 
+    def test_indented_workflow_root_new_unscoped_job_denied(self):
+        old = ("  on: push\n  jobs:\n    existing:\n"
+               "      runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("legacy-indented-root")
+        self.put(".github/workflows/original.yml", old +
+                 "    extra:\n      runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, base, self.commit("unscoped-new-indented-job"))["ok"])
+
+    def test_indented_root_after_yaml_document_marker_denied(self):
+        old = ("---\n  on: push\n  jobs:\n    existing:\n"
+               "      runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        base = self.commit("document-with-indented-root")
+        self.put(".github/workflows/original.yml", old +
+                 "    extra:\n      runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, base, self.commit("new-indented-job"))["ok"])
+
+    def test_legacy_indented_root_unchanged_with_external_docs_allowed(self):
+        self.put(".github/workflows/original.yml",
+                 "  on: push\n  jobs:\n    existing:\n"
+                 "      runs-on: ubuntu-latest\n")
+        base = self.commit("legacy-indented-root")
+        self.put("README.md", "unrelated")
+        self.assertTrue(check(self.root, base, self.commit("readme-only"))["ok"])
+
+    def test_conventional_yaml_document_marker_with_readonly_jobs_allowed(self):
+        self.assertTrue(self.check_file(
+            "---\non: push\npermissions:\n  contents: read\n"
+            "jobs:\n  test:\n    runs-on: ubuntu-latest\n"
+        )["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
