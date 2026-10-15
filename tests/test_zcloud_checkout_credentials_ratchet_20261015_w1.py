@@ -247,7 +247,7 @@ class RealGitCheckoutRatchet(unittest.TestCase):
     def test_doc_workflow_run_with_escaped_example_remains_inert(self):
         body = ("jobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n"
                 "      - run: |-\n"
-                "          echo \\"uses\\" \\"actions/chec" + chr(92) + "u006bout\\"\n")
+                '          echo "uses" "actions/chec' + chr(92) + 'u006bout"\n')
         self.verify(body)
 
     def test_historical_unsafe_untouched_grandfathered(self):
