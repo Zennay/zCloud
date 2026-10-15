@@ -28,7 +28,10 @@ EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|inputs\b)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
 DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs)\s*\[", re.I)
-FLOW_RUN_KEY = re.compile(r"(?<![A-Za-z0-9_])(?:run|[\'\"]run[\'\"])\s*:")
+FLOW_RUN_KEY = re.compile(
+    r'(?<![A-Za-z0-9_])(?:run|["]run["]|[\x27]run[\x27]|"(?:r|\\u0072|\\x72)(?:u|\\u0075|\\x75)(?:n|\\u006e|\\x6e)")\s*:',
+    re.I,
+)
 
 
 class EvidenceError(ValueError):
