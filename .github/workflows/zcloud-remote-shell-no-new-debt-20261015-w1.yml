@@ -60,15 +60,14 @@ jobs:
           scan_exit=$?
           set -e
           SCAN_EXIT="$scan_exit" SOURCE_REPORT="$report" python3 - <<'PY'
-          import json
           import os
           import sys
           from pathlib import Path
-          from scripts.zcloud_remote_shell_ratchet_20261015_w1 import SourceError, operator_summary
+          from scripts.zcloud_remote_shell_ratchet_20261015_w1 import SourceError, operator_summary, parse_operator_result
 
           summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
           try:
-              report = json.loads(Path(os.environ["SOURCE_REPORT"]).read_text(encoding="utf-8"))
+              report = parse_operator_result(Path(os.environ["SOURCE_REPORT"]).read_text(encoding="utf-8"))
               scan_exit = int(os.environ["SCAN_EXIT"])
               summary = operator_summary(report, scan_exit)
           except (ValueError, OSError, SourceError, TypeError):
