@@ -72,6 +72,66 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         self.assertEqual(before_pointer, (self.state / "last-known-good.json").read_bytes())
         self.assertEqual(before_manifest, (historical / "manifest.json").read_bytes())
 
+    def test_two_real_recovery_captures_report_only_config_filename_drift(self):
+        from unittest.mock import patch
+        from scripts import zcloud_recovery as production_capture
+
+        source = Path(self.tmp.name) / "capture-for-drift"
+        state = Path(self.tmp.name) / "state-for-drift"
+        source.mkdir()
+        (source / "server.py").write_bytes(b"stable managed source")
+        config = source / "projects.json"
+        config.write_bytes(b'{"real":"before"}')
+        with patch.object(production_capture, "git_meta", return_value={"head": "abcdef0123456789"}), patch.object(
+            production_capture, "snapshot_stamp", return_value="20261015T151800Z"
+        ):
+            first = production_capture.capture(
+                source, state, "synthetic prior release",
+                require_health=False, service_state={"active_state": "active"},
+                browser_state={"active_state": "active"},
+            )
+            config.write_bytes(b'{"real":"after"}')
+            second = production_capture.capture(
+                source, state, "synthetic later release",
+                require_health=False, service_state={"active_state": "active"},
+                browser_state={"active_state": "active"},
+            )
+
+        pointer = state / "last-known-good.json"
+        before = pointer.read_bytes()
+        report = probe.audit_all(state)
+        self.assertTrue(report["ok"])
+        self.assertEqual(2, report["snapshot_count"])
+        self.assertEqual(second["snapshot_id"], report["current_snapshot_id"])
+        old = next(row for row in report["results"] if row["snapshot_id"] == first["snapshot_id"])
+        self.assertEqual(["projects.json"], old["config_drift_from_current"]["changed"])
+        self.assertFalse(old["is_current"])
+        self.assertEqual(before, pointer.read_bytes())
+        self.assertNotIn('"before"', json.dumps(report))
+        self.assertNotIn('"after"', json.dumps(report))
+        self.assertFalse(report["authorizes_rollback"])
+
+    def test_batch_historic_config_removed_from_current_lists_only_in_snapshot(self):
+        config = self.files / "projects.json"
+        config.write_bytes(b'{"from":"historical"}')
+        self.hashes["projects.json"] = hashlib.sha256(config.read_bytes()).hexdigest()
+        self.save()
+        manifest = self.snap / "manifest.json"
+        obj = json.loads(manifest.read_text(encoding="utf-8"))
+        obj["present_paths"].append("projects.json")
+        manifest.write_text(json.dumps(obj), encoding="utf-8")
+        self._copy_historical_snapshot()
+        config.unlink()
+        self.hashes.pop("projects.json")
+        self.save()
+        report = probe.audit_all(self.state)
+        self.assertTrue(report["ok"])
+        self.assertEqual(
+            ["projects.json"],
+            report["results"][0]["config_drift_from_current"]["only_in_snapshot"],
+        )
+        self.assertEqual([], report["results"][0]["config_drift_from_current"]["only_in_current"])
+
     def test_batch_reports_only_verified_config_drift_without_values(self):
         current_config = self.files / "projects.json"
         current_config.write_bytes(b'{"version":1}')
