@@ -315,6 +315,65 @@ class SourceTests(unittest.TestCase):
             finally:
                 os.chdir(old)
 
+    def test_arbitrary_tools_tree_action_manifest_is_inspected(self):
+        # Local workflow reference to ./tools/deploy/probe is legitimate.
+        # A change to its action.yaml must not be skipped just because the
+        # path is outside root actions/ and .github/actions/.
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            action = Path(d) / "tools/deploy/probe/action.yaml"
+            action.parent.mkdir(parents=True)
+            action.write_text(SAFE)
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            action.write_text(SAFE.replace("dist/result.log", "out/.docker/config.json"))
+            git("add", ".")
+            git("commit", "-qm", "credential upload")
+            head = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                self.assertEqual(gate.workflow_paths(base, head),
+                                 ["tools/deploy/probe/action.yaml"])
+                self.assertEqual(gate.main(["--base", base, "--head", head]), 2)
+            finally:
+                os.chdir(old)
+
+    def test_root_manifest_is_checked_and_unrelated_unicode_code_ignored(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            action = Path(d) / "action.yml"
+            action.write_text(SAFE)
+            unrelated = Path(d) / "notes" / "résumé.txt"
+            unrelated.parent.mkdir()
+            unrelated.write_text("safe\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            action.write_text(SAFE.replace("dist/result.log", "artifact/.ssh/id_rsa"))
+            unrelated.write_text("still safe\n")
+            git("add", ".")
+            git("commit", "-qm", "mixed inputs")
+            head = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                self.assertEqual(gate.workflow_paths(base, head), ["action.yml"])
+                self.assertEqual(gate.main(["--base", base, "--head", head]), 2)
+            finally:
+                os.chdir(old)
+
     def test_composite_manifest_real_git_delta(self):
         with tempfile.TemporaryDirectory() as d:
             def git(*args):
