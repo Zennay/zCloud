@@ -70,3 +70,11 @@ The all-snapshot report checks the bounded snapshot-directory identity list both
 ## Recovery source-format compatibility
 
 The production `zcloud_recovery.capture()` short identifier is `(git_head or "working-tree")[:8]`. Therefore a legitimate no-Git LKG ID ends in `-working-` (and a collision in `-working--2`), **not** merely `-working-tree`. The probe now accepts both the generated and compatible historical spelling, validates the calendar date/time of every selected ID, and tests two actual synthetic `capture()` calls without a Git HEAD. This prevents a false denial of an otherwise valid locally produced LKG while continuing to reject malformed dates and traversal.
+
+## Offline cross-snapshot config comparison (read-only)
+
+The `--all-snapshots` JSON now includes an optional `config_drift_from_current` object for **verified** snapshots when the currently selected snapshot itself passes the integrity check. The comparison lists *filenames only*: `changed`, `only_in_snapshot`, `only_in_current` for the four managed configuration files. It never publishes file contents or SHA-256 values. Config differences between healthy independent snapshots are normal and **do not make an otherwise valid snapshot fail**; the report is a diagnostic hint, not a recommendation to deploy or roll back. If the current snapshot fails verification, comparison is withheld rather than inferring a healthy baseline from any historical snapshot.
+
+Before recording a config inventory the scanner reads the selected snapshot manifest, calls the normal complete integrity preflight, then checks the manifest again for equal parsed contents. This narrows ordinary concurrent metadata churn but remains neither a filesystem lock nor a cryptographic authentication claim. The original standalone selected-snapshot CLI output stays unchanged apart from the existing non-authorizing fields.
+
+Tests also compare probe allowlist and excluded persistent roots against the actual `zcloud_recovery` constants. A future source contract change will visibly fail hosted CI rather than silently loosening the standalone scan.
