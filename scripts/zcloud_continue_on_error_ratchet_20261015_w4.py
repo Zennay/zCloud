@@ -64,6 +64,12 @@ def check_workflow(source: str) -> list[str]:
         if stripped.startswith("#"):
             continue
         # Merges/aliases can hide a fail-open key from textual detection.
+        if re.match(r"^[ ]*\?[ ]*['\"]?continue-on-error", line, re.I):
+            issues.append(f"line_{number}:explicit_yaml_key_unreviewed")
+        # YAML quoted scalar keys can decode escaped characters before mapping.
+        # Do not let \u0063ontinue-on-error silently masquerade as another key.
+        if re.search(r'''(?:^|[,{])[ ]*"[^"\n]*\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2})[^"\n]*"[ ]*:''', line):
+            issues.append(f"line_{number}:encoded_yaml_key_unreviewed")
         if re.search(r"(^|[ {,])<<[ \t]*:", line):
             issues.append(f"line_{number}:yaml_merge_unreviewed")
         match = KEY.search(line)
