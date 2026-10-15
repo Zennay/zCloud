@@ -58,6 +58,26 @@ class GitAssetCases(unittest.TestCase):
         self.assertEqual(result["changed"], [])
         self.assertFalse(result["release_authorized"])
 
+    def test_direct_main_push_missing_cache_bump_reproduces_failure(self) -> None:
+        # Push-event SHAs are old-main and new-main, not a synthetic PR merge.
+        before = self.base
+        self.write("public/app.js", "console.log(4242);")
+        after = self.commit()
+        self.assertEqual(run("merge-base", before, after), before)
+        decision = gate.evaluate(before, after)
+        self.assertFalse(decision["ok"])
+        self.assertEqual(decision["reason"], "changed_asset_pin_unchanged")
+        self.assertEqual(decision["changed"], ["public/app.js"])
+
+    def test_direct_main_push_with_correct_cache_bump_allowed(self) -> None:
+        before = self.base
+        self.write("public/enhancements.css", "body{margin:3px}")
+        self.write("public/index.html", self.html("r8", "r6"))
+        after = self.commit()
+        decision = gate.evaluate(before, after)
+        self.assertTrue(decision["ok"])
+        self.assertFalse(decision["release_authorized"])
+
     def test_changed_js_without_bump_denied(self) -> None:
         self.write("public/app.js", "console.log(2);")
         self.head = self.commit()
@@ -330,8 +350,10 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertIn('EXPECTED_MAIN="$BASE_SHA"', workflow)
         self.assertIn('test "$current_main" = "$EXPECTED_MAIN"', workflow)
 
-    def test_direct_main_push_with_unchanged_cache_pin_is_denied(self) -> None:
+    def test_push_history_drift_guard_exists(self) -> None:
         self.assertIn('git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"', self.workflow)
+        self.assertIn('EXPECTED_MAIN="$HEAD_SHA"', self.workflow)
+        self.assertIn('test "$current_main" = "$EXPECTED_MAIN"', self.workflow)
 
     def test_hosted_read_only_and_no_automatic_deploy(self) -> None:
         self.assertIn('runs-on: ubuntu-latest', self.workflow)
