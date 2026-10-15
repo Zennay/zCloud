@@ -351,6 +351,26 @@ class ContinueOnErrorGitTests(unittest.TestCase):
             "        continue-on-error: true\n"
         ))
 
+    def test_cli_reports_safe_error_codes_without_exposing_exception(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+        for exception, code in (
+            (ValueError("git_output_limit"), "git_output_limit"),
+            (ValueError("TOKEN=topsecret"), "untrusted_source_io"),
+            (TimeoutError("TOKEN=topsecret"), "git_elapsed_deadline"),
+            (subprocess.CalledProcessError(1, ["git", "TOKEN=topsecret"]), "git_command_failed"),
+            (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "TOKEN=topsecret"), "invalid_workflow_utf8"),
+        ):
+            with self.subTest(code=code):
+                stream = io.StringIO()
+                with patch.object(gate, "scan", side_effect=exception):
+                    with contextlib.redirect_stderr(stream):
+                        outcome = gate.main(["--base", self.base, "--head", self.base])
+                self.assertEqual(outcome, 2)
+                self.assertIn(f"[{code}]", stream.getvalue())
+                self.assertNotIn("topsecret", stream.getvalue())
+
     def test_hosted_pr_admission_fails_instead_of_skipping(self):
         source = (Path(__file__).resolve().parents[1] /
                   ".github/workflows/zcloud-continue-on-error-no-new-debt-20261015-w4.yml"
