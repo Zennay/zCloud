@@ -268,6 +268,11 @@ def dutch_operator_summary(report: dict[str, object], status: int) -> str:
             raise ValueError("invalid_finding_count")
         counts.append(count)
     baseline, candidate, added = counts
+    # Even the user-facing summary must reject internally inconsistent
+    # evidence rather than turn a truncated or forged report into green.
+    exposed = report.get("new_risks")
+    if added > candidate or type(exposed) is not list or len(exposed) != min(added, 25):
+        raise ValueError("invalid_risk_inventory_consistency")
     if (status == 0) != (added == 0):
         raise ValueError("status_finding_mismatch")
     verdict = "Geen nieuwe risico's gevonden" if status == 0 else "Afgewezen: nieuwe risico's gevonden"
