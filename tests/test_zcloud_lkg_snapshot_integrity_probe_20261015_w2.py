@@ -33,9 +33,97 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             encoding="utf-8",
         )
         (self.snap / "manifest.json").write_text(
-            json.dumps({"format_version": 1, "snapshot_id": self.snap_id, "hashes": self.hashes}),
+            json.dumps({
+                "format_version": 1,
+                "snapshot_id": self.snap_id,
+                "hashes": self.hashes,
+                "managed_paths": sorted(probe.MANAGED_ROOTS),
+                "persistent_paths_never_restored": sorted(probe.PERSISTENT),
+                "present_paths": ["server.py"],
+                "config_hashes": {
+                    name: digest for name, digest in self.hashes.items()
+                    if name in {"projects.json", "project-layout.json", "resource-policy.json", "project-contracts.json"}
+                },
+            }),
             encoding="utf-8",
         )
+
+    def test_forged_present_paths_is_denied_even_when_hashes_are_valid(self):
+        manifest = self.snap / "manifest.json"
+        for changed in (
+            [],
+            ["projects.json"],
+            ["server.py", "server.py"],
+            ["server.py", "history.db"],
+            ["server.py", "scripts"],
+        ):
+            with self.subTest(changed=changed):
+                self.save()
+                obj = json.loads(manifest.read_text(encoding="utf-8"))
+                obj["present_paths"] = changed
+                manifest.write_text(json.dumps(obj), encoding="utf-8")
+                with self.assertRaises(probe.Denied):
+                    probe.inspect(self.state)
+
+    def test_mismatched_config_hash_is_denied(self):
+        blob = b'{"config":true}'
+        (self.files / "projects.json").write_bytes(blob)
+        self.hashes["projects.json"] = hashlib.sha256(blob).hexdigest()
+        self.save()
+        manifest = self.snap / "manifest.json"
+        obj = json.loads(manifest.read_text(encoding="utf-8"))
+        obj["present_paths"].append("projects.json")
+        obj["config_hashes"]["projects.json"] = "0" * 64
+        manifest.write_text(json.dumps(obj), encoding="utf-8")
+        with self.assertRaisesRegex(probe.Denied, "config_hash_mismatch"):
+            probe.inspect(self.state)
+
+    def test_persistent_root_omission_and_alias_are_denied(self):
+        manifest = self.snap / "manifest.json"
+        for values in (
+            [],
+            ["history.db"],
+            sorted(probe.PERSISTENT) + ["history.db"],
+            sorted(probe.PERSISTENT) + ["extra"],
+        ):
+            with self.subTest(values=values):
+                self.save()
+                obj = json.loads(manifest.read_text(encoding="utf-8"))
+                obj["persistent_paths_never_restored"] = values
+                manifest.write_text(json.dumps(obj), encoding="utf-8")
+                with self.assertRaises(probe.Denied):
+                    probe.inspect(self.state)
+
+    def test_changed_pointer_or_manifest_during_scan_is_denied(self):
+        from unittest.mock import patch
+        original = probe._json
+        for drift_name, expected_reason in (
+            ("last-known-good.json", "pointer_changed_during_scan"),
+            ("manifest.json", "manifest_changed_during_scan"),
+        ):
+            with self.subTest(drift=drift_name):
+                counter = [0]
+                def changing(path):
+                    result = original(path)
+                    if path.name == drift_name:
+                        counter[0] += 1
+                        if counter[0] == 2:
+                            return {**result, "scan_drift": True}
+                    return result
+                with patch.object(probe, "_json", side_effect=changing):
+                    with self.assertRaisesRegex(probe.Denied, expected_reason):
+                        probe.inspect(self.state)
+
+    def test_empty_managed_directory_is_allowed_if_manifest_declares_it(self):
+        (self.files / "scripts").mkdir()
+        self.save()
+        manifest = self.snap / "manifest.json"
+        obj = json.loads(manifest.read_text(encoding="utf-8"))
+        obj["present_paths"].append("scripts")
+        manifest.write_text(json.dumps(obj), encoding="utf-8")
+        result = probe.inspect(self.state)
+        self.assertEqual(1, result["file_count"])
+        self.assertTrue(result["ok"])
 
     def test_real_recovery_capture_format_is_accepted_without_live_mutation(self):
         from unittest.mock import patch
