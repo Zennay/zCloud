@@ -111,19 +111,74 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertIsNone(report["source_snapshot_sha256"])
         self.assertIsNone(report["writers"][name]["source_sha256"])
 
-    def test_exact_source_used_for_classification_is_the_hashed_source(self):
+    def test_classification_uses_first_pass_and_rechecks_every_source(self):
         counter = []
         original = module._read_regular
 
-        def read_once(root, name):
+        def tracked_read(root, name):
             counter.append(name)
             return original(root, name)
 
-        with patch.object(module, "_read_regular", side_effect=read_once):
+        with patch.object(module, "_read_regular", side_effect=tracked_read):
             report = module.inventory(self.root)
-        self.assertEqual(set(counter), set(module.WRITERS))
-        self.assertEqual(len(counter), len(module.WRITERS))
+        self.assertEqual(counter[:7], list(module.WRITERS))
+        self.assertEqual(counter[7:], list(module.WRITERS))
         self.assertEqual(report["source_serialized"], 7)
+        self.assertTrue(report["source_snapshot_complete"])
+
+    def test_cross_file_change_between_passes_denies_safe_receipt(self):
+        """A source modified after its first read must never count as locked."""
+        original = module._read_regular
+        counter = {}
+        target = "zcloud-postsend-tab-preservation-live.yml"
+
+        def changing_read(root, name):
+            counter[name] = counter.get(name, 0) + 1
+            source = original(root, name)
+            if name == target and counter[name] == 2:
+                return source + "# changed between read passes\\n"
+            return source
+
+        with patch.object(module, "_read_regular", side_effect=changing_read):
+            report = module.inventory(self.root)
+        self.assertEqual(report["writers"][target]["source_result"],
+                         "unstable_source_snapshot")
+        self.assertIsNone(report["writers"][target]["source_sha256"])
+        self.assertFalse(report["source_snapshot_complete"])
+        self.assertIsNone(report["source_snapshot_sha256"])
+        self.assertFalse(report["source_lock_complete"])
+        self.assertEqual(report["source_serialized"], 6)
+        self.assertFalse(report["release_authorized"])
+        self.assertEqual(len(counter), 7)
+
+    def test_unreadable_file_on_second_pass_denies_receipt(self):
+        original = module._read_regular
+        target = "zcloud-safe-memory-reclaim-20261013.yml"
+        observed = []
+
+        def disappearing_read(root, name):
+            observed.append(name)
+            if name == target and observed.count(name) == 2:
+                raise module.AmbiguousSource("unreadable_source")
+            return original(root, name)
+
+        with patch.object(module, "_read_regular", side_effect=disappearing_read):
+            report = module.inventory(self.root)
+        self.assertEqual(report["writers"][target]["source_result"],
+                         "unstable_source_snapshot")
+        self.assertIsNone(report["writers"][target]["source_sha256"])
+        self.assertFalse(report["source_snapshot_complete"])
+        self.assertEqual(report["source_serialized"], 6)
+        self.assertFalse(report["mutation_performed"])
+
+    def test_stable_second_pass_does_not_change_source_hash_or_authority(self):
+        expected = module.inventory(self.root)
+        actual = module.inventory(self.root)
+        self.assertEqual(expected["source_snapshot_sha256"],
+                         actual["source_snapshot_sha256"])
+        self.assertEqual(expected["writers"], actual["writers"])
+        self.assertTrue(actual["source_snapshot_complete"])
+        self.assertFalse(actual["runtime_lock_verified"])
 
     def test_expected_source_snapshot_cli_matching_digest_succeeds(self):
         digest = module.inventory(self.root)["source_snapshot_sha256"]
