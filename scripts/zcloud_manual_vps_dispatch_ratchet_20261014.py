@@ -323,6 +323,12 @@ def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object
     for path in modified:
         if path not in base:
             continue
+        # Only compare legacy authority when there is actually an unsafe
+        # identity shared by both snapshots. A malformed historical workflow
+        # can otherwise not be repaired merely because its header is invalid.
+        shared = sorted(key for key in previous & candidate if key[0] == path)
+        if not shared:
+            continue
         try:
             before_source = base[path].decode("utf-8")
             after_source = head[path].decode("utf-8")
@@ -334,9 +340,7 @@ def evaluate(base: dict[str, bytes], head: dict[str, bytes]) -> dict[str, object
             )
         except UnicodeError as exc:
             raise RefError("invalid_workflow_encoding") from exc
-        for key in previous & candidate:
-            if key[0] != path:
-                continue
+        for key in shared:
             if (before_jobs.get(key[1]) != after_jobs.get(key[1])
                     or authority_changed):
                 changed_old_debt.add(key)
