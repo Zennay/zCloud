@@ -17,6 +17,7 @@ STAT = f"/repos/Zennay/zCloud/commits/{SHA}/statuses?per_page=100&page=1"
 RUNS = ("/repos/Zennay/zCloud/actions/workflows/zcloud-vps-deploy.yml/runs"
         "?branch=main&per_page=100&page=1")
 JOBS = "/repos/Zennay/zCloud/actions/runs/92/jobs?per_page=100&page=1"
+RUN_DETAIL = "/repos/Zennay/zCloud/actions/runs/92"
 
 
 def ref(sha=SHA):
@@ -57,6 +58,11 @@ class FakeAPI:
 
     def get(self, path):
         self.calls.append(path)
+        if path == RUN_DETAIL and path not in self.pages:
+            # The real API returns the same selected run through a separate
+            # URL. Allow tests to override it to simulate a racing rerun.
+            candidate = self.pages[RUNS][0]["workflow_runs"]
+            return dict(candidate[0]) if candidate else None
         if path not in self.pages or not self.pages[path]:
             raise cockpit.EvidenceError("missing_fixture")
         values = self.pages[path]
@@ -265,6 +271,37 @@ class ReleaseEvidenceTests(unittest.TestCase):
         finished["conclusion"] = None
         api.pages[JOBS] = [{"total_count": 1, "jobs": [finished]}]
         with self.assertRaisesRegex(cockpit.EvidenceError, "invalid_terminal_job_conclusion"):
+            cockpit.collect(api)
+
+    def test_new_retry_attempt_during_job_read_denied(self):
+        api = FakeAPI()
+        changed = run()
+        changed["run_attempt"] = 2
+        api.pages[RUN_DETAIL] = [changed]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_changed_during_job_read"):
+            cockpit.collect(api)
+
+    def test_deploy_conclusion_changed_during_job_read_denied(self):
+        api = FakeAPI()
+        changed = run()
+        changed["conclusion"] = "failure"
+        api.pages[RUN_DETAIL] = [changed]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_changed_during_job_read"):
+            cockpit.collect(api)
+
+    def test_run_updated_timestamp_changes_during_job_read_denied(self):
+        api = FakeAPI()
+        changed = run()
+        changed["updated_at"] = "2026-10-15T03:00:00Z"
+        api.pages[RUN_DETAIL] = [changed]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_changed_during_job_read"):
+            cockpit.collect(api)
+
+    def test_duplicate_run_attempt_in_snapshot_denied(self):
+        api = FakeAPI()
+        same = run()
+        api.pages[RUNS] = [{"workflow_runs": [same, dict(same)]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_deploy_run_identity"):
             cockpit.collect(api)
 
     def test_missing_main_ref_is_denied(self):
