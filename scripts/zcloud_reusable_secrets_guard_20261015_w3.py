@@ -80,8 +80,13 @@ def has_secret_inherit(text: str) -> bool:
         return True
     # More conservative than the parser: catches quoted/flow/indented variations,
     # at the cost of occasionally requesting independent review for safe files.
+    # YAML complex mapping keys may put '?' and ':' on separate lines.
+    # Literal unicode escapes could conceal either word inside a quoted key.
+    # Such opaque candidates are denied rather than silently trusted.
+    if re.search(r"\\(?:u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2})", clean):
+        return True
     return bool(
-        re.search(r"(?i)(?:^|[\s{,?])['\"]?secrets['\"]?\s*:", clean)
+        re.search(r"(?i)\bsecrets\b", clean)
         and re.search(r"(?i)\binherit\b", clean)
     )
 
