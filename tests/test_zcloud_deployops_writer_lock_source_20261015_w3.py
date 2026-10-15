@@ -125,6 +125,76 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(len(counter), len(module.WRITERS))
         self.assertEqual(report["source_serialized"], 7)
 
+    def test_expected_source_snapshot_cli_matching_digest_succeeds(self):
+        digest = module.inventory(self.root)["source_snapshot_sha256"]
+        args = [sys.executable, str(SCRIPT), "--root", str(self.root),
+                "--expect-source-snapshot-sha256", digest]
+        proc = subprocess.run(args, capture_output=True, text=True, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertTrue(report["source_snapshot_matches_expected"])
+        self.assertFalse(report["release_authorized"])
+
+    def test_expected_source_snapshot_cli_detects_single_comment_drift(self):
+        digest = module.inventory(self.root)["source_snapshot_sha256"]
+        path = self.dir / "zcloud-worker-tab-guard.yml"
+        path.write_text(path.read_text(encoding="utf-8") + "# drift\n",
+                        encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.root),
+             "--expect-source-snapshot-sha256", digest],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(proc.returncode, 2)
+        report = json.loads(proc.stdout)
+        self.assertFalse(report["source_snapshot_matches_expected"])
+        self.assertTrue(report["source_snapshot_complete"])
+        self.assertFalse(report["mutation_performed"])
+
+    def test_expected_source_snapshot_with_missing_file_denies(self):
+        digest = module.inventory(self.root)["source_snapshot_sha256"]
+        (self.dir / "zcloud-worker-tab-guard.yml").unlink()
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.root),
+             "--expect-source-snapshot-sha256", digest],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(proc.returncode, 2)
+        report = json.loads(proc.stdout)
+        self.assertFalse(report["source_snapshot_matches_expected"])
+        self.assertIsNone(report["source_snapshot_sha256"])
+
+    def test_expected_source_snapshot_rejects_ambiguous_invalid_inputs(self):
+        digest = module.inventory(self.root)["source_snapshot_sha256"]
+        for value in ("", digest.upper(), digest[:-1], digest + "0",
+                      digest + "\n", "x" * 64, "0" * 65):
+            with self.subTest(value=value[:15]):
+                proc = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--root", str(self.root),
+                     "--expect-source-snapshot-sha256", value],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(proc.returncode, 2, proc.stdout)
+                self.assertFalse(proc.stdout)
+
+    def test_expected_source_snapshot_does_not_override_lock_denial(self):
+        digest = module.inventory(self.root)["source_snapshot_sha256"]
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "      group: zcloud-production-deploy",
+                  "      group: unsafe-group")
+        matching = module.inventory(self.root)["source_snapshot_sha256"]
+        self.assertNotEqual(digest, matching)
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--root", str(self.root),
+             "--expect-source-snapshot-sha256", matching, "--expect-serialized"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(proc.returncode, 1)
+        report = json.loads(proc.stdout)
+        self.assertTrue(report["source_snapshot_matches_expected"])
+        self.assertFalse(report["source_lock_complete"])
+        self.assertFalse(report["release_authorized"])
+
     def test_known_existing_three_debts_have_independent_job_scopes(self):
         for name in ("zcloud-worker-tab-guard.yml",
                      "zcloud-no-browser-churn-hotfix.yml",
