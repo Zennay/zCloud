@@ -281,7 +281,7 @@ class HostedCurrentMainShellTests(unittest.TestCase):
                   / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
                   ).read_text(encoding="utf-8")
         check = source.split("name: Refuse a stale main revision after the full source scan", 1)[1]
-        script = check.split("        run: |\n", 1)[1]
+        script = check.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
         self.script = "\n".join(
             line[10:] if line.startswith("          ") else line
             for line in script.splitlines()
