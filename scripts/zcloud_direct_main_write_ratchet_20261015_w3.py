@@ -18,6 +18,7 @@ import time
 
 HEX = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOW = re.compile(r"^\.github/workflows/[^/\x00]+\.(?:yml|yaml)$")
+COMPOSITE = re.compile(r"^\.github/actions/(?:[^/\x00]+/)+action\.(?:yml|yaml)$")
 GIT_PUSH = re.compile(r"(?i)(?<![\w-])git\s+(?:(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?|--git-dir\s+\S+)\s+)*(?:push\b|['\"]push['\"](?=\s|$|[;|&]))")
 REFS_API = re.compile(r"(?i)(?:git/refs/heads/|git/refs/heads\x2f|git/refs/heads\\u002f)")
 GH_REF_WRITE = re.compile(r"(?i)\bgh\s+api\b.{0,200}(?:\b(?:PATCH|POST|DELETE|PUT)\b|(?:-X|--method)\s+)")
@@ -89,7 +90,7 @@ def validate_commit(value: str) -> str:
 
 
 def tree(commit: str) -> dict[str, str]:
-    listing = git("ls-tree", "-rz", "--full-tree", commit, "--", ".github/workflows")
+    listing = git("ls-tree", "-rz", "--full-tree", commit, "--", ".github/workflows", ".github/actions")
     if not listing:
         raise AdmissionError("missing_workflows")
     entries = listing.split(b"\x00")
@@ -105,8 +106,12 @@ def tree(commit: str) -> dict[str, str]:
             path = path_bytes.decode("utf-8", errors="strict")
         except (ValueError, UnicodeError) as exc:
             raise AdmissionError("invalid_tree_entry") from exc
-        if not WORKFLOW.fullmatch(path):
-            # We intentionally do not claim to validate non-workflow content.
+        if path in (".github/workflows", ".github/actions"):
+            raise AdmissionError("nonregular_source_root")
+        if path.startswith(".github/actions/") and mode == "120000":
+            raise AdmissionError("nonregular_action_tree")
+        if not (WORKFLOW.fullmatch(path) or COMPOSITE.fullmatch(path)):
+            # Only workflow bodies and local composite action metadata are scoped.
             continue
         if mode != "100644" or kind != "blob" or not HEX.fullmatch(oid):
             raise AdmissionError("nonregular_workflow")
@@ -175,9 +180,12 @@ def audit(base: str, head: str) -> dict[str, object]:
     return {
         "status": "deny" if flagged else "pass",
         "base": base, "head": head,
-        "workflows_in_head": len(head_tree),
-        "changed_workflows_checked": len(changed),
-        "legacy_workflows_not_rescanned": len(head_tree) - len(changed),
+        "workflows_in_head": sum(WORKFLOW.fullmatch(p) is not None for p in head_tree),
+        "composites_in_head": sum(COMPOSITE.fullmatch(p) is not None for p in head_tree),
+        "changed_workflows_checked": sum(WORKFLOW.fullmatch(p) is not None for p in changed),
+        "changed_composites_checked": sum(COMPOSITE.fullmatch(p) is not None for p in changed),
+        "legacy_workflows_not_rescanned": sum(WORKFLOW.fullmatch(p) is not None for p in head_tree if p not in changed),
+        "legacy_composites_not_rescanned": sum(COMPOSITE.fullmatch(p) is not None for p in head_tree if p not in changed),
         "findings": flagged,
         "source_only": True, "authorizes_merge": False,
         "authorizes_deploy": False, "mutation_performed": False,
