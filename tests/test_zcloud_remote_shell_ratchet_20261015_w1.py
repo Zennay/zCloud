@@ -250,6 +250,69 @@ class RatchetTests(unittest.TestCase):
 
 
 
+class OperatorSummaryTests(unittest.TestCase):
+    def payload(self, *, candidates=0, new=0, complete=True):
+        return {
+            "policy": "zcloud-remote-shell-no-new-debt-v1",
+            "baseline_findings": 0,
+            "candidate_findings": candidates,
+            "new_risky_workflows": new,
+            "source_complete": complete,
+            "release_authorized": False,
+            "deployment_authorized": False,
+            "mutation_performed": False,
+        }
+
+    def test_green_summary_is_dutch_and_non_authorizing(self):
+        message = mod.operator_summary(self.payload(), 0)
+        self.assertIn("Geen nieuwe", message)
+        self.assertIn("Geen productieautorisatie", message)
+        self.assertNotIn("https://", message)
+
+    def test_red_summary_has_no_approval(self):
+        message = mod.operator_summary(self.payload(candidates=1, new=1), 1)
+        self.assertIn("Nieuw risico", message)
+        self.assertIn("Geen productieautorisatie", message)
+
+    def test_incomplete_evidence_is_not_green(self):
+        report = self.payload(complete=False)
+        report["baseline_findings"] = None
+        report["candidate_findings"] = None
+        report["new_risky_workflows"] = None
+        message = mod.operator_summary(report, 2)
+        self.assertIn("Onvolledig", message)
+        self.assertIn("Geen productieautorisatie", message)
+
+    def test_forged_green_and_boolean_as_integer_denied(self):
+        report = self.payload(candidates=1, new=1)
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(report, 0)
+        report = self.payload(candidates=True)
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(report, 0)
+        report = self.payload()
+        report["release_authorized"] = True
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(report, 0)
+
+    def test_contradictory_count_and_status_denied(self):
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(self.payload(candidates=0, new=1), 1)
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(self.payload(), 1)
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(self.payload(), 2)
+
+    def test_unknown_fields_and_large_untrusted_values_denied(self):
+        report = self.payload()
+        report["unexpected"] = "do-not-publish"
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(report, 0)
+        report = self.payload(candidates=10_000_001)
+        with self.assertRaises(mod.SourceError):
+            mod.operator_summary(report, 1)
+
+
 class WorkflowTrustTests(unittest.TestCase):
     def setUp(self):
         self.text = (HERE / ".github/workflows/zcloud-remote-shell-no-new-debt-20261015-w1.yml").read_text(encoding="utf-8")
