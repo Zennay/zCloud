@@ -965,6 +965,45 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(source.replace("echo safe", "echo changed"))
         self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
 
+    def test_new_risky_workflows_count_by_path_and_kind(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        extra = Path(".github/workflows/second.yml")
+        extra.write_text("steps:\n  - run: echo ${{ inputs.OTHER }}\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.event.issue.title }}\n  - run: *shell\n")
+        report = guard.audit(base, head)
+        self.assertEqual(3, report["new_risks"])
+        self.assertEqual([
+            {"path": str(self.workflow), "risk_count": 2,
+             "risk_kinds": [{"kind": "direct_interpolation", "count": 1},
+                            {"kind": "yaml_structure_ambiguity", "count": 1}]},
+            {"path": str(extra), "risk_count": 1,
+             "risk_kinds": [{"kind": "direct_interpolation", "count": 1}]},
+        ], report["new_risky_workflows"])
+        self.assertEqual(sorted([str(self.workflow), str(extra)]),
+                         report["affected_workflows"])
+        self.assertNotIn("OTHER", json.dumps(report))
+        self.assertNotIn("issue.title", json.dumps(report))
+
+    def test_new_risky_workflows_empty_when_only_legacy_debt(self):
+        legacy = "steps:\n  - run: echo ${{ github.event.issue.title }}\n"
+        base = self.commit(legacy)
+        head = self.commit(legacy + "# safe unrelated comment\n")
+        report = guard.audit(base, head)
+        self.assertEqual([], report["new_risky_workflows"])
+        self.assertEqual([], report["new_risk_kinds"])
+        self.assertEqual(0, report["new_risks"])
+
+    def test_new_risky_workflows_distinguishes_legacy_from_delta(self):
+        legacy = "steps:\n  - run: echo ${{ github.event.issue.title }}\n"
+        base = self.commit(legacy)
+        head = self.commit(legacy + "  - run: echo ${{ vars.NEW_SECRET }}\n")
+        report = guard.audit(base, head)
+        self.assertEqual(2, report["candidate_risks"])
+        self.assertEqual(1, report["new_risks"])
+        self.assertEqual([{"path": str(self.workflow), "risk_count": 1,
+                           "risk_kinds": [{"kind": "direct_interpolation", "count": 1}]}],
+                         report["new_risky_workflows"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
