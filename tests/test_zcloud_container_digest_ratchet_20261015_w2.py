@@ -421,6 +421,51 @@ jobs:
         self.assertGreater(workflow.index('test "$final_head" = "$HEAD_SHA"'),
                            workflow.index("NO_NEW_CONTAINER_IMAGE_TAG_DEBT"))
 
+    def test_dutch_operator_summary_is_safe_for_success_and_new_debt(self):
+        clean = guard.compare([], [])
+        rendered = guard.dutch_operator_summary(clean, 0)
+        self.assertIn("Geen nieuwe risico", rendered)
+        self.assertIn("| Nieuwe risico's | 0 |", rendered)
+        self.assertIn("\n", rendered)
+        self.assertNotIn("\\n", rendered)
+        tagged = guard.compare([], self.scan("  image: alpine:latest\n"))
+        rejected = guard.dutch_operator_summary(tagged, 1)
+        self.assertIn("Afgewezen: nieuwe risico", rejected)
+        self.assertIn("| Nieuwe risico's | 1 |", rejected)
+        self.assertNotIn("alpine:latest", rejected)
+        self.assertIn("Geen VPS-herstel, productie-deploy of vrijgave", rejected)
+
+    def test_dutch_operator_summary_reports_incomplete_git_without_exposing_error(self):
+        report = {
+            "policy": "container-image-digest-no-new-debt-v1",
+            "inventory_complete": False,
+            "error": "private/internal/location?token=secret",
+            "release_authorized": False,
+            "deployment_authorized": False,
+            "mutation_performed": False,
+        }
+        summary = guard.dutch_operator_summary(report, 2)
+        self.assertIn("bronbewijs incompleet", summary)
+        self.assertIn("Afgewezen", summary)
+        self.assertNotIn("secret", summary)
+        self.assertNotIn("private", summary)
+
+    def test_dutch_operator_summary_rejects_forged_authority_and_invalid_counts(self):
+        clean = guard.compare([], [])
+        for key in ("release_authorized", "deployment_authorized", "mutation_performed"):
+            bad = dict(clean, **{key: True})
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                guard.dutch_operator_summary(bad, 0)
+        for count in (True, -1, 8193, "0", None):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                guard.dutch_operator_summary(dict(clean, new_findings=count), 0)
+        with self.assertRaises(ValueError):
+            guard.dutch_operator_summary(clean, 1)
+        with self.assertRaises(ValueError):
+            guard.dutch_operator_summary(dict(clean, inventory_complete=False), 0)
+        with self.assertRaises(ValueError):
+            guard.dutch_operator_summary(dict(clean, policy="unknown"), 0)
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
