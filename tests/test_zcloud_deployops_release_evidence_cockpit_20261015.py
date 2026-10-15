@@ -164,6 +164,29 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_production_status_id"):
             cockpit.collect(api)
 
+    def test_production_status_changes_between_reads_denied(self):
+        api = FakeAPI()
+        api.pages[STAT] = [status("success"), status("failure")]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "production_status_changed_during_observation"):
+            cockpit.collect(api)
+        self.assertEqual(api.calls.count(STAT), 2)
+
+    def test_new_production_event_even_same_green_state_denied(self):
+        api = FakeAPI()
+        first = status()
+        second = [dict(first[0], id=21)]
+        api.pages[STAT] = [first, second]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "production_status_changed_during_observation"):
+            cockpit.collect(api)
+
+    def test_production_id_is_bound_to_snapshot(self):
+        data = cockpit.collect(FakeAPI())
+        self.assertEqual(data["production"]["latest_status_id"], 20)
+        self.assertTrue(data["production"]["latest_status_at_utc"])
+        self.assertFalse(data["deployment_authorized"])
+
     def test_queued_job_with_runner_zero_is_not_proof(self):
         api = FakeAPI()
         api.pages[JOBS] = [{"total_count": 1, "jobs": [job("queued", 0, None)]}]
