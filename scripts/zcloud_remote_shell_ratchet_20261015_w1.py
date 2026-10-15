@@ -211,6 +211,25 @@ def audit(repo: Path, base: str, head: str) -> Result:
                   sum(findings(v) for v in after.values()), len(delta), True)
 
 
+def parse_operator_result(raw: str) -> object:
+    """Strictly decode bounded scanner JSON: duplicates cannot rewrite safety fields."""
+    if type(raw) is not str or len(raw.encode("utf-8")) > 8192:
+        raise SourceError("Invalid source result size")
+    def unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise SourceError("Duplicate result field")
+            result[key] = value
+        return result
+    def reject_constant(_: str) -> object:
+        raise SourceError("Nonfinite JSON result denied")
+    try:
+        return json.loads(raw, object_pairs_hook=unique_pairs, parse_constant=reject_constant)
+    except (ValueError, UnicodeError) as exc:
+        raise SourceError("Untrustworthy JSON result") from exc
+
+
 def operator_summary(report: object, exit_code: int) -> str:
     """Render only bounded numerical CI evidence; never a release decision."""
     if type(exit_code) is not int or exit_code not in (0, 1, 2):
