@@ -36,6 +36,12 @@ GIT_WRITE_ALIAS = re.compile(
 GIT_SHELL_ALIAS = re.compile(
     r"(?i)\balias\.[a-z0-9_.-]+\s*=\s*['\"]?\s*!"
 )
+
+# Git's environment-backed config can define an alias across separate YAML
+# lines, bypassing a purely single-line Git command detector.
+GIT_ENV_CONFIG = re.compile(
+    r"(?i)\bGIT_CONFIG_(?:COUNT|KEY_[0-9]+|VALUE_[0-9]+)\b"
+)
 GOVERNANCE_API = re.compile(
     r"(?i)\b(?:github|octokit)\.(?:rest\.)?repos\."
     r"(?:updateBranchProtection|deleteBranchProtection|createRepoRuleset|"
@@ -207,6 +213,8 @@ def suspicious_lines(source: str) -> list[str]:
             findings.append("octokit_git_refs_write")
         if GIT_WRITE_ALIAS.search(line) or GIT_SHELL_ALIAS.search(line):
             findings.append("git_alias_indirect_write")
+        if GIT_ENV_CONFIG.search(line):
+            findings.append("git_environment_config_injection")
         if GOVERNANCE_API.search(line):
             findings.append("octokit_repository_governance_write")
         if GRAPHQL_ENDPOINT.search(line):
