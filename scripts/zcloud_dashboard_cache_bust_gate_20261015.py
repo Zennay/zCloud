@@ -149,6 +149,9 @@ def evaluate(base: str, head: str) -> dict[str, object]:
         before = pins(old[INDEX])
         after = pins(new[INDEX])
         changed = [name for name in ASSETS if old[name] != new[name]]
+        report["asset_versions"] = {
+            name: {"before": before[name], "after": after[name]} for name in ASSETS
+        }
         report["changed"] = changed
         unbumped = [name for name in changed if before[name] == after[name]]
         # Prevent a change from deliberately recycling an older browser cache key.
