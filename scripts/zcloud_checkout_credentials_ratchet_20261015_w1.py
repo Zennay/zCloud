@@ -152,10 +152,31 @@ def blob(oid: str, deadline: float | None = None) -> str:
         raise Denied("invalid_utf8") from exc
 
 
+def workflow_active_lines(source: str) -> list[str]:
+    """Ignore YAML run block *body* text, which is shell data, not YAML actions.
+
+    Only literal/folded run scalars are recognized; non-obvious YAML remains
+    subject to the conservative lexical gate. Dedented lines are still scanned.
+    """
+    active: list[str] = []
+    run_indent: int | None = None
+    for line in source.splitlines():
+        indent = len(line) - len(line.lstrip(" "))
+        if run_indent is not None:
+            if not line.strip() or indent > run_indent:
+                continue
+            run_indent = None
+        if line.lstrip().startswith("#"):
+            continue
+        active.append(line)
+        if re.fullmatch(r"\s*(?:-\s+)?run\s*:\s*[|>][0-9+-]*(?:\s*#.*)?", line):
+            run_indent = indent
+    return active
+
+
 def checkout_risks(source: str) -> list[str]:
     """Reject unsafe checkout and ambiguous syntax without publishing source."""
-    lines = source.splitlines()
-    active = [line for line in lines if not line.lstrip().startswith("#")]
+    active = workflow_active_lines(source)
     # YAML quoted scalars can decode \u0040 to @ *after* our regex scan.
     # A changed uses/action key using YAML escapes requires independent review,
     # including a partially encoded "checkout" or encoded mapping key.
