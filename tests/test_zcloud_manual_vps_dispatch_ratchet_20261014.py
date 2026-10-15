@@ -160,6 +160,22 @@ class ManualDispatchPolicy(unittest.TestCase):
         body = workflow().decode().replace("    steps:", "  other:\n    runs-on: [self-hosted, zcloud, vps]\n    steps:", 1)
         self.assertDenied(body.encode(), expected=2)
 
+    def test_unindented_comments_cannot_hide_manual_event(self):
+        src = workflow().replace(b"  workflow_dispatch:", b"  push:\n# owner comment\n  workflow_dispatch:")
+        self.assertDenied(src)
+
+    def test_unindented_comments_cannot_hide_later_risky_job(self):
+        safe = workflow(if_statement=SAFE_IF, runner="ubuntu-latest")
+        body = safe + b"# ordinary YAML comment inside jobs\n"
+        body += b"  dangerous:\n    runs-on: [self-hosted, zcloud, vps]\n    steps:\n      - run: echo exposed\n"
+        self.assertDenied(body)
+
+    def test_comments_between_two_safe_jobs_stay_allowed(self):
+        safe = workflow(if_statement=SAFE_IF, runner="ubuntu-latest")
+        body = safe + b"# comment between jobs\n"
+        body += b"  another:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo safe\n"
+        self.assertTrue(guard.evaluate({}, {WF: body})["ok"])
+
     def test_duplicate_job_authority_keys_denied(self):
         safe = workflow(if_statement=SAFE_IF)
         for key, addition in (
