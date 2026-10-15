@@ -226,6 +226,37 @@ class GitAssetCases(unittest.TestCase):
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
                          "self_closing_nonvoid_markup")
 
+    def test_unclosed_js_tag_does_not_count_as_active_cache_evidence(self) -> None:
+        # HTMLParser accepts this token, but browser execution is unresolved
+        # without a matching </script>. Do not authorize a stale-cache waiver.
+        self.write("public/app.js", "console.log(9001);")
+        self.write("public/index.html",
+                   '<link rel="stylesheet" href="/enhancements.css?v=r5">' +
+                   '<script src="/enhancements.js?v=r2"></script>' +
+                   '<script src="/app.js?v=r9">')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "unclosed_script_markup")
+
+    def test_stray_script_closer_after_valid_asset_refs_fails_closed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") + "</script>")
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "unbalanced_script_markup")
+
+    def test_benign_unclosed_inline_script_fails_closed(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<script>document.title = "example"')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"],
+                         "unclosed_script_markup")
+
+    def test_balanced_inline_script_remains_valid(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<script>document.title = "example"</script>')
+        self.head = self.commit()
+        self.assertTrue(gate.evaluate(self.base, self.head)["ok"])
+
     def test_script_slash_fails_closed(self) -> None:
         self.write("public/index.html",
                    self.html("r8", "r5") + '<script src="/app.js?v=r9"/>')
