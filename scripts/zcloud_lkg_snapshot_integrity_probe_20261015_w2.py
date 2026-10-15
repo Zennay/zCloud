@@ -152,6 +152,36 @@ def _canonical_file(name: object) -> bool:
     )
 
 
+def _iter_snapshot_entries(root: Path):
+    """Enumerate every child or deny; never silently skip unreadable dirs.
+
+    pathlib.rglob may skip enumeration errors, which could hide unlisted files.
+    Walk open directory descriptors with nofollow and an explicit depth cap.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+    def visit(fd: int, prefix: tuple[str, ...], depth: int):
+        if depth > 64:
+            raise Denied("snapshot_tree_too_deep")
+        with os.scandir(fd) as entries:
+            for child in entries:
+                parts = prefix + (child.name,)
+                path = root.joinpath(*parts)
+                yield path
+                if child.is_dir(follow_symlinks=False):
+                    next_fd = os.open(child.name, flags, dir_fd=fd)
+                    try:
+                        yield from visit(next_fd, parts, depth + 1)
+                    finally:
+                        os.close(next_fd)
+
+    fd = os.open(root, flags)
+    try:
+        yield from visit(fd, (), 0)
+    finally:
+        os.close(fd)
+
+
 def _string_set(value: object, *, kind: str, allowed: set[str]) -> set[str]:
     """Deny ambiguous metadata, duplicates and unrecognized managed roots."""
     if (
@@ -231,7 +261,7 @@ def inspect(state: Path) -> dict:
     # must not exhaust CI/VPS memory by presenting millions of entries.
     entries = []
     try:
-        for entry in files.rglob("*"):
+        for entry in _iter_snapshot_entries(files):
             entries.append(entry)
             if len(entries) > MAX_FILES * 3:
                 raise Denied("too_many_paths")
