@@ -596,10 +596,10 @@ jobs:
         # Previously only "- {uses: docker://...}" was found. A whole
         # sequence in a YAML flow mapping can hide the same Docker image.
         samples = (
-            "steps: [{uses: docker://alpine:latest}]\\n",
-            "steps: [{ 'uses': 'docker://alpine:latest' }]\\n",
-            'steps: [{ "uses": "docker://alpine:latest" }]\\n',
-            f"steps: [{{uses: docker://alpine@sha256:{DIGEST}}}]\\n",
+            "steps: [{uses: docker://alpine:latest}]\n",
+            "steps: [{ 'uses': 'docker://alpine:latest' }]\n",
+            'steps: [{ "uses": "docker://alpine:latest" }]\n',
+            f"steps: [{{uses: docker://alpine@sha256:{DIGEST}}}]\n",
         )
         for source in samples:
             with self.subTest(source=source):
@@ -609,9 +609,9 @@ jobs:
 
     def test_flow_job_container_cannot_hide_tag(self):
         samples = (
-            "jobs: {build: {container: alpine:latest}}\\n",
-            'jobs: {build: {"container": "alpine:latest"}}\\n',
-            f"jobs: {{build: {{container: alpine@sha256:{DIGEST}}}}}\\n",
+            "jobs: {build: {container: alpine:latest}}\n",
+            'jobs: {build: {"container": "alpine:latest"}}\n',
+            f"jobs: {{build: {{container: alpine@sha256:{DIGEST}}}}}\n",
         )
         for source in samples:
             with self.subTest(source=source):
@@ -620,12 +620,12 @@ jobs:
                 self.assertEqual("ambiguous_flow_container", risks[0].kind)
         # The flow image key still gets separately classified.
         self.assertEqual("ambiguous_flow_image",
-                         self.scan("services: {redis: {image: redis:latest}}\\n")[0].kind)
+                         self.scan("services: {redis: {image: redis:latest}}\n")[0].kind)
 
     def test_run_block_flow_text_does_not_claim_execution_image(self):
-        shell = ("jobs:\\n  build:\\n    steps:\\n      - run: |\\n"
-                 "          echo 'steps: [{uses: docker://alpine:latest}]'\\n"
-                 "          echo 'jobs: {build: {container: alpine:latest}}'\\n")
+        shell = ("jobs:\n  build:\n    steps:\n      - run: |\n"
+                 "          echo 'steps: [{uses: docker://alpine:latest}]'\n"
+                 "          echo 'jobs: {build: {container: alpine:latest}}'\n")
         self.assertEqual([], self.scan(shell))
 
     def test_real_git_flow_sequence_docker_tag_is_rejected(self):
@@ -633,8 +633,8 @@ jobs:
             root = Path(tmp)
             base, workflow = self._init(root)
             workflow.write_text(
-                "jobs:\\n  build:\\n    runs-on: ubuntu-latest\\n"
-                "    steps: [{uses: docker://alpine:latest}]\\n", encoding="utf-8",
+                "jobs:\n  build:\n    runs-on: ubuntu-latest\n"
+                "    steps: [{uses: docker://alpine:latest}]\n", encoding="utf-8",
             )
             run_git(root, "add", ".")
             run_git(root, "commit", "-qm", "flow shorthand adds mutable docker action")
