@@ -651,5 +651,23 @@ jobs:
             self.assertFalse(result["mutation_performed"])
 
 
+    def test_encoded_yaml_flow_uses_key_is_not_trusted(self):
+        # Quoted YAML keys decode Unicode escapes before interpreting the
+        # step, so the literal text need not contain "uses".
+        for escaped in (r'"\u0075ses"', r'"\x75ses"', r'"\U00000075ses"'):
+            source = f'steps: [{{{escaped}: "docker://alpine:latest"}}]\n'
+            with self.subTest(escaped=escaped):
+                risks = self.scan(source)
+                self.assertEqual(1, len(risks))
+                self.assertEqual("ambiguous_encoded_flow_key", risks[0].kind)
+
+    def test_encoded_yaml_flow_container_key_is_not_trusted(self):
+        source = r'jobs: {build: {"\u0063ontainer": alpine:latest}}' + "\n"
+        risks = self.scan(source)
+        self.assertEqual(1, len(risks))
+        self.assertEqual("ambiguous_encoded_flow_key", risks[0].kind)
+
+
+
 if __name__ == "__main__":
     unittest.main()
