@@ -17,7 +17,7 @@ import unicodedata
 
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
-ACTION_MANIFEST = re.compile(r"(?:\.github/)?actions/(?:[A-Za-z0-9_.-]+/)*action\.ya?ml\Z")
+ACTION_MANIFEST = re.compile(r"(?:[A-Za-z0-9_.-]+/)*action\.ya?ml\Z")
 USES = re.compile(r"^(\s*)-?\s*uses\s*:\s*['\"]?actions/upload-artifact@[^\s'\"]+['\"]?\s*(?:#.*)?$", re.I)
 WITH = re.compile(r"^(\s*)with\s*:\s*(?:#.*)?$", re.I)
 KEY = re.compile(r"^(\s*)([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*?)\s*$")
@@ -95,8 +95,16 @@ def workflow_paths(base: str, head: str) -> list[str]:
         raise Denied("invalid_ancestry")
     paths = []
     for raw in git("diff", "--name-only", "-z", "--diff-filter=ACMRT", base, head,
-                   "--", ".github/workflows/", ".github/actions/", "actions/", cap=100000).split(b"\0"):
+                   "--", cap=100000).split(b"\0"):
         if not raw:
+            continue
+        # Local relative uses references can point to action.yml anywhere.
+        # Skip unrelated paths before ASCII decoding so Unicode filenames
+        # unrelated to workflow source are left intact.
+        is_manifest_name = (raw in (b"action.yml", b"action.yaml") or
+                            raw.endswith((b"/action.yml", b"/action.yaml")))
+        if not (is_manifest_name or raw.startswith((
+                b".github/workflows/", b".github/actions/", b"actions/"))):
             continue
         try:
             name = raw.decode("ascii", "strict")
@@ -104,18 +112,19 @@ def workflow_paths(base: str, head: str) -> list[str]:
             raise Denied("ambiguous_workflow_path") from e
         if len(name) > 512:
             raise Denied("source_path_too_long")
-        if name.startswith((".github/actions/", "actions/")):
-            # Composite action manifests can declare additional upload-artifact
-            # steps; unrelated local scripts are not YAML action entrypoints.
-            if not ACTION_MANIFEST.fullmatch(name):
-                # A newly linked Action script/directory must not become an
-                # opaque path that this manifest-only scanner silently skips.
-                entry = git("ls-tree", "-z", head, "--", name, cap=1500)
-                if not entry.startswith((b"100644 blob ", b"100755 blob ")) or not entry.endswith(name.encode() + b"\0"):
-                    raise Denied("opaque_local_action_entry")
-                continue
-        elif not WORKFLOW.fullmatch(name):
-            raise Denied("ambiguous_workflow_path")
+        if name.startswith(".github/workflows/"):
+            if not WORKFLOW.fullmatch(name):
+                raise Denied("ambiguous_workflow_path")
+        elif ACTION_MANIFEST.fullmatch(name):
+            pass
+        elif name.startswith((".github/actions/", "actions/")):
+            # Deny opaque source entries, but do not parse normal scripts.
+            entry = git("ls-tree", "-z", head, "--", name, cap=1500)
+            if not entry.startswith((b"100644 blob ", b"100755 blob ")) or not entry.endswith(name.encode() + b"\0"):
+                raise Denied("opaque_local_action_entry")
+            continue
+        else:
+            raise Denied("ambiguous_action_manifest_path")
         paths.append(name)
     if len(paths) > 200 or len(paths) != len(set(paths)):
         raise Denied("workflow_inventory_unbounded")
