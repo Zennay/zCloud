@@ -213,6 +213,13 @@ def check_content(content: bytes) -> None:
     cmd_joined = re.sub(r"\^(?=[A-Za-z_-])", "", joined)
     if ENV.search(cmd_joined) or COMMANDS.search(cmd_joined):
         raise Denied("CMD caret-escaped legacy unsafe command syntax")
+    # PowerShell uses a backtick to escape literal characters and line breaks.
+    # Only known static token escapes are normalized; expression evaluation
+    # remains outside this conservative source-only boundary.
+    ps_joined = re.sub(r"`\r?\n[ \t]*", "", joined)
+    ps_joined = re.sub(r"`(?=[A-Za-z_-])", "", ps_joined)
+    if ENV.search(ps_joined) or COMMANDS.search(ps_joined):
+        raise Denied("PowerShell backtick-escaped legacy unsafe command syntax")
 
 
 def scan(base: str, head: str) -> tuple[int, int]:
