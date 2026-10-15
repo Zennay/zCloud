@@ -22,7 +22,9 @@ HEX = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOW = re.compile(r"^\.github/workflows/[^/\x00]+\.(?:yml|yaml)$")
 COMPOSITE = re.compile(r"^\.github/actions/(?:[^/\x00]+/)+action\.(?:yml|yaml)$")
 GIT_PUSH = re.compile(r"(?i)(?<![\w-])git\s+(?:(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?|--git-dir\s+\S+)\s+)*(?:push\b|['\"]push['\"](?=\s|$|[;|&]))")
-REFS_API = re.compile(r"(?i)(?:git/refs/heads/|git/refs/heads\x2f|git/refs/heads\\u002f)")
+# Reference creation uses the /git/refs collection; tags and notes also
+# update Git refs, not just the older /git/refs/heads/... endpoint.
+REFS_API = re.compile(r"(?i)\bgit/refs(?:[/#?]|%2f|\\u002f|\b)")
 GH_REF_WRITE = re.compile(r"(?i)\bgh\s+api\b.{0,200}(?:\b(?:PATCH|POST|DELETE|PUT)\b|(?:-X|--method)\s+)")
 OCTOKIT_REF_WRITE = re.compile(
     r"(?i)\b(?:github|octokit)\.(?:rest\.)?git\.(?:updateRef|createRef|deleteRef)\s*\("
