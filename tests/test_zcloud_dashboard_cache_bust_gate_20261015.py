@@ -78,6 +78,20 @@ class GitAssetCases(unittest.TestCase):
         self.assertTrue(decision["ok"])
         self.assertFalse(decision["release_authorized"])
 
+    def test_direct_push_unrelated_history_fails_continuity(self) -> None:
+        # A direct force-push is not a legitimate incremental cache-check
+        # baseline: its old-main SHA is not an ancestor of new main.
+        old_main = self.base
+        run("checkout", "--orphan", "unrelated-root")
+        self.write("public/app.js", "console.log('independent');")
+        new_main = self.commit()
+        attempt = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", old_main, new_main],
+            check=False, capture_output=True, timeout=10,
+        )
+        self.assertNotEqual(attempt.returncode, 0)
+        self.assertFalse(gate.evaluate(old_main, new_main)["ok"])
+
     def test_changed_js_without_bump_denied(self) -> None:
         self.write("public/app.js", "console.log(2);")
         self.head = self.commit()
