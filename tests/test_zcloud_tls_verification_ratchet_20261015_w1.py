@@ -53,6 +53,34 @@ class SourcePatterns(unittest.TestCase):
         self.assertEqual(self.count("run: python -c 'requests.get(url, verify=False)'",
                                     "python_requests_bypass"), 1)
 
+    def test_indexed_git_ssl_verify_env_bypass(self):
+        text = ("env:\n  GIT_CONFIG_COUNT: '1'\n"
+                "  GIT_CONFIG_KEY_0: http.sslVerify\n"
+                "  GIT_CONFIG_VALUE_0: 'false'\n")
+        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 1)
+
+    def test_indexed_origin_git_ssl_verify_env_bypass(self):
+        text = ("env:\n  GIT_CONFIG_KEY_7: http.https://github.com/.sslVerify\n"
+                "  GIT_CONFIG_VALUE_7: '0'\n")
+        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 1)
+
+    def test_indexed_git_config_unrelated_false_does_not_trigger(self):
+        text = ("env:\n  GIT_CONFIG_KEY_0: core.filemode\n"
+                "  GIT_CONFIG_VALUE_0: 'false'\n")
+        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 0)
+
+    def test_indexed_git_config_cannot_cross_indices(self):
+        text = ("env:\n  GIT_CONFIG_KEY_0: http.sslVerify\n"
+                "  GIT_CONFIG_VALUE_1: false\n")
+        self.assertEqual(self.count(text, "git_ssl_verify_environment"), 0)
+
+    def test_conflicting_indexed_git_config_fails_closed(self):
+        text = ("env:\n  GIT_CONFIG_KEY_0: http.sslVerify\n"
+                "  GIT_CONFIG_KEY_0: core.filemode\n"
+                "  GIT_CONFIG_VALUE_0: false\n")
+        with self.assertRaises(gate.Unverifiable):
+            gate.insecure_occurrences(text)
+
     def test_persistent_git_ssl_disable(self):
         self.assertEqual(self.count("run: git config --global http.sslVerify false",
                                     "git_ssl_verify_disabled"), 1)
@@ -162,6 +190,16 @@ class RealGitHistory(unittest.TestCase):
         self.wf.write_text("run: curl -k https://different.example.org\n", encoding="utf-8")
         self.commit()
         self.assertTrue(any("curl_insecure:new=1" in problem for problem in self.scan()[1]))
+
+    def test_new_indexed_git_env_tls_bypass_denied(self):
+        self.wf.write_text(
+            "name: unsafe\n"
+            "env:\n  GIT_CONFIG_KEY_0: http.sslVerify\n"
+            "  GIT_CONFIG_VALUE_0: false\n",
+            encoding="utf-8")
+        self.commit()
+        self.assertTrue(any("git_ssl_verify_environment" in finding
+                            for finding in self.scan()[1]))
 
     def test_new_persistent_git_config_disabled_denied(self):
         self.wf.write_text(
