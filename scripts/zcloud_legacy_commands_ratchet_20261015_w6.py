@@ -20,7 +20,7 @@ from pathlib import PurePosixPath
 SHA = re.compile(r"^[0-9a-f]{40}$")
 COMMANDS = re.compile(r"::\s*(?:set-env|add-path|set-output|save-state)\b", re.I)
 ENV = re.compile(r"actions_allow_unsecure_commands", re.I)
-ESCAPED_SCALAR = re.compile(r"\\\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8}))")
+ESCAPED_SCALAR = re.compile(r"\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8}))")
 MAX_CHANGED = 250
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 1024 * 1024
