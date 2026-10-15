@@ -37,3 +37,9 @@ The original `format_version=1` recovery manifest contains `managed_paths`, `per
 - Pointer and manifest are re-read after verifying snapshot bytes to catch ordinary metadata drift during the scan. This is **not** a race-proof filesystem transaction: a privileged concurrent writer could still mutate contents between checks. Genuine release authority remains elsewhere.
 
 A missing or contradictory field produces a fixed denial code. These stricter metadata semantics may reject unusual historical snapshots; they do not automatically rewrite, delete, migrate or repair old snapshots. Operators should investigate and use the separately approved recovery process; do not override this guard based on a passing hosted CI check alone.
+
+## Nofollow directory access and FIFO race
+
+A file-hash read using ordinary `Path.open()` can follow an intermediate directory symlink if another process swaps that directory between inventory and file read. The probe now opens each snapshot path component relative to an already-open parent directory using `dir_fd`, `O_DIRECTORY` and `O_NOFOLLOW`; file reads also enforce `O_NOFOLLOW` and `O_NONBLOCK`. This rejects a forged intermediate symlink and prevents a FIFO substitution from hanging an otherwise bounded JSON read. An adversarial test performs an actual parent-directory swap immediately before the file-reader call; a separate test replaces the pointer with a FIFO after the initial stat. Both must fail closed.
+
+This safety measure addresses following the wrong path during a scan. It does **not** provide cryptographic authenticity, an exclusive filesystem lock, or a complete atomic snapshot view. Concurrent privileged changes and mount-level attacks remain outside this offline probe's guarantee.
