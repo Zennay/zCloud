@@ -100,8 +100,18 @@ def collect(read, *, max_pages=10):
             changed = detail.get("changed_files")
             if type(changed) is not int or not 1 <= changed <= MAX_FILES:
                 raise InvalidInventory("incomplete_or_oversized_pr_files")
-            batch_files = read(f"/pulls/{number}/files?per_page=100&page=1")
-            if type(batch_files) is not list or len(batch_files) != changed:
+            # The GitHub files API is independently paginated at 100 entries.
+            # Never trust page one as a complete PR, even when its 100 entries
+            # look valid. Reject empty, overflowing or non-list pages.
+            batch_files = []
+            for file_page in range(1, (changed + 99) // 100 + 1):
+                fragment = read(f"/pulls/{number}/files?per_page=100&page={file_page}")
+                remaining = changed - len(batch_files)
+                expected_size = min(100, remaining)
+                if type(fragment) is not list or len(fragment) != expected_size:
+                    raise InvalidInventory("incomplete_pr_files_page")
+                batch_files.extend(fragment)
+            if len(batch_files) != changed:
                 raise InvalidInventory("incomplete_pr_files_page")
             def ident(ref):
                 return ref.get("sha") if type(ref) is dict else None
