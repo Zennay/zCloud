@@ -26,7 +26,7 @@ RUN_ESCAPED_KEY = re.compile(
     re.I,
 )
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
-YAML_QUOTED_ESCAPE = re.compile(r"\\\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
+YAML_QUOTED_ESCAPE = re.compile(r"\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
 UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.action_ref\b|inputs\b)", re.I)
 ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*github\s*\)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
