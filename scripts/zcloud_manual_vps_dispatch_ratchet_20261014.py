@@ -16,6 +16,8 @@ from pathlib import Path
 
 ROOT = ".github/workflows/"
 MAX_BYTES = 131072
+MAX_WORKFLOWS = 4096
+MAX_TOTAL_BYTES = 32 * 1024 * 1024
 HEX_SHA = re.compile(r"^[0-9a-f]{40}$")
 FILENAME = re.compile(r"^[A-Za-z0-9._-]+\.ya?ml$")
 # A runner with a "ubuntu-N" looking label is not necessarily GitHub-hosted.
@@ -58,6 +60,7 @@ def manifest(root: Path, commit: str) -> dict[str, bytes]:
         raise RefError("not_exact_commit")
     raw = git(root, "ls-tree", "-rz", commit, "--", ROOT)
     out: dict[str, bytes] = {}
+    accumulated_bytes = 0
     for entry in raw.split(b"\0"):
         if not entry:
             continue
@@ -79,9 +82,14 @@ def manifest(root: Path, commit: str) -> dict[str, bytes]:
             continue
         if mode != "100644" or typ != "blob":
             raise RefError("non_regular_workflow")
+        if len(out) >= MAX_WORKFLOWS:
+            raise RefError("workflow_count_limit")
         body = git(root, "cat-file", "blob", oid)
         if len(body) > MAX_BYTES:
             raise RefError("oversized_workflow")
+        accumulated_bytes += len(body)
+        if accumulated_bytes > MAX_TOTAL_BYTES:
+            raise RefError("aggregate_workflow_bytes_limit")
         try:
             out[path] = body.decode("utf-8").encode("utf-8")
         except UnicodeError as exc:
