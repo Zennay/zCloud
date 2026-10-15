@@ -18,6 +18,7 @@ ROOT = ".github/workflows/"
 MAX_BYTES = 131072
 MAX_WORKFLOWS = 4096
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
+MAX_GIT_STDOUT_BYTES = 8 * 1024 * 1024
 HEX_SHA = re.compile(r"^[0-9a-f]{40}$")
 FILENAME = re.compile(r"^[A-Za-z0-9._-]+\.ya?ml$")
 # A runner with a "ubuntu-N" looking label is not necessarily GitHub-hosted.
@@ -43,14 +44,27 @@ class RefError(Exception):
     pass
 
 def git(root: Path, *args: str) -> bytes:
+    """Read bounded Git output; hostile PR trees must not exhaust CI memory."""
+    process: subprocess.Popen[bytes] | None = None
     try:
-        return subprocess.run(
+        process = subprocess.Popen(
             ["git", "-C", str(root), *args],
-            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            timeout=20,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+        assert process.stdout is not None
+        output = process.stdout.read(MAX_GIT_STDOUT_BYTES + 1)
+        if len(output) > MAX_GIT_STDOUT_BYTES:
+            raise RefError("git_output_size_limit")
+        if process.wait(timeout=20) != 0:
+            raise RefError("unreadable_git_object")
+        return output
+    except (OSError, subprocess.TimeoutExpired) as exc:
         raise RefError("unreadable_git_object") from exc
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                process.kill()
+            process.wait()
 
 def manifest(root: Path, commit: str) -> dict[str, bytes]:
     if not HEX_SHA.fullmatch(commit):
