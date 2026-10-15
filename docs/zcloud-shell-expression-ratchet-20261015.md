@@ -128,6 +128,24 @@ downstream consumers must quote variables and validate their semantics.
 No change here authorizes a production deployment or remediates the
 self-hosted runner.
 
+## Configuration variables and secrets in direct shell expressions
+
+The ratchet also rejects **new** direct `vars.*` and `secrets.*`
+expressions in `run:` script text. GitHub configuration variables and
+secrets are generally managed by privileged operators, but their **values**
+may still contain quotes, substitution syntax or shell metacharacters; an
+inline expression can therefore change the structure of the script, as
+opposed to being passed as data. Directly serializing either entire context
+(`toJSON(vars)` / `toJSON(secrets)`) is also classified as suspicious.
+The same rule covers bracketed fields and ambiguous computed selectors.
+
+Place such values in a step-level `env:` mapping and reference only
+properly quoted shell variables; mask and limit secret exposure, validate
+derived values, and never print secret contents as diagnostics. That is
+an encoding boundary, **not** automatic authorization for deployments or
+arbitrary execution. Existing legacy expressions are reported without being
+treated as newly introduced debt unless their shell/body context changes.
+
 ## Local composite Action shell coverage
 
 The guard now also scans committed `action.yml` and `action.yaml` files **at
