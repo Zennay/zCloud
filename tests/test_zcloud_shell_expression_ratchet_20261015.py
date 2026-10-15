@@ -788,6 +788,47 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - env:\n      TOKEN: ${{ secrets.RELEASE_TOKEN }}\n    run: test -n \"$TOKEN\"\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_nested_needs_job_json_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(needs.compile) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_nested_steps_job_json_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(steps.download) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_nested_needs_bracket_json_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(needs['build-test']) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_nested_steps_bracket_json_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(steps['get-data']) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_nested_wildcard_job_json_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(needs.*) }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_nested_job_status_json_remains_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(needs.compile.result) }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_nested_step_status_json_remains_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ toJSON(steps.check.outcome) }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_nested_job_json_legacy_moved_shell_is_new_debt(self):
+        unsafe = "steps:\n  - run: echo ${{ toJSON(needs.build) }}\n"
+        base = self.commit(unsafe)
+        head = self.commit(unsafe.replace("echo", "eval"))
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
