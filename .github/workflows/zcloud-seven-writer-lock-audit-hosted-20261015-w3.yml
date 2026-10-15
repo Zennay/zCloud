@@ -44,11 +44,44 @@ jobs:
           assert not report["dispatch_authorized"]
           assert not report["release_authorized"]
           assert not report["mutation_performed"]
+          # Names and labels below are fixed trusted display strings; never
+          # render arbitrary workflow source or API response text as Markdown.
+          labels = {
+              "zcloud-vps-deploy.yml": "Hoofddeployment",
+              "zcloud-postsend-tab-preservation-live.yml": "Tabbehoud",
+              "zcloud-safe-memory-reclaim-20261013.yml": "Veilig geheugenherstel",
+              "zcloud-v2-activate-addon-in-place.yml": "Addon-activatie",
+              "zcloud-worker-tab-guard.yml": "Worker-tab beveiliging",
+              "zcloud-no-browser-churn-hotfix.yml": "Browserbehoud-hotfix",
+              "zcloud-emergency-addon-hot-reload.yml": "Nood-herladen addon",
+          }
+          assert set(report["writers"]) == set(labels)
+          assert report["source_serialized"] + len(report["source_unverified"]) == 7
+          expected_results = {
+              "serialized_source", "missing_concurrency", "ambiguous_concurrency",
+              "wrong_group", "unsafe_cancel_policy", "unsafe_parent_cancel_policy",
+              "ambiguous_parent_concurrency", "unexpected_nested_concurrency",
+              "unexpected_mutation_runner_target", "unexpected_companion_runner_target",
+              "missing_or_duplicate_runner_target", "missing_or_duplicate_mutation_job",
+              "ambiguous_jobs", "source_changed_during_read", "unreadable_source",
+              "symlink_source", "not_bounded_regular_source", "invalid_source_bytes",
+              "invalid_utf8", "tab_indentation_or_scalar", "unsupported_yaml_mapping_form",
+              "invalid_source_root", "duplicate_lock_field",
+          }
+          rows = []
+          for filename, label in labels.items():
+              item = report["writers"][filename]
+              reason = item["source_result"]
+              assert reason in expected_results
+              status = "Broncode vergrendeld" if reason == "serialized_source" else "Nog niet bewezen"
+              rows.append(f"| {label} | {status} | \`{reason}\` |")
           msg = (
-              "### Read-only production writer source inventory\n"
-              f"- Serialized in source: {report['source_serialized']}/7\n"
-              f"- Still unverified in source: {', '.join(report['source_unverified']) or 'none'}\n"
-              "- **This is not live runner, lock, release or deployment proof.**\n"
+              "### VPS-schrijftaken: broncodecontrole (niet productie)\n"
+              f"- Vergrendeld volgens broncode: **{report['source_serialized']} van 7**\n"
+              f"- Nog te beoordelen: **{len(report['source_unverified'])} van 7**\n"
+              "\n| Taak | Broncode | Reden |\n| --- | --- | --- |\n"
+              + "\n".join(rows)
+              + "\n\n**Dit verleent geen toestemming voor deploy, runnerherstel of mutaties.**\n"
           )
           print(msg)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
