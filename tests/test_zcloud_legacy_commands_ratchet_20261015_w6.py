@@ -138,6 +138,30 @@ class RealGitRatchetTests(unittest.TestCase):
                 with self.assertRaisesRegex(gate.Denied, "legacy unsafe"):
                     gate.scan(self.base, self.commit())
 
+    def test_package_json_action_lifecycle_script_is_checked(self):
+        self.write(".github/actions/tool/package.json",
+                   '{"scripts":{"prepare":"echo ::set-output name=X::Y"}}\n')
+        with self.assertRaisesRegex(gate.Denied, "legacy unsafe"):
+            gate.scan(self.base, self.commit())
+
+    def test_safe_package_json_action_lifecycle_script_passes(self):
+        self.write(".github/actions/tool/package.json",
+                   '{"scripts":{"prepare":"echo safe"}}\n')
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_cmd_caret_escaped_commands_are_denied(self):
+        for value in ("::set-^output", "::set^-env", "::save-^state",
+                      "ACTIONS_ALLOW_UNSECURE_^COMMANDS"):
+            with self.subTest(value=value):
+                self.git("reset", "--hard", self.base)
+                self.write(".github/actions/tool/activate.cmd", "echo " + value + "\n")
+                with self.assertRaisesRegex(gate.Denied, "CMD caret-escaped"):
+                    gate.scan(self.base, self.commit())
+
+    def test_safe_cmd_caret_escaping_is_allowed(self):
+        self.write(".github/actions/tool/activate.cmd", "echo a^safe-value\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
     def test_non_executable_unrecognized_extensionless_action_file_is_not_executable_source(self):
         self.write(".github/actions/tool/reference-data", "safe example text\n")
         self.assertEqual(gate.scan(self.base, self.commit()), (1, 0))
