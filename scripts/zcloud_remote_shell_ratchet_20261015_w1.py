@@ -15,8 +15,9 @@ from pathlib import Path
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SCALAR = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>run|shell)\s*:\s*(?P<value>.*)$")
-REMOTE = re.compile(r"\b(?:curl|wget)\b[^\n|;]*(?:\|\s*(?:(?:sudo|env)\s+)?(?:bash|sh|zsh)\b)", re.I)
-SUBSTITUTION = re.compile(r"\b(?:bash|sh|zsh)\s+<\(\s*(?:curl|wget)\b", re.I)
+SHELL_EXEC = r"(?:(?:sudo\s+(?:-[A-Za-z]+\s+)*|/usr/bin/env\s+))?(?:/usr/bin/|/bin/)?(?:bash|sh|zsh)\b"
+REMOTE = re.compile(r"\b(?:curl|wget)\b[^\n|;]*\|\s*" + SHELL_EXEC, re.I)
+SUBSTITUTION = re.compile(SHELL_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES = 512, 1024 * 1024, 32 * 1024 * 1024
 
 
