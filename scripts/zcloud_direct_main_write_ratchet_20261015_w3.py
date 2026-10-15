@@ -59,6 +59,13 @@ OCTOKIT_PR_MERGE = re.compile(
     r"(?i)\b(?:github|octokit)\.(?:rest\.)?"
     r"(?:pulls\.merge|repos\.merge)\s*\("
 )
+
+# A workflow can call Node/Python child-process APIs with separate argv
+# tokens, avoiding the literal "git push" substring in reviewed source.
+ARGV_GIT_WRITE = re.compile(
+    r"(?i)['\"]git['\"]\s*,\s*(?:\[\s*)?"
+    r"['\"](?:push|send-pack)['\"]"
+)
 REST_MERGE_PATH = re.compile(
     r"(?i)\brepos/[^/\s'\"<>]+/[^/\s'\"<>]+/"
     r"(?:merges\b|pulls/[^/\s'\"<>]+/merge\b)"
@@ -237,6 +244,8 @@ def suspicious_lines(source: str) -> list[str]:
             findings.append("octokit_repository_governance_write")
         if GH_PR_MERGE.search(line) or OCTOKIT_PR_MERGE.search(line):
             findings.append("indirect_pr_merge_write")
+        if ARGV_GIT_WRITE.search(line):
+            findings.append("separate_argv_git_writer")
         if REST_MERGE_PATH.search(line) and (
             re.search(r"(?i)\b(?:gh\s+api|curl|wget)\b", line)
             or "api.github.com" in line.lower()
