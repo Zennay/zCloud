@@ -47,6 +47,40 @@ jobs:
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           git cat-file -e "${BASE_SHA}^{commit}"
           git cat-file -e "${HEAD_SHA}^{commit}"
+
+          # Keep the security policy, tests and workflow in the candidate.
+          # Deletion or replacement by symlinks/submodules must not quietly
+          # disable enforcement on subsequent pull requests.
+          for protected in \
+            ".github/workflows/zcloud-manual-vps-dispatch-ratchet-20261014.yml" \
+            "scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py" \
+            "tests/test_zcloud_manual_vps_dispatch_ratchet_20261014.py"; do
+            object="$(git ls-tree "$HEAD_SHA" -- "$protected")"
+            [[ "$object" == "100644 blob "*"$(cd "$RUNNER_TEMP" && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          test "$current_main" = "$BASE_SHA"
+          # Run the immutable policy before any PR-supplied unit tests.
+          # Bootstrap PR: the source-only scanner does not yet exist on main,
+          # so the candidate's self-test is NOT independently trusted.
+          # Once merged, run the scanner from immutable BASE_SHA, never the
+          # untrusted PR checkout, including when PRs edit their own scanner.
+          policy_path="scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py"
+          if git cat-file -e "${BASE_SHA}:${policy_path}" 2>/dev/null; then
+            git show "${BASE_SHA}:${policy_path}" > "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py"
+            echo "POLICY_PROVENANCE=trusted_base_sha"
+            echo "Policy source: immutable PR base commit (trusted-base mode)." >> "$GITHUB_STEP_SUMMARY"
+            python3 "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py" \
+              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          else
+            echo "POLICY_PROVENANCE=untrusted_bootstrap_review_required"
+            echo "::warning::First-install policy is from PR source; this passing job is not an independent security admission."
+            echo "BOOTSTRAP ONLY: policy not yet on trusted main. Independent review is mandatory before merge." >> "$GITHUB_STEP_SUMMARY"
+            python3 "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          fi
+          python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
+          current_main="$(cd "$RUNNER_TEMP" && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          test "$current_main" = "$BASE_SHA"
+\t'"$protected" ]]
+          done
           current_main="$(cd "$RUNNER_TEMP" && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
           test "$current_main" = "$BASE_SHA"
           # Run the immutable policy before any PR-supplied unit tests.
