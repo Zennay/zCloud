@@ -69,15 +69,21 @@ class Refs(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.refs: dict[str, list[str]] = {name: [] for name in ASSETS}
-        self.inert_depth = 0
+        # HTMLParser does not enforce balanced markup. An unmatched </noscript>
+        # must never pop an open <template> and count inert asset refs as live.
+        self.inert_tags: list[str] = []
 
     def handle_endtag(self, tag: str) -> None:
         if tag in ("template", "noscript"):
-            self.inert_depth = max(0, self.inert_depth - 1)
+            if not self.inert_tags or self.inert_tags[-1] != tag:
+                raise ValueError("unbalanced_inert_markup")
+            self.inert_tags.pop()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in ("template", "noscript"):
-            self.inert_depth += 1
+            if any(k.lower() != k for k, _ in attrs):
+                raise ValueError("invalid_inert_markup")
+            self.inert_tags.append(tag)
             return
         attr_names = [key.lower() for key, _ in attrs]
         if len(attr_names) != len(set(attr_names)):
@@ -108,7 +114,7 @@ class Refs(HTMLParser):
             return
         if parsed.path != resolved_path:
             raise ValueError("noncanonical_asset_path")
-        if self.inert_depth:
+        if self.inert_tags:
             raise ValueError("inert_asset_ref")
         if tag == "script" and (values.get("type") or "").lower() not in ("", "module", "application/javascript", "text/javascript"):
             raise ValueError("inactive_script_asset_ref")
@@ -129,6 +135,8 @@ def pins(html: bytes) -> dict[str, str]:
     parser = Refs()
     parser.feed(html.decode("utf-8"))
     parser.close()
+    if parser.inert_tags:
+        raise ValueError("unclosed_inert_markup")
     if any(len(parser.refs[name]) != 1 for name in ASSETS):
         raise ValueError("missing_or_duplicate_asset_ref")
     return {name: parser.refs[name][0] for name in ASSETS}
