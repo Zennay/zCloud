@@ -18,6 +18,7 @@ RUNS = ("/repos/Zennay/zCloud/actions/workflows/zcloud-vps-deploy.yml/runs"
         "?branch=main&per_page=100&page=1")
 JOBS = "/repos/Zennay/zCloud/actions/runs/92/jobs?per_page=100&page=1"
 RUN_DETAIL = "/repos/Zennay/zCloud/actions/runs/92"
+RUNS_PREFIX = RUNS.rsplit("=", 1)[0] + "="
 
 
 def ref(sha=SHA):
@@ -338,6 +339,76 @@ class ReleaseEvidenceTests(unittest.TestCase):
         api.pages[RUNS] = [{"workflow_runs": [run(state="queued", conclusion="success")]}]
         with self.assertRaisesRegex(cockpit.EvidenceError, "nonterminal_deploy_has_conclusion"):
             cockpit.collect(api)
+
+    def test_deploy_page_two_can_find_same_sha_when_first_page_full(self):
+        api = FakeAPI()
+        older = [dict(run(sha=ALT_SHA), id=i + 1000) for i in range(100)]
+        api.pages[RUNS] = [{"workflow_runs": older}]
+        api.pages[RUNS_PREFIX + "2"] = [{"workflow_runs": [run()]}]
+        api.pages[RUN_DETAIL] = [run()]
+        data = cockpit.collect(api)
+        self.assertEqual(data["deploy"]["run_id"], 92)
+        self.assertEqual(data["deploy"]["run_pages_scanned"], 2)
+        self.assertEqual(data["deploy"]["runs_scanned"], 101)
+        self.assertFalse(data["deployment_authorized"])
+
+    def test_deploy_duplicate_run_id_across_pages_denied(self):
+        api = FakeAPI()
+        older = [dict(run(sha=ALT_SHA), id=i + 1000) for i in range(100)]
+        api.pages[RUNS] = [{"workflow_runs": older}]
+        api.pages[RUNS_PREFIX + "2"] = [
+            {"workflow_runs": [dict(run(sha=ALT_SHA), id=1005)]}
+        ]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_paginated_deploy_run"):
+            cockpit.collect(api)
+
+    def test_deploy_fifth_full_page_fails_closed(self):
+        api = FakeAPI()
+        for page in range(1, 6):
+            batch = [dict(run(sha=ALT_SHA), id=page * 1000 + i)
+                     for i in range(100)]
+            api.pages[RUNS_PREFIX + str(page)] = [{"workflow_runs": batch}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_pagination_cap"):
+            cockpit.collect(api)
+
+    def test_deploy_page_two_missing_or_malformed_denies(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [
+            {"workflow_runs": [dict(run(sha=ALT_SHA), id=1000 + i) for i in range(100)]}
+        ]
+        api.pages[RUNS_PREFIX + "2"] = [{"workflow_runs": None}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "invalid_workflow_runs"):
+            cockpit.collect(api)
+
+    def test_deploy_page_two_timeout_denies(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [
+            {"workflow_runs": [dict(run(sha=ALT_SHA), id=1000 + i) for i in range(100)]}
+        ]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "missing_fixture"):
+            cockpit.collect(api)
+
+    def test_deploy_page_drift_after_job_read_denies(self):
+        api = FakeAPI()
+        shifted = dict(run(sha=ALT_SHA), id=102)
+        api.pages[RUNS] = [{"workflow_runs": [run()]},
+                           {"workflow_runs": [shifted]}]
+        api.pages[RUN_DETAIL] = [run()]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_page_drift"):
+            cockpit.collect(api)
+
+    def test_missing_run_second_read_drift_denies(self):
+        api = FakeAPI()
+        api.pages[RUNS] = [{"workflow_runs": []},
+                           {"workflow_runs": [run()]}]
+        with self.assertRaisesRegex(cockpit.EvidenceError, "deploy_run_page_drift"):
+            cockpit.collect(api)
+
+    def test_deploy_one_page_snapshot_stays_bounded(self):
+        data = cockpit.collect(FakeAPI())
+        self.assertEqual(data["deploy"]["runs_scanned"], 1)
+        self.assertEqual(data["deploy"]["run_pages_scanned"], 1)
+        self.assertFalse(data["release_authorized"])
 
     def test_missing_main_ref_is_denied(self):
         api = FakeAPI()
