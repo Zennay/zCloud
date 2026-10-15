@@ -190,6 +190,16 @@ class ManualDispatchPolicy(unittest.TestCase):
         )
         self.assertTrue(guard.evaluate({}, {WF: admitted})["ok"])
 
+    def test_yaml_multiline_event_scalars_fail_closed_instead_of_skipping(self):
+        for scalar in (">-", "|", "|-", "!custom"):
+            with self.subTest(scalar=scalar):
+                body = workflow().replace(
+                    b"on:\n  workflow_dispatch:",
+                    ("on: " + scalar + "\n  workflow_dispatch").encode(),
+                )
+                with self.assertRaises(guard.RefError):
+                    guard.risky_manual_jobs(WF, body)
+
     def test_valid_yaml_block_sequence_and_quoted_events_fail_closed(self):
         for event in (
             '  - workflow_dispatch',
