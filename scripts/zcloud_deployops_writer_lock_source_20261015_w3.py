@@ -187,7 +187,14 @@ def _parent_cancel_status(lines: list[str]) -> str:
         # Inline YAML comments can change a plain scalar's actual group;
         # this narrow source reader cannot prove comment semantics.
         return "ambiguous_parent_group"
-    group = group.strip().casefold()
+    group = group.strip()
+    # Quoted plain YAML scalars have different source text from their runtime
+    # values. Folded/literal scalars, anchors, aliases, tags and flow values
+    # can similarly hide an identical production group from this line parser.
+    # Refuse forms that require YAML interpretation rather than guessing.
+    if group.startswith(("'", '"', "|", ">", "*", "&", "!", "{", "[")):
+        return "ambiguous_parent_group"
+    group = group.casefold()
     canonical = PRODUCTION_GROUP.casefold()
     # GitHub concurrency group names are case-insensitive, unlike ordinary
     # YAML scalars. Strip YAML's insignificant trailing whitespace as well.
