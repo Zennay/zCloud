@@ -27,6 +27,7 @@ WITH = re.compile(r"^(\s*)with\s*:\s*(?:#.*)?$")
 CREDENTIAL = re.compile(r"^(\s*)persist-credentials\s*:\s*(\S+)(?:\s*#.*)?$")
 NEW_STEP = re.compile(r"^(\s*)-\s+")
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+ESCAPED_YAML = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8})")
 
 
 class Denied(Exception):
@@ -121,6 +122,15 @@ def checkout_risks(source: str) -> list[str]:
     """Reject unsafe checkout and ambiguous syntax without publishing source."""
     lines = source.splitlines()
     active = [line for line in lines if not line.lstrip().startswith("#")]
+    # YAML quoted scalars can decode \u0040 to @ *after* our regex scan.
+    # A changed uses/action key using YAML escapes requires independent review,
+    # including a partially encoded "checkout" or encoded mapping key.
+    for line in active:
+        if ESCAPED_YAML.search(line) and (
+            re.search(r"(?i)\b(?:uses|actions|checkout)\b", line)
+            or re.match(r"^\s*(?:-\s*)?['\"]", line)
+        ):
+            return ["opaque_escaped_yaml"]
     uses = []
     for index, line in enumerate(active):
         if ANY_CHECKOUT.search(line):
