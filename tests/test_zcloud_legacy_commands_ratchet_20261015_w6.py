@@ -111,6 +111,37 @@ class RealGitRatchetTests(unittest.TestCase):
         with self.assertRaises(gate.Denied):
             gate.scan(self.base, self.commit())
 
+    def test_extensionless_executable_action_source_is_denied(self):
+        self.write(".github/actions/tool/bin/launch", "echo '::set-output name=K::V'\n")
+        Path(".github/actions/tool/bin/launch").chmod(0o755)
+        with self.assertRaisesRegex(gate.Denied, "legacy unsafe"):
+            gate.scan(self.base, self.commit())
+
+    def test_extensionless_safe_executable_is_checked(self):
+        self.write(".github/actions/tool/bin/launch", "echo safe\n")
+        Path(".github/actions/tool/bin/launch").chmod(0o755)
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_named_extensionless_entrypoint_is_scanned_without_exec_bit(self):
+        self.write(".github/actions/tool/entrypoint", "echo '::save-state name=K::V'\n")
+        with self.assertRaisesRegex(gate.Denied, "legacy unsafe"):
+            gate.scan(self.base, self.commit())
+
+    def test_makefile_and_windows_action_scripts_are_scanned(self):
+        for path in (".github/actions/tool/Makefile", ".github/actions/tool/GNUmakefile",
+                     ".github/actions/tool/setup.cmd", ".github/actions/tool/setup.bat",
+                     ".github/actions/tool/setup.zsh", ".github/actions/tool/setup.rb",
+                     ".github/actions/tool/setup.pl"):
+            with self.subTest(path=path):
+                self.git("reset", "--hard", self.base)
+                self.write(path, "echo '::set-env name=X::Y'\n")
+                with self.assertRaisesRegex(gate.Denied, "legacy unsafe"):
+                    gate.scan(self.base, self.commit())
+
+    def test_non_executable_unrecognized_extensionless_action_file_is_not_executable_source(self):
+        self.write(".github/actions/tool/reference-data", "safe example text\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 0))
+
     def test_changed_local_action_implementation_sources_are_scanned(self):
         unsafe = {
             ".github/actions/tool/run.sh": "echo '::set-output name=X::Y'\\n",
