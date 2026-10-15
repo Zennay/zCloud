@@ -134,16 +134,19 @@ def manual_event(source: str) -> bool:
     if rest.lstrip().startswith("#"):
         rest = ""
     if rest.strip():
+        # Inline YAML comments are not event names. Ignore comment-only
+        # references to workflow_dispatch, without ignoring incomplete lists.
+        event_scalar = rest.split(" #", 1)[0].strip()
         # Folded/literal/tagged YAML or a multiline flow list may resolve a
         # workflow_dispatch event *after* the first line. Never silently
         # classify an incomplete flow list as non-manual and skip its jobs.
         if any(ch in rest for ch in "{}&*") or rest.lstrip().startswith((">", "|", "!")):
             raise RefError("ambiguous_event_syntax")
         if rest.lstrip().startswith("["):
-            tail = rest.split(" #", 1)[0].strip()
-            if not tail.endswith("]") or tail.count("[") != 1 or tail.count("]") != 1:
+            if (not event_scalar.endswith("]") or event_scalar.count("[") != 1
+                    or event_scalar.count("]") != 1):
                 raise RefError("ambiguous_event_syntax")
-        return bool(re.search(r"\bworkflow_dispatch\b", rest))
+        return bool(re.search(r"\bworkflow_dispatch\b", event_scalar))
     tail = source[event.end():]
     end = re.search(r"(?m)^(?!#)\S", tail)
     block = tail[:end.start()] if end else tail
