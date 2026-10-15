@@ -13,6 +13,7 @@ from scripts import zcloud_manual_vps_dispatch_ratchet_20261014 as guard
 SRC = Path(__file__).resolve().parents[1] / "scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py"
 WF = ".github/workflows/sample.yml"
 SAFE_IF = (
+    "github.event_name == 'workflow_dispatch' && "
     "github.repository == 'Zennay/zCloud' && "
     "github.ref == 'refs/heads/main' && "
     "github.actor == 'Zennay' && "
@@ -159,6 +160,19 @@ class ManualDispatchPolicy(unittest.TestCase):
     def test_multiple_new_risky_jobs_counted(self):
         body = workflow().decode().replace("    steps:", "  other:\n    runs-on: [self-hosted, zcloud, vps]\n    steps:", 1)
         self.assertDenied(body.encode(), expected=2)
+
+    def test_multiple_event_workflow_cannot_run_manual_vps_job_automatically(self):
+        stale = SAFE_IF.replace("github.event_name == 'workflow_dispatch' && ", "")
+        both_events = workflow(if_statement=stale).replace(
+            b"  workflow_dispatch:",
+            b"  push:\n    branches: [main]\n  workflow_dispatch:",
+        )
+        self.assertDenied(both_events)
+        admitted = workflow(if_statement=SAFE_IF).replace(
+            b"  workflow_dispatch:",
+            b"  push:\n    branches: [main]\n  workflow_dispatch:",
+        )
+        self.assertTrue(guard.evaluate({}, {WF: admitted})["ok"])
 
     def test_unindented_comments_cannot_hide_manual_event(self):
         src = workflow().replace(b"  workflow_dispatch:", b"  push:\n# owner comment\n  workflow_dispatch:")
