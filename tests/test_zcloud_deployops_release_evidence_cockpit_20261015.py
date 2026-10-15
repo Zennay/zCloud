@@ -653,6 +653,45 @@ class ReleaseEvidenceTests(unittest.TestCase):
                                         "invalid_api_unicode"):
                 cockpit.GitHubReadOnly().get(REF)
 
+    def test_unicode_guard_handles_deeply_nested_in_memory_structures(self):
+        tree = "gezonde tekst"
+        for _ in range(1200):
+            tree = [tree]
+        self.assertIs(cockpit.reject_unpaired_unicode(tree), tree)
+        tree = ["veilig"]
+        for _ in range(1200):
+            tree = {"k": tree}
+        self.assertIs(cockpit.reject_unpaired_unicode(tree), tree)
+
+    def test_unicode_guard_rejects_unbounded_structure(self):
+        from unittest.mock import patch
+        with patch.object(cockpit, "MAX_BYTES", 3):
+            with self.assertRaisesRegex(cockpit.EvidenceError,
+                                        "oversized_api_structure"):
+                cockpit.reject_unpaired_unicode(["A", "B", "C", "D"])
+
+    def test_json_decoder_recursion_errors_are_sanitized(self):
+        from unittest.mock import patch
+
+        class FakeResponse:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def read(self, limit):
+                return b"[" * 1500 + b"0" + b"]" * 1500
+
+        class FakeOpener:
+            def open(self, request, timeout):
+                return FakeResponse()
+
+        with patch.object(cockpit.urllib.request, "build_opener",
+                          return_value=FakeOpener()):
+            with self.assertRaisesRegex(cockpit.EvidenceError,
+                                        "invalid_api_json"):
+                cockpit.GitHubReadOnly().get(REF)
+
     def test_nonfinite_json_denied(self):
         with self.assertRaisesRegex(cockpit.EvidenceError, "nonfinite"):
             json.loads('{"id": NaN}', parse_constant=cockpit.nonfinite)
