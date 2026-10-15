@@ -11,8 +11,10 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import subprocess
 import sys
+import time
 
 HEX = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOW = re.compile(r"^\.github/workflows/[^/\x00]+\.(?:yml|yaml)$")
@@ -29,19 +31,49 @@ class AdmissionError(ValueError):
 
 
 def git(*args: str) -> bytes:
+    """Bound stdout during collection, kill/reap on timeout and never print stderr."""
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
     env.update(GIT_NO_REPLACE_OBJECTS="1", GIT_CONFIG_NOSYSTEM="1",
                GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0",
                GIT_NO_LAZY_FETCH="1")
+    p = None
+    selector = selectors.DefaultSelector()
+    chunks: list[bytes] = []
+    size = 0
     try:
-        p = subprocess.run(["git", "-c", "core.pager=cat", *args],
-                           env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                           timeout=15, check=False)
+        p = subprocess.Popen(["git", "-c", "core.pager=cat", *args],
+                             env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, bufsize=0)
+        assert p.stdout is not None
+        selector.register(p.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + 15
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AdmissionError("git_timeout")
+            if not selector.select(min(remaining, 0.25)):
+                continue
+            data = os.read(p.stdout.fileno(), min(65536, MAX_OUTPUT - size + 1))
+            if not data:
+                break
+            size += len(data)
+            if size > MAX_OUTPUT:
+                raise AdmissionError("git_failed_or_oversize")
+            chunks.append(data)
+        remaining = max(0.01, deadline - time.monotonic())
+        if p.wait(timeout=remaining) != 0:
+            raise AdmissionError("git_failed_or_oversize")
+        return b"".join(chunks)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise AdmissionError("git_unavailable") from exc
-    if p.returncode != 0 or len(p.stdout) > MAX_OUTPUT:
-        raise AdmissionError("git_failed_or_oversize")
-    return p.stdout
+    finally:
+        selector.close()
+        if p is not None:
+            if p.poll() is None:
+                p.kill()
+            p.wait()
+            if p.stdout is not None:
+                p.stdout.close()
 
 
 def validate_commit(value: str) -> str:
@@ -115,9 +147,13 @@ def audit(base: str, head: str) -> dict[str, object]:
         raise AdmissionError("too_many_changes")
     flagged: list[dict[str, object]] = []
     for path in changed:
-        # cat-file references immutable blob oids, never workspace files.
-        blob = git("cat-file", "blob", head_tree[path])
-        if len(blob) > MAX_BLOB or b"\x00" in blob:
+        # Check immutable object size before requesting any potentially large bytes.
+        oid = head_tree[path]
+        raw_size = git("cat-file", "-s", oid).strip()
+        if not raw_size.isdigit() or int(raw_size) > MAX_BLOB:
+            raise AdmissionError("invalid_workflow_blob")
+        blob = git("cat-file", "blob", oid)
+        if len(blob) != int(raw_size) or b"\x00" in blob:
             raise AdmissionError("invalid_workflow_blob")
         try:
             content = blob.decode("utf-8", "strict")
