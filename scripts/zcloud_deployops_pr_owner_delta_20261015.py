@@ -83,8 +83,12 @@ def compare_snapshots(previous, current):
     edge_names = lambda edges: [ancestor + " -> " + child
                                 for ancestor, child in edges]
 
+    # An evidence change that leaves the semantic path-owner graph intact
+    # (for example API PR ordering) is still a changed UNVERIFIED snapshot.
+    # Never label nonidentical digest evidence as a stable inventory.
     modified = bool(
-        old_ids != new_ids or changed_ids or paths_changed
+        before["snapshot_sha256"] != after["snapshot_sha256"]
+        or old_ids != new_ids or changed_ids or paths_changed
         or changed_hierarchy_edges
     )
     return {
