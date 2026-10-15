@@ -669,5 +669,31 @@ jobs:
 
 
 
+    def test_real_git_unicode_escaped_flow_key_is_denied_without_value_leak(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, workflow = self._init(root)
+            workflow.write_text(
+                "jobs:\n  verify:\n    runs-on: ubuntu-latest\n"
+                + r'    steps: [{"\u0075ses": "docker://alpine:latest"}]'
+                + "\n", encoding="utf-8",
+            )
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "encoded flow key")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(1, check.returncode, check.stdout + check.stderr)
+            payload = json.loads(check.stdout)
+            self.assertEqual(1, payload["new_findings"])
+            self.assertEqual("ambiguous_encoded_flow_key", payload["new_risks"][0]["kind"])
+            self.assertNotIn("docker://", check.stdout)
+            self.assertFalse(payload["release_authorized"])
+            self.assertFalse(payload["deployment_authorized"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
