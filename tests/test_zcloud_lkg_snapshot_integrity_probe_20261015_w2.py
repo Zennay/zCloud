@@ -143,6 +143,58 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         self.assertEqual(1, result["file_count"])
         self.assertTrue(result["ok"])
 
+    def test_intermediate_directory_swap_to_external_symlink_fails_closed(self):
+        from unittest.mock import patch
+
+        folder = self.files / "scripts"
+        folder.mkdir()
+        (folder / "task.py").write_bytes(self.text)
+        self.hashes["scripts/task.py"] = hashlib.sha256(self.text).hexdigest()
+        self.save()
+        manifest = self.snap / "manifest.json"
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        payload["present_paths"].append("scripts")
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        external = Path(self.tmp.name) / "outside"
+        external.mkdir()
+        (external / "task.py").write_bytes(self.text)
+        original = probe._open_snapshot_regular
+        switched = [False]
+
+        def switch_parent(root, name):
+            if name == "scripts/task.py" and not switched[0]:
+                switched[0] = True
+                folder.rename(self.files / "scripts-original")
+                folder.symlink_to(external, target_is_directory=True)
+            return original(root, name)
+
+        with patch.object(probe, "_open_snapshot_regular", side_effect=switch_parent):
+            with self.assertRaisesRegex(probe.Denied, "unreadable_path"):
+                probe.inspect(self.state)
+        self.assertTrue(switched[0])
+        self.assertEqual(self.text, (external / "task.py").read_bytes())
+
+    def test_nonblocking_regular_open_rejects_fifo_substitution(self):
+        import os
+        from unittest.mock import patch
+
+        pointer = self.state / "last-known-good.json"
+        original_regular = probe._regular
+        swapped = [False]
+
+        def swap_to_fifo(path):
+            result = original_regular(path)
+            if path == pointer and not swapped[0]:
+                swapped[0] = True
+                path.unlink()
+                os.mkfifo(path)
+            return result
+
+        with patch.object(probe, "_regular", side_effect=swap_to_fifo):
+            with self.assertRaisesRegex(probe.Denied, "nonregular_file"):
+                probe.inspect(self.state)
+        self.assertTrue(swapped[0])
+
     def test_real_recovery_capture_format_is_accepted_without_live_mutation(self):
         from unittest.mock import patch
         from scripts import zcloud_recovery as production_capture
