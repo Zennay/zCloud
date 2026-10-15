@@ -91,6 +91,44 @@ def tree_files(rev: str) -> dict[str, str]:
     return files
 
 
+STEP_ITEM = re.compile(r"^( *)-\\s+\\S")
+STEP_PARENT = re.compile(r"^\\s*steps\\s*:")
+
+
+def step_scope(lines: list[str], run_row: int, run_indent: int) -> dict | None:
+    """Bind shell risks to one YAML sequence item's body and order.
+
+    Deliberately fail-conservative on step metadata edits; this is a bounded
+    indentation heuristic, not a claim to parse GitHub Actions YAML.
+    """
+    start = -1
+    level = -1
+    for row in range(run_row, -1, -1):
+        match = STEP_ITEM.match(lines[row])
+        if match and len(match.group(1)) <= run_indent:
+            start, level = row, len(match.group(1))
+            break
+    if start < 0:
+        return None
+    stop = len(lines)
+    for row in range(start + 1, len(lines)):
+        text = lines[row]
+        if text.strip() and len(text) - len(text.lstrip(" ")) <= level:
+            stop = row
+            break
+    parent = 0
+    for row in range(start - 1, -1, -1):
+        text = lines[row]
+        if STEP_PARENT.match(text) and len(text) - len(text.lstrip(" ")) < level:
+            parent = row
+            break
+    ordinal = sum(
+        1 for row in range(parent + 1, start)
+        if (match := STEP_ITEM.match(lines[row])) and len(match.group(1)) == level
+    )
+    return {"ordinal": ordinal, "body": lines[start:stop]}
+
+
 def run_shell_scalars(source: str) -> list[tuple[str, str]]:
     """Extract bounded run scalars with best-effort YAML ancestor identities.
 
@@ -121,7 +159,9 @@ def run_shell_scalars(source: str) -> list[tuple[str, str]]:
             continue
         indent = len(match.group(1))
         payload = [match.group(2)]
-        context = json.dumps([key for _, key in ancestors], ensure_ascii=False, separators=(",", ":"))
+        context = json.dumps({"parents": [key for _, key in ancestors],
+                              "step": step_scope(lines, i, indent)},
+                             ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         context_digest = hashlib.sha256(context.encode("utf-8")).hexdigest()
         i += 1
         while i < len(lines):
