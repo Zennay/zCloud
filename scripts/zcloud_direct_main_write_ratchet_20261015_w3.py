@@ -21,6 +21,9 @@ WORKFLOW = re.compile(r"^\.github/workflows/[^/\x00]+\.(?:yml|yaml)$")
 GIT_PUSH = re.compile(r"(?i)(?<![\w-])git\s+(?:(?:-C\s+\S+|-c\s+\S+|--[\w-]+(?:=\S+)?|--git-dir\s+\S+)\s+)*(?:push\b|['\"]push['\"](?=\s|$|[;|&]))")
 REFS_API = re.compile(r"(?i)(?:git/refs/heads/|git/refs/heads\x2f|git/refs/heads\\u002f)")
 GH_REF_WRITE = re.compile(r"(?i)\bgh\s+api\b.{0,200}(?:\b(?:PATCH|POST|DELETE|PUT)\b|(?:-X|--method)\s+)")
+OCTOKIT_REF_WRITE = re.compile(
+    r"(?i)\b(?:github|octokit)\.(?:rest\.)?git\.(?:updateRef|createRef|deleteRef)\s*\("
+)
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 16 * 1024 * 1024
 MAX_PATHS = 2000
@@ -119,7 +122,10 @@ def suspicious_lines(source: str) -> list[str]:
     findings: list[str] = []
     # Conservative lexical policy. Multiline/dynamic commands are not parsed
     # as shell or YAML; see operator guide for explicit limitations.
-    for index, line in enumerate(source.splitlines(), 1):
+    # POSIX shell removes a backslash-newline before tokenization. Fold
+    # physical continuations before testing commands, but not arbitrary lines.
+    normalized = re.sub(r"\\[ \t]*\r?\n[ \t]*", " ", source)
+    for line in normalized.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if GIT_PUSH.search(line):
@@ -132,6 +138,8 @@ def suspicious_lines(source: str) -> list[str]:
         if re.search(r"(?i)\bgh\s+api\b", line) and GH_REF_WRITE.search(line):
             # Dynamic gh API writes are unsafe when target cannot be proven.
             findings.append("gh_api_write")
+        if OCTOKIT_REF_WRITE.search(line):
+            findings.append("octokit_git_refs_write")
         if len(findings) >= 15:
             break
     return sorted(set(findings))
