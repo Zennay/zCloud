@@ -371,6 +371,18 @@ class ContinueOnErrorGitTests(unittest.TestCase):
                 self.assertIn(f"[{code}]", stream.getvalue())
                 self.assertNotIn("topsecret", stream.getvalue())
 
+    def test_workflow_checks_live_main_and_pr_head_before_and_after(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-continue-on-error-no-new-debt-20261015-w4.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertEqual(workflow.count("git ls-remote --exit-code"), 4)
+        self.assertEqual(workflow.count('test "$remote_main" = "$EXACT_BASE"'), 2)
+        self.assertEqual(workflow.count('test "$remote_head" = "$EXACT_HEAD"'), 2)
+        self.assertIn("https://github.com/Zennay/zCloud.git refs/heads/main", workflow)
+        self.assertIn('timeout 12 git ls-remote --exit-code origin "refs/heads/$HEAD_BRANCH"', workflow)
+        self.assertLess(workflow.index('test "$remote_main" = "$EXACT_BASE"'),
+                        workflow.index("Checkout exact PR SHA without credentials"))
+
     def test_hosted_pr_admission_fails_instead_of_skipping(self):
         source = (Path(__file__).resolve().parents[1] /
                   ".github/workflows/zcloud-continue-on-error-no-new-debt-20261015-w4.yml"
