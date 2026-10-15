@@ -20,7 +20,9 @@ MAX_EXPRESSIONS = 8192
 SHA = re.compile(r"^[0-9a-f]{40}$")
 RUN = re.compile(r"^( *)(?:-\s*)?run\s*:\s*(.*)$")
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
-UNTRUSTED = re.compile(r"\b(?:github\.event\.|github\.head_ref\b|github\.ref_name\b|inputs\.)", re.I)
+UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|inputs\b)", re.I)
+BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
+DYNAMIC_PROPERTY = re.compile(r"\b(?:github|inputs)\s*\[", re.I)
 
 
 class EvidenceError(ValueError):
@@ -101,8 +103,15 @@ def fingerprint_risks(source: str) -> Counter[str]:
             normalized = " ".join(expr.split()).lower()
             if len(normalized) > 4096:
                 raise EvidenceError("expression_too_large")
+            # GitHub expressions allow github['event']['issue'] as well as
+            # github.event.issue. Both must hit the same trust policy.
+            normalized = BRACKET_PROPERTY.sub(lambda m: "." + m.group(2), normalized)
+            normalized = re.sub(r"\s*\.\s*", ".", normalized)
             if UNTRUSTED.search(normalized):
                 out[normalized] += 1
+            elif DYNAMIC_PROPERTY.search(normalized):
+                # Unknown computed key might resolve to event or inputs.
+                out["ambiguous_dynamic_property"] += 1
     return out
 
 
