@@ -408,6 +408,19 @@ jobs:
         new = self.scan("jobs:\n  old:\n    timeout-minutes: 30\n    container:\n      image: alpine:latest\n")
         self.assertEqual(1, guard.compare(old, new)["new_findings"])
 
+    def test_hosted_source_rechecks_current_pr_head_after_scan(self):
+        workflow = (ROOT / ".github/workflows" /
+                    "zcloud-container-digest-ratchet-20261015-w2.yml").read_text()
+        self.assertIn('test "$GITHUB_BASE_REF" = "main"', workflow)
+        self.assertIn('[[ "$GITHUB_HEAD_REF" =~ ^[A-Za-z0-9._/-]{1,200}$ ]]', workflow)
+        self.assertIn('origin "refs/heads/$GITHUB_HEAD_REF"', workflow)
+        self.assertIn('test "$remote_head" = "$EXPECTED_HEAD"', workflow)
+        self.assertIn('test "$final_head" = "$HEAD_SHA"', workflow)
+        self.assertLess(workflow.index('test "$remote_head" = "$EXPECTED_HEAD"'),
+                        workflow.index("Run isolated real-Git and adversarial"))
+        self.assertGreater(workflow.index('test "$final_head" = "$HEAD_SHA"'),
+                           workflow.index("NO_NEW_CONTAINER_IMAGE_TAG_DEBT"))
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
