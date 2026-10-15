@@ -258,6 +258,28 @@ class RatchetTests(unittest.TestCase):
         code, result = self.audit(base=self.base, head=head)
         self.assertEqual(code, 0, result)
 
+    def test_git_quoted_config_value_then_push_denied(self):
+        code, result = self.change("git -c 'user.name=Alice Example' push origin HEAD:main")
+        self.assertEqual(code, 1, result)
+
+    def test_git_global_option_with_separate_path_then_push_denied(self):
+        self.assertEqual(self.change("git --work-tree '/tmp/working copy' push origin HEAD:main")[0], 1)
+
+    def test_git_quoted_config_value_non_writer_allowed(self):
+        code, result = self.change("git -c 'user.name=Alice Example' status")
+        self.assertEqual(code, 0, result)
+
+    def test_git_quoted_opaque_command_denied(self):
+        self.assertEqual(self.change("git 'unterminated quote")[0], 1)
+
+    def test_git_status_followed_by_unrelated_push_word_allowed(self):
+        code, result = self.change("git status && printf push")
+        self.assertEqual(code, 0, result)
+
+    def test_git_quoted_config_with_push_word_is_not_a_command(self):
+        code, result = self.change("git -c 'alias.demo=echo push' status")
+        self.assertEqual(code, 0, result)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, r = self.change("git push origin main # " + marker)
