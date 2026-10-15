@@ -1,0 +1,22 @@
+name: Control-plane unique JSON offline contract
+on:
+  pull_request:
+    paths:
+      - 'scripts/control_plane_unique_json_evidence_20261009_w1.py'
+      - 'tests/test_control_plane_unique_json_evidence_20261009_w1.py'
+      - '.github/workflows/control-plane-unique-json-offline-20261009-w1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run strict offline evidence parser contract
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_unique_json_evidence_20261009_w1.py' -v
