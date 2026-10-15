@@ -180,5 +180,40 @@ class ActionPinRatchetTests(unittest.TestCase):
             snapshot(self.root, self.command("rev-parse", "HEAD"))
 
 
+    def test_reused_anchor_step_denied_without_new_uses_line(self):
+        self.commit(
+            "name: proof\njobs:\n  demo:\n    steps:\n"
+            "      - &reusable\n        uses: actions/checkout@v4\n"
+            "      - *reusable\n"
+        )
+        with self.assertRaisesRegex(Refusal, "yaml_alias"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_flow_sequence_alias_denied(self):
+        self.commit(
+            "steps:\n  - &cached\n    uses: actions/checkout@v4\n"
+            "  - { name: again, source: [*cached] }\n"
+        )
+        with self.assertRaisesRegex(Refusal, "yaml_alias"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_flow_mapping_merge_denied(self):
+        self.commit(
+            "steps:\n - &base\n   uses: actions/checkout@v4\n"
+            " - { <<: *base }\n"
+        )
+        with self.assertRaisesRegex(Refusal, "yaml_merge_key"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_inline_shell_literal_alias_remains_ignored(self):
+        self.commit("steps:\n - run: |\n     echo '*not-a-yaml-alias'\n - uses: actions/checkout@v4\n")
+        self.assertEqual(self.evaluate()["new_unpinned"], 0)
+
+    def test_commented_yaml_alias_not_executed(self):
+        self.commit("steps:\n # - *inactive\n - uses: actions/checkout@v4\n")
+        self.assertEqual(self.evaluate()["new_unpinned"], 0)
+
+
+
 if __name__ == "__main__":
     unittest.main()
