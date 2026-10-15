@@ -69,6 +69,17 @@ class SourceTests(unittest.TestCase):
         self.check(SAFE.replace("uses: actions/upload-artifact@v4",
                                 r'"u\u0073es": "actions/up\u006coad-artifact@v4"'), False)
 
+    def test_workflow_unicode_controls_and_separators_fail_closed(self):
+        for char in ("\u0085", "\u200b", "\u202e", "\u2066",
+                     "\ufeff", "\u2028", "\u2029", "\ud800"):
+            with self.subTest(codepoint=hex(ord(char))):
+                # Insert into an otherwise safe workflow comment; even control
+                # characters outside a recognized input are ambiguous source.
+                self.check(SAFE + "# note:" + char + "\n", False)
+
+    def test_printable_unicode_comment_is_not_blocked(self):
+        self.check(SAFE + "# résumé: ordinary UTF-8 comment\n", True)
+
     def test_cloud_identity_folder_denied(self):
         for path in ("reports/.aws/config", "out/.kube/config", "out/.azure/profile",
                      "out/.gnupg/pubring", "out/.gcloud/settings"):
