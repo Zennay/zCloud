@@ -489,6 +489,27 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(initial)
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_workflow_ref_shell_interpolation_denied(self):
+        # Workflow refs contain the potentially attacker-selected branch name.
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.workflow_ref }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracketed_workflow_ref_shell_interpolation_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github['workflow_ref'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_action_ref_shell_interpolation_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.action_ref }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_safe_workflow_sha_shell_interpolation_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.workflow_sha }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
