@@ -5,7 +5,9 @@ import argparse
 import os
 import re
 import subprocess
+import selectors
 import sys
+import time
 from pathlib import Path
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -13,12 +15,46 @@ WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 LIMIT = 1024 * 1024
 
 def git(root: Path, *args: str, limit: int = LIMIT) -> bytes:
-    r = subprocess.run(["git", "-C", str(root), *args], check=True,
-                       capture_output=True, timeout=12,
-                       env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"})
-    if len(r.stdout) > limit:
-        raise ValueError("git_output_limit")
-    return r.stdout
+    """Read bounded Git stdout with a wall-clock deadline, no stderr content."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("invalid_git_limit")
+    command = ["git", "-C", str(root), *args]
+    proc = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
+    )
+    data = bytearray()
+    deadline = time.monotonic() + 15
+    try:
+        assert proc.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise TimeoutError("git_elapsed_deadline")
+                chunk = os.read(proc.stdout.fileno(), min(65536, limit + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > limit:
+                    raise ValueError("git_output_limit")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("git_elapsed_deadline")
+        code = proc.wait(timeout=remaining)
+        if code:
+            raise subprocess.CalledProcessError(code, command)
+        return bytes(data)
+    except BaseException:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        raise
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+
 
 def paths_changed(root: Path, base: str, head: str) -> list[str]:
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
