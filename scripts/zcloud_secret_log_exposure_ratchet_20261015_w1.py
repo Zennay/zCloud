@@ -29,6 +29,18 @@ SIGNS = {
         r"\b(?:Get-ChildItem|gci|dir|ls)\s+(?:Env:|env\\)(?=\s|$|[|;])", re.I),
     "debug_actions_enabled": re.compile(
         r"\bACTIONS_(?:STEP|RUNNER)_DEBUG\s*[:=]\s*['\"]?(?:true|1)\b", re.I),
+    "print_sensitive_context_json": re.compile(
+        r"\b(?:echo|printf|Write-Host|Write-Output|print)\b[^\n]*"
+        r"\$\{\{\s*toJSON\s*\(\s*(?:secrets|github|env)\s*\)\s*\}\}", re.I),
+    "print_indexed_secret_expression": re.compile(
+        r"\b(?:echo|printf|Write-Host|Write-Output|print)\b[^\n]*"
+        r"\$\{\{\s*secrets\s*\[\s*['\"][A-Za-z_][A-Za-z0-9_]*['\"]\s*\]\s*\}\}", re.I),
+    "print_named_secret_env": re.compile(
+        r"\bprintenv\s+(?:GITHUB_TOKEN|GH_TOKEN|AWS_SECRET_ACCESS_KEY|"
+        r"AZURE_CLIENT_SECRET|NPM_TOKEN|DOCKER_PASSWORD)\b", re.I),
+    "print_dotenv_file": re.compile(
+        r"\b(?:cat|head|tail|type|Get-Content)\b[^\n]*"
+        r"(?:^|[/\s])\.env(?:\.local|\.production|\.staging)?(?=$|[\s;|>\"'])", re.I),
     "print_secrets_expression": re.compile(
         r"\b(?:echo|printf|Write-Host|Write-Output|print)\b[^\n]*"
         r"\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}", re.I),
@@ -43,7 +55,7 @@ SIGNS = {
         r"(?:\.git-credentials|\.aws/credentials|\.docker/config\.json)\b", re.I),
     "print_github_env_file": re.compile(
         r"\b(?:cat|head|tail|type|Get-Content|gc)\b[^\n]*"
-        r"(?:\$(?:\{)?GITHUB_ENV(?:\}|(?=\W|$))|\$env:GITHUB_ENV\b)", re.I),
+        r"(?:\$(?:\{)?(?:GITHUB_ENV|GITHUB_OUTPUT)(?:\}|(?=\W|$))|\$env:(?:GITHUB_ENV|GITHUB_OUTPUT)\b)", re.I),
 }
 
 
