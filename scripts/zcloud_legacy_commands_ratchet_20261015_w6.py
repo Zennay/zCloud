@@ -231,6 +231,18 @@ def check_content(content: bytes) -> None:
     if ENV.search(ps_joined) or COMMANDS.search(ps_joined):
         raise Denied("PowerShell backtick-escaped legacy unsafe command syntax")
 
+    # Unquoted POSIX-shell/backslash escapes can emit forbidden literal token
+    # characters at runtime (e.g. echo ::set\-output). Reconstruct static
+    # slash/caret/backtick combinations conservatively; this does not execute
+    # script expressions or approve imported code.
+    plain_tokens = re.sub(r"\\(?=[A-Za-z_-])", "", joined)
+    plain_tokens = re.sub(r"\^(?=[A-Za-z_-])", "", plain_tokens)
+    plain_tokens = re.sub(r"`\r?\n[ \t]*", "", plain_tokens)
+    plain_tokens = re.sub(r"`(?=[A-Za-z_-])", "", plain_tokens)
+    if ENV.search(plain_tokens) or COMMANDS.search(plain_tokens):
+        raise Denied("Escaped legacy command tokens in changed source")
+
+
 
 def scan(base: str, head: str) -> tuple[int, int]:
     """Enforce a shared monotonic ceiling across all Git reads in one scan."""
