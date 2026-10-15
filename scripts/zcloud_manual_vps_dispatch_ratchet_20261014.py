@@ -121,7 +121,7 @@ def manual_event(source: str) -> bool:
     # Glob wildcards in paths: are valid event filters, not YAML aliases.
     if re.search(r"(?m)^[ \t]*(?:<<:|[A-Za-z_-]+:[ \t]*[&*]|-[ \t]*[&*])", block):
         raise RefError("ambiguous_event_syntax")
-    return bool(re.search(r"(?m)^  workflow_dispatch\s*:", block)) or bool(
+    return bool(re.search(r"(?m)^[ \t]+workflow_dispatch[ \t]*:", block)) or bool(
         re.search(r"\bworkflow_dispatch\b", block) and block.lstrip().startswith("[")
     )
 
