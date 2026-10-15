@@ -193,7 +193,8 @@ def execution_control_context(lines: list[str], run_row: int) -> dict:
         lines, 0, len(lines), 0, ROOT_EXECUTION_CONTROLS
     )
     jobs_root = next(
-        (i for i in range(run_row - 1, -1, -1) if re.match(r"^jobs\s*:", lines[i])),
+        (i for i in range(run_row - 1, -1, -1)
+         if (match := SECTION_HEADER.match(lines[i])) and "jobs" in match.groups()),
         None,
     )
     if jobs_root is None:
