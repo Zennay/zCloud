@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/**"
+      - ".github/actions/**"
       - "scripts/zcloud_artifact_upload_exposure_ratchet_20261015_w1.py"
       - "tests/test_zcloud_artifact_upload_exposure_ratchet_20261015_w1.py"
 
