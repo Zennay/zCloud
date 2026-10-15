@@ -32,8 +32,11 @@ is therefore not silently grandfathered. This is deliberately conservative:
 even a harmless edit elsewhere in a workflow containing such an alias may
 require replacing the alias with an explicit shell command.
 
-The source ratchet also treats shell interpolation of `github.ref` and
-`github.base_ref` as potentially untrusted branch/ref text. Full GitHub
+The source ratchet also treats shell interpolation of `github.ref`,
+`github.base_ref`, `github.workflow_ref`, and `github.action_ref` as potentially
+untrusted branch/ref text: workflow and action refs may contain branch or tag
+names, not only an immutable SHA. Direct `github.workflow_sha` remains permitted
+because it is a commit identifier, not the branch text. Full GitHub
 context serialization such as `${{ toJSON(github) }}` is conservatively denied:
 the context can contain event-derived values even if the expression does not
 spell out `github.event`. Bracket variants (`github['ref']`) and spaces in the
