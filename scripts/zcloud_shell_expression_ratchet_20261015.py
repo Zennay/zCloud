@@ -353,6 +353,11 @@ def audit(base: str, head: str) -> dict:
         ],
         "new_risks": sum(sum(risks.values()) for risks in newly.values()),
         "new_risk_kinds": risk_kind_counts(newly),
+        "new_risky_workflows": [
+            {"path": path, "risk_count": sum(risks.values()),
+             "risk_kinds": risk_kind_counts({path: risks})}
+            for path, risks in sorted(newly.items())
+        ],
         "affected_workflows": sorted(newly),
         "inventory_complete": True,
         "release_authorized": False,
