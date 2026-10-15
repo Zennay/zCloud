@@ -7,6 +7,7 @@ Historical unchanged workflow blobs are grandfathered, not certified safe.
 from __future__ import annotations
 
 import argparse
+import contextvars
 import os
 import re
 import selectors
@@ -25,6 +26,8 @@ MAX_CHANGED = 250
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 1024 * 1024
 TIMEOUT = 15
+MAX_SCAN_SECONDS = 120
+_SCAN_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar('scan_deadline', default=None)
 
 
 class Denied(ValueError):
@@ -48,6 +51,9 @@ def git(*args: str, max_output: int = MAX_OUTPUT) -> bytes:
     chunks: list[bytes] = []
     total = 0
     deadline = time.monotonic() + TIMEOUT
+    shared = _SCAN_DEADLINE.get()
+    if shared is not None:
+        deadline = min(deadline, shared)
     try:
         assert proc.stdout is not None
         with selectors.DefaultSelector() as selector:
@@ -177,6 +183,17 @@ def check_content(content: bytes) -> None:
 
 
 def scan(base: str, head: str) -> tuple[int, int]:
+    """Enforce a shared monotonic ceiling across all Git reads in one scan."""
+    if not 0 < MAX_SCAN_SECONDS <= 3600:
+        raise Denied("Invalid shared scan budget")
+    token = _SCAN_DEADLINE.set(time.monotonic() + MAX_SCAN_SECONDS)
+    try:
+        return _scan(base, head)
+    finally:
+        _SCAN_DEADLINE.reset(token)
+
+
+def _scan(base: str, head: str) -> tuple[int, int]:
     base, head = require_sha(base), require_sha(head)
     # Deny disconnected/unrelated bases, including stale unrelated source trees.
     try:
