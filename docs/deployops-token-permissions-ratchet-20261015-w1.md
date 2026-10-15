@@ -8,6 +8,7 @@ De bestaande deploy-ops-gates bewaken workflow-events, runnergebruik, acties en 
 
 - Zowel `permissions: write-all` als expliciete `id-token: write`, `actions: write`, `contents: write`, `statuses: write` en andere `*: write`-scopes tellen als write-risico.
 - Opaque expressies, flow-maps, onbekende waarden en onduidelijke mapping/indentation tellen conservatief als risico; eenvoudige `read`/`none` en `read-all` blijven read-only.
+- Nieuwe workflows en nieuwe jobs zonder expliciete veilige permissiegrens worden geweigerd als ze onbekende repository- of workflowstandaardrechten zouden erven. De bestaande impliciete baseline blijft alleen op dezelfde job en hetzelfde bestand toegestaan.
 - Scope is gekoppeld aan workflowpad en job-id. Een nieuwe write in een andere job wordt niet als oude schuld beschouwd. Verwijderen van een bestaande expliciete read-only-declaratie wordt ook geweigerd: daardoor zou een job terug kunnen vallen op ruimere standaard- of overgeërfde tokenrechten.
 - Via ongewijzigde Git-objecten wordt zowel de complete baseline als de kandidaat gelezen; symlinks, submodules, ongeldige paden, grote bestanden, NUL en non-UTF8 zijn onvolledig bewijs en dus een afwijzing.
 - PR-job draait uitsluitend GitHub-hosted met `contents: read`, exacte SHA-checks, een tweede actuele `main`- en PR-head-check, zonder secrets, VPS, SQLite, service-acties of artifactwrites.
