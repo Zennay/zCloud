@@ -125,6 +125,15 @@ def paths_and_modes(sha: str) -> dict[str, tuple[str, str]]:
             path = rawpath.decode("utf-8", "strict")
         except (ValueError, UnicodeDecodeError) as exc:
             raise Denied("ambiguous_tree") from exc
+        # Git allows filenames with embedded newlines/control codes and
+        # bidirectional overrides. Such names make security audits and CI
+        # provenance logs ambiguous even when the blob itself is harmless.
+        if any(
+            ord(ch) < 0x20 or ord(ch) == 0x7f or
+            ch in "\\u202a\\u202b\\u202c\\u202d\\u202e\\u2066\\u2067\\u2068\\u2069"
+            for ch in path
+        ):
+            raise Denied("ambiguous_workflow_path")
         if path in result:
             raise Denied("duplicate_path")
         if not path.startswith(ROOT) or not path.endswith(SUFFIXES):
