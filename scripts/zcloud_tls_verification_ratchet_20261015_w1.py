@@ -83,26 +83,40 @@ def source(root, sha, path):
         raise Unverifiable("invalid_workflow_encoding") from exc
 
 
-def insecure_counts(text):
+def insecure_occurrences(text):
     if len(text) > 100_000:
         raise Unverifiable("oversized_source")
-    # Treat shell backslash-newline continuations as a single logical line.
+    # Compare complete unsafe statements, not merely occurrence counts.
+    # Replacing an old curl -k destination with a new one is new debt.
     joined = re.sub(r"\\\r?\n[ \t]*", "", text)
-    joined = "\n".join(line for line in joined.splitlines()
-                       if not line.lstrip().startswith("#"))
-    return Counter({name: len(pattern.findall(joined))
-                    for name, pattern in DANGERS.items()})
+    occurrences = Counter()
+    for line in joined.splitlines():
+        statement = line.strip()
+        if not statement or statement.startswith("#"):
+            continue
+        for name, pattern in DANGERS.items():
+            number = len(pattern.findall(statement))
+            if number:
+                occurrences[(name, statement)] += number
+    return occurrences
+
+
+def insecure_counts(text):
+    occurrences = insecure_occurrences(text)
+    return Counter({name: sum(n for (kind, _), n in occurrences.items()
+                               if kind == name) for name in DANGERS})
 
 
 def evaluate(root, base, head):
     problems = []
     changes = workflow_changes(root, base, head)
     for status, path in changes:
-        after = insecure_counts(source(root, head, path))
-        before = Counter() if status == b"A" else insecure_counts(source(root, base, path))
-        for key in sorted(DANGERS):
-            if after[key] > before[key]:
-                problems.append(f"{path}:{key}:new={after[key]-before[key]}")
+        after = insecure_occurrences(source(root, head, path))
+        before = Counter() if status == b"A" else insecure_occurrences(source(root, base, path))
+        for (name, statement), number in sorted(after.items()):
+            increase = number - before[(name, statement)]
+            if increase > 0:
+                problems.append(f"{path}:{name}:new={increase}")
     return changes, problems
 
 
