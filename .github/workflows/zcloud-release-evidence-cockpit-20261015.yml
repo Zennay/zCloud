@@ -76,6 +76,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Generate advisory evidence from canonical GitHub GET API
+        id: observe
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -85,11 +86,15 @@ jobs:
             --json deploy-ops-evidence.json --html deploy-ops-evidence.html
           rc=$?
           set -e
-          if [ "$rc" -eq 2 ]; then
-            echo "Incomplete GitHub read-only evidence (fail closed)" >&2
-            exit 2
-          fi
-          test "$rc" -eq 0 -o "$rc" -eq 1
+          # A malformed/incomplete source returns 2 *with sanitized outputs*.
+          # Preserve the diagnostic artifact, then fail the job after upload.
+          # Unknown crash/exit code is not an eligible artifact producer.
+          case "$rc" in
+            0|1|2) printf 'evidence_rc=%s\n' "$rc" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Observer crashed with an unknown exit code" >&2; exit 3 ;;
+          esac
+          test -s deploy-ops-evidence.json
+          test -s deploy-ops-evidence.html
           {
             echo '### zCloud deploy-ops observation — NO RELEASE AUTHORITY'
             echo 'Advisory GET-only main SHA snapshot. Not live VPS health or deployment permission.'
@@ -99,6 +104,10 @@ jobs:
             echo '~~~'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Retain sanitized offline HTML and JSON for 1 day
+        if: >-
+          steps.observe.outputs.evidence_rc == '0' ||
+          steps.observe.outputs.evidence_rc == '1' ||
+          steps.observe.outputs.evidence_rc == '2'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: zcloud-release-evidence-readonly
@@ -107,3 +116,9 @@ jobs:
             deploy-ops-evidence.html
           retention-days: 1
           if-no-files-found: error
+      - name: Fail closed AFTER artifact for incomplete GitHub evidence
+        if: steps.observe.outputs.evidence_rc == '2'
+        shell: bash
+        run: |
+          echo "Incomplete GitHub read-only evidence — see sanitized artifact" >&2
+          exit 2
