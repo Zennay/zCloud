@@ -104,7 +104,6 @@ REMOTE_VARIABLE_EVAL = re.compile(
     r"\s*(?:&&|;|\n)\s*"
     r"""(?:eval\s+|(?:bash|sh|zsh|dash)\s+-c\s+)["']?\$\{?"""
     r"(?P=variable)" + r"""\}?["']?(?![A-Za-z0-9_])""",
-    re.I,
 )
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
