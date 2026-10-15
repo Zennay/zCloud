@@ -113,7 +113,7 @@ def strictly_bounded_step(step_source: str) -> bool:
     if not lines:
         return False
     action = re.match(
-        r"^(?P<spaces> *)(?P<dash>- +)?uses: *actions/upload-artifact@[^\\s#]+",
+        r"^(?P<spaces> *)(?P<dash>- +)?uses: *actions/upload-artifact@[A-Za-z0-9._-]+",
         lines[0],
     )
     if action is None:
