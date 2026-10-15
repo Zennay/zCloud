@@ -42,3 +42,6 @@ The Git-tree scanner no longer uses `subprocess.run(stdout=PIPE)` to capture an 
 
 ## Git subprocess non-interactive evidence boundary
 All Git source reads now explicitly disable inherited stdin, close unrelated file descriptors, disable terminal credential prompts and optional Git locks, and discard stderr. This keeps source inspection non-interactive and minimizes accidental file locking or prompt-based hangs. Real subprocess inspection tests assert those environment and descriptor settings. The scanner still relies on untrusted PR code until a separately reviewed version is installed on protected main; this is not an authorization or deploy guarantee.
+
+## Prevent Git replacement-object evidence spoofing
+A checkout can contain local `refs/replace/` objects that cause ordinary `git cat-file` to return a different blob while preserving the original requested object ID in the tree. All immutable source reads now set `GIT_NO_REPLACE_OBJECTS=1`. A real-Git adversarial test writes an unsafe reusable-workflow YAML blob, replaces it with innocent bytes through `git replace`, proves plain Git sees the substitute, and verifies the scanner still denies the original unsafe SHA. This only strengthens local read-only evidence; it does not authenticate PR code or grant merge/deploy authority.
