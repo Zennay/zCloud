@@ -60,9 +60,15 @@ by this scan.
 
 ## Hosted CI operator summary
 
-Each successful source check writes a Dutch GitHub Actions step summary with
-bounded integer counts for historical, candidate and newly introduced image
-risks. It never includes image values, repository secrets or shell scripts.
+Every source check writes a Dutch GitHub Actions step summary, including
+**rejected** results. Successful comparisons include bounded integer counts
+for historical, candidate and newly introduced image risks. New image debt
+produces an explicit red denial with counts. Incomplete or invalid Git evidence
+produces an explicit red "bronbewijs incompleet" message; even the scanner's
+original error string is omitted. The summary never includes image values,
+paths, repository secrets, branch names or shell scripts. The workflow
+preserves the scanner's failing exit code and rejects contradictory or
+forged-authority JSON rather than reporting an optimistic success.
 The summary is observation evidence only: it does not open a release gate,
 prove a healthy VPS listener or authorize mutation.
 
