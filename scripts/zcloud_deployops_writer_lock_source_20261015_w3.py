@@ -181,6 +181,33 @@ def _parent_cancel_status(lines: list[str]) -> str:
     return "safe"
 
 
+def _runner_targets(lines: list[str], jobs: list[int], jobs_end: int,
+                    expected_job: str) -> str:
+    """Confirm the entire known workflow runner topology, not just a lock.
+
+    A newly introduced self-hosted writer beside the locked job must not be
+    silently treated as serialized. Only the seven already-reviewed workflow
+    shapes are accepted: one target VPS job and GitHub-hosted companion jobs.
+    This is deliberately not a repository-wide discovery or YAML interpreter.
+    """
+    for pos, at in enumerate(jobs):
+        job_name = JOB.fullmatch(lines[at]).group(1)
+        end = jobs[pos + 1] if pos + 1 < len(jobs) else jobs_end
+        runners = [value for i in range(at + 1, end)
+                   if (parsed := _key(lines[i], 4))
+                   and parsed[0] == "runs-on"
+                   for value in [parsed[1]]]
+        if len(runners) != 1:
+            return "missing_or_duplicate_runner_target"
+        value = runners[0]
+        if job_name == expected_job:
+            if value != "[self-hosted, zcloud, vps]":
+                return "unexpected_mutation_runner_target"
+        elif value != "ubuntu-latest":
+            return "unexpected_companion_runner_target"
+    return "safe"
+
+
 def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
     try:
         lines = _read_regular(root, filename).splitlines()
@@ -198,6 +225,9 @@ def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
             return "missing_or_duplicate_mutation_job"
         at = selected[0]
         job_end = next((i for i in jobs if i > at), jobs_end)
+        runner_status = _runner_targets(lines, jobs, jobs_end, job)
+        if runner_status != "safe":
+            return runner_status
         if scope == "workflow":
             source_result = _lock(lines, 0, 0, len(lines))
             if source_result != "serialized_source":
