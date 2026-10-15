@@ -1,5 +1,8 @@
 """Adversarial tests for read-only workflow secret log exposure policy."""
 import io
+import os
+import time
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from pathlib import Path
 import subprocess
@@ -7,6 +10,42 @@ import tempfile
 import unittest
 
 from scripts import zcloud_secret_log_exposure_ratchet_20261015_w1 as gate
+
+
+class HostedWorkflowTrust(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (
+            Path(__file__).resolve().parents[1] /
+            ".github/workflows/zcloud-secret-log-exposure-ratchet-20261015-w1.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_hosted_only_and_read_only(self):
+        self.assertEqual(self.source.count("runs-on: ubuntu-latest"), 2)
+        self.assertIn("contents: read", self.source)
+        for unsafe in ("runs-on: self-hosted", "contents: write",
+                       "actions: write", "sudo ", "workflow_dispatch:",
+                       "gh workflow run", "systemctl restart"):
+            self.assertNotIn(unsafe, self.source)
+
+    def test_immutable_checkout_without_credentials(self):
+        self.assertIn("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+                      self.source)
+        self.assertIn("persist-credentials: false", self.source)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', self.source)
+
+    def test_main_equality_before_and_after(self):
+        statement = "timeout 15 git ls-remote --exit-code origin refs/heads/main"
+        self.assertEqual(self.source.count(statement), 2)
+        self.assertEqual(self.source.count('test "$remote_main" = "$BASE_SHA"'), 2)
+
+    def test_trust_admission_prior_to_checkout(self):
+        self.assertIn('test "$HEAD_REPOSITORY" = "$CURRENT_REPOSITORY"', self.source)
+        self.assertIn('test "$BASE_REPOSITORY" = "$CURRENT_REPOSITORY"', self.source)
+        self.assertIn('test "$BASE_BRANCH" = main', self.source)
+
+    def test_non_authorizing_output(self):
+        self.assertIn("Production mutation authorized: false", self.source)
 
 
 class Signatures(unittest.TestCase):
@@ -248,6 +287,42 @@ class RealGit(unittest.TestCase):
             rc = gate.main(["--root", str(self.root), "--base", self.base, "--head", head])
         self.assertEqual(rc, 1)
         self.assertIn("PRODUCTION_MUTATION_AUTHORIZED=false", stream.getvalue())
+
+    def test_git_output_limit_fails_closed(self):
+        fake = self.root / "git"
+        fake.write_text("#!/usr/bin/env python3\n"
+                        "import sys\nsys.stdout.write('A'*230000)\n")
+        fake.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaises(gate.Unverifiable):
+                gate.git(self.root, "status", deadline_seconds=1.0)
+
+    def test_git_deadline_fails_closed(self):
+        fake = self.root / "git"
+        fake.write_text("#!/usr/bin/env python3\n"
+                        "import time\ntime.sleep(5)\n")
+        fake.chmod(0o755)
+        start = time.monotonic()
+        with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaises(gate.Unverifiable):
+                gate.git(self.root, "status", deadline_seconds=0.2)
+        self.assertLess(time.monotonic() - start, 1.5)
+
+    def test_git_subprocess_inherited_stdout_reaped(self):
+        fake = self.root / "git"
+        marker = self.root / "orphan"
+        code = ("import time\n"
+                "time.sleep(0.7)\n"
+                f"open({str(marker)!r}, 'w').write('orphan')\n")
+        fake.write_text("#!/usr/bin/env python3\n"
+                        "import subprocess, sys\n"
+                        f"subprocess.Popen([sys.executable, '-c', {code!r}])\n")
+        fake.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(self.root) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaises(gate.Unverifiable):
+                gate.git(self.root, "status", deadline_seconds=0.2)
+        time.sleep(0.85)
+        self.assertFalse(marker.exists())
 
     def test_non_utf8_blob_fails_closed(self):
         self.wf.write_bytes(b"\xff")
