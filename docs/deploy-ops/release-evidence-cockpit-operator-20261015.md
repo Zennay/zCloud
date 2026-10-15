@@ -56,11 +56,14 @@ outcomes retain \`release_authorized=false\`,
    Two identical GETs do not establish a transactionally atomic snapshot.
 3. Main deploy runs from \`zcloud-vps-deploy.yml\` are inventoried across
    **all returned pages up to five pages of 100 runs**. Duplicate run IDs,
-   malformed pages, missing/failed later pages or reaching the five-page cap
-   without a short terminal page **refuse the whole snapshot**. Where GitHub
+   malformed pages and missing/failed later pages **refuse the snapshot**.
+   A repository with more than 500 runs instead yields an explicitly
+   **incomplete 500-run advisory window**, always with a blocking warning
+   and no release authority, never a claim that the entire history was checked. Where GitHub
    provides `total_count`, it must be a nonnegative strict integer, occur
-   consistently on all pages, remain unchanged, and match the exact final
-   number of runs collected; otherwise the entire observation is denied.
+   consistently on all pages and remain unchanged. On a complete inventory
+   it must exactly match the final number of runs. On a capped window it
+   must not be smaller than the scanned count; no completeness claim is made.
    The report marks whether this independent count was verified. The first page
    and **every other consumed page** are read a second time after job
    inspection; any changed page rejects the snapshot. Offset page reads are not transactionally atomic,
@@ -85,9 +88,11 @@ outcomes retain \`release_authorized=false\`,
 4. Canonical \`main\` is re-read at the end; SHA drift refuses the
    evidence snapshot. All malformed and over-limit inputs refuse proof.
 
-**Limits:** The workflow-run view is now a fully scanned **bounded** page
-window (up to 500 entries); more than the cap is an error, never a success
-or a silently truncated empty history. Two matching first pages do not prove
+**Limits:** The workflow-run view is a **bounded** page window (up to
+500 entries). A high-volume repository can exceed this limit: the CLI then
+returns a valid but **explicitly incomplete** observation, exit code 1,
+with `deploy_run_inventory_incomplete` and all release flags false, not an
+empty-history or all-green assertion. Two matching first pages do not prove
 that unseen changes did not happen (ABA/offset race). Full-page re-reads
 still do not constitute a database snapshot or production permission. The report cannot
 confirm present VPS listener uptime, safe-idle, SQLite write access,
