@@ -169,6 +169,64 @@ class SourceTests(unittest.TestCase):
                 with self.assertRaises(gate.Denied):gate.workflow_paths(base,"f"*40)
             finally: os.chdir(old)
 
+    def test_composite_manifest_real_git_delta(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            action = Path(d) / ".github/actions/archive/action.yml"
+            action.parent.mkdir(parents=True)
+            good = ("name: Archive\nruns:\n  using: composite\n  steps:\n"
+                    "    - uses: actions/upload-artifact@v4\n"
+                    "      with:\n        path: dist/result.log\n"
+                    "        include-hidden-files: false\n")
+            action.write_text(good)
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            action.write_text(good.replace("result.log", "private.pem"))
+            git("add", ".")
+            git("commit", "-qm", "head")
+            head = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                self.assertEqual(gate.workflow_paths(base, head),
+                                 [".github/actions/archive/action.yml"])
+                self.assertEqual(gate.main(["--base", base, "--head", head]), 2)
+                gate.examine(good)
+            finally:
+                os.chdir(old)
+
+    def test_composite_non_manifest_script_not_source_entrypoint(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            f = Path(d) / ".github/actions/archive/run.sh"
+            f.parent.mkdir(parents=True)
+            f.write_text("echo build\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            f.write_text("echo test\n")
+            git("add", ".")
+            git("commit", "-qm", "head")
+            head = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                self.assertEqual(gate.workflow_paths(base, head), [])
+                self.assertEqual(gate.main(["--base", base, "--head", head]), 0)
+            finally:
+                os.chdir(old)
+
     def test_symlink_denial(self):
         with tempfile.TemporaryDirectory() as d:
             def git(*args):
