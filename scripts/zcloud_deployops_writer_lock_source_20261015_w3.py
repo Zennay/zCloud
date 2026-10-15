@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""Read-only, fail-closed inventory of the seven known zCloud VPS deploy writers.
+
+This is SOURCE evidence, not a runtime lock probe or authorization to deploy.
+In particular, GitHub Actions concurrency locks are not proven active by YAML.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import stat
+from pathlib import Path
+
+PRODUCTION_GROUP = "zcloud-production-deploy"
+# Values are the jobs that mutate the VPS, never hosted PR verification jobs.
+WRITERS = {
+    "zcloud-vps-deploy.yml": ("deploy", "workflow"),
+    "zcloud-postsend-tab-preservation-live.yml": ("install", "job"),
+    "zcloud-safe-memory-reclaim-20261013.yml": ("reclaim", "job"),
+    "zcloud-v2-activate-addon-in-place.yml": ("activate", "job"),
+    "zcloud-worker-tab-guard.yml": ("install", "job"),
+    "zcloud-no-browser-churn-hotfix.yml": ("install", "job"),
+    "zcloud-emergency-addon-hot-reload.yml": ("activate", "job"),
+}
+KEY = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?:[ ]*(.*))?$")
+JOB = re.compile(r"^  ([A-Za-z][A-Za-z0-9_-]*):[ ]*$")
+MAX_BYTES = 256 * 1024
+
+
+class AmbiguousSource(ValueError):
+    pass
+
+
+def _read_regular(root: Path, filename: str) -> str:
+    # Refuse links at EVERY fixed-path component; never follow a link to a
+    # different checkout, or report that source as evidence of this repo.
+    parts = (root, root / ".github", root / ".github" / "workflows",
+             root / ".github" / "workflows" / filename)
+    for part in parts:
+        if part.is_symlink():
+            raise AmbiguousSource("symlink_source")
+    path = parts[-1]
+    try:
+        metadata = path.stat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
+            raise AmbiguousSource("not_bounded_regular_source")
+        raw = path.read_bytes()
+    except (OSError, ValueError) as exc:
+        raise AmbiguousSource("unreadable_source") from exc
+    if len(raw) > MAX_BYTES or b"\x00" in raw:
+        raise AmbiguousSource("invalid_source_bytes")
+    try:
+        data = raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise AmbiguousSource("invalid_utf8") from exc
+    if "\t" in data:
+        raise AmbiguousSource("tab_indentation_or_scalar")
+    return data
+
+
+def _key(line: str, indent: int):
+    if not line.startswith(" " * indent) or line.startswith(" " * (indent + 1)):
+        return None
+    match = KEY.fullmatch(line[indent:])
+    return match.groups() if match else None
+
+
+def _section(lines: list[str], key: str, indent: int, low: int, high: int):
+    starts = []
+    for i in range(low, high):
+        parsed = _key(lines[i], indent)
+        if parsed and parsed[0] == key:
+            starts.append((i, parsed[1]))
+    if len(starts) != 1:
+        raise AmbiguousSource("missing_or_duplicate_" + key)
+    start, value = starts[0]
+    if value not in ("", None):
+        raise AmbiguousSource("inline_" + key)
+    end = next((i for i in range(start + 1, high)
+                if lines[i].strip() and not lines[i].lstrip().startswith("#")
+                and len(lines[i]) - len(lines[i].lstrip(" ")) <= indent), high)
+    return start, end
+
+
+def _lock(lines: list[str], indent: int, low: int, high: int):
+    try:
+        start, end = _section(lines, "concurrency", indent, low, high)
+    except AmbiguousSource as exc:
+        if str(exc) == "missing_or_duplicate_concurrency":
+            matches = [i for i in range(low, high)
+                       if (parsed := _key(lines[i], indent))
+                       and parsed[0] == "concurrency"]
+            if not matches:
+                return "missing_concurrency"
+        return "ambiguous_concurrency"
+    values = {}
+    for line in lines[start + 1:end]:
+        parsed = _key(line, indent + 2)
+        if parsed:
+            k, v = parsed
+            if k in values:
+                return "duplicate_lock_field"
+            values[k] = v
+    if values.get("group") != PRODUCTION_GROUP:
+        return "wrong_group"
+    if values.get("cancel-in-progress") != "false":
+        return "unsafe_cancel_policy"
+    return "serialized_source"
+
+
+def inspect_workflow(root: Path, filename: str, job: str, scope: str) -> str:
+    try:
+        lines = _read_regular(root, filename).splitlines()
+        roots = [i for i, line in enumerate(lines) if line == "jobs:"]
+        if len(roots) != 1:
+            return "ambiguous_jobs"
+        jobs_at = roots[0]
+        jobs = [i for i in range(jobs_at + 1, len(lines)) if JOB.fullmatch(lines[i])]
+        selected = [i for i in jobs if JOB.fullmatch(lines[i]).group(1) == job]
+        if len(selected) != 1:
+            return "missing_or_duplicate_mutation_job"
+        at = selected[0]
+        job_end = next((i for i in jobs if i > at), len(lines))
+        if scope == "workflow":
+            return _lock(lines, 0, 0, jobs_at)
+        return _lock(lines, 4, at + 1, job_end)
+    except AmbiguousSource as exc:
+        return str(exc)
+
+
+def inventory(root: Path) -> dict:
+    details = {}
+    for name, (job, scope) in WRITERS.items():
+        result = inspect_workflow(root, name, job, scope)
+        details[name] = {"mutation_job": job, "required_scope": scope,
+                         "source_result": result}
+    unsafe = sorted(name for name, item in details.items()
+                    if item["source_result"] != "serialized_source")
+    return {
+        "schema": "zcloud-writer-lock-source-v1",
+        "group": PRODUCTION_GROUP,
+        "total_writers": len(WRITERS),
+        "source_serialized": len(WRITERS) - len(unsafe),
+        "source_unverified": unsafe,
+        "source_lock_complete": not unsafe,
+        "runtime_lock_verified": False,
+        "release_authorized": False,
+        "dispatch_authorized": False,
+        "mutation_performed": False,
+        "writers": details,
+    }
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--expect-serialized", action="store_true",
+                        help="Exit nonzero when any source writer lacks the shared lock")
+    args = parser.parse_args(argv)
+    report = inventory(args.root)
+    print(json.dumps(report, sort_keys=True, separators=(",", ":")))
+    # Ordinary read-only inventory succeeds even when debt is open. A later,
+    # deliberately enabled enforcement gate must opt in to strict failure.
+    return 1 if args.expect_serialized and not report["source_lock_complete"] else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
