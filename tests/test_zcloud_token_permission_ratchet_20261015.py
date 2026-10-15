@@ -787,5 +787,18 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertIn('test "$final_head" = "$EXPECTED_HEAD"', workflow)
 
 
+    def test_hosted_source_gate_emits_fixed_denial_summary_without_leaking_evidence(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-token-permission-ratchet-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        trap_index = workflow.index("trap 'printf")
+        scanner_index = workflow.index("python3 scripts/zcloud_token_permission_ratchet_20261015.py")
+        self.assertLess(trap_index, scanner_index)
+        self.assertIn("Afgewezen: broncontrole of bronidentiteit is mislukt.", workflow)
+        self.assertIn("Geen productievrijgave: release, deployment en mutatie verboden.", workflow)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', workflow)
+        self.assertNotIn("printf \"$EXPECTED_HEAD\"", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()
