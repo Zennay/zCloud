@@ -36,6 +36,19 @@ SHELL_COMMAND_SUBST = re.compile(SCRIPT_EXEC + r"""\s+-c\s+["\x27]?\$\(\s*(?:cur
 REMOTE_STDIN = re.compile(
     SCRIPT_EXEC + r"""(?:\s+-s|\s+-)?\s*(?:<\s*<\(|<<<\s*["\x27]?\s*\$\()\s*(?:curl|wget)\b""", re.I
 )
+# Obvious download-to-local-file then immediate execution is code ingestion
+# without a pipe. A bounded literal same-path backreference prevents guessing
+# whether a differently named local file came from this fetch. Does not claim
+# to model aliases, chmod/rewrite steps, shell variables or arbitrary files.
+DOWNLOAD_THEN_EXEC = re.compile(
+    r"\b(?:curl|wget)\b[^\n;|]{0,512}?"
+    r"(?:\s(?:-o|-O)\s+|\s--output(?:=|\s+))"
+    r"(?P<downloaded>(?:\./|/tmp/|/var/tmp/)?[A-Za-z0-9._/-]{1,180})"
+    r"[^\n;|]{0,512}?"
+    r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*)"
+    + SCRIPT_EXEC + r"\s+(?P=downloaded)(?![A-Za-z0-9._/-])",
+    re.I,
+)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
 # outside the narrow source reader. Conservatively reject newly introduced
@@ -216,6 +229,7 @@ def findings(data: bytes) -> int:
         matched += len(REMOTE.findall(command)) + len(SUBSTITUTION.findall(command))
         matched += len(SHELL_COMMAND_SUBST.findall(command))
         matched += len(REMOTE_STDIN.findall(command))
+        matched += len(DOWNLOAD_THEN_EXEC.findall(command))
         # YAML aliases/tags can hide a shell script outside the literal run scalar.
         # Never claim a new opaque run value is harmless on source evidence alone.
         matched += bool(OPAQUE_RUN.match(command))
