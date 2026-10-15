@@ -47,7 +47,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           git cat-file -e "${BASE_SHA}^{commit}"
           git cat-file -e "${HEAD_SHA}^{commit}"
-          current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          current_main="$(cd "$RUNNER_TEMP" && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
           test "$current_main" = "$BASE_SHA"
           # Run the immutable policy before any PR-supplied unit tests.
           # Bootstrap PR: the source-only scanner does not yet exist on main,
@@ -68,5 +68,5 @@ jobs:
             python3 "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
           fi
           python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
-          current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          current_main="$(cd "$RUNNER_TEMP" && GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
           test "$current_main" = "$BASE_SHA"
