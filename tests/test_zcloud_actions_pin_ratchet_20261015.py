@@ -180,6 +180,45 @@ class ActionPinRatchetTests(unittest.TestCase):
         self.command("commit", "-qm", "documentation only")
         self.assertEqual(self.evaluate()["new_unpinned"], 0)
 
+    def test_composite_action_in_nonstandard_directory_denied(self):
+        local = self.root / "tools/deploy/action.yml"
+        local.parent.mkdir(parents=True)
+        local.write_text("runs:\n  using: composite\n  steps:\n"
+                         "    - uses: actions/cache@v4\n")
+        self.command("add", "tools")
+        self.command("commit", "-qm", "nested custom action")
+        result = self.evaluate()
+        self.assertEqual(result["new_unpinned"], 1)
+        self.assertEqual(result["examples"][0]["path"], "tools/deploy/action.yml")
+
+    def test_root_composite_action_yaml_denied(self):
+        local = self.root / "action.yaml"
+        local.write_text("runs:\n  using: composite\n  steps:\n"
+                         "    - uses: actions/cache@v4\n")
+        self.command("add", "action.yaml")
+        self.command("commit", "-qm", "root composite action")
+        result = self.evaluate()
+        self.assertEqual(result["new_unpinned"], 1)
+        self.assertEqual(result["examples"][0]["path"], "action.yaml")
+
+    def test_nonstandard_action_metadata_symlink_rejected(self):
+        local = self.root / "tools/deploy/action.yaml"
+        local.parent.mkdir(parents=True)
+        local.symlink_to("/tmp/outside-action.yaml")
+        self.command("add", "tools")
+        self.command("commit", "-qm", "symlinked action metadata")
+        with self.assertRaisesRegex(Refusal, "nonregular_workflow"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_action_nonstandard_pinned_sha_allowed(self):
+        local = self.root / "tools/deploy/action.yml"
+        local.parent.mkdir(parents=True)
+        local.write_text("runs:\n  using: composite\n  steps:\n"
+                         "    - uses: actions/cache@" + "a" * 40 + "\n")
+        self.command("add", "tools")
+        self.command("commit", "-qm", "pinned reusable action")
+        self.assertTrue(self.evaluate()["ok"])
+
     def test_invalid_revision_refused(self):
         with self.assertRaisesRegex(Refusal, "invalid_revision"):
             workflow_tree(self.root, "main; rm -rf /")
@@ -320,6 +359,10 @@ class HostedPinRatchetTrustTests(unittest.TestCase):
         text = self.source
         self.assertIn("pull_request:", text)
         self.assertIn('".github/actions/**"', text)
+        self.assertIn('"**/action.yml"', text)
+        self.assertIn('"**/action.yaml"', text)
+        self.assertIn('"action.yml"', text)
+        self.assertIn('"action.yaml"', text)
         self.assertIn("contents: read", text)
         self.assertIn("runs-on: ubuntu-latest", text)
         self.assertIn("persist-credentials: false", text)
