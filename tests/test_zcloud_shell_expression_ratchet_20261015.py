@@ -1064,6 +1064,12 @@ class RealGitTests(unittest.TestCase):
         self.assertIn("overige bestanden niet getoond", summary)
         self.assertLess(len(summary), 6000)
 
+    def test_hosted_evidence_admission_renders_bounded_summary(self):
+        workflow = (MODULE.parents[1] / ".github/workflows/zcloud-shell-expression-ratchet-20261015.yml").read_text()
+        self.assertIn("from scripts.zcloud_shell_expression_ratchet_20261015 import markdown_summary", workflow)
+        self.assertIn("os.environ.get('GITHUB_STEP_SUMMARY')", workflow)
+        self.assertIn("summary.write(markdown_summary(payload))", workflow)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
