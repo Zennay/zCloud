@@ -260,6 +260,17 @@ class SourceTests(unittest.TestCase):
             finally:
                 os.chdir(old)
 
+    def test_artifact_admission_triggers_for_all_pull_requests(self):
+        # GitHub changed-path filters inspect only a bounded diff file set.
+        # A risky local Action can be hidden beyond the provider's path cap.
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-artifact-upload-exposure-ratchet-20261015-w1.yml").read_text()
+        self.assertIn("on:\n  pull_request:\n", workflow)
+        self.assertNotIn("\n    paths:", workflow)
+        self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+
     def test_deep_composite_manifest_real_git_source_checked(self):
         # A legitimate local composite Action may be more than 6 directories
         # deep. The previous regex classified it as a non-manifest and skipped.
