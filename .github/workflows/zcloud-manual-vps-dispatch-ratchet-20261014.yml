@@ -59,10 +59,13 @@ jobs:
           if git cat-file -e "${BASE_SHA}:${policy_path}" 2>/dev/null; then
             git show "${BASE_SHA}:${policy_path}" > "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py"
             echo "POLICY_PROVENANCE=trusted_base_sha"
+            echo "Policy source: immutable PR base commit (trusted-base mode)." >> "$GITHUB_STEP_SUMMARY"
             python3 "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py" \
               --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
           else
             echo "POLICY_PROVENANCE=untrusted_bootstrap_review_required"
+            echo "::warning::First-install policy is from PR source; this passing job is not an independent security admission."
+            echo "BOOTSTRAP ONLY: policy not yet on trusted main. Independent review is mandatory before merge." >> "$GITHUB_STEP_SUMMARY"
             python3 "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
           fi
           current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
