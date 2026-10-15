@@ -410,15 +410,8 @@ def inspect(state: Path, *, snapshot_id: str | None = None) -> dict:
     }
 
 
-def audit_all(state: Path) -> dict:
-    """Bounded all-snapshot inventory; never elect or authorize an alternative."""
-    _directory(state)
-    _directory(state / "snapshots")
-    pointer = _json(state / "last-known-good.json")
-    current = pointer.get("snapshot_id")
-    if not isinstance(current, str) or SNAPSHOT_ID_RE.fullmatch(current) is None:
-        raise Denied("invalid_snapshot_id")
-
+def _snapshot_entries(state: Path) -> list[tuple[str, bool]]:
+    """Bounded nofollow inventory suitable for before/after set comparisons."""
     directory_fd = _open_directory_nofollow(state / "snapshots")
     try:
         with os.scandir(directory_fd) as iterator:
@@ -429,6 +422,19 @@ def audit_all(state: Path) -> dict:
                     raise Denied("too_many_snapshots")
     finally:
         os.close(directory_fd)
+    return sorted(snapshots)
+
+
+def audit_all(state: Path) -> dict:
+    """Bounded all-snapshot inventory; never elect or authorize an alternative."""
+    _directory(state)
+    _directory(state / "snapshots")
+    pointer = _json(state / "last-known-good.json")
+    current = pointer.get("snapshot_id")
+    if not isinstance(current, str) or SNAPSHOT_ID_RE.fullmatch(current) is None:
+        raise Denied("invalid_snapshot_id")
+
+    snapshots = _snapshot_entries(state)
     if not snapshots:
         raise Denied("no_snapshots")
 
@@ -456,6 +462,8 @@ def audit_all(state: Path) -> dict:
         results.append(entry)
     if _json(state / "last-known-good.json") != pointer:
         raise Denied("pointer_changed_during_scan")
+    if _snapshot_entries(state) != snapshots:
+        raise Denied("snapshot_inventory_changed")
     ids = {name for name, _ in snapshots}
     if current not in ids:
         raise Denied("current_snapshot_missing")
