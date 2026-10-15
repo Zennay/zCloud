@@ -118,6 +118,11 @@ def files_at(sha: str, deadline: float | None = None) -> dict[str, tuple[str, st
             raise Denied("ambiguous_tree") from exc
         if CONTROL.search(name):
             raise Denied("ambiguous_path")
+        # A local composite-action directory can be replaced by a symlink
+        # before its action.yml is enumerated. A symlink anywhere within
+        # .github/actions is not an ordinary auditable action source.
+        if name.startswith(ACTIONS) and mode not in {"100644", "100755"}:
+            raise Denied("unsupported_action_entry")
         if not selected(name):
             continue
         if kind != "blob" or mode not in {"100644", "100755"} or not SHA.fullmatch(oid):
@@ -229,6 +234,19 @@ def inspect(base: str, head: str) -> dict:
                 raise Denied("missing_workflow_root") from exc
             if kind != b"tree":
                 raise Denied("unsupported_workflow_root")
+    # Include the actions *root* itself: recursive listing with a trailing
+    # slash would silently skip .github/actions when it becomes a symlink.
+    for sha in (base, head):
+        raw = git("ls-tree", "-z", sha, "--", ".github/actions", deadline=deadline)
+        if raw:
+            record = raw.removesuffix(b"\\0")
+            try:
+                metadata, path = record.split(b"\\t", 1)
+                mode, kind, _ = metadata.decode("ascii").split()
+            except (ValueError, UnicodeError) as exc:
+                raise Denied("ambiguous_action_root") from exc
+            if path != b".github/actions" or mode != "040000" or kind != "tree":
+                raise Denied("unsupported_action_root")
     old, new = files_at(base, deadline), files_at(head, deadline)
     checked = 0
     for path, (_, oid) in new.items():
