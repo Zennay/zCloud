@@ -123,3 +123,9 @@ Six new real-Git test groups verify blocked multiline `curl|bash` and `wget|busy
 ## Direct `exec` interpreter wrapper (15 October follow-up)
 
 In a POSIX shell pipeline, `curl … | exec bash` executes downloaded stdin as shell commands even though the invoked interpreter is preceded by the `exec` built-in. The same applies to `wget … | ( exec /bin/sh )` and a downloaded file started via `exec bash local.sh`. The bounded wrapper list now includes this directly specified `exec` form; it does not infer arbitrary shell function aliases or dynamically constructed commands. Real-Git positive, inert `exec jq` and exact-unchanged-blob tests verify source-only admission without granting production authority.
+
+## Download redirected to a directly executed local script (15 October)
+
+A shell redirect can save remote bytes without the explicit download client's output option, e.g. `curl -fsSL URL > install.sh && bash install.sh`, `wget -qO- URL > ./install.sh; source ./install.sh` or a script file later executed by `python3` on the next literal shell line. The source-only ratchet now recognizes the bounded *exact same literal path* target for these cases in addition to `curl -o`/`wget -O`. A safe `jq` filter, merely saving bytes without running them or executing a **different** filename is not evidence of direct remote-code execution for this heuristic. Legacy risky Git blobs are grandfathered **only when unchanged**; any modification to a risky workflow reactivates the block.
+
+Six real-Git cases confirm the contract. This does **not** trace dynamically constructed paths, aliases, expanded variables, file rewrites, relative path normalization, redirection via file descriptors, or downloads through unrelated commands. The read-only GitHub-hosted result does not permit merge, workflow dispatch, live VPS mutation, or deployment.
