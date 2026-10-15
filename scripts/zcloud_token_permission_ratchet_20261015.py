@@ -286,11 +286,44 @@ def check(root: Path, base: str, head: str) -> dict[str, object]:
     }
 
 
+
+def format_ci_summary(payload: dict[str, object]) -> str:
+    """Dutch, bounded, fixed-wording CI summary: no source/secret interpolation."""
+    if (type(payload) is not dict
+            or payload.get("policy") != "zcloud-token-permission-no-new-debt-v1"
+            or type(payload.get("ok")) is not bool
+            or any(payload.get(flag) is not False for flag in
+                   ("release_authorized", "deployment_authorized", "mutation_performed"))):
+        raise IncompleteSource("contradictory_report_authority")
+    lines = ["### zCloud GitHub-tokenrechten (alleen broncontrole)"]
+    if payload["ok"] is False:
+        lines.append("**Afgewezen:** onvolledig bewijs of nieuwe bronrisico's.")
+    else:
+        keys = ("baseline_risks", "candidate_risks",
+                "new_risks", "removed_safe_scopes")
+        if any(type(payload.get(key)) is not int or
+               not 0 <= payload[key] <= MAX_FILES * MAX_FINDINGS for key in keys):
+            raise IncompleteSource("invalid_report_counts")
+        if payload["new_risks"] or payload["removed_safe_scopes"]:
+            raise IncompleteSource("contradictory_report_success")
+        lines.extend((
+            "**Broncontrole geslaagd.** Geen nieuwe tokenrechten in de gecontroleerde bron.",
+            f"- Eerdere risicodeclaraties: {payload['baseline_risks']}.",
+            f"- Kandidaat-risicodeclaraties: {payload['candidate_risks']}.",
+            f"- Nieuwe risico's: {payload['new_risks']}.",
+            f"- Verwijderde expliciete veilige scopes: {payload['removed_safe_scopes']}.",
+        ))
+    lines.append("**Geen productievrijgave:** release, deployment en mutatie blijven verboden.")
+    lines.append("Dit is een syntactische Git-broncontrole, geen runner- of VPS-acceptatie.")
+    return "\n".join(lines) + "\n"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--root", type=Path, default=Path("."))
+    parser.add_argument("--summary-to", type=Path)
     args = parser.parse_args(argv)
     try:
         result = check(args.root.resolve(), args.base, args.head)
@@ -301,6 +334,18 @@ def main(argv: list[str] | None = None) -> int:
             "release_authorized": False, "deployment_authorized": False,
             "mutation_performed": False,
         }
+    if args.summary_to is not None:
+        try:
+            summary = format_ci_summary(result)
+            with args.summary_to.open("a", encoding="utf-8") as handle:
+                handle.write(summary)
+        except (OSError, IncompleteSource):
+            result = {
+                "policy": "zcloud-token-permission-no-new-debt-v1",
+                "ok": False, "reason": "summary_evidence_failed",
+                "release_authorized": False, "deployment_authorized": False,
+                "mutation_performed": False,
+            }
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0 if result["ok"] else 1
 
