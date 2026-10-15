@@ -279,7 +279,7 @@ class HostedPinRatchetTrustTests(unittest.TestCase):
     def test_canonical_main_freshness_rechecked_after_source_scan(self):
         text = self.source
         scan = text.index('python3 "$RUNNER_TEMP/trusted-pin-scanner.py"')
-        final_check = text.index('name: Refuse a stale main revision')
+        final_check = text.index('name: Refuse stale canonical main and same-repository PR head after scan')
         self.assertLess(scan, final_check)
         self.assertIn("timeout 20 git ls-remote --exit-code origin refs/heads/main", text)
         self.assertIn('timeout 20 git ls-remote --exit-code origin "refs/heads/$HEAD_REF"', text)
