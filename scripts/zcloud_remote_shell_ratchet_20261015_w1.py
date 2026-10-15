@@ -17,7 +17,13 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 SCALAR = re.compile(r"""^(?P<indent>\s*)(?:-\s+)?(?P<key>run|["\x27]run["\x27])\s*:\s*(?P<value>.*)$""")
 FLOW_RUN = re.compile(r"""(?:\{|,)\s*(?:run|["\x27]run["\x27])\s*:\s*(?P<script>"(?:\\.|[^"])*"|\x27(?:\x27\x27|[^\x27])*\x27|[^,}\]]+)""")
 SHELL_EXEC = r"(?:(?:sudo\s+(?:-[A-Za-z]+\s+)*|/usr/bin/env\s+))?(?:/usr/bin/|/bin/)?(?:bash|sh|zsh)\b"
-REMOTE = re.compile(r"\b(?:curl|wget)\b[^\n|;]*\|\s*" + SHELL_EXEC, re.I)
+# Remote bytes may traverse bounded pass-through/decoder stages before a shell.
+# Keep the allowed stage names explicit to avoid spanning unrelated commands.
+PASS_THROUGH = r"(?:tee|cat|sed|base64|tr|awk|gunzip|gzip)\\b[^\\n|;]*\\|\\s*"
+REMOTE = re.compile(
+    r"\\b(?:curl|wget)\\b[^\\n|;]*\\|\\s*" + rf"(?:{PASS_THROUGH}){{0,2}}" + SHELL_EXEC,
+    re.I,
+)
 SUBSTITUTION = re.compile(SHELL_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
 SHELL_COMMAND_SUBST = re.compile(SHELL_EXEC + r"""\s+-c\s+["\x27]?\$\(\s*(?:curl|wget)\b""", re.I)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
@@ -61,6 +67,11 @@ def committed_workflows(repo: Path, sha: str) -> dict[str, bytes]:
             path = raw_path.decode("utf-8", "strict")
         except (ValueError, UnicodeDecodeError) as exc:
             raise SourceError("Malformed Git tree entry") from exc
+        # Recursive Git tree listing omits directory nodes but emits a
+        # symlink/gitlink at the directory's exact path. Reject those control
+        # ancestors even if another valid composite Action remains in the tree.
+        if path in (".github", ".github/actions", ".github/workflows"):
+            raise SourceError("Actions control directory replaced by a non-tree")
         workflow_tree = path.startswith(".github/workflows/")
         action_source = path in ("action.yml", "action.yaml") or path.endswith(("/action.yml", "/action.yaml"))
         workflow_source = workflow_tree and path.endswith((".yml", ".yaml"))
