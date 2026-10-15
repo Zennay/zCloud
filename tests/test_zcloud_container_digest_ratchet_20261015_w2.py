@@ -508,6 +508,55 @@ jobs:
         self.assertEqual([], self.scan(f"    image: 'redis@sha256:{DIGEST}' # pinned\n"))
         self.assertEqual([], self.scan(f'    image: "redis@sha256:{DIGEST}" # pinned\n'))
 
+    def test_real_git_full_docker_uses_scalar_denies_trailing_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, workflow = self._init(root)
+            workflow.write_text(
+                "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n"
+                f"      - uses: docker://alpine@sha256:{DIGEST} trailing-invalid-yaml\n",
+                encoding="utf-8",
+            )
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "appended unsafe Docker uses scalar")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(1, check.returncode, check.stdout + check.stderr)
+            data = json.loads(check.stdout)
+            self.assertTrue(data["inventory_complete"])
+            self.assertEqual(1, data["new_findings"])
+            self.assertEqual("docker_uses", data["new_risks"][0]["kind"])
+            self.assertFalse(data["deployment_authorized"])
+
+    def test_real_git_action_uses_alias_denied_and_unmodified_source_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, workflow = self._init(root)
+            workflow.write_text(
+                "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - uses: *docker_image_ref\n",
+                encoding="utf-8",
+            )
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-qm", "indirect Docker action")
+            head = run_git(root, "rev-parse", "HEAD")
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", base, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(1, check.returncode, check.stdout + check.stderr)
+            self.assertEqual("ambiguous_uses_reference",
+                             json.loads(check.stdout)["new_risks"][0]["kind"])
+            same = subprocess.run(
+                [sys.executable, str(SCRIPT), "--base-sha", head, "--head-sha", head],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(0, same.returncode, same.stdout + same.stderr)
+            self.assertEqual(0, json.loads(same.stdout)["new_findings"])
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
