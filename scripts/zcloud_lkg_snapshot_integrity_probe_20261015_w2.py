@@ -17,6 +17,8 @@ from pathlib import Path, PurePosixPath
 
 MAX_JSON = 2 * 1024 * 1024
 MAX_FILES = 50000
+MAX_SNAPSHOTS = 16
+MAX_BATCH_BYTES = 1024 * 1024 * 1024
 MAX_BYTES = 512 * 1024 * 1024
 SNAPSHOT_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-(?:[a-f0-9]{8}|working-tree)(?:-[0-9]+)?$")
 SHA_RE = re.compile(r"^[a-f0-9]{64}$")
@@ -287,12 +289,15 @@ def _verify_manifest_metadata(manifest: dict, expected: dict[str, str]) -> set[s
     return present
 
 
-def inspect(state: Path) -> dict:
-    """Verify pointer, manifest, tree shape and exact SHA256 contents; do not restore."""
+def inspect(state: Path, *, snapshot_id: str | None = None) -> dict:
+    """Verify selected snapshot without ever modifying the active LKG pointer."""
     _directory(state)
     _directory(state / "snapshots")
     ptr = _json(state / "last-known-good.json")
-    snap_id = ptr.get("snapshot_id")
+    current_id = ptr.get("snapshot_id")
+    if not isinstance(current_id, str) or SNAPSHOT_ID_RE.fullmatch(current_id) is None:
+        raise Denied("invalid_snapshot_id")
+    snap_id = current_id if snapshot_id is None else snapshot_id
     if not isinstance(snap_id, str) or SNAPSHOT_ID_RE.fullmatch(snap_id) is None:
         raise Denied("invalid_snapshot_id")
     snapshot = state / "snapshots" / snap_id
@@ -399,18 +404,85 @@ def inspect(state: Path) -> dict:
     if _json(snapshot / "manifest.json") != manifest:
         raise Denied("manifest_changed_during_scan")
     return {
-        "ok": True, "snapshot_id": snap_id, "file_count": count,
-        "verified_bytes": size, "mutation_performed": False,
+        "ok": True, "snapshot_id": snap_id, "is_current": snap_id == current_id,
+        "file_count": count, "verified_bytes": size, "mutation_performed": False,
         "authorizes_rollback": False, "authorizes_deploy": False,
+    }
+
+
+def audit_all(state: Path) -> dict:
+    """Bounded all-snapshot inventory; never elect or authorize an alternative."""
+    _directory(state)
+    _directory(state / "snapshots")
+    pointer = _json(state / "last-known-good.json")
+    current = pointer.get("snapshot_id")
+    if not isinstance(current, str) or SNAPSHOT_ID_RE.fullmatch(current) is None:
+        raise Denied("invalid_snapshot_id")
+
+    directory_fd = _open_directory_nofollow(state / "snapshots")
+    try:
+        with os.scandir(directory_fd) as iterator:
+            snapshots = []
+            for item in iterator:
+                snapshots.append((item.name, item.is_dir(follow_symlinks=False)))
+                if len(snapshots) > MAX_SNAPSHOTS:
+                    raise Denied("too_many_snapshots")
+    finally:
+        os.close(directory_fd)
+    if not snapshots:
+        raise Denied("no_snapshots")
+
+    results: list[dict[str, object]] = []
+    total = 0
+    for name, is_dir in sorted(snapshots):
+        if SNAPSHOT_ID_RE.fullmatch(name) is None or not is_dir:
+            entry = {"snapshot_id": name[:100], "ok": False, "reason": "invalid_snapshot_entry"}
+        else:
+            try:
+                evidence = inspect(state, snapshot_id=name)
+            except (Denied, OSError) as exc:
+                reason = str(exc) if isinstance(exc, Denied) else "io_error"
+                entry = {"snapshot_id": name, "ok": False, "reason": reason}
+            else:
+                entry = {
+                    "snapshot_id": name, "ok": True,
+                    "file_count": evidence["file_count"],
+                    "verified_bytes": evidence["verified_bytes"],
+                }
+                total += evidence["verified_bytes"]
+                if total > MAX_BATCH_BYTES:
+                    raise Denied("batch_byte_limit")
+        entry["is_current"] = name == current
+        results.append(entry)
+    if _json(state / "last-known-good.json") != pointer:
+        raise Denied("pointer_changed_during_scan")
+    ids = {name for name, _ in snapshots}
+    if current not in ids:
+        raise Denied("current_snapshot_missing")
+    return {
+        "ok": all(item["ok"] for item in results),
+        "snapshot_count": len(snapshots),
+        "current_snapshot_id": current,
+        "results": results,
+        "mutation_performed": False,
+        "authorizes_rollback": False,
+        "authorizes_deploy": False,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", required=True, type=Path)
+    parser.add_argument(
+        "--all-snapshots", action="store_true",
+        help="Audit every retained snapshot without selecting or restoring any",
+    )
     args = parser.parse_args(argv)
     try:
-        result = inspect(args.state_dir.absolute())
+        result = (
+            audit_all(args.state_dir.absolute()) if args.all_snapshots
+            else inspect(args.state_dir.absolute())
+        )
     except (Denied, OSError) as exc:
         code = str(exc) if isinstance(exc, Denied) else "io_error"
         result = {
