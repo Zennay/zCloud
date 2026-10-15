@@ -28,6 +28,10 @@ WRITERS = {
 KEY = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(?:[ ]*(.*))?$")
 JOB = re.compile(r"^  ([A-Za-z][A-Za-z0-9_-]*):[ ]*$")
 MAX_BYTES = 256 * 1024
+# YAML permits quoted/escaped mapping keys, explicit mapping syntax, merge
+# aliases and multiple documents. The narrow stdlib scanner cannot soundly
+# interpret those variants, so refuse them rather than trusting a shadow key.
+SHADOW_KEY = re.compile(r"""^ {0,6}(?:(?:'[^']*'|"[^"]*"|<<)\s*:|\?\s)""")
 
 
 class AmbiguousSource(ValueError):
@@ -88,6 +92,9 @@ def _read_regular(root: Path, filename: str) -> str:
             raise AmbiguousSource("invalid_utf8") from exc
         if "\t" in data:
             raise AmbiguousSource("tab_indentation_or_scalar")
+        for line in data.splitlines():
+            if SHADOW_KEY.match(line) or line in ("---", "..."):
+                raise AmbiguousSource("unsupported_yaml_mapping_form")
         return data
     except OSError as exc:
         # Linux may return ELOOP for a leaf and ENOTDIR for a parent symlink.
