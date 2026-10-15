@@ -227,9 +227,28 @@ def read_snapshot(path):
     # Reject non-Path inputs, not valid concrete Path implementations.
     if not isinstance(path, Path):
         raise InvalidInventory("invalid_snapshot_path")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    # O_NOFOLLOW on the final file alone is insufficient: an ancestor
+    # directory may be swapped for a symlink. Walk each path component using
+    # directory file descriptors so a parent cannot redirect our read.
+    # This tool deliberately runs on the GitHub-hosted Linux runner.
+    components = path.parts
+    if not components or ".." in components or path.name in ("", ".", ".."):
+        raise InvalidInventory("invalid_snapshot_path")
+    directory_flags = (os.O_RDONLY | os.O_DIRECTORY |
+                       getattr(os, "O_NOFOLLOW", 0))
+    file_flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                  getattr(os, "O_NONBLOCK", 0))
+    directory_fd = None
     try:
-        with os.fdopen(os.open(path, flags), "rb") as stream:
+        directory_fd = os.open("/" if path.is_absolute() else ".", directory_flags)
+        parents = components[1:-1] if path.is_absolute() else components[:-1]
+        for component in parents:
+            if component == ".":
+                continue
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        with os.fdopen(os.open(path.name, file_flags, dir_fd=directory_fd), "rb") as stream:
             before = os.fstat(stream.fileno())
             if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_SNAPSHOT_BYTES:
                 raise InvalidInventory("unsafe_or_oversized_snapshot")
@@ -245,6 +264,9 @@ def read_snapshot(path):
         return data.decode("utf-8")
     except (OSError, UnicodeError) as exc:
         raise InvalidInventory("snapshot_read_failed") from exc
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
 
 
 def main(argv=None):
