@@ -49,8 +49,7 @@ jobs:
           git cat-file -e "${HEAD_SHA}^{commit}"
           current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
           test "$current_main" = "$BASE_SHA"
-          python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
-
+          # Run the immutable policy before any PR-supplied unit tests.
           # Bootstrap PR: the source-only scanner does not yet exist on main,
           # so the candidate's self-test is NOT independently trusted.
           # Once merged, run the scanner from immutable BASE_SHA, never the
@@ -68,5 +67,6 @@ jobs:
             echo "BOOTSTRAP ONLY: policy not yet on trusted main. Independent review is mandatory before merge." >> "$GITHUB_STEP_SUMMARY"
             python3 "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
           fi
+          python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
           current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
           test "$current_main" = "$BASE_SHA"
