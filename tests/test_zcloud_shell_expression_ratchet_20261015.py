@@ -859,6 +859,42 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - env:\n      WORKFLOW_TITLE: ${{ github.workflow }}\n    run: printf '%s\\n' \"$WORKFLOW_TITLE\"\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_risk_kind_report_classifies_inline_expression_without_leak(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.event.secret_message }}\n")
+        report = guard.audit(base, head)
+        self.assertEqual([], report["baseline_risk_kinds"])
+        self.assertEqual([{"kind": "direct_interpolation", "count": 1}],
+                         report["candidate_risk_kinds"])
+        self.assertNotIn("secret_message", json.dumps(report))
+
+    def test_risk_kind_report_classifies_incomplete_and_ambiguous_shell(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: *anchor_name\n  - run: echo ${{ missing\n")
+        report = guard.audit(base, head)
+        self.assertEqual([{"kind": "incomplete_expression", "count": 1},
+                          {"kind": "yaml_structure_ambiguity", "count": 1}],
+                         report["candidate_risk_kinds"])
+        self.assertEqual(2, sum(row["count"] for row in report["candidate_risk_kinds"]))
+
+    def test_risk_kind_report_classifies_computed_property_ambiguity(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github[format('event')] }}\n")
+        report = guard.audit(base, head)
+        self.assertEqual([{"kind": "dynamic_property_ambiguity", "count": 1}],
+                         report["candidate_risk_kinds"])
+        self.assertNotIn("format", json.dumps(report))
+
+    def test_risk_kind_report_grandfathers_exact_legacy_findings(self):
+        source = "steps:\n  - run: echo ${{ env.OLD_SECRET }}\n"
+        base = self.commit(source)
+        head = self.commit(source + "# harmless comment\n")
+        report = guard.audit(base, head)
+        expected = [{"kind": "direct_interpolation", "count": 1}]
+        self.assertEqual(expected, report["baseline_risk_kinds"])
+        self.assertEqual(expected, report["candidate_risk_kinds"])
+        self.assertEqual(0, report["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
