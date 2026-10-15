@@ -308,6 +308,21 @@ generic parsers. This check is intentionally a fail-closed syntax guard,
 **not** proof that a tagged key is executable by Actions, nor a substitute
 for YAML semantic validation. No release, merge or VPS permission is granted.
 
+## Exact-identity hosted admission
+
+The hosted read-only job validates the advisory JSON after computing it.
+It requires the document's schema, `base_sha` and `head_sha` to exactly
+match the two immutable refs checked from GitHub. It also reconciles
+baseline/candidate totals with both per-workflow and per-reason counts.
+A successful no-new-debt result must contain **empty**
+`new_risk_kinds`, `new_risky_workflows`, and `affected_workflows`,
+in addition to `new_risks=0` and all authority/mutation flags false.
+
+An incomplete, inconsistent, or replayed report fails the hosted job.
+These are two-point freshness/source-integrity checks rather than an
+atomic GitHub snapshot or independent release attestation. A green
+advisory run cannot authorize merging or touching the VPS.
+
 ## Limitations and safety boundary
 
 - The hosted workflow separately checks the exact remote `main` and branch
