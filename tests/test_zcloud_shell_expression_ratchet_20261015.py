@@ -179,6 +179,26 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(expression + "  - run: echo separately safe\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_second_unterminated_expression_after_valid_close_denied(self):
+        base = self.commit("steps:\n  - run: echo ${{ 1 + 1 }}\n")
+        head = self.commit("steps:\n  - run: echo ${{ 1 + 1 }} ${{ github.event.issue.title\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_changed_yaml_alias_is_new_ambiguous_shell_debt(self):
+        base = self.commit("steps:\n  - run: *old_command\n")
+        head = self.commit("steps:\n  - run: *new_command\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_changed_computed_property_is_new_ambiguous_debt(self):
+        base = self.commit("steps:\n  - run: echo ${{ github[format('event')] }}\n")
+        head = self.commit("steps:\n  - run: echo ${{ github[format('head_ref')] }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_legacy_incomplete_expression_relocated_is_new_risk(self):
+        base = self.commit("steps:\n  - run: echo ${{ broken\n")
+        head = self.commit("steps:\n  - run: printf ${{ broken\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
