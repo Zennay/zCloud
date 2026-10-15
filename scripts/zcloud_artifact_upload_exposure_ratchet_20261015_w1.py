@@ -106,6 +106,11 @@ def workflow_paths(base: str, head: str) -> list[str]:
             # Composite action manifests can declare additional upload-artifact
             # steps; unrelated local scripts are not YAML action entrypoints.
             if not ACTION_MANIFEST.fullmatch(name):
+                # A newly linked Action script/directory must not become an
+                # opaque path that this manifest-only scanner silently skips.
+                entry = git("ls-tree", "-z", head, "--", name, cap=1500)
+                if not entry.startswith((b"100644 blob ", b"100755 blob ")) or not entry.endswith(name.encode() + b"\0"):
+                    raise Denied("opaque_local_action_entry")
                 continue
         elif not WORKFLOW.fullmatch(name):
             raise Denied("ambiguous_workflow_path")
