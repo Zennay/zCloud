@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import shlex
 import subprocess
 import sys
 import time
@@ -131,6 +132,27 @@ def tree(commit: str) -> dict[str, str]:
     return result
 
 
+def shell_git_push(line: str) -> bool:
+    """Conservative same-command token fallback for quoted Git option arguments."""
+    if GIT_PUSH.search(line):
+        return True
+    for match in re.finditer(r"(?i)(?<![\w-])git\s+", line):
+        lexer = shlex.shlex(line[match.end():], posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        try:
+            pieces = list(lexer)
+        except ValueError:
+            # Unmatched quoting after an executable Git invocation is opaque.
+            return True
+        for part in pieces[:16]:
+            if part in (";", "&&", "||", "|", "&"):
+                break
+            if part.lower() == "push":
+                return True
+    return False
+
+
 def suspicious_lines(source: str) -> list[str]:
     findings: list[str] = []
     # Conservative lexical policy. Multiline/dynamic commands are not parsed
@@ -141,7 +163,7 @@ def suspicious_lines(source: str) -> list[str]:
     for line in normalized.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        if GIT_PUSH.search(line):
+        if shell_git_push(line):
             findings.append("git_push")
         if REFS_API.search(line) and (
             re.search(r"(?i)\b(?:gh\s+api|curl|wget|PATCH|POST|DELETE|PUT)\b", line)
