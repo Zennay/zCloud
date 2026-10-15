@@ -211,6 +211,55 @@ def audit(repo: Path, base: str, head: str) -> Result:
                   sum(findings(v) for v in after.values()), len(delta), True)
 
 
+def operator_summary(report: object, exit_code: int) -> str:
+    """Render only bounded numerical CI evidence; never a release decision."""
+    if type(exit_code) is not int or exit_code not in (0, 1, 2):
+        raise SourceError("Invalid scan exit status")
+    if not isinstance(report, dict):
+        raise SourceError("Invalid source result shape")
+    expected = {
+        "policy", "baseline_findings", "candidate_findings",
+        "new_risky_workflows", "source_complete", "release_authorized",
+        "deployment_authorized", "mutation_performed",
+    }
+    incomplete_required = {
+        "policy", "new_risky_workflows", "source_complete",
+        "release_authorized", "deployment_authorized", "mutation_performed",
+    }
+    if exit_code == 2:
+        if (not incomplete_required.issubset(report)
+                or not set(report).issubset(expected)):
+            raise SourceError("Incomplete result schema invalid")
+    elif set(report) != expected:
+        raise SourceError("Complete result schema invalid")
+    if report.get("policy") != "zcloud-remote-shell-no-new-debt-v1":
+        raise SourceError("Unknown result policy")
+    for authority in ("release_authorized", "deployment_authorized", "mutation_performed"):
+        if report.get(authority) is not False:
+            raise SourceError("Source evidence cannot authorize mutation")
+    if exit_code == 2:
+        if report.get("source_complete") is not False or report.get("new_risky_workflows") is not None:
+            raise SourceError("Incomplete evidence falsely reported complete")
+        if report.get("baseline_findings") is not None or report.get("candidate_findings") is not None:
+            raise SourceError("Incomplete source cannot publish confident counts")
+        return ("### zCloud broncontrole — Onvolledig bewijs\n\n"
+                "Bronvergelijking niet afgerond. Geen productieautorisatie.\n")
+    if report.get("source_complete") is not True:
+        raise SourceError("Complete scan not proven")
+    counters = tuple(report.get(k) for k in (
+        "baseline_findings", "candidate_findings", "new_risky_workflows"
+    ))
+    if any(type(v) is not int or not 0 <= v <= 10_000_000 for v in counters):
+        raise SourceError("Invalid or excessive source counters")
+    baseline, candidate, new = counters
+    if new > candidate or (exit_code == 0 and new != 0) or (exit_code == 1 and new == 0):
+        raise SourceError("Contradictory scan outcome")
+    status = "Geen nieuwe bekende shell-risico's" if exit_code == 0 else "Nieuw risico gedetecteerd"
+    return (f"### zCloud broncontrole — {status}\n\n"
+            f"Bestaande: {baseline}; kandidaat: {candidate}; nieuw: {new}.\n\n"
+            "Geen productieautorisatie. Broncontrole is geen VPS- of releasebewijs.\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--repo", default=".")
