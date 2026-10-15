@@ -18,7 +18,23 @@ SCALAR = re.compile(r"""^(?P<indent>\s*)(?:-\s+)?(?P<key>run|["\x27]run["\x27])\
 FLOW_RUN = re.compile(r"""(?:\{|,)\s*(?:run|["\x27]run["\x27])\s*:\s*(?P<script>"(?:\\.|[^"])*"|\x27(?:\x27\x27|[^\x27])*\x27|[^,}\]]+)""")
 # Wrappers can change the process name without changing remote-code execution.
 # Bounded, explicit prefixes keep this a conservative source-pattern check.
-SCRIPT_WRAPPER = r"(?:(?:sudo(?:\s+-[A-Za-z]+)*|(?:/usr/bin/)?env(?:\s+-[A-Za-z]+)*|(?:/usr/bin/)?timeout\s+[0-9]+(?:\.[0-9]+)?|nohup|command)\s+){0,3}"
+# Explicit bounded sudo user and env assignment forms are real interpreter
+# wrappers: curl | sudo -u root bash and wget | env LANG=C sh execute bytes.
+# Ignore arbitrary shell metacharacter expansion and dynamic variable values.
+RUN_USER = r"[A-Za-z_][A-Za-z0-9_.-]{0,63}"
+SUDO_WRAPPER = (
+    r"sudo(?:\s+-[A-Za-z]+)*"
+    + rf"(?:\s+(?:-u\s+{RUN_USER}|--user(?:=|\s+){RUN_USER}))?"
+    + r"(?:\s+--)?"
+)
+ENV_WRAPPER = (
+    r"(?:/usr/bin/)?env(?:\s+-[A-Za-z]+)*"
+    + r"(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s|;]{1,128}){0,3}"
+)
+SCRIPT_WRAPPER = (
+    rf"(?:(?:{SUDO_WRAPPER}|{ENV_WRAPPER}|"
+    r"(?:/usr/bin/)?timeout\s+[0-9]+(?:\.[0-9]+)?|nohup|command)\s+){0,3}"
+)
 SCRIPT_EXEC = SCRIPT_WRAPPER + r"(?:/usr/local/bin/|/usr/bin/|/bin/)?(?:bash|sh|zsh|python(?:[23](?:\.\d+)?)?|pypy3?|node(?:js)?|ruby|perl|php)\b"
 # Remote bytes may traverse bounded pass-through/decoder stages before a shell.
 # Keep the allowed stage names explicit to avoid spanning unrelated commands.
