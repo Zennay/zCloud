@@ -27,7 +27,7 @@ The first command prints a bounded JSON result including per-job source outcomes
 | `zcloud-no-browser-churn-hotfix.yml` | `install` | job (pending independent remediation) |
 | `zcloud-emergency-addon-hot-reload.yml` | `activate` | job (pending independent remediation) |
 
-The tool refuses missing, duplicated, dynamic or wrong lock group, `cancel-in-progress: true`, absent jobs, binary/unreadable/oversized files, symlinks and confusing repeated keys. It examines the known static workflow/job paths; it is **not a full YAML parser**, full repository writer discovery, or runtime proof. Unlisted workflows, GitHub job scheduling, simultaneous active attempts, deployed SHA, listener liveness and production approval remain unverified. A green source inventory cannot replace independent review.
+The tool refuses missing, duplicated, dynamic or wrong lock group, `cancel-in-progress: true`, absent jobs, binary/unreadable/oversized files, symlinks and confusing repeated keys. It also verifies that an optional **workflow-level parent concurrency** cannot cancel an otherwise protected job: missing, duplicate, dynamic or `true` parent `cancel-in-progress` is denied rather than trusting the nested job lock alone. It examines the known static workflow/job paths; it is **not a full YAML parser**, full repository writer discovery, or runtime proof. Unlisted workflows, GitHub job scheduling, simultaneous active attempts, deployed SHA, listener liveness and production approval remain unverified. A green source inventory cannot replace independent review.
 
 ## Serialized remediation / runtime acceptance remains separate
 
