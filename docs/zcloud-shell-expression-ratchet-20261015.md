@@ -65,6 +65,28 @@ moving an existing escaped run scalar does not silently inherit a waiver.
 Single-quoted YAML strings and block-style scripts do not decode these escapes
 and are not caught by this specific additional ambiguity rule.
 
+## Derived step and matrix output shell trust
+
+Not all attacker-controlled shell input is spelled `github.event` or
+`inputs`. Workflow outputs can carry downloaded text, PR metadata or other
+untrusted data, and dynamic matrix values can originate from those outputs.
+The ratchet therefore refuses **new** direct shell interpolations of
+`steps.<step-id>.outputs.*`, `needs.<job-id>.outputs.*` and `matrix.*`,
+including bracket syntax for named jobs/steps and hyphenated names.
+This is intentionally conservative: some outputs or matrix elements are
+immutable and harmless, but the source-only tripwire cannot prove their
+upstream origin. Existing historical expressions remain scoped to their
+exact original run scalar, job ancestry and step metadata; changing a
+command cannot reuse an old waiver.
+
+Boolean/status metadata (`steps.check.outcome`, `needs.check.result`) is
+not marked as an output payload by this specific rule. A direct `github.sha`
+shell interpolation and passing dynamically derived inputs through a
+step `env:` assignment rather than directly interpolating shell syntax
+remain outside the new direct-shell rule. Environment values must still
+be validated and quoted by the consumer: this is not a general guarantee
+of safety for arbitrary shell scripts.
+
 ## Local composite Action shell coverage
 
 The guard now also scans committed `action.yml` and `action.yaml` files **at
