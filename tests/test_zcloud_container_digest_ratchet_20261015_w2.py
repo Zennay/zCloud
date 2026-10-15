@@ -113,7 +113,9 @@ jobs:
     def test_duplicate_new_finding_cannot_be_hidden(self):
         old = self.scan("  image: alpine:3\n")
         new = self.scan("  image: alpine:3\n  image: alpine:3\n")
-        self.assertEqual(1, guard.compare(old, new)["new_findings"])
+        # Whole-file risk identity means *both* old and duplicated unsafe
+        # scalars require review when the surrounding workflow changed.
+        self.assertEqual(2, guard.compare(old, new)["new_findings"])
 
     def test_json_is_bounded_and_non_authorizing(self):
         result = guard.compare([], self.scan("  image: alpine:latest\n") * 30)
