@@ -12,8 +12,10 @@ import argparse
 import json
 import os
 import re
+import selectors
 import subprocess
 import sys
+import time
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOWS = ".github/workflows/"
@@ -21,6 +23,8 @@ ACTIONS = ".github/actions/"
 MAX_FILES = 750
 MAX_FILE_BYTES = 524288
 MAX_TREE_BYTES = 2 * 1024 * 1024
+MAX_SCAN_SECONDS = 120
+MAX_GIT_SECONDS = 15
 STEP = re.compile(r"^(\s*)-\s+uses\s*:\s*['\"]?actions/checkout@([0-9a-f]{40})(?:['\"])?(?:\s*(?:#.*)?)?$")
 ANY_CHECKOUT = re.compile(r"actions/checkout\s*@", re.I)
 WITH = re.compile(r"^(\s*)with\s*:\s*(?:#.*)?$")
@@ -34,39 +38,64 @@ class Denied(Exception):
     pass
 
 
-def git(*args: str, max_bytes: int = MAX_TREE_BYTES) -> bytes:
-    # Never allow caller environment to replace immutable objects, fetch absent
-    # objects automatically or alter the global system configuration.
+def git(*args: str, max_bytes: int = MAX_TREE_BYTES,
+        deadline: float | None = None) -> bytes:
+    """Bound Git subprocess output AND wall time, even for a stalled producer.
+
+    Buffered pipe.read can block indefinitely *before* subprocess.wait(timeout)
+    runs. A selector with a monotonic deadline controls every read and wait.
+    """
+    if type(max_bytes) is not int or not 0 <= max_bytes <= MAX_TREE_BYTES:
+        raise Denied("invalid_git_output_budget")
+    now = time.monotonic()
+    if deadline is not None and now >= deadline:
+        raise Denied("scan_deadline_exceeded")
+    stop = min(now + MAX_GIT_SECONDS, deadline) if deadline is not None else now + MAX_GIT_SECONDS
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     environment.update(GIT_NO_REPLACE_OBJECTS="1", GIT_OPTIONAL_LOCKS="0",
                        GIT_NO_LAZY_FETCH="1", GIT_TERMINAL_PROMPT="0",
                        GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                        GIT_CONFIG_SYSTEM=os.devnull)
+    process = None
     try:
         process = subprocess.Popen(["git", *args], stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                   env=environment)
-        # Bounded reading, not a post-hoc subprocess.run memory bound.
-        chunks = bytearray()
+                                   env=environment, close_fds=True)
+        output = bytearray()
         assert process.stdout is not None
-        while True:
-            chunk = process.stdout.read(min(65536, max_bytes + 1 - len(chunks)))
-            if not chunk:
-                break
-            chunks.extend(chunk)
-            if len(chunks) > max_bytes:
-                raise Denied("git_output_limit")
-        if process.wait(timeout=15) != 0:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while selector.get_map():
+                seconds_left = stop - time.monotonic()
+                if seconds_left <= 0:
+                    raise Denied("git_source_timeout")
+                ready = selector.select(timeout=seconds_left)
+                if not ready:
+                    raise Denied("git_source_timeout")
+                for key, _ in ready:
+                    chunk = os.read(key.fd, min(65536, max_bytes + 1 - len(output)))
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    output.extend(chunk)
+                    if len(output) > max_bytes:
+                        raise Denied("git_output_limit")
+        seconds_left = stop - time.monotonic()
+        if seconds_left <= 0:
+            raise Denied("git_source_timeout")
+        if process.wait(timeout=seconds_left) != 0:
             raise Denied("git_source_missing")
-        return bytes(chunks)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        return bytes(output)
+    except subprocess.TimeoutExpired as exc:
+        raise Denied("git_source_timeout") from exc
+    except OSError as exc:
         raise Denied("git_source_unavailable") from exc
     finally:
-        if "process" in locals():
+        if process is not None:
             if process.poll() is None:
                 process.kill()
             process.wait()
-            if process.stdout:
+            if process.stdout is not None:
                 process.stdout.close()
 
 
@@ -75,8 +104,8 @@ def selected(path: str) -> bool:
             or path.startswith(ACTIONS) and path.endswith(("/action.yml", "/action.yaml")))
 
 
-def files_at(sha: str) -> dict[str, tuple[str, str]]:
-    output = git("ls-tree", "-rz", sha, "--", WORKFLOWS, ACTIONS)
+def files_at(sha: str, deadline: float | None = None) -> dict[str, tuple[str, str]]:
+    output = git("ls-tree", "-rz", sha, "--", WORKFLOWS, ACTIONS, deadline=deadline)
     files = {}
     for raw in output.split(b"\x00"):
         if not raw:
@@ -101,15 +130,15 @@ def files_at(sha: str) -> dict[str, tuple[str, str]]:
     return files
 
 
-def blob(oid: str) -> str:
-    size = git("cat-file", "-s", oid, max_bytes=20)
+def blob(oid: str, deadline: float | None = None) -> str:
+    size = git("cat-file", "-s", oid, max_bytes=20, deadline=deadline)
     try:
         count = int(size.strip())
     except ValueError as exc:
         raise Denied("invalid_blob_size") from exc
     if not 0 <= count <= MAX_FILE_BYTES:
         raise Denied("oversized_source")
-    raw = git("cat-file", "blob", oid, max_bytes=MAX_FILE_BYTES)
+    raw = git("cat-file", "blob", oid, max_bytes=MAX_FILE_BYTES, deadline=deadline)
     if len(raw) != count:
         raise Denied("changed_blob")
     try:
@@ -186,26 +215,27 @@ def checkout_risks(source: str) -> list[str]:
 def inspect(base: str, head: str) -> dict:
     if not SHA.fullmatch(base) or not SHA.fullmatch(head) or base == head:
         raise Denied("invalid_commit_identity")
+    deadline = time.monotonic() + MAX_SCAN_SECONDS
     for sha in (base, head):
-        if git("cat-file", "-t", sha, max_bytes=30).strip() != b"commit":
+        if git("cat-file", "-t", sha, max_bytes=30, deadline=deadline).strip() != b"commit":
             raise Denied("not_a_commit")
     # Never accept a missing/symlinked workflow root as an empty safe scan.
     # The canonical repository requires both directories in both commits.
     for sha in (base, head):
         for root in (".github", ".github/workflows"):
             try:
-                kind = git("cat-file", "-t", f"{sha}:{root}", max_bytes=30).strip()
+                kind = git("cat-file", "-t", f"{sha}:{root}", max_bytes=30, deadline=deadline).strip()
             except Denied as exc:
                 raise Denied("missing_workflow_root") from exc
             if kind != b"tree":
                 raise Denied("unsupported_workflow_root")
-    old, new = files_at(base), files_at(head)
+    old, new = files_at(base, deadline), files_at(head, deadline)
     checked = 0
     for path, (_, oid) in new.items():
         if old.get(path) == new[path]:
             continue
         checked += 1
-        risks = checkout_risks(blob(oid))
+        risks = checkout_risks(blob(oid, deadline))
         if risks:
             # No attacker-controlled filenames or source text in reports.
             raise Denied("unsafe_checkout_" + risks[0])
