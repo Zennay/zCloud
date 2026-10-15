@@ -235,6 +235,15 @@ def _scan(base: str, head: str) -> tuple[int, int]:
         raise Denied("Too many changed workflow paths")
     checked = 0
     for path in changed:
+        # Changes to .github/actions/ may introduce an opaque submodule or a
+        # symlink without changing an action.yml. Such paths must not bypass
+        # the metadata-file filter: a Git link cannot be source-verified here.
+        if path.startswith((".github/actions/", ".github/workflows/")):
+            node = entry(head, path)
+            if node is not None and node not in (
+                ("100644", "blob"), ("100755", "blob"), ("040000", "tree")
+            ):
+                raise Denied("Changed Actions source uses unsafe Git tree entry")
         if not candidate(path):
             continue
         if not proper_file(head, path):
