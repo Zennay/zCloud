@@ -163,6 +163,13 @@ class WorkflowTrustTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertIn(marker, self.text)
 
+    def test_pr_head_movement_is_checked_twice(self):
+        self.assertIn("HEAD_REF: ${{ github.event.pull_request.head.ref }}", self.text)
+        self.assertIn('git check-ref-format "refs/heads/$HEAD_REF"', self.text)
+        proof = 'git ls-remote --exit-code origin "refs/heads/$HEAD_REF"'
+        self.assertEqual(self.text.count(proof), 2)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', self.text)
+
     def test_workflow_has_no_live_mutation_commands(self):
         for forbidden in (
             "systemctl ", "sudo ", "sqlite3 ", "ssh ",
