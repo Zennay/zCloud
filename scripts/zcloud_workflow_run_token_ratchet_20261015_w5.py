@@ -120,7 +120,8 @@ def classify_workflow(source: str) -> list[str]:
             continue
         if on_indent is not None:
             if indent > on_indent:
-                trigger |= bool(re.match(r"""['"]?workflow_run['"]?[ ]*:""", value))
+                # The on: block may be a mapping OR a YAML block sequence.
+                trigger |= bool(re.match(r"""(?:-[ ]+)?['"]?workflow_run['"]?[ ]*(?::|$)""", value))
                 if in_sequence:
                     trigger |= bool(re.search(r"\bworkflow_run\b", value))
                 ambiguous |= value.startswith("<<:") or r"\u" in value or r"\x" in value
