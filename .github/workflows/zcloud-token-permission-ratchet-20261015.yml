@@ -67,9 +67,13 @@ jobs:
           current_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
           test "$current_base" = "$BASE_SHA"
           test "$current_head" = "$EXPECTED_HEAD"
+          report_file="$(mktemp)"
+          trap 'rm -f "$report_file"' EXIT
+          # Persist only the tiny machine-readable report locally. A green
+          # human summary must not be emitted while immutable refs might
+          # have moved; first finish both post-scan source identity checks.
           python3 scripts/zcloud_token_permission_ratchet_20261015.py \
-            --root . --base "$BASE_SHA" --head "$EXPECTED_HEAD" \
-            --summary-to "$GITHUB_STEP_SUMMARY"
+            --root . --base "$BASE_SHA" --head "$EXPECTED_HEAD" > "$report_file"
           # GitHub refs may advance while a multi-second full-tree proof runs.
           # Never report green unless the very same immutable source pair
           # remains at canonical main and at the PR owner's branch tip.
@@ -78,4 +82,19 @@ jobs:
           final_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
           test "$final_base" = "$BASE_SHA"
           test "$final_head" = "$EXPECTED_HEAD"
+          # Render bounded, schema-checked, fixed-wording Dutch evidence
+          # only after both remote immutable SHA identities still agree.
+          python3 - "$report_file" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          from scripts.zcloud_token_permission_ratchet_20261015 import format_ci_summary
+          raw = Path(sys.argv[1]).read_bytes()
+          if len(raw) > 4096:
+              raise SystemExit("source_report_too_large")
+          report = json.loads(raw)
+          summary = format_ci_summary(report)
+          with Path(sys.argv[2]).open("a", encoding="utf-8") as dest:
+              dest.write(summary)
+          PY
           echo "Advisory source proof only; no release/deploy/runner writes."
