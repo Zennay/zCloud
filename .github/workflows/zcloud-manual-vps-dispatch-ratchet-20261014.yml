@@ -20,6 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Deny foreign PR source before any checkout
+        shell: bash
+        env:
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPOSITORY" = "$EXPECTED_REPOSITORY"
+
       - name: Checkout exact PR source without credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
@@ -37,6 +47,10 @@ jobs:
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           git cat-file -e "${BASE_SHA}^{commit}"
           git cat-file -e "${HEAD_SHA}^{commit}"
+          current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          test "$current_main" = "$BASE_SHA"
           python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
           python3 scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py \
             --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
+          test "$current_main" = "$BASE_SHA"
