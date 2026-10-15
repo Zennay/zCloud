@@ -26,6 +26,7 @@ MAX_BLOB = 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
 MAX_FILES = 512
 MAX_FINDINGS = 8192
+MAX_GIT_TREE_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,10 @@ def _selected(path: str) -> bool:
 def _tree(sha: str) -> list[tuple[str, str]]:
     if not SHA.fullmatch(sha):
         raise ValueError("invalid_revision")
-    raw = _git("ls-tree", "-rz", sha, "--", ".github/workflows", ".github/actions")
+    # Scan all committed paths: local actions may live anywhere in a repo.
+    raw = _git("ls-tree", "-rz", sha)
+    if len(raw) > MAX_GIT_TREE_BYTES:
+        raise ValueError("git_tree_listing_over_limit")
     entries: list[tuple[str, str]] = []
     for item in raw.split(b"\x00"):
         if not item:
