@@ -93,6 +93,20 @@ The existing JSON field `candidate_risky_workflows` may now include local
 Action metadata paths for backwards compatibility; it is not a list of deployed
 or proven-exploitable workflows.
 
+## Ordered step scope for risky legacy runs
+
+An unsafe `run:` snippet can become executable without its text changing:
+for example, an operator may remove a step's `if: false`, replace its `shell:`,
+change the step metadata, or move it later in the list. The guard now binds
+each risky scalar to a hash of its enclosing YAML **step item and ordinal**
+as well as the ancestor job keys. This blocks reusing a historical waiver
+after a same-text move to a different step or materially altered step.
+Appending an unrelated safe step *after* the risky step retains the
+old proof. This intentionally follows a conservative, whitespace-indented
+step-boundary heuristic, not a complete Actions YAML semantic parser.
+Changing unrelated metadata **within the risky step** can therefore
+produce false positives and requires an independent source review.
+
 ## Read-only workflow risk inventory
 
 A successful or rejected **complete** source audit contains
