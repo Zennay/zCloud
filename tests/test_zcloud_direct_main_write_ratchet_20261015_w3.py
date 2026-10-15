@@ -317,7 +317,9 @@ class RatchetTests(unittest.TestCase):
         self.assertEqual(source.count('test "$remote_head" = '), 2)
 
     def test_remote_branch_drift_changes_exact_head_proof(self):
-        bare = self.root / "upstream.git"
+        remote_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(remote_tmp.cleanup)
+        bare = Path(remote_tmp.name) / "upstream.git"
         self.git("init", "--bare", str(bare))
         self.git("branch", "-M", "owner-branch")
         self.git("remote", "add", "origin", str(bare))
