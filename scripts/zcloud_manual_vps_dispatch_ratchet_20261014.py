@@ -176,11 +176,15 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         # Alternate YAML spellings of job authority keys are real mappings,
         # but our strict reader would otherwise skip them (e.g. runs-on : or
         # "runs-on":). Detect before checking whether a runner is hosted.
-        prelude = re.split(r"(?m)^    steps[ \t]*:", block, maxsplit=1)[0]
         for field in re.finditer(
             r"""(?m)^(?P<indent>[ \t]+)(?P<key>['"]?(?:runs-on|uses|if)['"]?)[ \t]*:""",
-            prelude,
+            block,
         ):
+            # Step-level "uses:" has deeper indentation and is not a
+            # job-level reusable-workflow key. Inspect job keys even when
+            # they occur AFTER a steps block: YAML mapping order is arbitrary.
+            if len(field.group("indent").expandtabs(8)) >= 8:
+                continue
             literal = field.group(0)
             expected = "    " + field.group("key").strip("'\\\"") + ":"
             if literal != expected:
@@ -195,7 +199,7 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         runner = re.search(r"(?m)^    runs-on:\s*(.*)$", block)
         reuse = re.search(r"(?m)^    uses:\s*(.*)$", block)
         if not runner and not reuse:
-            continue
+            raise RefError("missing_or_ambiguous_job_runner")
         selection = runner.group(1) if runner else reuse.group(1)
         # Dynamic runner selection and reusable jobs require independent proof.
         # A custom label such as "vps" or "ftmo-research" can select an
