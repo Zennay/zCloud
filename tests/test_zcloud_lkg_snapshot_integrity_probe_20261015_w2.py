@@ -48,6 +48,24 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_typed_managed_roots_reject_file_directory_confusion(self):
+        for forged_name in ("server.py/nested.txt", "public", "scripts", "project-layout.json/child"):
+            with self.subTest(forged_name=forged_name):
+                self.hashes = {forged_name: hashlib.sha256(self.text).hexdigest()}
+                self.save()
+                with self.assertRaisesRegex(probe.Denied, "invalid_hash_manifest"):
+                    probe.inspect(self.state)
+
+    def test_real_root_type_drift_denied_even_with_matching_manifest(self):
+        (self.files / "public").write_text("not a directory", encoding="utf-8")
+        self.save()
+        manifest = self.snap / "manifest.json"
+        obj = json.loads(manifest.read_text(encoding="utf-8"))
+        obj["present_paths"] = ["server.py", "public"]
+        manifest.write_text(json.dumps(obj), encoding="utf-8")
+        with self.assertRaisesRegex(probe.Denied, "unexpected_snapshot_file"):
+            probe.inspect(self.state)
+
     def test_forged_present_paths_is_denied_even_when_hashes_are_valid(self):
         manifest = self.snap / "manifest.json"
         for changed in (
