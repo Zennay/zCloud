@@ -82,6 +82,7 @@ jobs:
           REPORT_FILE: ${{ runner.temp }}/zcloud-actions-pin-evidence.json
         run: |
           set -euo pipefail
+          cd "$RUNNER_TEMP"
           python3 - <<'PY'
           import json
           import os
@@ -94,7 +95,19 @@ jobs:
               raw = report_path.read_bytes()
               if not raw or len(raw) > 65536:
                   raise ValueError("report_size")
-              report = json.loads(raw.decode("utf-8"))
+              def unique_pairs(pairs):
+                  result = {}
+                  for key, value in pairs:
+                      if key in result:
+                          raise ValueError("duplicate_evidence_key")
+                      result[key] = value
+                  return result
+
+              def deny_constant(value):
+                  raise ValueError("nonfinite_evidence")
+
+              report = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_pairs,
+                                  parse_constant=deny_constant)
               if not isinstance(report, dict) or report.get("policy") != "zcloud-actions-pin-no-new-debt-v1":
                   raise ValueError("report_policy")
               if any(report.get(key) is not False for key in
