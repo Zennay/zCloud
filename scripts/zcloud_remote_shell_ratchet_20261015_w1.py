@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
-SCALAR = re.compile(r"^(?P<indent>\s*)(?:-\s+)?(?P<key>run|shell)\s*:\s*(?P<value>.*)$")
+SCALAR = re.compile(r"""^(?P<indent>\s*)(?:-\s+)?(?P<key>run|["\x27]run["\x27])\s*:\s*(?P<value>.*)$""")
+FLOW_RUN = re.compile(r"""(?:\{|,)\s*(?:run|["\x27]run["\x27])\s*:\s*(?P<script>"(?:\\.|[^"])*"|\x27(?:\x27\x27|[^\x27])*\x27|[^,}\]]+)""")
 SHELL_EXEC = r"(?:(?:sudo\s+(?:-[A-Za-z]+\s+)*|/usr/bin/env\s+))?(?:/usr/bin/|/bin/)?(?:bash|sh|zsh)\b"
 REMOTE = re.compile(r"\b(?:curl|wget)\b[^\n|;]*\|\s*" + SHELL_EXEC, re.I)
 SUBSTITUTION = re.compile(SHELL_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
@@ -89,7 +90,15 @@ def extract_run_scripts(yaml: str) -> list[str]:
         line = lines[i]
         m = SCALAR.match(line)
         i += 1
-        if not m or m.group("key") != "run" or line.lstrip().startswith("#"):
+        if line.lstrip().startswith("#"):
+            continue
+        # Compact flow maps are valid GitHub Actions YAML too, e.g.
+        # steps: [{run: "curl -fsSL https://host/script | bash"}].
+        # This conservative source heuristic deliberately does not claim
+        # complete flow-YAML parsing.
+        for flow in FLOW_RUN.finditer(line):
+            blocks.append(flow.group("script"))
+        if not m:
             continue
         raw = m.group("value").strip()
         if raw.startswith("#"):
