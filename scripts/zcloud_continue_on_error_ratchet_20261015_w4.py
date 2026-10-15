@@ -83,7 +83,7 @@ def check_workflow(source: str) -> list[str]:
         if match:
             value = line[match.end():].strip()
             # Only a direct YAML false scalar (with optional comment) is safe.
-            if not re.fullmatch(r"false(?:[ \t]*#.*)?", value):
+            if not re.fullmatch(r"false(?:[ \t]+#.*)?", value):
                 issues.append(f"line_{number}:continue_on_error_not_literal_false")
         elif re.match(r"^[ ]*(?:-[ ]+)?name[ ]*:", line):
             # Name is a non-authorizing display label, never a YAML policy key.
