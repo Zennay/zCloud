@@ -22,6 +22,14 @@ De bestaande deploy-ops-gates bewaken workflow-events, runnergebruik, acties en 
 
 De hosted broncontrole schrijft een **Nederlandse, begrensde job summary** voor acceptatie én afwijzing. De samenvatting toont alleen geverifieerde niet-negatieve tellingen, laat workflowbron en foutdetails weg en vermeldt expliciet dat release, deployment en mutatie niet zijn toegestaan. Tegenspraak tussen success-status, tellers of enige bevoegdheidsvlag wordt afgewezen. Ook een mislukte schrijfactie naar de lokale summary maakt de controle rood. Regressies controleren de echte CLI zowel op succes, onvolledige bron als summary-schrijfproblemen.
 
+## Nieuwe YAML-omzeilingen afgedekt (15 oktober, vervolg)
+
+De real-Git-regressies bevatten nu expliciet **YAML-tags op mappingsleutels** (`!!str permissions`), **ankers op sleutelposities** (`&scope permissions`), expliciete complexe YAML-sleutels (`? "permissions"`, `? 'permissions'` en meerdere regels), en **Unicode-escapes binnen getagde/geankerde sleutelstrings** zoals `!!str "permiss\\u0069ons"`. Een YAML-interpreter kan die gebruiken om effectief alsnog `permissions` of `jobs` te produceren, hoewel een simpele regelmatcher de letterlijke naam niet ziet. Daarom is iedere bestaande getagde/geankerde of expliciet complexe mapping-sleutel documentgebonden *opaque debt*: alleen exact ongewijzigde hele workflow-Git-objecten kunnen die oude vorm behouden.
+
+Naast de risicovergelijking controleert de regressiesuite nu het **eigen gehoste PR-workflowcontract**: uitsluitend `pull_request`, token `contents: read`, alleen `ubuntu-latest`, SHA-vastgezette externe acties, geen checkout-credentials, en SHA-validatie zowel vóór als na de scan. Dit beschermt tegen onbedoelde afwijkingen in dit eigen nieuwe workflowbestand, **niet** tegen opzettelijke wijziging van zowel de PR-test als het PR-script door dezelfde auteur.
+
+**Onafhankelijke review blijft vereist:** de scanner en tests draaien vanuit de kandidaat-PR zelf. Een malafide PR zou zijn eigen controle kunnen aanpassen of verwijderen; zonder onafhankelijk vertrouwde bescherming en code-review is een groen PR-resultaat geen afdwingbare beveiligingsgrens. Deze PR wijzigt geen branch protection, publiceert geen betrouwbare main-only enforceer en geeft geen productiebevoegdheid.
+
 ## Grenzen en vrijgave
 
 Dit is een bewust **lexicale** YAML-ratchet, geen volledige YAML-parser of semantische tokenprivilege-analyse. Ongebruikelijke mappingnotaties, expliciete mapping keys, anchors/aliases, duplicate-key shadowing en complexe inline constructies worden conservatief als risicobron behandeld en moeten onafhankelijk worden gereviewd; de scanner kan zowel omzeilingen als false positives kennen. Het maakt geen claims over effectieve GitHub-instellingen, omgevingsbescherming of de runtime. Bij een echte noodzaak voor een nieuwe write-scope moet een afzonderlijke eigenaar de wijziging onafhankelijk beoordelen; de ratchet verleent zelf nooit toestemming.
