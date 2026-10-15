@@ -48,12 +48,6 @@ jobs:
           test "${#HEAD_SHA}" -eq 40
           test "$(git cat-file -t "$BASE_SHA")" = "commit"
           test "$(git cat-file -t "$HEAD_SHA")" = "commit"
-      - name: Run exact-asset Git regression fixtures
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m unittest -v tests.test_zcloud_dashboard_cache_bust_gate_20261015
-          python3 -m py_compile scripts/zcloud_dashboard_cache_bust_gate_20261015.py
       - name: Immutable trusted-base scanner first; explicit bootstrap warning
         shell: bash
         env:
@@ -76,3 +70,10 @@ jobs:
             python3 -I "$policy_path" \
               --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
           fi
+
+      - name: Run exact-asset Git regression fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_dashboard_cache_bust_gate_20261015
+          python3 -m py_compile scripts/zcloud_dashboard_cache_bust_gate_20261015.py
