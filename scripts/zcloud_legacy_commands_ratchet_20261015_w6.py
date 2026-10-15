@@ -158,15 +158,20 @@ def decoded_scalar_escapes(source: str) -> str:
     all changed YAML (including comments/single quotes) intentionally errs
     on the side of denying ambiguous additions, not silent approval.
     """
-    for _ in range(4):
-        newer = ESCAPED_SCALAR.sub(
-            lambda match: chr(int(next(group for group in match.groups() if group), 16)),
-            source,
-        )
+    def expand(match: re.Match[str]) -> str:
+        value = int(next(group for group in match.groups() if group), 16)
+        if value > 0x10FFFF or 0xD800 <= value <= 0xDFFF:
+            raise Denied("Invalid escaped Unicode scalar in workflow")
+        return chr(value)
+
+    for _ in range(8):
+        newer = ESCAPED_SCALAR.sub(expand, source)
         if newer == source:
-            break
+            return source
+        if any(unicodedata.category(ch) == "Cf" for ch in newer):
+            raise Denied("Encoded Unicode format controls in workflow")
         source = newer
-    return source
+    raise Denied("Excessively nested YAML scalar escapes")
 
 
 def check_content(content: bytes) -> None:
