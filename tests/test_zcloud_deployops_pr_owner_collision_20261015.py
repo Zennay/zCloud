@@ -49,6 +49,67 @@ class PRCollisionInventoryTests(unittest.TestCase):
         self.assertEqual(6, result["files_scanned"])
         self.assertEqual(4, result["unique_paths_scanned"])
 
+    def test_transitive_conflict_clusters_not_independent_merge_permission(self):
+        # PR 1 conflicts with 2, and 2 with 3, despite no shared path 1↔3.
+        s = snapshot(
+            pr(3, ["docs/b.md"]),
+            pr(1, ["docs/a.md"]),
+            pr(4, ["docs/unique.md"]),
+            pr(2, ["docs/a.md", "docs/b.md"]),
+            pr(6, ["docs/z.md"]),
+            pr(5, ["docs/z.md"]),
+        )
+        result = m.assess(s)
+        self.assertEqual(5, result["conflicted_pr_count"])
+        self.assertEqual(2, result["conflict_group_count"])
+        self.assertEqual([
+            {"pr_count": 3, "prs": [1, 2, 3], "pr_ids_truncated": False},
+            {"pr_count": 2, "prs": [5, 6], "pr_ids_truncated": False},
+        ], result["conflict_groups"])
+        self.assertEqual(1, result["uncontested_pr_count"])
+        self.assertEqual([4], result["uncontested_pr_ids"])
+        self.assertFalse(result["release_authorized"])
+        self.assertFalse(result["deployment_authorized"])
+        self.assertFalse(result["mutation_performed"])
+
+    def test_uncontested_does_not_mean_reviewed_or_mergeable(self):
+        s = snapshot(pr(10, ["tests/a.py"]), pr(20, ["tests/b.py"]))
+        result = m.assess(s)
+        self.assertEqual(0, result["conflicted_pr_count"])
+        self.assertEqual(0, result["conflict_group_count"])
+        self.assertEqual([], result["conflict_groups"])
+        self.assertEqual([10, 20], result["uncontested_pr_ids"])
+        self.assertEqual("unverified_snapshot", result["input_provenance"])
+        self.assertFalse(result["release_authorized"])
+
+    def test_stale_base_pr_remains_in_conflicting_group(self):
+        result = m.assess(snapshot(
+            pr(11, ["docs/a.md"], base=B),
+            pr(12, ["docs/a.md"]),
+        ))
+        self.assertEqual([11], result["stale_base_prs"])
+        self.assertEqual([{"pr_count": 2, "prs": [11, 12],
+                           "pr_ids_truncated": False}],
+                         result["conflict_groups"])
+
+    def test_conflict_groups_bounded_without_hiding_total(self):
+        s = snapshot(*[pr(i, ["docs/shared.md"]) for i in range(1, 103)])
+        result = m.assess(s)
+        self.assertEqual(102, result["conflicted_pr_count"])
+        self.assertEqual(1, result["conflict_group_count"])
+        self.assertEqual(102, result["conflict_groups"][0]["pr_count"])
+        self.assertEqual(50, len(result["conflict_groups"][0]["prs"]))
+        self.assertTrue(result["conflict_groups"][0]["pr_ids_truncated"])
+        self.assertEqual(0, result["uncontested_pr_count"])
+
+    def test_uncontested_pr_list_is_bounded_and_count_honest(self):
+        s = snapshot(*[pr(i, [f"docs/{i}.md"]) for i in range(1, 102)])
+        result = m.assess(s)
+        self.assertEqual(101, result["uncontested_pr_count"])
+        self.assertEqual(80, len(result["uncontested_pr_ids"]))
+        self.assertTrue(result["uncontested_pr_ids_truncated"])
+        self.assertEqual(0, result["collision_count"])
+
     def test_stale_base_pr_still_owns_files(self):
         result = m.assess(snapshot(pr(1, ["docs/a.md"], base=B),
                                    pr(2, ["docs/a.md"])))
