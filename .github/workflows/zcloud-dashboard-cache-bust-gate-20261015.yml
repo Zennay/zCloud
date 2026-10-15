@@ -90,7 +90,7 @@ jobs:
           # Never turn a failed Git probe into an implicit bootstrap bypass.
           policy_entry="$(git ls-tree "$BASE_SHA" -- "$policy_path")"
           if [ -n "$policy_entry" ]; then
-            mode="$(printf '%s\\n' "$policy_entry" | awk '{print $1 " " $2}')"
+            mode="$(printf '%s\n' "$policy_entry" | awk '{print $1 " " $2}')"
             test "$mode" = "100644 blob"
             git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
             policy_path="$RUNNER_TEMP/trusted-dashboard-cache-gate.py"
