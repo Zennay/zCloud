@@ -42,7 +42,9 @@ REMOTE_STDIN = re.compile(
 # to model aliases, chmod/rewrite steps, shell variables or arbitrary files.
 DOWNLOAD_THEN_EXEC = re.compile(
     r"\b(?:curl|wget)\b[^\n;|]{0,512}?"
-    r"(?:\s(?:-o|-O)\s+|\s--output(?:=|\s+))"
+    # Combined short options like wget -qO or curl -fsSLo are common.
+    # Long flags remain explicitly bounded and cannot consume arbitrary text.
+    r"(?:\s-[A-Za-z]{0,8}[oO]\s+|\s--(?:output|output-document)(?:=|\s+))"
     r"(?P<downloaded>(?:\./|/tmp/|/var/tmp/)?[A-Za-z0-9._/-]{1,180})"
     r"[^\n;|]{0,512}?"
     r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*)"
