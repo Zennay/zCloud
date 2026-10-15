@@ -18,7 +18,7 @@ import time
 
 HEX = re.compile(r"^[0-9a-f]{40}$")
 WORKFLOW = re.compile(r"^\.github/workflows/[^/\x00]+\.(?:yml|yaml)$")
-GIT_PUSH = re.compile(r"(?i)(?<![\w-])git\s+(?:(?:-C\s+\S+|-c\s+\S+|--git-dir(?:=\S+|\s+\S+))\s+)*push\b")
+GIT_PUSH = re.compile(r"(?i)(?<![\\w-])git\\s+(?:(?:-C\\s+\\S+|-c\\s+\\S+|--[\\w-]+(?:=\\S+)?|--git-dir\\s+\\S+)\\s+)*(?:push\\b|['\"]push['\"](?=\\s|$|[;|&]))")
 REFS_API = re.compile(r"(?i)(?:git/refs/heads/|git/refs/heads\x2f|git/refs/heads\\u002f)")
 GH_REF_WRITE = re.compile(r"(?i)\bgh\s+api\b.{0,200}(?:\b(?:PATCH|POST|DELETE|PUT)\b|(?:-X|--method)\s+)")
 MAX_BLOB = 512 * 1024
