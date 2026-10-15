@@ -45,4 +45,4 @@ A remote download can still be executed after a pass-through or decoding pipelin
 
 Git-tree validation now refuses a symlink or gitlink replacing the exact `.github`, `.github/workflows`, or `.github/actions` directory, even when an unrelated composite Action exists and would otherwise make the source inventory nonempty. Existing per-file symlink checks remain intact. The scanner does not follow these links and never executes repository code during inventory.
 
-**Coordination (15 October):** changed-filename checks of 12 active related deploy-ops PRs (53 paths total) found no direct collision with this PR's four own add-only paths. This is **not** a complete 450+-PR or PR-less-branch semantic audit and cannot grant independent review, protected-branch merge or production authorization.
+**Coordination (15 October):** changed-filename checks of 12 active related deploy-ops PRs (56 paths total) found no direct collision with this PR's four own add-only paths. This is **not** a complete 450+-PR or PR-less-branch semantic audit and cannot grant independent review, protected-branch merge or production authorization.
