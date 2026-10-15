@@ -300,8 +300,15 @@ def _verify_manifest_metadata(manifest: dict, expected: dict[str, str]) -> set[s
     return present
 
 
-def inspect(state: Path, *, snapshot_id: str | None = None) -> dict:
-    """Verify selected snapshot without ever modifying the active LKG pointer."""
+def inspect(
+    state: Path, *, snapshot_id: str | None = None,
+    _batch_bytes: list[int] | None = None,
+) -> dict:
+    """Verify selected snapshot without ever modifying the active LKG pointer.
+
+    A batch caller supplies a shared byte counter. Rejected snapshots count
+    against the cap as soon as bytes are read, not only after hash success.
+    """
     _directory(state)
     _directory(state / "snapshots")
     ptr = _json(state / "last-known-good.json")
@@ -369,6 +376,10 @@ def inspect(state: Path, *, snapshot_id: str | None = None) -> dict:
                 if not chunk:
                     break
                 size += len(chunk)
+                if _batch_bytes is not None:
+                    _batch_bytes[0] += len(chunk)
+                    if _batch_bytes[0] > MAX_BATCH_BYTES:
+                        raise Denied("batch_byte_limit")
                 if size > MAX_BYTES:
                     raise Denied("oversized_snapshot")
                 digest.update(chunk)
@@ -451,7 +462,7 @@ def audit_all(state: Path) -> dict:
 
     results: list[dict[str, object]] = []
     verified_config_hashes: dict[str, dict[str, str]] = {}
-    total = 0
+    batch_bytes = [0]
     for name, is_dir in sorted(snapshots):
         if not _snapshot_id_valid(name) or not is_dir:
             entry = {"snapshot_id": None, "ok": False, "reason": "invalid_snapshot_entry"}
@@ -459,10 +470,16 @@ def audit_all(state: Path) -> dict:
             try:
                 manifest_path = state / "snapshots" / name / "manifest.json"
                 manifest_before = _json(manifest_path)
-                evidence = inspect(state, snapshot_id=name)
+                evidence = inspect(
+                    state, snapshot_id=name, _batch_bytes=batch_bytes,
+                )
                 if manifest_before != _json(manifest_path):
                     raise Denied("manifest_changed_during_scan")
             except (Denied, OSError) as exc:
+                # A shared resource limit is terminal, never a mere
+                # per-snapshot finding which could allow later extra reads.
+                if isinstance(exc, Denied) and str(exc) == "batch_byte_limit":
+                    raise
                 reason = str(exc) if isinstance(exc, Denied) else "io_error"
                 entry = {"snapshot_id": name, "ok": False, "reason": reason}
             else:
@@ -474,9 +491,6 @@ def audit_all(state: Path) -> dict:
                     "file_count": evidence["file_count"],
                     "verified_bytes": evidence["verified_bytes"],
                 }
-                total += evidence["verified_bytes"]
-                if total > MAX_BATCH_BYTES:
-                    raise Denied("batch_byte_limit")
         entry["is_current"] = name == current
         results.append(entry)
     if _json(state / "last-known-good.json") != pointer:
