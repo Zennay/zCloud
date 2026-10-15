@@ -168,7 +168,7 @@ def scan(root: Path, base: str, head: str) -> dict[str, list[str]]:
         source = raw.decode("utf-8", "strict")
         # Bidirectional/zero-width format marks can spoof apparently identical
         # YAML keys. U+2028/U+2029 alter Python line splitting semantics.
-        if any(unicodedata.category(ch) == "Cf" or ch in "\\u2028\\u2029" for ch in source):
+        if any(unicodedata.category(ch) == "Cf" or ord(ch) in (0x2028, 0x2029) for ch in source):
             raise ValueError("invisible_or_directional_unicode")
         problems = check_workflow(source)
         if problems:
