@@ -159,11 +159,12 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - {run: echo ${{ github.event.issue.body }}}\n")
         self.assertEqual(1, guard.audit(base, head)["new_risks"])
 
-    def test_unchanged_flow_run_does_not_create_debt(self):
+    def test_existing_flow_run_unrelated_comment_conservatively_denied(self):
+        # With unknown YAML flow structure, any source edit invalidates baseline.
         source = "steps:\n  - {run: echo safe}\n"
         base = self.commit(source)
-        head = self.commit(source + "# no new flow mappings\n")
-        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+        head = self.commit(source + "# changed file despite unchanged flow mapping\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
 
     def test_risky_expression_same_name_changed_shell_body_denied(self):
         base = self.commit("steps:\n  - run: echo ${{ github.event.issue.title }}\n")
