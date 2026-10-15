@@ -143,6 +143,8 @@ def production_status(api, sha: str) -> dict:
         "state": latest[1] if latest else "missing",
         "matching_events": count,
         "last_status_age_seconds": latest[2] if latest else None,
+        "latest_status_id": latest[0][1] if latest else None,
+        "latest_status_at_utc": latest[0][0].isoformat() if latest else None,
     }
 
 
@@ -336,6 +338,13 @@ def collect(api) -> dict:
     sha = main_sha(api)
     prod = production_status(api, sha)
     deploy = current_deploy(api, sha)
+    # Never combine an older green status with a newer failed deployment.
+    # A second GET is not an atomic transaction, but changing status-event
+    # identities or counts must invalidate the entire evidence snapshot.
+    prod_final = production_status(api, sha)
+    stable = ("state", "matching_events", "latest_status_id", "latest_status_at_utc")
+    if any(prod[key] != prod_final[key] for key in stable):
+        raise EvidenceError("production_status_changed_during_observation")
     if main_sha(api) != sha:
         raise EvidenceError("main_moved_during_observation")
     healthy_production_observed = prod["state"] == "success"
@@ -407,7 +416,8 @@ def main(argv: list[str] | None = None) -> int:
             "main_sha": "UNVERIFIED", "observed_utc": dt.datetime.now(
                 dt.timezone.utc).isoformat(),
             "production": {"state": "unknown", "matching_events": 0,
-                           "last_status_age_seconds": None},
+                           "last_status_age_seconds": None,
+                           "latest_status_id": None, "latest_status_at_utc": None},
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
                        "conclusion": None, "runner_route": "UNVERIFIED",
                        "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED"},
