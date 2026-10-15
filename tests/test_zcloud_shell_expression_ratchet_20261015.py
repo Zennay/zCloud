@@ -336,6 +336,37 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: echo ${{ toJSON(github.sha) }}\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_report_lists_risky_workflows_without_leaking_shell_commands(self):
+        expression = "steps:\n  - run: echo ${{ github.event.issue.title }}\n"
+        base = self.commit(expression)
+        head = self.commit(expression)
+        report = guard.audit(base, head)
+        expectation = [{"path": str(self.workflow), "risk_count": 1}]
+        self.assertEqual(expectation, report["baseline_risky_workflows"])
+        self.assertEqual(expectation, report["candidate_risky_workflows"])
+        self.assertNotIn("github.event.issue.title", json.dumps(report))
+
+    def test_risk_inventory_lists_paths_in_canonical_sorted_order(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        self.workflow.write_text("steps:\n  - run: echo ${{ github.ref }}\n")
+        extra = Path(".github/workflows/alpha.yml")
+        extra.write_text("steps:\n  - run: echo ${{ inputs.attacker }}\n")
+        head = self.commit()
+        report = guard.audit(base, head)
+        self.assertEqual([
+            {"path": str(extra), "risk_count": 1},
+            {"path": str(self.workflow), "risk_count": 1},
+        ], report["candidate_risky_workflows"])
+        self.assertEqual([], report["baseline_risky_workflows"])
+        self.assertEqual(2, report["new_risks"])
+
+    def test_clean_workflow_inventory_is_empty(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo harmless\n")
+        report = guard.audit(base, head)
+        self.assertEqual([], report["baseline_risky_workflows"])
+        self.assertEqual([], report["candidate_risky_workflows"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
