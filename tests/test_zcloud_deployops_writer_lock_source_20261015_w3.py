@@ -287,6 +287,38 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "ambiguous_parent_group")
 
+    def test_parent_shared_lock_differs_only_by_case(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: ZCLOUD-PRODUCTION-DEPLOY\n"
+                  "  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "parent_shares_production_group")
+
+    def test_parent_shared_lock_with_trailing_spaces_refused(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: zcloud-production-deploy   \n"
+                  "  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "parent_shares_production_group")
+
+    def test_parent_expression_case_insensitive_partial_prefix_refused(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: ZCLOUD-PRODUCTION-DEPL${{ vars.REST }}\n"
+                  "  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "ambiguous_parent_group")
+
+    def test_parent_inline_comment_cannot_hide_duplicate_lock(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: zcloud-production-deploy # hidden shadow\n"
+                  "  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "ambiguous_parent_group")
+
     def test_parent_cancel_after_jobs_is_denied(self):
         name = "zcloud-worker-tab-guard.yml"
         p = self.dir / name
