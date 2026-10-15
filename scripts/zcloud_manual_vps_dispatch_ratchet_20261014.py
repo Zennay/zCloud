@@ -285,14 +285,14 @@ def workflow_authority_header(source: str) -> tuple[str, ...]:
     Other global YAML edits can: they must not launder an unchanged unsafe
     job through the no-new-debt grandfathering rule.
     """
-    root = re.search(r"(?m)^jobs:[ \\t]*", source)
+    root = re.search(r"(?m)^jobs:[ \t]*", source)
     if root is None:
         raise RefError("missing_or_ambiguous_jobs")
     header = source[:root.start()]
     return tuple(
         line.rstrip() for line in header.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
-        and not re.match(r"^(?:name|run-name):[ \\t]", line)
+        and not re.match(r"^(?:name|run-name):[ \t]", line)
     )
 
 
