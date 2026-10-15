@@ -336,9 +336,11 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         safe_head = self.commit()
         safe_tree = self.git("rev-parse", safe_head + ":.github/workflows").strip()
         self.assertNotEqual(unsafe_tree, safe_tree)
-        self.git("replace", unsafe_tree, safe_tree)
+        # Capture immutable tree contents BEFORE installing a replacement:
+        # rev-parse <commit>:path itself follows replacement refs afterward.
         unsafe_blob_oid = self.git("rev-parse", unsafe_head + ":" + path).strip()
         safe_blob_oid = self.git("rev-parse", safe_head + ":" + path).strip()
+        self.git("replace", unsafe_tree, safe_tree)
         # Plain Git sees the replacement tree despite the unsafe tree ID.
         self.assertIn(safe_blob_oid, self.git("cat-file", "-p", unsafe_tree))
         # The scanner's Git wrapper must expose the original tree instead.
