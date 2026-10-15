@@ -53,6 +53,26 @@ class SourceTests(unittest.TestCase):
     def test_unicode_path(self): self.check(SAFE.replace("dist/result.log", "dist/résumé.log"), False)
     def test_directory_upload_denied(self): self.check(SAFE.replace("dist/result.log", "dist/reports/"), False)
 
+    def test_encoded_action_unicode_bypass(self):
+        self.check(SAFE.replace("uses: actions/upload-artifact@v4",
+                                r'uses: "actions/up\u006coad-artifact@v4"'), False)
+
+    def test_encoded_action_hex_bypass(self):
+        self.check(SAFE.replace("uses: actions/upload-artifact@v4",
+                                r'uses: "actions/\x75pload-artifact@v4"'), False)
+
+    def test_encoded_action_upper_unicode_bypass(self):
+        self.check(SAFE.replace("uses: actions/upload-artifact@v4",
+                                r'uses: "actions/u\U00000070load-artifact@v4"'), False)
+
+    def test_encoded_mapping_key_and_action_bypass(self):
+        self.check(SAFE.replace("uses: actions/upload-artifact@v4",
+                                r'"u\u0073es": "actions/up\u006coad-artifact@v4"'), False)
+
+    def test_safe_normal_uses_action_not_rejected(self):
+        self.check(SAFE.replace("actions/upload-artifact@v4",
+                                "actions/upload-artifact@v4.4.3"), True)
+
     def test_unrelated_safe(self): self.check("name: safe\njobs:\n  build:\n    run: echo hi", True)
 
     def test_git_output_bound_kills_stdout_holder(self):
