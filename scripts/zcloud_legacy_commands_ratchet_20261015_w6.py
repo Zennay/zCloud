@@ -172,7 +172,7 @@ def require_clean_source(source: str) -> None:
     """Reject ambiguous control bytes without breaking ordinary CRLF or tabs."""
     if any(
         unicodedata.category(ch) == "Cf"
-        or (unicodedata.category(ch) == "Cc" and ch not in "\\r\\n\\t")
+        or (unicodedata.category(ch) == "Cc" and ch not in "\r\n\t")
         for ch in source
     ):
         raise Denied("Hidden or invalid control character in changed source")
