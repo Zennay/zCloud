@@ -112,7 +112,10 @@ def manual_event(source: str) -> bool:
         return False
     rest = event.group(1)
     if rest.strip():
-        if any(ch in rest for ch in "{}&*"):
+        # Folded/literal/tagged YAML may resolve an event string from later
+        # lines. Never classify a multiline event as "not manual" by merely
+        # inspecting its first line and quietly skipping its VPS jobs.
+        if any(ch in rest for ch in "{}&*") or rest.lstrip().startswith((">", "|", "!")):
             raise RefError("ambiguous_event_syntax")
         return bool(re.search(r"\bworkflow_dispatch\b", rest))
     tail = source[event.end():]
