@@ -188,14 +188,21 @@ def checkout_risks(source: str) -> list[str]:
         correct = False
         seen = 0
         for line in step:
-            m = WITH.fullmatch(line)
-            if m:
+            # Duplicate YAML mapping keys can shadow the safe initial 'with'
+            # and silently reinstate checkout's credential-persistence default.
+            # A second 'with: {}', 'with: *alias' or folded value is unsafe
+            # even though it does not contain 'persist-credentials'.
+            if re.match(r"^\\s*with\\s*:", line):
+                m = WITH.fullmatch(line)
                 if with_indent is not None:
                     problems.append("ambiguous_checkout_with")
-                with_indent = len(m.group(1))
-                # A nested env.with/run.with is NOT checkout's direct with.
-                if with_indent != indent + 2:
-                    problems.append("nested_checkout_with")
+                if m is None:
+                    problems.append("opaque_checkout_with")
+                else:
+                    with_indent = len(m.group(1))
+                    # A nested env.with/run.with is NOT checkout's direct with.
+                    if with_indent != indent + 2:
+                        problems.append("nested_checkout_with")
             cred = CREDENTIAL.fullmatch(line)
             if cred:
                 seen += 1
