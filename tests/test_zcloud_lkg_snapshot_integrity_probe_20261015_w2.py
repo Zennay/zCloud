@@ -48,6 +48,49 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_symlink_in_metadata_ancestor_rejected_without_reading_outside(self):
+        alias = Path(self.tmp.name) / "alias-state"
+        alias.symlink_to(self.state, target_is_directory=True)
+        with self.assertRaisesRegex(probe.Denied, "nonregular_directory"):
+            probe.inspect(alias)
+        with self.assertRaisesRegex(probe.Denied, "nonregular_directory"):
+            probe._json(alias / "last-known-good.json")
+
+    def test_metadata_parent_swap_after_lstat_is_denied(self):
+        from unittest.mock import patch
+
+        parent = self.state
+        real = Path(self.tmp.name) / "renamed-state"
+        target = self.state / "last-known-good.json"
+        original = probe._regular
+        swapped = [False]
+
+        def swap_parent(path):
+            result = original(path)
+            if path == target and not swapped[0]:
+                swapped[0] = True
+                parent.rename(real)
+                parent.symlink_to(real, target_is_directory=True)
+            return result
+
+        with patch.object(probe, "_regular", side_effect=swap_parent):
+            with self.assertRaisesRegex(probe.Denied, "nonregular_directory"):
+                probe._json(target)
+        self.assertTrue(swapped[0])
+        self.assertTrue((real / "last-known-good.json").is_file())
+
+    def test_symlink_in_snapshot_parent_rejected_at_hash_open(self):
+        alias = Path(self.tmp.name) / "alias-state"
+        alias.symlink_to(self.state, target_is_directory=True)
+        with self.assertRaisesRegex(probe.Denied, "nonregular_directory"):
+            probe._open_snapshot_regular(
+                alias / "snapshots" / self.snap_id / "files", "server.py",
+            )
+        with self.assertRaisesRegex(probe.Denied, "nonregular_directory"):
+            list(probe._iter_snapshot_entries(
+                alias / "snapshots" / self.snap_id / "files",
+            ))
+
     def test_typed_managed_roots_reject_file_directory_confusion(self):
         for forged_name in ("server.py/nested.txt", "public", "scripts", "project-layout.json/child"):
             with self.subTest(forged_name=forged_name):
