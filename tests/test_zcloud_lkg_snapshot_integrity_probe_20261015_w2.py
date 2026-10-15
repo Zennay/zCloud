@@ -72,6 +72,75 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         self.assertEqual(before_pointer, (self.state / "last-known-good.json").read_bytes())
         self.assertEqual(before_manifest, (historical / "manifest.json").read_bytes())
 
+    def test_batch_reports_only_verified_config_drift_without_values(self):
+        current_config = self.files / "projects.json"
+        current_config.write_bytes(b'{"version":1}')
+        self.hashes["projects.json"] = hashlib.sha256(current_config.read_bytes()).hexdigest()
+        self.save()
+        manifest = self.snap / "manifest.json"
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        raw["present_paths"].append("projects.json")
+        manifest.write_text(json.dumps(raw), encoding="utf-8")
+        historic = self._copy_historical_snapshot()
+
+        current_config.write_bytes(b'{"version":2}')
+        self.hashes["projects.json"] = hashlib.sha256(current_config.read_bytes()).hexdigest()
+        self.save()
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        raw["present_paths"].append("projects.json")
+        manifest.write_text(json.dumps(raw), encoding="utf-8")
+
+        report = probe.audit_all(self.state)
+        self.assertTrue(report["ok"])
+        historical_row, active_row = report["results"]
+        self.assertEqual(
+            ["projects.json"],
+            historical_row["config_drift_from_current"]["changed"],
+        )
+        self.assertEqual([], active_row["config_drift_from_current"]["changed"])
+        self.assertEqual([], historical_row["config_drift_from_current"]["only_in_current"])
+        self.assertEqual([], historical_row["config_drift_from_current"]["only_in_snapshot"])
+        self.assertEqual(b'{"version":1}', (historic / "files" / "projects.json").read_bytes())
+        self.assertNotIn('"version"', json.dumps(report))
+        self.assertNotIn(self.hashes["projects.json"], json.dumps(report))
+        self.assertFalse(report["authorizes_rollback"])
+
+    def test_batch_no_comparison_if_current_snapshot_is_corrupt(self):
+        self._copy_historical_snapshot()
+        (self.files / "server.py").write_bytes(b"corrupted active LKG")
+        report = probe.audit_all(self.state)
+        self.assertFalse(report["ok"])
+        self.assertTrue(report["results"][0]["ok"])
+        self.assertFalse(report["results"][1]["ok"])
+        self.assertNotIn("config_drift_from_current", report["results"][0])
+        self.assertNotIn("config_drift_from_current", report["results"][1])
+
+    def test_batch_config_comparison_is_advisory_not_validation_failure(self):
+        import shutil
+        cfg = self.files / "projects.json"
+        cfg.write_bytes(b'{"hello":true}')
+        self.hashes["projects.json"] = hashlib.sha256(cfg.read_bytes()).hexdigest()
+        self.save()
+        manifest = self.snap / "manifest.json"
+        obj = json.loads(manifest.read_text(encoding="utf-8"))
+        obj["present_paths"].append("projects.json")
+        manifest.write_text(json.dumps(obj), encoding="utf-8")
+        historic = self._copy_historical_snapshot()
+        (historic / "files" / "projects.json").unlink()
+        historical_manifest = historic / "manifest.json"
+        payload = json.loads(historical_manifest.read_text(encoding="utf-8"))
+        payload["hashes"].pop("projects.json")
+        payload["config_hashes"].pop("projects.json")
+        payload["present_paths"].remove("projects.json")
+        historical_manifest.write_text(json.dumps(payload), encoding="utf-8")
+        report = probe.audit_all(self.state)
+        self.assertTrue(report["ok"])
+        self.assertEqual(
+            ["projects.json"],
+            report["results"][0]["config_drift_from_current"]["only_in_current"],
+        )
+        self.assertEqual([], report["results"][0]["config_drift_from_current"]["changed"])
+
     def test_batch_marks_corrupt_history_but_does_not_reselect_pointer(self):
         historical = self._copy_historical_snapshot()
         (historical / "files" / "server.py").write_bytes(b"corrupted backup")
