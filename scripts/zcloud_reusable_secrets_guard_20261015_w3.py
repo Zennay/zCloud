@@ -37,6 +37,18 @@ def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
     return p.stdout
 
 
+def require_workflow_root(sha: str) -> None:
+    # Listing a path beneath a symlink or absent directory may return an
+    # empty file set. Never mistake a missing workflows directory for safety.
+    for root in (".github", ".github/workflows"):
+        try:
+            kind = git("cat-file", "-t", f"{sha}:{root}", limit=32).strip()
+        except Denied as exc:
+            raise Denied("missing_workflow_directory") from exc
+        if kind != b"tree":
+            raise Denied("non_directory_workflow_root")
+
+
 def paths_and_modes(sha: str) -> dict[str, tuple[str, str]]:
     records = git("ls-tree", "-r", "-z", sha, "--", ROOT).split(b"\0")
     result: dict[str, tuple[str, str]] = {}
@@ -96,6 +108,8 @@ def inspect(base: str, head: str) -> dict[str, object]:
         raise Denied("invalid_commit_identity")
     if not git("merge-base", "--is-ancestor", base, head, limit=0) == b"":
         raise Denied("invalid_commit_graph")
+    require_workflow_root(base)
+    require_workflow_root(head)
     base_tree = paths_and_modes(base)
     head_tree = paths_and_modes(head)
     changed = sorted(path for path in head_tree if base_tree.get(path) != head_tree[path])
