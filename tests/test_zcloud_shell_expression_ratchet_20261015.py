@@ -1110,6 +1110,57 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: echo ${{ format('}}', 'safe') }} ${{ vars.NEW }}\n")
         self.assertEqual(1, guard.audit(base, head)["new_risks"])
 
+    def test_legacy_shell_becomes_new_debt_when_root_permissions_escalate(self):
+        old = "on: push\npermissions: read-all\njobs:\n  x:\n    steps:\n      - run: echo ${{ inputs.payload }}\n"
+        base = self.commit(old)
+        head = self.commit(old.replace("permissions: read-all", "permissions: write-all"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_legacy_shell_becomes_new_debt_when_event_trigger_escalates(self):
+        old = "on: push\njobs:\n  x:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n"
+        base = self.commit(old)
+        head = self.commit(old.replace("on: push", "on: pull_request_target"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_legacy_shell_becomes_new_debt_when_job_permissions_escalate(self):
+        old = ("jobs:\n  x:\n    permissions:\n      contents: read\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("contents: read", "contents: write"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_legacy_shell_becomes_new_debt_when_job_runner_changes(self):
+        old = ("jobs:\n  x:\n    runs-on: ubuntu-latest\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("ubuntu-latest", "self-hosted"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_legacy_shell_becomes_new_debt_when_job_condition_relaxes(self):
+        old = ("jobs:\n  x:\n    if: false\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("if: false", "if: true"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_unrelated_job_permissions_do_not_invalidate_existing_waiver(self):
+        old = ("jobs:\n  x:\n    permissions:\n      contents: read\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n"
+               "  unrelated:\n    permissions:\n      contents: read\n"
+               "    steps:\n      - run: echo safe\n")
+        base = self.commit(old)
+        head = self.commit(old.replace(
+            "  unrelated:\n    permissions:\n      contents: read",
+            "  unrelated:\n    permissions:\n      contents: write"))
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_unrelated_workflow_title_does_not_invalidate_waiver(self):
+        old = ("name: Original title\non: push\njobs:\n  x:\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("Original title", "Updated title"))
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
