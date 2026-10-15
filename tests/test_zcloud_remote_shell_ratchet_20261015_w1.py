@@ -89,6 +89,51 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/install.rb | tee inspect.rb | ruby\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_subshell_pipeline_executes_download(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/install.sh | ( bash )\n"
+        )
+        r = mod.audit(self.repo, self.base, self.commit())
+        self.assertEqual(r.new_risky_workflows, 1)
+        self.assertFalse(r.deployment_authorized)
+
+    def test_command_group_pipeline_executes_download(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -qO- https://example.invalid/install.sh | { sh; }\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wrapped_grouped_interpreter_executes_download(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i | ( env -S /bin/bash )\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_ordinary_subshell_json_filter_not_flagged(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/data.json | ( jq . )\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_subshell_pipeline_unmodified_legacy_grandfathered(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i | ( bash )\n"
+        )
+        legacy = self.commit()
+        self.assertEqual(mod.audit(self.repo, legacy, legacy).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, legacy, legacy).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL https://example.invalid/i | ( bash )\n"
+            "      - run: echo unrelated\n"
+        )
+        self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
+
     def test_download_to_jq_without_execution_not_blocked(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/config.json | jq .\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
