@@ -119,6 +119,22 @@ class SourceTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.check(SAFE.replace("dist/result.log", path), False)
 
+    def test_registry_cloud_and_local_identity_files_denied(self):
+        unsafe = (".docker/config.json", "build/.terraform/environment",
+                  "out/.npm/_auth", "cfg/.m2/settings.xml",
+                  "cfg/.config/gh/hosts.yml", ".netrc", "cfg/.pypirc",
+                  "cfg/.git-credentials", "dist/id_ed25519",
+                  "dist/id_ecdsa", "dist/id_dsa", "build/gradle.properties")
+        for path in unsafe:
+            with self.subTest(path=path):
+                self.check(SAFE.replace("dist/result.log", path), False)
+
+    def test_noncredential_manifest_and_reports_remain_allowed(self):
+        for path in ("dist/docker-build.log", "reports/npm-test.txt",
+                     "out/configuration-report.json", "tmp/maven-summary.log"):
+            with self.subTest(path=path):
+                self.check(SAFE.replace("dist/result.log", path), True)
+
     def test_private_key_container_extensions_denied(self):
         for suffix in ("pem", "p12", "pfx", "key", "jks", "keystore", "asc"):
             with self.subTest(suffix=suffix):
