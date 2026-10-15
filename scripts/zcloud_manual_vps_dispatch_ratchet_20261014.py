@@ -87,6 +87,16 @@ def split_jobs(source: str) -> dict[str, str]:
     if next_top:
         text = text[:next_top.start()]
     matches = list(JOB.finditer(text))
+    # Quoted, space-before-colon, inline-map and duplicate job identifiers are
+    # valid YAML variants but cannot be safely inspected by this bounded parser.
+    # Reject them rather than silently letting an uninspected VPS job through.
+    for line in text.splitlines():
+        if re.match(r"^  \S", line) and not line.lstrip().startswith("#"):
+            if not JOB.fullmatch(line):
+                raise RefError("unsupported_job_identifier")
+    names = [m.group(1) for m in matches]
+    if len(names) != len(set(names)):
+        raise RefError("duplicate_job_identifier")
     return {m.group(1): text[m.end():(matches[i + 1].start() if i + 1 < len(matches) else len(text))]
             for i, m in enumerate(matches)}
 
