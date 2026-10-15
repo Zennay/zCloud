@@ -224,6 +224,30 @@ class LkgSnapshotProbeTests(unittest.TestCase):
             with patch.object(probe, "MAX_SNAPSHOTS", 1):
                 probe.audit_all(self.state)
 
+    def test_batch_denies_same_named_snapshot_directory_replacement(self):
+        import shutil
+        from unittest.mock import patch
+
+        original = probe.inspect
+        replaced = [False]
+
+        def swap_dir(state, *, snapshot_id=None, _batch_bytes=None):
+            result = original(
+                state, snapshot_id=snapshot_id, _batch_bytes=_batch_bytes,
+            )
+            if not replaced[0]:
+                replaced[0] = True
+                old = self.snapshots / (self.snap_id + "-old")
+                self.snap.rename(old)
+                shutil.copytree(old, self.snap)
+                shutil.rmtree(old)
+            return result
+
+        with patch.object(probe, "inspect", side_effect=swap_dir):
+            with self.assertRaisesRegex(probe.Denied, "^snapshot_inventory_changed$"):
+                probe.audit_all(self.state)
+        self.assertTrue(replaced[0])
+
     def test_batch_denies_snapshots_added_during_inventory(self):
         from unittest.mock import patch
         original = probe.inspect
