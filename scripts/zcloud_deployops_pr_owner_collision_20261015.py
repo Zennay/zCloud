@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import os
 import re
 import stat
@@ -191,8 +192,15 @@ def assess(payload):
         for members in groups[:80]
     ]
     uncontested = sorted(seen_numbers - conflicting)
+    # A deterministic digest makes two independent read-only operator
+    # snapshots comparable without storing unbounded PR metadata in logs.
+    # This is an evidence identifier, not a signature or authorization.
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=True, allow_nan=False).encode("utf-8")
+    fingerprint = hashlib.sha256(canonical).hexdigest()
     return {
         "policy": "zcloud-deployops-pr-owner-collision-v1",
+        "snapshot_sha256": fingerprint,
         "repo": payload["repo"],
         "main_sha": payload["main_sha"],
         "prs_scanned": len(pulls),
