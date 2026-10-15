@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -216,6 +217,46 @@ class PRCollisionInventoryTests(unittest.TestCase):
                     output = json.loads(result.stdout)
                     self.assertFalse(output["mutation_performed"])
                     self.assertEqual(original, path.read_bytes())
+
+    def test_bounded_input_rejects_symlink_fifo_and_oversize(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            real = root / "snapshot.json"
+            real.write_text(json.dumps(snapshot(pr(1, ["docs/a.md"]))),
+                            encoding="utf-8")
+            self.assertEqual(real.read_text(encoding="utf-8"), m.read_snapshot(real))
+            alias = root / "alias.json"
+            alias.symlink_to(real)
+            with self.assertRaises(m.InvalidInventory):
+                m.read_snapshot(alias)
+            if hasattr(os, "mkfifo"):
+                fifo = root / "pipe.json"
+                os.mkfifo(fifo)
+                with self.assertRaisesRegex(m.InvalidInventory, "unsafe_or_oversized_snapshot"):
+                    m.read_snapshot(fifo)
+            huge = root / "oversized.json"
+            huge.write_bytes(b"x" * (m.MAX_SNAPSHOT_BYTES + 1))
+            with self.assertRaisesRegex(m.InvalidInventory, "unsafe_or_oversized_snapshot"):
+                m.read_snapshot(huge)
+            invalid = root / "invalid-utf8.json"
+            invalid.write_bytes(b"\\xff")
+            with self.assertRaisesRegex(m.InvalidInventory, "snapshot_read_failed"):
+                m.read_snapshot(invalid)
+
+    def test_bounded_input_cli_refuses_symlink_without_writing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            original = root / "actual.json"
+            original.write_text(json.dumps(snapshot(pr(1, ["docs/a.md"]))),
+                                encoding="utf-8")
+            link = root / "link.json"
+            link.symlink_to(original)
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--snapshot", str(link)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(2, result.returncode)
+            self.assertFalse(json.loads(result.stdout)["mutation_performed"])
 
     def test_read_only_cli_contract(self):
         code = SCRIPT.read_text(encoding="utf-8")
