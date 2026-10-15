@@ -237,6 +237,48 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "wrong_group")
 
+    def test_parent_same_shared_production_group_is_not_independent(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: zcloud-production-deploy\n"
+                  "  cancel-in-progress: false\njobs:\n")
+        report = module.inventory(self.root)
+        self.assertEqual(report["writers"][name]["source_result"],
+                         "parent_shares_production_group")
+        self.assertFalse(report["release_authorized"])
+        self.assertFalse(report["dispatch_authorized"])
+
+    def test_parent_expression_only_is_ambiguous(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: ${{ vars.DEPLOY_LOCK }}\n"
+                  "  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "ambiguous_parent_group")
+
+    def test_parent_expression_completing_production_group_is_ambiguous(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: zcloud-production-deplo${{ vars.SUFFIX }}\n"
+                  "  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "ambiguous_parent_group")
+
+    def test_parent_separate_static_prefix_expression_keeps_safe_job_lock(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  group: zcloud-hosted-${{ github.ref }}\n"
+                  "  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "serialized_source")
+
+    def test_parent_missing_group_is_ambiguous(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n",
+                  "concurrency:\n  cancel-in-progress: false\njobs:\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "ambiguous_parent_group")
+
     def test_parent_cancel_after_jobs_is_denied(self):
         name = "zcloud-worker-tab-guard.yml"
         p = self.dir / name
