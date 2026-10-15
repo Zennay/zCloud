@@ -262,6 +262,19 @@ class ContinueOnErrorGitTests(unittest.TestCase):
         self.assertTrue(gate.check_workflow("\tcontinue-on-error: false\n"))
         self.assertTrue(gate.check_workflow("  \t- name: nested\n"))
 
+    def test_hosted_pr_admission_fails_instead_of_skipping(self):
+        source = (Path(__file__).resolve().parents[1] /
+                  ".github/workflows/zcloud-continue-on-error-no-new-debt-20261015-w4.yml"
+                  ).read_text(encoding="utf-8")
+        self.assertIn("Reject untrusted pull request before checkout", source)
+        self.assertIn('test "$EVENT_KIND" = pull_request', source)
+        self.assertIn('test "$HEAD_REPOSITORY" = "$SOURCE_REPOSITORY"', source)
+        self.assertIn('test "$BASE_REPOSITORY" = "$SOURCE_REPOSITORY"', source)
+        self.assertIn('test "$EVENT_BASE" = main', source)
+        self.assertNotIn("  source-only:\n    if:", source)
+        self.assertLess(source.index("Reject untrusted pull request"),
+                        source.index("Checkout exact PR SHA"))
+
     def test_direct_source_key_matrix(self):
         for source, expected in (
             ("continue-on-error: true", True),
