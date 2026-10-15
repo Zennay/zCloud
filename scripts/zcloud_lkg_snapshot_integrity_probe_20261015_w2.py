@@ -14,13 +14,14 @@ import os
 import re
 import stat
 from pathlib import Path, PurePosixPath
+from datetime import datetime
 
 MAX_JSON = 2 * 1024 * 1024
 MAX_FILES = 50000
 MAX_SNAPSHOTS = 16
 MAX_BATCH_BYTES = 1024 * 1024 * 1024
 MAX_BYTES = 512 * 1024 * 1024
-SNAPSHOT_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-(?:[a-f0-9]{8}|working-tree)(?:-[0-9]+)?$")
+SNAPSHOT_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-(?:[a-f0-9]{8}|working-(?:tree)?)(?:-[0-9]+)?$")
 SHA_RE = re.compile(r"^[a-f0-9]{64}$")
 MANAGED_ROOTS = {
     "server.py", "project_runtime.py", "lane_generator.py", "enhancements.py",
@@ -73,6 +74,16 @@ def _valid_unicode_tree(document: object) -> None:
             pending.extend(value.values())
         elif isinstance(value, list):
             pending.extend(value)
+
+
+def _snapshot_id_valid(value: object) -> bool:
+    if not isinstance(value, str) or SNAPSHOT_ID_RE.fullmatch(value) is None:
+        return False
+    try:
+        datetime.strptime(value[:16], "%Y%m%dT%H%M%SZ")
+    except ValueError:
+        return False
+    return True
 
 
 def _regular(path: Path) -> os.stat_result:
@@ -295,10 +306,10 @@ def inspect(state: Path, *, snapshot_id: str | None = None) -> dict:
     _directory(state / "snapshots")
     ptr = _json(state / "last-known-good.json")
     current_id = ptr.get("snapshot_id")
-    if not isinstance(current_id, str) or SNAPSHOT_ID_RE.fullmatch(current_id) is None:
+    if not _snapshot_id_valid(current_id):
         raise Denied("invalid_snapshot_id")
     snap_id = current_id if snapshot_id is None else snapshot_id
-    if not isinstance(snap_id, str) or SNAPSHOT_ID_RE.fullmatch(snap_id) is None:
+    if not _snapshot_id_valid(snap_id):
         raise Denied("invalid_snapshot_id")
     snapshot = state / "snapshots" / snap_id
     files = snapshot / "files"
@@ -431,7 +442,7 @@ def audit_all(state: Path) -> dict:
     _directory(state / "snapshots")
     pointer = _json(state / "last-known-good.json")
     current = pointer.get("snapshot_id")
-    if not isinstance(current, str) or SNAPSHOT_ID_RE.fullmatch(current) is None:
+    if not _snapshot_id_valid(current):
         raise Denied("invalid_snapshot_id")
 
     snapshots = _snapshot_entries(state)
@@ -441,7 +452,7 @@ def audit_all(state: Path) -> dict:
     results: list[dict[str, object]] = []
     total = 0
     for name, is_dir in sorted(snapshots):
-        if SNAPSHOT_ID_RE.fullmatch(name) is None or not is_dir:
+        if not _snapshot_id_valid(name) or not is_dir:
             entry = {"snapshot_id": None, "ok": False, "reason": "invalid_snapshot_entry"}
         else:
             try:
