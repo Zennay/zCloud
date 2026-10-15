@@ -454,6 +454,55 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.git("remote", "set-url", "origin", "https://github.com/untrusted/fake")
         self.assertNotEqual(self.git("remote", "get-url", "origin").strip(), expected)
 
+    def test_zero_width_name_format_character_denied(self):
+        self.write(f"{ROOT}/hidden\u200bname.yml", "name: safe\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "ambiguous_workflow_path"):
+            inspect(self.base, head)
+
+    def test_soft_hyphen_format_character_denied(self):
+        self.write(f"{ROOT}/hidden\u00adname.yml", "name: safe\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "ambiguous_workflow_path"):
+            inspect(self.base, head)
+
+    def test_new_casefold_filename_collision_denied(self):
+        self.write(f"{ROOT}/Policy.yml", "name: first\n")
+        self.write(f"{ROOT}/policy.yml", "name: second\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "new_confusable_workflow_paths"):
+            inspect(self.base, head)
+
+    def test_new_nfc_nfd_filename_collision_denied(self):
+        self.write(f"{ROOT}/café.yml", "name: first\n")
+        self.write(f"{ROOT}/cafe\u0301.yml", "name: second\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "new_confusable_workflow_paths"):
+            inspect(self.base, head)
+
+    def test_unchanged_legacy_case_collision_grandfathered(self):
+        self.write(f"{ROOT}/Alias.yml", "name: old uppercase\n")
+        self.write(f"{ROOT}/alias.yml", "name: old lowercase\n")
+        self.base = self.commit()
+        self.write(f"{ROOT}/unrelated.yml", "name: new safe\n")
+        head = self.commit()
+        self.assertEqual(inspect(self.base, head)["changed_workflows_checked"], 1)
+
+    def test_modified_legacy_case_collision_fails_closed(self):
+        self.write(f"{ROOT}/Alias.yml", "name: old uppercase\n")
+        self.write(f"{ROOT}/alias.yml", "name: old lowercase\n")
+        self.base = self.commit()
+        self.write(f"{ROOT}/Alias.yml", "name: edited\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "new_confusable_workflow_paths"):
+            inspect(self.base, head)
+
+    def test_safe_distinct_unicode_workflow_paths_preserved(self):
+        self.write(f"{ROOT}/café.yml", "name: accented\n")
+        self.write(f"{ROOT}/cafe.yml", "name: unaccented\n")
+        head = self.commit()
+        self.assertEqual(inspect(self.base, head)["changed_workflows_checked"], 2)
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
