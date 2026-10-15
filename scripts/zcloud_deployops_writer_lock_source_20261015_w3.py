@@ -42,7 +42,9 @@ def _read_regular(root: Path, filename: str) -> str:
     between validation and read. CI is isolated, but operator output must also
     refuse that race rather than silently inspecting a different source.
     """
-    flags = os.O_RDONLY | os.O_NOFOLLOW
+    # O_NONBLOCK avoids hanging on a maliciously substituted FIFO, which
+    # otherwise blocks at open() before fstat() can reject non-regular files.
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
     directory_flags = flags | os.O_DIRECTORY
     fds = []
     try:
@@ -64,7 +66,20 @@ def _read_regular(root: Path, filename: str) -> str:
         metadata = os.fstat(leaf)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
             raise AmbiguousSource("not_bounded_regular_source")
-        raw = os.read(leaf, MAX_BYTES + 1)
+        chunks = []
+        remaining = MAX_BYTES + 1
+        while remaining:
+            part = os.read(leaf, min(65536, remaining))
+            if not part:
+                break
+            chunks.append(part)
+            remaining -= len(part)
+        raw = b"".join(chunks)
+        after = os.fstat(leaf)
+        identity = lambda meta: (meta.st_dev, meta.st_ino, meta.st_mode,
+                                 meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns)
+        if len(raw) != metadata.st_size or identity(metadata) != identity(after):
+            raise AmbiguousSource("source_changed_during_read")
         if len(raw) > MAX_BYTES or b"\x00" in raw:
             raise AmbiguousSource("invalid_source_bytes")
         try:
