@@ -207,7 +207,7 @@ class GitAssetCases(unittest.TestCase):
 class WorkflowTrustCases(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.workflow = (SCRIPT.parents[0] / ".github/workflows/zcloud-dashboard-cache-bust-gate-20261015.yml").read_text(encoding="utf-8")
+        cls.workflow = (SCRIPT.parents[1] / ".github/workflows/zcloud-dashboard-cache-bust-gate-20261015.yml").read_text(encoding="utf-8")
 
     def test_immutable_base_policy_has_precedence(self) -> None:
         data = self.workflow
