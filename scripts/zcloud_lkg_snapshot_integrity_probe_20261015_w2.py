@@ -72,7 +72,10 @@ def _directory(path: Path) -> None:
 def _open_regular(path: Path):
     _regular(path)
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        fd = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+        )
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             os.close(fd)
@@ -80,6 +83,41 @@ def _open_regular(path: Path):
         return os.fdopen(fd, "rb")
     except (OSError, ValueError) as exc:
         raise Denied("unreadable_path") from exc
+
+
+def _open_snapshot_regular(root: Path, name: str):
+    """Walk snapshot components with O_NOFOLLOW, not a path-join open.
+
+    A symlink swapped into an intermediate directory after enumeration must
+    never redirect the file reader outside the selected snapshot.
+    """
+    if not _canonical_file(name):
+        raise Denied("unexpected_snapshot_file")
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    parent_fd = None
+    try:
+        parent_fd = os.open(root, directory_flags)
+        parts = PurePosixPath(name).parts
+        for component in parts[:-1]:
+            next_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            os.close(parent_fd)
+            parent_fd = next_fd
+        fd = os.open(parts[-1], file_flags, dir_fd=parent_fd)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            os.close(fd)
+            raise Denied("nonregular_file")
+        try:
+            return os.fdopen(fd, "rb")
+        except BaseException:
+            os.close(fd)
+            raise
+    except OSError as exc:
+        raise Denied("unreadable_path") from exc
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def _json(path: Path) -> dict:
@@ -219,7 +257,7 @@ def inspect(state: Path) -> dict:
         if count > MAX_FILES:
             raise Denied("too_many_files")
         digest = hashlib.sha256()
-        with _open_regular(path) as f:
+        with _open_snapshot_regular(files, name) as f:
             while True:
                 chunk = f.read(1024 * 1024)
                 if not chunk:
