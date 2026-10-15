@@ -44,3 +44,13 @@ De oorspronkelijke broncontrole accepteerde een eerste veilige `with.persist-cre
 Adversariële real-Git-tests dekken deze varianten, zonder gebruik van productie, VPS, worker, Firefox of SQLite. De eerste hosted check werd rood door een verkeerd ge-escapete regex, daarna een beperkte foutredenen-prioritering. Beide testgedreven fouten zijn gerepareerd zonder een onveilige configuratie toe te laten. Op SHA `b159f0b57cfd0064c5b341fdece418a21273293a` heeft de gerichte GitHub-hosted CI 48/48 tests gehaald. Voor deze documentatiecommit en elke latere SHA moet opnieuw exact-head CI worden beoordeeld.
 
 Deze ratchet is PR-eigen source code en biedt geen onafhankelijke release-autorisatie. Review/main-bescherming #922, runner #1326, writers #1447 en serialized release #580/PWQ-41/#1089 blijven intact.
+
+
+## Minder foutpositieven: echte YAML-checkout versus shell-voorbeeld (15 oktober, vervolg)
+
+Een bronworkflow kan in een GitHub Actions `run: |`, `run: |-` of `run: >-` shellcode de tekst `actions/checkout@...` tonen zonder daadwerkelijk een checkout-step uit te voeren. De eerdere lexicale check interpreteerde deze inert documentatietekst als een riskante workflowwijziging. De nieuwe scanner markeert de *body* van een eenvoudig en volledig herkend YAML run-blockscalar als inert; bij dedent gaan alle echte YAML-regels weer door de beveiligingscontrole.
+
+Deze beperkte contextverbetering maakt echte checkout-adoptie niet vrij: een echte `- uses: actions/checkout@...` na het codeblok blijft onder de strenge expliciete `with.persist-credentials: false`-eis vallen. Niet herkende blokscalarvormen blijven conservatief te reviewen. De decoder voert geen scripts uit en geeft geen deploy-/mergebevoegdheid.
+
+Gerichte real-Git regressies onderscheiden een letterlijk en gevouwen shellvoorbeeld, een voorbeeld met YAML-escape in tekst en echte onveilige checkout-steps na de blokscalar. Ook na deze wijziging blijven onafhankelijke beveiligingsreview en main-protection verplicht.
+
