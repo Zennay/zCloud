@@ -203,5 +203,33 @@ class GitAssetCases(unittest.TestCase):
         self.assertFalse(report["live_bytes_observed"])
 
 
+
+class WorkflowTrustCases(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.workflow = (SCRIPT.parents[0] / ".github/workflows/zcloud-dashboard-cache-bust-gate-20261015.yml").read_text(encoding="utf-8")
+
+    def test_immutable_base_policy_has_precedence(self) -> None:
+        data = self.workflow
+        self.assertIn('git show "$BASE_SHA:$policy_path" > "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', data)
+        self.assertIn('python3 -I "$RUNNER_TEMP/trusted-dashboard-cache-gate.py"', data)
+        self.assertLess(data.index('POLICY_PROVENANCE=immutable_pr_base'),
+                        data.index('POLICY_PROVENANCE=untrusted_bootstrap_review_required'))
+        self.assertIn('test "$mode" = "100644 blob"', data)
+
+    def test_initial_policy_install_warns_untrusted(self) -> None:
+        self.assertIn('::warning::POLICY_PROVENANCE=untrusted_bootstrap_review_required', self.workflow)
+        self.assertIn('python3 -I "$policy_path"', self.workflow)
+        self.assertNotIn('POLICY_PROVENANCE=trusted_bootstrap', self.workflow)
+
+    def test_hosted_read_only_and_no_automatic_deploy(self) -> None:
+        self.assertIn('runs-on: ubuntu-latest', self.workflow)
+        self.assertIn('contents: read', self.workflow)
+        self.assertIn('persist-credentials: false', self.workflow)
+        self.assertNotIn('self-hosted', self.workflow)
+        self.assertNotIn('workflow_dispatch:', self.workflow)
+        self.assertNotIn('pull_request_target:', self.workflow)
+        self.assertNotIn('contents: write', self.workflow)
+
 if __name__ == "__main__":
     unittest.main()
