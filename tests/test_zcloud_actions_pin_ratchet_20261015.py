@@ -252,6 +252,40 @@ class ActionPinRatchetTests(unittest.TestCase):
         self.commit(self.path.read_text() + "      - uses: ./tools/safe\n")
         self.assertEqual(self.evaluate()["new_unpinned"], 0)
 
+    def test_reject_composite_action_symlink_alias_via_dot_segment(self):
+        link = self.root / "tools/external"
+        link.parent.mkdir()
+        link.symlink_to("/tmp/untrusted")
+        self.command("add", "tools")
+        self.commit(self.path.read_text() + "      - uses: ./tools/./external\n")
+        with self.assertRaisesRegex(Refusal, "ambiguous_local_action_path"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_reject_local_action_path_equivalents_before_symlink_scan(self):
+        for reference in ("./tools//external", "./tools/../external",
+                          "./tools/.", "./tools/", "././tools", "./tools/./action"):
+            with self.subTest(reference=reference):
+                with self.assertRaises(Refusal):
+                    refs("steps:\n - uses: " + reference, "proof.yml")
+
+    def test_standard_hidden_local_action_path_remains_allowed(self):
+        self.assertEqual(refs("steps:\n - uses: ./.github/actions/example", "proof.yml"), [])
+
+    def test_yaml_folded_uses_does_not_mask_changed_external_reference(self):
+        self.commit("steps:\n  - uses: >\n      actions/cache@v3\n")
+        with self.assertRaisesRegex(Refusal, "ambiguous_uses_value"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_yaml_literal_and_chomp_uses_are_refused(self):
+        for token in (">", "|", ">-", "|+", ">2", "|-2", ""):
+            with self.subTest(token=token):
+                with self.assertRaisesRegex(Refusal, "ambiguous_uses_value"):
+                    refs("steps:\n - uses: " + token, "proof.yml")
+
+    def test_unchanged_pinned_action_still_passes_source_scan(self):
+        self.commit("steps:\n  - uses: actions/cache@" + "a" * 40 + "\n")
+        self.assertTrue(self.evaluate()["ok"])
+
     def test_invalid_revision_refused(self):
         with self.assertRaisesRegex(Refusal, "invalid_revision"):
             workflow_tree(self.root, "main; rm -rf /")
