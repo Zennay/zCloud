@@ -39,6 +39,7 @@ class FakeGitHub:
         self.drift_head = False
         self.drift_head_at_completion = False
         self.drift_pr_list = False
+        self.boolean_metadata_on_read = None
         self.list_pass = 0
         self.detail_reads = {}
         self.details = {n: detail(n, path=f"docs/{n}.md")
@@ -72,6 +73,10 @@ class FakeGitHub:
             if ((self.drift_head and self.detail_reads[number] > 1)
                     or (self.drift_head_at_completion and self.detail_reads[number] > 2)):
                 result["head"]["sha"] = "c" * 40
+            if self.boolean_metadata_on_read is not None:
+                field, read_number = self.boolean_metadata_on_read
+                if self.detail_reads[number] == read_number:
+                    result[field] = True
             return result
         raise AssertionError(path)
 
@@ -176,6 +181,25 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(InvalidInventory,
                                     "pr_changed_before_snapshot_completed"):
             s.collect(api)
+
+    def test_boolean_pr_identity_on_immediate_recheck_denied(self):
+        for field in ("number", "changed_files"):
+            api = FakeGitHub(count=1)
+            api.boolean_metadata_on_read = (field, 2)
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(InvalidInventory,
+                                            "pr_changed_during_snapshot"):
+                    s.collect(api)
+
+    def test_boolean_pr_identity_on_final_recheck_denied(self):
+        for field in ("number", "changed_files"):
+            api = FakeGitHub(count=1)
+            api.boolean_metadata_on_read = (field, 3)
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(
+                    InvalidInventory, "pr_changed_before_snapshot_completed"
+                ):
+                    s.collect(api)
 
     def test_open_pr_list_change_during_pagination_denied(self):
         api = FakeGitHub()
