@@ -384,6 +384,36 @@ class RatchetTests(unittest.TestCase):
         code, out = self.change("await octokit.rest.repos.getBranchProtection({})")
         self.assertEqual(code, 0, out)
 
+    def test_unicode_rtl_override_denied(self):
+        self.write(".github/workflows/safe.yml", SAFE + "# harmless\u202evisible\n")
+        self.commit()
+        self.assertEqual(self.audit()[1]["reason"], "opaque_workflow_encoding")
+
+    def test_unicode_zero_width_joiner_denied(self):
+        self.write(".github/workflows/safe.yml", SAFE + "# foo\u200dbar\n")
+        self.commit()
+        self.assertEqual(self.audit()[1]["reason"], "opaque_workflow_encoding")
+
+    def test_unicode_bidi_isolate_denied(self):
+        self.write(".github/workflows/safe.yml", SAFE + "# \u2067foo\u2069\n")
+        self.commit()
+        self.assertEqual(self.audit()[1]["reason"], "opaque_workflow_encoding")
+
+    def test_non_ascii_accented_workflow_allowed(self):
+        self.write(".github/workflows/safe.yml", SAFE + "# résumé café\n")
+        self.commit()
+        code, receipt = self.audit()
+        self.assertEqual(code, 0, receipt)
+
+    def test_unicode_legacy_unchanged_bytes_not_rescanned(self):
+        self.write(".github/workflows/safe.yml", SAFE + "# foo\u200dbar\n")
+        old = self.commit()
+        self.write(".github/workflows/new.yml", SAFE)
+        now = self.commit()
+        code, receipt = self.audit(old, now)
+        self.assertEqual(code, 0, receipt)
+        self.assertEqual(receipt["legacy_workflows_not_rescanned"], 1)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, result = self.change("git push origin main # " + marker)
