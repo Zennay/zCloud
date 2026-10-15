@@ -68,7 +68,7 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         pointer = self.state / "last-known-good.json"
         samples = (
             ('{"snapshot_id":"' + self.snap_id + '","padding":1e999}', "nonfinite_json"),
-            ('{"snapshot_id":"' + self.snap_id + '","ignored":"\\\\ud800"}', "invalid_unicode"),
+            ('{"snapshot_id":"' + self.snap_id + '","ignored":"\\ud800"}', "invalid_unicode"),
         )
         for payload, reason in samples:
             with self.subTest(reason=reason):
