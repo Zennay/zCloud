@@ -57,7 +57,7 @@ def _git(*args: str) -> bytes:
 def _selected(path: str) -> bool:
     if re.fullmatch(r"\.github/workflows/[^/]+\.ya?ml", path):
         return True
-    return bool(re.fullmatch(r"(?:\.github/actions/|.+/)(?:action\.ya?ml)", path))
+    return bool(re.fullmatch(r"(?:.*/)?action\.ya?ml", path))
 
 
 def _tree(sha: str) -> list[tuple[str, str]]:
