@@ -25,6 +25,13 @@ MAX_CHANGED = 250
 MAX_INVENTORY = 128 * 1024
 MAX_WORKFLOW = 1024 * 1024
 GIT_DEADLINE_SECONDS = 15
+SAFE_DENIAL_CODES = frozenset({
+    "invalid_git_limit", "git_output_limit", "invalid_sha",
+    "checkout_head_changed", "not_a_commit", "unsafe_workflow_root",
+    "incomplete_or_duplicate_inventory", "unsafe_workflow_path",
+    "unsafe_workflow_mode", "workflow_blob_too_large", "nul_in_workflow",
+    "invisible_or_directional_unicode",
+})
 
 
 def git(root: Path, *args: str, limit: int = MAX_WORKFLOW) -> bytes:
@@ -197,8 +204,21 @@ def main(argv: list[str] | None = None) -> int:
     try:
         findings = scan(args.root, args.base, args.head)
     except (OSError, ValueError, UnicodeError, subprocess.SubprocessError) as exc:
-        # Never print arbitrary git stderr, file contents, or secret-bearing payloads.
-        print(f"DENY: source inventory could not be trusted ({type(exc).__name__})", file=sys.stderr)
+        # Only codes in our own constant allowlist may be emitted. Never leak
+        # arbitrary exception text, Git stderr, checked-out content or tokens.
+        if type(exc) is ValueError and str(exc) in SAFE_DENIAL_CODES:
+            code = str(exc)
+        elif isinstance(exc, TimeoutError):
+            code = "git_elapsed_deadline"
+        elif isinstance(exc, UnicodeError):
+            code = "invalid_workflow_utf8"
+        elif isinstance(exc, subprocess.TimeoutExpired):
+            code = "git_subprocess_deadline"
+        elif isinstance(exc, subprocess.CalledProcessError):
+            code = "git_command_failed"
+        else:
+            code = "untrusted_source_io"
+        print(f"DENY: source inventory could not be trusted [{code}]", file=sys.stderr)
         return 2
     for path, reasons in sorted(findings.items()):
         for reason in reasons[:20]:
