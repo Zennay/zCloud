@@ -169,6 +169,37 @@ class SourceTests(unittest.TestCase):
                 with self.assertRaises(gate.Denied):gate.workflow_paths(base,"f"*40)
             finally: os.chdir(old)
 
+    def test_divergent_git_history_fails_ancestry_closed(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            f = Path(d) / ".github/workflows/a.yml"
+            f.parent.mkdir(parents=True)
+            f.write_text(SAFE)
+            git("add", ".")
+            git("commit", "-qm", "common")
+            common = git("rev-parse", "HEAD")
+            f.write_text(SAFE.replace("result.log", "first.log"))
+            git("commit", "-qam", "left")
+            unrelated_base = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "other", common)
+            f.write_text(SAFE.replace("result.log", "second.log"))
+            git("commit", "-qam", "right")
+            right = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                with self.assertRaisesRegex(gate.Denied, "invalid_ancestry"):
+                    gate.workflow_paths(unrelated_base, right)
+                self.assertEqual(gate.workflow_paths(common, right),
+                                 [".github/workflows/a.yml"])
+            finally:
+                os.chdir(old)
+
     def test_composite_manifest_real_git_delta(self):
         with tempfile.TemporaryDirectory() as d:
             def git(*args):
