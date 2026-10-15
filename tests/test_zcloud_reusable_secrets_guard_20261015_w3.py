@@ -329,20 +329,25 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
 
     def test_git_tree_replacement_cannot_hide_unsafe_workflow(self):
         path = f"{ROOT}/unsafe-tree.yml"
-        self.write(path, "jobs:\\n  call:\\n    secrets: inherit\\n")
+        self.write(path, "jobs:\n  call:\n    secrets: inherit\n")
         unsafe_head = self.commit()
         unsafe_tree = self.git("rev-parse", unsafe_head + ":.github/workflows").strip()
-        self.write(path, "name: safe\\n")
+        self.write(path, "name: safe\n")
         safe_head = self.commit()
         safe_tree = self.git("rev-parse", safe_head + ":.github/workflows").strip()
         self.assertNotEqual(unsafe_tree, safe_tree)
         self.git("replace", unsafe_tree, safe_tree)
-        self.assertIn("safe", self.git("cat-file", "blob", self.git("rev-parse", safe_head + ":" + path).strip()))
+        unsafe_blob_oid = self.git("rev-parse", unsafe_head + ":" + path).strip()
+        safe_blob_oid = self.git("rev-parse", safe_head + ":" + path).strip()
+        # Plain Git sees the replacement tree despite the unsafe tree ID.
+        self.assertIn(safe_blob_oid, self.git("cat-file", "-p", unsafe_tree))
+        # The scanner's Git wrapper must expose the original tree instead.
+        self.assertIn(unsafe_blob_oid, git("cat-file", "-p", unsafe_tree).decode())
         with self.assertRaisesRegex(Denied, "inherit_secrets"):
             inspect(self.base, unsafe_head)
 
     def test_changed_git_blob_bytes_denied_by_sha_even_same_size(self):
-        self.write(f"{ROOT}/verified.yml", "name: safe\\n")
+        self.write(f"{ROOT}/verified.yml", "name: safe\n")
         head = self.commit()
         original_git = guard.git
 
@@ -357,13 +362,13 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
                 inspect(self.base, head)
 
     def test_git_blob_size_claim_mismatch_denied(self):
-        self.write(f"{ROOT}/verified.yml", "name: safe\\n")
+        self.write(f"{ROOT}/verified.yml", "name: safe\n")
         head = self.commit()
         original_git = guard.git
 
         def spoof_size(*args, **kwargs):
             if args[:2] == ("cat-file", "-s"):
-                return b"1\\n"
+                return b"1\n"
             return original_git(*args, **kwargs)
 
         with mock.patch.object(guard, "git", side_effect=spoof_size):
