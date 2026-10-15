@@ -30,6 +30,13 @@ REMOTE = re.compile(
 SUBSTITUTION = re.compile(SCRIPT_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
 SHELL_COMMAND_SUBST = re.compile(SCRIPT_EXEC + r"""\s+-c\s+["\x27]?\$\(\s*(?:curl|wget)\b""", re.I)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
+# Escaped YAML mapping keys and explicit question-mark run keys have semantics
+# outside the narrow source reader. Conservatively reject newly introduced
+# ambiguity instead of silently reporting an unexamined run step as safe.
+ESCAPED_MAPPING_KEY = re.compile(
+    r"""^\s*(?:-\s+)?["'][^"'\n]*\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})[^"'\n]*["']\s*:"""
+)
+EXPLICIT_RUN_KEY = re.compile(r"""^\s*(?:-\s+)?\?\s*(?:"run"|'run'|run)(?:\s*:|\s*$)""")
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES = 512, 1024 * 1024, 32 * 1024 * 1024
 
 
@@ -131,6 +138,8 @@ def extract_run_scripts(yaml: str) -> list[str]:
         i += 1
         if line.lstrip().startswith("#"):
             continue
+        if ESCAPED_MAPPING_KEY.match(line) or EXPLICIT_RUN_KEY.match(line):
+            blocks.append("*ambiguous-mapping-key")
         # Compact flow maps are valid GitHub Actions YAML too, e.g.
         # steps: [{run: "curl -fsSL https://host/script | bash"}].
         # This conservative source heuristic deliberately does not claim
