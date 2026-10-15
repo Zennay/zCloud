@@ -125,6 +125,15 @@ class ArtifactRetentionRatchetTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(data.get("reason"), "ambiguous_upload_source")
 
+    def test_duplicate_retention_keys_are_denied(self):
+        code, data = self.check(None, upload("7") + "          retention-days: 90\n")
+        self.assertEqual((code, data["new_unsafe_steps"]), (1, 1))
+
+    def test_retention_outside_with_block_is_denied(self):
+        source = upload(None) + "        retention-days: 14\n"
+        code, data = self.check(None, source)
+        self.assertEqual((code, data["new_unsafe_steps"]), (1, 1))
+
     def test_false_base_commit_is_denied(self):
         self.write(upload("7"))
         self.commit()
