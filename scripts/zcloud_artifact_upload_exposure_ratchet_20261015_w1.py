@@ -147,6 +147,7 @@ def examine(text: str) -> None:
         assert m
         step_indent = len(m.group(1))
         with_indent = None
+        field_indent = None
         fields = {}
         for line in lines[i+1:]:
             if not line.strip() or line.lstrip().startswith("#"):
@@ -160,11 +161,18 @@ def examine(text: str) -> None:
                 continue
             if with_indent is None:
                 continue
+            if with_match:
+                # Duplicate YAML mappings can replace the earlier safe values.
+                raise Denied("duplicate_upload_with")
             if indent <= with_indent:
                 break
             key = KEY.match(line)
             if not key or len(key.group(1)) <= with_indent:
                 raise Denied("ambiguous_upload_value")
+            if field_indent is None:
+                field_indent = indent
+            elif indent != field_indent:
+                raise Denied("nested_upload_option")
             k = key.group(2).lower()
             if k in fields:
                 raise Denied("duplicate_upload_option")
