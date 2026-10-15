@@ -291,7 +291,26 @@ def extract_run_scripts(yaml: str) -> list[str]:
                 # A plain YAML run value terminates at a whitespace-prefixed
                 # '#'; fully quoted run values preserve that character. Avoid
                 # false source debt from a comment after a harmless command.
-                blocks.append(raw if raw[0] in ('"', "'") else raw.split(" #", 1)[0])
+                if raw[0] in ('"', "'"):
+                    blocks.append(raw)
+                else:
+                    # YAML folds indented continuations of a *plain* run scalar.
+                    # A shell pipe split after curl's '|' must be scanned as
+                    # the actual concatenated command, not only its first line.
+                    indent = len(m.group("indent"))
+                    parts = [raw.split(" #", 1)[0]]
+                    while i < len(lines):
+                        continuation = lines[i]
+                        if not continuation.strip():
+                            i += 1
+                            continue
+                        deeper = len(continuation) - len(continuation.lstrip())
+                        if deeper <= indent:
+                            break
+                        if not continuation.lstrip().startswith("#"):
+                            parts.append(continuation.strip().split(" #", 1)[0])
+                        i += 1
+                    blocks.append(" ".join(parts))
     return blocks
 
 
