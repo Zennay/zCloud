@@ -73,6 +73,8 @@ def _tree(sha: str) -> list[tuple[str, str]]:
             path = path_bytes.decode("utf-8")
         except (ValueError, UnicodeError) as exc:
             raise ValueError("invalid_git_tree") from exc
+        if path in (".github/workflows", ".github/actions") and mode == "120000":
+            raise ValueError("symlinked_source_directory")
         if not _selected(path):
             continue
         if mode != "100644" or kind != "blob" or not SHA.fullmatch(blob_sha):
@@ -80,6 +82,8 @@ def _tree(sha: str) -> list[tuple[str, str]]:
         entries.append((path, blob_sha))
     if len(entries) > MAX_FILES:
         raise ValueError("workflow_inventory_over_limit")
+    if not any(path.startswith(".github/workflows/") for path, _ in entries):
+        raise ValueError("missing_workflow_source_tree")
     return sorted(entries)
 
 
