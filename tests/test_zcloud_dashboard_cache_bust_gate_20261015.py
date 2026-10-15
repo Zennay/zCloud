@@ -167,6 +167,40 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "inert_asset_ref")
 
+    def test_external_base_origin_denied(self) -> None:
+        self.write("public/index.html", '<base href="https://example.invalid/">' + self.html("r8", "r5"))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "base_href_changes_asset_origin")
+
+    def test_relative_base_origin_also_requires_review(self) -> None:
+        self.write("public/index.html", '<base href="/">' + self.html("r8", "r5"))
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "base_href_changes_asset_origin")
+
+    def test_percent_encoded_js_alias_cannot_hide_second_asset(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<script src="/app%2Ejs?v=r9"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "noncanonical_asset_path")
+
+    def test_percent_encoded_css_alias_denied(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<link rel="stylesheet" href="/enhancements%2Ecss?v=r6">')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "noncanonical_asset_path")
+
+    def test_dot_segment_js_alias_cannot_hide_second_asset(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<script src="/ignored/../app.js?v=r9"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "noncanonical_asset_path")
+
+    def test_untrusted_non_utf8_percent_encoded_asset_denied(self) -> None:
+        self.write("public/index.html", self.html("r8", "r5") +
+                   '<script src="/app%FF.js?v=r9"></script>')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "malformed_asset_path")
+
     def test_symlinked_asset_denied(self) -> None:
         Path("public/app.js").unlink()
         Path("public/app.js").symlink_to("enhancements.css")
