@@ -308,6 +308,23 @@ generic parsers. This check is intentionally a fail-closed syntax guard,
 **not** proof that a tagged key is executable by Actions, nor a substitute
 for YAML semantic validation. No release, merge or VPS permission is granted.
 
+## Quoted expression delimiters
+
+GitHub Actions expressions may contain the literal text `}}` inside a
+single-quoted string, for example `format('}}', inputs.payload)`.
+A regex that treats the **first** `}}` as the expression terminator
+could ignore all following untrusted arguments and quietly accept an
+unsafe direct shell substitution. A legitimate string can also escape
+an apostrophe as `''` and contain the same delimiter.
+
+The shell guard now scans expressions with explicit single-quote state,
+honours doubled apostrophes and closes only on `}}` **outside** a literal.
+An unmatched expression, or another unquoted `${{` before its closer,
+is counted as incomplete/ambiguous debt. Literal strings containing
+`}}` but **no untrusted property** remain outside the direct-expression
+risk classification. This is still lexical source inspection, not
+execution, GitHub expression validation, or permission to deploy.
+
 ## Human-readable GitHub Actions summary
 
 After successful SHA-bound evidence admission, the hosted job writes a
