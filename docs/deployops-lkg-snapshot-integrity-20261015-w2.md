@@ -51,3 +51,16 @@ For each source file, the probe now records `fstat()` identity (device, inode, s
 ## Complete directory inventory: fail closed on unreadable subtrees
 
 On supported Linux deployments, the scanner enumerates the snapshot tree through explicitly opened directory descriptors, `os.scandir(fd)`, `O_DIRECTORY` and `O_NOFOLLOW`; it refuses path depth over 64 and inventory sizes beyond the configured cap. This replaces `pathlib.rglob`, which can suppress traversal errors and therefore allow a partial inventory to look complete. An unreadable subtree, an injected enumeration failure or a too-deep tree is a denial, never an implicit empty directory. Targeted adversarial tests cover both cases, and no new VPS permissions or mutation operations were introduced.
+
+## All retained snapshots — read-only operator inventory
+
+The standalone preflight now also supports `--all-snapshots`, which verifies the selected active snapshot and every other retained snapshot without switching the active pointer:
+
+```bash
+python3 scripts/zcloud_lkg_snapshot_integrity_probe_20261015_w2.py \\
+  --state-dir "$HOME/.local/state/zcloud/recovery" --all-snapshots
+```
+
+The JSON summary contains a bounded list of recognized snapshot IDs, their status, currentness, verified byte count and fixed-category failure reason. Unknown snapshot filenames are deliberately hidden (`snapshot_id:null`) and treated as a denial. At most 16 entries and 1 GiB of cumulatively verified data are admitted; more entries or bytes fail closed without truncating a purportedly complete report. The current pointer must remain unchanged and present. A clean historical snapshot is **not** a suggestion to select or restore it; each result always declares `authorizes_rollback:false` and `authorizes_deploy:false` at the report level. The inventory only reads files and performs no cleanup, pruning, restarts, deployments, rollback or alternate-pointer writes.
+
+Additional hardening: all metadata and snapshot readers walk every ancestor via nofollow directory descriptors, so a symlink swapped into an upper directory cannot redirect reads outside the recovery state. The full managed restore-path contract is checked exactly. JSON exponent overflow and lone Unicode surrogate escapes are rejected even in otherwise ignored metadata fields.
