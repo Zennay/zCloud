@@ -192,6 +192,7 @@ class ContinueOnErrorGitTests(unittest.TestCase):
             ("continue-on-error: ${{ true }}", True),
             ("'continue-on-error': false", False),
             ("continue-on-error: false # note", False),
+            ("continue-on-error: false#not-a-yaml-comment", True),
             ("  # continue-on-error: true", False),
         ):
             with self.subTest(source=source):
