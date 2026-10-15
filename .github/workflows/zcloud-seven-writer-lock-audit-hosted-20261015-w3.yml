@@ -47,6 +47,8 @@ jobs:
           assert not report["mutation_performed"]
           # Snapshot checks are equality evidence only, not trusted release
           # provenance or canonical-main verification.
+          # Detect source drift between two independent bounded read passes.
+          # This remains read-only equality evidence, not atomicity proof.
           assert report["source_snapshot_complete"] is True
           assert re.fullmatch(r"[0-9a-f]{64}", report["source_snapshot_sha256"])
           assert all(re.fullmatch(r"[0-9a-f]{64}", row["source_sha256"])
@@ -75,7 +77,7 @@ jobs:
               "symlink_source", "not_bounded_regular_source", "invalid_source_bytes",
               "invalid_utf8", "tab_indentation_or_scalar", "unsupported_yaml_mapping_form",
               "invalid_source_root", "duplicate_lock_field",
-              "unsupported_job_mapping",
+              "unsupported_job_mapping", "unstable_source_snapshot",
           }
           rows = []
           for filename, label in labels.items():
