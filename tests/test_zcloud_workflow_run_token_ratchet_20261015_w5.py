@@ -231,13 +231,12 @@ class WorkflowRunTokenRatchetTests(unittest.TestCase):
             )
             fake_git.chmod(0o755)
             with patch.dict(os.environ, {"PATH": directory + os.pathsep + os.environ["PATH"]}):
-                with patch.object(gate.time, "monotonic", side_effect=None):
-                    # Simulate a monotonic elapsed deadline without waiting
-                    # for 15 seconds of CI wall time.
-                    initial = gate.time.monotonic()
-                    with patch.object(gate.time, "monotonic", side_effect=[initial, initial + 16]):
-                        with self.assertRaisesRegex(TimeoutError, "git_elapsed_deadline"):
-                            gate.git(self.root, "status", limit=512)
+                # Simulate deadline expiry before the first readable byte.
+                import time
+                initial = time.monotonic()
+                with patch.object(gate.time, "monotonic", side_effect=[initial, initial + 16]):
+                    with self.assertRaisesRegex(TimeoutError, "git_elapsed_deadline"):
+                        gate.git(self.root, "status", limit=512)
 
     def test_invalid_git_output_limit_fails_closed(self):
         for bad in (0, -1, True, "1024"):
