@@ -89,6 +89,23 @@ def committed_workflows(repo: Path, sha: str) -> dict[str, bytes]:
     return found
 
 
+def closed_quoted_run(value: str) -> bool:
+    """An unescaped matching closing quote is required for YAML quoted scalars."""
+    if not value or value[0] not in ("'", '"'):
+        return True
+    quote = value[0]
+    count = 0
+    escaped = False
+    for character in value:
+        if character == quote and (quote == "'" or not escaped):
+            count += 1
+        if character == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    return count % 2 == 0
+
+
 def extract_run_scripts(yaml: str) -> list[str]:
     """Scan literal run scalars; no full YAML semantic claim."""
     lines = yaml.splitlines()
@@ -124,7 +141,24 @@ def extract_run_scripts(yaml: str) -> list[str]:
             # Folded YAML (>) joins line breaks into spaces; literal (|) keeps them.
             blocks.append(" ".join(body) if raw.startswith(">") else "\n".join(body))
         elif raw:
-            blocks.append(raw.split(" #", 1)[0])
+            if raw.startswith(('"', "'")) and not closed_quoted_run(raw):
+                # Quoted multiline YAML scalars fold continuation newlines to
+                # spaces. A new remote-shell pipe must not evade a line reader.
+                indent = len(m.group("indent"))
+                parts = [raw]
+                while i < len(lines) and not closed_quoted_run(" ".join(parts)):
+                    continuation = lines[i]
+                    if continuation.strip() and len(continuation) - len(continuation.lstrip()) <= indent:
+                        raise SourceError("Unterminated quoted YAML run scalar")
+                    parts.append(continuation.strip())
+                    i += 1
+                if not closed_quoted_run(" ".join(parts)):
+                    raise SourceError("Unterminated quoted YAML run scalar")
+                blocks.append(" ".join(parts))
+            else:
+                # Inline hash characters inside quoted YAML are not comments.
+                # Preserve the complete scalar to avoid hiding a source risk.
+                blocks.append(raw)
     return blocks
 
 
