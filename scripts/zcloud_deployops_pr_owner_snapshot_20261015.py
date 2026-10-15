@@ -137,7 +137,10 @@ def collect(read, *, max_pages=10):
             # Files endpoint is NOT head-SHA pinned. Re-read the PR
             # immediately to reject a ref moving between the two GETs.
             after = read(f"/pulls/{number}")
-            if type(after) is not dict or (
+            if (type(after) is not dict
+                    or type(after.get("number")) is not int
+                    or type(after.get("changed_files")) is not int
+                    or (
                 after.get("number"), after.get("state"),
                 after.get("changed_files"),
                 ident(after.get("head")), ident(after.get("base")),
@@ -145,7 +148,7 @@ def collect(read, *, max_pages=10):
             ) != (
                 number, proof["state"], changed, proof["head_sha"],
                 proof["base_sha"], proof["head_repo"], proof["base_repo"],
-            ):
+            )):
                 raise InvalidInventory("pr_changed_during_snapshot")
             prs.append(proof)
         if len(batch) < 100:
@@ -186,9 +189,10 @@ def collect(read, *, max_pages=10):
             origin = ref.get("repo")
             return origin.get("full_name") if type(origin) is dict else None
         if (type(latest.get("number")) is not int
+                or type(latest.get("changed_files")) is not int
                 or latest["number"] != proof["number"]
                 or latest.get("state") != proof["state"]
-                or latest.get("changed_files") != proof["changed_files"]
+                or latest["changed_files"] != proof["changed_files"]
                 or identity(head, "sha") != proof["head_sha"]
                 or identity(base, "sha") != proof["base_sha"]
                 or identity(head, "repo") != proof["head_repo"]
