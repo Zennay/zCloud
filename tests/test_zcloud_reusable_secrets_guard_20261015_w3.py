@@ -503,6 +503,36 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         head = self.commit()
         self.assertEqual(inspect(self.base, head)["changed_workflows_checked"], 2)
 
+    def test_git_global_config_does_not_contaminate_scanner(self):
+        home = Path(self.tmp.name) / "untrusted-home"
+        home.mkdir()
+        (home / ".gitconfig").write_text(
+            "[ratchet]\n  untrustedMarker = infected\n", encoding="utf-8",
+        )
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            outside = self.git("config", "--get", "ratchet.untrustedMarker").strip()
+            self.assertEqual(outside, "infected")
+            with self.assertRaisesRegex(Denied, "git_source_unavailable"):
+                git("config", "--get", "ratchet.untrustedMarker")
+            self.assertEqual(len(git("rev-parse", "HEAD", limit=41)), 41)
+
+    def test_git_no_implicit_fetch_and_no_system_config_contract(self):
+        original = subprocess.Popen
+        envs = []
+
+        def inspect_popen(*args, **kwargs):
+            envs.append(kwargs.get("env", {}))
+            return original(*args, **kwargs)
+
+        with mock.patch.object(guard.subprocess, "Popen", side_effect=inspect_popen):
+            self.assertEqual(len(git("rev-parse", "HEAD", limit=41)), 41)
+        self.assertEqual(len(envs), 1)
+        env = envs[0]
+        self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(env["GIT_CONFIG_SYSTEM"], os.devnull)
+        self.assertEqual(env["GIT_CONFIG_GLOBAL"], os.devnull)
+        self.assertEqual(env["GIT_NO_LAZY_FETCH"], "1")
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
