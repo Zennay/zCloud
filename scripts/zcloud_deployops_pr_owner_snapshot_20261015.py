@@ -62,7 +62,8 @@ def github_reader(token):
 
 def _main_sha(read):
     info = read("/branches/main")
-    sha = info.get("commit", {}).get("sha") if type(info) is dict else None
+    commit = info.get("commit") if type(info) is dict else None
+    sha = commit.get("sha") if type(commit) is dict else None
     if type(sha) is not str or SHA.fullmatch(sha) is None:
         raise InvalidInventory("untrusted_main_revision")
     return sha
@@ -93,7 +94,8 @@ def collect(read, *, max_pages=10):
             if len(seen) > MAX_PRS:
                 raise InvalidInventory("unbounded_pr_inventory")
             detail = read(f"/pulls/{number}")
-            if type(detail) is not dict or detail.get("number") != number:
+            if (type(detail) is not dict or type(detail.get("number")) is not int
+                    or detail["number"] != number):
                 raise InvalidInventory("wrong_pr_detail")
             changed = detail.get("changed_files")
             if type(changed) is not int or not 1 <= changed <= MAX_FILES:
