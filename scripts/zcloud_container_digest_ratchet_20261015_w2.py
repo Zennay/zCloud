@@ -82,8 +82,11 @@ def _tree(sha: str) -> list[tuple[str, str]]:
             path = path_bytes.decode("utf-8")
         except (ValueError, UnicodeError) as exc:
             raise ValueError("invalid_git_tree") from exc
-        if path in (".github/workflows", ".github/actions") and mode == "120000":
-            raise ValueError("symlinked_source_directory")
+        # Local Actions can live at any repository depth. A symlink or
+        # gitlink anywhere may conceal an executable Action under an arbitrary
+        # alias path; the source inventory cannot safely resolve its target.
+        if mode in ("120000", "160000"):
+            raise ValueError("opaque_git_source_entry")
         if not _selected(path):
             continue
         if mode != "100644" or kind != "blob" or not SHA.fullmatch(blob_sha):
@@ -126,6 +129,11 @@ def _scan(path: str, source: str) -> list[Finding]:
     import hashlib
 
     findings: list[Finding] = []
+    # Bind legacy unsafe source to the *entire execution context* in its
+    # committed workflow or Action metadata. Any edit to jobs, triggers,
+    # permissions, shell, Docker inputs, or an enclosing step is then new debt
+    # requiring independent review; benign same-file edits may also deny.
+    source_identity = hashlib.sha256(source.encode("utf-8")).digest()
     multiline_indent: int | None = None
     for number, line in enumerate(source.splitlines(), 1):
         stripped = line.lstrip(" ")
@@ -174,7 +182,7 @@ def _scan(path: str, source: str) -> list[Finding]:
         # cannot silently become new source debt.
         if not kind.startswith("ambiguous_") and "{" not in value and "[" not in value and _safe_literal(value):
             continue
-        fingerprint = hashlib.sha256(line.encode("utf-8")).hexdigest()
+        fingerprint = hashlib.sha256(source_identity + line.encode("utf-8")).hexdigest()
         findings.append(Finding(path, number, kind, fingerprint))
         if len(findings) > MAX_FINDINGS:
             raise ValueError("risk_inventory_over_limit")
