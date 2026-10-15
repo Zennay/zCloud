@@ -184,6 +184,23 @@ class RealGitRatchetTests(unittest.TestCase):
             with self.assertRaises(gate.Denied):
                 gate.git("version", max_output=128)
 
+    def test_git_forked_descendant_cannot_hold_stdout_open_after_parent_exits(self):
+        # Parent Git wrapper exits while a forked descendant inherits stdout.
+        # Timeout must kill the session even when direct parent's poll() is zero.
+        path = self.fake_git(
+            "import os, time\n"
+            "if os.fork() == 0:\n"
+            "    time.sleep(10)\n"
+            "    os._exit(0)\n"
+            "os._exit(0)\n"
+        )
+        with (mock.patch.dict(os.environ, {"PATH": path}),
+              mock.patch.object(gate, "TIMEOUT", 0.2),
+              mock.patch.object(gate.os, "killpg", wraps=gate.os.killpg) as killed):
+            with self.assertRaises(gate.Denied):
+                gate.git("version", max_output=128)
+            self.assertTrue(killed.called, "orphaned Git process group must be killed")
+
     def test_invalid_output_budget_is_denied(self):
         for budget in (0, -1, gate.MAX_OUTPUT + 1):
             with self.subTest(budget=budget), self.assertRaises(gate.Denied):
