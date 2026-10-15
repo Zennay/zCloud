@@ -31,7 +31,7 @@ OCTOKIT_REF_WRITE = re.compile(
 # Git supports aliases in -c/config arguments. Invoking the alias may
 # execute a write without a direct push subcommand in the command line.
 GIT_WRITE_ALIAS = re.compile(
-    r"(?i)\balias\.[a-z0-9_.-]+\s*=\s*['\"]?\s*(?:!(?:git\s+)?|git\s+)?push\b"
+    r"(?i)\balias\.[a-z0-9_.-]+\s*=\s*['\"]?\s*(?:!(?:git\s+)?|git\s+)?(?:push|send-pack)\b"
 )
 GIT_SHELL_ALIAS = re.compile(
     r"(?i)\balias\.[a-z0-9_.-]+\s*=\s*['\"]?\s*!"
@@ -171,8 +171,8 @@ def tree(commit: str) -> dict[str, str]:
     return result
 
 
-def shell_git_push(line: str) -> bool:
-    """Conservative same-command token fallback for quoted Git option arguments."""
+def shell_git_writer(line: str, forbidden: tuple[str, ...]) -> bool:
+    """Token-based direct Git-writer classifier; handles quoted option arguments."""
     # Tokenize rather than short-circuiting on a raw regex: the latter
     # mistakes 'alias.demo=echo push' inside a quoted -c value for a command.
     for match in re.finditer(r"(?i)(?<![\w-])git\s+", line):
@@ -192,13 +192,13 @@ def shell_git_push(line: str) -> bool:
                 list(full)
             except ValueError:
                 return True
-            if GIT_PUSH.search(line):
+            if any(word in line.lower() for word in forbidden):
                 return True
             continue
         for part in pieces[:16]:
             if part in (";", "&&", "||", "|", "&"):
                 break
-            if part.lower() == "push":
+            if part.lower() in forbidden:
                 return True
     return False
 
@@ -213,8 +213,10 @@ def suspicious_lines(source: str) -> list[str]:
     for line in normalized.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        if shell_git_push(line):
+        if shell_git_writer(line, ("push",)):
             findings.append("git_push")
+        if shell_git_writer(line, ("send-pack",)):
+            findings.append("git_send_pack")
         if REFS_API.search(line) and (
             re.search(r"(?i)\b(?:gh\s+api|curl|wget|PATCH|POST|DELETE|PUT)\b", line)
             or "api.github.com" in line.lower()
