@@ -25,6 +25,7 @@ MANAGED_ROOTS = {
     "project-contracts.json", "portfolio_queue.seed.json", "public",
     "firefox-extension", "deploy", "scripts",
 }
+DIRECTORY_ROOTS = {"public", "firefox-extension", "deploy", "scripts"}
 PERSISTENT = {
     "history.db", "history.db-wal", "history.db-shm", ".watch-token",
     ".action-allowed-ips", "watch-tls.crt", "watch-tls.key",
@@ -109,6 +110,7 @@ def _canonical_file(name: object) -> bool:
         and name == p.as_posix()
         and p.parts[0] in MANAGED_ROOTS
         and p.parts[0] not in PERSISTENT
+        and ((p.parts[0] in DIRECTORY_ROOTS) == (len(p.parts) > 1))
     )
 
 
@@ -233,9 +235,14 @@ def inspect(state: Path) -> dict:
         raise Denied("missing_snapshot_files")
     # A manifest can truthfully describe an empty managed directory. Check the
     # direct children as well, not just the nonempty file hash list.
-    actual_roots = {entry.name for entry in files.iterdir()}
+    roots = tuple(files.iterdir())
+    actual_roots = {entry.name for entry in roots}
     if actual_roots != declared_roots:
         raise Denied("manifest_inventory_mismatch")
+    for root in roots:
+        mode = root.lstat().st_mode
+        if (root.name in DIRECTORY_ROOTS) != stat.S_ISDIR(mode):
+            raise Denied("managed_path_type_mismatch")
     # A source tree might be changed during a long scan. This second check
     # catches ordinary pointer/manifest churn; it is not a filesystem lock.
     if _json(state / "last-known-good.json") != ptr:
