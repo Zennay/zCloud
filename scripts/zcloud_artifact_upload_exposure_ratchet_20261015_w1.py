@@ -192,6 +192,11 @@ def ambiguous_artifact_path(value: str) -> bool:
         return True
     if re.search(r"(?:secret|credential|token|privatekey|password|passwd|\.env|id_rsa|\.npmrc)", value, re.I):
         return True
+    # A narrow filename can still be a private key or cloud credential.
+    if re.search(r"\.(?:pem|p12|pfx|jks|keystore|key|asc)\Z", value, re.I):
+        return True
+    if any(part.lower() in {".aws", ".kube", ".azure", ".gnupg", ".gcloud"} for part in value.split("/")):
+        return True
     return False
 
 
