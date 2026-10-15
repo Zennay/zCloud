@@ -231,6 +231,14 @@ def permission_debt(
                 r"""^\s*(?:\?\s*)?(?:(?:!![\w:-]+|!\S+|&[\w-]+)\s+)+(?:permissions|['"]permissions['"])\s*(?::|$)""",
                 line,
             )
+            or re.match(
+                # YAML tags and key anchors can make even an encoded name
+                # like !!str "permiss\\u0069ons" resolve to permissions.
+                # We cannot safely decode every variant lexically, so a
+                # tagged/anchored mapping key is document-bound opaque debt.
+                r"""^\s*(?:\?\s*)?(?:(?:!!\S+|!\S+|&[\w-]+)\s+)+(?:["'][^"']+["']|[A-Za-z_][\w-]*)\s*(?::|$)""",
+                line,
+            )
         )
         if ambiguous:
             findings[f"{path}|opaque_yaml_key|{_fingerprint(line)}"] += 1
