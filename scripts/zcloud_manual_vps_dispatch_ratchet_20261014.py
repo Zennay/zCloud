@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import selectors
+import time
 import re
 import subprocess
 from pathlib import Path
@@ -52,12 +55,26 @@ def git(root: Path, *args: str) -> bytes:
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
         assert process.stdout is not None
-        output = process.stdout.read(MAX_GIT_STDOUT_BYTES + 1)
-        if len(output) > MAX_GIT_STDOUT_BYTES:
-            raise RefError("git_output_size_limit")
-        if process.wait(timeout=20) != 0:
+        deadline = time.monotonic() + 20
+        chunks: list[bytes] = []
+        size = 0
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not ready.select(remaining):
+                    raise RefError("git_read_timeout")
+                chunk = os.read(process.stdout.fileno(), min(65536, MAX_GIT_STDOUT_BYTES - size + 1))
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_GIT_STDOUT_BYTES:
+                    raise RefError("git_output_size_limit")
+                chunks.append(chunk)
+        remaining = max(0.001, deadline - time.monotonic())
+        if process.wait(timeout=remaining) != 0:
             raise RefError("unreadable_git_object")
-        return output
+        return b"".join(chunks)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RefError("unreadable_git_object") from exc
     finally:
