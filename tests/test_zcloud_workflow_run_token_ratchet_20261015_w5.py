@@ -142,6 +142,22 @@ class WorkflowRunTokenRatchetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid_revision"):
             gate.paths_changed(self.root, "main", self.base)
 
+    def test_job_permissions_alias_is_not_implicitly_safe(self):
+        candidate = SAFE.replace("    runs-on:", "    permissions: *write_permissions\n    runs-on:")
+        self.assertTrue(self.edit(candidate))
+
+    def test_tagged_job_permission_is_not_implicitly_safe(self):
+        candidate = SAFE.replace("    runs-on:", "    permissions:\n      contents: !!str write\n    runs-on:")
+        self.assertTrue(self.edit(candidate))
+
+    def test_quoted_job_write_is_not_implicitly_safe(self):
+        candidate = SAFE.replace("    runs-on:", '    permissions:\n      contents: "write"\n    runs-on:')
+        self.assertTrue(self.edit(candidate))
+
+    def test_yaml_permission_anchor_is_not_implicitly_safe(self):
+        candidate = SAFE.replace("    runs-on:", "    permissions: &privileged\n    runs-on:")
+        self.assertTrue(self.edit(candidate))
+
     def test_source_policy_matrix(self):
         for value, unsafe in [
             (SAFE, False),
