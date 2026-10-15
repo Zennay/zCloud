@@ -44,6 +44,28 @@ buffering and refuses symlinked workflow files, drifted/non-ancestor source,
 invalid SHAs, missing or incomplete source evidence. CLI exit codes:
 0 no new risk, 1 new risk, 2 missing/inconsistent evidence.
 
+## Local composite Action shell coverage
+
+The guard now also scans committed `action.yml` and `action.yaml` files **at
+any tree depth** for run-shell interpolations. This closes a source-inventory blind
+spot: a workflow can invoke a repository-local composite Action whose `runs.steps`
+execute shell code even though the invoking workflow has no `run:` entry.
+The check remains conservative and syntactic: it also inspects Action metadata
+for non-composite Actions and does not claim execution reachability.
+
+The GitHub-hosted workflow watches Action metadata additions and edits, including
+nested `.github/actions/**` and `packages/**` metadata. Ordinary YAML files not
+named `action.yml` or `action.yaml` are excluded. The inventory is from immutable
+Git tree blobs, rejecting symlinked metadata; it is bounded to 16,384 total tree
+entries, 512 selected workflow/Action sources, 1 MiB per source, and 32 MiB
+across selected sources. A missing or oversized inventory fails closed.
+Legacy composite Action risks are counted as baseline, and changing an unsafe
+shell command creates new debt even when the expression itself is unchanged.
+Step-level `env:` indirection remains outside this direct run-shell check.
+The existing JSON field `candidate_risky_workflows` may now include local
+Action metadata paths for backwards compatibility; it is not a list of deployed
+or proven-exploitable workflows.
+
 ## Read-only workflow risk inventory
 
 A successful or rejected **complete** source audit contains
