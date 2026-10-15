@@ -17,6 +17,7 @@ ASSETS = ("public/app.js", "public/enhancements.css")
 INDEX = "public/index.html"
 SHA = re.compile(r"[0-9a-f]{40}")
 PIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+REVISION = re.compile(r"r([1-9][0-9]{0,8})")
 MAX_FILE = 2 * 1024 * 1024
 
 
@@ -136,9 +137,22 @@ def evaluate(base: str, head: str) -> dict[str, object]:
         changed = [name for name in ASSETS if old[name] != new[name]]
         report["changed"] = changed
         unbumped = [name for name in changed if before[name] == after[name]]
-        report["ok"] = not unbumped
-        report["reason"] = "changed_asset_pin_unchanged" if unbumped else "cache_bust_delta_ok"
+        # Prevent a change from deliberately recycling an older browser cache key.
+        # Require strictly increasing rN until a separately reviewed token-scheme migration.
+        rollback = []
+        for name in changed:
+            if name in unbumped:
+                continue
+            old_revision = REVISION.fullmatch(before[name])
+            new_revision = REVISION.fullmatch(after[name])
+            if (old_revision is None or new_revision is None or
+                    int(new_revision.group(1)) <= int(old_revision.group(1))):
+                rollback.append(name)
+        report["ok"] = not unbumped and not rollback
+        report["reason"] = ("changed_asset_pin_unchanged" if unbumped else
+                            "nonmonotonic_cache_pin" if rollback else "cache_bust_delta_ok")
         report["unbumped"] = unbumped
+        report["nonmonotonic"] = rollback
     except ValueError as exc:
         report["reason"] = str(exc)
     return report
