@@ -27,6 +27,20 @@ OCTOKIT_REF_WRITE = re.compile(
     r"(?i)\b(?:github|octokit)\.(?:rest\.)?git\.(?:updateRef|createRef|deleteRef)\s*\("
 )
 
+# Git supports aliases in -c/config arguments. Invoking the alias may
+# execute a write without a direct push subcommand in the command line.
+GIT_WRITE_ALIAS = re.compile(
+    r"(?i)\balias\.[a-z0-9_.-]+\s*=\s*['\"]?\s*(?:!(?:git\s+)?|git\s+)?push\b"
+)
+GIT_SHELL_ALIAS = re.compile(
+    r"(?i)\balias\.[a-z0-9_.-]+\s*=\s*['\"]?\s*!"
+)
+GOVERNANCE_API = re.compile(
+    r"(?i)\b(?:github|octokit)\.(?:rest\.)?repos\."
+    r"(?:updateBranchProtection|deleteBranchProtection|createRepoRuleset|"
+    r"updateRepoRuleset|deleteRepoRuleset)\s*\("
+)
+
 # GraphQL can update refs with a POST to /graphql and no git/refs URL.
 # Conservatively deny dynamic GraphQL entrypoints in newly edited sources.
 GRAPHQL_ENDPOINT = re.compile(
@@ -190,6 +204,10 @@ def suspicious_lines(source: str) -> list[str]:
             findings.append("gh_api_write")
         if OCTOKIT_REF_WRITE.search(line):
             findings.append("octokit_git_refs_write")
+        if GIT_WRITE_ALIAS.search(line) or GIT_SHELL_ALIAS.search(line):
+            findings.append("git_alias_indirect_write")
+        if GOVERNANCE_API.search(line):
+            findings.append("octokit_repository_governance_write")
         if GRAPHQL_ENDPOINT.search(line):
             findings.append("dynamic_graphql_write_unverifiable")
         if len(findings) >= 15:
