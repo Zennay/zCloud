@@ -1,0 +1,76 @@
+name: Control-plane receipt contract W4
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/test_runner_command_*_w4.py'
+      # Re-run when the runner/gate or production receipt handler changes.
+      - 'tests/run_receipt_contract_w4.py'
+      - 'server.py'
+      - 'docs/control-plane-runner-command-terminal-receipt-handoff-w4.md'
+      - '.github/workflows/control-plane-receipt-contract-w4.yml'
+
+  push:
+    branches: [main]
+    paths:
+      - 'tests/test_runner_command_*_w4.py'
+      # Re-run when the runner/gate or production receipt handler changes.
+      - 'tests/run_receipt_contract_w4.py'
+      - 'server.py'
+      - 'docs/control-plane-runner-command-terminal-receipt-handoff-w4.md'
+      - '.github/workflows/control-plane-receipt-contract-w4.yml'
+
+# Do not spend runner slots on superseded revisions of this draft PR.
+# Concurrency is scoped to this workflow and PR/ref, not other zCloud jobs.
+concurrency:
+  group: receipt-contract-w4-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  receipt-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run isolated control-plane receipt contracts
+        shell: bash
+        run: |
+          python3 tests/run_receipt_contract_w4.py > receipt-test-results.log 2>&1 || result=$?
+          cat receipt-test-results.log
+          if [[ -f receipt-results.json ]]; then
+            python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          data = json.loads(Path("receipt-results.json").read_text())
+          expected = data["expected_failures"]
+          lines = [
+              "## Control-plane receipt contract",
+              f"- Tests: **{data['tests_run']}**",
+              f"- Expected failures (known production gaps): **{len(expected)}**",
+              f"- Unexpected successes: **{len(data['unexpected_successes'])}**",
+              "### Known-defect probes",
+              *[f"- `{item}`" for item in expected],
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              out.write(chr(10).join(lines) + chr(10))
+          if expected:
+              print(f"::warning title=Known production contract gaps::{len(expected)} expected failures remain; green CI does not establish remediation.")
+          PY
+          fi
+          exit "${result:-0}"
+      - name: Preserve structured receipt evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-plane-receipt-evidence
+          path: |
+            receipt-results.json
+            receipt-test-results.log
+          if-no-files-found: error
+          retention-days: 14
