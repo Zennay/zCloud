@@ -158,6 +158,29 @@ class RealGitRatchetTests(unittest.TestCase):
                 with self.assertRaisesRegex(gate.Denied, "CMD caret-escaped"):
                     gate.scan(self.base, self.commit())
 
+    def test_powershell_backtick_escaped_command_is_denied(self):
+        for value in ("::set-`output", "::save-`state",
+                      "ACTIONS_ALLOW_UNSECURE_`COMMANDS"):
+            with self.subTest(value=value):
+                self.git("reset", "--hard", self.base)
+                self.write(".github/actions/tool/run.ps1", 'Write-Output "' + value + '"\n')
+                with self.assertRaisesRegex(gate.Denied, "PowerShell backtick-escaped"):
+                    gate.scan(self.base, self.commit())
+
+    def test_powershell_backtick_line_continuation_is_denied(self):
+        self.write(".github/actions/tool/run.ps1",
+                   'Write-Output "::set-`\r\noutput name=K::V"\r\n')
+        with self.assertRaisesRegex(gate.Denied, "PowerShell backtick-escaped"):
+            gate.scan(self.base, self.commit())
+
+    def test_safe_powershell_escaped_text_is_allowed(self):
+        self.write(".github/actions/tool/run.ps1", 'Write-Output "hello`world"\n')
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_safe_github_output_file_write_is_not_deprecated_command(self):
+        self.write(".github/actions/tool/run.sh", 'echo "VALUE=ok" >> "$GITHUB_OUTPUT"\n')
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
     def test_safe_cmd_caret_escaping_is_allowed(self):
         self.write(".github/actions/tool/activate.cmd", "echo a^safe-value\n")
         self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
