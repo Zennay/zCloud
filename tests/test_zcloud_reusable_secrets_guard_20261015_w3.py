@@ -226,6 +226,22 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.assertEqual(inspect(self.base, head)["workflows_examined"], 2)
         self.assertFalse(inspect(self.base, head)["mutation_performed"])
 
+    def test_directory_with_only_readme_fails_closed(self):
+        Path(f"{ROOT}/baseline.yml").unlink()
+        self.write(f"{ROOT}/README.md", "workflow definitions disabled\\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "empty_workflow_inventory"):
+            inspect(self.base, head)
+
+    def test_deletion_of_one_workflow_preserves_remaining_inventory(self):
+        self.write(f"{ROOT}/retired.yml", "name: retired\\n")
+        self.base = self.commit()
+        Path(f"{ROOT}/retired.yml").unlink()
+        head = self.commit()
+        result = inspect(self.base, head)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["workflows_examined"], 1)
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
