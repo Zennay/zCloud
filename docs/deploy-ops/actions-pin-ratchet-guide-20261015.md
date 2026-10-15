@@ -16,6 +16,12 @@ A workflow may use a mutable reference like actions/checkout@v4. An upstream tag
 * After the full scanner finishes, a separate GitHub-hosted shell gate rechecks both current canonical main and the exact same-repository pull-request head via read-only Git queries. If either reference advanced, disappeared or cannot be fetched, proof fails; a foreign-fork head is also refused because origin alone cannot independently attest it. Real temporary-Git regressions exercise unchanged, moved and missing main and head references, plus foreign-head denial. This is still not a production authorization check.
 * This does not replace runner recovery #1326, three writer locks #1447, existing source owners, or serialized production gate #580/PWQ-41 and #1089.
 
+## Aanvullende main-push audit
+
+De GitHub-hosted workflow controleert naast PR's ook rechtstreekse pushes naar `main` zodra een workflowbestand, pin-scanner of lokaal `action.yml`/`action.yaml` wijzigt. Die extra, niet-geprivilegieerde job vergelijkt de exacte `before`-commit met de gepushte `HEAD`, leest de scanregel bij voorkeur van de historische before-commit (first-merge-bootstrap expliciet onbewezen) en controleert opnieuw dat `origin/main` nog op die gepushte HEAD staat. Onbetrouwbare/null before-revisies falen dicht. De audit schrijft alleen een korte Nederlandstalige samenvatting in GitHub-hosted Actions, zelfs bij ontbrekend bewijs. De job mag geen productie of release autoriseren en kan een reeds uitgevoerde push niet terugdraaien: het resultaat is signalering en bewijs, niet preventieve branchbescherming.
+
+De echte shell-push wordt met tijdelijke bare Git repositories getest op ongewijzigde main, nieuw onveilig gepinde Action, ontbrekende before-commit en een niet-main event. Privileged runner, VPS, tokens met schrijfrecht, workflow dispatch of deploy worden nergens aangeroepen.
+
 ## Operator usage
 
 From a local Git repository with the base and candidate commits already fetched:
