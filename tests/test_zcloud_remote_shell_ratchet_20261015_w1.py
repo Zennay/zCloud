@@ -366,6 +366,33 @@ class WorkflowTrustTests(unittest.TestCase):
         self.assertEqual(self.text.count(proof), 2)
         self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', self.text)
 
+    def test_ci_summary_uses_strict_report_and_preserves_failure_exit(self):
+        for marker in (
+            "parse_operator_result",
+            "operator_summary",
+            'test "$scan_exit" -eq 0',
+            'SOURCE_REPORT="$report"',
+            '"GITHUB_STEP_SUMMARY"',
+            'set +e',
+            'set -e',
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.text)
+
+    def test_ci_summary_does_not_upload_or_publish_untrusted_source(self):
+        for token in (
+            "upload-artifact",
+            "actions/github-script",
+            "gh api ",
+            "GITHUB_TOKEN:",
+            "pull_request_target:",
+            "workflow_run:",
+            "workflow_dispatch:",
+            "zcloud-production-deploy",
+        ):
+            with self.subTest(token=token):
+                self.assertNotIn(token, self.text)
+
     def test_workflow_has_no_live_mutation_commands(self):
         for forbidden in (
             "systemctl ", "sudo ", "sqlite3 ", "ssh ",
