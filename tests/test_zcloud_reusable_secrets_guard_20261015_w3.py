@@ -377,6 +377,29 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
             with self.assertRaisesRegex(Denied, "git_blob_integrity"):
                 inspect(self.base, head)
 
+    def test_newline_workflow_filename_denied(self):
+        self.write(f"{ROOT}/unsafe\nname.yml", "name: safe\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "ambiguous_workflow_path"):
+            inspect(self.base, head)
+
+    def test_bidi_override_workflow_filename_denied(self):
+        self.write(f"{ROOT}/unsafe\u202e.yml", "name: safe\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "ambiguous_workflow_path"):
+            inspect(self.base, head)
+
+    def test_control_character_non_yaml_filename_denied(self):
+        self.write(f"{ROOT}/invisible\tname.txt", "note\n")
+        head = self.commit()
+        with self.assertRaisesRegex(Denied, "ambiguous_workflow_path"):
+            inspect(self.base, head)
+
+    def test_legitimate_utf8_filename_allowed(self):
+        self.write(f"{ROOT}/café.yml", "name: safe\n")
+        head = self.commit()
+        self.assertEqual(inspect(self.base, head)["status"], "pass")
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
