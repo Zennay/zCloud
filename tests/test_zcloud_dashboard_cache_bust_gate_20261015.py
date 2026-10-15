@@ -296,7 +296,7 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertEqual(self.workflow.count(url), 2)
         self.assertEqual(self.workflow.count("env -i PATH=/usr/bin:/bin HOME=/nonexistent"), 2)
         self.assertEqual(self.workflow.count("GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null"), 2)
-        self.assertEqual(self.workflow.count('test "$current_main" = "$BASE_SHA"'), 2)
+        self.assertEqual(self.workflow.count('test "$current_main" = "$EXPECTED_MAIN"'), 2)
         self.assertNotIn("git ls-remote origin refs/heads/main", self.workflow)
         self.assertLess(
             self.workflow.index("name: Immutable trusted-base scanner first"),
@@ -306,6 +306,32 @@ class WorkflowTrustCases(unittest.TestCase):
             self.workflow.index("name: Run exact-asset Git regression fixtures"),
             self.workflow.index("name: Recheck immutable current main"),
         )
+
+    def test_hosted_main_push_covers_existing_unprotected_main_path(self) -> None:
+        # A direct push cannot be blocked retroactively, but must produce
+        # a real hosted red check for unbumped assets after integration.
+        workflow = self.workflow
+        self.assertIn('  push:\\n    branches: [main]', workflow)
+        self.assertEqual(workflow.count('      - "public/app.js"'), 2)
+        self.assertEqual(workflow.count('      - "public/enhancements.css"'), 2)
+        self.assertEqual(workflow.count('      - "public/index.html"'), 2)
+        self.assertIn('github.event.pull_request.base.sha || github.event.before', workflow)
+        self.assertIn('github.event.pull_request.head.sha || github.sha', workflow)
+        self.assertIn('git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"', workflow)
+
+    def test_only_exact_main_push_or_same_repo_pr_is_admitted(self) -> None:
+        workflow = self.workflow
+        self.assertIn('test "$GITHUB_REF" = "refs/heads/main"', workflow)
+        self.assertIn('test "$GITHUB_SHA" = "$HEAD_SHA"', workflow)
+        self.assertIn('test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"', workflow)
+        self.assertIn('case "$GITHUB_EVENT_NAME" in', workflow)
+        self.assertIn('*) exit 1 ;;', workflow)
+        self.assertIn('EXPECTED_MAIN="$HEAD_SHA"', workflow)
+        self.assertIn('EXPECTED_MAIN="$BASE_SHA"', workflow)
+        self.assertIn('test "$current_main" = "$EXPECTED_MAIN"', workflow)
+
+    def test_direct_main_push_with_unchanged_cache_pin_is_denied(self) -> None:
+        self.assertIn('git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"', self.workflow)
 
     def test_hosted_read_only_and_no_automatic_deploy(self) -> None:
         self.assertIn('runs-on: ubuntu-latest', self.workflow)
