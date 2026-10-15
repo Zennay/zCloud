@@ -20,6 +20,7 @@ from pathlib import PurePosixPath
 SHA = re.compile(r"^[0-9a-f]{40}$")
 COMMANDS = re.compile(r"::\s*(?:set-env|add-path|set-output|save-state)\b", re.I)
 ENV = re.compile(r"actions_allow_unsecure_commands", re.I)
+ESCAPED_SCALAR = re.compile(r"\\\\(?:x([0-9a-fA-F]{2})|u([0-9a-fA-F]{4})|U([0-9a-fA-F]{8}))")
 MAX_CHANGED = 250
 MAX_BLOB = 512 * 1024
 MAX_OUTPUT = 1024 * 1024
@@ -141,6 +142,24 @@ def candidate(path: str) -> bool:
     return False
 
 
+def decoded_scalar_escapes(source: str) -> str:
+    """Conservatively surface hidden shell/YAML escapes before lexical checks.
+
+    YAML's double-quoted scalar parsing expands x/u/U escapes. Expanding in
+    all changed YAML (including comments/single quotes) intentionally errs
+    on the side of denying ambiguous additions, not silent approval.
+    """
+    for _ in range(4):
+        newer = ESCAPED_SCALAR.sub(
+            lambda match: chr(int(next(group for group in match.groups() if group), 16)),
+            source,
+        )
+        if newer == source:
+            break
+        source = newer
+    return source
+
+
 def check_content(content: bytes) -> None:
     if len(content) > MAX_BLOB:
         raise Denied("Workflow blob exceeds size limit")
@@ -152,6 +171,9 @@ def check_content(content: bytes) -> None:
         raise Denied("Unicode format controls in workflow source")
     if ENV.search(source) or COMMANDS.search(source):
         raise Denied("New or changed workflow uses legacy unsafe command syntax")
+    expanded = decoded_scalar_escapes(source)
+    if ENV.search(expanded) or COMMANDS.search(expanded):
+        raise Denied("Encoded legacy unsafe command syntax in changed workflow")
 
 
 def scan(base: str, head: str) -> tuple[int, int]:
