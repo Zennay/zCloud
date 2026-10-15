@@ -318,6 +318,24 @@ class ManualDispatchPolicy(unittest.TestCase):
                 with self.assertRaises(guard.RefError):
                     guard.risky_manual_jobs(WF, source)
 
+    def test_job_authority_after_steps_is_still_scanned(self):
+        safe = workflow(if_statement=SAFE_IF, runner="ubuntu-latest")
+        for extra in (b"    runs-on : [self-hosted, zcloud, vps]\n",
+                      b'    "runs-on": self-hosted\n',
+                      b"    if : true\n"):
+            with self.subTest(extra=extra):
+                changed = safe + extra
+                with self.assertRaisesRegex(guard.RefError, "unsupported_job_authority_syntax"):
+                    guard.risky_manual_jobs(WF, changed)
+
+    def test_missing_or_ambiguous_runner_never_counts_as_hosted(self):
+        source = workflow(if_statement=SAFE_IF).replace(
+            b"    runs-on: [self-hosted, zcloud, vps]\n",
+            b"    timeout-minutes: 30\n",
+        )
+        with self.assertRaisesRegex(guard.RefError, "missing_or_ambiguous_job_runner"):
+            guard.risky_manual_jobs(WF, source)
+
     def test_quoted_and_alternate_job_authority_fields_fail_closed(self):
         safe = workflow(if_statement=SAFE_IF)
         for key in (b'runs-on :', b'"runs-on":', b"'runs-on':",
