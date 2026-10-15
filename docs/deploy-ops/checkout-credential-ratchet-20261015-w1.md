@@ -29,3 +29,18 @@ Deze scanner is een conservatieve lexical detector en **geen YAML parser, semant
 
 ## Geen toestemming voor live actie
 Een groene broncheck impliceert nooit een verbonden self-hosted runner, een inzetbare deploy-lock, werkende Firefox-sessie of toegewezen workers. #1326 (VPS listener), #1447 (writer-locks), #922 (main security), #580/PWQ-41/#1089 (serialized release) blijven aparte voorwaarden. **Niet zonder review mergen; geen VPS-dispatch/rollback/service/SQLite/worker/queue/runner of productie-update**.
+
+## Beveiligingsfix — YAML-mapping overschrijft checkout credentials (15 oktober)
+De oorspronkelijke broncontrole accepteerde een eerste veilige `with.persist-credentials: false`, terwijl een tweede `with: {}` of `with: *alias` onopgemerkt kon blijven. De laatst geldige YAML mapping kan zo de veilige waarde overschrijven en standaard credential-opslag opnieuw activeren. Dit is een **geverifieerde detectieomzeiling op bronniveau**, niet bewijs van een productie-incident of echt tokenlek.
+
+### Nieuwe afwijzingen op nieuw of gewijzigd bronmateriaal
+- Duplicate met `with: {}`, `with: *alias`, quoted `"with": {}` of een tweede normale `with`.
+- Expliciete YAML key `? with`, YAML merge `<<: *defaults` en tagged keys zoals `!!str with` en `!<tag:yaml.org,2002:str> with`.
+- Unicode-geëscapete sleutelvarianten binnen een checkout-step, ook wanneer de volledige naam niet lexicaal herkenbaar is.
+- Eén inline `with: {persist-credentials: false}` is conservatief niet geautoriseerd: deze standalone detector is geen YAML-interpreter.
+- Normale acties zonder checkout en hun eigen inline `with` blijven toegestaan; een ongewijzigde legacyworkflow wordt slechts op exact dezelfde Git-blob geëxcuseerd.
+
+### Regressies, afbakening en bewijs
+Adversariële real-Git-tests dekken deze varianten, zonder gebruik van productie, VPS, worker, Firefox of SQLite. De eerste hosted check werd rood door een verkeerd ge-escapete regex, daarna een beperkte foutredenen-prioritering. Beide testgedreven fouten zijn gerepareerd zonder een onveilige configuratie toe te laten. Op SHA `b159f0b57cfd0064c5b341fdece418a21273293a` heeft de gerichte GitHub-hosted CI 48/48 tests gehaald. Voor deze documentatiecommit en elke latere SHA moet opnieuw exact-head CI worden beoordeeld.
+
+Deze ratchet is PR-eigen source code en biedt geen onafhankelijke release-autorisatie. Review/main-bescherming #922, runner #1326, writers #1447 en serialized release #580/PWQ-41/#1089 blijven intact.
