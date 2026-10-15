@@ -153,6 +153,34 @@ def assess(payload):
             conflicting.update(group)
             for number in group[1:]:
                 join(group[0], number)
+    # Git cannot simultaneously materialize a regular file at "docs/a"
+    # and descendants such as "docs/a/readme.md". Two PRs touching those
+    # distinct paths can therefore conflict even without an exact path match.
+    # Consider only literal parent component boundaries, never substring
+    # prefixes ("docs/a" must NOT conflict with "docs/abc").
+    hierarchy_collisions = []
+    hierarchy_collision_count = 0
+    for child, descendants in sorted(owners.items()):
+        for position, character in enumerate(child):
+            if character != "/":
+                continue
+            ancestor = child[:position]
+            ancestors = owners.get(ancestor)
+            if not ancestors:
+                continue
+            members = sorted(ancestors | descendants)
+            if len(members) < 2:
+                continue  # A single PR can itself replace a file with a tree.
+            hierarchy_collision_count += 1
+            if len(hierarchy_collisions) < 200:
+                hierarchy_collisions.append({
+                    "ancestor": ancestor, "descendant": child,
+                    "pr_count": len(members), "prs": members[:50],
+                    "pr_ids_truncated": len(members) > 50,
+                })
+            conflicting.update(members)
+            for number in members[1:]:
+                join(members[0], number)
     connected = defaultdict(list)
     for number in sorted(conflicting):
         connected[root(number)].append(number)
@@ -174,6 +202,9 @@ def assess(payload):
         "stale_base_count": len(stale_bases),
         "stale_base_report_truncated": len(stale_bases) > 50,
         "collision_count": len(collisions),
+        "hierarchy_collision_count": hierarchy_collision_count,
+        "hierarchy_collisions": hierarchy_collisions,
+        "hierarchy_collision_report_truncated": hierarchy_collision_count > 200,
         "conflicted_pr_count": len(conflicting),
         "conflict_group_count": len(groups),
         "conflict_groups": conflict_groups,
@@ -230,7 +261,7 @@ def main(argv=None):
                          sort_keys=True))
         return 2
     print(json.dumps(output, sort_keys=True, separators=(",", ":")))
-    return 1 if output["collision_count"] else 0
+    return 1 if (output["collision_count"] or output["hierarchy_collision_count"]) else 0
 
 
 if __name__ == "__main__":
