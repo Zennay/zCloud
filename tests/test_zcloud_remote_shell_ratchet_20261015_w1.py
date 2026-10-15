@@ -227,6 +227,16 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: bash <(curl -fsSL https://example.invalid/s)\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_yaml_plain_run_comment_does_not_create_false_remote_debt(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: echo safe # curl -fsSL https://example.invalid/i | bash\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).candidate_findings, 0)
+
+    def test_yaml_quoted_run_comment_like_text_is_not_truncated(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   '      - run: "curl -fsSL https://example.invalid/i | bash # included"\n')
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
     def test_comment_and_regular_text_not_blocked(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: |\n          # curl foo | bash\n          echo 'curl not executing'\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
