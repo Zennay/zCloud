@@ -325,7 +325,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         api = FakeAPI()
         same = run()
         api.pages[RUNS] = [{"workflow_runs": [same, dict(same)]}]
-        with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_deploy_run_identity"):
+        with self.assertRaisesRegex(cockpit.EvidenceError, "duplicate_paginated_deploy_run"):
             cockpit.collect(api)
 
     def test_completed_run_missing_conclusion_is_denied(self):
