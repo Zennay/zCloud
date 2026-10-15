@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import selectors
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -98,6 +101,10 @@ OPAQUE_QUOTED_ESCAPE = re.compile(
     r"""\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[nrt0abefv\\])"""
 )
 MAX_FILES, MAX_FILE_BYTES, MAX_TOTAL_BYTES = 512, 1024 * 1024, 32 * 1024 * 1024
+# Bound even the *whole* ls-tree response, before the per-file source cap.
+MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024
+GIT_TIMEOUT_SECONDS = 25
+
 
 
 class SourceError(ValueError):
@@ -105,12 +112,49 @@ class SourceError(ValueError):
 
 
 def git(repo: Path, *argv: str) -> bytes:
-    p = subprocess.run(["git", "-C", str(repo), *argv],
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                       check=False, timeout=25)
-    if p.returncode:
-        raise SourceError("Git evidence unavailable or invalid")
-    return p.stdout
+    """Read trusted Git-object bytes with a hard aggregate output/deadline cap.
+
+    Checking source-file counts *after* subprocess.run collected the entire
+    ls-tree output was insufficient to prevent a large Git tree exhausting
+    hosted scanner memory. Never return arbitrary Git stderr to the operator.
+    """
+    command = ["git", "-C", str(repo), *argv]
+    deadline = time.monotonic() + GIT_TIMEOUT_SECONDS
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    try:
+        chunks: list[bytes] = []
+        total = 0
+        with selectors.DefaultSelector() as selector:
+            assert process.stdout is not None
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, GIT_TIMEOUT_SECONDS)
+                ready = selector.select(remaining)
+                if not ready:
+                    raise subprocess.TimeoutExpired(command, GIT_TIMEOUT_SECONDS)
+                for key, _ in ready:
+                    piece = os.read(key.fileobj.fileno(), 65536)
+                    if not piece:
+                        selector.unregister(key.fileobj)
+                        continue
+                    total += len(piece)
+                    if total > MAX_GIT_OUTPUT_BYTES:
+                        raise SourceError("Excessive Git source evidence")
+                    chunks.append(piece)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, GIT_TIMEOUT_SECONDS)
+        if process.wait(timeout=remaining) != 0:
+            raise SourceError("Git evidence unavailable or invalid")
+        return b"".join(chunks)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
 
 
 def verify_commit(repo: Path, sha: str) -> None:
