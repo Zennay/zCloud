@@ -105,9 +105,17 @@ class Signatures(unittest.TestCase):
                                    "print_named_secret_env"), 0)
 
     def test_cat_github_output(self):
-        line = 'run: cat "
-        self.assertEqual(self.hits("run: cat ~/.aws/credentials",
-                                   "print_credential_file"), 1)
+        line = 'run: cat "' + chr(36) + '{GITHUB_OUTPUT}"'
+        self.assertEqual(self.hits(line, "print_github_env_file"), 1)
+
+    def test_cat_dotenv_local(self):
+        self.assertEqual(self.hits("run: cat config/.env.local", "print_dotenv_file"), 1)
+
+    def test_dotenv_sample_not_a_live_secret_file(self):
+        self.assertEqual(self.hits("run: cat .env.example", "print_dotenv_file"), 0)
+
+    def test_cat_aws_credentials(self):
+        self.assertEqual(self.hits("run: cat ~/.aws/credentials", "print_credential_file"), 1)
 
     def test_cat_github_env(self):
         self.assertEqual(self.hits('run: cat "$GITHUB_ENV"', "print_github_env_file"), 1)
