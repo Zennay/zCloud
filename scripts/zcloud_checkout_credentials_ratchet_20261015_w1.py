@@ -192,7 +192,7 @@ def checkout_risks(source: str) -> list[str]:
             # and silently reinstate checkout's credential-persistence default.
             # A second 'with: {}', 'with: *alias' or folded value is unsafe
             # even though it does not contain 'persist-credentials'.
-            if re.match(r"^\\s*with\\s*:", line):
+            if re.match(r"^\s*with\s*:", line):
                 m = WITH.fullmatch(line)
                 if with_indent is not None:
                     problems.append("ambiguous_checkout_with")
@@ -218,7 +218,8 @@ def checkout_risks(source: str) -> list[str]:
                 problems.append("ambiguous_credentials")
         if seen != 1 or not correct:
             problems.append("missing_explicit_false")
-    priority = {"persisted_credentials": 0, "ambiguous_credentials": 1,
+    priority = {"persisted_credentials": 0, "opaque_checkout_with": 0,
+                "ambiguous_credentials": 1,
                 "ambiguous_checkout_with": 2, "credentials_outside_with": 3,
                 "missing_explicit_false": 4}
     return sorted(set(problems), key=lambda reason: (priority.get(reason, 5), reason))
