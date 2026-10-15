@@ -1028,6 +1028,42 @@ class RealGitTests(unittest.TestCase):
         self.assertIn("sum(item['count'] for item in payload['candidate_risk_kinds'])",
                       source)
 
+    def test_markdown_summary_is_readable_without_approval(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo harmless\n")
+        summary = guard.markdown_summary(guard.audit(base, head))
+        self.assertIn("Geen nieuwe risicovolle shellinvoegingen", summary)
+        self.assertIn("Broncontrole, geen productievrijgave", summary)
+        self.assertIn("0", summary)
+        self.assertNotIn("release_authorized=true", summary)
+
+    def test_markdown_summary_escapes_adversarial_workflow_names(self):
+        payload = {"schema": "zcloud-shell-expression-ratchet-v1",
+                   "baseline_risks": 1, "candidate_risks": 2, "new_risks": 1,
+                   "new_risky_workflows": [
+                       {"path": ".github/workflows/evil|<script>alert('x')</script>.yml",
+                        "risk_count": 1,
+                        "risk_kinds": [{"kind": "direct_interpolation", "count": 1}]}]}
+        summary = guard.markdown_summary(payload)
+        self.assertIn("&#124;", summary)
+        self.assertIn("&lt;script&gt;", summary)
+        self.assertNotIn("<script>", summary)
+        self.assertNotIn("evil|", summary)
+        self.assertIn("direct_interpolation", summary)
+
+    def test_markdown_summary_bounds_large_file_lists(self):
+        payload = {"schema": "zcloud-shell-expression-ratchet-v1",
+                   "baseline_risks": 0, "candidate_risks": 25, "new_risks": 25,
+                   "new_risky_workflows": [
+                       {"path": f".github/workflows/fixture-{n:02d}.yml",
+                        "risk_count": 1, "risk_kinds": []}
+                       for n in range(25)]}
+        summary = guard.markdown_summary(payload)
+        self.assertIn("fixture-00", summary)
+        self.assertNotIn("fixture-24", summary)
+        self.assertIn("overige bestanden niet getoond", summary)
+        self.assertLess(len(summary), 6000)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
