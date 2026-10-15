@@ -119,6 +119,21 @@ POWERSHELL_INVOKE_EVAL = re.compile(
     rf"\b{PS_EVAL}\b\s*\(\s*{PS_DOWNLOAD}\b",
     re.I,
 )
+# A downloaded local executable is not always started via bash/script.py.
+# After a literal download, direct ./script execution, optionally preceded
+# by chmod +x on the same literal name, consumes remote code as well.
+# Do not trace moves, shell expansions, aliases or intermediate rewrites.
+DOWNLOADED_DIRECT_EXEC = re.compile(
+    r"\b(?:curl|wget)\b[^\n;|]{0,512}?"
+    r"(?:\s-[A-Za-z]{0,8}[oO]\s+|\s--(?:output|output-document)(?:=|\s+)|\s*>\s*)"
+    r"(?P<executable>(?:\./|/tmp/|/var/tmp/)?[A-Za-z0-9._/-]{1,180})"
+    r"[^\n;|]{0,512}?"
+    r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*)"
+    r"(?:chmod\s+[A-Za-z0-9+,-]{1,16}\s+(?P=executable)"
+    r"(?:\s*&&\s*|\s*;\s*|\s*\n\s*))?"
+    r"(?:\./)?(?P=executable)(?![A-Za-z0-9._/-])",
+    re.I,
+)
 OPAQUE_RUN = re.compile(r"""^\s*(?:\*[A-Za-z_][\w.-]*|![^\s#]+)(?:\s|$)""")
 # Escaped YAML mapping keys and explicit question-mark run keys have semantics
 # outside the narrow source reader. Conservatively reject newly introduced
@@ -364,6 +379,7 @@ def findings(data: bytes) -> int:
         matched += len(REMOTE_VARIABLE_EVAL.findall(command))
         matched += len(POWERSHELL_PIPE_EVAL.findall(command))
         matched += len(POWERSHELL_INVOKE_EVAL.findall(command))
+        matched += len(DOWNLOADED_DIRECT_EXEC.findall(command))
         matched += len(SHELL_EVAL_REMOTE.findall(command))
         matched += len(SHELL_SOURCE_PROCESS.findall(command))
         # YAML aliases/tags can hide a shell script outside the literal run scalar.
