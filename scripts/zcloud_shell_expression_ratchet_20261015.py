@@ -160,7 +160,6 @@ JOB_EXECUTION_CONTROLS = frozenset({
     "defaults", "strategy", "concurrency", "timeout-minutes", "env",
 })
 SECTION_HEADER = re.compile(r"""^(?:([A-Za-z_][\w.-]*)|'([^']+)'|"([^"]+)")\s*:""")
-JOB_HEADER = re.compile(r"""^ {2}(?:([A-Za-z_][\w.-]*)|'([^']+)'|"([^"]+)")\s*:""")
 
 
 def execution_sections(lines: list[str], start: int, stop: int,
@@ -199,18 +198,35 @@ def execution_control_context(lines: list[str], run_row: int) -> dict:
     )
     if jobs_root is None:
         return {"global": global_controls, "job": []}
-    job_heads = [(i, JOB_HEADER.match(lines[i]))
-                 for i in range(jobs_root + 1, run_row)]
-    job_heads = [(i, m) for i, m in job_heads if m]
-    if not job_heads:
+    candidates = []
+    for i in range(jobs_root + 1, run_row):
+        line = lines[i]
+        indentation = len(line) - len(line.lstrip(" "))
+        if indentation > 0 and SECTION_HEADER.match(line.lstrip()):
+            candidates.append((i, indentation))
+    if not candidates:
         return {"global": global_controls, "job": []}
-    job_start, _ = job_heads[-1]
+    # YAML is indentation-driven, not constrained to a 2-space style.
+    # Job headers use the shallowest positive key indent below jobs:.
+    job_indent = min(level for _, level in candidates)
+    job_start = next(i for i, level in reversed(candidates)
+                     if level == job_indent)
     job_stop = next(
-        (i for i in range(job_start + 1, len(lines)) if JOB_HEADER.match(lines[i])),
+        (i for i in range(job_start + 1, len(lines))
+         if lines[i].strip() and not lines[i].lstrip().startswith("#")
+         and len(lines[i]) - len(lines[i].lstrip(" ")) <= job_indent),
         len(lines),
     )
+    metadata_levels = [
+        len(line) - len(line.lstrip(" "))
+        for line in lines[job_start + 1:job_stop]
+        if SECTION_HEADER.match(line.lstrip())
+        and len(line) - len(line.lstrip(" ")) > job_indent
+    ]
+    if not metadata_levels:
+        return {"global": global_controls, "job": []}
     job_controls = execution_sections(
-        lines, job_start + 1, job_stop, 4, JOB_EXECUTION_CONTROLS
+        lines, job_start + 1, job_stop, min(metadata_levels), JOB_EXECUTION_CONTROLS
     )
     return {"global": global_controls, "job": job_controls}
 
