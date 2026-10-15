@@ -55,7 +55,8 @@ class PermissionRatchetTests(unittest.TestCase):
     def test_top_level_write_all_denied(self):
         value = self.check_file("on: push\npermissions: write-all\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
         self.assertFalse(value["ok"])
-        self.assertEqual(value["new_risks"], 1)
+        self.assertEqual(value["new_risks"], 2)
+        self.assertEqual(value["removed_safe_scopes"], 1)
 
     def test_job_level_write_denied(self):
         value = self.check_file("on: push\njobs:\n  build:\n    permissions:\n"
