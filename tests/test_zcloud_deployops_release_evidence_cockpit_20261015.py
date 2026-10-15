@@ -224,6 +224,37 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaises(cockpit.EvidenceError):
             cockpit.collect(api)
 
+    def test_old_status_event_changed_but_latest_green_still_denied(self):
+        api = FakeAPI()
+        fresh = status()[0]
+        old = {"context": "zcloud/vps-production", "id": 19,
+               "created_at": "2020-01-01T00:00:00Z", "state": "pending"}
+        original = [fresh, old]
+        changed = [fresh, dict(old, state="failure")]
+        api.pages[STAT] = [original, changed]
+        with self.assertRaisesRegex(cockpit.EvidenceError,
+                                    "production_status_changed_during_observation"):
+            cockpit.collect(api)
+        self.assertEqual(api.calls.count(STAT), 2)
+
+    def test_status_event_order_change_is_not_a_false_drift(self):
+        api = FakeAPI()
+        fresh = status()[0]
+        old = {"context": "zcloud/vps-production", "id": 19,
+               "created_at": "2020-01-01T00:00:00Z", "state": "pending"}
+        api.pages[STAT] = [[fresh, old], [old, fresh]]
+        data = cockpit.collect(api)
+        self.assertEqual(data["production"]["state"], "success")
+        self.assertEqual(len(data["production"]["status_events_digest"]), 64)
+        self.assertFalse(data["deployment_authorized"])
+
+    def test_status_digest_is_present_even_when_no_status_exists(self):
+        api = FakeAPI()
+        api.pages[STAT] = [[]]
+        data = cockpit.collect(api)
+        self.assertEqual(len(data["production"]["status_events_digest"]), 64)
+        self.assertIn("production_not_success", data["warnings"])
+
     def test_queued_job_with_runner_zero_is_not_proof(self):
         api = FakeAPI()
         api.pages[JOBS] = [{"total_count": 1, "jobs": [job("queued", 0, None)]}]
