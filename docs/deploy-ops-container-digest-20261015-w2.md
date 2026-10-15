@@ -39,6 +39,12 @@ findings. The workflow targets same-repository owner PRs only and has
   Root and arbitrarily nested \`action.yml\` / \`action.yaml\` metadata are
   included, not just \`.github/actions/**\`. The PR gate also triggers on those
   paths at any directory depth.
+- Whole-line YAML flow sequences such as `steps: [{uses: docker://alpine:latest}]`
+  and compact jobs like `jobs: {build: {container: alpine:latest}}` are
+  treated as ambiguous source, even if a candidate string includes a digest.
+  Encoded flow mapping keys (for example a quoted `\\u0075ses` spelling)
+  also deny by default. This is intentionally conservative: it closes gaps
+  in block-key-only scanning without claiming a complete YAML parser.
 - Never place image scalar values, bearer tokens or shell bodies in output.
   Reports contain bounded paths, line numbers and categories only.
 
