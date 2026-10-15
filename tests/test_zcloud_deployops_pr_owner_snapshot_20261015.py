@@ -334,6 +334,7 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
         self.assertIn("GIT_TERMINAL_PROMPT=0 timeout 20 git", text)
         self.assertIn('test "$current" = "$GITHUB_SHA"', text[final:])
         self.assertIn("Main snapshot SHA:", text)
+        self.assertIn("Evidence fingerprint (unverified SHA-256):", text)
         self.assertIn('exit "$status"', text[final:])
 
     def test_no_release_or_runtime_mutation_codepaths(self):
