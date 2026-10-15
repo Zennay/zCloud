@@ -107,6 +107,31 @@ class GitAssetCases(unittest.TestCase):
         self.head = self.commit()
         self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "duplicate_html_attribute")
 
+
+    def test_inert_template_ref_never_counts_as_live_script(self) -> None:
+        self.write("public/index.html", '<template><script src="/app.js?v=r9"></script></template>' +
+                   '<link rel="stylesheet" href="/enhancements.css?v=r5">')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "inert_asset_ref")
+
+    def test_json_script_ref_rejected(self) -> None:
+        self.write("public/index.html", '<script type="application/json" src="/app.js?v=r9"></script>' +
+                   '<link rel="stylesheet" href="/enhancements.css?v=r5">')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "inactive_script_asset_ref")
+
+    def test_disabled_stylesheet_ref_rejected(self) -> None:
+        self.write("public/index.html", '<script src="/app.js?v=r8"></script>' +
+                   '<link rel="stylesheet" disabled href="/enhancements.css?v=r6">')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "disabled_stylesheet_asset_ref")
+
+    def test_noscript_ref_does_not_count_as_active(self) -> None:
+        self.write("public/index.html", '<noscript><script src="/app.js?v=r9"></script></noscript>' +
+                   '<link rel="stylesheet" href="/enhancements.css?v=r5">')
+        self.head = self.commit()
+        self.assertEqual(gate.evaluate(self.base, self.head)["reason"], "inert_asset_ref")
+
     def test_symlinked_asset_denied(self) -> None:
         Path("public/app.js").unlink()
         Path("public/app.js").symlink_to("enhancements.css")
