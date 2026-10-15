@@ -26,6 +26,7 @@ RUN_ESCAPED_KEY = re.compile(
     re.I,
 )
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
+YAML_QUOTED_ESCAPE = re.compile(r"\\\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})")
 UNTRUSTED = re.compile(r"\b(?:github\.event\b|github\.head_ref\b|github\.ref_name\b|github\.ref\b|github\.base_ref\b|github\.workflow_ref\b|github\.action_ref\b|inputs\b)", re.I)
 ROOT_CONTEXT_JSON = re.compile(r"\btojson\s*\(\s*github\s*\)", re.I)
 BRACKET_PROPERTY = re.compile(r"\[\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\s*\]")
@@ -161,6 +162,121 @@ def fingerprint_risks(source: str) -> Counter[str]:
         value = scalar.lstrip()
         if value.startswith("*") or value.startswith("!") or value.startswith("&"):
             out["ambiguous_yaml_run_scalar|workflow_sha256:" + workflow_digest] += 1
+        # YAML double-quoted scalars decode \\xHH, \\uHHHH and \\UHHHHHHHH
+        # before GitHub expressions are evaluated. Raw-source scans can miss
+        # an encoded '        expressions = EXPR.findall(scalar)
+        # A well-formed first expression must not conceal a *second*
+        # unfinished interpolation in the same shell scalar.
+        if scalar.count("${{") != len(expressions):
+            out["incomplete_expression|run_sha256:" + scalar_digest] += 1
+        for expr in expressions:
+            normalized = " ".join(expr.split()).lower()
+            if len(normalized) > 4096:
+                raise EvidenceError("expression_too_large")
+            # GitHub expressions allow github['event']['issue'] as well as
+            # github.event.issue. Both must hit the same trust policy.
+            normalized = BRACKET_PROPERTY.sub(lambda m: "." + m.group(2), normalized)
+            normalized = re.sub(r"\s*\.\s*", ".", normalized)
+            if UNTRUSTED.search(normalized) or ROOT_CONTEXT_JSON.search(normalized):
+                out[normalized + "|run_sha256:" + scalar_digest] += 1
+            elif DYNAMIC_PROPERTY.search(normalized):
+                # Unknown computed key might resolve to event or inputs.
+                out["ambiguous_dynamic_property|run_sha256:" + scalar_digest] += 1
+    return out
+
+
+def snapshot(rev: str) -> dict[str, Counter[str]]:
+    files = tree_files(rev)
+    total_bytes = 0
+    found = 0
+    result = {}
+    for path, blob in sorted(files.items()):
+        try:
+            size = int(git("cat-file", "-s", blob).strip())
+        except ValueError as exc:
+            raise EvidenceError("invalid_git_blob_size") from exc
+        if size < 0 or size > MAX_BLOB_BYTES:
+            raise EvidenceError("workflow_blob_too_large")
+        total_bytes += size
+        if total_bytes > MAX_TOTAL_BYTES:
+            raise EvidenceError("workflow_tree_too_large")
+        data = git("cat-file", "blob", blob)
+        if len(data) != size:
+            raise EvidenceError("unstable_blob_size")
+        try:
+            source = data.decode("utf-8", "strict")
+        except UnicodeError as exc:
+            raise EvidenceError("invalid_workflow_utf8") from exc
+        if "\t" in source:
+            raise EvidenceError("ambiguous_workflow_tabs")
+        risks = fingerprint_risks(source)
+        found += sum(risks.values())
+        if found > MAX_EXPRESSIONS:
+            raise EvidenceError("too_many_risk_expressions")
+        result[path] = risks
+    return result
+
+
+def audit(base: str, head: str) -> dict:
+    if not SHA.fullmatch(base) or not SHA.fullmatch(head):
+        raise EvidenceError("invalid_commit_sha")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", base, head], capture_output=True, timeout=15).returncode:
+        raise EvidenceError("base_not_head_ancestor")
+    before = snapshot(base)
+    after = snapshot(head)
+    newly = {}
+    for path, risks in after.items():
+        diff = risks - before.get(path, Counter())
+        if diff:
+            newly[path] = sum(diff.values())
+    return {
+        "schema": "zcloud-shell-expression-ratchet-v1",
+        "base_sha": base,
+        "head_sha": head,
+        "baseline_risks": sum(sum(x.values()) for x in before.values()),
+        "candidate_risks": sum(sum(x.values()) for x in after.values()),
+        # Only Git paths and bounded counts, never potentially malicious shell text.
+        "baseline_risky_workflows": [
+            {"path": path, "risk_count": sum(risks.values())}
+            for path, risks in sorted(before.items()) if risks
+        ],
+        "candidate_risky_workflows": [
+            {"path": path, "risk_count": sum(risks.values())}
+            for path, risks in sorted(after.items()) if risks
+        ],
+        "new_risks": sum(newly.values()),
+        "affected_workflows": sorted(newly),
+        "inventory_complete": True,
+        "release_authorized": False,
+        "deployment_authorized": False,
+        "mutation_performed": False,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", required=True, help="Immutable complete 40-hex Git SHA")
+    parser.add_argument("--head", required=True, help="Immutable complete 40-hex Git SHA")
+    args = parser.parse_args()
+    try:
+        report = audit(args.base, args.head)
+        print(json.dumps(report, sort_keys=True))
+        return 1 if report["new_risks"] else 0
+    except (EvidenceError, subprocess.TimeoutExpired, OSError) as exc:
+        print(json.dumps({"schema": "zcloud-shell-expression-ratchet-v1", "inventory_complete": False,
+                          "error": str(exc) if isinstance(exc, EvidenceError) else "git_evidence_unavailable",
+                          "release_authorized": False, "deployment_authorized": False,
+                          "mutation_performed": False}, sort_keys=True))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+, '{', '}' or even the property name. Rather than
+        # claim to parse YAML semantics, reject new encoded scalar ambiguity.
+        # Single-quoted and block run scalars do NOT decode those escapes.
+        if value.startswith('"') and YAML_QUOTED_ESCAPE.search(value):
+            out["ambiguous_yaml_escaped_quoted_run|run_sha256:" + scalar_digest] += 1
         expressions = EXPR.findall(scalar)
         # A well-formed first expression must not conceal a *second*
         # unfinished interpolation in the same shell scalar.
