@@ -7,6 +7,7 @@ Only byte-identical legacy workflow blobs are grandfathered.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -25,7 +26,7 @@ MAX_WORKFLOW = 1024 * 1024
 def git(root: Path, *args: str, limit: int = MAX_WORKFLOW) -> bytes:
     result = subprocess.run(
         ["git", "-C", str(root), *args], check=True, capture_output=True,
-        timeout=20,
+        timeout=20, env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
     )
     if len(result.stdout) > limit:
         raise ValueError("git_output_limit")
@@ -43,7 +44,13 @@ def changed_workflows(root: Path, base: str, head: str) -> list[str]:
     subprocess.run(
         ["git", "-C", str(root), "merge-base", "--is-ancestor", base, head],
         check=True, capture_output=True, timeout=10,
+        env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
     )
+    # Replacing the workflow directory with a symlink can otherwise evade
+    # the `.github/workflows/` pathspec entirely.
+    root_mode = git(root, "ls-tree", head, "--", ".github/workflows", limit=512)
+    if not root_mode.startswith(b"040000 tree "):
+        raise ValueError("unsafe_workflow_root")
     raw = git(
         root, "diff", "--name-only", "-z", "--diff-filter=ACMRT",
         f"{base}...{head}", "--", ".github/workflows/",
@@ -93,6 +100,9 @@ def scan(root: Path, base: str, head: str) -> dict[str, list[str]]:
         mode_data = git(root, "ls-tree", head, "--", path, limit=512)
         if not mode_data.startswith((b"100644 blob ", b"100755 blob ")):
             raise ValueError("unsafe_workflow_mode")
+        blob_size = int(git(root, "cat-file", "-s", f"{head}:{path}", limit=32).strip())
+        if blob_size > MAX_WORKFLOW:
+            raise ValueError("workflow_blob_too_large")
         raw = git(root, "show", f"{head}:{path}", limit=MAX_WORKFLOW)
         if b"\0" in raw:
             raise ValueError("nul_in_workflow")
