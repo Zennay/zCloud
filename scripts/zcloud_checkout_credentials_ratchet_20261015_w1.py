@@ -239,9 +239,9 @@ def inspect(base: str, head: str) -> dict:
     for sha in (base, head):
         raw = git("ls-tree", "-z", sha, "--", ".github/actions", deadline=deadline)
         if raw:
-            record = raw.removesuffix(b"\\0")
+            record = raw.removesuffix(bytes([0]))
             try:
-                metadata, path = record.split(b"\\t", 1)
+                metadata, path = record.split(bytes([9]), 1)
                 mode, kind, _ = metadata.decode("ascii").split()
             except (ValueError, UnicodeError) as exc:
                 raise Denied("ambiguous_action_root") from exc
