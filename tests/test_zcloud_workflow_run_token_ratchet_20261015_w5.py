@@ -169,6 +169,41 @@ class WorkflowRunTokenRatchetTests(unittest.TestCase):
                         workflow.index("Checkout immutable PR source"))
         self.assertIn('timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF"', workflow)
 
+    def test_invalid_utf8_workflow_blob_fails_closed(self):
+        self.file.write_bytes(b"on: workflow_run\npermissions:\n  contents: \xff\n")
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-qm", "invalid-utf8")
+        with self.assertRaises(UnicodeDecodeError):
+            gate.scan(self.root, self.base, git(self.root, "rev-parse", "HEAD"))
+
+    def test_oversized_workflow_blob_fails_before_reading(self):
+        self.file.write_text(SAFE + ("#" * (gate.LIMIT + 1)), encoding="utf-8")
+        git(self.root, "add", ".")
+        git(self.root, "commit", "-qm", "oversized")
+        with self.assertRaisesRegex(ValueError, "workflow_too_large"):
+            gate.scan(self.root, self.base, git(self.root, "rev-parse", "HEAD"))
+
+    def test_workflow_directory_symlink_fails_closed(self):
+        self.file.unlink()
+        (self.root / ".github/workflows").rmdir()
+        (self.root / ".github/workflows").symlink_to("../")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "dir-symlink")
+        with self.assertRaisesRegex(ValueError, "workflow_directory_not_tree"):
+            gate.scan(self.root, self.base, git(self.root, "rev-parse", "HEAD"))
+
+    def test_comment_only_policy_does_not_create_trigger(self):
+        src = "name: Without triggers\non: push\n# on: workflow_run\npermissions: write-all\n"
+        self.assertEqual(self.edit(src), {})
+
+    def test_inline_root_readonly_mapping_passes(self):
+        src = SAFE.replace("permissions:\n  contents: read", "permissions: {contents: read}")
+        self.assertEqual(self.edit(src), {})
+
+    def test_inline_root_write_mapping_fails(self):
+        src = SAFE.replace("permissions:\n  contents: read", "permissions: {contents: read, actions: write}")
+        self.assertTrue(self.edit(src))
+
     def test_source_policy_matrix(self):
         for value, unsafe in [
             (SAFE, False),
