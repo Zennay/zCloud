@@ -46,7 +46,7 @@ def _read_regular(root: Path, filename: str) -> str:
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
             raise AmbiguousSource("not_bounded_regular_source")
         raw = path.read_bytes()
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         raise AmbiguousSource("unreadable_source") from exc
     if len(raw) > MAX_BYTES or b"\x00" in raw:
         raise AmbiguousSource("invalid_source_bytes")
