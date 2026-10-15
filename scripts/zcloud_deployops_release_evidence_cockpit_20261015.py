@@ -55,22 +55,26 @@ def nonfinite(_: str) -> object:
 
 
 def reject_unpaired_unicode(value: object) -> object:
-    """Reject escaped surrogate codepoints anywhere in GitHub JSON evidence.
+    """Reject escaped surrogate codepoints in bounded GitHub JSON evidence.
 
-    Python's JSON decoder accepts lone UTF-16 surrogate escapes, but they
-    cannot be safely encoded into a UTF-8 HTML artifact. Keep this check
-    bounded by MAX_BYTES, without ever including untrusted input in errors.
+    The iterative walk avoids recursive decoding limits while keeping all
+    error codes static and therefore safe for an operator artifact.
     """
-    if isinstance(value, str):
-        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
-            raise EvidenceError("invalid_api_unicode")
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            reject_unpaired_unicode(key)
-            reject_unpaired_unicode(item)
-    elif isinstance(value, list):
-        for item in value:
-            reject_unpaired_unicode(item)
+    pending = [value]
+    visited = 0
+    while pending:
+        item = pending.pop()
+        visited += 1
+        if visited > MAX_BYTES:
+            raise EvidenceError("oversized_api_structure")
+        if isinstance(item, str):
+            if any(0xD800 <= ord(char) <= 0xDFFF for char in item):
+                raise EvidenceError("invalid_api_unicode")
+        elif isinstance(item, dict):
+            for key, val in item.items():
+                pending.extend((key, val))
+        elif isinstance(item, list):
+            pending.extend(item)
     return value
 
 
@@ -105,7 +109,7 @@ class GitHubReadOnly:
             parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_pairs,
                                 parse_constant=nonfinite)
             return reject_unpaired_unicode(parsed)
-        except (UnicodeError, ValueError, TypeError) as exc:
+        except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
             raise EvidenceError("invalid_api_json") from exc
 
 
