@@ -494,6 +494,20 @@ jobs:
             "      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803\n"
         ))
 
+    def test_pinned_image_must_have_balanced_yaml_quotes(self):
+        for scalar in (
+            f"'redis@sha256:{DIGEST}",
+            f"redis@sha256:{DIGEST}'",
+            f'"redis@sha256:{DIGEST}',
+            f'redis@sha256:{DIGEST}"',
+            f"'redis@sha256:{DIGEST}''",
+            f'"redis@sha256:{DIGEST}""',
+        ):
+            with self.subTest(scalar=scalar):
+                self.assertEqual(1, len(self.scan(f"      image: {scalar}\n")))
+        self.assertEqual([], self.scan(f"    image: 'redis@sha256:{DIGEST}' # pinned\n"))
+        self.assertEqual([], self.scan(f'    image: "redis@sha256:{DIGEST}" # pinned\n'))
+
     def test_invalid_sha_fails_closed(self):
         check = subprocess.run(
             [sys.executable, str(SCRIPT), "--base-sha", "main", "--head-sha", "main"],
