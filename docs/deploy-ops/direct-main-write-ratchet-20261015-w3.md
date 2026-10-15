@@ -41,3 +41,9 @@ The scanner also demands that the `--base` commit is an actual ancestor of `--he
 ## Further parsing hardening — Git global configuration arguments
 
 Git permits global arguments with whitespace-containing quoted values (for example `git -c 'user.name=Alice Example' push origin HEAD:main`). The old line regex could miss that valid direct writer. The new fallback tokenizes the same command with `shlex`, separates POSIX shell punctuation and detects `push` even after quoted option values or a separate `--work-tree` path. Ambiguous unmatched Git quoting fails closed. Benign `git status && printf push`, quoted configuration values containing the word `push`, and read-only Git commands remain permitted. Six additional real-Git tests cover these distinctions. This is **not** a full shell parser or complete protection against dynamic command construction.
+
+## Hardened CI examples and whole-scan time budget
+
+The exact-head hosted tests exposed two **false-positive scanner bugs**, not actual GitHub write attempts: a quoted `git -c 'alias.demo=echo push' status` value was parsed as a real push; after fixing that, scanning its own workflow incorrectly denied harmless `actual_head="$(git rev-parse HEAD)"` because the parser started inside a surrounding double-quoted shell expression. Both were repaired in the owned scanner and backed with specific safe-reader and forbidden-writer cases. Self-scanning is required in every hosted gate.
+
+Git child processes were already bounded to 15 seconds each. A single immutable 120-second monotonic **end-to-end scan budget** now applies across every Git command (including before process spawn); it cannot be raised by workflow input. Expired budget fails closed with no Git process, covered by a dedicated unittest with a mocked process boundary. Valid Python, Git or shell source checks never authorize a deployment.
