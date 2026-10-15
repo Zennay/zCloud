@@ -272,6 +272,26 @@ run mapping: it conservatively fingerprints the whole workflow whenever an
 escaped explicit key might hide the command. Keep shell script steps as
 ordinary `- run: ...` fields where possible.
 
+## Tagged and anchored YAML run keys
+
+A mapping key can be prefixed with a YAML scalar tag (`!!str run:`)
+or an anchor (`&run_key run:`). A line-oriented scanner looking only
+for `run:` at the start of a step can silently skip the associated
+shell text. The same ambiguity exists with quoted, Unicode-escaped
+and explicit mapping keys such as `? !!str run`.
+
+The source guard now conservatively fingerprints the **entire workflow
+blob** whenever a tagged or anchored key spells `run`. Any change to
+such a workflow creates new review debt, including a seemingly harmless
+comment. Unchanged legacy source is accepted as unchanged evidence.
+Tagging unrelated keys such as `name:` does not trigger the new rule.
+Rewriting these cases into ordinary `run:` syntax is preferred.
+
+GitHub Actions does not necessarily accept every YAML tag accepted by
+generic parsers. This check is intentionally a fail-closed syntax guard,
+**not** proof that a tagged key is executable by Actions, nor a substitute
+for YAML semantic validation. No release, merge or VPS permission is granted.
+
 ## Limitations and safety boundary
 
 - The hosted workflow separately checks the exact remote `main` and branch
