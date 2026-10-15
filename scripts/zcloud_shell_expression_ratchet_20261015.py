@@ -112,10 +112,13 @@ def fingerprint_risks(source: str) -> Counter[str]:
         scalar_digest = hashlib.sha256(scalar.encode("utf-8")).hexdigest()
         value = scalar.lstrip()
         if value.startswith("*") or value.startswith("!") or value.startswith("&"):
-            out["ambiguous_yaml_run_scalar"] += 1
-        if "${{" in scalar and "}}" not in scalar:
-            out["incomplete_expression"] += 1
-        for expr in EXPR.findall(scalar):
+            out["ambiguous_yaml_run_scalar|run_sha256:" + scalar_digest] += 1
+        expressions = EXPR.findall(scalar)
+        # A well-formed first expression must not conceal a *second*
+        # unfinished interpolation in the same shell scalar.
+        if scalar.count("${{") != len(expressions):
+            out["incomplete_expression|run_sha256:" + scalar_digest] += 1
+        for expr in expressions:
             normalized = " ".join(expr.split()).lower()
             if len(normalized) > 4096:
                 raise EvidenceError("expression_too_large")
@@ -127,7 +130,7 @@ def fingerprint_risks(source: str) -> Counter[str]:
                 out[normalized + "|run_sha256:" + scalar_digest] += 1
             elif DYNAMIC_PROPERTY.search(normalized):
                 # Unknown computed key might resolve to event or inputs.
-                out["ambiguous_dynamic_property"] += 1
+                out["ambiguous_dynamic_property|run_sha256:" + scalar_digest] += 1
     return out
 
 
