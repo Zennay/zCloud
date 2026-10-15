@@ -775,6 +775,56 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn("exit 2", workflow[deny:])
         self.assertIn("if-no-files-found: error", workflow[upload:deny])
 
+    def test_hosted_observer_shell_retains_diagnostics_then_denies(self):
+        import os
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        workflow = (SOURCE.parents[1] / ".github/workflows" /
+                    "zcloud-release-evidence-cockpit-20261015.yml").read_text()
+        collect = workflow.split("        id: observe\n", 1)[1]
+        shell = collect.split("        run: |\n", 1)[1].split("      - name:", 1)[0]
+        commands = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in shell.splitlines()
+        )
+        for rc in (0, 1, 2):
+            with self.subTest(rc=rc), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                binary = root / "bin"
+                binary.mkdir()
+                fake_python = binary / "python3"
+                fake_python.write_text(
+                    "#!/bin/sh\n"
+                    "printf '{\"release_authorized\": false}' > deploy-ops-evidence.json\n"
+                    "printf '<html>Geen toestemming</html>' > deploy-ops-evidence.html\n"
+                    f"exit {rc}\n"
+                )
+                fake_python.chmod(0o755)
+                summary = root / "summary"
+                output = root / "outputs"
+                env = dict(os.environ, PATH=str(binary) + ":" + os.environ["PATH"],
+                           GITHUB_OUTPUT=str(output), GITHUB_STEP_SUMMARY=str(summary))
+                completed = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", commands], cwd=root,
+                    env=env, capture_output=True, text=True, check=False
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertIn(f"evidence_rc={rc}", output.read_text())
+                self.assertIn("NO RELEASE AUTHORITY", summary.read_text())
+                self.assertTrue((root / "deploy-ops-evidence.json").is_file())
+                self.assertTrue((root / "deploy-ops-evidence.html").is_file())
+                if rc == 2:
+                    deny = workflow.split(
+                        "Fail closed AFTER artifact for incomplete GitHub evidence", 1
+                    )[1].split("        run: |\n", 1)[1]
+                    denied = subprocess.run(
+                        ["bash", "-e", "-c", deny], cwd=root,
+                        capture_output=True, text=True, check=False
+                    )
+                    self.assertEqual(denied.returncode, 2)
+
     def test_observer_still_has_no_self_hosted_or_write_permissions(self):
         workflow = (SOURCE.parents[1] / ".github/workflows" /
                     "zcloud-release-evidence-cockpit-20261015.yml").read_text()
