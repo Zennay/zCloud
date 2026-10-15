@@ -192,7 +192,7 @@ def checkout_risks(source: str) -> list[str]:
             # and silently reinstate checkout's credential-persistence default.
             # A second 'with: {}', 'with: *alias' or folded value is unsafe
             # even though it does not contain 'persist-credentials'.
-            if re.match(r"^\s*with\s*:", line):
+            if re.match(r"^\s*(?:with|[\x27\x22]with[\x27\x22])\s*:", line):
                 m = WITH.fullmatch(line)
                 if with_indent is not None:
                     problems.append("ambiguous_checkout_with")
@@ -203,6 +203,13 @@ def checkout_risks(source: str) -> list[str]:
                     # A nested env.with/run.with is NOT checkout's direct with.
                     if with_indent != indent + 2:
                         problems.append("nested_checkout_with")
+            # Explicit YAML keys and merges/aliases may introduce or
+            # shadow a second 'with' mapping after the safely declared one.
+            # Their expansion is not proved by this lexical scanner.
+            if re.match(r"^\s*\?\s*[\x27\x22]?with\b", line):
+                problems.append("opaque_checkout_with")
+            if re.match(r"^\s*<<\s*:", line):
+                problems.append("opaque_checkout_merge")
             cred = CREDENTIAL.fullmatch(line)
             if cred:
                 seen += 1
