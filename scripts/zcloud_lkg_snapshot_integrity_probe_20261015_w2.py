@@ -133,6 +133,10 @@ def inspect(state: Path) -> dict:
         for key, value in expected.items()
     ):
         raise Denied("invalid_hash_manifest")
+    # A snapshot with no control-plane entrypoint is not a safe rollback
+    # candidate even if its empty hash inventory is self-consistent.
+    if "server.py" not in expected:
+        raise Denied("missing_required_source")
     count, size = 0, 0
     seen = set()
     # Bound the directory enumeration *before* sorting it. A malicious tree
