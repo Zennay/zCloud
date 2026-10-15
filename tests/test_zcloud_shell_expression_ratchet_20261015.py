@@ -234,6 +234,22 @@ class RealGitTests(unittest.TestCase):
         head = self.commit('steps:\n  - {name: guard, "' + key + '": echo ${{ github.event.issue.body }}}\n')
         self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
 
+    def test_explicit_yaml_run_key_is_fail_closed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - ? run\n    : echo ${{ github.event.issue.body }}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_explicit_yaml_run_key_legacy_unchanged_is_not_new_debt(self):
+        source = "steps:\n  - ? run\n    : echo safe\n"
+        base = self.commit(source)
+        head = self.commit(source)
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_explicit_yaml_run_key_changed_value_is_new_debt(self):
+        base = self.commit("steps:\n  - ? run\n    : echo safe\n")
+        head = self.commit("steps:\n  - ? run\n    : echo riskier\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
