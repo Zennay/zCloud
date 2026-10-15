@@ -228,6 +228,12 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(source)
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_flow_style_escaped_run_key_not_ignored(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        key = chr(92) + "u0072un"
+        head = self.commit('steps:\n  - {name: guard, "' + key + '": echo ${{ github.event.issue.body }}}\n')
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
