@@ -16,7 +16,6 @@ import sys
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
-KEY = re.compile(r"(?P<key>[A-Za-z][A-Za-z-]*|['\\"][A-Za-z][A-Za-z-]*['\\"])")
 MAX_FILES = 512
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TOTAL_BYTES = 24 * MAX_FILE_BYTES
@@ -97,7 +96,7 @@ def _uncomment(line: str) -> str:
 
 
 def _scalar(value: str) -> str:
-    return value.strip().strip("'\\"").lower()
+    return value.strip().strip("'\"").lower()
 
 
 def _mapping_risk(body: list[str], indent: int) -> str | None:
@@ -112,7 +111,7 @@ def _mapping_risk(body: list[str], indent: int) -> str | None:
         width = len(line) - len(line.lstrip(" "))
         if width != indent + 2 or "\t" in line[:width]:
             return "opaque_permissions"
-        pair = re.fullmatch(r"([A-Za-z][A-Za-z-]*|['\\"][A-Za-z][A-Za-z-]*['\\"]):\s*([^{}\[\],&*]+?)\s*", stripped)
+        pair = re.fullmatch(r"""([A-Za-z][A-Za-z-]*|['"][A-Za-z][A-Za-z-]*['"]):\s*([^{}\[\],&*]+?)\s*""", stripped)
         if not pair:
             return "opaque_permissions"
         key = _scalar(pair.group(1))
@@ -146,7 +145,7 @@ def permission_debt(source: str, path: str) -> Counter[str]:
         elif in_jobs and width == 2:
             head = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_-]*):\s*", line)
             job = head.group(1) if head else None
-        match = re.match(r"^\s*(?:permissions|['\\"]permissions['\\"]):\s*(.*)$", line)
+        match = re.match(r"""^\s*(?:permissions|['"]permissions['"]):\s*(.*)$""", line)
         if not match:
             continue
         scope = "top" if width == 0 else f"job:{job}" if width == 4 and in_jobs and job else "unsupported"
