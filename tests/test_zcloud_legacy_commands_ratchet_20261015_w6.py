@@ -111,6 +111,35 @@ class RealGitRatchetTests(unittest.TestCase):
         with self.assertRaises(gate.Denied):
             gate.scan(self.base, self.commit())
 
+    def test_new_gitlink_under_actions_is_denied_even_without_metadata_file(self):
+        # Gitlinks are opaque references: checking only action.yml names misses
+        # newly introduced third-party execution sources.
+        self.git("update-index", "--add", "--cacheinfo",
+                 "160000," + self.base + ",.github/actions/external")
+        self.git("commit", "-qm", "add gitlink")
+        head = self.git("rev-parse", "HEAD").decode().strip()
+        with self.assertRaisesRegex(gate.Denied, "unsafe Git tree entry"):
+            gate.scan(self.base, head)
+
+    def test_new_non_metadata_symlink_under_actions_is_denied(self):
+        Path(".github/actions/tool").mkdir(parents=True, exist_ok=True)
+        os.symlink("/tmp/untrusted", ".github/actions/tool/README.md")
+        with self.assertRaisesRegex(gate.Denied, "unsafe Git tree entry"):
+            gate.scan(self.base, self.commit())
+
+    def test_regular_non_metadata_action_file_remains_allowed(self):
+        self.write(".github/actions/tool/README.md", "plain ordinary readme\\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 0))
+
+    def test_deleted_action_symlink_does_not_introduce_unsafe_source(self):
+        Path(".github/actions/tool").mkdir(parents=True, exist_ok=True)
+        os.symlink("/tmp/untrusted", ".github/actions/tool/README.md")
+        before = self.commit()
+        Path(".github/actions/tool/README.md").unlink()
+        self.write(".github/actions/tool/notes.txt", "safe\\n")
+        after = self.commit()
+        self.assertEqual(gate.scan(before, after), (1, 0))
+
     def test_symlink_workflow_denied(self):
         Path(".github/workflows/old.yml").unlink()
         os.symlink("/tmp/untrusted", ".github/workflows/old.yml")
