@@ -217,5 +217,25 @@ class RealGitRatchetTests(unittest.TestCase):
         self.assertIsNone(gate._SCAN_DEADLINE.get())
 
 
+    def test_invalid_unicode_scalar_escapes_fail_closed(self):
+        for escaped in (r"\U00110000", r"\UFFFFFFFF", r"\uD800", r"\uDC00"):
+            with self.subTest(escaped=escaped), self.assertRaises(gate.Denied):
+                gate.check_content(("name: " + escaped + "\n").encode("utf-8"))
+
+    def test_escaped_unicode_format_controls_fail_closed(self):
+        with self.assertRaisesRegex(gate.Denied, "format controls"):
+            gate.check_content(r"name: \u202e".encode("utf-8"))
+
+    def test_excessively_nested_unicode_escapes_fail_closed(self):
+        value = r"::set\u002doutput"
+        for _ in range(10):
+            value = value.replace("\\", r"\u005c")
+        with self.assertRaisesRegex(gate.Denied, "nested"):
+            gate.check_content(value.encode("utf-8"))
+
+    def test_safe_unicode_scalar_escape_is_allowed(self):
+        gate.check_content(r"name: hell\u006f".encode("utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
