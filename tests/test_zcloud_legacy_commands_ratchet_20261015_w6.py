@@ -189,6 +189,24 @@ class RealGitRatchetTests(unittest.TestCase):
                 with self.assertRaisesRegex(gate.Denied, "CMD caret-escaped"):
                     gate.scan(self.base, self.commit())
 
+    def test_posix_backslash_escaped_logging_tokens_are_denied(self):
+        for value in (r"::set\-output", r"::set-out\put", r"::add\-path",
+                      r"ACTIONS_ALLOW_UNSECURE_\COMMANDS"):
+            with self.subTest(value=value):
+                self.git("reset", "--hard", self.base)
+                self.write(".github/actions/tool/run.sh", "echo " + value + "\n")
+                with self.assertRaisesRegex(gate.Denied, "Escaped legacy command tokens"):
+                    gate.scan(self.base, self.commit())
+
+    def test_mixed_posix_and_cmd_escaping_cannot_hide_logging_command(self):
+        self.write(".github/actions/tool/run.sh", r"echo ::set\-^output" + "\n")
+        with self.assertRaisesRegex(gate.Denied, "Escaped legacy command tokens"):
+            gate.scan(self.base, self.commit())
+
+    def test_safe_backslash_escaped_action_text_is_accepted(self):
+        self.write(".github/actions/tool/run.sh", r"echo C:\Users\public" + "\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
     def test_powershell_backtick_escaped_command_is_denied(self):
         for value in ("::set-`output", "::save-`state",
                       "ACTIONS_ALLOW_UNSECURE_`COMMANDS"):
