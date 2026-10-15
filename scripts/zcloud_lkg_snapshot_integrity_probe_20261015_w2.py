@@ -129,6 +129,16 @@ def _directory(path: Path) -> None:
     os.close(fd)
 
 
+def _directory_identity(path: Path) -> tuple[int, int]:
+    """Observe the actual directory inode without following any ancestor links."""
+    fd = _open_directory_nofollow(path)
+    try:
+        info = os.fstat(fd)
+        return (info.st_dev, info.st_ino)
+    finally:
+        os.close(fd)
+
+
 def _open_regular(path: Path):
     _regular(path)
     parent_fd = _open_directory_nofollow(path.parent)
@@ -320,8 +330,8 @@ def inspect(
         raise Denied("invalid_snapshot_id")
     snapshot = state / "snapshots" / snap_id
     files = snapshot / "files"
-    _directory(snapshot)
-    _directory(files)
+    snapshot_identity = _directory_identity(snapshot)
+    files_identity = _directory_identity(files)
     manifest = _json(snapshot / "manifest.json")
     if type(manifest.get("format_version")) is not int or manifest["format_version"] != 1 or manifest.get("snapshot_id") != snap_id:
         raise Denied("manifest_identity_mismatch")
@@ -425,6 +435,11 @@ def inspect(
         raise Denied("pointer_changed_during_scan")
     if _json(snapshot / "manifest.json") != manifest:
         raise Denied("manifest_changed_during_scan")
+    if (
+        _directory_identity(snapshot) != snapshot_identity
+        or _directory_identity(files) != files_identity
+    ):
+        raise Denied("snapshot_changed_during_scan")
     return {
         "ok": True, "snapshot_id": snap_id, "is_current": snap_id == current_id,
         "file_count": count, "verified_bytes": size, "mutation_performed": False,
