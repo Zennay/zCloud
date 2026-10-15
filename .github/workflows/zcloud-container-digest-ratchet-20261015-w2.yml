@@ -76,29 +76,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Preserve denial status so even incomplete Git evidence produces a
+          # readable red summary; never turn missing source into a green job.
+          set +e
           python3 scripts/zcloud_container_digest_ratchet_20261015_w2.py \
             --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" > "$RUNNER_TEMP/container-digest.json"
-          REPORT="$RUNNER_TEMP/container-digest.json" python3 - <<'PY'
-          import json, os
+          scanner_status=$?
+          set -e
+          REPORT="$RUNNER_TEMP/container-digest.json" SCAN_EXIT="$scanner_status" python3 - <<'PY'
+          import json, os, sys
           from pathlib import Path
-          data = json.loads(Path(os.environ["REPORT"]).read_text())
-          assert data["policy"] == "container-image-digest-no-new-debt-v1"
-          assert data["inventory_complete"] is True
-          assert data["new_findings"] == 0
-          for key in ("release_authorized", "deployment_authorized", "mutation_performed"):
-              assert data[key] is False
-          for field in ("baseline_findings", "candidate_findings", "new_findings"):
-              assert type(data[field]) is int and 0 <= data[field] <= 8192
+          from scripts import zcloud_container_digest_ratchet_20261015_w2 as guard
+
+          result = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          status = int(os.environ["SCAN_EXIT"])
+          summary = guard.dutch_operator_summary(result, status)
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write(summary)
+          if status != 0:
+              print("CONTAINER_SOURCE_EVIDENCE_DENIED=1")
+              sys.exit(status)
           print("NO_NEW_CONTAINER_IMAGE_TAG_DEBT=1")
-          print("LEGACY_UNPINNED_IMAGE_RECORDS=" + str(data["baseline_findings"]))
-          # Operator-friendly, safe numeric-only hosted source evidence.
-          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
-              summary.write("### Container-images: nieuwe risico's geweigerd\n\n")
-              summary.write("| Bewijs (broncode) | Aantal |\n|---|---:|\n")
-              summary.write(f"| Bestaande aandachtspunten | {data['baseline_findings']} |\n")
-              summary.write(f"| Kandidaat-aandachtspunten | {data['candidate_findings']} |\n")
-              summary.write(f"| Nieuw toegelaten risico | {data['new_findings']} |\n\n")
-              summary.write("**Alleen GitHub-broncontrole.** Geen VPS-herstel, productie-deploy of vrijgave.\n")
+          print("LEGACY_UNPINNED_IMAGE_RECORDS=" + str(result["baseline_findings"]))
           PY
           test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
           final_head="$(git ls-remote --exit-code origin "refs/heads/$GITHUB_HEAD_REF" | awk '{print $1}')"
