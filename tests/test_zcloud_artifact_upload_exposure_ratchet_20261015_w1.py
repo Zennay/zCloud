@@ -269,6 +269,59 @@ class SourceTests(unittest.TestCase):
             finally:
                 os.chdir(old)
 
+    def test_untrusted_composite_action_symlink_fails_closed(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            root = Path(d) / ".github/actions/local"
+            root.mkdir(parents=True)
+            (root / "run.sh").write_text("echo safe\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            (root / "extra.sh").symlink_to("../../outside")
+            git("add", ".")
+            git("commit", "-qm", "head")
+            head = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                with self.assertRaisesRegex(gate.Denied, "opaque_local_action_entry"):
+                    gate.workflow_paths(base, head)
+            finally:
+                os.chdir(old)
+
+    def test_untrusted_composite_action_gitlink_fails_closed(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*args):
+                return subprocess.check_output(["git", "-C", d, *args],
+                                               stderr=subprocess.DEVNULL).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "test")
+            git("config", "user.email", "test@example.com")
+            root = Path(d) / ".github"
+            root.mkdir()
+            (root / "placeholder").write_text("base\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            # A Gitlink is an opaque commit reference, not inspectable Action source.
+            git("update-index", "--add", "--cacheinfo", "160000", base,
+                ".github/actions/external")
+            git("commit", "-qm", "head")
+            head = git("rev-parse", "HEAD")
+            old = os.getcwd()
+            try:
+                os.chdir(d)
+                with self.assertRaisesRegex(gate.Denied, "opaque_local_action_entry"):
+                    gate.workflow_paths(base, head)
+            finally:
+                os.chdir(old)
+
     def test_symlink_denial(self):
         with tempfile.TemporaryDirectory() as d:
             def git(*args):
