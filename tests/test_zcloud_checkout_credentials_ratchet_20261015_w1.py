@@ -216,6 +216,40 @@ class RealGitCheckoutRatchet(unittest.TestCase):
     def test_inert_workflow_safe(self):
         self.verify("jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n")
 
+    def test_literal_run_block_does_not_create_checkout_step(self):
+        body = ("name: harmless docs\njobs:\n  docs:\n    runs-on: ubuntu-latest\n"
+                "    steps:\n      - run: |\n"
+                f"          echo actions/checkout@{PIN}\n"
+                "          echo \u0075ses: not-a-yaml-key\n")
+        self.verify(body)
+
+    def test_folded_run_block_does_not_create_checkout_step(self):
+        body = ("jobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: >-\n"
+                f"          echo actions/checkout@{PIN}\n")
+        self.verify(body)
+
+    def test_unsafe_real_checkout_after_run_block_still_denied(self):
+        body = ("jobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: |\n"
+                f"          echo actions/checkout@{PIN}\n"
+                f"      - uses: actions/checkout@{PIN}\n")
+        self.verify(body, "missing_explicit_false")
+
+    def test_unindented_checkout_line_after_run_block_still_denied(self):
+        body = ("jobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: |\n"
+                "          echo commands\n"
+                f"      - uses: actions/checkout@{PIN}\n"
+                "        with: {}\n")
+        self.verify(body, "opaque_checkout_with")
+
+    def test_doc_workflow_run_with_escaped_example_remains_inert(self):
+        body = ("jobs:\n  docs:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - run: |-\n"
+                "          echo \\"uses\\" \\"actions/chec" + chr(92) + "u006bout\\"\n")
+        self.verify(body)
+
     def test_historical_unsafe_untouched_grandfathered(self):
         self.write(f"{WORK}/legacy.yml", workflow(None))
         self.base = self.commit()
