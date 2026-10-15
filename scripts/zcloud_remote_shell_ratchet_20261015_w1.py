@@ -47,7 +47,9 @@ def verify_commit(repo: Path, sha: str) -> None:
 
 def committed_workflows(repo: Path, sha: str) -> dict[str, bytes]:
     verify_commit(repo, sha)
-    entries = git(repo, "ls-tree", "-r", "-z", "--full-tree", sha, ".github/workflows").split(b"\0")
+    # Also inspect repository-local composite Action entrypoints: their run: 
+    # steps execute through `uses: ./path`, outside .github/workflows.
+    entries = git(repo, "ls-tree", "-r", "-z", "--full-tree", sha).split(b"\0")
     found: dict[str, bytes] = {}
     total = 0
     for entry in entries:
@@ -59,14 +61,18 @@ def committed_workflows(repo: Path, sha: str) -> dict[str, bytes]:
             path = raw_path.decode("utf-8", "strict")
         except (ValueError, UnicodeDecodeError) as exc:
             raise SourceError("Malformed Git tree entry") from exc
-        if mode not in ("100644", "100755") or typ != "blob" or not SHA.fullmatch(object_id):
-            raise SourceError("Unsafe workflow tree entry")
-        if not path.startswith(".github/workflows/"):
-            raise SourceError("Unexpected Git tree path")
-        if not path.endswith((".yml", ".yaml")):
+        workflow_tree = path.startswith(".github/workflows/")
+        action_source = path in ("action.yml", "action.yaml") or path.endswith(("/action.yml", "/action.yaml"))
+        workflow_source = workflow_tree and path.endswith((".yml", ".yaml"))
+        # A symlink in Actions control source is never a trusted local entrypoint.
+        if mode == "120000" and (workflow_tree or action_source or path.startswith(".github/actions/")):
+            raise SourceError("Symlinked Actions source rejected")
+        if not workflow_source and not action_source:
             continue
+        if mode not in ("100644", "100755") or typ != "blob" or not SHA.fullmatch(object_id):
+            raise SourceError("Unsafe Actions source tree entry")
         if path in found or len(found) >= MAX_FILES:
-            raise SourceError("Duplicate or excessive workflow inventory")
+            raise SourceError("Duplicate or excessive Actions source inventory")
         size = git(repo, "cat-file", "-s", object_id).decode().strip()
         if not size.isdecimal() or int(size) > MAX_FILE_BYTES:
             raise SourceError("Oversized or invalid workflow blob")
@@ -79,7 +85,7 @@ def committed_workflows(repo: Path, sha: str) -> dict[str, bytes]:
         data.decode("utf-8", "strict")
         found[path] = data
     if not found:
-        raise SourceError("No committed GitHub Actions workflow evidence")
+        raise SourceError("No committed GitHub Actions source evidence")
     return found
 
 
