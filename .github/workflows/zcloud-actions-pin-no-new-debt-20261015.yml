@@ -13,15 +13,28 @@ on:
       - "scripts/zcloud_actions_pin_ratchet_20261015.py"
       - "tests/test_zcloud_actions_pin_ratchet_20261015.py"
 
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "**/action.yml"
+      - "**/action.yaml"
+      - "action.yml"
+      - "action.yaml"
+      - "scripts/zcloud_actions_pin_ratchet_20261015.py"
+      - "tests/test_zcloud_actions_pin_ratchet_20261015.py"
+
 permissions:
   contents: read
 
 concurrency:
-  group: zcloud-action-pin-${{ github.event.pull_request.number }}
+  group: zcloud-action-pin-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
   immutable-action-refs:
+    if: github.event_name == 'pull_request'
     name: Reject newly floating GitHub Action references
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -163,4 +176,110 @@ jobs:
           ])
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("\n".join(lines) + "\n")
+          PY
+
+  audit-pushed-main:
+    name: Source-only pin drift audit after a main push
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout immutable pushed revision with read-only credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+          clean: true
+
+      - name: Compare exact before and after commit tree read only
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_EVENT_NAME" = "push"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          [[ "$BEFORE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$BEFORE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+          scanner="scripts/zcloud_actions_pin_ratchet_20261015.py"
+          if git cat-file -e "$BEFORE_SHA:$scanner" 2>/dev/null; then
+            git show "$BEFORE_SHA:$scanner" > "$RUNNER_TEMP/trusted-pin-main.py"
+          else
+            cp "$scanner" "$RUNNER_TEMP/trusted-pin-main.py"
+            echo "::warning::First-merge scanner bootstrap is not independently trusted."
+          fi
+          python3 "$RUNNER_TEMP/trusted-pin-main.py" --repo-root . --base "$BEFORE_SHA" --head "$HEAD_SHA" |
+            tee "$RUNNER_TEMP/main-pin-drift.json"
+
+      - name: Refuse evidence for a superseded main head
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          current="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$current"
+          if test "$current" != "$HEAD_SHA"; then
+            echo "::error::Main advanced during this advisory proof."
+            exit 1
+          fi
+          echo "MAIN_PUSH_PIN_DRIFT_CURRENT=1"
+
+      - name: Report outcome without creating any release authority
+        if: always()
+        shell: bash
+        env:
+          EVIDENCE: ${{ runner.temp }}/main-pin-drift.json
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          count = None
+          try:
+              raw = Path(os.environ["EVIDENCE"]).read_bytes()
+              if not 0 < len(raw) <= 65536:
+                  raise ValueError("size")
+              def unique(items):
+                  obj = {}
+                  for k, v in items:
+                      if k in obj:
+                          raise ValueError("duplicate")
+                      obj[k] = v
+                  return obj
+              def deny_constant(value):
+                  raise ValueError("nonfinite")
+              data = json.loads(raw.decode("utf-8"), object_pairs_hook=unique,
+                                parse_constant=deny_constant)
+              n = data.get("new_unpinned")
+              if (data.get("policy") == "zcloud-actions-pin-no-new-debt-v1" and
+                  type(n) is int and 0 <= n <= 200000 and
+                  all(data.get(k) is False for k in
+                      ("release_authorized", "deployment_authorized", "mutation_performed")) and
+                  data.get("ok") is (n == 0)):
+                  count = n
+          except (OSError, UnicodeError, TypeError, ValueError):
+              pass
+          lines = [
+              "### GitHub Actions - directe main-wijziging",
+              f"- Nieuwe onveilig gepinde verwijzingen: {count if count is not None else 'onbekend'}",
+              "- Directe push kan achteraf **niet** geblokkeerd worden.",
+              "- Merge- en deployautorisatie: **Nee**.",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as report:
+              report.write("\n".join(lines) + "\n")
           PY
