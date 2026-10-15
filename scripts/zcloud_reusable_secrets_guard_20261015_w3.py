@@ -39,7 +39,17 @@ def git(*args: str, limit: int = MAX_TOTAL_BYTES) -> bytes:
     deadline = time.monotonic() + 20
     try:
         proc = subprocess.Popen(
-            ["git", *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            ["git", *args],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            env={
+                **os.environ,
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_PAGER": "cat",
+            },
         )
     except OSError as exc:
         raise Denied("git_source_unavailable") from exc
