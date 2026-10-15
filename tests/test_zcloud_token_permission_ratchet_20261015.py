@@ -686,5 +686,39 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertTrue(check(self.root, baseline, self.commit("safe-docs"))["ok"])
 
 
+    def test_explicit_double_quoted_permissions_key_write_denied(self):
+        source = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                  "  test:\n    ? \"permissions\"\n"
+                  "    : write-all\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(source)["ok"])
+
+    def test_explicit_single_quoted_permissions_key_write_denied(self):
+        source = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                  "  test:\n    ? 'permissions'\n"
+                  "    : write-all\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(source)["ok"])
+
+    def test_explicit_unicode_escaped_permissions_key_denied(self):
+        source = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                  "  test:\n    ? \"permiss\\u0069ons\"\n"
+                  "    : write-all\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(source)["ok"])
+
+    def test_multiline_explicit_permissions_key_denied(self):
+        source = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                  "  test:\n    ?\n      permissions\n"
+                  "    : write-all\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(source)["ok"])
+
+    def test_legacy_explicit_quoted_permissions_can_remain_on_docs_only(self):
+        source = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                  "  test:\n    ? \"permiss\\u0069ons\"\n"
+                  "    : write-all\n    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", source)
+        old = self.commit("legacy-explicit-encoded-key")
+        self.put("README.md", "safe unrelated edit")
+        self.assertTrue(check(self.root, old, self.commit("unrelated-docs"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
