@@ -218,6 +218,24 @@ class RatchetTests(unittest.TestCase):
         with self.assertRaises(mod.SourceError):
             mod.audit(self.repo, self.base, self.commit())
 
+    def test_oversized_composite_action_is_rejected_before_scanning(self):
+        action = self.repo / "action.yaml"
+        action.write_text("name: large\n" + "#" * (mod.MAX_FILE_BYTES + 1))
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, self.commit())
+
+    def test_binary_action_evidence_is_rejected(self):
+        action = self.repo / "action.yml"
+        action.write_bytes(b"name: invalid\nruns: \xff\n")
+        with self.assertRaises(UnicodeDecodeError):
+            mod.audit(self.repo, self.base, self.commit())
+
+    def test_null_terminated_action_evidence_is_rejected(self):
+        action = self.repo / "action.yaml"
+        action.write_bytes(b"name: invalid\x00injected\n")
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, self.commit())
+
     def test_unrelated_yaml_docs_not_treated_as_action(self):
         doc = self.repo / "docs" / "example.yml"
         doc.parent.mkdir(parents=True)
