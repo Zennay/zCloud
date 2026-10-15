@@ -450,6 +450,47 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.Denied, "snapshot_tree_too_deep"):
             probe.inspect(self.state)
 
+    def test_real_working_tree_capture_and_collision_suffix_are_accepted(self):
+        from unittest.mock import patch
+        from scripts import zcloud_recovery as production_capture
+
+        root = Path(self.tmp.name) / "no-git-root"
+        state = Path(self.tmp.name) / "no-git-recovery"
+        root.mkdir()
+        (root / "server.py").write_text("valid source", encoding="utf-8")
+        with patch.object(
+            production_capture, "git_meta", return_value={"head": None}
+        ), patch.object(
+            production_capture, "snapshot_stamp", return_value="20261015T155000Z"
+        ):
+            first = production_capture.capture(
+                root, state, "offline without git",
+                require_health=False,
+                service_state={"active_state": "active"},
+                browser_state={"active_state": "active"},
+            )
+            second = production_capture.capture(
+                root, state, "offline repeat",
+                require_health=False,
+                service_state={"active_state": "active"},
+                browser_state={"active_state": "active"},
+            )
+        self.assertTrue(first["snapshot_id"].endswith("-working-"))
+        self.assertTrue(second["snapshot_id"].endswith("-working--2"))
+        self.assertTrue(probe.inspect(state)["ok"])
+        inventory = probe.audit_all(state)
+        self.assertTrue(inventory["ok"])
+        self.assertEqual(2, inventory["snapshot_count"])
+
+    def test_impossible_calendar_snapshot_id_is_denied(self):
+        for invalid in ("20261355T250000Z-deadbeef", "20260230T000000Z-deadbeef"):
+            with self.subTest(invalid=invalid):
+                (self.state / "last-known-good.json").write_text(
+                    json.dumps({"snapshot_id": invalid}), encoding="utf-8"
+                )
+                with self.assertRaisesRegex(probe.Denied, "invalid_snapshot_id"):
+                    probe.inspect(self.state)
+
     def test_real_recovery_capture_format_is_accepted_without_live_mutation(self):
         from unittest.mock import patch
         from scripts import zcloud_recovery as production_capture
