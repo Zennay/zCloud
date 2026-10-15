@@ -829,6 +829,36 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(unsafe.replace("echo", "eval"))
         self.assertEqual(1, guard.audit(base, head)["new_risks"])
 
+    def test_github_workflow_title_direct_shell_is_new_debt(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.workflow }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_github_workflow_title_bracket_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: printf ${{ github['workflow'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_github_token_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.token }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_github_token_bracket_direct_shell_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github['token'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_github_workflow_sha_remains_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.workflow_sha }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_workflow_title_via_quoted_shell_env_remains_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - env:\n      WORKFLOW_TITLE: ${{ github.workflow }}\n    run: printf '%s\\n' \"$WORKFLOW_TITLE\"\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
