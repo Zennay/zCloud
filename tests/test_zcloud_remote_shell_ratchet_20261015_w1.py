@@ -29,6 +29,9 @@ class RatchetTests(unittest.TestCase):
         call(self.repo, "init", "-q")
         call(self.repo, "config", "user.email", "tests@example.invalid")
         call(self.repo, "config", "user.name", "Test")
+        # Prevent background git maintenance from racing tempfile cleanup on CI.
+        call(self.repo, "config", "gc.auto", "0")
+        call(self.repo, "config", "maintenance.auto", "false")
         self.write("name: demo\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo safe\n")
         self.base = self.commit()
 
