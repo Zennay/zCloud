@@ -121,10 +121,23 @@ def examine(text: str) -> None:
         paths = fields["path"].split(",")
         for value in paths:
             path = value.strip().strip("\"'")
-            if (not path or BROAD.search(path) or PRIVATE.search(path) or
+            if (not path or ambiguous_artifact_path(path) or BROAD.search(path) or PRIVATE.search(path) or
                 path.startswith(("-", "/", "\\")) or ".." in path.split("/") or
                 any(c.isspace() or c in "|>&;" + chr(96) + "#:" for c in path)):
                 raise Denied("secret_or_broad_artifact_path")
+
+
+def ambiguous_artifact_path(value: str) -> bool:
+    """Disallow upload globs, encoded paths, hidden indirections and secret-like names."""
+    if len(value) > 200 or any(char in value for char in ("\\", "*", "?", "%")):
+        return True
+    if value.endswith("/") or "//" in value:
+        return True
+    if any(ord(char) < 32 or ord(char) > 126 for char in value):
+        return True
+    if re.search(r"(?:secret|credential|token|privatekey|password|passwd|\.env|id_rsa|\.npmrc)", value, re.I):
+        return True
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:
