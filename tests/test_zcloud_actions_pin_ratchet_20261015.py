@@ -225,7 +225,7 @@ class ActionPinRatchetTests(unittest.TestCase):
         link.symlink_to("/tmp/untrusted-action")
         self.command("add", "tools")
         self.commit(self.path.read_text() + "      - uses: ./tools/external\n")
-        with self.assertRaisesRegex(Refusal, "symlink_local_action"):
+        with self.assertRaisesRegex(Refusal, "nonregular_local_action_source"):
             snapshot(self.root, self.command("rev-parse", "HEAD"))
 
     def test_local_action_symlink_ancestor_denied(self):
@@ -233,7 +233,7 @@ class ActionPinRatchetTests(unittest.TestCase):
         parent.symlink_to("/tmp/untrusted-actions")
         self.command("add", "tools")
         self.commit(self.path.read_text() + "      - uses: ./tools/subdir\n")
-        with self.assertRaisesRegex(Refusal, "symlink_local_action"):
+        with self.assertRaisesRegex(Refusal, "nonregular_local_action_source"):
             snapshot(self.root, self.command("rev-parse", "HEAD"))
 
     def test_unrelated_symlink_ignored(self):
@@ -284,6 +284,29 @@ class ActionPinRatchetTests(unittest.TestCase):
 
     def test_unchanged_pinned_action_still_passes_source_scan(self):
         self.commit("steps:\n  - uses: actions/cache@" + "a" * 40 + "\n")
+        self.assertTrue(self.evaluate()["ok"])
+
+    def test_referenced_submodule_gitlink_denied(self):
+        self.command("update-index", "--add", "--cacheinfo",
+                     "160000," + "a" * 40 + ",tools/external")
+        self.command("commit", "-qm", "register untrusted submodule")
+        self.commit(self.path.read_text() + "      - uses: ./tools/external\n")
+        with self.assertRaisesRegex(Refusal, "nonregular_local_action_source"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_submodule_gitlink_ancestor_denied(self):
+        self.command("update-index", "--add", "--cacheinfo",
+                     "160000," + "a" * 40 + ",tools")
+        self.command("commit", "-qm", "register top-level gitlink")
+        self.commit(self.path.read_text() + "      - uses: ./tools/action\n")
+        with self.assertRaisesRegex(Refusal, "nonregular_local_action_source"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_unrelated_submodule_gitlink_does_not_block_scanning(self):
+        self.command("update-index", "--add", "--cacheinfo",
+                     "160000," + "a" * 40 + ",thirdparty/unrelated")
+        self.command("commit", "-qm", "register unrelated gitlink")
+        self.commit(self.path.read_text() + "      - uses: ./tools/safe\n")
         self.assertTrue(self.evaluate()["ok"])
 
     def test_invalid_revision_refused(self):
