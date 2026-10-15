@@ -202,6 +202,15 @@ def audit(base: str, head: str) -> dict:
         "head_sha": head,
         "baseline_risks": sum(sum(x.values()) for x in before.values()),
         "candidate_risks": sum(sum(x.values()) for x in after.values()),
+        # Only Git paths and bounded counts, never potentially malicious shell text.
+        "baseline_risky_workflows": [
+            {"path": path, "risk_count": sum(risks.values())}
+            for path, risks in sorted(before.items()) if risks
+        ],
+        "candidate_risky_workflows": [
+            {"path": path, "risk_count": sum(risks.values())}
+            for path, risks in sorted(after.items()) if risks
+        ],
         "new_risks": sum(newly.values()),
         "affected_workflows": sorted(newly),
         "inventory_complete": True,
