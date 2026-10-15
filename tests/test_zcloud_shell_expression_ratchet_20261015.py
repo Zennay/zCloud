@@ -449,6 +449,21 @@ class RealGitTests(unittest.TestCase):
         head = self.commit()
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_identical_untrusted_run_moved_to_other_job_is_new_debt(self):
+        base = self.commit("jobs:\n  audit:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n")
+        head = self.commit("jobs:\n  privileged:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_identical_untrusted_run_under_renamed_job_is_new_debt(self):
+        base = self.commit("jobs:\n  old:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n")
+        head = self.commit("jobs:\n  new:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_legacy_run_unrelated_job_added_does_not_create_debt(self):
+        base = self.commit("jobs:\n  audit:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n")
+        head = self.commit("jobs:\n  audit:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n  separate:\n    steps:\n      - run: echo safe\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
