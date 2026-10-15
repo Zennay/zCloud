@@ -7,7 +7,9 @@ In particular, GitHub Actions concurrency locks are not proven active by YAML.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
+import os
 import re
 import stat
 from pathlib import Path
@@ -33,30 +35,53 @@ class AmbiguousSource(ValueError):
 
 
 def _read_regular(root: Path, filename: str) -> str:
-    # Refuse links at EVERY fixed-path component; never follow a link to a
-    # different checkout, or report that source as evidence of this repo.
-    parts = (root, root / ".github", root / ".github" / "workflows",
-             root / ".github" / "workflows" / filename)
-    for part in parts:
-        if part.is_symlink():
-            raise AmbiguousSource("symlink_source")
-    path = parts[-1]
+    """Pin every directory and the file itself with NOFOLLOW fds.
+
+    An ordinary is_symlink/stat/read_bytes sequence is TOCTOU-vulnerable: a
+    competing process could replace a checked parent or leaf with a symlink
+    between validation and read. CI is isolated, but operator output must also
+    refuse that race rather than silently inspecting a different source.
+    """
+    flags = os.O_RDONLY | os.O_NOFOLLOW
+    directory_flags = flags | os.O_DIRECTORY
+    fds = []
     try:
-        metadata = path.stat()
+        absolute = root.absolute()
+        # Traverse from /, never resolving the supplied root through symlinks.
+        if not absolute.is_absolute() or ".." in absolute.parts:
+            raise AmbiguousSource("invalid_source_root")
+        fd = os.open("/", directory_flags)
+        fds.append(fd)
+        for component in (*absolute.parts[1:], ".github", "workflows"):
+            if component in ("", ".", ".."):
+                if component == "..":
+                    raise AmbiguousSource("invalid_source_root")
+                continue
+            fd = os.open(component, directory_flags, dir_fd=fd)
+            fds.append(fd)
+        leaf = os.open(filename, flags, dir_fd=fd)
+        fds.append(leaf)
+        metadata = os.fstat(leaf)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_BYTES:
             raise AmbiguousSource("not_bounded_regular_source")
-        raw = path.read_bytes()
+        raw = os.read(leaf, MAX_BYTES + 1)
+        if len(raw) > MAX_BYTES or b"\\x00" in raw:
+            raise AmbiguousSource("invalid_source_bytes")
+        try:
+            data = raw.decode("utf-8")
+        except UnicodeError as exc:
+            raise AmbiguousSource("invalid_utf8") from exc
+        if "\\t" in data:
+            raise AmbiguousSource("tab_indentation_or_scalar")
+        return data
     except OSError as exc:
+        # Linux may return ELOOP for a leaf and ENOTDIR for a parent symlink.
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise AmbiguousSource("symlink_source") from exc
         raise AmbiguousSource("unreadable_source") from exc
-    if len(raw) > MAX_BYTES or b"\x00" in raw:
-        raise AmbiguousSource("invalid_source_bytes")
-    try:
-        data = raw.decode("utf-8")
-    except UnicodeError as exc:
-        raise AmbiguousSource("invalid_utf8") from exc
-    if "\t" in data:
-        raise AmbiguousSource("tab_indentation_or_scalar")
-    return data
+    finally:
+        for descriptor in reversed(fds):
+            os.close(descriptor)
 
 
 def _key(line: str, indent: int):
