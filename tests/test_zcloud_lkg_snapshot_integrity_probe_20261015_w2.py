@@ -134,6 +134,16 @@ class LkgSnapshotProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(probe.Denied, "oversized_json"):
             probe.inspect(self.state)
 
+    def test_empty_or_entrypointless_manifest_does_not_count_as_safe_restore(self):
+        self.hashes.clear()
+        self.save()
+        with self.assertRaisesRegex(probe.Denied, "missing_required_source"):
+            probe.inspect(self.state)
+        self.hashes["projects.json"] = hashlib.sha256(b"{}").hexdigest()
+        self.save()
+        with self.assertRaisesRegex(probe.Denied, "missing_required_source"):
+            probe.inspect(self.state)
+
     def test_extra_validly_hashed_unmanaged_top_level_file_is_denied(self):
         rogue = b"do not restore"
         (self.files / "unmanaged.py").write_bytes(rogue)
