@@ -19,9 +19,9 @@ FLOW_RUN = re.compile(r"""(?:\{|,)\s*(?:run|["\x27]run["\x27])\s*:\s*(?P<script>
 SHELL_EXEC = r"(?:(?:sudo\s+(?:-[A-Za-z]+\s+)*|/usr/bin/env\s+))?(?:/usr/bin/|/bin/)?(?:bash|sh|zsh)\b"
 # Remote bytes may traverse bounded pass-through/decoder stages before a shell.
 # Keep the allowed stage names explicit to avoid spanning unrelated commands.
-PASS_THROUGH = r"(?:tee|cat|sed|base64|tr|awk|gunzip|gzip)\\b[^\\n|;]*\\|\\s*"
+PASS_THROUGH = r"(?:tee|cat|sed|base64|tr|awk|gunzip|gzip)\b[^\n|;]*\|\s*"
 REMOTE = re.compile(
-    r"\\b(?:curl|wget)\\b[^\\n|;]*\\|\\s*" + rf"(?:{PASS_THROUGH}){{0,2}}" + SHELL_EXEC,
+    r"\b(?:curl|wget)\b[^\n|;]*\|\s*" + rf"(?:{PASS_THROUGH}){{0,2}}" + SHELL_EXEC,
     re.I,
 )
 SUBSTITUTION = re.compile(SHELL_EXEC + r"\s+<\(\s*(?:curl|wget)\b", re.I)
