@@ -99,6 +99,35 @@ remain outside the new direct-shell rule. Environment values must still
 be validated and quoted by the consumer: this is not a general guarantee
 of safety for arbitrary shell scripts.
 
+## Workflow `env` context as a shell injection source
+
+A job or workflow `env` mapping may inherit content from external events,
+downloaded artifacts or prior output values. Although GitHub expression
+interpolation happens before shell execution, directly inserting
+`${{ env.PR_TITLE }}` into `run:` can turn untrusted content into executable
+shell syntax. The no-new-debt scanner now treats direct `env.*`
+interpolation as potentially unsafe, including bracket notation, whitespace
+around dot access, computed selectors, and `toJSON(env)` serialization.
+This is a conservative trust-boundary rule, **not** proof that an existing
+`env` assignment is attacker-controlled. Existing expressions remain
+accepted only when their scalar, step metadata and job context are unchanged.
+
+The recommended form uses `env:` to assign an expression and refers to a
+properly quoted **shell variable** instead:
+
+```yaml
+- name: Process PR title
+  env:
+    PR_TITLE: ${{ github.event.pull_request.title }}
+  run: printf '%s\\n' "$PR_TITLE"
+```
+
+The check does not reject that safe indirection or ordinary shell expansions.
+This rule does **not** make arbitrary use of a shell environment safe:
+downstream consumers must quote variables and validate their semantics.
+No change here authorizes a production deployment or remediates the
+self-hosted runner.
+
 ## Local composite Action shell coverage
 
 The guard now also scans committed `action.yml` and `action.yaml` files **at
