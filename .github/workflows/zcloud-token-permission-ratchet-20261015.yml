@@ -69,4 +69,12 @@ jobs:
           test "$current_head" = "$EXPECTED_HEAD"
           python3 scripts/zcloud_token_permission_ratchet_20261015.py \
             --root . --base "$BASE_SHA" --head "$EXPECTED_HEAD"
+          # GitHub refs may advance while a multi-second full-tree proof runs.
+          # Never report green unless the very same immutable source pair
+          # remains at canonical main and at the PR owner's branch tip.
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          final_base="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          final_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$final_base" = "$BASE_SHA"
+          test "$final_head" = "$EXPECTED_HEAD"
           echo "Advisory source proof only; no release/deploy/runner writes."
