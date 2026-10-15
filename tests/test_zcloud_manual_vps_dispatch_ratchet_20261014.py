@@ -272,6 +272,35 @@ class ManualDispatchPolicy(unittest.TestCase):
         new = workflow(job="another")
         self.assertDenied(new)
 
+    def test_legacy_unguarded_job_cannot_keep_waiver_after_global_authority_change(self):
+        old = workflow()
+        variants = (
+            old.replace(b"  contents: read", b"  contents: write"),
+            old.replace(b"  workflow_dispatch:", b"  workflow_dispatch:\n  push:"),
+            old.replace(b"jobs:", b"env:\n  UNSAFE_CONTROL: enabled\njobs:"),
+            old.replace(b"jobs:", b"concurrency:\n  cancel-in-progress: true\njobs:"),
+        )
+        for new in variants:
+            with self.subTest(changed=new[:95]):
+                self.assertDeniedDiff(old, new)
+
+    def test_legacy_unguarded_job_allows_only_display_name_and_comment_edits(self):
+        old = workflow()
+        for updated in (
+            old.replace(b"name: proof", b"name: display-only revision"),
+            old.replace(b"name: proof", b"name: proof\n# a pure comment"),
+        ):
+            with self.subTest(updated=updated[:70]):
+                out = guard.evaluate({WF: old}, {WF: updated})
+                self.assertTrue(out["ok"])
+                self.assertEqual(0, out["new_debt_count"])
+
+    def assertDeniedDiff(self, old: bytes, new: bytes) -> None:
+        result = guard.evaluate({WF: old}, {WF: new})
+        self.assertFalse(result["ok"])
+        self.assertEqual(1, result["new_debt_count"])
+        self.assertFalse(result["production_mutation_authorized"])
+
     def test_modified_legacy_unguarded_job_is_new_debt(self):
         old = workflow()
         new = old.replace(b"echo evidence-only", b"sudo systemctl restart dangerous")
