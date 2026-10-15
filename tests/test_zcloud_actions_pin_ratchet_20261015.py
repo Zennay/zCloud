@@ -215,5 +215,45 @@ class ActionPinRatchetTests(unittest.TestCase):
 
 
 
+class HostedPinRatchetTrustTests(unittest.TestCase):
+    """Lock the source-only CI trust boundary against regression."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (Path(__file__).resolve().parents[1]
+                      / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
+                      ).read_text(encoding="utf-8")
+
+    def test_hosted_read_only_pr_admission(self):
+        text = self.source
+        self.assertIn("pull_request:", text)
+        self.assertIn("contents: read", text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertIn("persist-credentials: false", text)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", text)
+        for denied in ("pull_request_target:", "workflow_dispatch:", "workflow_run:",
+                       "permissions: write-all", "contents: write", "self-hosted",
+                       "sudo ", "systemctl ", "gh workflow run"):
+            self.assertNotIn(denied, text)
+
+    def test_trusted_base_policy_and_bootstrap_warning(self):
+        text = self.source
+        self.assertIn('git cat-file -e "$BASE_SHA:$source_path"', text)
+        self.assertIn('git show "$BASE_SHA:$source_path"', text)
+        self.assertIn("Initial policy bootstrap is PR-supplied", text)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', text)
+        self.assertIn('--base "$BASE_SHA" --head "$HEAD_SHA"', text)
+
+    def test_canonical_main_freshness_rechecked_after_source_scan(self):
+        text = self.source
+        scan = text.index('python3 "$RUNNER_TEMP/trusted-pin-scanner.py"')
+        final_check = text.index('name: Refuse a stale main revision')
+        self.assertLess(scan, final_check)
+        self.assertIn("timeout 20 git ls-remote --exit-code origin refs/heads/main", text)
+        self.assertIn('if test "$current_main" != "$BASE_SHA"; then', text)
+        self.assertIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", text)
+        self.assertIn("exit 1", text[final_check:])
+
+
 if __name__ == "__main__":
     unittest.main()
