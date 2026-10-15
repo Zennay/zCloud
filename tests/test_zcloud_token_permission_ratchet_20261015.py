@@ -55,7 +55,7 @@ class PermissionRatchetTests(unittest.TestCase):
     def test_top_level_write_all_denied(self):
         value = self.check_file("on: push\npermissions: write-all\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
         self.assertFalse(value["ok"])
-        self.assertEqual(value["new_risks"], 2)
+        self.assertEqual(value["new_risks"], 3)
         self.assertEqual(value["removed_safe_scopes"], 1)
 
     def test_job_level_write_denied(self):
@@ -92,7 +92,7 @@ class PermissionRatchetTests(unittest.TestCase):
         new = self.commit("docs")
         outcome = check(self.root, old, new)
         self.assertTrue(outcome["ok"])
-        self.assertEqual(outcome["baseline_risks"], 1)
+        self.assertEqual(outcome["baseline_risks"], 2)
 
     def test_move_legacy_risk_to_different_job_denied(self):
         self.put(".github/workflows/original.yml",
