@@ -17,6 +17,12 @@ does not silently skip the shell-command check. A second unfinished `${{`
 after a valid closed expression is flagged; an earlier valid `}}` no
 longer hides the incomplete token.
 
+YAML's explicit mapping-key syntax (`- ? run` followed by its value on a
+separate `:` line) is also treated as ambiguous and bound to the complete
+workflow source hash. This conservative refusal covers run-shell content that
+a simple line-oriented scanner cannot parse reliably. Use ordinary
+`- run: ...` steps to avoid the review burden.
+
 For legacy run aliases, the guard binds the ambiguity fingerprint to the
 entire workflow Git blob. Changing an anchor referenced by `run: *alias`
 is therefore not silently grandfathered. This is deliberately conservative:
