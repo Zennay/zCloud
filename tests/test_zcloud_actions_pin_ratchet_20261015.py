@@ -321,5 +321,86 @@ class HostedCurrentMainShellTests(unittest.TestCase):
         self.assertNotIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", result.stdout)
 
 
+class HostedPinSummaryTests(unittest.TestCase):
+    """Execute the actual non-authorizing Actions summary shell on adversarial data."""
+
+    @classmethod
+    def setUpClass(cls):
+        source = (Path(__file__).resolve().parents[1]
+                  / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
+                  ).read_text(encoding="utf-8")
+        src = source.split("name: Publish bounded Dutch evidence even when the source gate refuses", 1)[1]
+        block = src.split("        run: |\n", 1)[1]
+        cls.script = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in block.splitlines()
+        ) + "\n"
+
+    def summary(self, raw=None):
+        import os
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            report = root / "pin.json"
+            destination = root / "summary.md"
+            if raw is not None:
+                report.write_text(raw, encoding="utf-8")
+            env = dict(os.environ, REPORT_FILE=str(report),
+                       GITHUB_STEP_SUMMARY=str(destination), RUNNER_TEMP=str(root))
+            run = subprocess.run(["bash", "-c", self.script], cwd=root, env=env,
+                                 capture_output=True, text=True, timeout=25)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            return destination.read_text(encoding="utf-8")
+
+    def valid_report(self, **override):
+        payload = {
+            "policy": "zcloud-actions-pin-no-new-debt-v1",
+            "base_unpinned": 72,
+            "head_unpinned": 73,
+            "new_unpinned": 1,
+            "ok": False,
+            "release_authorized": False,
+            "deployment_authorized": False,
+            "mutation_performed": False,
+        }
+        payload.update(override)
+        return json.dumps(payload)
+
+    def test_valid_denial_count_is_visible_without_permission(self):
+        summary = self.summary(self.valid_report())
+        self.assertIn("Nieuw gevonden risico | 1", summary)
+        self.assertIn("Productie- of mergeautorisatie | **Nee**", summary)
+
+    def test_missing_report_still_emits_deny_only_summary(self):
+        summary = self.summary()
+        self.assertIn("Nee — ontbrekend of onbetrouwbaar", summary)
+        self.assertIn("Productie- of mergeautorisatie | **Nee**", summary)
+
+    def test_duplicate_keys_rejected(self):
+        raw = self.valid_report()
+        raw = raw.replace('"release_authorized": false',
+                          '"release_authorized": true, "release_authorized": false')
+        summary = self.summary(raw)
+        self.assertIn("Nee — ontbrekend of onbetrouwbaar", summary)
+        self.assertNotIn("Nieuw gevonden risico | 1", summary)
+
+    def test_incorrect_authorization_discredits_entire_report(self):
+        summary = self.summary(self.valid_report(release_authorized=True))
+        self.assertIn("Nee — ontbrekend of onbetrouwbaar", summary)
+        self.assertIn("Productie- of mergeautorisatie | **Nee**", summary)
+
+    def test_nonfinite_and_inconsistent_verdict_denied(self):
+        raw = self.valid_report().replace('"new_unpinned": 1', '"new_unpinned": NaN')
+        self.assertIn("Nee — ontbrekend of onbetrouwbaar", self.summary(raw))
+        self.assertIn("Nee — ontbrekend of onbetrouwbaar",
+                      self.summary(self.valid_report(ok=True)))
+
+    def test_private_raw_strings_never_interpolated_to_summary(self):
+        raw = self.valid_report()
+        raw = raw.replace('"ok": false', '"examples": [{"path": "TOP_SECRET_TOKEN"}], "ok": false')
+        summary = self.summary(raw)
+        self.assertNotIn("TOP_SECRET_TOKEN", summary)
+        self.assertIn("Nieuw gevonden risico | 1", summary)
+
+
 if __name__ == "__main__":
     unittest.main()
