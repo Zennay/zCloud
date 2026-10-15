@@ -293,6 +293,39 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         self.assertEqual(invocation["env"]["GIT_OPTIONAL_LOCKS"], "0")
         self.assertEqual(invocation["env"]["GIT_TERMINAL_PROMPT"], "0")
 
+    def test_git_replace_ref_cannot_hide_inherited_secrets(self):
+        path = f"{ROOT}/adversarial.yml"
+        self.write(path, "jobs:\\n  call:\\n    secrets: inherit\\n")
+        head = self.commit()
+        original_oid = self.git("rev-parse", "HEAD:" + path).strip()
+        replacement = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], input="name: safe\\n",
+            text=True, stdout=subprocess.PIPE, check=True,
+        ).stdout.strip()
+        self.git("replace", original_oid, replacement)
+        # Plain Git follows refs/replace and would report the innocent blob.
+        substituted = self.git("cat-file", "blob", original_oid)
+        self.assertIn("name: safe", substituted)
+        # The scanner must read the real object associated with its SHA.
+        self.assertIn(b"secrets: inherit", git("cat-file", "blob", original_oid))
+        with self.assertRaisesRegex(Denied, "inherit_secrets"):
+            inspect(self.base, head)
+
+    def test_git_child_environment_forbids_object_replacement(self):
+        observed = []
+        real_popen = subprocess.Popen
+
+        def wrapped(*args, **kwargs):
+            observed.append(kwargs.get("env", {}))
+            return real_popen(*args, **kwargs)
+
+        with mock.patch(
+            "scripts.zcloud_reusable_secrets_guard_20261015_w3.subprocess.Popen",
+            side_effect=wrapped,
+        ):
+            self.assertEqual(len(git("rev-parse", "HEAD", limit=41)), 41)
+        self.assertEqual(observed[0]["GIT_NO_REPLACE_OBJECTS"], "1")
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
