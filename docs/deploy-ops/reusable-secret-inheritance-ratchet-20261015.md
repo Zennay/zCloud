@@ -54,3 +54,6 @@ Git permits workflow filenames containing embedded newline, tab and bidirectiona
 
 ## Ignore caller-controlled Git environment
 The read-only Git subprocess now drops inherited `GIT_*` variables before launching and explicitly restores only strict read-only source-inspection values. This removes alternate object-database pointers, trace destinations, dynamic `GIT_CONFIG_COUNT` injection and caller changes to replacement-object settings. Two synthetic-environment/real-Git tests verify the original commit can still be read, the child receives the trusted settings, and no trace file is written. This does not sanitize non-Git environment variables or convert PR-owned source into independently reviewed trust. It provides no production authority.
+
+## Exact origin URL before and after the source check
+The PR admission shell now binds `git remote get-url origin` to the canonical `https://github.com/Zennay/zCloud` both before and after the Git object scanner runs. This prevents tests or source code from quietly switching `origin` to a different repository while keeping the same expected ref names. It complements the existing exact main and PR-head SHA/ref checks, but the PR-supplied workflow is not itself a protected, independent check until reviewed and landed through the controlled branch-protection process.
