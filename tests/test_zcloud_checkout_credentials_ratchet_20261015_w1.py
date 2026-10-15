@@ -276,7 +276,7 @@ class RealGitCheckoutRatchet(unittest.TestCase):
             '          persist-credentials: false\n'
             '        !!str "' + encoded + '": {}\n',
         )
-        self.verify(bad, "opaque_checkout_escape")
+        self.verify(bad, "opaque_escaped_yaml")
 
     def test_single_inline_with_map_denied(self):
         bad = workflow(None).replace(
