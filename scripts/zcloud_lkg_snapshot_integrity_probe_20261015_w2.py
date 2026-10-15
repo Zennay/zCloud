@@ -436,7 +436,7 @@ def audit_all(state: Path) -> dict:
     total = 0
     for name, is_dir in sorted(snapshots):
         if SNAPSHOT_ID_RE.fullmatch(name) is None or not is_dir:
-            entry = {"snapshot_id": name[:100], "ok": False, "reason": "invalid_snapshot_entry"}
+            entry = {"snapshot_id": None, "ok": False, "reason": "invalid_snapshot_entry"}
         else:
             try:
                 evidence = inspect(state, snapshot_id=name)
