@@ -11,6 +11,7 @@ import unittest
 from scripts import zcloud_manual_vps_dispatch_ratchet_20261014 as guard
 
 SRC = Path(__file__).resolve().parents[1] / "scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py"
+CI_WORKFLOW = SRC.parents[1] / ".github/workflows/zcloud-manual-vps-dispatch-ratchet-20261014.yml"
 WF = ".github/workflows/sample.yml"
 SAFE_IF = (
     "github.event_name == 'workflow_dispatch' && "
@@ -48,6 +49,21 @@ class ManualDispatchPolicy(unittest.TestCase):
         self.assertEqual(expected, out["new_debt_count"])
         self.assertFalse(out["mutation_performed"])
         self.assertFalse(out["production_mutation_authorized"])
+
+    def test_hosted_proof_rejects_forks_before_checkout_and_main_drift(self):
+        workflow_source = CI_WORKFLOW.read_text(encoding="utf-8")
+        denial = workflow_source.index("Deny foreign PR source before any checkout")
+        checkout = workflow_source.index("Checkout exact PR source without credentials")
+        self.assertLess(denial, checkout)
+        self.assertIn('test "$HEAD_REPOSITORY" = "$EXPECTED_REPOSITORY"', workflow_source)
+        self.assertIn("persist-credentials: false", workflow_source)
+        self.assertIn("runs-on: ubuntu-latest", workflow_source)
+        self.assertNotIn("runs-on: self-hosted", workflow_source)
+        preflight = workflow_source.index('git cat-file -e "${HEAD_SHA}^{commit}"')
+        self.assertGreater(workflow_source.index("timeout 20 git ls-remote"), preflight)
+        self.assertEqual(2, workflow_source.count("timeout 20 git ls-remote"))
+        self.assertEqual(2, workflow_source.count('test "$current_main" = "$BASE_SHA"'))
+        self.assertEqual(1, workflow_source.count("python3 -m unittest discover"))
 
     def test_new_untrusted_manual_vps_job_is_denied(self):
         self.assertDenied(workflow())
