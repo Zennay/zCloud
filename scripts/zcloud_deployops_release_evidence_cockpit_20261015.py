@@ -230,6 +230,31 @@ def current_deploy(api, sha: str) -> dict:
     }
 
 
+def operator_next_checks(warnings: list[str]) -> list[str]:
+    """Bounded safe next observations; guidance never authorizes mutation."""
+    checks = {
+        "production_not_success":
+            "Controleer de exacte main-SHA productiestatus en de bijbehorende "
+            "deploylog; herstart of herbewapen niets automatisch.",
+        "runner_route_not_proven":
+            "Controleer in GitHub de repository-toegang, runnerlabels en "
+            "jobtoewijzing; een oude of wachtrij-job bewijst geen actieve listener.",
+        "deploy_observation_stale_or_missing":
+            "Ververs eerst de alleen-lezen GitHub-observatie en vergelijk dezelfde "
+            "main-SHA voordat je conclusies trekt.",
+        "deploy_run_not_success":
+            "Bekijk de exacte workflow-run en de afzonderlijke safe-idle- en "
+            "database-logmarkers; leid geen oorzaak af uit één mislukte jobnaam.",
+    }
+    result = [checks[key] for key in checks if key in warnings]
+    if not result:
+        result = [
+            "Laat een onafhankelijke eigenaar runtime, bronconflicten en de "
+            "geserialiseerde releasepoort beoordelen; dit is geen deploygoedkeuring."
+        ]
+    return result
+
+
 def collect(api) -> dict:
     sha = main_sha(api)
     prod = production_status(api, sha)
@@ -251,6 +276,7 @@ def collect(api) -> dict:
         "repository": REPO, "main_sha": sha,
         "observed_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "production": prod, "deploy": deploy, "warnings": warnings,
+        "next_checks": operator_next_checks(warnings),
         "observation": "GREEN_STATUS_IS_NOT_RELEASE_PERMISSION",
         "release_authorized": False, "deployment_authorized": False,
         "mutations_performed": False,
@@ -262,6 +288,7 @@ def render_html(snapshot: dict) -> str:
         return html.escape(str(value), quote=True)
     p, d = snapshot["production"], snapshot["deploy"]
     warnings = "".join(f"<li>{safe(w)}</li>" for w in snapshot["warnings"])
+    next_checks = "".join(f"<li>{safe(c)}</li>" for c in snapshot["next_checks"])
     return """<!doctype html><html lang="nl"><meta charset="utf-8">
 <title>zCloud deploy-ops evidence</title>
 <style>body{max-width:850px;margin:2rem auto;padding:1rem;font:16px system-ui,sans-serif;
@@ -277,6 +304,7 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd>
 <dt>Leeftijd laatste deploybewijs (seconden)</dt><dd>""" + safe(d["run_age_seconds"]) + """</dd></dl>
 <h2>Ontbrekend of afwijkend bewijs</h2><ul>""" + (warnings or "<li>Geen lokale waarschuwingen; onafhankelijke releasepoort blijft verplicht.</li>") + """</ul>
+<h2>Veilige volgende controles</h2><ol>""" + next_checks + """</ol>
 <p>Geen live healthcheck van Firefox, SQLite, workers of VPS verricht. 
 Groene GitHub-status is geen bewijs van actuele runtimegezondheid.</p>
 <p>Bevoegd tot deploy: <strong>NEE</strong></p></article></html>"""
@@ -299,7 +327,12 @@ def main(argv: list[str] | None = None) -> int:
             "deploy": {"run_id": None, "attempt": None, "status": "not_observed",
                        "conclusion": None, "runner_route": "UNVERIFIED",
                        "run_age_seconds": None},
-            "warnings": [str(exc)], "observation": "INCOMPLETE_EVIDENCE",
+            "warnings": [str(exc)],
+            "next_checks": [
+                "GitHub-bewijs is onvolledig of onbereikbaar: onderzoek uitsluitend "
+                "met leesrechten en vraag eigenaarstoestemming voor verdere stappen."
+            ],
+            "observation": "INCOMPLETE_EVIDENCE",
             "release_authorized": False, "deployment_authorized": False,
             "mutations_performed": False,
         }
