@@ -280,6 +280,19 @@ class RatchetTests(unittest.TestCase):
         code, result = self.change("git -c 'alias.demo=echo push' status")
         self.assertEqual(code, 0, result)
 
+    def test_quoted_git_revparse_substitution_allowed(self):
+        code, receipt = self.change('actual="$(git rev-parse HEAD)"')
+        self.assertEqual(code, 0, receipt)
+
+    def test_quoted_git_fetch_substitution_allowed(self):
+        code, receipt = self.change('source="$(git rev-parse --show-toplevel)"')
+        self.assertEqual(code, 0, receipt)
+
+    def test_quoted_git_push_substitution_denied(self):
+        code, receipt = self.change('actual="$(git push origin HEAD:main)"')
+        self.assertEqual(code, 1, receipt)
+        self.assertIn("git_push", receipt["findings"][0]["reasons"])
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, r = self.change("git push origin main # " + marker)
