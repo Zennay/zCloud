@@ -667,7 +667,7 @@ class RealGitTests(unittest.TestCase):
 
     def test_safe_sha_and_numeric_matrix_env_remain_allowed(self):
         base = self.commit("steps:\n  - run: echo safe\n")
-        head = self.commit("steps:\n  - env:\n      SAFE_SHA: ${{ github.sha }}\n      MATRIX_SIZE: ${{ matrix.size }}\n    run: echo \\"$SAFE_SHA\\" \\"$MATRIX_SIZE\\"\n")
+        head = self.commit("steps:\n  - env:\n      SAFE_SHA: ${{ github.sha }}\n      MATRIX_SIZE: ${{ matrix.size }}\n    run: echo $SAFE_SHA $MATRIX_SIZE\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
     def test_boolean_all_output_authority_flags_false(self):
