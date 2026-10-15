@@ -123,6 +123,43 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "ambiguous_concurrency")
 
+    def test_quoted_root_jobs_shadow_is_denied(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "jobs:\n", "jobs:\n\"jobs\":\n",)
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_yaml_mapping_form")
+
+    def test_yaml_unicode_escape_quoted_shadow_key_denied(self):
+        name = "zcloud-vps-deploy.yml"
+        p = self.dir / name
+        with p.open("a", encoding="utf-8") as output:
+            output.write('''"\\u006aobs": {}\n''')
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_yaml_mapping_form")
+
+    def test_yaml_explicit_mapping_form_denied(self):
+        name = "zcloud-worker-tab-guard.yml"
+        p = self.dir / name
+        with p.open("a", encoding="utf-8") as output:
+            output.write("? jobs\n: {}\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_yaml_mapping_form")
+
+    def test_yaml_merge_key_is_denied(self):
+        name = "zcloud-worker-tab-guard.yml"
+        self.edit(name, "      group: zcloud-production-deploy\n",
+                  "      <<: *potential_override\n      group: zcloud-production-deploy\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_yaml_mapping_form")
+
+    def test_second_yaml_document_is_denied(self):
+        name = "zcloud-vps-deploy.yml"
+        p = self.dir / name
+        with p.open("a", encoding="utf-8") as output:
+            output.write("---\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_yaml_mapping_form")
+
     def test_job_outside_jobs_block_cannot_supply_missing_lock(self):
         name = "zcloud-worker-tab-guard.yml"
         p = self.dir / name
