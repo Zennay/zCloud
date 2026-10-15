@@ -50,7 +50,20 @@ jobs:
           current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
           test "$current_main" = "$BASE_SHA"
           python3 -m unittest discover -s tests -p 'test_zcloud_manual_vps_dispatch_ratchet_20261014.py' -v
-          python3 scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py \
-            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+
+          # Bootstrap PR: the source-only scanner does not yet exist on main,
+          # so the candidate's self-test is NOT independently trusted.
+          # Once merged, run the scanner from immutable BASE_SHA, never the
+          # untrusted PR checkout, including when PRs edit their own scanner.
+          policy_path="scripts/zcloud_manual_vps_dispatch_ratchet_20261014.py"
+          if git cat-file -e "${BASE_SHA}:${policy_path}" 2>/dev/null; then
+            git show "${BASE_SHA}:${policy_path}" > "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py"
+            echo "POLICY_PROVENANCE=trusted_base_sha"
+            python3 "${RUNNER_TEMP}/zcloud-trusted-manual-policy.py" \
+              --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          else
+            echo "POLICY_PROVENANCE=untrusted_bootstrap_review_required"
+            python3 "$policy_path" --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA"
+          fi
           current_main="$(timeout 20 git ls-remote --exit-code origin refs/heads/main | awk '$2 == "refs/heads/main" { print $1 }')"
           test "$current_main" = "$BASE_SHA"
