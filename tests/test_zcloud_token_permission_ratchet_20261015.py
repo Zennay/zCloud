@@ -5,6 +5,7 @@ from pathlib import Path
 from contextlib import redirect_stdout
 from io import StringIO
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -718,6 +719,51 @@ class PermissionRatchetTests(unittest.TestCase):
         old = self.commit("legacy-explicit-encoded-key")
         self.put("README.md", "safe unrelated edit")
         self.assertTrue(check(self.root, old, self.commit("unrelated-docs"))["ok"])
+
+
+    def test_hosted_gate_is_pr_only_with_explicit_read_token_scope(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-token-permission-ratchet-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertRegex(workflow, r"(?m)^on:\s*$")
+        self.assertRegex(workflow, r"(?m)^  pull_request:\s*$")
+        self.assertNotRegex(
+            workflow,
+            r"(?m)^\s*(?:pull_request_target|workflow_run|workflow_dispatch|"
+            r"push|schedule|repository_dispatch)\s*:",
+        )
+        self.assertRegex(workflow, r"(?m)^permissions:\s*\n  contents: read\s*$")
+        self.assertNotRegex(workflow, r"(?m)^\s*(?:id-token|actions|contents): write\s*$")
+
+    def test_hosted_gate_cannot_add_self_hosted_job_or_unpinned_actions(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-token-permission-ratchet-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        runners = re.findall(r"(?m)^\s*runs-on:\s*(\S.+?)\s*$", workflow)
+        self.assertEqual(runners, ["ubuntu-latest"])
+        actions = re.findall(r"(?m)^\s*uses:\s*(.+)$", workflow)
+        self.assertTrue(actions)
+        for action in actions:
+            self.assertRegex(
+                action.strip(),
+                r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[a-f0-9]{40}(?:\s+#.*)?$",
+            )
+        self.assertRegex(workflow, r"(?m)^\s*persist-credentials: false\s*$")
+
+    def test_hosted_gate_sha_checks_before_and_after_scanner(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-token-permission-ratchet-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn('test "$HEAD_REPO" = "$GITHUB_REPOSITORY"', workflow)
+        self.assertIn('test "$BASE_REPO" = "$GITHUB_REPOSITORY"', workflow)
+        self.assertIn('test "$BASE_REF" = "main"', workflow)
+        index_scan = workflow.index("python3 scripts/zcloud_token_permission_ratchet_20261015.py")
+        index_initial = workflow.index('current_head="$(timeout 15 git ls-remote')
+        index_final = workflow.index('final_head="$(timeout 15 git ls-remote')
+        self.assertLess(index_initial, index_scan)
+        self.assertLess(index_scan, index_final)
+        self.assertIn('test "$final_base" = "$BASE_SHA"', workflow)
+        self.assertIn('test "$final_head" = "$EXPECTED_HEAD"', workflow)
 
 
 if __name__ == "__main__":
