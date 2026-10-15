@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import time
+import unicodedata
 
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
@@ -128,7 +129,10 @@ def read_workflow(commit: str, path: str) -> str:
 
 
 def examine(text: str) -> None:
-    if any(ord(c) < 32 and c not in "\r\n\t" for c in text):
+    # YAML accepts some invisible format/bidi and separator code points that
+    # a line-oriented lexical parser cannot safely treat as ordinary letters.
+    if any(unicodedata.category(c) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
+           and c not in "\r\n\t" for c in text):
         raise Denied("unsafe_workflow_bytes")
     # YAML double-quoted escapes are resolved before GitHub identifies an Action.
     # Detect encoded uses values even when the source lacks the literal action name.
