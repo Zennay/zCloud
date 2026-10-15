@@ -167,5 +167,27 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertFalse(value["ok"])
 
 
+    def test_opaque_legacy_mapping_changed_content_denied(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions: {contents: read}\njobs: {}\n")
+        old = self.commit("legacy-opaque")
+        self.put(".github/workflows/original.yml",
+                 "on: push\npermissions: {contents: write}\njobs: {}\n")
+        result = check(self.root, old, self.commit("opaque-write"))
+        self.assertFalse(result["ok"])
+
+    def test_compact_legacy_flow_jobs_changed_denied(self):
+        self.put(".github/workflows/original.yml", "on: push\njobs: { test: { permissions: read-all } }\n")
+        old = self.commit("flow-old")
+        self.put(".github/workflows/original.yml", "on: push\njobs: { test: { permissions: write-all } }\n")
+        self.assertFalse(check(self.root, old, self.commit("flow-new"))["ok"])
+
+    def test_opaque_legacy_expression_swap_denied(self):
+        self.put(".github/workflows/original.yml", "on: push\npermissions: ${{ inputs.a }}\njobs: {}\n")
+        old = self.commit("expression-old")
+        self.put(".github/workflows/original.yml", "on: push\npermissions: ${{ inputs.b }}\njobs: {}\n")
+        self.assertFalse(check(self.root, old, self.commit("expression-new"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
