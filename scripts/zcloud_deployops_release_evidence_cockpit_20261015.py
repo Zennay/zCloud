@@ -189,11 +189,18 @@ def current_deploy(api, sha: str) -> dict:
             seen_page_run_ids.add(run_id)
             runs.append(row)
         if len(batch) < 100:
+            inventory_complete = True
             break
     else:
-        raise EvidenceError("deploy_run_pagination_cap")
+        # The repository can legitimately contain thousands of deploy runs.
+        # Keep a bounded advisory window with an explicit incomplete marker;
+        # do not misrepresent it as exhaustive or turn it into release authority.
+        inventory_complete = False
     pages_scanned = page
-    if reported_total is not None and reported_total != len(runs):
+    if reported_total is not None and (
+        reported_total < len(runs) or
+        (inventory_complete and reported_total != len(runs))
+    ):
         raise EvidenceError("inconsistent_deploy_total_count")
 
     def verify_paginated_run_snapshots():
@@ -253,7 +260,8 @@ def current_deploy(api, sha: str) -> dict:
             "runner_job_result": "NOT_OBSERVED",
             "run_pages_scanned": pages_scanned,
             "runs_scanned": len(runs),
-            "run_inventory_count_verified": reported_total is not None,
+            "run_inventory_count_verified": reported_total is not None and inventory_complete,
+            "run_inventory_complete": inventory_complete,
         }
     run_id, attempt, status, conclusion, run_age_seconds, updated_at = max(matching, key=lambda x: (x[0], x[1]))
     jobs_payload = api.get(
@@ -353,7 +361,8 @@ def current_deploy(api, sha: str) -> dict:
         "matching_deploys_in_bounded_inventory": len(matching),
         "run_pages_scanned": pages_scanned,
         "runs_scanned": len(runs),
-        "run_inventory_count_verified": reported_total is not None,
+        "run_inventory_count_verified": reported_total is not None and inventory_complete,
+        "run_inventory_complete": inventory_complete,
         "run_age_seconds": run_age_seconds,
     }
 
@@ -367,6 +376,10 @@ def operator_next_checks(warnings: list[str]) -> list[str]:
         "production_observation_stale":
             "De laatste productie-statusmelding is oud of ontbreekt; vergelijk de "
             "huidige main-SHA met een nieuwe onafhankelijke bronobservatie.",
+        "deploy_run_inventory_incomplete":
+            "De deployrunhistorie bevat meer dan 500 vermeldingen; dit rapport "
+            "toont slechts een begrensde, onvolledige periode. Interpreteer "
+            "een ontbrekende run niet als bewijs dat er geen deploy was.",
         "runner_route_not_proven":
             "Controleer in GitHub de repository-toegang, runnerlabels en "
             "jobtoewijzing; een oude of wachtrij-job bewijst geen actieve listener.",
@@ -408,6 +421,8 @@ def collect(api) -> dict:
         warnings.append("production_not_success")
     if prod["last_status_age_seconds"] is None or prod["last_status_age_seconds"] > 900:
         warnings.append("production_observation_stale")
+    if not deploy["run_inventory_complete"]:
+        warnings.append("deploy_run_inventory_incomplete")
     if deploy["runner_route"] != "ASSIGNED_TO_EXPECTED":
         warnings.append("runner_route_not_proven")
     if deploy["run_age_seconds"] is None or deploy["run_age_seconds"] > 900:
@@ -447,7 +462,7 @@ dd{margin-left:0;overflow-wrap:anywhere}.warning{font-weight:700}</style>
 <dt>Productie-status</dt><dd>""" + safe(p["state"]) + """</dd>
 <dt>Leeftijd productiestatus (seconden)</dt><dd>""" + safe(p["last_status_age_seconds"]) + """</dd>
 <dt>Laatste deploy (huidige SHA, begrensd volledig opgehaalde pagina's)</dt><dd>run """ + safe(d["run_id"]) + """ · poging """ + safe(d["attempt"]) + """ · """ + safe(d["status"]) + """ · """ + safe(d["conclusion"]) + """</dd>
-<dt>Doorgenomen deployruns</dt><dd>""" + safe(d["runs_scanned"]) + """ runs in """ + safe(d["run_pages_scanned"]) + """ pagina's</dd>
+<dt>Doorgenomen deployruns</dt><dd>""" + safe(d["runs_scanned"]) + """ runs in """ + safe(d["run_pages_scanned"]) + """ pagina's · volledige historie: """ + safe(d["run_inventory_complete"]) + """</dd>
 <dt>VPS-runnerbewijs</dt><dd>""" + safe(d["runner_route"]) + """</dd>
 <dt>VPS-jobuitkomst</dt><dd>""" + safe(d["runner_job_result"]) + """</dd>
 <dt>Leeftijd laatste deploybewijs (seconden)</dt><dd>""" + safe(d["run_age_seconds"]) + """</dd></dl>
@@ -478,7 +493,8 @@ def main(argv: list[str] | None = None) -> int:
                        "conclusion": None, "runner_route": "UNVERIFIED",
                        "run_age_seconds": None, "runner_job_result": "NOT_OBSERVED",
                        "run_pages_scanned": 0, "runs_scanned": 0,
-                       "run_inventory_count_verified": False},
+                       "run_inventory_count_verified": False,
+                       "run_inventory_complete": False},
             "warnings": [str(exc)],
             "next_checks": [
                 "GitHub-bewijs is onvolledig of onbereikbaar: onderzoek uitsluitend "
