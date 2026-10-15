@@ -67,7 +67,8 @@ jobs:
           expected_results = {
               "serialized_source", "missing_concurrency", "ambiguous_concurrency",
               "wrong_group", "unsafe_cancel_policy", "unsafe_parent_cancel_policy",
-              "ambiguous_parent_concurrency", "unexpected_nested_concurrency",
+              "ambiguous_parent_concurrency", "ambiguous_parent_group",
+              "parent_shares_production_group", "unexpected_nested_concurrency",
               "unexpected_mutation_runner_target", "unexpected_companion_runner_target",
               "missing_or_duplicate_runner_target", "missing_or_duplicate_mutation_job",
               "ambiguous_jobs", "source_changed_during_read", "unreadable_source",
