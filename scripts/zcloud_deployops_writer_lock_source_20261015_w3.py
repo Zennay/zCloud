@@ -308,10 +308,29 @@ def inventory(root: Path) -> dict:
             result = str(exc)
         details[name] = {"mutation_job": job, "required_scope": scope,
                          "source_result": result, "source_sha256": digest}
+    # A multi-file scan is not an atomic filesystem snapshot. Re-read all
+    # seven pinned paths after the classification pass and refuse a receipt if
+    # even one input changed (or ceased to be safely readable). This detects
+    # ordinary cross-file churn without pretending to prove an atomic instant.
+    # An ABA change between the two reads remains outside this claim.
+    for name, item in details.items():
+        first_digest = item["source_sha256"]
+        if first_digest is None:
+            continue
+        try:
+            second = _read_regular(root, name)
+            stable = hashlib.sha256(second.encode("utf-8")).hexdigest() == first_digest
+        except AmbiguousSource:
+            stable = False
+        if not stable:
+            item["source_result"] = "unstable_source_snapshot"
+            item["source_sha256"] = None
     unsafe = sorted(name for name, item in details.items()
                     if item["source_result"] != "serialized_source")
     complete = all(item["source_sha256"] is not None
                    for item in details.values())
+    # "complete" means two equal, safely bounded read passes. It is NOT a
+    # filesystem-atomic snapshot or an origin authentication.
     snapshot = None
     if complete:
         h = hashlib.sha256(b"zcloud-seven-writer-snapshot-v1\0")
