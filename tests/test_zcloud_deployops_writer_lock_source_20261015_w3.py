@@ -172,6 +172,32 @@ class WriterLockSourceEvidenceTests(unittest.TestCase):
         self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
                          "missing_or_duplicate_mutation_job")
 
+    def test_inline_vps_writer_does_not_evade_runner_inventory(self):
+        name = "zcloud-worker-tab-guard.yml"
+        path = self.dir / name
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("  stealth: {runs-on: [self-hosted, zcloud, vps]}\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_job_mapping")
+        self.assertFalse(module.inventory(self.root)["source_lock_complete"])
+
+    def test_anchored_job_declaration_does_not_hide_vps_writer(self):
+        name = "zcloud-vps-deploy.yml"
+        path = self.dir / name
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("  stealth: &worker_def\n"
+                         "    runs-on: [self-hosted, zcloud, vps]\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_job_mapping")
+
+    def test_list_style_job_declaration_denied(self):
+        name = "zcloud-worker-tab-guard.yml"
+        path = self.dir / name
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write("  - unexpected-job\n")
+        self.assertEqual(module.inventory(self.root)["writers"][name]["source_result"],
+                         "unsupported_job_mapping")
+
     def test_extra_self_hosted_writer_cannot_hide_beside_locked_job(self):
         name = "zcloud-worker-tab-guard.yml"
         p = self.dir / name
