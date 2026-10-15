@@ -54,8 +54,11 @@ outcomes retain \`release_authorized=false\`,
    for **the observed SHA** is identified by GitHub run ID and attempt.
    Up to 100 returned jobs must be fully accounted for; self-hosted
    \`zcloud,vps\` jobs are classified as canonical-assigned, unexpected-runner,
-   queued-unassigned or unverified. A queued job with runner ID 0 is NOT
-   proof that the runner listener is online or offline.
+   queued-unassigned or unverified. Each matching run's GitHub `updated_at`
+   is validated; observations over 15 minutes old receive a stale-evidence
+   warning, future-dated or malformed timestamps are rejected. Even fresh
+   historical assignment is NOT a live listener healthcheck. A queued job with
+   runner ID 0 is NOT proof that the runner listener is online or offline.
 4. Canonical \`main\` is re-read at the end; SHA drift refuses the
    evidence snapshot. All malformed and over-limit inputs refuse proof.
 
