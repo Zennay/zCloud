@@ -199,6 +199,34 @@ class ReleaseEvidenceTests(unittest.TestCase):
         self.assertIn("&lt;script&gt;", page)
         self.assertIn("Bevoegd tot deploy: <strong>NEE</strong>", page)
 
+    def test_next_checks_offer_read_only_steps_for_missing_proof(self):
+        api = FakeAPI()
+        api.pages[STAT] = [[]]
+        api.pages[RUNS] = [{"workflow_runs": []}]
+        data = cockpit.collect(api)
+        self.assertTrue(data["next_checks"])
+        self.assertTrue(any("lees" in x or "Controleer" in x
+                            or "Ververs" in x or "Bekijk" in x
+                            for x in data["next_checks"]))
+        self.assertFalse(data["release_authorized"])
+        self.assertIn("Veilige volgende controles", cockpit.render_html(data))
+
+    def test_next_checks_have_no_runtime_mutation_authority(self):
+        guidance = cockpit.operator_next_checks([
+            "production_not_success", "runner_route_not_proven",
+            "deploy_observation_stale_or_missing", "deploy_run_not_success"
+        ])
+        self.assertEqual(len(guidance), 4)
+        self.assertIn("herstart of herbewapen niets", guidance[0])
+        self.assertTrue(all(isinstance(x, str) for x in guidance))
+        self.assertNotIn("deployment_authorized", " ".join(guidance))
+
+    def test_no_warnings_still_requires_independent_release_review(self):
+        guidance = cockpit.operator_next_checks([])
+        self.assertEqual(len(guidance), 1)
+        self.assertIn("geen deploygoedkeuring", guidance[0])
+        self.assertFalse(cockpit.collect(FakeAPI())["deployment_authorized"])
+
     def test_old_green_and_missing_deploy_cannot_grant_permission(self):
         api = FakeAPI()
         api.pages[RUNS] = [{"workflow_runs": []}]
