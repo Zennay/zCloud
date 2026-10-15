@@ -35,6 +35,14 @@ findings. The workflow targets same-repository owner PRs only and has
 - Never place image scalar values, bearer tokens or shell bodies in output.
   Reports contain bounded paths, line numbers and categories only.
 
+## Hosted CI operator summary
+
+Each successful source check writes a Dutch GitHub Actions step summary with
+bounded integer counts for historical, candidate and newly introduced image
+risks. It never includes image values, repository secrets or shell scripts.
+The summary is observation evidence only: it does not open a release gate,
+prove a healthy VPS listener or authorize mutation.
+
 ## Explicit limits
 
 This is a conservative syntactic risk tripwire, **not** a full YAML 1.2 or
