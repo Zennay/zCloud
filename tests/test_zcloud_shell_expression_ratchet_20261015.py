@@ -285,6 +285,31 @@ class RealGitTests(unittest.TestCase):
         self.assertFalse(report["release_authorized"])
         self.assertFalse(report["deployment_authorized"])
 
+    def test_new_github_ref_interpolation_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.ref }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_new_github_base_ref_interpolation_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.base_ref }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracket_notation_github_ref_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github['ref'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_serialized_entire_github_context_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo '${{ toJSON(github) }}'\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_safe_github_sha_interpolation_not_misidentified(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ github.sha }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
