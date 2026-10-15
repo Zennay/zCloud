@@ -1132,6 +1132,36 @@ class RatchetTests(unittest.TestCase):
         with self.assertRaises(mod.SourceError):
             mod.audit(self.repo, self.base, head)
 
+    def test_git_stdout_descriptor_closes_after_success(self):
+        real_popen = mod.subprocess.Popen
+        seen = []
+
+        def tracked(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            seen.append(process)
+            return process
+
+        with patch.object(mod.subprocess, "Popen", side_effect=tracked):
+            self.assertEqual(mod.git(self.repo, "rev-parse", "HEAD").decode().strip(), self.base)
+        self.assertTrue(seen)
+        self.assertTrue(all(p.stdout is not None and p.stdout.closed for p in seen))
+
+    def test_git_stdout_descriptor_closes_after_oversized_capture(self):
+        real_popen = mod.subprocess.Popen
+        seen = []
+
+        def tracked(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            seen.append(process)
+            return process
+
+        with patch.object(mod.subprocess, "Popen", side_effect=tracked):
+            with patch.object(mod, "MAX_GIT_OUTPUT_BYTES", 1):
+                with self.assertRaises(mod.SourceError):
+                    mod.git(self.repo, "ls-tree", "-r", "-z", self.base)
+        self.assertTrue(seen)
+        self.assertTrue(all(p.stdout is not None and p.stdout.closed for p in seen))
+
     def test_git_bounded_capture_allows_ordinary_sha(self):
         with patch.object(mod, "MAX_GIT_OUTPUT_BYTES", 48):
             result = mod.git(self.repo, "rev-parse", "HEAD").decode().strip()
