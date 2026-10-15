@@ -291,6 +291,20 @@ class WorkflowTrustCases(unittest.TestCase):
         self.assertIn('python3 -I "$policy_path"', self.workflow)
         self.assertNotIn('POLICY_PROVENANCE=trusted_bootstrap', self.workflow)
 
+    def test_current_main_is_rechecked_through_canonical_remote_twice(self) -> None:
+        url = "git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main"
+        self.assertEqual(self.workflow.count(url), 2)
+        self.assertEqual(self.workflow.count('test "$current_main" = "$BASE_SHA"'), 2)
+        self.assertNotIn("git ls-remote origin refs/heads/main", self.workflow)
+        self.assertLess(
+            self.workflow.index("name: Immutable trusted-base scanner first"),
+            self.workflow.index("name: Recheck immutable current main"),
+        )
+        self.assertLess(
+            self.workflow.index("name: Run exact-asset Git regression fixtures"),
+            self.workflow.index("name: Recheck immutable current main"),
+        )
+
     def test_hosted_read_only_and_no_automatic_deploy(self) -> None:
         self.assertIn('runs-on: ubuntu-latest', self.workflow)
         self.assertIn('contents: read', self.workflow)
