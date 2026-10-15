@@ -1,0 +1,144 @@
+"""Real temporary-Git regressions for the legacy GitHub Actions command ratchet."""
+from __future__ import annotations
+
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+
+SOURCE = Path(__file__).resolve().parents[1] / "scripts" / "zcloud_legacy_commands_ratchet_20261015_w6.py"
+SPEC = importlib.util.spec_from_file_location("legacy_command_gate", SOURCE)
+gate = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(gate)
+
+
+class RealGitRatchetTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.oldcwd = os.getcwd()
+        os.chdir(self.temp.name)
+        self.addCleanup(os.chdir, self.oldcwd)
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.email", "ci@example.invalid")
+        self.git("config", "user.name", "CI")
+        self.write(".github/workflows/old.yml", "name: existing\non: push\njobs: {}\n")
+        self.commit("base")
+        self.base = self.git("rev-parse", "HEAD").decode().strip()
+
+    def git(self, *argv):
+        return subprocess.check_output(["git", *argv], stderr=subprocess.DEVNULL)
+
+    def write(self, path, data):
+        f = Path(path)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(data if isinstance(data, bytes) else data.encode())
+
+    def commit(self, message="fixture"):
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+        return self.git("rev-parse", "HEAD").decode().strip()
+
+    def test_unchanged_legacy_allowed_without_certification(self):
+        self.write(".github/workflows/old.yml", "name: legacy\nrun: echo '::set-env name=X::Y'\n")
+        self.commit("legacy")
+        base = self.git("rev-parse", "HEAD").decode().strip()
+        self.write("README.md", "unrelated\n")
+        head = self.commit("unrelated")
+        self.assertEqual(gate.scan(base, head), (0, 0))
+
+    def test_changed_legacy_becomes_denied(self):
+        self.write(".github/workflows/old.yml", "run: echo '::set-env name=X::Y'\n")
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_safe_new_workflow_passes(self):
+        self.write(".github/workflows/new.yml", "name: safe\non: pull_request\njobs: {}\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_safe_edited_workflow_passes(self):
+        self.write(".github/workflows/old.yml", "name: safe\non: push\njobs: {}\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_legacy_commands_deny(self):
+        for forbidden in ("::set-env", "::add-path", "::set-output", "::save-state",
+                          ":: SET-ENV", "ACTIONS_ALLOW_UNSECURE_COMMANDS",
+                          "actions_allow_unsecure_commands"):
+            with self.subTest(forbidden=forbidden):
+                self.git("reset", "--hard", self.base)
+                self.write(".github/workflows/old.yml", "run: echo '" + forbidden + " name=x::hi'\n")
+                with self.assertRaises(gate.Denied):
+                    gate.scan(self.base, self.commit())
+
+    def test_a_github_env_write_is_not_deprecated_command(self):
+        self.write(".github/workflows/old.yml", "run: echo HELLO=world >> ${GITHUB_ENV}\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_safe_composite_action_passes(self):
+        self.write(".github/actions/tool/action.yml", "name: safe\nruns:\n  using: composite\n  steps: []\n")
+        self.assertEqual(gate.scan(self.base, self.commit()), (1, 1))
+
+    def test_unsafe_composite_action_denied(self):
+        self.write(".github/actions/tool/action.yaml", "run: echo '::set-output name=X::Y'\n")
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_non_utf8_denied(self):
+        self.write(".github/workflows/old.yml", b"name: \xff\n")
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_oversized_workflow_denied(self):
+        self.write(".github/workflows/old.yml", "x" * (gate.MAX_BLOB + 1))
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_unicode_format_controls_denied(self):
+        self.write(".github/workflows/old.yml", "name: \u202eevil\n")
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_symlink_workflow_denied(self):
+        Path(".github/workflows/old.yml").unlink()
+        os.symlink("/tmp/untrusted", ".github/workflows/old.yml")
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_symlink_workflow_root_denied(self):
+        Path(".github/workflows/old.yml").unlink()
+        Path(".github/workflows").rmdir()
+        os.symlink("/tmp/untrusted", ".github/workflows")
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_actions_root_symlink_denied(self):
+        os.symlink("/tmp/untrusted", ".github/actions")
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, self.commit())
+
+    def test_sha_format_denied(self):
+        with self.assertRaises(gate.Denied):
+            gate.scan("HEAD", self.base)
+
+    def test_disconnected_base_denied(self):
+        self.git("checkout", "--orphan", "unrelated")
+        self.git("rm", "-qr", ".")
+        self.write(".github/workflows/new.yml", "name: other\n")
+        other = self.commit()
+        with self.assertRaises(gate.Denied):
+            gate.scan(self.base, other)
+
+    def test_deleted_legacy_file_does_not_create_new_debt(self):
+        self.write(".github/workflows/another.yml", "name: kept\n")
+        self.write(".github/workflows/old.yml", "run: echo '::set-env name=X::Y'\n")
+        original = self.commit()
+        Path(".github/workflows/old.yml").unlink()
+        after = self.commit()
+        self.assertEqual(gate.scan(original, after), (0, 0))
+
+
+if __name__ == "__main__":
+    unittest.main()
