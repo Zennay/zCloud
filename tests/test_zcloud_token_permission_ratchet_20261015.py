@@ -142,5 +142,30 @@ class PermissionRatchetTests(unittest.TestCase):
         self.assertNotIn("SECRET_TOKEN", repr(value))
 
 
+    def test_whitespace_before_permissions_colon_denied(self):
+        value = self.check_file("on: push\npermissions : write-all\njobs: {}\n")
+        self.assertFalse(value["ok"])
+
+    def test_yaml_explicit_mapping_key_denied(self):
+        value = self.check_file("on: push\n? permissions\n: write-all\njobs: {}\n")
+        self.assertFalse(value["ok"])
+
+    def test_unicode_escaped_permission_key_denied(self):
+        value = self.check_file('on: push\n"permiss\\u0069ons": write-all\njobs: {}\n')
+        self.assertFalse(value["ok"])
+
+    def test_yaml_merge_alias_denied(self):
+        value = self.check_file("on: push\npermissions: &admin write-all\n<<: *admin\njobs: {}\n")
+        self.assertFalse(value["ok"])
+
+    def test_malformed_quoted_read_is_not_safe(self):
+        value = self.check_file("on: push\npermissions:\n  contents: 'read\njobs: {}\n")
+        self.assertFalse(value["ok"])
+
+    def test_job_level_write_on_compact_jobs_flow_fails_closed(self):
+        value = self.check_file("on: push\njobs: { test: { permissions: write-all } }\n")
+        self.assertFalse(value["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
