@@ -629,6 +629,47 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("steps:\n  - run: printf '*shell_literal'\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_steps_output_direct_shell_is_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ steps.build.outputs.pr_body }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_needs_output_direct_shell_is_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ needs.collect.outputs.raw_title }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracketed_steps_output_direct_shell_is_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ steps['get-data']['outputs']['result'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_bracketed_needs_output_direct_shell_is_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ needs['download'].outputs['contents'] }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_dynamic_matrix_value_direct_shell_is_denied(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ matrix.pull_request_payload }}\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_prior_steps_output_does_not_hide_changed_command(self):
+        expression = "${{ steps.download.outputs.payload }}"
+        base = self.commit("steps:\n  - run: echo " + expression + "\n")
+        head = self.commit("steps:\n  - run: printf execute " + expression + "\n")
+        self.assertEqual(1, guard.audit(base, head)["new_risks"])
+
+    def test_safe_steps_outcome_and_needs_result_remain_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - run: echo ${{ steps.audit.outcome }} ${{ needs.audit.result }}\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
+    def test_safe_sha_and_numeric_matrix_env_remain_allowed(self):
+        base = self.commit("steps:\n  - run: echo safe\n")
+        head = self.commit("steps:\n  - env:\n      SAFE_SHA: ${{ github.sha }}\n      MATRIX_SIZE: ${{ matrix.size }}\n    run: echo \\"$SAFE_SHA\\" \\"$MATRIX_SIZE\\"\n")
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
