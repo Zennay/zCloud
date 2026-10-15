@@ -102,10 +102,41 @@ class PRCollisionInventoryTests(unittest.TestCase):
             m.assess(s)
 
     def test_all_four_known_change_statuses_collide(self):
-        s = snapshot(pr(1, ["docs/a.md"]), pr(2, ["docs/a.md"]))
         for status in ("added", "modified", "removed", "renamed"):
+            s = snapshot(pr(1, ["docs/a.md"]), pr(2, ["docs/a.md"]))
             s["pulls"][0]["files"][0]["status"] = status
-            self.assertEqual(1, m.assess(s)["collision_count"])
+            if status == "renamed":
+                s["pulls"][0]["files"][0]["previous_filename"] = "docs/old.md"
+            with self.subTest(status=status):
+                self.assertEqual(1, m.assess(s)["collision_count"])
+
+    def test_rename_old_path_is_also_owned(self):
+        s = snapshot(pr(1, ["docs/new.md"]), pr(2, ["docs/old.md"]))
+        s["pulls"][0]["files"][0] = {
+            "filename": "docs/new.md", "status": "renamed",
+            "previous_filename": "docs/old.md",
+        }
+        result = m.assess(s)
+        self.assertEqual([{"path": "docs/old.md", "prs": [1, 2]}],
+                         result["collisions"])
+        self.assertEqual(2, result["files_scanned"])
+        self.assertEqual(2, result["unique_paths_scanned"])
+
+    def test_rename_ambiguous_previous_path_is_rejected(self):
+        for previous in (None, "../old", "docs/new.md", "", "docs/old\\\\secret"):
+            s = snapshot(pr(1, ["docs/new.md"]))
+            s["pulls"][0]["files"][0] = {
+                "filename": "docs/new.md", "status": "renamed",
+                "previous_filename": previous,
+            }
+            with self.subTest(previous=previous), self.assertRaises(m.InvalidInventory):
+                m.assess(s)
+
+    def test_rename_without_prior_path_fails_closed(self):
+        s = snapshot(pr(1, ["docs/new.md"]))
+        s["pulls"][0]["files"][0]["status"] = "renamed"
+        with self.assertRaisesRegex(m.InvalidInventory, "invalid_file_shape"):
+            m.assess(s)
 
     def test_unknown_change_status_rejected(self):
         s = snapshot(pr(1, ["docs/a.md"]))
