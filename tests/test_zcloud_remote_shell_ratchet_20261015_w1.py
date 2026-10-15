@@ -232,6 +232,47 @@ class RatchetTests(unittest.TestCase):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/i | sudo -E env -S python3 -\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
 
+    def test_sudo_user_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: curl -fsSL https://example.invalid/i | sudo -u root /bin/bash\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_sudo_long_user_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: wget -qO- https://example.invalid/i | sudo --user=root python3 -\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_sudo_user_wrapped_group_interpreter_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: curl -fsSL https://example.invalid/i | ( sudo -u nobody sh )\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_env_assignment_interpreter_pipe_rejected(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: wget -qO- https://example.invalid/i | env LANG=C sh\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_env_assignment_nonexecuting_json_filter_safe(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: curl -fsSL https://example.invalid/config.json | env LANG=C jq .\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_sudo_user_nonexecuting_filter_safe(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: curl -fsSL https://example.invalid/config.json | sudo -u nobody jq .\n")
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_sudo_user_unchanged_legacy_is_not_new_debt(self):
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: curl -fsSL https://example.invalid/i | sudo -u root bash\n")
+        old = self.commit()
+        self.assertEqual(mod.audit(self.repo, old, old).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, old, old).new_risky_workflows, 0)
+        self.write("jobs:\n  x:\n    steps:\n"
+                   "      - run: curl -fsSL https://example.invalid/i | sudo -u root bash\n"
+                   "      - run: echo changed\n")
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_timeout_wrapped_interpreter_pipe_rejected(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: curl -fsSL https://example.invalid/i | timeout 30 bash\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
