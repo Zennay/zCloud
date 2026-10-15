@@ -31,6 +31,7 @@ def git(*args: str, cap: int = 1200000) -> bytes:
     """Bound output while receiving it, and tear down the whole process group."""
     process = None
     poller = None
+    succeeded = False
     try:
         env = os.environ.copy()
         env["GIT_NO_REPLACE_OBJECTS"] = "1"
@@ -59,6 +60,7 @@ def git(*args: str, cap: int = 1200000) -> bytes:
             chunks.append(piece)
         if process.wait(timeout=max(0.001, deadline - time.monotonic())):
             raise Denied("git_source_unavailable")
+        succeeded = True
         return b"".join(chunks)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise Denied("git_unavailable") from e
@@ -66,11 +68,13 @@ def git(*args: str, cap: int = 1200000) -> bytes:
         if poller is not None:
             poller.close()
         if process is not None:
-            if process.poll() is None:
+            # A Git wrapper may exit while a forked child holds stdout open.
+            if not succeeded:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+            if process.poll() is None:
                 process.wait()
             if process.stdout is not None:
                 process.stdout.close()
