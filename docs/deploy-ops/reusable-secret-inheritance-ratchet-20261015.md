@@ -36,3 +36,6 @@ The ratchet also conservatively denies newly changed workflow YAML with literal 
 
 ## Empty YAML inventory denial
 Merely preserving `.github/workflows/` with only a README does not preserve GitHub Actions execution. The scanner therefore rejects a base or candidate Git tree with **zero** recognized `.yml`/`.yaml` workflows, while still permitting removal of an individual retired workflow when another actual workflow remains. This is source-only fail-closed evidence, not an authorization to keep or delete workflows. Two real-Git regression fixtures protect the distinction.
+
+## Bounded Git subprocess output, including malicious blobs
+The Git-tree scanner no longer uses `subprocess.run(stdout=PIPE)` to capture an entire Git subprocess response before applying a size limit. It now consumes stdout through a bounded selector loop, reads at most the allowed number of bytes plus one proof byte, kills an oversized or timed-out subprocess, and always waits for cleanup. A 20-second wall-clock deadline applies even when output stops arriving. Negative real-Git cases prove large blob truncation, exact-41-byte SHA output bounds, zero-byte successful `merge-base` output, invalid budgets and nonzero Git status. This limits memory exposure to a fixed cap but does not make source or repository content trustworthy, nor authorize deploy/merge.
