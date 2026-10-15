@@ -88,6 +88,38 @@ class ActionPinRatchetTests(unittest.TestCase):
         self.path.write_text(self.path.read_text() + " - uses: actions/cache@v3\n")
         self.assertEqual(self.evaluate()["new_unpinned"], 0)
 
+    def test_actual_hosted_scan_red_path_keeps_failure_and_evidence(self):
+        import os
+        import shutil
+        src_root = Path(__file__).resolve().parents[1]
+        scanner_path = src_root / "scripts/zcloud_actions_pin_ratchet_20261015.py"
+        destination = self.root / "scripts/zcloud_actions_pin_ratchet_20261015.py"
+        destination.parent.mkdir()
+        shutil.copyfile(scanner_path, destination)
+        self.commit(self.path.read_text() + "      - uses: actions/cache@v4\n")
+        head = self.command("rev-parse", "HEAD")
+        workflow = (src_root / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
+                    ).read_text(encoding="utf-8")
+        section = workflow.split("name: Compare exact base and head source trees read only", 1)[1]
+        script = section.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0]
+        script = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in script.splitlines()
+        ) + "\n"
+        env = dict(os.environ, GITHUB_REPOSITORY="Zennay/zCloud",
+                   GITHUB_EVENT_NAME="pull_request",
+                   BASE_SHA=self.base, HEAD_SHA=head, RUNNER_TEMP=str(self.root))
+        proc = subprocess.run(["bash", "-c", script], cwd=self.root, env=env,
+                              capture_output=True, text=True, timeout=25)
+        self.assertEqual(proc.returncode, 1, proc.stderr + proc.stdout)
+        report = self.root / "zcloud-actions-pin-evidence.json"
+        self.assertTrue(report.is_file())
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(payload["new_unpinned"], 1)
+        self.assertFalse(payload["release_authorized"])
+        self.assertFalse(payload["deployment_authorized"])
+        self.assertFalse(payload["mutation_performed"])
+
     def test_invalid_revision_refused(self):
         with self.assertRaisesRegex(Refusal, "invalid_revision"):
             workflow_tree(self.root, "main; rm -rf /")
