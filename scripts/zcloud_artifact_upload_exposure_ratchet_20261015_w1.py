@@ -6,9 +6,13 @@ Unchanged historical workflow blobs are intentionally grandfathered.
 """
 from __future__ import annotations
 import argparse
+import os
 import re
+import selectors
+import signal
 import subprocess
 import sys
+import time
 
 SHA = re.compile(r"[a-f0-9]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
@@ -24,14 +28,52 @@ class Denied(ValueError):
 
 
 def git(*args: str, cap: int = 1200000) -> bytes:
+    """Bound output while receiving it, and tear down the whole process group."""
+    process = None
+    poller = None
     try:
-        p = subprocess.run(["git", "-c", "core.pager=cat", *args], stdout=subprocess.PIPE,
-                           stderr=subprocess.DEVNULL, timeout=10, check=False)
+        env = os.environ.copy()
+        env["GIT_NO_REPLACE_OBJECTS"] = "1"
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+        process = subprocess.Popen(["git", "-c", "core.pager=cat", *args],
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   env=env, start_new_session=True)
+        assert process.stdout is not None
+        poller = selectors.DefaultSelector()
+        poller.register(process.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + 10
+        chunks = []
+        seen = 0
+        while True:
+            remain = deadline - time.monotonic()
+            if remain <= 0:
+                raise Denied("git_deadline")
+            if not poller.select(remain):
+                raise Denied("git_deadline")
+            piece = os.read(process.stdout.fileno(), min(65536, cap - seen + 1))
+            if not piece:
+                break
+            seen += len(piece)
+            if seen > cap:
+                raise Denied("git_output_unbounded")
+            chunks.append(piece)
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())):
+            raise Denied("git_source_unavailable")
+        return b"".join(chunks)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise Denied("git_unavailable") from e
-    if p.returncode or len(p.stdout) > cap:
-        raise Denied("git_source_unavailable")
-    return p.stdout
+    finally:
+        if poller is not None:
+            poller.close()
+        if process is not None:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 def workflow_paths(base: str, head: str) -> list[str]:
