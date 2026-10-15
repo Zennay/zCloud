@@ -179,6 +179,16 @@ def inspect(base: str, head: str) -> dict:
     for sha in (base, head):
         if git("cat-file", "-t", sha, max_bytes=30).strip() != b"commit":
             raise Denied("not_a_commit")
+    # Never accept a missing/symlinked workflow root as an empty safe scan.
+    # The canonical repository requires both directories in both commits.
+    for sha in (base, head):
+        for root in (".github", ".github/workflows"):
+            try:
+                kind = git("cat-file", "-t", f"{sha}:{root}", max_bytes=30).strip()
+            except Denied as exc:
+                raise Denied("missing_workflow_root") from exc
+            if kind != b"tree":
+                raise Denied("unsupported_workflow_root")
     old, new = files_at(base), files_at(head)
     checked = 0
     for path, (_, oid) in new.items():
