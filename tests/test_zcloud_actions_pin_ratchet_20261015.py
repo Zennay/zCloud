@@ -255,5 +255,71 @@ class HostedPinRatchetTrustTests(unittest.TestCase):
         self.assertIn("exit 1", text[final_check:])
 
 
+class HostedCurrentMainShellTests(unittest.TestCase):
+    """Execute the actual hosted final shell step against local Git remotes."""
+
+    def setUp(self):
+        import os
+        self.os = os
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "candidate"
+        self.repo.mkdir()
+        self.remote = self.root / "origin.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(self.remote)], check=True)
+        self.git("init", "-q")
+        self.git("config", "user.name", "CI test")
+        self.git("config", "user.email", "ci@example.invalid")
+        (self.repo / "README.md").write_text("main rev 1\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "initial main")
+        self.base = self.git("rev-parse", "HEAD")
+        self.git("remote", "add", "origin", str(self.remote))
+        self.git("push", "-q", "origin", "HEAD:refs/heads/main")
+        source = (Path(__file__).resolve().parents[1]
+                  / ".github/workflows/zcloud-actions-pin-no-new-debt-20261015.yml"
+                  ).read_text(encoding="utf-8")
+        check = source.split("name: Refuse a stale main revision after the full source scan", 1)[1]
+        script = check.split("        run: |\n", 1)[1]
+        self.script = "\n".join(
+            line[10:] if line.startswith("          ") else line
+            for line in script.splitlines()
+        ) + "\n"
+
+    def git(self, *args):
+        return subprocess.run(["git", "-C", str(self.repo), *args],
+                              text=True, check=True, capture_output=True).stdout.strip()
+
+    def execute(self):
+        env = dict(self.os.environ, GITHUB_REPOSITORY="Zennay/zCloud",
+                   BASE_SHA=self.base, HEAD_SHA=self.base)
+        return subprocess.run(["bash", "-c", self.script], cwd=self.repo,
+                              env=env, text=True, capture_output=True, timeout=25)
+
+    def test_exact_current_main_remains_eligible_for_source_proof(self):
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", result.stdout)
+
+    def test_main_movement_after_checkout_denied(self):
+        (self.repo / "README.md").write_text("main rev 2\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "new canonical main")
+        self.git("push", "-q", "origin", "HEAD:refs/heads/main")
+        # The checked-out candidate stays the immutable old head.
+        self.git("reset", "--hard", self.base)
+        result = self.execute()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Canonical main advanced", result.stdout)
+        self.assertNotIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", result.stdout)
+
+    def test_missing_canonical_main_denied(self):
+        self.git("push", "-q", "origin", ":refs/heads/main")
+        result = self.execute()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("ACTION_PIN_BASE_IS_CURRENT_MAIN=1", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
