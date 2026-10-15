@@ -69,6 +69,9 @@ jobs:
           test "$current_head" = "$EXPECTED_HEAD"
           report_file="$(mktemp)"
           trap 'rm -f "$report_file"' EXIT
+          # A denied scan or stale ref must never leave a misleading green
+          # summary; print only static, redacted, non-authorizing Dutch text.
+          trap 'printf "%s\n" "### zCloud tokenrechten (broncontrole)" "**Afgewezen: broncontrole of bronidentiteit is mislukt.**" "**Geen productievrijgave: release, deployment en mutatie verboden.**" >> "$GITHUB_STEP_SUMMARY"' ERR
           # Persist only the tiny machine-readable report locally. A green
           # human summary must not be emitted while immutable refs might
           # have moved; first finish both post-scan source identity checks.
