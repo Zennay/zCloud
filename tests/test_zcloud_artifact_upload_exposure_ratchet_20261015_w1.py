@@ -55,6 +55,42 @@ class SourceTests(unittest.TestCase):
 
     def test_unrelated_safe(self): self.check("name: safe\njobs:\n  build:\n    run: echo hi", True)
 
+    def test_git_output_bound_kills_stdout_holder(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            marker = root / "orphan-wrote"
+            git = root / "git"
+            child = "import pathlib,sys,time;time.sleep(0.55);pathlib.Path(sys.argv[1]).write_text('bad')"
+            import json
+            git.write_text("#!/usr/bin/env python3\nimport subprocess,sys,time\n"
+                           + "subprocess.Popen([sys.executable,'-c',"
+                           + repr(child) + "," + repr(str(marker)) + "])\n"
+                           + "time.sleep(0.06)\nsys.stdout.write('z'*4096)\nsys.stdout.flush()\n")
+            git.chmod(0o755)
+            old = os.environ.get("PATH", "")
+            try:
+                os.environ["PATH"] = d + os.pathsep + old
+                with self.assertRaises(gate.Denied):
+                    gate.git("status", cap=128)
+            finally:
+                os.environ["PATH"] = old
+            import time
+            time.sleep(0.65)
+            self.assertFalse(marker.exists(), "orphan Git child survived bound failure")
+
+    def test_git_benign_no_kill(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            fake = root / "git"
+            fake.write_text("#!/usr/bin/env python3\nprint('ok')\n")
+            fake.chmod(0o755)
+            old = os.environ.get("PATH", "")
+            try:
+                os.environ["PATH"] = d + os.pathsep + old
+                self.assertEqual(gate.git("status", cap=8), b"ok\n")
+            finally:
+                os.environ["PATH"] = old
+
     def test_git_diff_real_and_head_guard(self):
         with tempfile.TemporaryDirectory() as d:
             def git(*args):
