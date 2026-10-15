@@ -611,5 +611,50 @@ class PermissionRatchetTests(unittest.TestCase):
         )["ok"])
 
 
+    def test_new_yaml_explicit_str_tag_permission_key_denied(self):
+        candidate = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                     "  test:\n    !!str permissions: write-all\n"
+                     "    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(candidate)["ok"])
+
+    def test_new_yaml_anchor_on_permission_key_denied(self):
+        candidate = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                     "  test:\n    &scope permissions: write-all\n"
+                     "    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(candidate)["ok"])
+
+    def test_new_complex_key_explicit_yaml_tag_permissions_denied(self):
+        candidate = ("on: push\npermissions:\n  contents: read\njobs:\n"
+                     "  test:\n    ? !!str permissions\n"
+                     "    : write-all\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(self.check_file(candidate)["ok"])
+
+    def test_tagged_jobs_mapping_cannot_inherit_new_default_job(self):
+        old = ("on: push\n!!str jobs:\n  old:\n"
+               "    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        baseline = self.commit("legacy-tagged-jobs")
+        self.put(".github/workflows/original.yml", old +
+                 "  new:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, baseline, self.commit("new-implicit-job"))["ok"])
+
+    def test_anchored_jobs_mapping_cannot_inherit_new_default_job(self):
+        old = ("on: push\n&j jobs:\n  old:\n"
+               "    runs-on: ubuntu-latest\n")
+        self.put(".github/workflows/original.yml", old)
+        baseline = self.commit("legacy-anchor-jobs")
+        self.put(".github/workflows/original.yml", old +
+                 "  new:\n    runs-on: ubuntu-latest\n")
+        self.assertFalse(check(self.root, baseline, self.commit("new-implicit-job"))["ok"])
+
+    def test_unchanged_legacy_tagged_jobs_allows_docs_edit(self):
+        self.put(".github/workflows/original.yml",
+                 "on: push\n!!str jobs:\n  old:\n"
+                 "    runs-on: ubuntu-latest\n")
+        baseline = self.commit("legacy-tagged-jobs")
+        self.put("README.md", "unrelated docs")
+        self.assertTrue(check(self.root, baseline, self.commit("docs-only"))["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
