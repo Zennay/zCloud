@@ -37,6 +37,7 @@ class FakeGitHub:
         self.duplicate_page = False
         self.truncate_files = False
         self.drift_head = False
+        self.drift_head_at_completion = False
         self.drift_pr_list = False
         self.list_pass = 0
         self.detail_reads = {}
@@ -66,7 +67,8 @@ class FakeGitHub:
                 return [] if self.truncate_files else copy.deepcopy(files)
             self.detail_reads[number] = self.detail_reads.get(number, 0) + 1
             result = copy.deepcopy(metadata)
-            if self.drift_head and self.detail_reads[number] > 1:
+            if ((self.drift_head and self.detail_reads[number] > 1)
+                    or (self.drift_head_at_completion and self.detail_reads[number] > 2)):
                 result["head"]["sha"] = "c" * 40
             return result
         raise AssertionError(path)
@@ -132,6 +134,13 @@ class ReadOnlyPRSnapshotTests(unittest.TestCase):
         api = FakeGitHub()
         api.drift_head = True
         with self.assertRaisesRegex(InvalidInventory, "pr_changed_during_snapshot"):
+            s.collect(api)
+
+    def test_pr_head_changes_after_other_pr_reads_are_denied(self):
+        api = FakeGitHub(2)
+        api.drift_head_at_completion = True
+        with self.assertRaisesRegex(InvalidInventory,
+                                    "pr_changed_before_snapshot_completed"):
             s.collect(api)
 
     def test_open_pr_list_change_during_pagination_denied(self):
