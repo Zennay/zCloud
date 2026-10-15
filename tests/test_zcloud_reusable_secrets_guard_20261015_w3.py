@@ -438,6 +438,22 @@ class WorkflowSecretInheritanceTests(unittest.TestCase):
         }):
             self.assertEqual(git("rev-parse", "HEAD", limit=41), original)
 
+    def test_ci_binds_canonical_origin_on_both_sides_of_source_tests(self):
+        workflow = (
+            Path(__file__).resolve().parents[1] /
+            ".github/workflows/zcloud-reusable-secret-inheritance-ratchet-20261015.yml"
+        ).read_text(encoding="utf-8")
+        needle = 'test "$(git remote get-url origin)" = "https://github.com/Zennay/zCloud"'
+        self.assertEqual(workflow.count(needle), 2)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', workflow)
+
+    def test_real_git_detects_remote_origin_redirection(self):
+        expected = "https://github.com/Zennay/zCloud"
+        self.git("remote", "add", "origin", expected)
+        self.assertEqual(self.git("remote", "get-url", "origin").strip(), expected)
+        self.git("remote", "set-url", "origin", "https://github.com/untrusted/fake")
+        self.assertNotEqual(self.git("remote", "get-url", "origin").strip(), expected)
+
     def test_deleted_legacy_inheritance_is_not_new_exposure(self):
         self.write(f"{ROOT}/legacy.yml", "secrets: inherit\n")
         self.base = self.commit()
