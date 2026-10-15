@@ -464,6 +464,30 @@ class RealGitTests(unittest.TestCase):
         head = self.commit("jobs:\n  audit:\n    steps:\n      - run: echo ${{ github.event.issue.title }}\n  separate:\n    steps:\n      - run: echo safe\n")
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_multiline_flow_run_edit_denied(self):
+        """Changing an expression on a continuation line must not reuse a legacy flow finding."""
+        base = self.commit("jobs:\n  old:\n    steps:\n      - {name: probe, run: 'echo\n          ${{ github.event.issue.title }}'}\n")
+        head = self.commit("jobs:\n  old:\n    steps:\n      - {name: probe, run: 'echo\n          ${{ inputs.payload }}'}\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_identical_flow_run_relocated_to_other_job_denied(self):
+        original = "jobs:\n  old:\n    steps:\n      - {name: probe, run: echo safe}\n"
+        changed = "jobs:\n  privileged:\n    steps:\n      - {name: probe, run: echo safe}\n"
+        base = self.commit(original)
+        head = self.commit(changed)
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_existing_flow_run_anchor_edit_denied(self):
+        base = self.commit("jobs:\n  x:\n    steps:\n      - {run: *cmd}\n  env:\n    CMD: &cmd safe\n")
+        head = self.commit("jobs:\n  x:\n    steps:\n      - {run: *cmd}\n  env:\n    CMD: &cmd dangerous\n")
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_unchanged_flow_workflow_is_grandfathered(self):
+        initial = "jobs:\n  x:\n    steps:\n      - {run: echo safe}\n"
+        base = self.commit(initial)
+        head = self.commit(initial)
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
