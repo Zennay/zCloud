@@ -1,0 +1,57 @@
+name: MixLab engine exact-source VPS proof
+on:
+  push:
+    branches: [proof/mixlab-engine-20261015]
+    paths: [.github/workflows/mixlab-engine-20261015.yml]
+permissions:
+  contents: read
+concurrency:
+  group: mixlab-foundation-proof
+  cancel-in-progress: false
+jobs:
+  proof:
+    if: github.repository == 'Zennay/zCloud' && github.actor == 'Zennay'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      MIXLAB_SHA: ce4a98e5a05da6ed10a30ec3c8466fee899b0808
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 183d2a7ddf65af7fa4906d800135dbf495388a1c
+          path: guard
+          persist-credentials: false
+      - name: Guard canonical host and resource admission
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = "vps-bb300bba"
+          python3 guard/scripts/zcloud_vps_runner_guard.py --json
+          python3 - <<'PY'
+          from pathlib import Path
+          available = next(int(line.split()[1]) for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'))
+          if available < 1048576:
+              raise SystemExit('MixLab deferred: less than 1 GiB available')
+          PY
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: Zennay/Mixlab
+          ref: ce4a98e5a05da6ed10a30ec3c8466fee899b0808
+          path: mixlab
+          persist-credentials: false
+      - name: Bounded synthetic engine verification
+        run: |
+          set -euo pipefail
+          cd mixlab
+          test "$(git rev-parse HEAD)" = "$MIXLAB_SHA"
+          ulimit -v 524288
+          python3 ops/prove.py "$RUNNER_TEMP/mixlab-engine-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+      - name: Preserve sanitized receipt
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mixlab-engine-proof
+          path: ${{ runner.temp }}/mixlab-engine-${{ github.run_id }}-${{ github.run_attempt }}/receipt.json
+          if-no-files-found: error
+          retention-days: 14
