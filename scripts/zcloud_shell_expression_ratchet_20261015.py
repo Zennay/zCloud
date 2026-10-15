@@ -159,8 +159,8 @@ JOB_EXECUTION_CONTROLS = frozenset({
     "if", "permissions", "runs-on", "environment", "container", "services",
     "defaults", "strategy", "concurrency", "timeout-minutes", "env",
 })
-SECTION_HEADER = re.compile(r"^([A-Za-z_][\w.-]*)\s*:")
-JOB_HEADER = re.compile(r"^ {2}([A-Za-z_][\w.-]*)\s*:")
+SECTION_HEADER = re.compile(r"""^(?:([A-Za-z_][\w.-]*)|'([^']+)'|"([^"]+)")\s*:""")
+JOB_HEADER = re.compile(r"""^ {2}(?:([A-Za-z_][\w.-]*)|'([^']+)'|"([^"]+)")\s*:""")
 
 
 def execution_sections(lines: list[str], start: int, stop: int,
@@ -175,7 +175,7 @@ def execution_sections(lines: list[str], start: int, stop: int,
         current_indent = len(line) - len(line.lstrip(" "))
         if current_indent <= indent:
             key = SECTION_HEADER.match(stripped) if current_indent == indent else None
-            enabled = bool(key and key.group(1) in keys)
+            enabled = bool(key and any(group in keys for group in key.groups() if group))
         if enabled and current_indent >= indent:
             gathered.append(stripped)
     return gathered
