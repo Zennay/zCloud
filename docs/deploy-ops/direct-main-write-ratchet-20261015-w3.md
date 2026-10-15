@@ -63,3 +63,7 @@ The same changed-source check also denies explicit GitHub Octokit `updateBranchP
 ## Unicode source integrity
 
 New/edited workflow and composite Action UTF-8 bytes containing Unicode format controls (`Cf`), bidirectional overrides/isolation characters, or U+2028/U+2029 separators are rejected because such invisible content can make reviewers see a different command from the actual source. Ordinary accents in comments (for example `résumé café`) remain allowed. Unchanged historical Git blobs still retain their explicit legacy exemption and are not claimed clean. Five additional real Git regression cases capture these boundaries.
+
+## Split Git configuration environment variables
+
+Git supports a programmatic environment configuration set with `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0`, and `GIT_CONFIG_VALUE_0`. A workflow may split an alias definition (`alias.ship` = `push`) across multiple YAML lines so that a checker looking only for a single-line `git push` misses the effective command. This checker conservatively denies any introduction of these indexed configuration keys in changed workflow/composite source, even if the specified Git configuration was benign. `GIT_TERMINAL_PROMPT` and other ordinary non-indexed Git settings remain unaffected. Five real-Git fixtures cover the denial and a benign negative control.
