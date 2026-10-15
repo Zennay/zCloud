@@ -120,6 +120,66 @@ class ActionPinRatchetTests(unittest.TestCase):
         self.assertFalse(payload["deployment_authorized"])
         self.assertFalse(payload["mutation_performed"])
 
+    def test_new_composite_action_unpinned_step_denied(self):
+        local = self.root / ".github/actions/reusable/action.yml"
+        local.parent.mkdir(parents=True)
+        local.write_text("runs:\n  using: composite\n  steps:\n"
+                         "    - uses: actions/cache@v4\n")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "new composite action")
+        result = self.evaluate()
+        self.assertEqual(result["new_unpinned"], 1)
+        self.assertEqual(result["examples"][0]["path"], ".github/actions/reusable/action.yml")
+
+    def test_pinned_composite_action_allowed(self):
+        local = self.root / ".github/actions/reusable/action.yaml"
+        local.parent.mkdir(parents=True)
+        local.write_text("runs:\n  using: composite\n  steps:\n"
+                         "    - uses: actions/cache@" + "a" * 40 + "\n")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "pin composite step")
+        self.assertEqual(self.evaluate()["new_unpinned"], 0)
+
+    def test_legacy_composite_action_debt_unchanged_allowed(self):
+        local = self.root / ".github/actions/reusable/action.yml"
+        local.parent.mkdir(parents=True)
+        local.write_text("runs:\n  using: composite\n  steps:\n"
+                         "    - uses: actions/cache@v4\n")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "legacy composite action")
+        base = self.command("rev-parse", "HEAD")
+        self.commit(self.path.read_text() + "# harmless workflow comment\n")
+        result = self.evaluate(base=base)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["base_unpinned"], 2)
+        self.assertEqual(result["head_unpinned"], 2)
+
+    def test_composite_metadata_symlink_refused(self):
+        local = self.root / ".github/actions/reusable/action.yml"
+        local.parent.mkdir(parents=True)
+        local.symlink_to("/tmp/outside-action.yml")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "symlink composite metadata")
+        with self.assertRaisesRegex(Refusal, "nonregular_composite_action_source"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_composite_action_directory_symlink_refused(self):
+        local = self.root / ".github/actions/reusable"
+        local.parent.mkdir(parents=True)
+        local.symlink_to("/tmp/outside-composite")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "symlink composite directory")
+        with self.assertRaisesRegex(Refusal, "nonregular_composite_action_source"):
+            snapshot(self.root, self.command("rev-parse", "HEAD"))
+
+    def test_unrelated_composite_file_is_not_counted_as_action(self):
+        local = self.root / ".github/actions/reusable/README.md"
+        local.parent.mkdir(parents=True)
+        local.write_text("    - uses: actions/cache@v4\n")
+        self.command("add", ".github")
+        self.command("commit", "-qm", "documentation only")
+        self.assertEqual(self.evaluate()["new_unpinned"], 0)
+
     def test_invalid_revision_refused(self):
         with self.assertRaisesRegex(Refusal, "invalid_revision"):
             workflow_tree(self.root, "main; rm -rf /")
@@ -259,6 +319,7 @@ class HostedPinRatchetTrustTests(unittest.TestCase):
     def test_hosted_read_only_pr_admission(self):
         text = self.source
         self.assertIn("pull_request:", text)
+        self.assertIn('".github/actions/**"', text)
         self.assertIn("contents: read", text)
         self.assertIn("runs-on: ubuntu-latest", text)
         self.assertIn("persist-credentials: false", text)
