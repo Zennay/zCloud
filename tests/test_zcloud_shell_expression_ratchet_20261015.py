@@ -1161,6 +1161,44 @@ class RealGitTests(unittest.TestCase):
         head = self.commit(old.replace("Original title", "Updated title"))
         self.assertEqual(0, guard.audit(base, head)["new_risks"])
 
+    def test_quoted_double_job_key_permissions_escalation_denied(self):
+        old = ("jobs:\n  \"deploy\":\n    permissions:\n      contents: read\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("contents: read", "contents: write"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_quoted_single_job_key_runner_escalation_denied(self):
+        old = ("jobs:\n  'deploy':\n    runs-on: ubuntu-latest\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("ubuntu-latest", "self-hosted"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_quoted_root_on_trigger_escalation_denied(self):
+        old = ("'on': push\njobs:\n  deploy:\n"
+               "    steps:\n      - run: echo ${{ github.event.issue.body }}\n")
+        base = self.commit(old)
+        head = self.commit(old.replace("'on': push", "'on': pull_request_target"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_quoted_root_permissions_escalation_denied(self):
+        old = ('"permissions": read-all\njobs:\n  deploy:\n'
+               '    steps:\n      - run: echo ${{ inputs.payload }}\n')
+        base = self.commit(old)
+        head = self.commit(old.replace("permissions\": read-all", "permissions\": write-all"))
+        self.assertGreaterEqual(guard.audit(base, head)["new_risks"], 1)
+
+    def test_unrelated_quoted_job_control_change_preserves_legacy(self):
+        old = ("jobs:\n  'danger':\n    runs-on: ubuntu-latest\n"
+               "    steps:\n      - run: echo ${{ inputs.payload }}\n"
+               "  \"other\":\n    permissions: read-all\n"
+               "    steps:\n      - run: echo safe\n")
+        base = self.commit(old)
+        head = self.commit(old.replace('  "other":\n    permissions: read-all',
+                                      '  "other":\n    permissions: write-all'))
+        self.assertEqual(0, guard.audit(base, head)["new_risks"])
+
     def test_boolean_all_output_authority_flags_false(self):
         base = self.commit("steps:\n  - run: echo x\n")
         head = self.commit("steps:\n  - run: echo y\n")
