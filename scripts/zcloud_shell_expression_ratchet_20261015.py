@@ -314,11 +314,11 @@ def audit(base: str, head: str) -> dict:
         raise EvidenceError("base_not_head_ancestor")
     before = snapshot(base)
     after = snapshot(head)
-    newly = {}
+    newly: dict[str, Counter[str]] = {}
     for path, risks in after.items():
         diff = risks - before.get(path, Counter())
         if diff:
-            newly[path] = sum(diff.values())
+            newly[path] = diff
     return {
         "schema": "zcloud-shell-expression-ratchet-v1",
         "base_sha": base,
@@ -336,7 +336,8 @@ def audit(base: str, head: str) -> dict:
             {"path": path, "risk_count": sum(risks.values())}
             for path, risks in sorted(after.items()) if risks
         ],
-        "new_risks": sum(newly.values()),
+        "new_risks": sum(sum(risks.values()) for risks in newly.values()),
+        "new_risk_kinds": risk_kind_counts(newly),
         "affected_workflows": sorted(newly),
         "inventory_complete": True,
         "release_authorized": False,
