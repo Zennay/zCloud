@@ -18,6 +18,15 @@ ROOT = ".github/workflows/"
 MAX_BYTES = 131072
 HEX_SHA = re.compile(r"^[0-9a-f]{40}$")
 FILENAME = re.compile(r"^[A-Za-z0-9._-]+\.ya?ml$")
+# A runner with a "ubuntu-N" looking label is not necessarily GitHub-hosted.
+# Keep the exemption to known exact GitHub-hosted image labels; unknown labels
+# are conservatively considered able to select a private runner.
+HOSTED_LABELS = frozenset({
+    "ubuntu-latest", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-24.04-arm",
+    "windows-latest", "windows-2022", "windows-2025",
+    "macos-latest", "macos-13", "macos-14", "macos-15",
+    "macos-15-intel", "macos-26", "macos-26-intel",
+})
 JOB = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$", re.M)
 TRUST = (
     r"github\.event_name\s*==\s*['\"]workflow_dispatch['\"]",
@@ -178,10 +187,8 @@ def risky_manual_jobs(path: str, body: bytes) -> set[tuple[str, str]]:
         # Dynamic runner selection and reusable jobs require independent proof.
         # A custom label such as "vps" or "ftmo-research" can select an
         # actual self-hosted runner without spelling "self-hosted".
-        hosted = bool(runner and re.fullmatch(
-            r"(?:ubuntu|windows|macos)-(?:latest|[0-9][A-Za-z0-9._-]*)",
-            selection.strip().strip("'\\\""),
-        ))
+        hosted = bool(runner and
+                      selection.split(" #", 1)[0].strip().strip("'\\\"") in HOSTED_LABELS)
         potentially_vps = bool(reuse) or bool(runner and not hosted)
         if not potentially_vps:
             continue
