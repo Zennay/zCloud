@@ -47,13 +47,21 @@ outcomes retain \`release_authorized=false\`,
 2. The \`zcloud/vps-production\` commit statuses are queried for **that exact
    SHA**, with bounded full page traversal (max 5 × 100 statuses);
    newest matching timestamp/ID wins. A historic success cannot override a
-   newer failure, and a missing status is not success.
+   newer failure, and a missing status is not success. IDs must be unique,
+   timestamps real and not future-dated. A success older than 15 minutes is
+   *historical* and emits a freshness warning; it is never runtime health.
 3. The first 100 most recently returned main deploy runs from
    \`zcloud-vps-deploy.yml\` are inspected. The latest matching run
    for **the observed SHA** is identified by GitHub run ID and attempt.
    Up to 100 returned jobs must be fully accounted for; self-hosted
    \`zcloud,vps\` jobs are classified as canonical-assigned, unexpected-runner,
-   queued-unassigned or unverified. Each matching run's GitHub `updated_at`
+   queued-unassigned or unverified. Each GitHub job ID must be unique, and every
+   job must belong to the selected *exact run, attempt and SHA*. A job that
+   was assigned yet failed is reported separately from the runner assignment;
+   an in-progress job never counts as completed success. After inspecting
+   jobs the original run is fetched again, and any changed run, attempt,
+   conclusion, SHA, event or updated timestamp refuses the entire snapshot.
+   Each matching run's GitHub `updated_at`
    is validated; observations over 15 minutes old receive a stale-evidence
    warning, future-dated or malformed timestamps are rejected. Even fresh
    historical assignment is NOT a live listener healthcheck. A queued job with
@@ -81,7 +89,9 @@ python3 -m unittest -v \
 
 Includes at least: main movement, stale production success, missing status,
 queue without runner, unexpected runner, multiple contradictory route
-signals, truncated jobs, bad provenance, bool masquerading as integer,
+signals, truncated jobs, mismatched job run/attempt/SHA, failed vs assigned,
+post-read reruns/conclusion drift, stale/future/duplicate production status,
+bad provenance, bool masquerading as integer,
 duplicate JSON keys, NaN and XSS/HTML escaping. Production writer files
 and other workers' PR-owned paths are deliberately untouched.
 
