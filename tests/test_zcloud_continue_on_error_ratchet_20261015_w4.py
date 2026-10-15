@@ -147,6 +147,29 @@ class ContinueOnErrorGitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsafe_workflow_mode"):
             gate.scan(self.root, self.base, head)
 
+    def test_replacing_workflow_directory_with_link_is_denied(self):
+        self.path.unlink()
+        (self.root / ".github/workflows").rmdir()
+        (self.root / ".github/workflows").symlink_to("../")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "replace-workflow-root")
+        head = self._git("rev-parse", "HEAD")
+        with self.assertRaisesRegex(ValueError, "unsafe_workflow_root"):
+            gate.changed_workflows(self.root, self.base, head)
+
+    def test_oversized_workflow_blob_denied_before_reading(self):
+        head = self._commit(SAFE + ("#" * (gate.MAX_WORKFLOW + 1)))
+        with self.assertRaisesRegex(ValueError, "workflow_blob_too_large"):
+            gate.scan(self.root, self.base, head)
+
+    def test_invalid_utf8_workflow_is_denied(self):
+        self.path.write_bytes(b"name: broken\xff\n")
+        self._git("add", "-A")
+        self._git("commit", "-qm", "invalid-bytes")
+        head = self._git("rev-parse", "HEAD")
+        with self.assertRaises(UnicodeDecodeError):
+            gate.scan(self.root, self.base, head)
+
     def test_unicode_escaped_initial_key_denied(self):
         self.assertTrue(self._reasons(SAFE + '\n"\\u0063ontinue-on-error": true\n'))
         self.assertTrue(gate.check_workflow('{"\\u0063ontinue-on-error": true}'))
