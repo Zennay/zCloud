@@ -350,8 +350,15 @@ def inspect(state: Path) -> dict:
         raise Denied("missing_snapshot_files")
     # A manifest can truthfully describe an empty managed directory. Check the
     # direct children as well, not just the nonempty file hash list.
-    with os.scandir(_open_directory_nofollow(files)) as root_entries:
-        roots = tuple((entry.name, entry.stat(follow_symlinks=False)) for entry in root_entries)
+    root_fd = _open_directory_nofollow(files)
+    try:
+        with os.scandir(root_fd) as root_entries:
+            roots = tuple(
+                (entry.name, entry.stat(follow_symlinks=False))
+                for entry in root_entries
+            )
+    finally:
+        os.close(root_fd)
     actual_roots = {name for name, _ in roots}
     if actual_roots != declared_roots:
         raise Denied("manifest_inventory_mismatch")
