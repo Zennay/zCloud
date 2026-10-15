@@ -220,9 +220,11 @@ class RealGitCheckoutRatchet(unittest.TestCase):
             launch.assert_not_called()
 
     def test_elapsed_global_scan_deadline_denied_before_git(self):
+        self.write(f"{WORK}/added.yml", "name: extra\\n")
+        head = self.commit()
         with mock.patch.object(guard, "MAX_SCAN_SECONDS", 0):
             with self.assertRaisesRegex(Denied, "scan_deadline_exceeded"):
-                inspect(self.base, self.commit())
+                inspect(self.base, head)
 
     def test_oversized_workflow_content_denied(self):
         self.write(f"{WORK}/added.yml", "x" * (guard.MAX_FILE_BYTES + 1))
