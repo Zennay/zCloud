@@ -314,12 +314,30 @@ def main(argv=None):
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--expect-serialized", action="store_true",
                         help="Exit nonzero when any source writer lacks the shared lock")
+    parser.add_argument("--expect-source-snapshot-sha256",
+                        metavar="64_HEX_CHARACTERS",
+                        help="Compare the complete seven-file source snapshot with an "
+                             "independently supplied digest. This does not prove origin.")
     args = parser.parse_args(argv)
+    expected = args.expect_source_snapshot_sha256
+    if expected is not None and re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+        parser.error("--expect-source-snapshot-sha256 needs exactly 64 lowercase hex characters")
     report = inventory(args.root)
+    if expected is not None:
+        report["source_snapshot_matches_expected"] = (
+            report["source_snapshot_complete"] and
+            report["source_snapshot_sha256"] == expected
+        )
     print(json.dumps(report, sort_keys=True, separators=(",", ":")))
-    # Ordinary read-only inventory succeeds even when debt is open. A later,
-    # deliberately enabled enforcement gate must opt in to strict failure.
-    return 1 if args.expect_serialized and not report["source_lock_complete"] else 0
+    # Default observation exits 0 even if there is known open debt. Exit 2
+    # for a snapshot mismatch/incomplete input, 1 for a missing source lock,
+    # and 0 only when the explicitly selected checks succeed. None of these
+    # exit codes grant deployment or mutation authority.
+    if expected is not None and not report["source_snapshot_matches_expected"]:
+        return 2
+    if args.expect_serialized and not report["source_lock_complete"]:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
