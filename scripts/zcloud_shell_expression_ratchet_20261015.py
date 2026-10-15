@@ -154,6 +154,66 @@ def step_scope(lines: list[str], run_row: int, run_indent: int) -> dict | None:
     return {"ordinal": ordinal, "body": lines[start:stop]}
 
 
+ROOT_EXECUTION_CONTROLS = frozenset({"on", "permissions", "defaults", "env", "concurrency"})
+JOB_EXECUTION_CONTROLS = frozenset({
+    "if", "permissions", "runs-on", "environment", "container", "services",
+    "defaults", "strategy", "concurrency", "timeout-minutes", "env",
+})
+SECTION_HEADER = re.compile(r"^([A-Za-z_][\\w.-]*)\\s*:")
+JOB_HEADER = re.compile(r"^ {2}([A-Za-z_][\\w.-]*)\\s*:")
+
+
+def execution_sections(lines: list[str], start: int, stop: int,
+                       indent: int, keys: frozenset[str]) -> list[str]:
+    """Collect only non-comment source lines in selected YAML key sections."""
+    gathered: list[str] = []
+    enabled = False
+    for line in lines[start:stop]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        current_indent = len(line) - len(line.lstrip(" "))
+        if current_indent <= indent:
+            key = SECTION_HEADER.match(stripped) if current_indent == indent else None
+            enabled = bool(key and key.group(1) in keys)
+        if enabled and current_indent >= indent:
+            gathered.append(stripped)
+    return gathered
+
+
+def execution_control_context(lines: list[str], run_row: int) -> dict:
+    """Track high-impact source controls independently of step-shell bytes.
+
+    A legacy shell expression cannot quietly inherit broader workflow triggers
+    or more powerful job permissions. Unrelated jobs and display titles do not
+    invalidate its no-new-debt baseline. This is a YAML indentation heuristic,
+    not evidence that a GitHub Actions job has actually run.
+    """
+    global_controls = execution_sections(
+        lines, 0, len(lines), 0, ROOT_EXECUTION_CONTROLS
+    )
+    jobs_root = next(
+        (i for i in range(run_row - 1, -1, -1) if re.match(r"^jobs\\s*:", lines[i])),
+        None,
+    )
+    if jobs_root is None:
+        return {"global": global_controls, "job": []}
+    job_heads = [(i, JOB_HEADER.match(lines[i]))
+                 for i in range(jobs_root + 1, run_row)]
+    job_heads = [(i, m) for i, m in job_heads if m]
+    if not job_heads:
+        return {"global": global_controls, "job": []}
+    job_start, _ = job_heads[-1]
+    job_stop = next(
+        (i for i in range(job_start + 1, len(lines)) if JOB_HEADER.match(lines[i])),
+        len(lines),
+    )
+    job_controls = execution_sections(
+        lines, job_start + 1, job_stop, 4, JOB_EXECUTION_CONTROLS
+    )
+    return {"global": global_controls, "job": job_controls}
+
+
 def run_shell_scalars(source: str) -> list[tuple[str, str]]:
     """Extract bounded run scalars with best-effort YAML ancestor identities.
 
@@ -185,7 +245,8 @@ def run_shell_scalars(source: str) -> list[tuple[str, str]]:
         indent = len(match.group(1))
         payload = [match.group(2)]
         context = json.dumps({"parents": [key for _, key in ancestors],
-                              "step": step_scope(lines, i, indent)},
+                              "step": step_scope(lines, i, indent),
+                              "execution": execution_control_context(lines, i)},
                              ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         context_digest = hashlib.sha256(context.encode("utf-8")).hexdigest()
         i += 1
