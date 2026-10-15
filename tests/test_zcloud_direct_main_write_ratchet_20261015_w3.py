@@ -498,6 +498,31 @@ class RatchetTests(unittest.TestCase):
         code, receipt = self.change("git -c 'alias.demo=echo send-pack' status")
         self.assertEqual(code, 0, receipt)
 
+    def test_rest_git_refs_collection_create_denied(self):
+        code, out = self.change("curl -X POST https://api.github.com/repos/org/repo/git/refs")
+        self.assertEqual(code, 1, out)
+        self.assertIn("git_refs_api", out["findings"][0]["reasons"])
+
+    def test_rest_git_tags_ref_mutation_denied(self):
+        code, out = self.change("curl -X PATCH https://api.github.com/repos/org/repo/git/refs/tags/v1")
+        self.assertEqual(code, 1, out)
+        self.assertIn("git_refs_api", out["findings"][0]["reasons"])
+
+    def test_rest_git_notes_ref_mutation_denied(self):
+        self.assertEqual(self.change("curl -X DELETE https://api.github.com/repos/org/repo/git/refs/notes/test")[0], 1)
+
+    def test_rest_git_refs_url_encoded_slash_denied(self):
+        code, out = self.change("curl -X POST https://api.github.com/repos/org/repo/git/refs%2fheads")
+        self.assertEqual(code, 1, out)
+
+    def test_rest_git_refs_unicode_encoded_slash_denied(self):
+        code, out = self.change(r'curl -X POST "https://api.github.com/repos/org/repo/git/refs\u002fheads"')
+        self.assertEqual(code, 1, out)
+
+    def test_rest_git_reflog_lookup_is_not_writer_denied(self):
+        code, out = self.change("curl https://api.github.com/repos/org/repo/git/reflogs")
+        self.assertEqual(code, 0, out)
+
     def test_no_raw_source_in_receipt(self):
         marker = "SECRET_TOKEN_SHOULD_NOT_BE_EMITTED"
         _, result = self.change("git push origin main # " + marker)
