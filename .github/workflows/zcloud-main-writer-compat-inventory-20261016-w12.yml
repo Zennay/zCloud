@@ -111,6 +111,28 @@ jobs:
           print("OWNER_REVIEW_PENDING=" + str(status["pending_owner_review_count"]))
           print("SAFE_TO_ENABLE_BRANCH_PROTECTION=false")
           PY
+          # Verify owner edits can be read directly from the real exact-blob CSV,
+          # without manufacturing approvals or manually rewriting JSON.
+          python3 scripts/zcloud_main_writer_review_admission_20261016_w12.py \
+            --inventory "$RUNNER_TEMP/main-writer-receipt.json" \
+            --reviews-csv "$RUNNER_TEMP/main-writer-review-queue.csv" \
+            --expected-main-sha "$SOURCE_MAIN" --format json > "$RUNNER_TEMP/csv-review-summary.json"
+          python3 - "$RUNNER_TEMP/csv-review-summary.json" "$RUNNER_TEMP/writer-review-summary.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              csv_review = json.load(handle)
+          with open(sys.argv[2], encoding="utf-8") as handle:
+              json_review = json.load(handle)
+          assert csv_review == json_review
+          assert csv_review["review_claim_count"] == 0
+          assert csv_review["pending_owner_review_count"] == csv_review["candidate_count"]
+          assert csv_review["review_claims_independently_verified"] is False
+          assert csv_review["safe_to_enable_branch_protection"] is False
+          assert csv_review["production_mutation_authorized"] is False
+          print("CSV_REVIEW_ADMISSION_PENDING=" + str(csv_review["pending_owner_review_count"]))
+          print("CSV_REVIEW_PRODUCTION_AUTHORIZED=false")
+          PY
       - name: Reconfirm current main and PR head unchanged after inventory
         env:
           EVENT_BASE: ${{ github.event.pull_request.base.sha }}
