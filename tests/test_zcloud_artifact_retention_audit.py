@@ -706,6 +706,70 @@ jobs:
                     audit.scan_repository(root, max_days=30)
             self.assertTrue(swapped)
 
+    def test_repository_rejects_parent_directory_symlink_swap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            (folder / "proof.yml").write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n",
+                encoding="utf-8",
+            )
+            outside = root / "outside"
+            (outside / "workflows").mkdir(parents=True)
+            (outside / "workflows" / "proof.yml").write_text(
+                "private-content\n", encoding="utf-8"
+            )
+            original_open = audit.os.open
+            swapped = False
+
+            def swap_directory(name, flags, *args, **kwargs):
+                nonlocal swapped
+                if name == ".github" and not swapped and "dir_fd" in kwargs:
+                    swapped = True
+                    (root / ".github").rename(root / "saved-github")
+                    (root / ".github").symlink_to(outside, target_is_directory=True)
+                return original_open(name, flags, *args, **kwargs)
+
+            with patch.object(audit.os, "open", side_effect=swap_directory):
+                with self.assertRaises(OSError):
+                    audit.scan_repository(root, max_days=30)
+            self.assertTrue(swapped)
+            self.assertEqual(
+                "private-content\n",
+                (outside / "workflows" / "proof.yml").read_text(encoding="utf-8"),
+            )
+
+    def test_repository_rejects_in_place_workflow_mutation_during_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            path = folder / "proof.yml"
+            path.write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n",
+                encoding="utf-8",
+            )
+            original_stat = audit.os.fstat
+            observed = 0
+
+            def change_during_read(fd):
+                nonlocal observed
+                observed += 1
+                if observed == 2:
+                    path.write_text("altered-content-longer-than-before\n",
+                                    encoding="utf-8")
+                return original_stat(fd)
+
+            with patch.object(audit.os, "fstat", side_effect=change_during_read):
+                with self.assertRaisesRegex(
+                    RuntimeError, "workflow changed during audit"
+                ):
+                    audit.scan_repository(root, max_days=30)
+            self.assertGreaterEqual(observed, 2)
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
