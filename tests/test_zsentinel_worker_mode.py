@@ -54,6 +54,9 @@ class ZSentinelModeTests(unittest.TestCase):
         self.assertIn("worker_role_ids=role_ids", repair)
         self.assertIn("layout_changed", repair)
         self.assertIn('"project.layout"', repair)
+        for source_path in ("scripts/zcloud_recovery.py", "scripts/zcloud_prechange_guard.py"):
+            with self.subTest(source=source_path):
+                self.assertIn('"worker-modes.json",', (ROOT / source_path).read_text())
 
     def test_scheduler_has_live_worker_contract_without_privileged_bypass(self):
         contracts = json.loads((ROOT / "project-contracts.json").read_text())["projects"]
