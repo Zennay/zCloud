@@ -89,6 +89,16 @@ def _scalar(value):
     return name
 
 
+
+def _ambiguous_escaped_root_key(line, indent):
+    """Reject escaped YAML mapping keys that could decode to on or name."""
+    stripped = line[indent:].lstrip()
+    if not stripped.startswith('"'):
+        return False
+    key_part = stripped.split(":", 1)[0]
+    return "\\" in key_part
+
+
 def workflow_name(path, source):
     try:
         source = source.decode("utf-8", "strict").removeprefix("\ufeff")
@@ -104,6 +114,9 @@ def workflow_name(path, source):
     indent = min(len(line) - len(line.lstrip(" ")) for line in significant)
     if indent > 8 or significant[0].lstrip().startswith(("{", "[")):
         raise InvalidInventory("unsupported_workflow_root")
+    if any(_ambiguous_escaped_root_key(line, indent) for line in significant
+           if len(line) - len(line.lstrip(" ")) == indent):
+        raise InvalidInventory("ambiguous_escaped_root_key")
     pattern = r"""(?m)^""" + " " * indent + r"""(?:name|'name'|"name")[ \t]*:(.*)$"""
     matches = re.findall(pattern, source)
     if len(matches) > 1:
@@ -217,6 +230,8 @@ def workflow_run_targets(source):
         if len(line) - len(line.lstrip(" ")) != root:
             continue
         root_key = line[root:].lstrip()
+        if _ambiguous_escaped_root_key(line, root):
+            return None
         # YAML mapping merges / explicit complex keys can inject an on field.
         # We cannot establish that workflow_run is absent without expansion.
         if root_key.startswith(("<<:", "? ", "?[", "?{")):
