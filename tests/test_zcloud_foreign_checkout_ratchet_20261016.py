@@ -451,6 +451,71 @@ class CheckoutRepoGuardTest(unittest.TestCase):
                     seen.add(key)
             self.assertTrue('run' in seen or 'uses' in seen, first)
 
+    def test_submodules_true_exposes_foreign_origin(self):
+        text = workflow().replace(
+            '      - run: echo safe', '        with:\n          submodules: true\n      - run: echo safe')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_submodules_recursive_exposes_foreign_origin(self):
+        text = workflow().replace(
+            '      - run: echo safe', '        with:\n          submodules: recursive\n      - run: echo safe')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_submodules_quoted_true_exposes_foreign_origin(self):
+        for value in ('"true"', "'true'", 'TRUE'):
+            with self.subTest(value=value):
+                text = workflow().replace('      - run: echo safe',
+                    '        with:\n          submodules: ' + value + '\n      - run: echo safe')
+                self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_submodules_dynamic_expression_denied(self):
+        text = workflow().replace('      - run: echo safe',
+                '        with:\n          submodules: ${{ inputs.submodules }}\n      - run: echo safe')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_submodules_explicit_false_allowed(self):
+        for value in ('false', '"false"', "'FALSE'", 'FALSE'):
+            with self.subTest(value=value):
+                text = workflow().replace('      - run: echo safe',
+                    '        with:\n          submodules: ' + value + '\n      - run: echo safe')
+                self.assertFalse(guard.scan(text))
+
+    def test_submodules_inline_flow_false_is_safe(self):
+        text = workflow().replace('      - run: echo safe',
+            '        with: {submodules: false, persist-credentials: false}\n      - run: echo safe')
+        self.assertFalse(guard.scan(text))
+
+    def test_submodules_inline_flow_recursive_rejected(self):
+        text = workflow().replace('      - run: echo safe',
+            '        with: {submodules: recursive, fetch-depth: 0}\n      - run: echo safe')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_submodules_before_uses_rejected(self):
+        text = ('steps:\n  - with:\n      submodules: true\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_submodules_monotonic_legacy_and_growth(self):
+        old = workflow().replace('      - run: echo safe',
+            '        with:\n          submodules: true\n      - run: echo safe')
+        self.assertEqual(guard.compare({P: old}, {P: old}), [])
+        new = old.replace('      - run: echo safe',
+            '      - uses: actions/checkout@v4\n        with:\n          submodules: recursive\n      - run: echo safe')
+        changed = guard.compare({P: old}, {P: new})
+        self.assertIn('checkout-submodules-enabled-or-dynamic', changed[0]['reason'])
+        self.assertEqual(changed[0]['new_count'], 1)
+
+    def test_submodules_of_other_action_are_not_checkout(self):
+        text = workflow() + ('      - uses: other/actions@v4\n'
+                '        with:\n          submodules: true\n')
+        self.assertFalse(guard.scan(text))
+
+    def test_submodules_default_without_override_remains_safe(self):
+        self.assertFalse(guard.scan(workflow()))
+
+    def test_submodules_in_full_comment_is_ignored(self):
+        self.assertFalse(guard.scan(workflow() + '# submodules: true\n'))
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
