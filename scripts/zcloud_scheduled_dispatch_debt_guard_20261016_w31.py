@@ -20,9 +20,10 @@ from pathlib import Path
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
 ON = re.compile(r"^(?:on|'on'|\"on\")\s*:(.*)$")
-SCHEDULE = re.compile(r"(?i)(?:^|[\s,{])['\"]?schedule['\"]?\s*(?:[:,}\]]|$)")
+SCHEDULE = re.compile(r"(?i)(?:^|[\s,{\[])['\"]?schedule['\"]?\s*(?:[:,}\]]|$)")
 DISPATCH = re.compile(
-    r"(?i)\bgh\s+workflow\s+run\b"
+    r"(?i)\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+workflow"
+    r"(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+run\b"
     # A dynamic workflow ID can be passed as a shell/environment variable.
     r"|/actions/workflows/[^\s'\"\n]{1,256}/dispatches\b"
     # POST repos/owner/repo/dispatches invokes repository_dispatch.
