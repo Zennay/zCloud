@@ -131,6 +131,26 @@ class BacklogBriefTests(TestCase):
         self.assertNotIn("<script>", content)
         self.assertNotIn("\nSAFE |", content)
 
+    def test_untrusted_pr_and_issue_titles_cannot_format_fake_status(self):
+        spoof = "**accepted** ![approval](https://evil.example/ok) | ~strike~"
+        reader = CombinedReader(
+            {1: [pr(7, title=spoof)]},
+            {1: [issue(7, is_pr=True), issue(1, title=spoof)]})
+        output = brief.render(brief.collect(reader, NOW, include_issues=True))
+        self.assertIn(r"\*\*accepted\*\*", output)
+        self.assertIn(r"\!\[approval\]\(https://evil\.example/ok\)", output)
+        self.assertIn(r"\~strike\~", output)
+        self.assertNotIn("![approval](", output)
+        self.assertNotIn("**accepted**", output)
+        self.assertEqual("\\" + chr(96), brief._safe(chr(96)))
+
+    def test_safe_title_never_truncates_into_dangling_escape(self):
+        value = "a" * 159 + "|" + "garbage" * 40
+        escaped = brief._safe(value)
+        self.assertTrue(escaped.endswith(r"\|"))
+        self.assertNotIn("garbage", escaped)
+        self.assertEqual(160, len(escaped.replace(r"\|", "|")))
+
     def test_missing_authorization_disallowed_even_with_valid_prs(self):
         report = brief.collect(Reader({1: [pr(1)]}), NOW)
         report["merge_authorized"] = True
