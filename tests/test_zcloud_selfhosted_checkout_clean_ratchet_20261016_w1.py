@@ -554,6 +554,41 @@ class ImmutableGitTreeTests(unittest.TestCase):
                 self.scan()
 
 
+    def test_real_git_stream_caps_large_blob_without_buffering_all_output(self):
+        import os
+        self.workflow("large-output.yml", sample() + "#" +
+                      "x" * (guard.MAX_GIT_OUTPUT + 8192))
+        self.commit("create intentionally oversized source object")
+        oid = self.git("rev-parse", "HEAD:.github/workflows/large-output.yml")
+        cwd = Path.cwd()
+        try:
+            os.chdir(self.work)
+            with self.assertRaisesRegex(guard.Denied, "git_output_size_cap"):
+                guard.git("cat-file", "blob", oid)
+        finally:
+            os.chdir(cwd)
+
+    def test_real_git_stream_accepts_bounded_git_metadata(self):
+        import os
+        cwd = Path.cwd()
+        try:
+            os.chdir(self.work)
+            self.assertEqual(guard.git("rev-parse", "HEAD").decode().strip(),
+                             self.rev())
+        finally:
+            os.chdir(cwd)
+
+    def test_real_git_stream_denies_invalid_git_command(self):
+        import os
+        cwd = Path.cwd()
+        try:
+            os.chdir(self.work)
+            with self.assertRaisesRegex(guard.Denied, "git_source_unavailable"):
+                guard.git("cat-file", "blob", "0000000000000000000000000000000000000000")
+        finally:
+            os.chdir(cwd)
+
+
 class HostedPolicyWiringTests(unittest.TestCase):
     """Prevent an otherwise green checker from being skipped by PR routing."""
 
