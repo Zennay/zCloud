@@ -288,6 +288,56 @@ class CheckoutCleanTests(unittest.TestCase):
 
 
 
+    def test_quoted_job_id_can_not_hide_dirty_checkout(self):
+        source = sample("false").replace("  inspect:", '  "inspect":')
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_single_quoted_job_id_can_not_hide_dirty_checkout(self):
+        source = sample("false").replace("  inspect:", "  'inspect':")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_quoted_jobs_root_detected(self):
+        source = sample("false").replace("jobs:", '"jobs":')
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_aliased_jobs_map_refused(self):
+        source = sample("true").replace("jobs:", "jobs: *jobs_anchor")
+        self.assertTrue(any("opaque-jobs-map" in r[-1] for r in self.find(source)))
+
+    def test_flow_jobs_map_refused(self):
+        source = sample("true").replace("jobs:", "jobs: {inspect: {runs-on: self-hosted}}")
+        self.assertTrue(any("opaque-jobs-map" in r[-1] for r in self.find(source)))
+
+    def test_duplicate_jobs_map_refused(self):
+        source = sample("true") + "\njobs:\n  extra:\n    runs-on: ubuntu-latest\n"
+        self.assertTrue(any("missing-or-duplicated-jobs-map" in r[-1]
+                            for r in self.find(source)))
+
+    def test_missing_jobs_map_refused(self):
+        source = sample("true").replace("jobs:\n", "")
+        self.assertTrue(any("missing-or-duplicated-jobs-map" in r[-1]
+                            for r in self.find(source)))
+
+    def test_non_job_two_space_map_cannot_be_misread_as_job(self):
+        source = """name: test
+on: workflow_dispatch
+env:
+  false_job:
+    runs-on: [self-hosted, zcloud, vps]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+jobs:
+  real:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+"""
+        self.assertEqual(self.find(source), [])
+
+
+
 class ImmutableGitTreeTests(unittest.TestCase):
     """Exercise the complete scanner with actual local Git objects and remote main."""
 
