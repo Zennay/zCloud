@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -40,16 +41,29 @@ def required_time(data: dict[str, Any], key: str, now: datetime, where: str) -> 
     return dt
 
 
-def incident_id(project: str, kind: str, sha: str = "") -> str:
-    token = f"{project}|{kind}|{sha}".encode("utf-8")
-    return hashlib.sha256(token).hexdigest()[:24]
+def incident_id(project: str, kind: str, sha: str = "", identity: str = "") -> str:
+    token = f"{project}|{kind}|{sha}" + (f"|{identity}" if identity else "")
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:24]
+
+
+def github_job_identity(github: dict[str, Any], project_id: str) -> str:
+    """Separate incidents on distinct GitHub runs/jobs without exposing their raw evidence."""
+    parts = []
+    for key in ("run_id", "job_id"):
+        value = github.get(key)
+        if value is None:
+            continue
+        if type(value) is not int or not 1 <= value <= (2**63 - 1):
+            raise ValueError(f"{project_id}.github.{key}: positive integer ID required")
+        parts.append(f"{key}:{value}")
+    return "|".join(parts)
 
 
 def verdict(project: str, state: str, reason: str, action: str,
-            kind: str = "", sha: str = "") -> dict[str, str]:
+            kind: str = "", sha: str = "", identity: str = "") -> dict[str, str]:
     item = {"project_id": project, "state": state, "reason": reason, "next_action": action}
     if kind:
-        item["incident_id"] = incident_id(project, kind, sha)
+        item["incident_id"] = incident_id(project, kind, sha, identity)
     return item
 
 
@@ -57,7 +71,7 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
     if not isinstance(project, dict):
         raise ValueError("projects[] must contain objects")
     pid = project.get("id")
-    if not isinstance(pid, str) or not pid or not pid.replace("-", "").replace("_", "").isalnum() or len(pid) > 64:
+    if not isinstance(pid, str) or len(pid) > 64 or not re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", pid):
         raise ValueError("project id must be a bounded slug")
     notion = project.get("notion", {})
     github = project.get("github", {})
@@ -93,22 +107,25 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
         if sha and (not isinstance(sha, str) or len(sha) != 40
                     or any(ch not in "0123456789abcdef" for ch in sha)):
             raise ValueError(f"{pid}.github.head_sha: canonical lowercase full SHA required")
+        identity = github_job_identity(github, pid)
         if status in {"queued", "waiting", "pending"}:
             queued = required_time(github, "queued_at", now, pid + ".github")
             if github.get("runner_assigned") is False and now - queued >= timedelta(minutes=30):
                 return verdict(pid, "stalled", "github_job_unassigned",
                                "Check exact labels, runner group/repo access and listener from an independent route. Do not restart the missing runner from its own queued job.",
-                               "github-unassigned", sha)
+                               "github-unassigned", sha, identity)
             return verdict(pid, "in_progress", "github_queue_not_yet_actionable",
                            "Continue observing; queue delay alone does not prove a broken runner.")
         if status in COMPLETED:
             conclusion = github.get("conclusion")
             if conclusion not in RESULTS:
                 raise ValueError(f"{pid}.github.conclusion: explicit conclusion required")
+            if status in {"success", "failure", "cancelled"} and status != conclusion:
+                raise ValueError(f"{pid}.github.conclusion: contradictory terminal status")
             if conclusion in {"failure", "timed_out", "action_required"}:
                 return verdict(pid, "stalled", "github_workflow_failed",
                                "Inspect the exact-head failed job log; reproduce and fix an independently owned scoped defect, then verify fresh CI.",
-                               "workflow-failed", sha)
+                               "workflow-failed", sha, identity)
             if conclusion == "cancelled":
                 return verdict(pid, "unknown", "github_job_cancelled",
                                "Resolve cancellation reason and owner before retrying.")
@@ -141,7 +158,7 @@ def diagnose(snapshot: dict[str, Any], now: datetime | None = None) -> dict[str,
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     now = now.astimezone(UTC)
-    if snapshot.get("schema_version") != 1:
+    if type(snapshot.get("schema_version")) is not int or snapshot["schema_version"] != 1:
         raise ValueError("schema_version must be 1")
     recorded = required_time(snapshot, "observed_at", now, "snapshot")
     if now - recorded > timedelta(minutes=30):
@@ -150,6 +167,8 @@ def diagnose(snapshot: dict[str, Any], now: datetime | None = None) -> dict[str,
     if not isinstance(projects, list) or not 1 <= len(projects) <= MAX_PROJECTS:
         raise ValueError("projects must be a nonempty bounded array")
     ids = [project.get("id") if isinstance(project, dict) else None for project in projects]
+    if any(not isinstance(pid, str) for pid in ids):
+        raise ValueError("invalid project identifiers: bounded string slug required")
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate project identifiers are not allowed")
     reports = [classify(project, now) for project in projects]
