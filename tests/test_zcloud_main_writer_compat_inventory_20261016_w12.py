@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -184,6 +185,34 @@ class MainWriterInventoryTests(unittest.TestCase):
         self.commit()
         with self.assertRaisesRegex(audit.InventoryError, "missing_workflow_tree"):
             audit.inventory(self.repo, self.rev())
+
+    def test_git_large_output_is_denied_before_capture_exceeds_budget(self):
+        shim_dir = self.repo / "shim-git"
+        shim_dir.mkdir()
+        fake = shim_dir / "git"
+        fake.write_text("#!/bin/sh\nhead -c 10485760 /dev/zero\n", encoding="utf-8")
+        fake.chmod(0o755)
+        # This fake Git emits 10 MiB; the helper must reject at 129 bytes
+        # without storing the entire attacker-controlled output in memory.
+        with mock.patch.dict(os.environ, {"PATH": str(shim_dir) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaisesRegex(audit.InventoryError, "git_output_too_large"):
+                audit.git(self.repo, "ls-tree", "unused", max_output=128)
+
+    def test_git_nonzero_child_exit_denied(self):
+        shim_dir = self.repo / "shim-failure"
+        shim_dir.mkdir()
+        fake = shim_dir / "git"
+        fake.write_text("#!/bin/sh\nprintf 'not a trusted result'\nexit 9\n", encoding="utf-8")
+        fake.chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": str(shim_dir) + os.pathsep + os.environ["PATH"]}):
+            with self.assertRaisesRegex(audit.InventoryError, "git_read_failed"):
+                audit.git(self.repo, "ls-tree", "unused", max_output=128)
+
+    def test_git_streaming_keeps_exact_binary_bytes(self):
+        output = audit.git(self.repo, "ls-tree", "-rz", "--full-tree",
+                           self.sha, ".github/workflows", max_output=4096)
+        self.assertIn(b"\x00", output)
+        self.assertIn(b".github/workflows/safe.yml", output)
 
     def test_no_git_config_or_working_tree_trust(self):
         # Inspect committed blob only; working-tree change without commit is irrelevant.
