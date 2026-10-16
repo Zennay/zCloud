@@ -509,9 +509,12 @@ def pairs(items):
 
 def judge(base, candidate, base_refs=None, candidate_refs=None,
           *, base_blobs=None, candidate_blobs=None):
+    baseline_reference_risks = reference_risks(base, base_refs or {})
+    candidate_reference_risks = reference_risks(candidate, candidate_refs or {})
+    baseline_cycle_edges = cyclic_reference_edges(base, base_refs or {})
+    candidate_cycle_edges = cyclic_reference_edges(candidate, candidate_refs or {})
     new = sorted(pairs(candidate) - pairs(base))
-    reference_new = sorted(reference_risks(candidate, candidate_refs or {}) -
-                           reference_risks(base, base_refs or {}))
+    reference_new = sorted(candidate_reference_risks - baseline_reference_risks)
     if base_blobs is not None and candidate_blobs is not None:
         # A previously unparseable workflow is grandfathered only while its
         # exact Git blob stays unchanged. Otherwise unverified new trigger
@@ -526,8 +529,7 @@ def judge(base, candidate, base_refs=None, candidate_refs=None,
     reference_new.extend(sorted(newly_activated_legacy_targets(
         base, candidate, base_refs or {}, candidate_refs or {})))
     reference_new = sorted(set(reference_new))
-    cycle_new = sorted(cyclic_reference_edges(candidate, candidate_refs or {}) -
-                       cyclic_reference_edges(base, base_refs or {}))
+    cycle_new = sorted(candidate_cycle_edges - baseline_cycle_edges)
     return {
         "policy": "workflow-name-no-new-collision-v1",
         "status": "deny" if new or reference_new or cycle_new else "pass",
@@ -541,6 +543,13 @@ def judge(base, candidate, base_refs=None, candidate_refs=None,
                                   for path, reason, name in reference_new[:20]],
         "baseline_collision_count": len(pairs(base)),
         "candidate_collision_count": len(pairs(candidate)),
+        "baseline_reference_risk_count": len(baseline_reference_risks),
+        "candidate_reference_risk_count": len(candidate_reference_risks),
+        "baseline_reference_risks": [
+            dict(workflow=path, reason=reason, target=name)
+            for path, reason, name in sorted(baseline_reference_risks)[:10]],
+        "baseline_cycle_edge_count": len(baseline_cycle_edges),
+        "candidate_cycle_edge_count": len(candidate_cycle_edges),
         "merge_authorized": False,
         "production_mutation_authorized": False,
     }
@@ -605,6 +614,8 @@ def main():
                        base_blobs=base_blobs, candidate_blobs=head_blobs)
         result["workflow_count_base"] = len(base)
         result["workflow_count_head"] = len(head)
+        result["source_commit_base"] = opts.base
+        result["source_commit_head"] = opts.head
     except InvalidInventory as exc:
         result = {
             "policy": "workflow-name-no-new-collision-v1", "status": "deny",
