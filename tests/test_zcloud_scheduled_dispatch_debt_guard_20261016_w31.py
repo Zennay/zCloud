@@ -109,7 +109,7 @@ class RealGit(unittest.TestCase):
         (self.repo / ".github/workflows" / name).write_text(value, encoding="utf-8")
 
     def commit(self):
-        cmd(self.repo, "add", ".github/workflows")
+        cmd(self.repo, "add", ".github")
         cmd(self.repo, "commit", "-qm", "test fixture", "--allow-empty")
         return cmd(self.repo, "rev-parse", "HEAD")
 
@@ -419,6 +419,73 @@ jobs:
 """)
         report = self.check(self.commit(), "reject")
         self.assertLessEqual(report["new_sites"], 4)
+
+    def put_action(self, directory, value):
+        action = self.repo / ".github" / "actions" / directory / "action.yml"
+        action.parent.mkdir(parents=True, exist_ok=True)
+        action.write_text(value, encoding="utf-8")
+
+    def test_scheduled_composite_action_indirect_dispatch_rejected(self):
+        self.put("schedule-actions.yml", """on: schedule
+jobs:
+  rearm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/rearm
+""")
+        self.put_action("rearm", """name: rearm
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: gh workflow run deploy.yml
+""")
+        result = self.check(self.commit(), "reject")
+        self.assertGreaterEqual(result["new_sites"], 2)
+
+    def test_existing_scheduled_action_detects_helper_mutation(self):
+        self.put("schedule-actions.yml", """on: schedule
+jobs:
+  rearm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/rearm
+""")
+        self.put_action("rearm", """name: rearm
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo safe
+""")
+        base = self.commit()
+        self.put_action("rearm", """name: rearm
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: gh workflow run deploy.yml
+""")
+        verdict = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(verdict["status"], "reject")
+        self.assertIn(".github/workflows/schedule-actions.yml", verdict["changed_workflows_with_new_sites"])
+
+    def test_scheduled_action_missing_manifest_is_denied(self):
+        self.put("schedule-actions.yml", """on: schedule
+jobs:
+  rearm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/nonexistent
+""")
+        self.check(self.commit(), "reject")
+
+    def test_action_symlink_manifest_denied(self):
+        directory = self.repo / ".github" / "actions" / "rearm"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "action.yml").symlink_to("nonexistent")
+        with self.assertRaisesRegex(ValueError, "non-regular"):
+            guard.evaluate(self.repo, self.base, self.commit())
 
     def test_git_stdout_bounded_during_read(self):
         # With a tiny cap even ls-tree inventory output is excessive.
