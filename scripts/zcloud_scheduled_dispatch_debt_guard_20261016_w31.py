@@ -363,7 +363,12 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     ).hexdigest()
                     sites[edge] += 1
                     visiting.append(target)
-            if ACTION_CODE.fullmatch(path) and path.endswith(NODE_SUFFIXES):
+            if (ACTION_CODE.fullmatch(path) or HELPER_CODE.fullmatch(path)) and path.endswith(NODE_SUFFIXES):
+                # JavaScript in root-level scheduled helpers can import more
+                # JS; it is as relevant as action entrypoint dependencies.
+                boundary = (".github/actions/" if ACTION_CODE.fullmatch(path)
+                            else ".github/scripts/" if path.startswith(".github/scripts/")
+                            else "scripts/")
                 # Nonliteral require/import calls cannot prove which local
                 # code executes. Conservatively fingerprint new unknown edges.
                 for match in NODE_DYNAMIC_IMPORT.finditer(text):
@@ -381,9 +386,9 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     resolved = posixpath.normpath(
                         posixpath.join(posixpath.dirname(path), reference)
                     )
-                    if not resolved.startswith(".github/actions/"):
-                        # Relative imports leaving the bounded action source
-                        # tree cannot be treated as verified evidence.
+                    if not resolved.startswith(boundary):
+                        # Imports leaving the respective immutable source tree
+                        # are opaque. Do not infer safety or read outside scope.
                         sites[hashlib.sha256(
                             ("opaque-node-import:" + path + ":" + reference).encode()
                         ).hexdigest()] += 1
