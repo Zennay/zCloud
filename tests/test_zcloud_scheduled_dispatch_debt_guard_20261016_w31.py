@@ -1549,5 +1549,189 @@ jobs:
 
 
 
+    def test_scheduled_dockerfile_dispatch_edit_rejected(self):
+        self.put("scheduled-docker.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/container
+""")
+        self.put_action("container", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        dockerfile = self.repo / ".github/actions/container/Dockerfile"
+        dockerfile.write_text("FROM alpine:3.20\nRUN echo safe\n", encoding="utf-8")
+        base = self.commit()
+        dockerfile.write_text("FROM alpine:3.20\nRUN gh workflow run release.yml\n",
+                              encoding="utf-8")
+        report = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(report["status"], "reject")
+        self.assertEqual(report["new_sites"], 1)
+        self.assertIn(".github/workflows/scheduled-docker.yml",
+                      report["changed_workflows_with_new_sites"])
+
+    def test_scheduled_dockerfile_variant_edit_rejected(self):
+        self.put("scheduled-docker-prod.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/release
+""")
+        self.put_action("release", """runs:
+  using: docker
+  image: Dockerfile.prod
+""")
+        dockerfile = self.repo / ".github/actions/release/Dockerfile.prod"
+        dockerfile.write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        dockerfile.write_text("FROM alpine:3.21\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_scheduled_dockerfile_removal_rejected(self):
+        self.put("scheduled-docker-remove.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/remove
+""")
+        self.put_action("remove", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        dockerfile = self.repo / ".github/actions/remove/Dockerfile"
+        dockerfile.write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        dockerfile.unlink()
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_scheduled_dockerfile_addition_rejected(self):
+        self.put("scheduled-docker-add.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/add
+""")
+        self.put_action("add", """runs:
+  using: docker
+  image: docker://alpine:3.20
+""")
+        base = self.commit()
+        (self.repo / ".github/actions/add/Dockerfile").write_text(
+            "FROM alpine:3.20\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_scheduled_docker_action_manifest_edit_rejected(self):
+        self.put("scheduled-docker-manifest.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/manifest
+""")
+        self.put_action("manifest", """runs:
+  using: docker
+  image: docker://alpine:3.20
+""")
+        base = self.commit()
+        self.put_action("manifest", """runs:
+  using: docker
+  image: docker://alpine:3.21
+""")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_scheduled_inline_docker_manifest_change_rejected(self):
+        self.put("scheduled-inline-container.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps: [{uses: ./.github/actions/inline}]
+""")
+        self.put_action("inline", """runs: {using: docker, image: Dockerfile}
+""")
+        dockerfile = self.repo / ".github/actions/inline/Dockerfile"
+        dockerfile.write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        dockerfile.write_text("FROM alpine:3.21\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_unchanged_scheduled_docker_source_is_grandfathered(self):
+        self.put("scheduled-docker-legacy.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/legacy-container
+""")
+        self.put_action("legacy-container", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        dockerfile = self.repo / ".github/actions/legacy-container/Dockerfile"
+        dockerfile.write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_manual_docker_change_not_scheduled_debt(self):
+        self.put("manual-docker.yml", """on: workflow_dispatch
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/manual-container
+""")
+        self.put_action("manual-container", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        dockerfile = self.repo / ".github/actions/manual-container/Dockerfile"
+        dockerfile.write_text("FROM alpine:3.20\n", encoding="utf-8")
+        self.check(self.commit(), "pass")
+
+    def test_non_docker_action_ignores_unused_dockerfile_edits(self):
+        self.put("scheduled-js-with-dockerfile.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/node
+""")
+        self.put_action("node", """runs:
+  using: node20
+  main: index.js
+""")
+        root = self.repo / ".github/actions/node"
+        (root / "index.js").write_text("console.log('safe');\n", encoding="utf-8")
+        dockerfile = root / "Dockerfile"
+        dockerfile.write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        dockerfile.write_text("FROM alpine:3.21\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "pass")
+
+    def test_scheduled_dockerfile_symlink_fails_closed(self):
+        self.put("scheduled-docker-symlink.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/docker-link
+""")
+        self.put_action("docker-link", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        dockerfile = self.repo / ".github/actions/docker-link/Dockerfile"
+        dockerfile.symlink_to("missing")
+        with self.assertRaises(ValueError):
+            guard.evaluate(self.repo, self.base, self.commit())
+
+
+
 if __name__ == "__main__":
     unittest.main()
