@@ -618,8 +618,7 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.git("add", ".")
         self.git("commit", "-qm", "one zoned cron and one duplicate")
         baseline = self.git("rev-parse", "HEAD")
-        updated = old.replace("    - cron: '0 8 * * *'\n",
-                              "    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n")
+        updated = old + "      timezone: Europe/Amsterdam\n"
         path.write_text(updated, encoding="utf-8")
         result = audit(self.root, baseline)
         self.assertFalse(result["accepted"])
