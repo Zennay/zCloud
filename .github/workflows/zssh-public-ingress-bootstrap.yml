@@ -7,6 +7,10 @@ on:
         description: Exact canonical Zennay/zSSH main SHA to deploy
         required: true
         type: string
+      confirm_sha:
+        description: Exact current Zennay/zCloud main SHA being authorized
+        required: true
+        type: string
       activation_phrase:
         description: Type INSTALL_ZSSH_PUBLIC_INGRESS
         required: true
@@ -22,6 +26,13 @@ concurrency:
 jobs:
   bootstrap:
     name: Install Caddy and promote zSSH public ingress
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 20
     env:
@@ -41,6 +52,7 @@ jobs:
         env:
           ACTIVATION_PHRASE: "${{ inputs.activation_phrase }}"
           EXPECTED_ZSSH_SHA: "${{ inputs.expected_zssh_sha }}"
+          CONFIRM_SHA: "${{ inputs.confirm_sha }}"
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -48,6 +60,10 @@ jobs:
           test "$GITHUB_REF_NAME" = "main"
           test "$ACTIVATION_PHRASE" = "INSTALL_ZSSH_PUBLIC_INGRESS"
           [[ "$EXPECTED_ZSSH_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$CONFIRM_SHA"
+          live_zcloud_main="$(git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$live_zcloud_main" = "$CONFIRM_SHA"
           python3 scripts/zcloud_vps_runner_guard.py --json             | tee "$RUNNER_TEMP/zssh-public-ingress-runner-guard.json"
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
