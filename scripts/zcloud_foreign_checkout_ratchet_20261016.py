@@ -74,7 +74,9 @@ def scan(text: str) -> Counter[str]:
                 end = j
                 break
         values: list[str] = []
-        for snippet in lines[i:end]:
+        # YAML mapping key order is flexible: checkout `with.repository` may
+        # precede `uses` within the SAME step. Inspect its entire step only.
+        for snippet in lines[start:end]:
             if snippet.lstrip().startswith('#'):
                 continue
             if re.match(r'^\s*with\s*:\s*(?:\*|&|\$\{\{)', snippet) or re.match(r'^\s*<<\s*:\s*\*', snippet):
