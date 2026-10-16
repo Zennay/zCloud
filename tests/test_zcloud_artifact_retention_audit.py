@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts import zcloud_artifact_retention_audit as audit
 
@@ -561,6 +562,62 @@ jobs:
         rows = audit.inspect_workflow("shell-example.yml", source, max_days=30)
         self.assertEqual(1, len(rows))
         self.assertEqual("bounded", rows[0].status)
+
+    def test_inspect_workflow_rejects_unbounded_upload_output(self):
+        source = "jobs:\n  proof:\n    steps:\n" + (
+            "      - uses: actions/upload-artifact@v4\n"
+            "        with:\n"
+            "          retention-days: 14\n"
+        ) * 3
+        with patch.object(audit, "MAX_ARTIFACT_UPLOADS", 2):
+            with self.assertRaisesRegex(RuntimeError, "artifact upload inventory too large"):
+                audit.inspect_workflow("many.yml", source, max_days=30)
+
+    def test_repository_aggregated_upload_count_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            for name in ("a.yml", "b.yml"):
+                (folder / name).write_text(
+                    "jobs:\n  proof:\n    steps:\n"
+                    + (
+                        "      - uses: actions/upload-artifact@v4\n"
+                        "        with:\n"
+                        "          retention-days: 7\n"
+                    ) * 2,
+                    encoding="utf-8",
+                )
+            with patch.object(audit, "MAX_ARTIFACT_UPLOADS", 3):
+                with self.assertRaisesRegex(
+                    RuntimeError, "artifact upload inventory too large"
+                ):
+                    audit.scan_repository(root, max_days=30)
+
+    def test_cli_refuses_excessive_upload_findings_without_partial_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            path = folder / "many.yml"
+            path.write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                + "      - uses: actions/upload-artifact@v4\n"
+                * (audit.MAX_ARTIFACT_UPLOADS + 1),
+                encoding="utf-8",
+            )
+            before = path.read_bytes()
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--repo-root", str(root)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(2, result.returncode)
+            self.assertEqual(
+                {"ok": False, "error": "RuntimeError"},
+                json.loads(result.stdout),
+            )
+            self.assertNotIn("traceback", result.stderr.lower())
+            self.assertEqual(before, path.read_bytes())
 
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
