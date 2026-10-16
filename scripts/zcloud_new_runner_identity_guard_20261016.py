@@ -142,7 +142,7 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
         raise ValueError("unsupported_jobs_mapping")
     lines = doc.splitlines()
     # Root defaults.run.shell can override the trusted first-run interpreter.
-    workflow_defaults = bool(re.search(r"(?m)^defaults:\s*(?:#.*)?$", doc))
+    workflow_defaults = bool(re.search(r"""(?m)^(?:defaults|["\']defaults["\']|[?!]\s*defaults)\s*:""", doc))
     roots = [i for i, l in enumerate(lines) if re.fullmatch(r"jobs:\s*(?:#.*)?", l)]
     if len(roots) != 1:
         raise ValueError("ambiguous_jobs_root")
