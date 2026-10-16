@@ -7,6 +7,7 @@ by their exact (workflow path, cron expression) identity. Nothing runs on VPS.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 from pathlib import Path
 import re
@@ -264,12 +265,16 @@ def _times_near(a: list[int], b: list[int], *, offset: int = 0) -> bool:
     return False
 
 
-def cross_schedule_bursts(expressions: tuple[str, ...]) -> set[tuple[str, str]]:
-    """Pairs of individually acceptable crons that together oversubscribe a workflow."""
+def _cross_schedule_burst_counts(expressions: tuple[str, ...]) -> Counter:
+    """Count collisions by scheduled-entry identity, not just cron text.
+
+    Two duplicates have one colliding pair; three duplicates have three.
+    An unchanged legacy pair must not grandfather a newly added third.
+    """
     if len(expressions) > 32:
         raise AdmissionError("schedule_entry_budget_exceeded")
     compiled = [_compiled_cron(cron) for cron in expressions]
-    findings: set[tuple[str, str]] = set()
+    findings: Counter = Counter()
     for i, left in enumerate(compiled):
         for j in range(i + 1, len(compiled)):
             right = compiled[j]
@@ -287,8 +292,13 @@ def cross_schedule_bursts(expressions: tuple[str, ...]) -> set[tuple[str, str]]:
                 and _calendar_overlap(right, left, next_day=True)
             )
             if adjacent or forward or reverse:
-                findings.add(tuple(sorted((expressions[i], expressions[j]))))
+                findings[tuple(sorted((expressions[i], expressions[j])))] += 1
     return findings
+
+
+def cross_schedule_bursts(expressions: tuple[str, ...]) -> set[tuple[str, str]]:
+    """Compatibility view of distinct colliding cron expression pairs."""
+    return set(_cross_schedule_burst_counts(expressions))
 
 
 def audit(repo: Path, baseline_sha: str) -> dict:
@@ -325,13 +335,15 @@ def audit(repo: Path, baseline_sha: str) -> dict:
                           "reason": "timezone_requires_independent_review"})
         # A workflow can schedule the same job from multiple cron entries:
         # independently hourly 10:00 and 10:05 still creates a burst.
-        prior_pairs = cross_schedule_bursts(old_entries)
-        candidate_pairs = cross_schedule_bursts(after)
-        for pair in sorted(candidate_pairs):
-            count += 1
+        prior_pairs = _cross_schedule_burst_counts(old_entries)
+        candidate_pairs = _cross_schedule_burst_counts(after)
+        for pair, occurrences in sorted(candidate_pairs.items()):
+            count += occurrences
             finding = {"workflow": path, "cron": " | ".join(pair),
-                       "reason": "cross_schedule_burst"}
-            (existing if pair in prior_pairs else added).append(finding)
+                       "reason": "cross_schedule_burst",
+                       "baseline_instances": prior_pairs[pair],
+                       "candidate_instances": occurrences}
+            (existing if occurrences <= prior_pairs[pair] else added).append(finding)
         for cron in after:
             if is_high_frequency(cron):
                 count += 1
