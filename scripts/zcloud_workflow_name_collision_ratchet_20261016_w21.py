@@ -357,7 +357,10 @@ def cyclic_reference_edges(names, references):
 def pairs(items):
     by_name = {}
     for path, name in items.items():
-        by_name.setdefault(name, []).append(path)
+        # The GitHub UI can render canonically equivalent Unicode names alike.
+        # Compare display identities in NFC without rewriting GitHub's raw names.
+        canonical_name = unicodedata.normalize("NFC", name)
+        by_name.setdefault(canonical_name, []).append(path)
     return {(name, a, b) for name, paths in by_name.items()
             for a, b in itertools.combinations(sorted(paths), 2)}
 
