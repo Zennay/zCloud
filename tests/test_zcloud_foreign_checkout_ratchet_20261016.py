@@ -321,6 +321,7 @@ class CheckoutRepoGuardTest(unittest.TestCase):
     def test_hosted_workflow_step_keys_do_not_duplicate(self):
         workflow_path = Path(__file__).parents[1] / '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
         lines = workflow_path.read_text(encoding='utf-8').splitlines()
+        lines = lines[lines.index('    steps:') + 1:]
         starts = [i for i, line in enumerate(lines) if line.startswith('      - ') ]
         self.assertEqual(len(starts), 5)
         starts.append(len(lines))
