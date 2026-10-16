@@ -102,8 +102,8 @@ def _git(root: Path, *args: str, max_bytes: int = 2_000_000) -> bytes:
 def _inventory(root: Path, sha: str) -> dict[str, str]:
     """Enumerate workflows AND composite action manifests at arbitrary paths.
 
-    Checking only .github/workflows misses an action.yml where a workflow
-    indirectly invokes download-artifact through a local uses reference.
+    Checking only .github/workflows misses composite action.yml files and
+    shell helpers that execute GitHub CLI or REST artifact downloads.
     Git trees are the immutable source of truth; no working-tree traversal.
     """
     data = _git(root, "ls-tree", "-rz", sha, max_bytes=2_000_000)
@@ -120,7 +120,8 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
             raise Refusal("invalid_git_tree_entry") from exc
         is_workflow = path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
         is_action = path.rsplit("/", 1)[-1] in {"action.yml", "action.yaml"}
-        if not (is_workflow or is_action):
+        is_shell = path.endswith((".sh", ".bash"))
+        if not (is_workflow or is_action or is_shell):
             continue
         if path.startswith("/") or "/../" in "/" + path + "/" or not path.strip():
             raise Refusal("unsafe_source_path")
@@ -137,8 +138,34 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
     return result
 
 
+def _command_risks(lines: list[str], path: str) -> Counter[str]:
+    risky: Counter[str] = Counter()
+    # Review new direct GitHub CLI artifact downloads as well. Many hosted
+    # workflows use inline run blocks rather than an explicit download action.
+    # Join bounded shell backslash continuations so a split command is not
+    # silently invisible. This is a conservative source indicator.
+    for number, source in enumerate(lines):
+        if source.lstrip().startswith("#"):
+            continue
+        logical = source
+        following = number + 1
+        while logical.rstrip().endswith("\\") and following < len(lines) and following <= number + 8:
+            logical = logical.rstrip()[:-1] + " " + lines[following].strip()
+            following += 1
+        if _GH_RUN_DOWNLOAD.search(logical):
+            token = sha256(logical.encode("utf-8")).hexdigest()
+            risky[f"{path}:{number+1}:gh-run-download:{token}"] += 1
+        if _API_ARTIFACT_PATH.search(logical):
+            token = sha256(logical.encode("utf-8")).hexdigest()
+            risky[f"{path}:{number+1}:github-api-artifact-path:{token}"] += 1
+    return risky
+
+
 def _risks(text: str, path: str) -> Counter[str]:
     lines = text.splitlines()
+    if path.endswith((".sh", ".bash")):
+        # Shell has no YAML uses mapping; inspect only literal downloads.
+        return _command_risks(lines, path)
     risky: Counter[str] = Counter()
     for index, line in enumerate(lines):
         # Reject indented tabs/ambiguous aliases where a download action is mentioned.
@@ -210,24 +237,7 @@ def _risks(text: str, path: str) -> Counter[str]:
             raw = "\n".join(lines[index:index+1]) + "\n" + "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
             key = path + ":" + str(index + 1) + ":" + sha256(raw.encode("utf-8")).hexdigest()
             risky[key] += 1
-    # Review new direct GitHub CLI artifact downloads as well. Many hosted
-    # workflows use inline run blocks rather than an explicit download action.
-    # Join bounded shell backslash continuations so a split command is not
-    # silently invisible. This is a conservative source indicator.
-    for number, source in enumerate(lines):
-        if source.lstrip().startswith("#"):
-            continue
-        logical = source
-        following = number + 1
-        while logical.rstrip().endswith("\\") and following < len(lines) and following <= number + 8:
-            logical = logical.rstrip()[:-1] + " " + lines[following].strip()
-            following += 1
-        if _GH_RUN_DOWNLOAD.search(logical):
-            token = sha256(logical.encode("utf-8")).hexdigest()
-            risky[f"{path}:{number+1}:gh-run-download:{token}"] += 1
-        if _API_ARTIFACT_PATH.search(logical):
-            token = sha256(logical.encode("utf-8")).hexdigest()
-            risky[f"{path}:{number+1}:github-api-artifact-path:{token}"] += 1
+    risky.update(_command_risks(lines, path))
     return risky
 
 
