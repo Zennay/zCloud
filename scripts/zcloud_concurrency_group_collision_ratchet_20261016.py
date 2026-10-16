@@ -171,7 +171,7 @@ def _is_opaque_expression(group: str) -> bool:
     return False
 
 
-def _group_entry(path: str, scope: str, value: object, workflow_name: str):
+def _group_entry(path: str, scope: str, value: object, workflow_name: str, *, name_explicit: bool):
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -199,7 +199,12 @@ def _group_entry(path: str, scope: str, value: object, workflow_name: str):
     # expression whitespace; collisions can arise with duplicate names.
     resolved_group = _normalize_group(group, workflow_name)
     token = hashlib.sha256(resolved_group.casefold().encode("utf-8")).hexdigest()
-    return (token, path, scope, mode, queue, _is_opaque_expression(group))
+    uses_workflow_name = re.search(r"\$\{\{\s*github\.workflow\s*\}\}", group, re.IGNORECASE)
+    unresolved_workflow_name = bool(uses_workflow_name and (
+        not name_explicit or "${{" in workflow_name or "}}" in workflow_name
+    ))
+    return (token, path, scope, mode, queue,
+            _is_opaque_expression(group) or unresolved_workflow_name)
 
 def _entries_for_file(path: str, contents: bytes):
     try:
@@ -208,11 +213,13 @@ def _entries_for_file(path: str, contents: bytes):
         raise AdmissionError("ambiguous or invalid workflow YAML") from e
     if not isinstance(body, dict):
         raise AdmissionError("workflow must be a YAML mapping")
+    name_explicit = "name" in body
     name = body.get("name", path)
     if not isinstance(name, str) or not (1 <= len(name) <= 256):
         raise AdmissionError("non-literal or invalid workflow name")
     entries = []
-    root = _group_entry(path, "workflow", body.get("concurrency"), name)
+    root = _group_entry(path, "workflow", body.get("concurrency"), name,
+                        name_explicit=name_explicit)
     if root:
         entries.append(root)
     jobs = body.get("jobs", {})
@@ -225,7 +232,8 @@ def _entries_for_file(path: str, contents: bytes):
             raise AdmissionError("unsafe workflow job ID")
         if not isinstance(definition, dict):
             raise AdmissionError("workflow job must be mapping")
-        item = _group_entry(path, "job:" + job_id, definition.get("concurrency"), name)
+        item = _group_entry(path, "job:" + job_id, definition.get("concurrency"),
+                            name, name_explicit=name_explicit)
         if item:
             entries.append(item)
     return entries
