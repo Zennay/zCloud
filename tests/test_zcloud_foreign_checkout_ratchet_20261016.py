@@ -66,6 +66,26 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         old = workflow('other/repo')
         self.assertEqual(guard.compare({P: old}, {P: old.replace('repository: other', 'repository:  other')}), [])
 
+    def test_alias_checkout_input_map_rejected(self):
+        text = workflow().replace('      - run: echo safe', '        with: *external_inputs\n      - run: echo safe')
+        self.assertIn('ambiguous-checkout-input-map', guard.scan(text))
+
+    def test_merged_checkout_input_map_rejected(self):
+        text = workflow().replace('      - run: echo safe', '        with:\n          <<: *external_inputs\n      - run: echo safe')
+        self.assertIn('ambiguous-checkout-input-map', guard.scan(text))
+
+    def test_dynamic_checkout_input_map_rejected(self):
+        text = workflow().replace('      - run: echo safe', '        with: ${{ fromJSON(inputs.checkout) }}\n      - run: echo safe')
+        self.assertIn('ambiguous-checkout-input-map', guard.scan(text))
+
+    def test_checkout_input_anchor_declaration_rejected(self):
+        text = workflow().replace('      - run: echo safe', '        with: &external_inputs\n      - run: echo safe')
+        self.assertIn('ambiguous-checkout-input-map', guard.scan(text))
+
+    def test_named_checkout_step_also_protected(self):
+        text = workflow('foreign/repo', '- name: Fetch\n        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803')
+        self.assertTrue(guard.scan(text))
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
