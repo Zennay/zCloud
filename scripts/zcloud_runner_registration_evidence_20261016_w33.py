@@ -21,6 +21,14 @@ MAX_INPUT = 262144
 MAX_AGE = 300
 MAX_FUTURE_SKEW = 15
 SCHEMA = 'zcloud-runner-registration-evidence-v1'
+SAFE_DENIAL_REASONS = frozenset({
+    'invalid_input_size', 'duplicate_json_key', 'nonfinite_number', 'malformed_json',
+    'not_object', 'bad_observation_time', 'unbound_repository', 'unbound_api_response',
+    'unknown_clock', 'stale_observation', 'future_observation', 'missing_runner_response',
+    'incomplete_runner_inventory', 'unbounded_runner_inventory', 'malformed_runner',
+    'invalid_runner_identity', 'ambiguous_runner_identity', 'invalid_runner_state',
+    'invalid_runner_labels', 'duplicate_runner_label',
+})
 
 class InvalidEvidence(ValueError):
     pass
@@ -83,7 +91,7 @@ def inspect(envelope, *, now=None):
             or type(envelope.get('http_status')) is not int
             or envelope['http_status'] != 200):
         raise InvalidEvidence('unbound_api_response')
-    now = now or datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc) if now is None else now
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise InvalidEvidence('unknown_clock')
     dt = _timestamp(envelope.get('captured_at'))
@@ -152,10 +160,14 @@ def main():
     try:
         data = sys.stdin.buffer.read(MAX_INPUT + 1)
         result = inspect(load_json(data))
+        result['reason_code'] = 'diagnostic_only'
         # Exit is NEVER an admission signal: diagnostic claims always deny by default.
         code = 2
-    except (InvalidEvidence, ValueError, TypeError, OverflowError):
+    except (InvalidEvidence, ValueError, TypeError, OverflowError) as exc:
+        # Never reflect attacker-controlled exception strings or source content.
+        reason = str(exc) if type(exc) is InvalidEvidence else None
         result = {'schema': SCHEMA, 'classification': 'EVIDENCE_UNAVAILABLE',
+                  'reason_code': reason if reason in SAFE_DENIAL_REASONS else 'unknown_error',
                   'registration_claim_parsed': False, 'independent_registration_verified': False,
                   'runner_group_access_verified': False, 'live_runner_health_verified': False,
                   'service_idle_verified': False, 'production_deploy_verified': False,
