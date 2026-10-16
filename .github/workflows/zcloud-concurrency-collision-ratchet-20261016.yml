@@ -97,7 +97,7 @@ jobs:
                   raise SystemExit("review pair has malformed members")
               pair_counts[group] = pair_counts.get(group, 0) + 1
               for member in members:
-                  if not re.fullmatch(r"\\.github/workflows/[A-Za-z0-9_./-]+\\.ya?ml",
+                  if not re.fullmatch(r"\.github/workflows/[A-Za-z0-9_./-]+\.ya?ml",
                                       member.get("workflow_path", "")):
                       raise SystemExit("review contains unsafe workflow path")
                   digest = member.get("cancel_expression_sha256")
