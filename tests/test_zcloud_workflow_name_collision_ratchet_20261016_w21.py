@@ -179,6 +179,31 @@ class NameCollisionRatchetTests(unittest.TestCase):
             self.assertEqual(verdict["added_reference_risk_count"], 1)
             self.assertEqual(verdict["status"], "deny")
 
+
+    def test_git_read_enforces_output_budget_before_full_capture(self):
+        with tempfile.TemporaryDirectory() as root:
+            subprocess.check_call(["git", "init", "-q"], cwd=root)
+            blob = subprocess.check_output(["git", "hash-object", "-w", "--stdin"],
+                                           cwd=root, input=b"x" * 200000).decode().strip()
+            with self.assertRaisesRegex(guard.InvalidInventory, "git_output_too_large"):
+                guard._git(["cat-file", "blob", blob], root, 1024)
+
+    def test_tree_object_cannot_impersonate_commit_in_inventory(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "a.yml").write_text("name: Commit proof\n")
+            git("add", ".")
+            git("commit", "-qm", "baseline")
+            tree = git("rev-parse", "HEAD^{tree}")
+            with self.assertRaises(guard.InvalidInventory):
+                guard.read_inventory(tree, cwd=root)
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
