@@ -99,10 +99,12 @@ def analyze(source, path):
                                     line, re.IGNORECASE) for line in runner_source)
         # A YAML alias, mapping, or GitHub expression can resolve to
         # self-hosted even without a literal label; deny new checkout jobs.
-        dynamic_runner = any(
-            (chr(36) + "{" in line or re.search(r":\s*[*&{]", line)
-             or re.match(r"^    runs-on\s*:\s*(?:#.*)?$", line))
-            for line in runner_fields
+        dynamic_runner = (
+            any(chr(36) + "{" in line or re.search(r":\s*[*&{]", line)
+                for line in runner_fields + runner_items)
+            or (not runner_items and any(
+                re.match(r"^    runs-on\s*:\s*(?:#.*)?$", line)
+                for line in runner_fields))
         )
         if dynamic_runner and any("checkout@" in line.lower() for line in body):
             risks.append((path, job_name, "runner", "dynamic-runner-checkout"))
@@ -150,7 +152,7 @@ def analyze(source, path):
                 in_with = False
                 with_blocks = 0
                 for line in step_lines:
-                    if re.match(r"^        with\s*:", line):
+                    if re.match(r"^(?:        |      -\s+)with\s*:", line):
                         with_blocks += 1
                         in_with = True
                         with_value = line.split(":", 1)[1].split("#", 1)[0].strip()
