@@ -491,6 +491,41 @@ class RealGitEvidenceTests(unittest.TestCase):
             self.assertEqual(report["new_findings"], [])
             self.assertFalse(report["mutation_performed"])
 
+    def test_real_git_changed_legacy_vps_trigger_denied(self):
+        with self.fixture(wf(guard=False)) as (tmp, file, base):
+            file.write_text(wf(guard=False).replace("  workflow_dispatch:", "  push:"))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(report["new_findings"][0]["reason"],
+                             "modified_legacy_unsafe_workflow_envelope")
+
+    def test_real_git_safe_hosted_job_does_not_reopen_legacy_debt(self):
+        with self.fixture(wf(guard=False)) as (tmp, file, base):
+            file.write_text(wf(guard=False) + (
+                "  added_hosted:\n"
+                "    runs-on: ubuntu-latest\n"
+                "    steps:\n"
+                "      - run: echo source-only\n"
+            ))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(report["new_findings"], [])
+            self.assertGreater(report["remaining_debt_in_changed_files"], 0)
+
+    def test_real_git_delegated_job_fails_closed(self):
+        with self.fixture() as (tmp, file, base):
+            file.write_text(wf("ubuntu-latest", False) + (
+                "  delegated:\n"
+                "    uses: org/unknown/.github/workflows/vps.yml@" + PIN + "\n"
+            ))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertIn("delegated_runner_unverified",
+                          [f["reason"] for f in report["new_findings"]])
+
     def test_real_git_symlink_workflow_rejected(self):
         with self.fixture() as (tmp, file, base):
             file.unlink()
