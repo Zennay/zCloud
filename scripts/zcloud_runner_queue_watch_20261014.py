@@ -93,6 +93,7 @@ def summarize(runs, jobsets, now, *, total_count=None):
     recent_assigned = 0
     queued_assigned = 0
     unassigned_cancelled = 0
+    approval_or_prestart = 0
     other = 0
     oldest_queued_seconds = 0
     stale_over_2h = 0
@@ -117,6 +118,19 @@ def summarize(runs, jobsets, now, *, total_count=None):
                 or not isinstance(run.get("head_sha"), str)
                 or not SHA.fullmatch(run["head_sha"])):
             raise Unavailable("run_provenance")
+        run_status = run.get("status")
+        # GitHub can show a workflow awaiting environment approval or an
+        # upstream start while its job still has runner_id=0. That is NOT
+        # evidence of a missing VPS listener. Treat it separately.
+        if run_status is not None and run_status not in (
+                "queued", "in_progress", "completed", "waiting", "pending", "requested"):
+            raise Unavailable("unknown_workflow_run_status")
+        if run_status == "completed" and run.get("conclusion") not in (
+                "success", "failure", "cancelled", "timed_out", "neutral",
+                "skipped", "action_required", "stale"):
+            raise Unavailable("unknown_workflow_run_conclusion")
+        if run_status in ("queued", "in_progress", "waiting", "pending", "requested") and run.get("conclusion") is not None:
+            raise Unavailable("nonterminal_workflow_run_conclusion")
         run_created = _utc(run.get("created_at"))
         run_age = (now - run_created).total_seconds()
         if run_age < -5:
@@ -182,6 +196,13 @@ def summarize(runs, jobsets, now, *, total_count=None):
         if age > MAX_AGE:
             continue
         inspected += 1
+        if run_status == "completed" and status != "completed":
+            raise Unavailable("terminal_run_has_unfinished_job")
+        if run_status in ("waiting", "pending", "requested"):
+            if status != "queued" or runner_id != 0:
+                raise Unavailable("non_schedulable_run_job_contradiction")
+            approval_or_prestart += 1
+            continue
         if status == "queued" and runner_id == 0 and job.get("conclusion") is None:
             observed += 1
             oldest_queued_seconds = max(oldest_queued_seconds, int(age))
@@ -237,7 +258,8 @@ def summarize(runs, jobsets, now, *, total_count=None):
             "queued_over_2h": stale_over_2h,
             "recent_assignments": recent_assigned, "assigned_failures": assigned_failures,
             "queued_with_assigned_runner": queued_assigned,
-            "cancelled_before_assignment": unassigned_cancelled, "skipped": other,
+            "cancelled_before_assignment": unassigned_cancelled,
+            "approval_or_prestart": approval_or_prestart, "skipped": other,
             "runner_offline_verified": False, "production_verified": False,
             "mutation_authorized": False, "mutations_performed": False}
 
