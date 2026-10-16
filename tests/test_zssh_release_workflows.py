@@ -182,7 +182,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("INSTALL_ZSSH_PUBLIC_INGRESS", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
         self.assertIn("scripts/zcloud_vps_runner_guard.py --json", text)
-        self.assertIn("ZSSH_PRODUCTION_ORIGIN: https://zssh.cheapgpt.shop", text)
+        self.assertIn("ZSSH_PRODUCTION_ORIGIN: https://zssh.zennay.nl", text)
         self.assertIn("ZSSH_EXPECTED_IPV4: 198.244.191.182", text)
         self.assertIn("if found != {expected}:", text)
         self.assertIn("systemctl --user is-active --quiet zssh-public.service", text)
