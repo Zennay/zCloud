@@ -137,3 +137,25 @@ owner-review queue, and trigger/runner hints. The new CSV provides the same
 45 candidate paths and original digests; only actual workflow owners can
 determine live usage, compatibility or retirement. No #922 or #1326
 governance/production gate is opened by the triage report.
+
+
+### Automatic push does not imply a frequently running job
+
+The automatic-event hint is intentionally conservative. In many historical
+FTMO recovery workflows the YAML says \`on.push\` **with a \`paths\` filter**
+restricting execution to specific workflow source changes, often only that
+workflow file itself. This is different from an unrestricted push or an hourly
+schedule. The context scanner now reports \`push_paths_filter_key_hint\` and
+\`push_branches_filter_key_hint\`, plus overall counts. These fields report
+literal nested \`on.push.paths\` and \`on.push.branches\` **key presence** only;
+they do **not** evaluate YAML aliases, glob matches, branches, default event
+behavior, disabled workflow state, old run activity or actual trigger
+reachability. \`push_filter_effectiveness_verified=false\` is invariant.
+
+Review priority suggestion, **not an automated authorization decision**:
+first inspect all explicit \`schedule\` and broad unfiltered \`push\` hints,
+then the source-filtered push candidates, and independently confirm any
+workflow with unknown YAML/runner syntax. All 45 still require the original
+owner to decide migrate, retire or evidenced false positive. The GitHub-hosted
+workflow cross-checks source-digest identity and the deny flags on these new
+columns against the exact main/PR head.
