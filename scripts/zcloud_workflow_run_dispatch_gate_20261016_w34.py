@@ -22,12 +22,15 @@ WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 ON = re.compile(r"(?m)^(?:on|'on'|\"on\"):[ \t]*(.*)$")
 RUN = re.compile(r"(?m)^( {6,})(?:-[ \\t]+)?run:[ \\t]*(.*)$")
 RISK = (
-    re.compile(r"\bgh\s+workflow\s+run\b", re.I),
-    re.compile(r"\bgh\s+run\s+rerun\b", re.I),
-    re.compile(r"\bgh\s+api\b.{0,180}(?:-X\s+POST|--method(?:=|\s+)POST)\b.{0,200}/dispatches\b", re.I | re.S),
-    re.compile(r"\bcurl\b.{0,180}(?:-X\s+POST|--request\s+POST)\b.{0,200}/dispatches\b", re.I | re.S),
+    re.compile(r"\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+workflow\s+run\b", re.I),
+    re.compile(r"\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+run\s+rerun\b", re.I),
+    re.compile(r"\bgh\s+api\b[^\n]{0,400}", re.I),
+    re.compile(r"\bcurl\b[^\n]{0,400}", re.I),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch)\b"),
 )
+GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field)(?=[ =]))", re.I)
+CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json)(?=[ =]))", re.I)
+
 MAX_PATHS = 400
 MAX_SOURCE = 200_000
 MAX_TOTAL = 16_000_000
@@ -143,6 +146,12 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
         normalized = re.sub(r"\\\s*\n", " ", body)
         for detector, pattern in enumerate(RISK):
             for match in pattern.finditer(normalized):
+                if detector in (2, 3):
+                    fragment = match.group(0)
+                    if "/dispatches" not in fragment:
+                        continue
+                    if not (GH_POST if detector == 2 else CURL_POST).search(fragment):
+                        continue
                 start = normalized.rfind("\n", 0, match.start()) + 1
                 end = normalized.find("\n", match.end())
                 if end < 0:

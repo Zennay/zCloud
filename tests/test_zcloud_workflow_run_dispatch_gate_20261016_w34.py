@@ -131,6 +131,30 @@ class GateTests(unittest.TestCase):
         self.assertFalse(classify(TEMPLATE.replace("echo harmless", "echo safe").replace("on:\n  workflow_run:", "on: [push]")))
         self.assertFalse(classify(TEMPLATE + "\n# gh workflow run docs\n"))
 
+    def test_dispatch_flag_order_and_implicit_post(self):
+        commands = (
+            "gh api /repos/Zennay/zCloud/actions/workflows/x.yml/dispatches -X POST",
+            "gh api /repos/Zennay/zCloud/actions/workflows/x.yml/dispatches -f ref=main",
+            "gh api --method=POST /repos/Zennay/zCloud/dispatches",
+            "curl https://api.github.com/repos/Zennay/zCloud/dispatches -X POST",
+            "curl https://api.github.com/repos/Zennay/zCloud/dispatches --data '{ }'",
+            "gh -R Zennay/zCloud workflow run x.yml",
+            "gh --repo=Zennay/zCloud run rerun 123",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_read_only_dispatch_endpoint_is_not_a_post(self):
+        for command in (
+            "gh api /repos/Zennay/zCloud/dispatches",
+            "curl https://api.github.com/repos/Zennay/zCloud/dispatches",
+            "gh api -X GET /repos/Zennay/zCloud/dispatches",
+            "curl -X GET https://api.github.com/repos/Zennay/zCloud/dispatches",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
     def test_on_variants(self):
         self.assertTrue(workflow_run_event("on: [push, workflow_run]\njobs:\n"))
         self.assertTrue(workflow_run_event('"on": {workflow_run: {types: [completed]}}\njobs:\n'))
