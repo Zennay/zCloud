@@ -266,17 +266,32 @@ def render_markdown(result: dict[str, Any]) -> str:
     This is not a verification step: a perfectly filled-in but forged receipt
     remains an untrusted assertion and can never grant production authority.
     """
-    codes = result.get("reason_codes")
+    expected_keys = {
+        "contract", "evidence_source", "offline_claims_complete",
+        "live_sources_verified", "production_mutation_authorized",
+        "reason_codes",
+    }
+    codes = result.get("reason_codes") if type(result) is dict else None
     known = {code for code, _, _ in REPORT_GATES}
+    allowed = known | {
+        "invalid_schema", "receipt_too_large", "duplicate_json_key",
+        "nonfinite_json", "invalid_json", "unsafe_or_missing_receipt",
+        "unreadable_receipt",
+    }
+    valid_codes = (
+        type(codes) is list
+        and all(type(code) is str and code in allowed for code in codes)
+        and len(set(codes)) == len(codes)
+    )
     bad_shape = (
-        type(codes) is not list
-        or any(type(code) is not str or code not in known | {
-            "invalid_schema", "receipt_too_large", "duplicate_json_key",
-            "nonfinite_json", "invalid_json", "unsafe_or_missing_receipt",
-            "unreadable_receipt",
-        } for code in codes)
+        type(result) is not dict
+        or set(result) != expected_keys
+        or result.get("contract") != "zcloud-release-evidence-v1"
+        or result.get("evidence_source") != "untrusted_offline_receipt"
         or result.get("production_mutation_authorized") is not False
         or result.get("live_sources_verified") is not False
+        or not valid_codes
+        or result.get("offline_claims_complete") is not (not codes)
     )
     if bad_shape:
         codes = ["invalid_schema"]
