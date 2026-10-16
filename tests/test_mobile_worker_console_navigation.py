@@ -89,7 +89,7 @@ const click = () => registered.click({
         self.assertIn('aria-label="Jump to worker management"',nav.group(1))
         self.assertIn('viewport-fit=cover',html)
         self.assertIn('/enhancements.css?v=r5',html)
-        self.assertIn('/app.js?v=r8',html)
+        self.assertIn('/app.js?v=20261016-auto',html)
 
     def test_phone_workers_remain_visible_and_readable(self):
         css = (ROOT / "public" / "design-system.css").read_text(encoding="utf-8")
