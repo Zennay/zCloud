@@ -9,7 +9,7 @@
     var view = document.getElementById('view');
     if (!view) return;
     var stillLoading = !!view.querySelector('.loading') || !view.textContent.trim();
-    if (!stillLoading && !broken) return;
+    if (!stillLoading) return;
     shown = true;
     var panel = document.createElement('section');
     panel.className = 'panel';
