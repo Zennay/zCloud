@@ -243,6 +243,46 @@ jobs:
             "on:\n  schedule:\n    - cron: '*/15 * * * *'", "on: schedule"))
         self.check(self.commit(), "reject")
 
+    def test_compact_single_schedule_sequence_is_rejected(self):
+        for value in ("[schedule]", "['schedule']", '["schedule"]'):
+            with self.subTest(value=value):
+                self.assertTrue(guard.scheduled(LEGACY.replace(
+                    "on:\n  schedule:\n    - cron: '*/15 * * * *'",
+                    "on: " + value,
+                )))
+        self.put("compact.yml", LEGACY.replace(
+            "on:\n  schedule:\n    - cron: '*/15 * * * *'",
+            "on: [schedule]",
+        ))
+        self.check(self.commit(), "reject")
+
+    def test_compact_list_first_schedule_with_other_event(self):
+        source = LEGACY.replace(
+            "on:\n  schedule:\n    - cron: '*/15 * * * *'",
+            "on: [schedule,push]",
+        )
+        self.assertTrue(guard.scheduled(source))
+        self.put("compact.yml", source)
+        self.check(self.commit(), "reject")
+
+    def test_repository_option_between_gh_workflow_and_run(self):
+        for command in (
+            "gh workflow -R Zennay/zCloud run deploy.yml",
+            "gh workflow --repo Zennay/zCloud run deploy.yml",
+            "gh workflow --repo=Zennay/zCloud run deploy.yml",
+            "gh -R Zennay/zCloud workflow run deploy.yml",
+            "gh --repo=Zennay/zCloud workflow run deploy.yml",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.dispatch_count(LEGACY.replace(
+                    "gh workflow run zcloud-regression-smoke.yml", command
+                )), 1)
+        self.put("repo-option.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "gh -R Zennay/zCloud workflow run deploy.yml",
+        ))
+        self.check(self.commit(), "reject")
+
     def test_shell_continuation_cannot_hide_dispatch(self):
         self.put("new.yml", LEGACY.replace(
             "gh workflow run zcloud-regression-smoke.yml",
