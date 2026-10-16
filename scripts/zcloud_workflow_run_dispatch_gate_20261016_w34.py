@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 ON = re.compile(r"(?m)^(?:on|'on'|\"on\"):[ \t]*(.*)$")
-RUN = re.compile(r"(?m)^( {6,})run:[ \t]*(.*)$")
+RUN = re.compile(r"(?m)^( {6,})(?:-[ \\t]+)?run:[ \\t]*(.*)$")
 RISK = (
     re.compile(r"\bgh\s+workflow\s+run\b", re.I),
     re.compile(r"\bgh\s+run\s+rerun\b", re.I),
