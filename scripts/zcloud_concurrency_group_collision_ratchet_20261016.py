@@ -337,10 +337,11 @@ def _non_escalating_pair(previous, candidate) -> bool:
 
 
 def _activation_fingerprints(commit: str, members: set) -> dict:
-    """Hash event triggers and job 'if' for existing collision participants.
+    """Hash event triggers, matrix/needs and job guards of legacy collisions.
 
-    A legacy writer gaining a new automatic trigger or a weaker job guard
-    increases exposure despite unchanged group and cancel mode. Changes
+    A legacy writer gaining an automatic trigger, changed matrix fan-out,
+    new job dependency chain or a weaker job guard can increase overlap even
+    if the concurrency group and cancel mode are unchanged. Changes
     require the original workflow owner to review, not silent admission.
     """
     tree = dict(_workflow_entries(commit))
@@ -364,12 +365,21 @@ def _activation_fingerprints(commit: str, members: set) -> dict:
             raise AdmissionError("invalid trigger evidence jobs")
         for scope in scopes:
             conditional = None
+            strategy = None
+            prerequisites = None
             if scope.startswith("job:"):
                 job = jobs.get(scope[4:])
                 if not isinstance(job, dict):
                     raise AdmissionError("missing legacy collision job")
                 conditional = job.get("if")
-            source = {"events": body.get("on"), "job_if": conditional}
+                # A matrix fan-out or changed dependency chain alters the
+                # number/timing of contenders for an unchanged shared group.
+                # The scanner cannot prove these transitions safe: require
+                # the existing workflow owner's independent review.
+                strategy = job.get("strategy")
+                prerequisites = job.get("needs")
+            source = {"events": body.get("on"), "job_if": conditional,
+                      "job_strategy": strategy, "job_needs": prerequisites}
             try:
                 serialized = json.dumps(source, sort_keys=True, separators=(",", ":"),
                                         ensure_ascii=True, default=str)
