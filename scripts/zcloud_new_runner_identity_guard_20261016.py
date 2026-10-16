@@ -29,11 +29,17 @@ CHECKOUT = re.compile(r"actions/checkout@" + TRUSTED_CHECKOUT_SHA + r"(?:\s*(?:#
 GUARD = re.compile(r"python3\s+(?:\./)?scripts/zcloud_vps_runner_guard\.py(?:\s+--json)?\s*(?:#.*)?$")
 # Pre-shell hooks and Python module/path shadowing can run attacker-supplied
 # code before the first guard command even if that command is visually first.
+PRE_GUARD_ENV = re.compile(
+    r"(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH|NODE_OPTIONS|NODE_PATH|"
+    r"LD_PRELOAD|LD_LIBRARY_PATH|GIT_SSH|GIT_SSH_COMMAND|GIT_ASKPASS|"
+    r"GIT_CONFIG_COUNT|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|"
+    r"GIT_CONFIG_(?:KEY|VALUE)_[0-9]+)"
+)
 SHELL_HIJACK = re.compile(
-    r"""(?m)^\s+["']?(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)["']?\s*:"""
+    r"""(?m)^\s+["']?""" + PRE_GUARD_ENV.pattern + r"""["']?\s*:"""
 )
 INLINE_HIJACK = re.compile(
-    r"""(?m)^\s*env:\s*\{[^\n}]*(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)\s*:"""
+    r"""(?m)^\s*env:\s*\{[^\n}]*(?:""" + PRE_GUARD_ENV.pattern + r""")\s*:"""
 )
 
 
@@ -297,7 +303,7 @@ def _unsafe_root_env(lines: list[str]) -> bool:
         if item is None:
             return True
         key, value = item.group(1), item.group(2)
-        if key in seen or key in {"BASH_ENV", "PYTHONPATH", "PYTHONHOME", "PATH"}:
+        if key in seen or PRE_GUARD_ENV.fullmatch(key):
             return True
         if value.lstrip().startswith(("*", "&", "!", "|", ">", "{", "[")):
             return True
