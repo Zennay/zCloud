@@ -228,6 +228,29 @@ runs:
         ))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_explicit_yaml_script_mapping_key_is_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "          script: |",
+            "          ? script\n          : |",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_inherited_with_mapping_alias_is_denied(self):
+        a = self.commit(SAFE)
+        start = SAFE.index("        with:")
+        end = SAFE.index("        env:", start)
+        b = self.commit(SAFE[:start] + "        with: *remote_script_properties\n" + SAFE[end:])
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_inherited_yaml_merge_key_is_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "          script: |",
+            "          <<: *remote_script_properties\n          script: |",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_script_in_unrelated_action_is_not_guarded(self):
         a = self.commit(OTHER)
         b = self.commit(OTHER + "\n# GitHub-script not invoked\n")
