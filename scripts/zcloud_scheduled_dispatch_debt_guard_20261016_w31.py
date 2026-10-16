@@ -16,7 +16,7 @@ from pathlib import Path
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
 ON = re.compile(r"^(?:on|'on'|\"on\")\s*:(.*)$")
-SCHEDULE = re.compile(r"(?i)(?:^|[\s,{])['\"]?schedule['\"]?\s*(?:[:,}])")
+SCHEDULE = re.compile(r"(?i)(?:^|[\s,{])['\"]?schedule['\"]?\s*(?:[:,}\]])")
 DISPATCH = re.compile(
     r"(?i)\bgh\s+workflow\s+run\b"
     r"|/actions/workflows/[a-zA-Z0-9_./{}-]+/dispatches\b"
