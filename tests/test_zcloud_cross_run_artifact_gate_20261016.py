@@ -47,6 +47,10 @@ class Tests(unittest.TestCase):
         self.git('init', '-q')
         self.git('config','user.email','tests@example.invalid')
         self.git('config','user.name','CI')
+        # Avoid background Git auto-maintenance racing TemporaryDirectory
+        # cleanup on short-lived real-Git fixtures in hosted CI.
+        self.git('config','gc.auto','0')
+        self.git('config','maintenance.auto','false')
 
     def git(self, *args):
         return subprocess.check_output(['git','-C',str(self.repo),*args],stderr=subprocess.DEVNULL).decode().strip()
