@@ -123,6 +123,13 @@ class BacklogBriefTests(TestCase):
                 self.assertNotIn("details", stderr.getvalue())
                 self.assertIn("DENIED", stderr.getvalue())
 
+    def test_workflow_checkout_sha_mismatch_denied(self):
+        report = brief.collect(Reader({1: [pr(1)]}), NOW)
+        with mock.patch.object(brief, "collect", return_value=report):
+            with redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(2, brief.main(["--expected-main-sha", OTHER]))
+                self.assertIn("DENIED", stderr.getvalue())
+
     def test_reader_never_accepts_other_method_or_url(self):
         with self.assertRaisesRegex(brief.Denied, "unsupported_endpoint"):
             brief.fetch("workflow_dispatch", 1)
