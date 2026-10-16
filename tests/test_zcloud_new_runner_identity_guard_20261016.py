@@ -193,6 +193,31 @@ class IdentityPolicyTests(unittest.TestCase):
                            "      - if: success()\n        run: echo safe")
         self.assertEqual(g.unsafe_jobs(val), {})
 
+    def test_quoted_identity_step_key_cannot_shadow_run_or_shell(self):
+        for extra in ('"run": echo untrusted', "'run': echo untrusted",
+                      '"shell": python', "'if': true", "!!str run: echo unsafe",
+                      "run: |"):
+            with self.subTest(field=extra):
+                doc = wf().replace("        run: |", "        run: |\n        " + extra)
+                self.assertIn("audit", g.unsafe_jobs(doc))
+
+    def test_identity_step_env_alias_is_not_allowed(self):
+        for setting in ("        env: *malicious", "        env: {BASH_ENV: /tmp/code}",
+                        "        'env': {PATH: /tmp}"):
+            with self.subTest(setting=setting):
+                doc = wf().replace("        run: |", setting + "\n        run: |")
+                self.assertIn("audit", g.unsafe_jobs(doc))
+
+    def test_job_env_alias_cannot_inject_shell_hook(self):
+        for setting in ("    env: *inherited", "    env: {SAFE: yes}"):
+            with self.subTest(setting=setting):
+                doc = wf().replace("    steps:", setting + "\n    steps:")
+                self.assertIn("audit", g.unsafe_jobs(doc))
+
+    def test_identity_step_with_normal_literal_shell_is_still_valid(self):
+        doc = wf().replace("        run: |", "        shell: bash\n        run: |")
+        self.assertEqual(g.unsafe_jobs(doc), {})
+
     def test_explicit_bash_shell_preserves_safe_guard(self):
         value = wf().replace("        run: |", "        shell: bash\n        run: |")
         self.assertEqual(g.unsafe_jobs(value), {})
