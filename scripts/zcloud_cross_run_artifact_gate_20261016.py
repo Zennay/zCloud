@@ -11,8 +11,12 @@ import argparse
 from collections import Counter
 from hashlib import sha256
 import json
+import os
 import re
+import selectors
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -27,15 +31,58 @@ class Refusal(ValueError):
 
 
 def _git(root: Path, *args: str, max_bytes: int = 2_000_000) -> bytes:
+    """Read Git output with an actual memory and deadline bound.
+
+    subprocess.run(stdout=PIPE) checks size only AFTER buffering untrusted
+    output. An inherited pipe from a child can also leave a consumer stuck.
+    A separate process group makes refusal terminate those children as well.
+    """
+    if max_bytes < 1:
+        raise Refusal("invalid_output_budget")
     try:
-        p = subprocess.run(["git", "-C", str(root), *args],
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                           timeout=20, check=False)
+        proc = subprocess.Popen(
+            ["git", "-C", str(root), *args], stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+    except OSError as exc:
+        raise Refusal("git_command_unavailable") from exc
+    complete = False
+    chunks: list[bytes] = []
+    total = 0
+    deadline = time.monotonic() + 15
+    try:
+        assert proc.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise Refusal("git_command_timed_out")
+                chunk = os.read(proc.stdout.fileno(), min(65_536, max_bytes + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise Refusal("git_output_oversized")
+                chunks.append(chunk)
+        if proc.wait(timeout=max(0.05, deadline - time.monotonic())):
+            raise Refusal("git_command_failed")
+        complete = True
+        return b"".join(chunks)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Refusal("git_command_unavailable") from exc
-    if p.returncode or len(p.stdout) > max_bytes:
-        raise Refusal("git_command_failed_or_oversized")
-    return p.stdout
+    finally:
+        if not complete:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def _inventory(root: Path, sha: str) -> dict[str, str]:
