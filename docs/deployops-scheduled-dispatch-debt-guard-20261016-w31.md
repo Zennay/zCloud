@@ -1,11 +1,26 @@
-# Scheduled redispatch growth guard — 16 October 2026
+# Scheduled redispatch source guard — 16 October 2026
 
-Deploy-ops source-only prevention associated with [#633](https://github.com/Zennay/zCloud/issues/633) and known repeat-dispatch debt [#1216](https://github.com/Zennay/zCloud/issues/1216).
+This **GitHub-hosted, read-only** control is independently owned deploy-ops work for [#633](https://github.com/Zennay/zCloud/issues/633), informed by the existing production recovery issue [#1216](https://github.com/Zennay/zCloud/issues/1216). It does not alter the live recovery workflow, schedule, or queue.
 
-A scheduled workflow that calls `gh workflow run`, the REST `/actions/workflows/.../dispatches` endpoint, or Octokit workflow-dispatch methods can flood CI or repeatedly rearm a failing deployment. This guard computes dispatch-site counts from immutable Git blobs on the exact PR base and head. It rejects **new** sites in scheduled workflows while exposing legacy debt without silently claiming it is fixed. A new scheduled trigger on an existing manual dispatch workflow is also considered new debt.
+## What the check enforces
 
-Security bounds: Git SHA is a full 40-digit lowercase object identity; manifests must be regular files; tree records and blob lengths are validated, inventory count, per-file bytes, aggregate bytes and each Git subprocess have hard limits. Source is never interpolated into logs; no credential or API write permission is requested. Only the GitHub-hosted PR job evaluates candidates.
+The workflow has **no PR path filter**: **every main-targeting pull request** runs the source-only policy. A path-filtered guard would miss a newly added risky workflow. It checks the exact PR head and canonical live main ref before and after validation, rejecting stale base evidence.
 
-Validation: `python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31` and `python3 scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py --base <EXACT_BASE_SHA> --candidate <EXACT_HEAD_SHA>`. Nonzero exit means reject or incomplete evidence.
+The scanner inventories regular `.github/workflows/*.yml` and `.yaml` blobs at immutable Git tree IDs for base and candidate. For workflows with a scheduled event (including inline, quoted and opaque alias-shaped triggers), it identifies direct `gh workflow run`, REST workflow dispatch, REST `repository_dispatch`, Octokit dispatch and dynamic workflow-ID variants. It also recognises the split Python REST URL used by the existing recovery workflow. All source stays local to the GitHub-hosted job.
 
-Not covered: indirect shell wrappers, multiline-disguised dispatch commands, imported reusable workflow behavior, runtime state and existing #1216 release workflow debt. Passing this test **does not** authorize a deploy, prove runner health, close #1216, or replace serialized gate #580/PWQ-41 / #1089. Actual idempotent recovery repair is exclusively owned by #913 and the existing policy work [#1239](https://github.com/Zennay/zCloud/pull/1239). No direct edit, rearm or dispatch of the live recovery workflow is permitted by this standalone PR.
+**Monotone fingerprint policy:** each matched dispatch site is hashed from its source line and counted as a multiset. A new site, duplicate site, changed command or changed dispatch target is rejected—even if the old site was removed so that raw call counts appear equal. An unchanged legacy site may remain while other non-dispatch code changes. Fingerprinting deliberately treats some formatting-only changes to the dispatch line as review-requiring, not as proof of new runtime behavior.
+
+## Read-only acceptance
+
+- `python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31`
+- `python3 scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py --base <40-character-main-SHA> --candidate <40-character-PR-head-SHA>`
+
+Outputs contain only repo-relative workflow filenames, bounded counts, Git SHAs and permit/deny status; they never echo workflow content, secrets, command arguments or event payloads. Exit codes: 0 unchanged/no-new-debt; 1 new sites; 2 malformed/incomplete evidence. `mutation_performed=false` and `deploy_authorized=false` always.
+
+Source guard validates SHA syntax, regular blob mode, tree entries, content size, UTF-8 and Git object lengths. The Git subprocess timeout is 20 seconds and its response is rejected if over 16 MiB. This is a post-capture output bound (not a streaming-memory guarantee).
+
+## Explicit non-claims
+
+This is **not** a complete interpreter for shell variables, scripts imported by workflows, local reusable actions, runtime dispatch permissions or indirect external orchestration. In particular, a command assembled through opaque wrappers could escape string-based matching; all privileged production workflows still require separate authorisation.
+
+Passing this PR gate does **not** fix existing [#1216](https://github.com/Zennay/zCloud/issues/1216) redispatch, demonstrate the self-hosted runner is alive, or authorize merging/deploying anything. Actual recovery idempotence has its own [#913](https://github.com/Zennay/zCloud/pull/913) workflow owner and [#1239](https://github.com/Zennay/zCloud/pull/1239) policy owner. Release stays serialized under #580/PWQ-41 + #1089. No manual workflow dispatch, VPS/Firefox/SQLite/worker/runner/queue/service write is part of this source-only guard.
