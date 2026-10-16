@@ -290,6 +290,33 @@ class CheckoutRepoGuardTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'timed out'):
                 guard.git('.', 'ls-tree', '-r', 'a'*40)
 
+    def test_trusted_admission_precedes_first_pr_python_execution(self):
+        workflow_path = Path(__file__).parents[1] / '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
+        text = workflow_path.read_text(encoding='utf-8')
+        admission = text.index('- name: Admit canonical current main before executing PR code')
+        test_exec = text.index('python3 -m unittest -v tests.test_zcloud_foreign_checkout_ratchet_20261016')
+        self.assertLess(admission, test_exec)
+
+    def test_precode_admission_uses_exact_canonical_main(self):
+        workflow_path = Path(__file__).parents[1] / '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
+        text = workflow_path.read_text(encoding='utf-8')
+        self.assertIn('origin="$(git remote get-url origin)"', text)
+        self.assertIn('http.followRedirects=false ls-remote --exit-code origin refs/heads/main', text)
+        self.assertIn('test "$advertised" = "$EXPECTED_BASE"', text)
+
+    def test_precode_admission_never_checks_out_foreign_repository(self):
+        workflow_path = Path(__file__).parents[1] / '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
+        text = workflow_path.read_text(encoding='utf-8')
+        self.assertIn('ref: ${{ github.event.pull_request.head.sha }}', text)
+        self.assertIn('persist-credentials: false', text)
+        self.assertIn('test "$HEAD_REPO" = "$REPO"', text)
+
+    def test_scanner_requires_main_proof_after_running_pr_unit_tests(self):
+        workflow_path = Path(__file__).parents[1] / '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
+        text = workflow_path.read_text(encoding='utf-8')
+        self.assertIn('--require-current-main', text)
+        self.assertIn('git diff --quiet -- scripts/zcloud_foreign_checkout_ratchet_20261016.py', text)
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
