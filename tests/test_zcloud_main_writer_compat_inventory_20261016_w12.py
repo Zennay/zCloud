@@ -174,7 +174,7 @@ class MainWriterInventoryTests(unittest.TestCase):
             audit.inventory(self.repo, self.rev())
 
     def test_nul_in_workflow_blob_denied(self):
-        (self.repo / ".github" / "workflows" / "nul.yml").write_bytes(b"name: a\\x00b\\n".replace(b"\\x00", b"\\x00"))
+        (self.repo / ".github" / "workflows" / "nul.yml").write_bytes(b"name: a\x00b\n")
         self.commit()
         with self.assertRaisesRegex(audit.InventoryError, "invalid_workflow_blob"):
             audit.inventory(self.repo, self.rev())
