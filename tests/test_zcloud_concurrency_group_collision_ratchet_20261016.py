@@ -95,9 +95,58 @@ class RatchetTests(unittest.TestCase):
             "cancel-in-progress: false", "cancel-in-progress: false\n  queue: [max]"))
         self.denied(base, self.save())
 
-    def test_changing_legacy_pending_queue_requires_review(self):
+    def test_legacy_single_to_max_is_monotonic_pending_loss_remediation(self):
         base = self.base(document("shared", False), document("shared", False))
         self.write("first.yml", document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_legacy_both_members_can_migrate_to_max(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("first.yml", document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
+        self.write("second.yaml", document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_max_to_single_legacy_escalation_denied(self):
+        protected = document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max")
+        base = self.base(protected, document("shared", False))
+        self.write("first.yml", document("shared", False))
+        self.denied(base, self.save())
+
+    def test_true_to_false_is_monotonic_cancellation_remediation(self):
+        base = self.base(document("shared", True), document("shared", False))
+        self.write("first.yml", document("shared", False))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_true_to_false_and_single_to_max_can_coexist(self):
+        base = self.base(document("shared", True), document("shared", False))
+        self.write("first.yml", document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_dynamic_to_literal_false_is_monotonic(self):
+        base = self.base(document("shared", "dynamic"), document("shared", False))
+        self.write("first.yml", document("shared", False))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_dynamic_to_true_is_not_provably_safer(self):
+        base = self.base(document("shared", "dynamic"), document("shared", False))
+        self.write("first.yml", document("shared", True))
+        self.denied(base, self.save())
+
+    def test_mode_improvement_does_not_excuse_queue_regression(self):
+        old_first = document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max")
+        base = self.base(old_first, document("shared", False))
+        self.write("first.yml", document("shared", True))
+        self.denied(base, self.save())
+
+    def test_new_member_with_max_queue_is_still_denied(self):
+        base = self.base(document("shared", False), document("separate", False))
+        self.write("second.yaml", document("shared", False).replace(
             "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
         self.denied(base, self.save())
 
