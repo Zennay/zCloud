@@ -107,6 +107,8 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
     found_schedule = False
     seen_on = False
     event_indent: int | None = None
+    entry_indent: int | None = None
+    entry_has_timezone = False
     for line in source.splitlines():
         # YAML explicit mapping keys can synthesize a trigger without a
         # recognizable top-level on: line. Refuse ambiguous source outright.
@@ -128,6 +130,8 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             in_on = key == "on"
             in_schedule = False
             event_indent = None
+            entry_indent = None
+            entry_has_timezone = False
             if in_on and line.partition(":")[2].strip() not in ("", "# workflow events"):
                 # Inline aliases, maps, YAML tags or schedule directives could
                 # hide a cron job. Only simple event names/lists are exempt.
@@ -163,6 +167,8 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
                     raise AdmissionError("ambiguous_schedule_block")
                 found_schedule = True
                 in_schedule = True
+                entry_indent = None
+                entry_has_timezone = False
             else:
                 in_schedule = False
             continue
@@ -174,6 +180,9 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             raise AdmissionError("yaml_schedule_merge_forbidden")
         timezone_match = TIMEZONE_RE.fullmatch(line)
         if timezone_match:
+            if entry_indent is None or indent <= entry_indent or entry_has_timezone:
+                raise AdmissionError("misplaced_or_duplicate_timezone")
+            entry_has_timezone = True
             zone = timezone_match.group(1).strip()
             if not zone or zone.startswith(("*", "&", "!", "[", "{")):
                 raise AdmissionError("ambiguous_timezone_selector")
@@ -182,6 +191,11 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             continue
         match = CRON_RE.match(line)
         if match:
+            if entry_indent is None:
+                entry_indent = indent
+            if indent != entry_indent:
+                raise AdmissionError("ambiguous_cron_entry_indentation")
+            entry_has_timezone = False
             scalar = match.group(1).strip()
             if scalar[0:1] in ("'", '"'):
                 quote = scalar[0]
@@ -193,7 +207,10 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             if not scalar or "${{" in scalar:
                 raise AdmissionError("dynamic_cron_forbidden")
             entries.append(scalar)
-        elif line.strip().startswith("-") or "cron:" in line:
+        else:
+            # This subset only permits a cron item and its own optional
+            # timezone. An extra quoted cron/timezone key or YAML alias
+            # could override the parsed key in the real Actions evaluator.
             raise AdmissionError("unsupported_schedule_entry")
     if found_schedule and not entries:
         raise AdmissionError("empty_or_ambiguous_schedule")
