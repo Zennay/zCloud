@@ -7,9 +7,12 @@ Textual YAML subset; unsupported shapes must be reviewed separately.
 import argparse
 import collections
 import json
+import os
 import re
+import select
 import subprocess
 import sys
+import time
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 JOB = re.compile(r"^  (?P<quote>['\"]?)(?P<id>[A-Za-z0-9_.-]+)(?P=quote)\s*:(?:\s*#.*)?\s*$")
@@ -20,6 +23,8 @@ WORKFLOW_PREFIX = ".github/workflows/"
 MAX_FILES, MAX_BYTES = 512, 1024 * 1024
 MAX_TOTAL_BYTES = 24 * 1024 * 1024
 MAX_TREE_BYTES = 512 * 1024
+MAX_GIT_OUTPUT = MAX_BYTES + 8192
+MAX_GIT_SECONDS = 25
 CANONICAL_ORIGINS = frozenset({
     "https://github.com/Zennay/zCloud",
     "https://github.com/Zennay/zCloud.git",
@@ -31,11 +36,43 @@ class Denied(ValueError):
 
 
 def git(*args):
-    result = subprocess.run(["git", *args], capture_output=True, timeout=25,
-                            check=False)
-    if result.returncode:
-        raise Denied("git_source_unavailable")
-    return result.stdout
+    """Read bounded Git stdout without first buffering attacker-sized output.
+
+    This scanner only issues read-only Git commands. Pipe polling ensures even
+    malformed trees and adversarial Git metadata cannot exhaust hosted memory.
+    """
+    deadline = time.monotonic() + MAX_GIT_SECONDS
+    with subprocess.Popen(["git", *args], stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL) as proc:
+        result = bytearray()
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Denied("git_source_timeout")
+                if not select.select([proc.stdout], [], [], remaining)[0]:
+                    raise Denied("git_source_timeout")
+                chunk = os.read(proc.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                result.extend(chunk)
+                if len(result) > MAX_GIT_OUTPUT:
+                    raise Denied("git_output_size_cap")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Denied("git_source_timeout")
+            try:
+                proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                raise Denied("git_source_timeout") from None
+            if proc.returncode:
+                raise Denied("git_source_unavailable")
+            return bytes(result)
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+            raise
 
 
 def workflow_tree(sha):
