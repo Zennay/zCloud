@@ -23,6 +23,8 @@ MAX_BLOB_BYTES = 256 * 1024
 MAX_TOTAL_BYTES = 8 * 1024 * 1024
 MAX_GROUP_LENGTH = 256
 MAX_FINDINGS = 20000
+MAX_JOBS_PER_WORKFLOW = 256
+MAX_GROUP_ENTRIES = 4096
 
 class AdmissionError(ValueError):
     pass
@@ -197,6 +199,8 @@ def _entries_for_file(path: str, contents: bytes):
     jobs = body.get("jobs", {})
     if not isinstance(jobs, dict):
         raise AdmissionError("workflow jobs must be mapping")
+    if len(jobs) > MAX_JOBS_PER_WORKFLOW:
+        raise AdmissionError("workflow job count exceeds bounded budget")
     for job_id, definition in jobs.items():
         if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,120}", job_id):
             raise AdmissionError("unsafe workflow job ID")
@@ -210,15 +214,23 @@ def _entries_for_file(path: str, contents: bytes):
 def findings(commit: str):
     grouped = defaultdict(list)
     total = 0
+    total_entries = 0
     for path, sha in _workflow_entries(commit):
         blob = git_bytes("cat-file", "blob", sha, limit=MAX_BLOB_BYTES)
         total += len(blob)
         if total > MAX_TOTAL_BYTES:
             raise AdmissionError("aggregate workflow source budget exceeded")
-        for token, p, scope, mode, queue in _entries_for_file(path, blob):
+        entries = _entries_for_file(path, blob)
+        total_entries += len(entries)
+        if total_entries > MAX_GROUP_ENTRIES:
+            raise AdmissionError("repository concurrency entry budget exceeded")
+        for token, p, scope, mode, queue in entries:
             grouped[token].append((p, scope, mode, queue))
     out = set()
     for token, members in grouped.items():
+        # Identical workflow paths cannot create cross-workflow collisions;
+        # deduplicate within each path before any quadratic comparison.
+        members = list(dict.fromkeys(members))
         for i, first in enumerate(members):
             for second in members[i + 1:]:
                 # Even cancel-in-progress:false replaces a previous *pending*
