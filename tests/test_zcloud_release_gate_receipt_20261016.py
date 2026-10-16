@@ -51,13 +51,14 @@ class ReleaseReceiptTests(unittest.TestCase):
             node = node[fragment]
         node[key[-1]] = value
         result = self.verdict(data)
-        self.assertFalse(result["operational_gates_observed"])
+        self.assertFalse(result["offline_claims_complete"])
         self.assertFalse(result["production_mutation_authorized"])
+        self.assertFalse(result["live_sources_verified"])
         self.assertIn(code, result["reason_codes"])
 
     def test_complete_claim_still_never_authorizes_production(self):
         result = self.verdict(receipt())
-        self.assertTrue(result["operational_gates_observed"])
+        self.assertTrue(result["offline_claims_complete"])
         self.assertFalse(result["production_mutation_authorized"])
         self.assertEqual("untrusted_offline_receipt", result["evidence_source"])
         self.assertEqual([], result["reason_codes"])
@@ -141,13 +142,15 @@ class ReleaseReceiptTests(unittest.TestCase):
     def test_future_old_and_non_utc_timestamps_fail_closed(self):
         for stamp in ("2026-10-16T00:21:00Z", "2026-10-16T00:09:59Z",
                       "2026-10-16T00:20:00+00:00",
-                      "2026-10-16T01:19:30+01:00", "n/a", True, None):
+                      "2026-10-16T01:19:30+01:00", "20261016T001930Z",
+                      "2026-10-16 00:19:30Z", "2026-10-16T00:19Z",
+                      "2026-W42-5T00:19:30Z", "n/a", True, None):
             with self.subTest(stamp=stamp):
                 self.deny(["observed_at"], stamp, "stale_or_invalid_observation")
-        self.assertTrue(self.verdict(receipt())["operational_gates_observed"])
+        self.assertTrue(self.verdict(receipt())["offline_claims_complete"])
         data = receipt()
         data["observed_at"] = "2026-10-16T00:10:00Z"
-        self.assertTrue(self.verdict(data)["operational_gates_observed"])
+        self.assertTrue(self.verdict(data)["offline_claims_complete"])
 
     def test_now_must_be_timezone_aware(self):
         with self.assertRaisesRegex(ValueError, "timezone"):
@@ -212,7 +215,7 @@ class ReleaseReceiptTests(unittest.TestCase):
                                   capture_output=True, text=True, timeout=5)
             self.assertEqual(0, call.returncode, call.stderr)
             result = json.loads(call.stdout)
-            self.assertTrue(result["operational_gates_observed"])
+            self.assertTrue(result["offline_claims_complete"])
             self.assertFalse(result["production_mutation_authorized"])
 
     def test_cli_duplicate_keys_fail_without_spilling_receipt(self):
