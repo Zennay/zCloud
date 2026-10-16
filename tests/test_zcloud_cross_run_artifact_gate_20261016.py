@@ -606,6 +606,53 @@ class Tests(unittest.TestCase):
         with self.assertRaises(module.Refusal):
             module.evaluate(self.repo,base,head)
 
+    def test_unknown_external_download_artifact_is_risky_by_default(self):
+        for action in ('acme/download-artifact','acme/custom-download-artifact','org/download_artifact','ORG/My_Download_Artifact'):
+            with self.subTest(action=action):
+                candidate=SAFE.replace('actions/download-artifact@',action+'@')
+                self.assertEqual(sum(module._risks(candidate,'w.yml').values()),1)
+
+    def test_unknown_external_download_artifact_without_with_is_risky(self):
+        candidate=SAFE.replace('actions/download-artifact@','organisation/secure-download-artifact@')
+        candidate=candidate.replace('        with:\n          name: evidence\n','')
+        self.assertEqual(sum(module._risks(candidate,'w.yml').values()),1)
+
+    def test_unknown_external_download_artifact_denied_real_git(self):
+        base=self.commit(SAFE)
+        candidate=SAFE.replace('actions/download-artifact@','acme/download_artifact@')
+        head=self.commit(candidate)
+        report=module.evaluate(self.repo,base,head)
+        self.assertFalse(report['ok'])
+        self.assertEqual(report['new_finding_paths'],['.github/workflows/sample.yml'])
+
+    def test_unknown_external_download_artifact_nested_composite_denied(self):
+        base=self.commit(SAFE)
+        action=self.repo/'components/a/action.yml'
+        action.parent.mkdir(parents=True)
+        action.write_text(SAFE.replace('actions/download-artifact@','acme/other-download-artifact@'))
+        self.git('add','.'); self.git('commit','-qm','vendor downloader')
+        self.assertEqual(module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))['new_findings'],1)
+
+    def test_unknown_external_download_artifact_unchanged_legacy_allowed(self):
+        legacy=SAFE.replace('actions/download-artifact@','acme/custom-download-artifact@')
+        base=self.commit(legacy)
+        head=self.commit(legacy+'\n# unchanged vendor input\n')
+        report=module.evaluate(self.repo,base,head)
+        self.assertTrue(report['ok'])
+        self.assertEqual(report['legacy_findings'],1)
+
+    def test_unknown_external_download_artifact_malformed_ref_refused(self):
+        invalid='    uses: "acme/custom-download-artifact@'+chr(36)+'{{ vars.TAG }}"'
+        with self.assertRaises(module.Refusal):
+            module._risks(invalid,'w.yml')
+
+    def test_unrelated_external_action_is_still_allowed(self):
+        source=SAFE.replace('actions/download-artifact@','myorg/upload-artifact@')
+        self.assertEqual(sum(module._risks(source,'w.yml').values()),0)
+
+    def test_official_action_without_sensitive_inputs_is_still_allowed(self):
+        self.assertEqual(sum(module._risks(SAFE,'w.yml').values()),0)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
