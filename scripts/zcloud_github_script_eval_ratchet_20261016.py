@@ -102,7 +102,7 @@ def steps_for_use(lines: list[str], idx: int) -> tuple[int, int]:
     return start, end
 
 
-def inspect_step(lines: list[str], path: str, start: int, end: int) -> tuple[str, str] | None:
+def inspect_step(lines: list[str], path: str, start: int, end: int, full_source: str) -> tuple[str, str] | None:
     body = "".join(lines[start:end])
     why: set[str] = set()
     script_found = False
@@ -141,7 +141,10 @@ def inspect_step(lines: list[str], path: str, start: int, end: int) -> tuple[str
         why.add("ambiguous_yaml")
     if not why:
         return None
-    fingerprint = digest(path + "\n" + str(start) + "\n" + body)
+    # YAML aliases, escaped delimiters and flow mappings may be defined outside
+    # the step. A changed anchor must never reuse the old ambiguous-step waiver.
+    scope = full_source if "ambiguous_yaml" in why else str(start) + "\n" + body
+    fingerprint = digest(path + "\n" + scope)
     return fingerprint, "+".join(sorted(why))
 
 
@@ -166,6 +169,11 @@ def risks(sha: str) -> tuple[Counter, int]:
         if "\x00" in source:
             raise EvidenceError("workflow includes NUL byte")
         lines = source.splitlines(keepends=True)
+        # An alias can hide the action identity itself. If github-script appears
+        # anywhere in a workflow, refuse a new unresolved uses alias even when
+        # the step action is not spelled out on the uses line.
+        if "actions/github-script@" in source.lower() and re.search(r"(?m)^\s*(?:-\s*)?uses\s*:\s*\*", source):
+            found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
         processed: set[tuple[int, int]] = set()
         for i, line in enumerate(lines):
             if USE.match(line):
@@ -173,7 +181,7 @@ def risks(sha: str) -> tuple[Counter, int]:
                 if (start, end) in processed:
                     continue
                 processed.add((start, end))
-                risk = inspect_step(lines, path, start, end)
+                risk = inspect_step(lines, path, start, end, source)
                 if risk:
                     fingerprint, reason = risk
                     found[(path, fingerprint, reason)] += 1
