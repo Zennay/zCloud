@@ -18,6 +18,7 @@ import sys
 from typing import Any
 
 MAX_BYTES = 65536
+MAX_JSON_DEPTH = 64
 MAX_AGE_SECONDS = 600
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z")
@@ -55,9 +56,40 @@ def _finite_float(value: str) -> float:
     return result
 
 
+def _check_json_nesting(raw: bytes) -> None:
+    """Bound JSON container depth before Python allocates a nested tree.
+
+    Count brackets only outside strings (including escaped quotes) to avoid
+    interpreting arbitrary user data as syntax. JSON grammar is checked by
+    json.loads afterwards. This depth cap is independent of sys recursionlimit.
+    """
+    depth = 0
+    quoted = False
+    escaped = False
+    for byte in raw:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif byte == 92:  # backslash
+                escaped = True
+            elif byte == 34:  # quotation mark
+                quoted = False
+        elif byte == 34:
+            quoted = True
+        elif byte in (91, 123):  # '[' or '{'
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                raise ValueError("invalid_json")
+        elif byte in (93, 125):
+            depth -= 1
+            if depth < 0:
+                raise ValueError("invalid_json")
+
+
 def decode_receipt(raw: bytes) -> dict[str, Any]:
     if len(raw) > MAX_BYTES:
         raise ValueError("receipt_too_large")
+    _check_json_nesting(raw)
     try:
         result = json.loads(raw.decode("utf-8", errors="strict"),
                             object_pairs_hook=_unique_object,
