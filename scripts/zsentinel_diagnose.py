@@ -122,15 +122,15 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
     # Every GitHub job diagnosis must be anchored in a fresh observed snapshot.
     status = github.get("job_status")
     if status is not None:
-        if status not in RUNNING | COMPLETED | {"queued", "waiting", "pending"}:
+        if not isinstance(status, str) or status not in RUNNING | COMPLETED | {"queued", "waiting", "pending"}:
             raise ValueError(f"{pid}.github.job_status: unsupported value")
         observed = required_time(github, "observed_at", now, pid + ".github")
         if now - observed > timedelta(minutes=30):
             return verdict(pid, "unknown", "stale_github_observation",
                            "Refresh GitHub run/job metadata before diagnosing or intervening.")
         sha = github.get("head_sha", "")
-        if sha and (not isinstance(sha, str) or len(sha) != 40
-                    or any(ch not in "0123456789abcdef" for ch in sha)):
+        if not isinstance(sha, str) or (sha and (len(sha) != 40
+                    or any(ch not in "0123456789abcdef" for ch in sha))):
             raise ValueError(f"{pid}.github.head_sha: canonical lowercase full SHA required")
         identity = github_job_identity(github, pid)
         if status in {"queued", "waiting", "pending"}:
@@ -143,7 +143,7 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
                            "Continue observing; queue delay alone does not prove a broken runner.")
         if status in COMPLETED:
             conclusion = github.get("conclusion")
-            if conclusion not in RESULTS:
+            if not isinstance(conclusion, str) or conclusion not in RESULTS:
                 raise ValueError(f"{pid}.github.conclusion: explicit conclusion required")
             if status in {"success", "failure", "cancelled"} and status != conclusion:
                 raise ValueError(f"{pid}.github.conclusion: contradictory terminal status")
@@ -155,6 +155,8 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
                 return verdict(pid, "unknown", "github_job_cancelled",
                                "Resolve cancellation reason and owner before retrying.")
     state = runtime.get("execution_state")
+    if state is not None and not isinstance(state, str):
+        raise ValueError(f"{pid}.runtime.execution_state: string required")
     if state == "running":
         hb = required_time(runtime, "heartbeat_at", now, pid + ".runtime")
         seconds = runtime.get("heartbeat_interval_seconds")
