@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      ZSSH_PRODUCTION_HOST: zssh.cheapgpt.shop
+      ZSSH_PRODUCTION_HOST: zssh.zennay.nl
       ZSSH_EXPECTED_IPV4: 198.244.191.182
     steps:
       - name: Resolve production DNS and write non-secret evidence
