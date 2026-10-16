@@ -218,9 +218,9 @@ class RatchetTests(unittest.TestCase):
 
     def _parent_and_job_same_group(self):
         return document("shared", False).replace(
-            "    runs-on: ubuntu-latest\\n",
-            "    concurrency:\\n      group: shared\\n"
-            "      cancel-in-progress: false\\n    runs-on: ubuntu-latest\\n",
+            "    runs-on: ubuntu-latest\n",
+            "    concurrency:\n      group: shared\n"
+            "      cancel-in-progress: false\n    runs-on: ubuntu-latest\n",
         )
 
     def test_new_parent_job_self_deadlock_is_denied(self):
@@ -233,14 +233,14 @@ class RatchetTests(unittest.TestCase):
         base = self.base(self._parent_and_job_same_group(),
                          document("unrelated", False))
         self.write("first.yml", self._parent_and_job_same_group()
-                   + "# unrelated non-concurrency change\\n")
+                   + "# unrelated non-concurrency change\n")
         self.assertEqual(gate.check(base, self.save()), (1, 1))
 
     def test_self_deadlock_inventory_is_one_group_one_workflow(self):
         base = self.base(self._parent_and_job_same_group(),
                          document("unrelated", False))
         self.write("first.yml", self._parent_and_job_same_group()
-                   + "# unrelated edit\\n")
+                   + "# unrelated edit\n")
         receipt = gate.inventory(base, self.save())
         self.assertEqual(receipt["legacy_collision_count"], 1)
         self.assertEqual(receipt["legacy_group_count"], 1)
@@ -252,13 +252,13 @@ class RatchetTests(unittest.TestCase):
         base = self.base(document("shared", False, job=True),
                          document("unrelated", False))
         sibling = (
-            "  sibling:\\n"
-            "    runs-on: ubuntu-latest\\n"
-            "    concurrency:\\n"
-            "      group: shared\\n"
-            "      cancel-in-progress: false\\n"
-            "    steps:\\n"
-            "      - run: echo ok\\n"
+            "  sibling:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n"
+            "      group: shared\n"
+            "      cancel-in-progress: false\n"
+            "    steps:\n"
+            "      - run: echo ok\n"
         )
         self.write("first.yml", document("shared", False, job=True) + sibling)
         self.assertEqual(gate.check(base, self.save()), (0, 0))
