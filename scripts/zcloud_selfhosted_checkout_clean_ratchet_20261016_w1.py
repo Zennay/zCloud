@@ -13,8 +13,8 @@ import sys
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 JOB = re.compile(r"^  ([A-Za-z0-9_.-]+):(?:\s*#.*)?\s*$")
-STEP = re.compile(r"^      - (?:name|uses|run|id|if|shell|env|with):")
-USES = re.compile(r"^\s*(?:-\s*)?uses:\s*['\"]?([^'\"\s#]+)")
+STEP = re.compile(r"^      -\s+(?:name|uses|run|id|if|shell|env|with)\s*:")
+USES = re.compile(r"^\s*(?:-\s*)?uses\s*:\s*['\"]?([^'\"\s#]+)")
 CLEAN = re.compile(r"^\s+clean\s*:\s*(.*)$")
 WORKFLOW_PREFIX = ".github/workflows/"
 MAX_FILES, MAX_BYTES = 512, 1024 * 1024
@@ -82,23 +82,28 @@ def analyze(source, path):
             current = None
 
     for job_name, body in jobs:
-        # Do not mistake text inside a shell command for a runner declaration:
-        # match only the top-level job mapping and its sequence entries.
-        before_steps = []
-        for line in body:
-            if line.startswith("    steps:"):
-                break
-            before_steps.append(line)
-        runner_fields = [l for l in before_steps
+        # Mapping order is irrelevant in YAML: runs-on may appear *after*
+        # steps. Restrict runner-sequence entries to runs-on itself; a list
+        # under a different job key must never declare the runner implicitly.
+        runner_fields = [l for l in body
                          if re.match(r"^    runs-on\s*:", l)]
-        runner_list_items = [l for l in before_steps
-                             if re.match(r"^      -\s*['\\\"]?self-hosted['\\\"]?(?:\s*#.*)?$", l)]
-        selfhosted = (any("self-hosted" in l.lower() for l in runner_fields)
-                      or bool(runner_list_items))
-        # A dynamic runner may select the permanent VPS even if its source
-        # text does not contain the literal word self-hosted.
-        dynamic_runner = any(chr(36) + "{" in line or "*" in line.split(":", 1)[1]
-                             for line in runner_fields)
+        runner_items = []
+        in_runner = False
+        for line in body:
+            if re.match(r"^    [A-Za-z_-]+\s*:", line):
+                in_runner = bool(re.match(r"^    runs-on\s*:", line))
+            elif in_runner and re.match(r"^      -\s*", line):
+                runner_items.append(line)
+        runner_source = runner_fields + runner_items
+        selfhosted = any(re.search(r"(?<![A-Za-z0-9_-])self-hosted(?![A-Za-z0-9_-])",
+                                    line, re.IGNORECASE) for line in runner_source)
+        # A YAML alias, mapping, or GitHub expression can resolve to
+        # self-hosted even without a literal label; deny new checkout jobs.
+        dynamic_runner = any(
+            (chr(36) + "{" in line or re.search(r":\s*[*&{]", line)
+             or re.match(r"^    runs-on\s*:\s*(?:#.*)?$", line))
+            for line in runner_fields
+        )
         if dynamic_runner and any("checkout@" in line.lower() for line in body):
             risks.append((path, job_name, "runner", "dynamic-runner-checkout"))
         if not selfhosted:
@@ -143,11 +148,17 @@ def analyze(source, path):
             if action.startswith("actions/checkout@"):
                 clean_values = []
                 in_with = False
+                with_blocks = 0
                 for line in step_lines:
                     if re.match(r"^        with\s*:", line):
+                        with_blocks += 1
                         in_with = True
-                        if re.search(r"^        with\s*:\s*\{", line):
-                            risks.append((path, job_name, str(index), "inline-with-unverified"))
+                        with_value = line.split(":", 1)[1].split("#", 1)[0].strip()
+                        if with_value:
+                            # Inline flow maps and inherited/unknown maps can
+                            # override clean; only a literal block is proven.
+                            risks.append((path, job_name, str(index),
+                                          "opaque-with-map"))
                     elif re.match(r"^        [A-Za-z_-]+\s*:", line):
                         in_with = False
                     elif in_with:
@@ -157,6 +168,8 @@ def analyze(source, path):
                             clean_values.append(raw)
                         if re.match(r"^\s+<<\s*:", line):
                             risks.append((path, job_name, str(index), "merged-with-map"))
+                if with_blocks > 1:
+                    risks.append((path, job_name, str(index), "duplicate-with-map"))
                 if len(clean_values) > 1:
                     risks.append((path, job_name, str(index), "duplicate-clean"))
                 for value in clean_values:
