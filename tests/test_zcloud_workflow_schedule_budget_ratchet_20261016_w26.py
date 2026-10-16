@@ -125,6 +125,18 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             cross_schedule_bursts(("0 9 * * *",) * 33)
 
+    def test_timezone_metadata_parsed(self):
+        zones = []
+        expr = "on:\n  schedule:\n    - cron: '0 9 * * *'\n      timezone: America/New_York\n"
+        self.assertEqual(schedules(expr, timezone_metadata=zones), ("0 9 * * *",))
+        self.assertEqual(zones, ["timezone: America/New_York"])
+
+    def test_timezone_not_in_unrelated_jobs(self):
+        zones = []
+        expr = "on:\n  push:\n    branches: [main]\njobs:\n  test:\n    timezone: Asia/Tokyo\n"
+        self.assertEqual(schedules(expr, timezone_metadata=zones), ())
+        self.assertEqual(zones, [])
+
     def test_quoted_schedule(self):
         self.assertEqual(schedules(workflow("30 8 * * 1-5")), ("30 8 * * 1-5",))
 
@@ -215,6 +227,36 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertFalse(result["accepted"])
         self.assertTrue(any("10 * * * *" in item["cron"]
                             for item in result["new_high_frequency"]))
+
+    def test_new_timezone_requires_independent_review(self):
+        path = self.directory / "safe.yml"
+        path.write_text(workflow("0 8 * * *").replace(
+            "jobs:", "      timezone: America/New_York\njobs:"))
+        receipt = audit(self.root, self.baseline)
+        self.assertFalse(receipt["accepted"])
+        self.assertTrue(any(entry.get("reason") == "timezone_requires_independent_review"
+                            for entry in receipt["new_high_frequency"]))
+
+    def test_legacy_timezone_preserved_with_unrelated_edit(self):
+        path = self.directory / "safe.yml"
+        path.write_text(workflow("0 8 * * *").replace(
+            "jobs:", "      timezone: America/New_York\njobs:"))
+        self.git("add", ".")
+        self.git("commit", "-qm", "grandfather known timezone")
+        base = self.git("rev-parse", "HEAD")
+        self.assertTrue(audit(self.root, base)["accepted"])
+        path.write_text(path.read_text() + "\n# Source-only comment\n")
+        self.assertTrue(audit(self.root, base)["accepted"])
+
+    def test_existing_timezone_cron_mutation_denied(self):
+        path = self.directory / "safe.yml"
+        path.write_text(workflow("0 8 * * *").replace(
+            "jobs:", "      timezone: America/New_York\njobs:"))
+        self.git("add", ".")
+        self.git("commit", "-qm", "existing zoned schedule")
+        base = self.git("rev-parse", "HEAD")
+        path.write_text(path.read_text().replace("0 8 * * *", "0 9 * * *"))
+        self.assertFalse(audit(self.root, base)["accepted"])
 
     def test_missing_or_invalid_baseline_denied(self):
         with self.assertRaises(AdmissionError):
