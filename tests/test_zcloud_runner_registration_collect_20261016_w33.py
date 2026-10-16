@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -159,6 +161,43 @@ class CollectorTests(unittest.TestCase):
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                 )
+
+    def test_timeout_terminates_spawned_stdout_holder(self):
+        # Parent exits, but its descendant inherits the stdout pipe and
+        # would otherwise survive an idle/timeout read. A file marker proves
+        # the descendant did NOT survive long enough to execute its payload.
+        with tempfile.TemporaryDirectory() as directory:
+            from pathlib import Path
+            marker = Path(directory) / 'descendant-still-alive'
+            code = (
+                "import pathlib,time;"
+                "time.sleep(0.6);"
+                "pathlib.Path(" + repr(str(marker)) + ").write_text('alive')"
+            )
+            parent = (
+                "import subprocess,sys;"
+                "subprocess.Popen([sys.executable,'-c'," + repr(code) +
+                "],stdout=sys.stdout,stderr=subprocess.DEVNULL);"
+                "print('spawned',flush=True)"
+            )
+            argv=(sys.executable,'-c',parent)
+            with mock.patch.object(collector, 'GH_GET', argv):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    collector._bounded_gh_read(
+                        argv,check=False,shell=False,timeout=0.2,
+                        stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL,
+                    )
+            time.sleep(0.7)
+            self.assertFalse(marker.exists(), 'timeout left a live descendant')
+
+    def test_fixed_get_child_cannot_become_shell_script(self):
+        with self.assertRaisesRegex(collector.InvalidEvidence, 'unexpected_runner_request'):
+            collector._bounded_gh_read(
+                ('sh','-c','true'), check=False, shell=False, timeout=1,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
 
     def test_bounded_capture_does_not_accept_untrusted_command(self):
         with self.assertRaisesRegex(collector.InvalidEvidence, 'unexpected_runner_request'):

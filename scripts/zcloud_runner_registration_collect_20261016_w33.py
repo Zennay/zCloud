@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import json
 import os
 import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -41,7 +42,11 @@ def _bounded_gh_read(argv, *, check, shell, timeout, stdin, stdout, stderr):
     proc = subprocess.Popen(
         argv, shell=False, stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        # Any gh child inherits a private process group so timeout cleanup
+        # never kills unrelated jobs, shells, Firefox or the VPS runner.
+        start_new_session=True,
     )
+    completed = False
     try:
         with selectors.DefaultSelector() as selector:
             selector.register(proc.stdout, selectors.EVENT_READ)
@@ -61,10 +66,21 @@ def _bounded_gh_read(argv, *, check, shell, timeout, stdin, stdout, stderr):
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, timeout)
         status = proc.wait(timeout=remaining)
+        completed = True
         return subprocess.CompletedProcess(argv, status, b''.join(chunks))
     finally:
+        if not completed:
+            # Even if the gh parent exited, a child may still hold stdout open
+            # or continue a spawned auth helper. Kill ONLY our new group.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if proc.poll() is None:
-            proc.kill()
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
         proc.wait()
         if proc.stdout is not None:
             proc.stdout.close()
