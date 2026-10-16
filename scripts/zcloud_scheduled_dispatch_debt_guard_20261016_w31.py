@@ -23,6 +23,14 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
 ACTION = re.compile(r"\.github/actions/(?:[^/\0]+/)+action\.ya?ml\Z")
 ACTION_CODE = re.compile(r"\.github/actions/(?:[^/\0]+/)+[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
+# Action-local Dockerfile variants are source dependencies of Docker Actions.
+# Their content is compared as immutable Git blobs, never built or executed.
+ACTION_DOCKERFILE = re.compile(
+    r"\.github/actions/(?:[^/\0]+/)+Dockerfile(?:\.[A-Za-z0-9_.-]+)?\Z"
+)
+DOCKER_USING = re.compile(
+    r"""\busing\s*:\s*['"]?docker['"]?(?=\s*(?:[,}#]|$))""", re.MULTILINE
+)
 HELPER_CODE = re.compile(r"(?:scripts|\.github/scripts)/(?:[^/\0]+/)*[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
 ACTION_ENTRY = re.compile(
     r"""(?m)^[ \t]{2,}(?:main|pre|post|['\"](?:main|pre|post)['\"])\s*:[ \t]*['\"]?([^'\"\s#]+)['\"]?[ \t]*(?:#.*)?$"""
@@ -178,7 +186,7 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
             path = path_bytes.decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError("invalid Git tree entry") from exc
-        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path) or HELPER_CODE.fullmatch(path)):
+        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path) or ACTION_DOCKERFILE.fullmatch(path) or HELPER_CODE.fullmatch(path)):
             continue
         # A newline, terminal escape or delimiter hidden in a Git pathname
         # must never be folded into apparently ordinary evidence filenames.
@@ -345,6 +353,23 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                 ).hexdigest()
                 sites[edge] += 1
             if ACTION.fullmatch(path):
+                if DOCKER_USING.search(text):
+                    # A Docker action is opaque to this source-only scanner.
+                    # Snapshot its manifest AND action-local Dockerfiles so a
+                    # change, removal or addition cannot bypass the ratchet.
+                    # No Docker build, remote resolution or runtime execution.
+                    prefix = path.rsplit("/", 1)[0] + "/"
+                    dockerfiles = sorted(
+                        (name, hashlib.sha256(source.encode("utf-8")).hexdigest())
+                        for name, source in workflows.items()
+                        if name.startswith(prefix) and ACTION_DOCKERFILE.fullmatch(name)
+                    )
+                    docker_signature = hashlib.sha256(json.dumps(
+                        [text, dockerfiles], ensure_ascii=True
+                    ).encode("utf-8")).hexdigest()
+                    sites[hashlib.sha256(
+                        ("docker-action-source:" + path + ":" + docker_signature).encode()
+                    ).hexdigest()] += 1
                 entries = [match.group(1) for match in ACTION_ENTRY.finditer(text)]
                 for flow in INLINE_RUNS.finditer(text):
                     entries.extend(match.group(1) for match in
