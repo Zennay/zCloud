@@ -44,8 +44,17 @@ class RunnerEvidenceTests(unittest.TestCase):
     def test_offline_requires_independent_inspection(self):
         self.assertEqual(self.classify(fixture(state='offline')), 'RUNNER_LISTED_OFFLINE')
 
-    def test_no_runner_is_not_listener_outage_proof(self):
-        self.assertEqual(self.classify(fixture(name='another')), 'RUNNER_NOT_LISTED')
+    def test_filtered_unrelated_runner_fails_closed(self):
+        self.denies(fixture(name='another'), 'runner_name_filter_mismatch')
+
+    def test_name_filter_returns_only_target_or_empty(self):
+        self.assertEqual(self.classify(fixture(name='ZCLOUD-VPS-1')), 'RUNNER_LISTED_ONLINE_IDLE')
+        x=fixture(); x['response']['runners'][0]['name']='zcloud-vps-1-backup'
+        self.denies(x, 'runner_name_filter_mismatch')
+
+    def test_unfiltered_api_url_is_rejected(self):
+        x=fixture(); x['request_url']='https://api.github.com/repos/Zennay/zCloud/actions/runners?per_page=100'
+        self.denies(x,'unbound_api_response')
 
     def test_empty_complete_inventory(self):
         x = fixture(); x['response']={'total_count':0,'runners':[]}
