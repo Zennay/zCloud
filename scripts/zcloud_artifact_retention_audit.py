@@ -217,7 +217,7 @@ def scan_repository(root: Path, *, max_days: int) -> list[ArtifactUpload]:
             continue
         size = path.stat().st_size
         if size > MAX_WORKFLOW_BYTES:
-            raise RuntimeError("workflow file too large")
+            raise RuntimeError("workflow too large to audit")
         total_bytes += size
         if total_bytes > MAX_TOTAL_WORKFLOW_BYTES:
             raise RuntimeError("workflow inventory bytes exceeded")
