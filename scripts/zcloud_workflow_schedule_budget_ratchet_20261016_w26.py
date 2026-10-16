@@ -100,11 +100,13 @@ def schedules(source: str) -> tuple[str, ...]:
     in_on = False
     in_schedule = False
     found_schedule = False
+    event_indent: int | None = None
     for line in source.splitlines():
         if TOP_LEVEL_RE.match(line):
             key = line.partition(":")[0].strip().strip("'\"")
             in_on = key == "on"
             in_schedule = False
+            event_indent = None
             if in_on and line.partition(":")[2].strip() not in ("", "# workflow events"):
                 # Inline aliases, maps, YAML tags or schedule directives could
                 # hide a cron job. Only simple event names/lists are exempt.
@@ -119,8 +121,15 @@ def schedules(source: str) -> tuple[str, ...]:
             continue
         if not in_on or not line.strip() or line.lstrip().startswith("#"):
             continue
-        if line.startswith("  ") and not line.startswith("    "):
-            match = SCHEDULE_RE.match(line)
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0 or "\\t" in line[:indent]:
+            raise AdmissionError("ambiguous_event_indentation")
+        if event_indent is None:
+            event_indent = indent
+        if indent < event_indent:
+            raise AdmissionError("ambiguous_event_indentation")
+        if indent == event_indent:
+            match = re.fullmatch(r"\\s*schedule\\s*:\\s*(.*?)\\s*", line)
             if match:
                 if found_schedule or match.group(1):
                     raise AdmissionError("ambiguous_schedule_block")
