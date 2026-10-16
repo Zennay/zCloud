@@ -80,36 +80,45 @@ def git(*args: str, cap: int = MAX_TOTAL) -> bytes:
     if cap < 0 or cap > MAX_TOTAL:
         raise EvidenceError("invalid Git evidence budget")
     try:
-        with subprocess.Popen(
+        process = subprocess.Popen(
             ["git", "--no-pager", *args], env=GIT_ENV, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        ) as process:
-            assert process.stdout is not None
-            deadline = time.monotonic() + 12
-            output = bytearray()
-            with selectors.DefaultSelector() as selector:
-                selector.register(process.stdout, selectors.EVENT_READ)
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise EvidenceError("Git evidence exceeded time budget")
-                    if not selector.select(remaining):
-                        raise EvidenceError("Git evidence exceeded time budget")
-                    chunk = os.read(process.stdout.fileno(), min(65536, cap + 1 - len(output)))
-                    if not chunk:
-                        break
-                    output.extend(chunk)
-                    if len(output) > cap:
-                        raise EvidenceError("Git evidence exceeds bounded budget")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise EvidenceError("Git evidence exceeded time budget")
-            if process.wait(timeout=remaining):
-                raise EvidenceError("immutable Git command refused evidence")
-            return bytes(output)
+        )
+    except OSError as exc:
+        raise EvidenceError("immutable Git evidence unavailable") from exc
+    try:
+        assert process.stdout is not None
+        deadline = time.monotonic() + 12
+        output = bytearray()
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise EvidenceError("Git evidence exceeded time budget")
+                chunk = os.read(process.stdout.fileno(), min(65536, cap + 1 - len(output)))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > cap:
+                    raise EvidenceError("Git evidence exceeds bounded budget")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise EvidenceError("Git evidence exceeded time budget")
+        if process.wait(timeout=remaining):
+            raise EvidenceError("immutable Git command refused evidence")
+        return bytes(output)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise EvidenceError("immutable Git evidence unavailable") from exc
-
+    finally:
+        if process.poll() is None:
+            process.kill()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            raise EvidenceError("Git process did not terminate")
+        if process.stdout is not None:
+            process.stdout.close()
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
