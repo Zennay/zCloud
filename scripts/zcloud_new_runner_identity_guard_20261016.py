@@ -22,7 +22,10 @@ HOSTED = re.compile(
     r"|macos-(?:latest|(?:13|14|15|26)(?:-large|-intel)?))\Z"
 )
 JOB = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_-]*):(?:\s*(?:#.*)?)?$")
-CHECKOUT = re.compile(r"actions/checkout@[0-9a-f]{40}(?:\s*(?:#.*)?)?$")
+# A 40-hex Git ref is immutable, but not necessarily trusted: an attacker
+# can point checkout at an arbitrary commit, executing code before identity.
+TRUSTED_CHECKOUT_SHA = "d23441a48e516b6c34aea4fa41551a30e30af803"  # actions/checkout v6
+CHECKOUT = re.compile(r"actions/checkout@" + TRUSTED_CHECKOUT_SHA + r"(?:\s*(?:#.*)?)?$")
 GUARD = re.compile(r"python3\s+(?:\./)?scripts/zcloud_vps_runner_guard\.py(?:\s+--json)?\s*(?:#.*)?$")
 # Pre-shell hooks and Python module/path shadowing can run attacker-supplied
 # code before the first guard command even if that command is visually first.
