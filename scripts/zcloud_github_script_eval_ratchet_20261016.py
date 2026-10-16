@@ -40,6 +40,9 @@ ACTION_DECLARED = re.compile(
 FLOW_USE = re.compile(
     r"""^\s*-\s*\{[^#\n]*?\buses\s*:\s*['"]?actions/github-script@""", re.I
 )
+MULTILINE_USE = re.compile(
+    r"""^\s*(?:-\s*)?(?:uses|'uses'|"uses")\s*:\s*[|>](?:[1-9]?[-+]?|[-+]?[1-9]?)\s*(?:#.*)?$""", re.I
+)
 BLOCK_HEADER = re.compile(
     r"""^\s*(?:-\s*)?(?:[\w.-]+|'[^']+'|"[^"]+")\s*:\s*[|>][0-9+-]*\s*(?:#.*)?$"""
 )
@@ -267,6 +270,22 @@ def risks(sha: str) -> tuple[Counter, int]:
         parsed_actions = sum(bool(USE.match(line)) for line in visible)
         if declared_actions > parsed_actions:
             found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
+        # YAML literal/folded uses values can hide the action name on
+        # subsequent lines. Refuse new github-script invocations even if
+        # the ordinary same-line action identity regex cannot see them.
+        for i, line in enumerate(visible):
+            if not MULTILINE_USE.match(line):
+                continue
+            header_indent = len(line) - len(line.lstrip(" "))
+            body: list[str] = []
+            for continuation in lines[i + 1:]:
+                if continuation.strip():
+                    depth = len(continuation) - len(continuation.lstrip(" "))
+                    if depth <= header_indent:
+                        break
+                body.append(continuation)
+            if "actions/github-script@" in "".join(body).lower():
+                found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
         # YAML decoding can reveal an executable action name hidden by
         # backslash-escaped quoted scalars or mapping keys. Treat any newly
         # escaped action identity or mapping key as untrusted source structure.
