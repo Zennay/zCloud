@@ -135,6 +135,13 @@ def findings(source):
     if not isinstance(data, dict) or not isinstance(data.get("jobs"), dict):
         raise InvalidSource("unknown_workflow_schema")
     risks = []
+    # Each separately named self-hosted matrix job can execute in parallel
+    # with other jobs even when every job has max-parallel: 1. Prevent a
+    # collection of individually bounded matrices from bypassing the overall
+    # capacity ceiling for newly introduced workflow source.
+    matrix_groups = []
+    if len(data["jobs"]) > 256:
+        raise InvalidSource("too_many_jobs")
     for name, job in data["jobs"].items():
         if not isinstance(name, str) or not isinstance(job, dict):
             raise InvalidSource("invalid_job")
@@ -147,6 +154,7 @@ def findings(source):
         potential_vps = _candidate_runner(job.get("runs-on")) or "uses" in job
         if "matrix" not in strategy or not potential_vps:
             continue
+        matrix_groups.append(name)
         parallel = strategy.get("max-parallel")
         matrix_size = _matrix_count(strategy["matrix"])
         if type(parallel) is not int or parallel != 1:
@@ -155,7 +163,25 @@ def findings(source):
             risks.append((name, "unknown_matrix_size"))
         elif matrix_size > MAX_MATRIX_JOBS:
             risks.append((name, "matrix_fanout:" + str(matrix_size)))
+    if len(matrix_groups) > MAX_MATRIX_JOBS:
+        risks.append(("__workflow__", "aggregate_matrix_groups:" + str(len(matrix_groups))))
     return sorted(risks)
+
+
+def _matrix_job_config(data):
+    """Return only run-target/matrix configuration for VPS-capable jobs."""
+    jobs = data["jobs"]
+    config = {}
+    for name, job in jobs.items():
+        if not isinstance(job, dict):
+            raise InvalidSource("invalid_job")
+        strategy = job.get("strategy", {})
+        if not isinstance(strategy, dict):
+            raise InvalidSource("unknown_strategy")
+        if ("matrix" in strategy and
+                (_candidate_runner(job.get("runs-on")) or "uses" in job)):
+            config[name] = {key: job.get(key) for key in ("runs-on", "uses", "strategy")}
+    return config
 
 
 def inspect(base, head):
@@ -208,6 +234,11 @@ def inspect(base, head):
         if common_risky_jobs:
             old_jobs = yaml.load(original, Loader=UniqueLoader)["jobs"]
             new_jobs = yaml.load(candidate, Loader=UniqueLoader)["jobs"]
+            if "__workflow__" in common_risky_jobs:
+                if _matrix_job_config({"jobs": old_jobs}) != _matrix_job_config({"jobs": new_jobs}):
+                    new_risks.append({"path": path, "job": "__workflow__",
+                                      "reason": "legacy_aggregate_matrix_configuration_changed"})
+                common_risky_jobs.remove("__workflow__")
             for job in sorted(common_risky_jobs):
                 old_job, new_job = old_jobs[job], new_jobs[job]
                 keys = ("runs-on", "uses", "strategy")
