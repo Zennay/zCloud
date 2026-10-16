@@ -203,6 +203,11 @@ def collect(reader=fetch, now=None, *, include_issues=False):
         if issue_pr_numbers != {row[0] for row in first}:
             raise Denied("pr_issue_cohort_mismatch")
         issues = tuple(row for row in all_first if not row[2])
+        # Verify PR head/base, draft, title and freshness still match AFTER
+        # both issue passes. Equal PR ID cohorts alone cannot detect
+        # changes to an existing PR while issue pages were read.
+        if _inventory(reader, now) != first:
+            raise Denied("pr_drift_across_issue_scan")
     if _main(reader) != main:
         raise Denied("main_drift")
     return {"schema": "zcloud-review-backlog-v1", "repo": REPO,
