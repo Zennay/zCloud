@@ -15,6 +15,7 @@ WORKFLOW_SUFFIXES = {".yml", ".yaml"}
 MAX_WORKFLOW_ENTRIES = 1024
 MAX_WORKFLOW_BYTES = 1024 * 1024
 MAX_TOTAL_WORKFLOW_BYTES = 32 * 1024 * 1024
+MAX_ARTIFACT_UPLOADS = 4096
 
 @dataclass(frozen=True)
 class ArtifactUpload:
@@ -185,6 +186,8 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
                         status = "over_limit"
                     else:
                         status = "bounded"
+        if len(uploads) >= MAX_ARTIFACT_UPLOADS:
+            raise RuntimeError("artifact upload inventory too large")
         uploads.append(
             ArtifactUpload(
                 path=path,
@@ -238,6 +241,8 @@ def scan_repository(root: Path, *, max_days: int) -> list[ArtifactUpload]:
                 max_days=max_days,
             )
         )
+        if len(uploads) > MAX_ARTIFACT_UPLOADS:
+            raise RuntimeError("artifact upload inventory too large")
     return uploads
 
 
