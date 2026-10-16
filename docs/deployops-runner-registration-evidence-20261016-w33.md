@@ -21,7 +21,7 @@ accepts only a complete single-page response (<=100 entries), supplied on stdin:
 The output is deliberately anonymous: it contains **no runner IDs, endpoint
 credentials, other runner names or raw JSON**. It classifies `RUNNER_NOT_LISTED`,
 `LABEL_MISMATCH`, `RUNNER_LISTED_OFFLINE`, `RUNNER_LISTED_BUSY`,
-`RUNNER_LISTED_ONLINE_IDLE`, or `EVIDENCE_UNAVAILABLE` (exit code 2).
+`RUNNER_LISTED_ONLINE_IDLE`, or `EVIDENCE_UNAVAILABLE`. **Every invocation exits 2, even when the claim parses cleanly**: a parseable unauthenticated snapshot must never turn a CI/release condition green solely from process exit status.
 An outdated, partial, foreign, malformed or ambiguous inventory fails closed.
 The operator must also record the exact HTTPS request URL, GET method and HTTP
 200 status alongside the JSON response; a wrong repository path, host, query,
