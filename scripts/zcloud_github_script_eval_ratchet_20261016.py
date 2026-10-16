@@ -21,7 +21,7 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 USE = re.compile(r"^\s*(?:-\s*)?uses\s*:\s*['\"]?actions/github-script@[^\s#'\"]+", re.I)
 LIST_KEY = re.compile(r"^(\s*)-\s*(?:[\w-]+|'[^']+'|\"[^\"]+\")\s*:")
 SCRIPT_KEY = re.compile(r"^(\s*)(?:script|'script'|\"script\")\s*:\s*(.*)$")
-WITH_KEY = re.compile(r"^(\s*)with\s*:")
+WITH_KEY = re.compile(r"""^(\s*)(?:with|'with'|"with")\s*:""")
 EXPR = re.compile(r"\$\s*\{\{")
 ESCAPE = re.compile(r"\\(?:x24|u0024|U00000024|x7b|u007b|U0000007b)", re.I)
 AMBIG = re.compile(r"(?:^|\s)(?:\*[\w-]+|![\w!]+)\s*(?:#.*)?$")
@@ -186,7 +186,7 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
             why.add("ambiguous_yaml")
         # YAML unescapes double-quoted mapping keys before the Action uses
         # them. An encoded script key must not bypass the literal-key parser.
-        if with_indent >= 0 and line.lstrip().startswith((chr(34), chr(39))) and any(chr(92) + mark in line for mark in ("x", "u", "U")):
+        if line.lstrip().startswith((chr(34), chr(39))) and any(chr(92) + mark in line.split(":", 1)[0] for mark in ("x", "u", "U")):
             why.add("ambiguous_yaml")
         sm = SCRIPT_KEY.match(line)
         if sm is None:
@@ -212,6 +212,8 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
     # github-script evaluates JavaScript from with.script; flow-style maps, aliases
     # and escapes cannot be safely interpreted by this intentionally strict scanner.
     if re.search(r'(?m)^\s*with\s*:\s*[*!]\S+', body):
+        why.add("ambiguous_yaml")
+    if any(line.lstrip().startswith(("? with", '? "with"', "? 'with'")) for line in body.splitlines()):
         why.add("ambiguous_yaml")
     if any(line.lstrip().startswith(("? script", "? \"script\"", "? 'script'")) for line in body.splitlines()):
         why.add("ambiguous_yaml")
