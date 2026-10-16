@@ -144,6 +144,14 @@ class MatrixContract(unittest.TestCase):
                           "      matrix:\n        shard: [1, 2]",
                           runner="null")))
 
+    def test_empty_runner_label_list_is_not_hosted_proof(self):
+        for runner in ("[]", "[[]]"):
+            with self.subTest(runner=runner):
+                self.assertIn(("probe", "unsafe_max_parallel:None"),
+                              findings(workflow(
+                                  "      matrix:\n        shard: [1, 2]",
+                                  runner=runner)))
+
     def test_numeric_runner_selector_is_not_hosted_proof(self):
         risks = findings(workflow(
             "      matrix:\n        shard: [1, 2]",
