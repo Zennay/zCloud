@@ -13,7 +13,14 @@ import sys
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 PATH = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
-HOSTED = re.compile(r"(?:ubuntu|windows|macos)-[A-Za-z0-9_.-]+\Z")
+# Explicit GitHub-hosted label families only. Prefix matching mistakenly
+# classifies custom self-hosted names such as ubuntu-vps as GitHub-hosted.
+# Unknown/future labels fail closed until verified and allowlisted.
+HOSTED = re.compile(
+    r"(?:ubuntu-(?:latest|(?:20|22|24|26)\.04(?:-arm)?)"
+    r"|windows-(?:latest|2019|2022|2025)"
+    r"|macos-(?:latest|(?:13|14|15|26)(?:-large|-intel)?))\Z"
+)
 JOB = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_-]*):(?:\s*(?:#.*)?)?$")
 CHECKOUT = re.compile(r"actions/checkout@[0-9a-f]{40}(?:\s*(?:#.*)?)?$")
 GUARD = re.compile(r"python3\s+(?:\./)?scripts/zcloud_vps_runner_guard\.py(?:\s+--json)?\s*(?:#.*)?$")
