@@ -103,6 +103,22 @@ class IdentityPolicyTests(unittest.TestCase):
         new = g.unsafe_jobs(wf(guard=False).replace("name: guarded", "name: renamed"))
         self.assertEqual(set(new) - set(old), set())
 
+    def test_inline_job_mapping_fails_closed(self):
+        with self.assertRaises(ValueError):
+            g.unsafe_jobs(wf() + "  injected: {runs-on: [self-hosted, zcloud], steps: []}\n")
+
+    def test_alias_job_fails_closed(self):
+        with self.assertRaises(ValueError):
+            g.unsafe_jobs(wf() + "  injected: *unguarded\n")
+
+    def test_quoted_root_shadow_fails_closed(self):
+        with self.assertRaises(ValueError):
+            g.unsafe_jobs(wf() + '"jobs": {unsafe: {runs-on: self-hosted}}\n')
+
+    def test_root_yaml_merge_fails_closed(self):
+        with self.assertRaises(ValueError):
+            g.unsafe_jobs(wf() + "<<: *override\n")
+
     def test_ambiguous_jobs_root_fails_closed(self):
         with self.assertRaises(ValueError):
             g.unsafe_jobs(wf() + "\njobs:\n  evil:\n    runs-on: self-hosted\n")
