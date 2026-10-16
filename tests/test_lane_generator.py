@@ -261,7 +261,7 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual("strategy-implementation", risk_lane["lane_id"])
         self.assertIn("ftmo-validation", risk_lane["scope"]["capabilities"])
         product = self.project("supa", "product")
-        bug = {**self.item("supa-fix", "Fix crashing planner integration"), "project_id": "supa"}
+        bug = {**self.item("supa-fix", "Fix broken planner integration crash bug"), "project_id": "supa"}
         self.assertEqual("bugfix-delivery", classify_backlog_item(product, bug)["lane_id"])
 
     def test_unknown_explicit_lane_profile_fails_closed(self):
