@@ -179,6 +179,28 @@ class HostedTimeoutPolicyTests(unittest.TestCase):
         with self.assertRaises(policy.InvalidSource):
             policy.audit(self.base, head)
 
+    def test_git_output_is_bounded_before_it_is_buffered(self):
+        with self.assertRaisesRegex(policy.InvalidSource, "git_output_too_large"):
+            policy.git("show", "--format=fuller", self.base, limit=16)
+
+    def test_failed_git_command_is_denied(self):
+        with self.assertRaisesRegex(policy.InvalidSource, "git_command_failed"):
+            policy.git("cat-file", "-t", "0" * 40)
+
+    def test_changed_workflow_count_is_bounded(self):
+        root = Path(".github/workflows")
+        for number in range(513):
+            (root / f"too-many-{number:04d}.yml").write_text(
+                content(timeout=8), encoding="utf-8"
+            )
+        self.git("add", "-A")
+        self.git("commit", "-qm", "oversized changed workflow inventory")
+        head = self.git("rev-parse", "HEAD")
+        with self.assertRaisesRegex(
+            policy.InvalidSource, "changed_workflow_path_budget_exceeded"
+        ):
+            policy.audit(self.base, head)
+
     def test_requires_immutable_40_char_shas(self):
         with self.assertRaisesRegex(policy.InvalidSource, "immutable"):
             policy.audit("main", self.base)
