@@ -19,6 +19,7 @@ from typing import Any
 
 MAX_BYTES = 65536
 MAX_JSON_DEPTH = 64
+MAX_INTEGER_DIGITS = 128
 MAX_AGE_SECONDS = 600
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 STAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z")
@@ -54,6 +55,13 @@ def _finite_float(value: str) -> float:
     if not math.isfinite(result):
         raise ValueError("nonfinite_json")
     return result
+
+
+def _bounded_integer(value: str) -> int:
+    # Deterministic regardless of Python's int string conversion limit.
+    if len(value.lstrip("-")) > MAX_INTEGER_DIGITS:
+        raise ValueError("invalid_json")
+    return int(value)
 
 
 def _check_json_nesting(raw: bytes) -> None:
@@ -94,7 +102,8 @@ def decode_receipt(raw: bytes) -> dict[str, Any]:
         result = json.loads(raw.decode("utf-8", errors="strict"),
                             object_pairs_hook=_unique_object,
                             parse_constant=_reject_constant,
-                            parse_float=_finite_float)
+                            parse_float=_finite_float,
+                            parse_int=_bounded_integer)
     except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
         raise ValueError("invalid_json") from error
     except ValueError as error:
