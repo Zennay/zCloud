@@ -124,6 +124,47 @@ class WriterStartupHintTests(unittest.TestCase):
         self.assertEqual(receipt["push_paths_key_hint_count"], 0)
         self.assertFalse(receipt["safe_to_enable_branch_protection"])
 
+    def test_own_workflow_path_literal_hint_from_exact_yaml(self):
+        content = ("on:\n  push:\n    branches: [main]\n    paths:\n"
+                   "      - '.github/workflows/proof.yml'\n")
+        r = hints.observe(content, workflow_path=".github/workflows/proof.yml")
+        self.assertTrue(r["push_paths_filter_key_hint"])
+        self.assertTrue(r["push_paths_mentions_own_yaml_literal_hint"])
+        self.assertFalse(r["push_filter_effectiveness_verified"])
+
+    def test_other_workflow_path_does_not_count_as_own(self):
+        content = ("on:\n  push:\n    paths:\n"
+                   "      - '.github/workflows/different.yml'\n")
+        r = hints.observe(content, workflow_path=".github/workflows/proof.yml")
+        self.assertFalse(r["push_paths_mentions_own_yaml_literal_hint"])
+
+    def test_comment_only_does_not_match_own_path(self):
+        content = ("on:\n  push:\n    paths:\n"
+                   "      # - '.github/workflows/proof.yml'\n"
+                   "      - 'docs/**'\n")
+        r = hints.observe(content, workflow_path=".github/workflows/proof.yml")
+        self.assertFalse(r["push_paths_mentions_own_yaml_literal_hint"])
+
+    def test_self_path_outside_on_push_is_not_misclassified(self):
+        content = ("on:\n  pull_request:\n    paths:\n"
+                   "      - '.github/workflows/proof.yml'\n")
+        r = hints.observe(content, workflow_path=".github/workflows/proof.yml")
+        self.assertFalse(r["push_paths_mentions_own_yaml_literal_hint"])
+
+    def test_source_own_path_hint_not_authority(self):
+        p = ".github/workflows/candidate.yml"
+        target = self.repo / p
+        target.write_text(
+            "on:\n  push:\n    branches: [main]\n    paths:\n"
+            "      - '.github/workflows/candidate.yml'\n"
+            "permissions:\n  contents: write\n",
+            encoding="utf-8")
+        self.commit()
+        result = hints.audit(self.repo, self.git("rev-parse", "HEAD"))
+        self.assertEqual(result["push_own_yaml_literal_hint_count"], 1)
+        self.assertFalse(result["safe_to_enable_branch_protection"])
+        self.assertFalse(result["production_mutation_authorized"])
+
     def test_inline_yaml_trigger_collection(self):
         r = hints.observe("on: [push, pull_request, workflow_dispatch]\n")
         self.assertEqual(r["automatic_event_hints"], ["pull_request", "push"])
