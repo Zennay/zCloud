@@ -197,10 +197,13 @@ def inventory(repo: Path, expected: str) -> dict:
             content = contents.decode("utf-8", "strict")
         except UnicodeDecodeError as exc:
             raise InventoryError("invalid_workflow_encoding") from exc
+        # splitlines() removes extra separators (including vertical tab):
+        # validate the original decoded blob before any line normalization.
+        if any((ord(char) < 32 and char not in "\t\r\n") or
+               0x7f <= ord(char) <= 0x9f for char in content):
+            raise InventoryError("invalid_workflow_controls")
         signals = []
         for lineno, line in logical_shell_lines(content):
-            if any(ord(char) < 32 and char != "\t" for char in line):
-                raise InventoryError("invalid_workflow_controls")
             for name, regex in SIGNALS:
                 if regex.search(line):
                     signals.append({"line": lineno, "kind": name})
