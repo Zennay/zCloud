@@ -554,6 +554,37 @@ class CheckoutRepoGuardTest(unittest.TestCase):
                 '    uses: actions/checkout@v4\n')
         self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
 
+    def test_duplicate_inline_submodules_false_then_true_is_denied(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with: {submodules: false, submodules: true}\n')
+        issues = guard.scan(text)
+        self.assertIn('checkout-submodules-enabled-or-dynamic', issues)
+        self.assertIn('multiple-checkout-submodules-inputs', issues)
+
+    def test_duplicate_inline_submodules_true_then_false_is_denied(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with: {submodules: true, submodules: false}\n')
+        issues = guard.scan(text)
+        self.assertIn('checkout-submodules-enabled-or-dynamic', issues)
+        self.assertIn('multiple-checkout-submodules-inputs', issues)
+
+    def test_duplicate_inline_false_values_still_ambiguous(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with: {submodules: false, submodules: "false"}\n')
+        issues = guard.scan(text)
+        self.assertNotIn('checkout-submodules-enabled-or-dynamic', issues)
+        self.assertIn('multiple-checkout-submodules-inputs', issues)
+
+    def test_inline_submodules_following_other_input_detected(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with: {repository: Zennay/zCloud, submodules: recursive}\n')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_literal_quoted_hash_in_submodules_not_safe(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with:\n      submodules: "false#possibly-true"\n')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
