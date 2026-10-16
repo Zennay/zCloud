@@ -125,7 +125,10 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
             continue
         if path.startswith("/") or "/../" in "/" + path + "/" or not path.strip():
             raise Refusal("unsafe_source_path")
-        if mode not in {"100644", "100664"} or kind != "blob" or not _SHA.fullmatch(oid):
+        allowed_modes = {"100644", "100664"} | ({"100755"} if is_shell else set())
+        if mode not in allowed_modes or kind != "blob" or not _SHA.fullmatch(oid):
+            # Executable shell helpers are ordinary regular files; Git
+            # symlinks (120000), submodules and executable YAML stay denied.
             raise Refusal("non_regular_workflow_or_action")
         if path in result:
             raise Refusal("duplicate_source_path")
