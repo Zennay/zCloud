@@ -68,3 +68,12 @@ The hosted workflow exercises both real Git source tests and owner-claim tests, 
 ## Source safety validation
 
 Both the main inventory and human review triage run without GitHub API write privileges. Inventory Git subprocess output is streamed with a hard per-command output cap and a monotonic 20-second deadline, terminating stalled/oversized child process groups. This prevents unchecked output buffering while examining potentially hostile Git trees. Review evidence is read from fd-anchored regular files with `O_NOFOLLOW` for every ancestor and final component, rejecting symlink parents and traversal. On any failure the CLI returns a stable non-sensitive reason and **never** branch protection or production authorization. These bounded offline proofs cannot certify live runner health or owner authenticity.
+
+## Machine-readable reviewer queue export
+
+```bash
+python3 scripts/zcloud_main_writer_compat_inventory_20261016_w12.py \
+  --expected-main-sha EXACT_40_CHAR_SHA --format csv > review-queue.csv
+```
+
+This CSV includes immutable Git main SHA, workflow path, **SHA-256 of the workflow's committed Git blob bytes**, line/kind signal references and P1/P2 triage priority. All owner, reviewer, decision and evidence URL cells start blank. `review_verified` and `branch_protection_authorized` are always `false`. Each row is a candidate requiring human action and is not evidence that a workflow actually ran. The read-only GitHub-hosted job checks the generated CSV and exposes its bounded source-only rows in the job log, without uploading executable artifacts or GitHub write tokens. Independent identity/evidence confirmation and the #922 owner workflow remain mandatory.
