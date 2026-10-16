@@ -548,6 +548,30 @@ class NameCollisionRatchetTests(unittest.TestCase):
         source = b"name: Literal\njobs:\n  test:\n    <<: *job_template\non: push\n"
         self.assertEqual(guard.workflow_name(".github/workflows/a.yml", source), "Literal")
 
+
+    def test_escaped_yaml_event_key_cannot_hide_workflow_run_trigger(self):
+        sources = (
+            b'on:\n  "workflow\\u005frun":\n    workflows: [Build]\n',
+            b'on:\n  "work\\x66low_run":\n    workflows: [Build]\n',
+            b'on:\n  workflow_run:\n    workflows: [Build]\n  "workflow\\u005frun":\n    workflows: [Other]\n',
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertIsNone(guard.workflow_run_targets(source))
+
+    def test_escaped_workflows_field_cannot_shadow_plain_value(self):
+        sources = (
+            b'on:\n  workflow_run:\n    "work\\u0066lows": [Build]\n',
+            b'on:\n  workflow_run:\n    workflows: [Build]\n    "work\\u0066lows": [Other]\n',
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertIsNone(guard.workflow_run_targets(source))
+
+    def test_literal_nested_yaml_key_in_quotes_still_supported(self):
+        source = b'"on":\n  "workflow_run":\n    "workflows": ["Build"]\n'
+        self.assertEqual(guard.workflow_run_targets(source), ("Build",))
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
