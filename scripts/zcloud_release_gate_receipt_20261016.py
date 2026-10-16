@@ -17,6 +17,7 @@ from typing import Any
 MAX_BYTES = 65536
 MAX_AGE_SECONDS = 600
 SHA = re.compile(r"[0-9a-f]{40}\Z")
+STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z")
 RUN_URL = re.compile(r"https://github[.]com/Zennay/zCloud/actions/runs/[1-9][0-9]*\Z")
 JOB_URL = re.compile(r"https://github[.]com/Zennay/zCloud/actions/runs/[1-9][0-9]*/job/[1-9][0-9]*\Z")
 ROOT_KEYS = {"schema", "candidate_sha", "canonical_main_sha", "observed_at",
@@ -71,7 +72,7 @@ def _positive_int(value: Any) -> bool:
 
 
 def _utc_stamp(value: Any) -> datetime | None:
-    if type(value) is not str or not value.endswith("Z"):
+    if type(value) is not str or STAMP.fullmatch(value) is None:
         return None
     try:
         stamp = datetime.fromisoformat(value[:-1] + "+00:00")
@@ -88,7 +89,8 @@ def evaluate(receipt: Any, *, now: datetime | None = None) -> dict[str, Any]:
     output: dict[str, Any] = {
         "contract": "zcloud-release-evidence-v1",
         "evidence_source": "untrusted_offline_receipt",
-        "operational_gates_observed": False,
+        "live_sources_verified": False,
+        "offline_claims_complete": False,
         "production_mutation_authorized": False,
         "reason_codes": reason_codes,
     }
@@ -149,7 +151,7 @@ def evaluate(receipt: Any, *, now: datetime | None = None) -> dict[str, Any]:
             release["exclusive_window"] is not True):
         reason_codes.append("serialized_release_window_unapproved")
 
-    output["operational_gates_observed"] = not reason_codes
+    output["offline_claims_complete"] = not reason_codes
     return output
 
 
@@ -170,11 +172,11 @@ def main(argv: list[str] | None = None) -> int:
         code = str(error) if str(error) in allowed else "unreadable_receipt"
         result = {"contract": "zcloud-release-evidence-v1",
                   "evidence_source": "untrusted_offline_receipt",
-                  "operational_gates_observed": False,
+                  "offline_claims_complete": False,
                   "production_mutation_authorized": False,
                   "reason_codes": [code]}
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
-    return 0 if result["operational_gates_observed"] else 2
+    return 0 if result["offline_claims_complete"] else 2
 
 
 if __name__ == "__main__":
