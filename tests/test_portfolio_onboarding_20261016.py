@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 NEW_PROJECTS = {
+    "zsentinel": ("https://github.com/Zennay/zCloud", "3fb9e19ac95581f2b686f01ed9e4dee0"),
     "mixlab": ("https://github.com/Zennay/Mixlab", "3e79e19ac95581a78ee3f24aa5e7e8b6"),
     "fuckball": ("https://github.com/Zennay/fuckball", "3f99e19ac95581bca947da243bd78f91"),
     "tuddy": ("https://github.com/Zennay/Tuddy", "3f89e19ac955810aa4a5e53871966f8f"),
@@ -67,9 +68,9 @@ class PortfolioOnboardingTests(unittest.TestCase):
                 self.assertEqual(contract["autonomy"], {"mode": "external_gate", "auto_start": False})
                 self.assertEqual(contract["queue_mode"], "execution")
                 self.assertEqual(contract["compute"]["pool"], "build")
-                self.assertEqual(contract["compute"]["priority"], "background")
+                self.assertEqual(contract["compute"]["priority"], "high" if pid == "zsentinel" else "background")
                 self.assertFalse(contract["compute"]["protected"])
-                self.assertEqual(self.resources[pid], {"priority": "background"})
+                self.assertEqual(self.resources[pid], {"priority": "high" if pid == "zsentinel" else "background"})
                 self.assertEqual(self.units[pid], [])
                 self.assertEqual(self.layout["order"].count(pid), 1)
                 self.assertNotIn(pid, self.layout["archived"])
