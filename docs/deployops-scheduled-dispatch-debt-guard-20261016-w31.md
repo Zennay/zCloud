@@ -4,7 +4,7 @@ This **GitHub-hosted, read-only** control is independently owned deploy-ops work
 
 ## What the check enforces
 
-The workflow has **no PR path filter**: **every main-targeting pull request** runs the source-only policy. A path-filtered guard would miss a newly added risky workflow. It checks the exact PR head and canonical live main ref before and after validation, rejecting stale base evidence.
+The workflow has **no PR path filter**: **every main-targeting pull request** starts the source-only check, including PRs retargeted to main via the `edited` event. Fork-origin pull requests fail explicitly in a pre-check on a GitHub-hosted runner (rather than silently yielding a skipped/success check); the untrusted fork is never checked out. A path-filtered guard would miss a newly added risky workflow. For same-repository PRs, the gate checks exact candidate head and canonical live main ref before and after validation, rejecting stale base evidence.
 
 The scanner inventories regular `.github/workflows/*.yml` and `.yaml` blobs at immutable Git tree IDs for base and candidate. For workflows with a scheduled event (including inline, quoted and opaque alias-shaped triggers), it identifies direct `gh workflow run`, REST workflow dispatch, REST `repository_dispatch`, Octokit dispatch and dynamic workflow-ID variants. It also recognises the split Python REST URL used by the existing recovery workflow. All source stays local to the GitHub-hosted job.
 
