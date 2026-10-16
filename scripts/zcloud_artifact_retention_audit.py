@@ -45,6 +45,22 @@ def _structural_lines(text: str) -> list[tuple[int, str]]:
             scalar_indent = None
         if not stripped or stripped.startswith("#"):
             continue
+        # This bounded source scanner intentionally does not resolve YAML
+        # quoted mapping keys. Counting a partial set would be fail-open.
+        if re.match(
+            r"""^\s*(?:-\s+)?(?:['"](?:steps|uses|with|retention-days)['"])\s*:""",
+            line,
+        ):
+            raise RuntimeError("unresolved workflow mapping key")
+        # Flow-style or aliased step collections cannot be audited by the
+        # block-sequence reader below. Reject rather than report zero uploads.
+        steps_value = re.match(r"^\s*steps:\s*(.*)$", line)
+        if steps_value:
+            value = steps_value.group(1).strip()
+            if value and not value.startswith("#") and not re.fullmatch(
+                r"\[\]\s*(?:#.*)?", value
+            ):
+                raise RuntimeError("unresolved workflow steps collection")
         result.append((number, line))
         if scalar_start.match(line):
             scalar_indent = indent
@@ -68,6 +84,10 @@ def _step_blocks(text: str) -> Iterable[tuple[int, list[tuple[int, str]], int]]:
         while i < len(lines):
             indent = len(lines[i][1]) - len(lines[i][1].lstrip(" "))
             if indent <= section_indent:
+                # YAML also allows indentless sequences at the same depth as
+                # their mapping key; do not silently skip those upload steps.
+                if indent == section_indent and item_key.match(lines[i][1]):
+                    raise RuntimeError("unresolved indentless steps collection")
                 break
             item = item_key.match(lines[i][1])
             if item and item_indent is None:
@@ -76,6 +96,8 @@ def _step_blocks(text: str) -> Iterable[tuple[int, list[tuple[int, str]], int]]:
                 i += 1
                 continue
             first = i
+            if re.match(r"^\s*-\s*[\[{]", lines[first][1]):
+                raise RuntimeError("unresolved flow-style workflow step")
             i += 1
             while i < len(lines):
                 following = lines[i][1]
