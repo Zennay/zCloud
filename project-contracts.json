@@ -214,7 +214,7 @@
       "ai_worker_cap": 1,
       "autonomy": {
         "mode": "ai_worker",
-        "auto_start": false
+        "auto_start": true
       },
       "lane_profile": "product",
       "compute": {
@@ -231,7 +231,7 @@
       "ai_worker_cap": 1,
       "autonomy": {
         "mode": "ai_worker",
-        "auto_start": false
+        "auto_start": true
       },
       "lane_profile": "product",
       "compute": {
@@ -248,7 +248,7 @@
       "ai_worker_cap": 1,
       "autonomy": {
         "mode": "ai_worker",
-        "auto_start": false
+        "auto_start": true
       },
       "lane_profile": "device-product",
       "compute": {
