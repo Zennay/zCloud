@@ -31,7 +31,7 @@ class ZsshPublicIngressHostnameTests(unittest.TestCase):
             'test "$GITHUB_SHA" = "$CONFIRM_SHA"',
             "git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main",
             "systemctl --user is-active --quiet zssh-public.service",
-            "reverse_proxy 127.0.0.1:8789",
+            "install-public-caddy.sh",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, text)
@@ -44,7 +44,7 @@ class ZsshPublicIngressHostnameTests(unittest.TestCase):
             "ZSSH_PUBLIC_CADDY_PROMOTION_GREEN",
             "ZSSH_PUBLIC_TLS_LOCAL_GREEN",
             "ZSSH_PUBLIC_INGRESS_BOOTSTRAP_GREEN",
-            "ZSSH_AGENT_PAIRING_GREEN",
+            "ZSSH_TARGET_AGENT_CONTROL_GREEN",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, text)
