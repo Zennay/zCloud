@@ -100,6 +100,8 @@ def _git(*args, max_output=5_000_000):
         if process.poll() is None:
             process.kill()
         process.wait()
+        process.stdout.close()
+        process.stderr.close()
 
 
 def _commit(sha):
