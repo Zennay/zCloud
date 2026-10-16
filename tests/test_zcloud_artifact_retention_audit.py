@@ -770,6 +770,95 @@ jobs:
                     audit.scan_repository(root, max_days=30)
             self.assertGreaterEqual(observed, 2)
 
+    def test_valid_yaml_key_spacing_cannot_hide_upload_steps(self):
+        cases = (
+            "    steps :\n      - uses: actions/upload-artifact@v4\n",
+            "    steps:\n      - uses : actions/upload-artifact@v4\n",
+            "    steps:\n      - uses: actions/upload-artifact@v4\n"
+            "        with :\n          retention-days: 7\n",
+            "    steps:\n      - uses: actions/upload-artifact@v4\n"
+            "        with:\n          retention-days : 14\n",
+            "    steps:\n      - uses: actions/upload-artifact@v4\n"
+            "        with:\n          retention-days: 14\n"
+            "        retention-days : 90\n",
+        )
+        for body in cases:
+            with self.subTest(body=body):
+                text = "jobs:\n  audit:\n" + body
+                with self.assertRaisesRegex(
+                    RuntimeError, "unresolved workflow key whitespace"
+                ):
+                    audit.inspect_workflow("spaced-key.yml", text, max_days=30)
+
+    def test_jobs_flow_or_aliased_collection_fails_closed(self):
+        for value in (
+            "{audit: {steps: [{uses: actions/upload-artifact@v4}]}}",
+            "*private_jobs",
+            "&listed_jobs",
+            "[{steps: [{uses: actions/upload-artifact@v4}]}]",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(
+                    RuntimeError, "unresolved workflow jobs collection"
+                ):
+                    audit.inspect_workflow("flow-jobs.yml", "jobs: " + value, max_days=30)
+
+    def test_dynamic_action_identity_denied_instead_of_zero_uploads(self):
+        for value in (
+            "${{ inputs.action }}",
+            "${{ matrix.upload_action }}",
+        ):
+            with self.subTest(value=value):
+                text = (
+                    "jobs:\n  audit:\n    steps:\n"
+                    "      - uses: " + value + "\n"
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, "unresolved action identity"
+                ):
+                    audit.inspect_workflow("dynamic-action.yml", text, max_days=30)
+
+    def test_shell_scalar_can_contain_unusual_mapping_whitespace(self):
+        text = """jobs:
+  test:
+    steps:
+      - name: document odd syntax
+        run: |
+          echo "jobs: {a: foo}"
+          echo "steps : example"
+          echo "  uses : actions/upload-artifact@v4"
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+"""
+        rows = audit.inspect_workflow("shell-scalar.yml", text, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("bounded", rows[0].status)
+
+    def test_dynamic_uses_cli_is_error_only_and_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            path = folder / "hidden.yml"
+            path.write_text(
+                "jobs:\n  run:\n    steps:\n"
+                "      - uses: ${{ inputs.SECRET_ACTION }}\n",
+                encoding="utf-8",
+            )
+            before = path.read_bytes()
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--repo-root", str(root)],
+                check=False, text=True, capture_output=True,
+            )
+            self.assertEqual(2, result.returncode)
+            self.assertEqual(
+                {"ok": False, "error": "RuntimeError"},
+                json.loads(result.stdout),
+            )
+            self.assertNotIn("SECRET_ACTION", result.stdout + result.stderr)
+            self.assertEqual(before, path.read_bytes())
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
