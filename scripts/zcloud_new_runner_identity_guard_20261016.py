@@ -75,6 +75,10 @@ def _runner(value: str) -> str:
 
 
 def _early_guard(job: list[str]) -> bool:
+    # If a later step uses a status-check override, it can run even after the
+    # identity guard fails. No source-only admission can trust that sequence.
+    if re.search(r"(?i)\b(?:always|failure|cancelled)\s*\(", "\n".join(job)):
+        return False
     # Only a pinned checkout and shell 'set' may precede the actual guard command.
     if any(re.match(r"^    (?:defaults|container):", line) for line in job):
         return False
