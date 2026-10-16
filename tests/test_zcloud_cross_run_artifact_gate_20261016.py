@@ -512,6 +512,69 @@ class Tests(unittest.TestCase):
             self.assertEqual(module._risk_source_path('a:b/c.yml:44:'+kind+':hash'),'a:b/c.yml')
         self.assertEqual(module._risk_source_path('a:b/c.yml:44:hash'),'a:b/c.yml')
 
+    def test_shell_helper_new_cli_download_denied_by_real_git(self):
+        base=self.commit(SAFE)
+        sh=self.repo/'scripts/prepare-download.sh'
+        sh.parent.mkdir(exist_ok=True)
+        sh.write_text('#!/bin/bash\nset -euo pipefail\ngh run download 12345\n')
+        self.git('add','.'); self.git('commit','-qm','new shell downloader')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_findings'],1)
+        self.assertEqual(report['new_finding_paths'],['scripts/prepare-download.sh'])
+
+    def test_shell_bash_helper_new_rest_artifact_denied(self):
+        base=self.commit(SAFE)
+        sh=self.repo/'scripts/artifact-fetch.bash'
+        sh.parent.mkdir(exist_ok=True)
+        sh.write_text('curl https://api.github.com/repos/example/repo/actions/artifacts/123/zip\n')
+        self.git('add','.'); self.git('commit','-qm','new REST script')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_findings'],1)
+
+    def test_shell_unchanged_legacy_cli_is_inventory_only(self):
+        helper=self.repo/'scripts/existing.sh'
+        helper.parent.mkdir(exist_ok=True)
+        helper.write_text('gh run download 12345\n')
+        base=self.commit(SAFE)
+        head=self.commit(SAFE+'\n# harmless note after current workflow\n')
+        report=module.evaluate(self.repo,base,head)
+        self.assertTrue(report['ok'])
+        self.assertEqual(report['legacy_findings'],1)
+        self.assertEqual(report['new_findings'],0)
+
+    def test_shell_copy_of_legacy_cli_download_denied(self):
+        src=self.repo/'scripts/existing.sh'
+        src.parent.mkdir(exist_ok=True)
+        src.write_text('gh run download 12345\n')
+        base=self.commit(SAFE)
+        copied=self.repo/'other/copy.sh'
+        copied.parent.mkdir(exist_ok=True)
+        copied.write_text('gh run download 12345\n')
+        self.git('add','.'); self.git('commit','-qm','copy shell downloader')
+        self.assertEqual(module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))['new_findings'],1)
+
+    def test_safe_shell_helper_is_permitted(self):
+        base=self.commit(SAFE)
+        helper=self.repo/'scripts/format.sh'
+        helper.parent.mkdir(exist_ok=True)
+        helper.write_text('#!/bin/sh\necho "no artifact commands"\n')
+        self.git('add','.'); self.git('commit','-qm','safe helper')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertTrue(report['ok'])
+        self.assertEqual(report['new_findings'],0)
+
+    def test_shell_helper_comment_is_not_executable_risk(self):
+        script='#!/bin/bash\n# gh run download 12345\n# curl /actions/artifacts/123/zip\necho ok\n'
+        self.assertEqual(sum(module._risks(script,'scripts/example.sh').values()),0)
+
+    def test_shell_non_artifact_github_cli_is_safe(self):
+        script='#!/bin/bash\ngh run list --limit 10\ngh api repos/example/repo/actions/runs/2\n'
+        self.assertEqual(sum(module._risks(script,'scripts/example.sh').values()),0)
+
+    def test_shell_github_action_literal_is_not_yaml_uses_mapping(self):
+        script='#!/bin/sh\necho actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n'
+        self.assertEqual(sum(module._risks(script,'scripts/example.sh').values()),0)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
