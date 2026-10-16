@@ -323,8 +323,27 @@ class IdentityPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             g.unsafe_jobs(wf() + "\njobs:\n  evil:\n    runs-on: self-hosted\n")
 
-    def test_reusable_job_no_runner_ok(self):
-        self.assertEqual(g.unsafe_jobs("jobs:\n  reuse:\n    uses: org/repo/.github/workflows/x.yml@" + PIN), {})
+    def test_reusable_job_runner_is_unverified_not_implicitly_hosted(self):
+        doc = "jobs:\n  reuse:\n    uses: org/repo/.github/workflows/x.yml@" + PIN
+        self.assertEqual(g.unsafe_jobs(doc), {"reuse": "delegated_runner_unverified"})
+
+    def test_new_delegated_job_is_fresh_runner_debt(self):
+        path = ".github/workflows/new.yml"
+        delegated = "jobs:\n  reuse:\n    uses: org/repo/.github/workflows/x.yml@" + PIN
+        with mock.patch.object(g, "inventory", return_value=[path]), \
+             mock.patch.object(g, "source", side_effect=[None, delegated]):
+            result = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(result["new_findings"], [
+            {"path": path, "job": "reuse", "reason": "delegated_runner_unverified"}
+        ])
+
+    def test_unmodified_existing_delegated_job_is_not_new_debt(self):
+        base = ("name: before\njobs:\n  reuse:\n"
+                "    uses: org/repo/.github/workflows/x.yml@" + PIN)
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[base, base]):
+            result = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(result["new_findings"], [])
 
     def test_missing_runner_denied(self):
         self.assertEqual(g.unsafe_jobs(wf().replace(
