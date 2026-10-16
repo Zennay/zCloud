@@ -103,6 +103,38 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(EvidenceError):
             evaluate(self.repo, base, self.git("rev-parse", "HEAD"))
 
+    def test_oversized_workflow_denies_before_reading_blob(self):
+        from unittest.mock import patch
+        from scripts import zcloud_workflow_run_dispatch_gate_20261016_w34 as gate
+
+        base = self.commit(TEMPLATE)
+        oversized = TEMPLATE + ("#" * (gate.MAX_SOURCE + 1))
+        head = self.commit(oversized)
+        with patch.object(gate, "git", wraps=gate.git) as git_call:
+            with self.assertRaisesRegex(EvidenceError, "oversized_workflow"):
+                evaluate(self.repo, base, head)
+        # Metadata preflight must prevent capture of attacker-sized blobs.
+        blobs = [call for call in git_call.call_args_list
+                 if len(call.args) >= 3 and call.args[1:3] == ("cat-file", "blob")]
+        self.assertEqual(len(blobs), 1)  # only the small baseline source
+
+    def test_workflow_blob_size_must_match_git_metadata(self):
+        from unittest.mock import patch
+        from scripts import zcloud_workflow_run_dispatch_gate_20261016_w34 as gate
+
+        base = self.commit(TEMPLATE)
+        head = self.commit(DANGEROUS)
+        original = gate.git
+        def swapped_blob(root, *args):
+            data = original(root, *args)
+            if len(args) >= 3 and args[:2] == ("cat-file", "blob"):
+                return data + b" "
+            return data
+
+        with patch.object(gate, "git", side_effect=swapped_blob):
+            with self.assertRaisesRegex(EvidenceError, "inconsistent_blob_size"):
+                evaluate(self.repo, base, head)
+
     def test_nonancestor_rejected(self):
         base = self.commit(TEMPLATE)
         head = self.commit(DANGEROUS)

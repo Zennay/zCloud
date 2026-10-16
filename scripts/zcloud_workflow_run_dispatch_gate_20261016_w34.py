@@ -95,10 +95,19 @@ def inventory(root: Path, sha: str) -> dict[str, str]:
             raise EvidenceError("ambiguous_workflow_inventory")
         if mode not in ("100644", "100755") or kind != "blob" or not SHA.fullmatch(oid):
             raise EvidenceError("unsafe_workflow_object")
-        raw_source = git(root, "cat-file", "blob", oid)
-        if len(raw_source) > MAX_SOURCE:
+        # Query object metadata BEFORE reading the blob. An attacker can add
+        # a multi-GB YAML blob; checking len() after capture_output=True
+        # already incurred the memory allocation and could OOM hosted CI.
+        size_bytes = git(root, "cat-file", "-s", oid)
+        if not re.fullmatch(rb"[0-9]{1,12}\\n?", size_bytes):
+            raise EvidenceError("unverifiable_blob_size")
+        declared_size = int(size_bytes)
+        if declared_size > MAX_SOURCE:
             raise EvidenceError("oversized_workflow")
-        total += len(raw_source)
+        raw_source = git(root, "cat-file", "blob", oid)
+        if len(raw_source) != declared_size:
+            raise EvidenceError("inconsistent_blob_size")
+        total += declared_size
         if total > MAX_TOTAL:
             raise EvidenceError("oversized_inventory")
         try:
