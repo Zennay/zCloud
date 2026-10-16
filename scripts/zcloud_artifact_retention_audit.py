@@ -107,7 +107,12 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
                 )
             if candidate:
                 raw_action = candidate.group(1).split("#", 1)[0].strip()
-                uses.append((number, raw_action.strip(chr(39) + chr(34))))
+                action = raw_action.strip(chr(39) + chr(34))
+                # A text-only audit cannot resolve YAML aliases, anchors, tags
+                # or folded action references. Never certify a partial list.
+                if action.startswith(("*", "&", "!", "|", ">")):
+                    raise RuntimeError("unresolved action identity")
+                uses.append((number, action))
             if re.match(r"^ {" + str(field_indent) + r"}with:\s*(?:#.*)?$", line):
                 with_positions.append(position)
 
