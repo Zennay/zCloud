@@ -100,8 +100,11 @@ def schedules(source: str) -> tuple[str, ...]:
             in_on = key == "on"
             in_schedule = False
             if in_on and line.partition(":")[2].strip() not in ("", "# workflow events"):
-                # Inline YAML is deliberately not a trusted parser input.
-                raise AdmissionError("ambiguous_inline_on")
+                # Simple inline triggers are valid but have no cron settings.
+                # Inline YAML mentioning schedule cannot be safely parsed.
+                if "schedule" in line.partition(":")[2]:
+                    raise AdmissionError("ambiguous_inline_schedule")
+                in_on = False
             continue
         if not in_on or not line.strip() or line.lstrip().startswith("#"):
             continue
