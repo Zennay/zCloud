@@ -158,6 +158,19 @@ class RunnerEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.InvalidEvidence,'invalid_input_size'):
             mod.load_json(b' ' * (mod.MAX_INPUT + 1))
 
+    def test_cli_parses_current_claim_but_never_exits_success_or_leaks_identity(self):
+        x=fixture()
+        x['captured_at']=datetime.now(timezone.utc).isoformat()
+        p=subprocess.run([sys.executable,str(SCRIPT)],input=json.dumps(x).encode(),capture_output=True,check=False)
+        self.assertEqual(p.returncode,2)
+        report=json.loads(p.stdout)
+        self.assertEqual(report['classification'],'RUNNER_LISTED_ONLINE_IDLE')
+        self.assertIs(report['registration_claim_parsed'],True)
+        self.assertIs(report['restart_authorized'],False)
+        self.assertIs(report['production_deploy_verified'],False)
+        self.assertNotIn('21',p.stdout.decode())
+        self.assertNotIn('Authorization',p.stdout.decode())
+
     def test_cli_rejects_invalid_input_without_leaking_payload(self):
         p=subprocess.run([sys.executable,str(SCRIPT)],input=b'{"secret":"hello"}',capture_output=True,check=False)
         self.assertEqual(p.returncode,2)
