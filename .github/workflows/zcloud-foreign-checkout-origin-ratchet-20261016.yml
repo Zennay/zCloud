@@ -1,0 +1,60 @@
+name: zCloud foreign checkout repository origin ratchet
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - 'scripts/zcloud_foreign_checkout_ratchet_20261016.py'
+      - 'tests/test_zcloud_foreign_checkout_ratchet_20261016.py'
+      - '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  foreign-checkout-origin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Fail closed unless first-party PR into main
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          test "$REPO" = "Zennay/zCloud"
+          test "$HEAD_REPO" = "$REPO"
+          test "$BASE_REPO" = "$REPO"
+          test "$BASE_BRANCH" = "main"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+      - name: Verify exact checkout and execute offline regressions
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 -m unittest -v tests.test_zcloud_foreign_checkout_ratchet_20261016
+      - name: Compare complete workflow and composite checkout inventory
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$EXPECTED_BASE^{commit}"
+          git cat-file -e "$EXPECTED_HEAD^{commit}"
+          python3 scripts/zcloud_foreign_checkout_ratchet_20261016.py --base "$EXPECTED_BASE" --head "$EXPECTED_HEAD"
