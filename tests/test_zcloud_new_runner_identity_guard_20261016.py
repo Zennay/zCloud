@@ -658,7 +658,7 @@ class RealGitEvidenceTests(unittest.TestCase):
         # The prior implementation only checked length after reading the
         # complete attacker-controlled blob into memory.
         with self.fixture() as (tmp, file, base):
-            file.write_text("name: padded\\n" + "#" * 256_010, encoding="utf-8")
+            file.write_text("name: padded\n" + "#" * 256_010, encoding="utf-8")
             self.commit(tmp)
             large_blob = subprocess.check_output(
                 ["git", "-C", tmp, "hash-object", str(file)], text=True
@@ -679,7 +679,7 @@ class RealGitEvidenceTests(unittest.TestCase):
 
     def test_real_git_exact_size_limit_is_readable(self):
         with self.fixture() as (tmp, file, base):
-            prefix = "name: bounded\\njobs:\\n  hosted:\\n    runs-on: ubuntu-latest\\n"
+            prefix = "name: bounded\njobs:\n  hosted:\n    runs-on: ubuntu-latest\n"
             file.write_bytes(prefix.encode("utf-8") + b"#" * (256_000 - len(prefix)))
             self.commit(tmp)
             with self.active_git(tmp), self.active_merge(tmp):
