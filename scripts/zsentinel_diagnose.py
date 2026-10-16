@@ -78,6 +78,19 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
     runtime = project.get("runtime", {})
     if not all(isinstance(x, dict) for x in (notion, github, runtime)):
         raise ValueError(f"{pid}: sources must be objects")
+    # A string "true" must never silently bypass an explicit human/owner stop gate.
+    for label, source, fields in (
+        ("notion", notion, ("human_gate",)),
+        ("github", github, ("active_owner_pr", "runner_assigned")),
+        ("runtime", runtime, ("ownership_locked",)),
+    ):
+        for field in fields:
+            if field in source and type(source[field]) is not bool:
+                raise ValueError(f"{pid}.{label}.{field}: explicit boolean required")
+    if "posture" in notion:
+        known_postures = PAUSED | {"accelerate", "active", "maintain", "incubate"}
+        if not isinstance(notion["posture"], str) or notion["posture"].lower() not in known_postures:
+            raise ValueError(f"{pid}.notion.posture: unsupported project posture")
     # No inferred recovery from a calendar wait or a human stop gate.
     posture = str(notion.get("posture", "")).lower()
     if posture in PAUSED:
