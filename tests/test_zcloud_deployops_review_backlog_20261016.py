@@ -77,6 +77,35 @@ class BacklogBriefTests(TestCase):
         self.assertFalse(found["merge_authorized"])
         self.assertFalse(found["deploy_authorized"])
 
+    def test_review_attention_shortlist_only_non_draft_main_prs(self):
+        rows = [
+            pr(1, draft=False, title="ready to examine", updated_at="2026-10-01T08:00:00Z"),
+            pr(2, draft=True, title="draft must not show"),
+            pr(3, draft=False, base={"ref": "release", "sha": SHA},
+               title="non-main must not show"),
+            pr(4, draft=False, title="newer review candidate",
+               updated_at="2026-10-10T08:00:00Z"),
+        ]
+        output = brief.render(brief.collect(Reader({1: rows}), NOW))
+        self.assertIn("2 niet-concept-PR's gericht op main", output)
+        shortlist = output.split("### PR's voor onafhankelijke beoordeling", 1)[1]
+        self.assertLess(shortlist.index("[#4]"), shortlist.index("[#1]"))
+        self.assertNotIn("[#2]", shortlist)
+        self.assertNotIn("[#3]", shortlist)
+        self.assertIn("niet mergegoedgekeurd", output)
+        self.assertIn("Niet automatisch mergegereed", output)
+
+    def test_review_attention_shortlist_limits_rows_and_never_claims_ci(self):
+        report = brief.collect(
+            Reader({1: [pr(n, draft=False) for n in range(1, 21)]}), NOW)
+        output = brief.render(report)
+        shortlist = output.split("### PR's voor onafhankelijke beoordeling", 1)[1]
+        self.assertEqual(12, shortlist.count("https://github.com/Zennay/zCloud/pull/"))
+        self.assertIn("20 niet-concept-PR's gericht op main", shortlist)
+        self.assertIn("[#20]", shortlist)
+        self.assertNotIn("[#1]", shortlist)
+        self.assertIn("zonder CI-/eigenaarsoordeel", shortlist)
+
     def test_no_prs_is_complete_if_both_passes_empty(self):
         reader = Reader({1: []})
         report = brief.collect(reader, NOW)
