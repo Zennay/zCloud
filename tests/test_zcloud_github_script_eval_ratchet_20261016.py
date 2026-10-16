@@ -473,6 +473,61 @@ runs:
         ))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_with_first_list_item_still_rejects_expression(self):
+        a = self.commit(SAFE)
+        reordered = BAD.replace(
+            "      - name: Evaluate\n        uses: actions/github-script@0123456789012345678901234567890123456789\n        with:\n",
+            "      - with:\n",
+        ).replace(
+            "        env:\n",
+            "        uses: actions/github-script@0123456789012345678901234567890123456789\n        env:\n",
+        )
+        self.assertGreaterEqual(self.evaluate(a, self.commit(reordered))["new_findings"], 1)
+
+    def test_with_first_list_item_safe_script_is_not_blocked(self):
+        a = self.commit(OTHER)
+        reordered = SAFE.replace(
+            "      - name: Evaluate\n        uses: actions/github-script@0123456789012345678901234567890123456789\n        with:\n",
+            "      - with:\n",
+        ).replace(
+            "        env:\n",
+            "        uses: actions/github-script@0123456789012345678901234567890123456789\n        env:\n",
+        )
+        self.assertEqual(self.evaluate(a, self.commit(reordered))["new_findings"], 0)
+
+    def test_env_script_is_not_github_script_js(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}",
+            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}\n"
+            "          script: '@EXPR@ github.event.issue.title }}'",
+        ))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_nested_env_with_script_is_not_action_with_script(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}",
+            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}\n"
+            "          with:\n"
+            "            script: '@EXPR@ github.event.issue.title }}'",
+        ))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_first_key_with_legacy_expression_modification_rejected(self):
+        reordered = BAD.replace(
+            "      - name: Evaluate\n        uses: actions/github-script@0123456789012345678901234567890123456789\n        with:\n",
+            "      - with:\n",
+        ).replace(
+            "        env:\n",
+            "        uses: actions/github-script@0123456789012345678901234567890123456789\n        env:\n",
+        )
+        a = self.commit(reordered)
+        b = self.commit(reordered.replace(
+            "github.event.pull_request.title", "github.event.issue.title",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
         b = self.commit(BAD)
