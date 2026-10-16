@@ -121,11 +121,14 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
         is_workflow = path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
         is_action = path.rsplit("/", 1)[-1] in {"action.yml", "action.yaml"}
         is_shell = path.endswith((".sh", ".bash"))
-        if not (is_workflow or is_action or is_shell):
+        # Extensionless executable scripts are frequently invoked by a job's
+        # run step. Ignore non-executable extensionless documentation.
+        is_extensionless_executable = mode == "100755" and not Path(path).suffix
+        if not (is_workflow or is_action or is_shell or is_extensionless_executable):
             continue
         if path.startswith("/") or "/../" in "/" + path + "/" or not path.strip():
             raise Refusal("unsafe_source_path")
-        allowed_modes = {"100644", "100664"} | ({"100755"} if is_shell else set())
+        allowed_modes = {"100644", "100664"} | ({"100755"} if (is_shell or is_extensionless_executable) else set())
         if mode not in allowed_modes or kind != "blob" or not _SHA.fullmatch(oid):
             # Executable shell helpers are ordinary regular files; Git
             # symlinks (120000), submodules and executable YAML stay denied.
@@ -166,8 +169,9 @@ def _command_risks(lines: list[str], path: str) -> Counter[str]:
 
 def _risks(text: str, path: str) -> Counter[str]:
     lines = text.splitlines()
-    if path.endswith((".sh", ".bash")):
-        # Shell has no YAML uses mapping; inspect only literal downloads.
+    if path.endswith((".sh", ".bash")) or not Path(path).suffix:
+        # Shell and extensionless executable sources do not have YAML uses
+        # mappings; review only CLI and REST artifact references.
         return _command_risks(lines, path)
     risky: Counter[str] = Counter()
     for index, line in enumerate(lines):
