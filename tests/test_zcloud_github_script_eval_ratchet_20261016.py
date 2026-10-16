@@ -332,6 +332,38 @@ runs:
         with self.assertRaisesRegex(EvidenceError, "invalid Git evidence budget"):
             git("status", cap=33 * 1024 * 1024)
 
+    def test_double_quoted_with_key_detects_inline_script_injection(self):
+        a = self.commit(SAFE)
+        b = self.commit(BAD.replace("        with:", '        "with":'))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_single_quoted_with_key_detects_inline_script_injection(self):
+        a = self.commit(SAFE)
+        b = self.commit(BAD.replace("        with:", "        'with':"))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_double_quoted_with_key_safe_env_binding(self):
+        a = self.commit(OTHER)
+        b = self.commit(SAFE.replace("        with:", '        "with":'))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_explicit_yaml_with_key_refuses_ambiguous_source(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace("        with:", "        ? with\n        :"))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_escaped_with_key_refuses_ambiguous_source(self):
+        a = self.commit(SAFE)
+        b = self.commit(BAD.replace("        with:", r'        "w\u0069th":'))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_quoted_with_key_does_not_grandfather_modified_injection(self):
+        a = self.commit(BAD.replace("        with:", '        "with":'))
+        b = self.commit(BAD.replace("        with:", '        "with":').replace(
+            "github.event.pull_request.title", "github.event.issue.title",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
         b = self.commit(BAD)
