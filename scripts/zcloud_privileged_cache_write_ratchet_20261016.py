@@ -107,6 +107,39 @@ def discover_workflows(revision: str) -> dict[str, str]:
     return files
 
 
+def reject_ambiguous_merges(obj, stack=None, budget=None, depth=0) -> None:
+    """Refuse YAML merge keys/cycles in privileged manifests.
+
+    BaseLoader intentionally preserves the scalar spelling 'on', but it does
+    not resolve YAML '<<' mapping merges. Ignoring them would silently miss a
+    cache writer supplied through an alias.
+    """
+    if stack is None:
+        stack = set()
+    if budget is None:
+        budget = [0]
+    budget[0] += 1
+    if budget[0] > 10000 or depth > 64:
+        raise Denied("YAML structure too large or deeply nested")
+    if not isinstance(obj, (dict, list)):
+        return
+    ident = id(obj)
+    if ident in stack:
+        raise Denied("cyclic YAML alias is ambiguous")
+    stack.add(ident)
+    try:
+        if isinstance(obj, dict):
+            if "<<" in obj:
+                raise Denied("unresolved YAML merge key in privileged workflow")
+            for child in obj.values():
+                reject_ambiguous_merges(child, stack, budget, depth + 1)
+        else:
+            for child in obj:
+                reject_ambiguous_merges(child, stack, budget, depth + 1)
+    finally:
+        stack.remove(ident)
+
+
 def event_names(on):
     if isinstance(on, str):
         return {on}
@@ -128,6 +161,7 @@ def cache_writers(path: str, source: str) -> Counter:
         raise Denied(f"{path}: missing event triggers")
     if not (event_names(document["on"]) & PRIVILEGED_EVENTS):
         return Counter()
+    reject_ambiguous_merges(document)
     jobs = document.get("jobs")
     if not isinstance(jobs, dict):
         raise Denied(f"{path}: privileged workflow has invalid jobs")
