@@ -122,6 +122,57 @@ class QueueStormContract(unittest.TestCase):
                     audit.Unavailable, "job_url_binding_invalid"):
                 audit.read_sample(p, j, NOW, 20)
 
+    def test_runner_prestart_and_executing_contradictions_fail_closed(self):
+        for run_state in ("waiting", "pending", "requested"):
+            for job_state, runner_id in (("in_progress", 21),
+                                         ("queued", 21), ("in_progress", 0)):
+                with self.subTest(run=run_state, job=job_state, runner=runner_id):
+                    p, j = payloads([make_run(1, status=run_state)])
+                    job = j[1]["jobs"][0]
+                    job["status"] = job_state
+                    job["runner_id"] = runner_id
+                    job["runner_name"] = "zcloud-vps-1" if runner_id else ""
+                    with self.assertRaises(audit.Unavailable):
+                        audit.read_sample(p, j, NOW, 20)
+        p, j = payloads([make_run(1)])
+        j[1]["jobs"][0]["status"] = "in_progress"
+        with self.assertRaisesRegex(audit.Unavailable, "unassigned_executing_job"):
+            audit.read_sample(p, j, NOW, 20)
+
+    def test_boolean_identifiers_and_page_counts_cannot_spoof_one(self):
+        for field, value in (("run_id", True), ("run_attempt", True)):
+            p, j = payloads([make_run(1)])
+            j[1]["jobs"][0][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                    audit.Unavailable, "job_run_binding_invalid"):
+                audit.read_sample(p, j, NOW, 20)
+        p, j = payloads([make_run(1)])
+        j[1]["total_count"] = True
+        with self.assertRaisesRegex(audit.Unavailable, "job_page_incomplete"):
+            audit.read_sample(p, j, NOW, 20)
+
+    def test_cross_pr_queue_pressure_is_bounded_and_not_a_listener_claim(self):
+        result = self.evaluate(make_run(1, sha="a"*40),
+                               make_run(2, sha="b"*40),
+                               make_run(3, sha="c"*40, event="workflow_dispatch"))
+        self.assertEqual(result["repeated_sha_groups"], [])
+        self.assertEqual(result["sampled_unique_unassigned_heads"], 3)
+        self.assertEqual(result["sampled_unassigned_by_event"],
+                         {"pull_request": 2, "workflow_dispatch": 1})
+        self.assertEqual(result["oldest_unassigned_job_minutes"], 30)
+        self.assertFalse(result["runner_offline_verified"])
+        self.assertFalse(result["cancel_authorized"])
+        self.assertFalse(result["deploy_authorized"])
+
+    def test_approval_and_assigned_jobs_not_counted_as_queue_pressure(self):
+        p, j = payloads([make_run(1, status="waiting"), make_run(2)])
+        j[2]["jobs"][0].update({"runner_id": 21, "runner_name": "zcloud-vps-1"})
+        result = audit.receipt(audit.read_sample(p, j, NOW, 20), stable=True)
+        self.assertEqual(result["sampled_unique_unassigned_heads"], 0)
+        self.assertIsNone(result["oldest_unassigned_job_minutes"])
+        self.assertEqual(result["sampled_unassigned_by_event"],
+                         {"pull_request": 0, "workflow_dispatch": 0})
+
     def test_contradictory_runner_fields_and_labels_denied(self):
         for key, value in (("runner_id", True), ("runner_name", "fake"),
                            ("labels", ["self-hosted", "zcloud"]),
