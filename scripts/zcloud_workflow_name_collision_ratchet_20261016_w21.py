@@ -5,6 +5,9 @@ import itertools
 import json
 import re
 import subprocess
+import os
+import selectors
+import time
 from pathlib import PurePosixPath
 from collections import Counter
 import unicodedata
@@ -21,14 +24,40 @@ class InvalidInventory(ValueError):
 
 
 def _git(args, cwd, max_bytes):
+    """Execute a read-only Git command with a hard streaming byte/time budget."""
+    if max_bytes < 1 or max_bytes > MAX_TOTAL:
+        raise InvalidInventory("invalid_git_output_budget")
+    proc = None
     try:
-        proc = subprocess.run(["git", *args], cwd=cwd, stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL, timeout=15, check=True)
+        proc = subprocess.Popen(["git", *args], cwd=cwd, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + 15.0
+        chunks, total = [], 0
+        with selectors.DefaultSelector() as watch:
+            watch.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise InvalidInventory("git_read_timeout")
+                if not watch.select(remaining):
+                    raise InvalidInventory("git_read_timeout")
+                chunk = os.read(proc.stdout.fileno(), min(65536, max_bytes + 1 - total))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise InvalidInventory("git_output_too_large")
+                chunks.append(chunk)
+        proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+        if proc.returncode != 0:
+            raise InvalidInventory("git_read_failed")
+        return b"".join(chunks)
     except (OSError, subprocess.SubprocessError) as exc:
         raise InvalidInventory("git_read_failed") from exc
-    if len(proc.stdout) > max_bytes:
-        raise InvalidInventory("git_output_too_large")
-    return proc.stdout
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2)
 
 
 def _scalar(value):
@@ -261,6 +290,9 @@ def judge(base, candidate, base_refs=None, candidate_refs=None):
 def read_inventory(sha, *, cwd):
     if not SHA.fullmatch(sha):
         raise InvalidInventory("invalid_sha")
+    resolved = _git(["rev-parse", "--verify", sha + "^{commit}"], cwd, 48)
+    if resolved.strip().decode("ascii", "strict") != sha:
+        raise InvalidInventory("revision_not_commit")
     raw = _git(["ls-tree", "-rz", "--full-tree", sha, "--",
                 ".github/workflows"], cwd, MAX_FILES * 200)
     names, references, total = {}, {}, 0
