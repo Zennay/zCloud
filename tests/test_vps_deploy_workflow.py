@@ -68,6 +68,7 @@ class VpsDeployWorkflowTests(unittest.TestCase):
         self.assertIn("--allow-recent-ancestor-prechange-drift", backend)
         self.assertIn("--path project_runtime.py", backend)
         self.assertIn("--path project-contracts.json", backend)
+        self.assertIn("--path worker-modes.json", backend)
         self.assertIn("--path lane_generator.py", backend)
         recovery = (ROOT / "scripts/zcloud_recovery.py").read_text(encoding="utf-8")
         prechange = (ROOT / "scripts/zcloud_prechange_guard.py").read_text(encoding="utf-8")
@@ -318,6 +319,9 @@ class VpsDeployWorkflowTests(unittest.TestCase):
             "project_runtime.py",
             "lane_generator.py",
             "project-contracts.json",
+            "worker-modes.json",
+            "projects.json",
+            "project-layout.json",
             "autonomy-policy.json",
             "vps-execution-policy.json",
             "portfolio_queue.seed.json",
