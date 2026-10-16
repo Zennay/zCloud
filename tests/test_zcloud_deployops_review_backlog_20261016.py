@@ -40,6 +40,7 @@ def issue(n, *, is_pr=False, labels=None, **changes):
         "html_url": f"https://github.com/Zennay/zCloud/{'pull' if is_pr else 'issues'}/{n}",
         "updated_at": "2026-10-01T08:00:00Z",
         "labels": [{"name": name} for name in (labels or [])],
+        "assignees": [],
     }
     if is_pr:
         row["pull_request"] = {"url": f"https://api.github.com/repos/Zennay/zCloud/pulls/{n}"}
@@ -238,6 +239,32 @@ class BacklogBriefTests(TestCase):
         self.assertIn("2 open PR", summary)
         self.assertFalse(report["merge_authorized"])
 
+    def test_issue_assignees_are_visible_but_never_ownership_admission(self):
+        rows = [issue(1, title="P0: safe-triage", assignees=[{"login": "runner-owner"}]),
+                issue(2)]
+        report = brief.collect(CombinedReader({1: []}, {1: rows}),
+                               NOW, include_issues=True)
+        shown = brief.render(report)
+        self.assertIn("runner-owner", shown)
+        self.assertIn("niet toegewezen", shown)
+        self.assertIn("niet vrij", shown)
+        self.assertFalse(report["merge_authorized"])
+        self.assertFalse(report["deploy_authorized"])
+
+    def test_issue_assignee_assignment_change_invalidates_snapshot(self):
+        calls = 0
+        def reader(kind, page):
+            nonlocal calls
+            if kind == "main":
+                return {"commit": {"sha": SHA}}
+            if kind == "pulls":
+                return []
+            calls += 1
+            assignees = [{"login": "worker1"}] if calls == 1 else [{"login": "worker2"}]
+            return [issue(1, assignees=assignees)]
+        with self.assertRaisesRegex(brief.Denied, "issue_drift"):
+            brief.collect(reader, NOW, include_issues=True)
+
     def test_issue_pull_overlap_requires_exact_pr_cohort(self):
         for items in ([issue(10, is_pr=True), issue(99, is_pr=True)],
                       [issue(12, is_pr=True)]):
@@ -271,6 +298,9 @@ class BacklogBriefTests(TestCase):
             {"labels": [{"name": ""}]}, {"labels": [{}]},
             {"labels": [{"name": "P0"}, {"name": "P0"}]},
             {"labels": "P0"}, {"pull_request": True},
+            {"assignees": None}, {"assignees": [None]},
+            {"assignees": [{"login": ""}]}, 
+            {"assignees": [{"login": "alice"}, {"login": "alice"}]},
             {"html_url": "https://evil.test/issues/1"},
             {"updated_at": "2027-01-01T00:00:00Z"},
         ]
