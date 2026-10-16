@@ -19,6 +19,8 @@ class ZsshPublicIngressHostnameTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         for marker in (
             "workflow_dispatch:",
+            "docker inspect zssh-https",
+            "ZSSH_DOCKER_CADDY_TOPOLOGY_UNSUPPORTED",
             "expected_zssh_sha:",
             "confirm_sha:",
             "INSTALL_ZSSH_PUBLIC_INGRESS",
