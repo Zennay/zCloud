@@ -164,6 +164,8 @@ def _candidate_runner(value):
             if not _HOSTED_RUNNER.fullmatch(current):
                 return True
         elif isinstance(current, list):
+            if not current:
+                return True  # [] cannot identify a valid hosted runner
             identity = id(current)
             if identity in seen:
                 raise InvalidSource("cyclic_runner_selection")
