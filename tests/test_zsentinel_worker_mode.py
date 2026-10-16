@@ -37,6 +37,8 @@ class ZSentinelModeTests(unittest.TestCase):
         source = (ROOT / "public/app.js").read_text()
         self.assertIn("...(DATA?.worker_modes||[])", source)
         self.assertEqual(source.count("...(DATA?.worker_modes||[])"), 2)
+        self.assertEqual(source.count("...(DATA?.archived_projects||[])"), 2)
+        self.assertNotIn("aria-label=\\"Project voor worker '+slot+'\\"'+(!verified?' disabled':'')", source)
         self.assertIn("project or worker role", source)
 
     def test_scheduler_has_live_worker_contract_without_privileged_bypass(self):
