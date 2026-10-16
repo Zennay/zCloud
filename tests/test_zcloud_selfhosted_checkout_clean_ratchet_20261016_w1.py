@@ -109,5 +109,121 @@ class CheckoutCleanTests(unittest.TestCase):
         self.assertEqual(self.find(sample("true", uses="other/tool@v1")), [])
 
 
+class ImmutableGitTreeTests(unittest.TestCase):
+    """Exercise the complete scanner with actual local Git objects and remote main."""
+
+    def setUp(self):
+        import subprocess
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory(prefix="zcloud-checkout-clean-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.work = self.root / "work"
+        self.remote = self.root / "origin.git"
+        subprocess.run(["git", "init", "--bare", str(self.remote)],
+                       check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main", str(self.work)],
+                       check=True, capture_output=True)
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("config", "user.name", "Checkout Fixture")
+        self.git("config", "commit.gpgsign", "false")
+        self.git("remote", "add", "origin", str(self.remote))
+        self.workflow("baseline.yml", sample())
+        self.commit("baseline")
+        self.base = self.rev()
+        self.git("push", "origin", "main")
+
+    def git(self, *args):
+        import subprocess
+        proc = subprocess.run(["git", *args], cwd=self.work,
+                              capture_output=True, text=True, check=True,
+                              timeout=15)
+        return proc.stdout.strip()
+
+    def rev(self):
+        return self.git("rev-parse", "HEAD")
+
+    def workflow(self, name, data):
+        target = self.work / ".github" / "workflows" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(data, encoding="utf-8")
+
+    def commit(self, label):
+        self.git("add", "-A")
+        self.git("commit", "-m", label)
+
+    def scan(self):
+        import os
+        old = Path.cwd()
+        try:
+            os.chdir(self.work)
+            return guard.run(self.base, self.rev())
+        finally:
+            os.chdir(old)
+
+    def test_real_git_detects_new_dirty_checkout(self):
+        self.workflow("danger.yml", sample("false"))
+        self.commit("introduce unsafe clean")
+        result = self.scan()
+        self.assertEqual(result["baseline_findings"], 0)
+        self.assertEqual(result["new_finding_count"], 1)
+        self.assertEqual(result["candidate_findings"], 1)
+        self.assertFalse(result["deploy_authorized"])
+        self.assertFalse(result["mutation_performed"])
+
+    def test_real_git_safe_checkout_is_accepted(self):
+        self.workflow("safe.yml", sample("true"))
+        self.commit("add safe checkout")
+        result = self.scan()
+        self.assertEqual(result["new_finding_count"], 0)
+
+    def test_real_git_grandfathers_unchanged_baseline_debt(self):
+        self.workflow("baseline.yml", sample("false"))
+        self.commit("legacy debt committed")
+        self.base = self.rev()
+        self.git("push", "origin", "main")
+        self.workflow("safe.yml", sample("true"))
+        self.commit("add unrelated safe checkout")
+        result = self.scan()
+        self.assertEqual(result["baseline_findings"], 1)
+        self.assertEqual(result["candidate_findings"], 1)
+        self.assertEqual(result["new_finding_count"], 0)
+
+    def test_real_git_copy_of_existing_debt_is_new(self):
+        self.workflow("baseline.yml", sample("false"))
+        self.commit("legacy debt")
+        self.base = self.rev()
+        self.git("push", "origin", "main")
+        self.workflow("newcopy.yml", sample("false"))
+        self.commit("copy debt to new path")
+        result = self.scan()
+        self.assertEqual(result["baseline_findings"], 1)
+        self.assertEqual(result["candidate_findings"], 2)
+        self.assertEqual(result["new_finding_count"], 1)
+
+    def test_real_git_rejects_moving_main(self):
+        self.workflow("changed.yml", sample("true"))
+        self.commit("advance head")
+        self.git("push", "origin", "main")
+        with self.assertRaisesRegex(guard.Denied, "moving_or_foreign_main"):
+            self.scan()
+
+    def test_real_git_rejects_symlinked_workflow(self):
+        target = self.work / ".github" / "workflows" / "danger.yml"
+        target.symlink_to("baseline.yml")
+        self.commit("unsafe symlink")
+        with self.assertRaisesRegex(guard.Denied, "nonregular_workflow_manifest"):
+            self.scan()
+
+    def test_real_git_rejects_head_not_descended_from_main(self):
+        self.git("checkout", "-b", "unrelated")
+        self.git("commit", "--allow-empty", "-m", "unrelated")
+        self.git("checkout", "--orphan", "detached")
+        self.workflow("different.yml", sample("false"))
+        self.commit("unrelated root")
+        with self.assertRaises(guard.Denied):
+            self.scan()
+
+
 if __name__ == "__main__":
     unittest.main()
