@@ -136,12 +136,36 @@ class RatchetTests(unittest.TestCase):
         self.write("second.yaml", document("shared", "dynamic"))
         self.denied(base, self.save())
 
-    def test_workflow_namespaced_group_is_not_cross_workflow(self):
+    def test_unique_workflow_names_keep_namespaced_groups_separate(self):
         base = self.base()
         group = "${{ github.workflow }}-${{ github.ref }}"
-        self.write("first.yml", document(group, True))
-        self.write("second.yaml", document(group, True))
+        self.write("first.yml", document(group, True).replace("name: Test", "name: First"))
+        self.write("second.yaml", document(group, True).replace("name: Test", "name: Second"))
         self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_duplicate_workflow_names_can_collide_despite_namespacing(self):
+        base = self.base()
+        group = "${{ github.workflow }}-${{ github.ref }}"
+        self.write("first.yml", document(group, False))
+        self.write("second.yaml", document(group, False))
+        self.denied(base, self.save())
+
+    def test_literal_group_aliases_workflow_name_expression(self):
+        base = self.base()
+        self.write("first.yml", document("${{ github.workflow }}", False))
+        self.write("second.yaml", document("Test", False))
+        self.denied(base, self.save())
+
+    def test_simple_expression_whitespace_does_not_hide_collision(self):
+        base = self.base()
+        self.write("first.yml", document("prefix-${{github.ref}}", False))
+        self.write("second.yaml", document("prefix-${{ github.ref }}", False))
+        self.denied(base, self.save())
+
+    def test_non_string_workflow_name_denied(self):
+        base = self.base()
+        self.write("second.yaml", document().replace("name: Test", "name: [Test]"))
+        self.denied(base, self.save())
 
     def test_unsafe_symlink_workflow_denied(self):
         base = self.base()
