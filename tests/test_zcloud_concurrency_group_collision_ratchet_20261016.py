@@ -161,6 +161,21 @@ class RatchetTests(unittest.TestCase):
         else:
             self.fail("collision was admitted")
 
+    def test_untrusted_git_environment_is_ignored(self):
+        from unittest.mock import patch
+        base = self.base()
+        self.write("second.yaml", document("separate", True))
+        head = self.save()
+        with patch.dict(os.environ, {
+            "GIT_NAMESPACE": "attacker",
+            "GIT_OBJECT_DIRECTORY": "/definitely/not/a/git/object/store",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/definitely/not/an/object/store",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.pager",
+            "GIT_CONFIG_VALUE_0": "false",
+        }):
+            self.assertEqual(gate.check(base, head), (0, 0))
+
     def test_invalid_shas_denied(self):
         base = self.base()
         for invalid in ("main", "f" * 39, "z" * 40):
