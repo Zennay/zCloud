@@ -7,6 +7,7 @@ Existing exact source debt is inventoried, not certified safe.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections import Counter
 import os
 from pathlib import Path
@@ -133,15 +134,27 @@ def executable_steps(source: str) -> list[str]:
     return steps
 
 
-def classify(source: str) -> bool:
+def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
+    """Count every distinct executable site, including repeated commands."""
     if not workflow_run_event(source):
-        return False
-    # Only executable run-block bodies are inspected; documentation text is ignored.
+        return Counter()
+    sites: Counter[tuple[int, str]] = Counter()
     for body in executable_steps(source):
         normalized = re.sub(r"\\\s*\n", " ", body)
-        if any(pattern.search(normalized) for pattern in RISK):
-            return True
-    return False
+        for detector, pattern in enumerate(RISK):
+            for match in pattern.finditer(normalized):
+                start = normalized.rfind("\n", 0, match.start()) + 1
+                end = normalized.find("\n", match.end())
+                if end < 0:
+                    end = len(normalized)
+                line = normalized[start:end].strip()
+                digest = hashlib.sha256(line.encode("utf-8")).hexdigest()
+                sites[(detector, digest)] += 1
+    return sites
+
+
+def classify(source: str) -> bool:
+    return bool(dispatch_sites(source))
 
 
 def evaluate(root: Path, base: str, head: str) -> dict:
@@ -150,9 +163,15 @@ def evaluate(root: Path, base: str, head: str) -> dict:
     git(root, "merge-base", "--is-ancestor", base, head)
     old = inventory(root, base)
     new = inventory(root, head)
-    previous = Counter(path for path, content in old.items() if classify(content))
-    current = Counter(path for path, content in new.items() if classify(content))
-    new_findings = sorted((current - previous).elements())
+    previous: Counter[tuple[str, int, str]] = Counter()
+    current: Counter[tuple[str, int, str]] = Counter()
+    for path, source in old.items():
+        previous.update({(path, detector, digest): count
+                         for (detector, digest), count in dispatch_sites(source).items()})
+    for path, source in new.items():
+        current.update({(path, detector, digest): count
+                        for (detector, digest), count in dispatch_sites(source).items()})
+    new_findings = sorted(path for (path, _detector, _digest) in (current - previous).elements())
     return {
         "base": base, "head": head,
         "scanned_base": len(old), "scanned_head": len(new),

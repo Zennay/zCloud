@@ -62,6 +62,26 @@ class GateTests(unittest.TestCase):
         self.assertEqual(report["previous_findings"], 1)
         self.assertEqual(report["new_findings"], [])
 
+    def test_second_identical_dispatch_in_existing_workflow_is_denied(self):
+        base = self.commit(DANGEROUS)
+        head = self.commit(DANGEROUS.replace(
+            "gh workflow run unsafe.yml",
+            "gh workflow run unsafe.yml\n          gh workflow run unsafe.yml"))
+        report = evaluate(self.repo, base, head)
+        self.assertEqual(report["previous_findings"], 1)
+        self.assertEqual(report["current_findings"], 2)
+        self.assertEqual(report["new_findings"], [WORKFLOW])
+
+    def test_changed_dispatch_target_is_new_risk(self):
+        base = self.commit(DANGEROUS)
+        head = self.commit(DANGEROUS.replace("unsafe.yml", "different.yml"))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
+    def test_benign_adjacent_edit_preserves_legacy_fingerprint(self):
+        base = self.commit(DANGEROUS)
+        head = self.commit(DANGEROUS + "\n# unrelated note\n")
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [])
+
     def test_reduced_debt_is_allowed(self):
         base = self.commit(DANGEROUS)
         head = self.commit(TEMPLATE)
