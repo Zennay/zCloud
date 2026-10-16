@@ -6,9 +6,12 @@ self-hosted, dynamic and reusable jobs are owned by separate policies.
 No workflow is changed; no token/API/write authority is requested.
 """
 import argparse
+import os
 import re
+import selectors
 import subprocess
 import sys
+import time
 
 import yaml
 
@@ -62,17 +65,56 @@ StrictLoader.add_constructor(
 
 
 def git(*args, limit=MAX_GIT_OUTPUT):
+    """Enforce Git byte/time budgets while reading, not after buffering."""
     try:
-        proc = subprocess.run(
-            ["git", *args], capture_output=True, timeout=20, check=False
+        proc = subprocess.Popen(
+            ["git", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-    except (subprocess.TimeoutExpired, OSError) as exc:
+    except OSError as exc:
         raise InvalidSource("git_command_unavailable") from exc
-    if proc.returncode != 0:
-        raise InvalidSource("git_command_failed")
-    if len(proc.stdout) > limit or len(proc.stderr) > 8192:
-        raise InvalidSource("git_output_too_large")
-    return proc.stdout
+    output = []
+    stdout_bytes = 0
+    stderr_bytes = 0
+    deadline = time.monotonic() + 20
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise InvalidSource("git_command_timeout")
+                ready = selector.select(timeout=remaining)
+                if not ready:
+                    raise InvalidSource("git_command_timeout")
+                for key, _ in ready:
+                    chunk = os.read(key.fileobj.fileno(), 65536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.data == "stdout":
+                        stdout_bytes += len(chunk)
+                        if stdout_bytes > limit:
+                            raise InvalidSource("git_output_too_large")
+                        output.append(chunk)
+                    else:
+                        stderr_bytes += len(chunk)
+                        if stderr_bytes > 8192:
+                            raise InvalidSource("git_stderr_too_large")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise InvalidSource("git_command_timeout")
+        if proc.wait(timeout=remaining):
+            raise InvalidSource("git_command_failed")
+        return b"".join(output)
+    except subprocess.TimeoutExpired as exc:
+        raise InvalidSource("git_command_timeout") from exc
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        proc.stdout.close()
+        proc.stderr.close()
 
 
 def require_commit(revision):
@@ -91,6 +133,8 @@ def changed_paths(base, head):
         paths = [part.decode("utf-8") for part in raw.split(b"\0") if part]
     except UnicodeDecodeError as exc:
         raise InvalidSource("invalid_workflow_path_encoding") from exc
+    if len(paths) > 512:
+        raise InvalidSource("changed_workflow_path_budget_exceeded")
     return sorted(set(paths))
 
 
