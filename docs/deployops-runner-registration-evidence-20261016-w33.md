@@ -13,7 +13,7 @@ process arguments or the raw runner inventory in PR logs/artifacts. This tool
 accepts only a complete single-page response (<=100 entries), supplied on stdin:
 
 ```json
-{"repository":"Zennay/zCloud","captured_at":"2026-10-16T17:59:30Z","response":{"total_count":1,"runners":[{"id":21,"name":"zcloud-vps-1","status":"offline","busy":false,"labels":[{"name":"self-hosted"},{"name":"zcloud"},{"name":"vps"}]}]}}
+{"repository":"Zennay/zCloud","request_url":"https://api.github.com/repos/Zennay/zCloud/actions/runners?per_page=100","method":"GET","http_status":200,"captured_at":"2026-10-16T17:59:30Z","response":{"total_count":1,"runners":[{"id":21,"name":"zcloud-vps-1","status":"offline","busy":false,"labels":[{"name":"self-hosted"},{"name":"zcloud"},{"name":"vps"}]}]}}
 ```
 
 `python3 scripts/zcloud_runner_registration_evidence_20261016_w33.py < operator-private.json`
@@ -23,6 +23,10 @@ credentials, other runner names or raw JSON**. It classifies `RUNNER_NOT_LISTED`
 `LABEL_MISMATCH`, `RUNNER_LISTED_OFFLINE`, `RUNNER_LISTED_BUSY`,
 `RUNNER_LISTED_ONLINE_IDLE`, or `EVIDENCE_UNAVAILABLE` (exit code 2).
 An outdated, partial, foreign, malformed or ambiguous inventory fails closed.
+The operator must also record the exact HTTPS request URL, GET method and HTTP
+200 status alongside the JSON response; a wrong repository path, host, query,
+method or status is denied. These fields are **operator assertions**, not signed
+origin evidence: the checker deliberately cannot authenticate GitHub itself.
 
 Even an apparent positive classification is only an **unauthenticated,
 operator-supplied claim**: the tool cannot validate the origin of the JSON,
