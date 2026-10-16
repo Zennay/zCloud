@@ -20,10 +20,10 @@ import time
 from pathlib import Path
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
-_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?(?P<action>actions/download-artifact|dawidd6/action-download-artifact|step-security/action-download-artifact)@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
+_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?(?P<action>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]*download[-_]artifact)@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
 _INPUT = re.compile(r"^(?P<indent> *)(?P<key>[\w-]+):\s*(?P<value>.*?)\s*$")
 _TARGETS = frozenset({"run-id", "repository", "github-token"})
-_DOWNLOAD_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@", "step-security/action-download-artifact@")
+_DOWNLOAD_ACTION_REF = re.compile(r"\b[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]*download[-_]artifact@", re.IGNORECASE)
 # Direct GitHub Actions artifact API routes bypass download-artifact and gh run.
 # Deliberately review ANY new endpoint reference in runnable workflow sources:
 # dynamically assembled IDs may hide the final /zip URL at authoring time.
@@ -172,13 +172,13 @@ def _risks(text: str, path: str) -> Counter[str]:
     risky: Counter[str] = Counter()
     for index, line in enumerate(lines):
         # Reject indented tabs/ambiguous aliases where a download action is mentioned.
-        if any(item in line.lower() for item in _DOWNLOAD_ACTIONS) and ("\t" in line[:len(line)-len(line.lstrip())] or "*" in line.strip().split("#")[0]):
+        if _DOWNLOAD_ACTION_REF.search(line) and ("\t" in line[:len(line)-len(line.lstrip())] or "*" in line.strip().split("#")[0]):
             raise Refusal("ambiguous_download_action")
         match = _USES.fullmatch(line)
         if not match:
             # Reject a syntactically unrecognized action reference, rather than
             # silently approving an additional renamed/quoted action invocation.
-            if any(item in line.lower() for item in _DOWNLOAD_ACTIONS) and not line.lstrip().startswith("#"):
+            if _DOWNLOAD_ACTION_REF.search(line) and not line.lstrip().startswith("#"):
                 # Block scalar run scripts may quote the action as inert data;
                 # conservatively require human review instead of false approval.
                 raise Refusal("unparsed_download_action")
