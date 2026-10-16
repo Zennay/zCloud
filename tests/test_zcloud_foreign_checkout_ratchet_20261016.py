@@ -86,6 +86,44 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         text = workflow().replace('      - run: echo safe', '        with: &external_inputs\n      - run: echo safe')
         self.assertIn('ambiguous-checkout-input-map', guard.scan(text))
 
+    def test_repository_before_checkout_uses_is_rejected(self):
+        text = ('steps:\n'
+                '  - name: Fetch untrusted source\n'
+                '    with:\n'
+                '      repository: other/repo\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertIn('foreign-checkout-repository:other/repo', guard.scan(text))
+
+    def test_repository_before_uses_without_name_is_rejected(self):
+        text = ('steps:\n'
+                '  - with:\n'
+                '      repository: attacker/workflow\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertIn('foreign-checkout-repository:attacker/workflow', guard.scan(text))
+
+    def test_repository_before_uses_does_not_leak_prior_step(self):
+        text = ('steps:\n'
+                '  - uses: actions/setup-node@v4\n'
+                '    with:\n'
+                '      repository: other/repo\n'
+                '  - name: Trusted checkout\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertFalse(guard.scan(text))
+
+    def test_alias_map_before_checkout_uses_is_rejected(self):
+        text = ('steps:\n'
+                '  - name: Fetch\n'
+                '    with: *suspicious_map\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertIn('ambiguous-checkout-input-map', guard.scan(text))
+
+    def test_same_repo_override_before_uses_remains_safe(self):
+        text = ('steps:\n'
+                '  - with:\n'
+                '      repository: Zennay/zCloud\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertFalse(guard.scan(text))
+
     def test_named_checkout_step_also_protected(self):
         text = workflow('foreign/repo', '- name: Fetch\n        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803')
         self.assertTrue(guard.scan(text))
