@@ -93,6 +93,92 @@ class NameCollisionRatchetTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(guard.InvalidInventory):
                 guard.workflow_name(".github/workflows/a.yml", source)
 
+
+    def test_new_workflow_run_reference_to_missing_target_denied(self):
+        base_names = {"a.yml": "Build"}
+        candidate_names = {"a.yml": "Build", "listener.yml": "Listener"}
+        base_refs = {"a.yml": ()}
+        candidate_refs = {"a.yml": (), "listener.yml": ("Missing",)}
+        decision = guard.judge(base_names, candidate_names, base_refs, candidate_refs)
+        self.assertEqual(decision["status"], "deny")
+        self.assertEqual(decision["added_collision_count"], 0)
+        self.assertEqual(decision["added_reference_risk_count"], 1)
+        self.assertEqual(decision["added_reference_risks"][0]["reason"], "missing_target")
+
+    def test_old_duplicate_target_with_new_listener_is_denied(self):
+        base = {"a.yml": "Build", "b.yml": "Build"}
+        candidate = dict(base, **{"listener.yml": "Listener"})
+        verdict = guard.judge(base, candidate, {}, {"listener.yml": ("Build",)})
+        self.assertEqual(verdict["status"], "deny")
+        self.assertEqual(verdict["added_reference_risks"][0]["reason"], "ambiguous_target")
+
+    def test_old_broken_listener_baseline_tolerated(self):
+        names = {"source.yml": "Listener", "target.yml": "Target"}
+        refs = {"source.yml": ("Unknown",)}
+        self.assertEqual(guard.judge(names, names, refs, refs)["status"], "pass")
+        self.assertEqual(guard.judge(names, names, refs, {"source.yml": ("Target",)})["status"], "pass")
+
+    def test_removing_a_target_breaks_existing_workflow_run(self):
+        base = {"listener.yml": "Listener", "target.yml": "Target"}
+        target = {"listener.yml": "Listener"}
+        verdict = guard.judge(base, target, {"listener.yml": ("Target",)},
+                              {"listener.yml": ("Target",)})
+        self.assertEqual(verdict["status"], "deny")
+
+    def test_literal_workflow_run_formats(self):
+        formats = (
+            b'on:\n  workflow_run:\n    workflows: ["Build", "Lint"]\n    types: [completed]\n',
+            b"on:\n  workflow_run:\n    workflows:\n      - Build\n      - Lint\n",
+            b"  on:\n    workflow_run:\n      workflows: ['Build', 'Lint']\n",
+            b'"on":\n  "workflow_run":\n    "workflows": [Build, Lint]\n',
+        )
+        for source in formats:
+            with self.subTest(source=source):
+                self.assertEqual(guard.workflow_run_targets(source), ("Build", "Lint"))
+
+    def test_quoted_literal_workflow_run_target(self):
+        source = b'on:\n  workflow_run:\n    workflows: ["Build, Test", "CI"]\n'
+        self.assertEqual(guard.workflow_run_targets(source), ("Build, Test", "CI"))
+
+    def test_unparsed_new_workflow_run_source_denied_without_release_authority(self):
+        new_ref = b'on:\n  workflow_run:\n    workflows: \${{ github.event.workflow.name }}\n'
+        self.assertIsNone(guard.workflow_run_targets(new_ref))
+        verdict = guard.judge({}, {"new.yml": "New"}, {},
+                              {"new.yml": guard.workflow_run_targets(new_ref)})
+        self.assertEqual(verdict["status"], "deny")
+        self.assertFalse(verdict["production_mutation_authorized"])
+
+    def test_untrusted_invisible_workflow_name_rejected(self):
+        path = ".github/workflows/a.yml"
+        for name in ("hello\u202eworld", "hello\u200bworld", "hello\ud800world"):
+            with self.subTest(name=name), self.assertRaises(guard.InvalidInventory):
+                guard.workflow_name(path, ("name: " + name + "\n").encode("utf-8", "surrogatepass"))
+
+    def test_genuine_git_reference_breakage_without_name_duplicate(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "target.yml").write_text("name: Existing Build\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "baseline")
+            base = git("rev-parse", "HEAD")
+            (folder / "listener.yml").write_text(
+                'name: Listener\non:\n  workflow_run:\n    workflows: ["Missing Build"]\n    types: [completed]\n')
+            git("add", ".")
+            git("commit", "-qm", "added invalid listener")
+            head = git("rev-parse", "HEAD")
+            bn, br = guard.read_inventory(base, cwd=root)
+            cn, cr = guard.read_inventory(head, cwd=root)
+            verdict = guard.judge(bn, cn, br, cr)
+            self.assertEqual(verdict["added_collision_count"], 0)
+            self.assertEqual(verdict["added_reference_risk_count"], 1)
+            self.assertEqual(verdict["status"], "deny")
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
