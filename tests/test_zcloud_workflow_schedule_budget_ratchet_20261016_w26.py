@@ -185,7 +185,7 @@ class RealGitNoNewDebtTests(unittest.TestCase):
     def test_new_cross_entry_burst_denied(self):
         path = self.directory / "safe.yml"
         path.write_text(workflow("0 * * * *").replace(
-            "jobs:", "    - cron: '5 * * * *'\\njobs:"))
+            "jobs:", "    - cron: '5 * * * *'\njobs:"))
         receipt = audit(self.root, self.baseline)
         self.assertFalse(receipt["accepted"])
         self.assertTrue(any(item.get("reason") == "cross_schedule_burst"
@@ -194,23 +194,23 @@ class RealGitNoNewDebtTests(unittest.TestCase):
     def test_legacy_pair_grandfathered_exactly(self):
         legacy = self.directory / "legacy.yml"
         legacy.write_text(workflow("0 * * * *").replace(
-            "jobs:", "    - cron: '5 * * * *'\\njobs:"))
+            "jobs:", "    - cron: '5 * * * *'\njobs:"))
         self.git("add", ".")
         self.git("commit", "-qm", "preexisting two-entry legacy")
         base = self.git("rev-parse", "HEAD")
         self.assertTrue(audit(self.root, base)["accepted"])
-        legacy.write_text(legacy.read_text() + "\\n# unrelated step")
+        legacy.write_text(legacy.read_text() + "\n# unrelated step")
         self.assertTrue(audit(self.root, base)["accepted"])
 
     def test_new_pair_not_hidden_by_legacy_pair(self):
         path = self.directory / "legacy.yml"
         path.write_text(workflow("0 * * * *").replace(
-            "jobs:", "    - cron: '5 * * * *'\\njobs:"))
+            "jobs:", "    - cron: '5 * * * *'\njobs:"))
         self.git("add", ".")
         self.git("commit", "-qm", "legacy source pair")
         base = self.git("rev-parse", "HEAD")
         path.write_text(path.read_text().replace(
-            "jobs:", "    - cron: '10 * * * *'\\njobs:"))
+            "jobs:", "    - cron: '10 * * * *'\njobs:"))
         result = audit(self.root, base)
         self.assertFalse(result["accepted"])
         self.assertTrue(any("10 * * * *" in item["cron"]
