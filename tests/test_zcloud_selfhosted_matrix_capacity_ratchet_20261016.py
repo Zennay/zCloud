@@ -370,6 +370,21 @@ class GitTreeContract(unittest.TestCase):
         self.assertEqual(inspect(unsafe, healed)["new_risks"], [])
         self.assertEqual(main(["--base", unsafe, "--head", healed]), 0)
 
+    def test_uppercase_yaml_extension_does_not_bypass_no_new_debt(self):
+        # A changed YAML file whose casing differs must be a DENY, not
+        # incorrectly ignored as outside the changed-workflow inventory.
+        for suffix in (".YML", ".Yaml", ".YAML"):
+            with self.subTest(suffix=suffix):
+                path = ".github/workflows/strange" + suffix
+                Path(path).write_text(workflow(
+                    "      matrix:\n        shard: [a, b, c, d, e]",
+                    runner="vps"))
+                git("add", ".")
+                git("commit", "-qm", "unusual extension")
+                head = git("rev-parse", "HEAD")
+                with self.assertRaisesRegex(InvalidSource, "noncanonical_workflow_extension"):
+                    inspect(self.base, head)
+
     def test_refuses_noncommit_git_object(self):
         blob = git("rev-parse", f"{self.base}:" + ROOT)
         with self.assertRaises(InvalidSource):
