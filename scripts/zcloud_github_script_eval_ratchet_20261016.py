@@ -214,6 +214,10 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
             with_child_indent = None
         if with_indent >= 0 and physical_level > step_level and with_child_indent is None:
             with_child_indent = physical_level
+        if with_indent >= 0 and physical_level > step_level and line.lstrip().startswith("<<: *"):
+            # Report source ambiguity when it is encountered. An unrelated
+            # later sibling (such as env:) must not erase the finding.
+            why.add("ambiguous_yaml")
         if FLOW.search(line) or ("\\x" in line and "script" in line):
             why.add("ambiguous_yaml")
         # YAML unescapes double-quoted mapping keys before the Action uses
@@ -248,8 +252,6 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
     if any(line.lstrip().startswith(("? with", '? "with"', "? 'with'")) for line in yaml_body.splitlines()):
         why.add("ambiguous_yaml")
     if any(line.lstrip().startswith(("? script", "? \"script\"", "? 'script'")) for line in yaml_body.splitlines()):
-        why.add("ambiguous_yaml")
-    if with_indent >= 0 and any(line.lstrip().startswith("<<: *") for line in yaml_body.splitlines()):
         why.add("ambiguous_yaml")
     if not script_found and (FLOW.search(yaml_body) or re.search(r"\bscript\s*:\s*[*!]", yaml_body)):
         why.add("ambiguous_yaml")
