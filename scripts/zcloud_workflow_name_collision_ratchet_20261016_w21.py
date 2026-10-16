@@ -117,6 +117,10 @@ def workflow_name(path, source):
     if any(_ambiguous_escaped_root_key(line, indent) for line in significant
            if len(line) - len(line.lstrip(" ")) == indent):
         raise InvalidInventory("ambiguous_escaped_root_key")
+    if any(line[indent:].lstrip().startswith(("<<:", "? ", "?[", "?{"))
+           for line in significant
+           if len(line) - len(line.lstrip(" ")) == indent):
+        raise InvalidInventory("ambiguous_workflow_name_root")
     pattern = r"""(?m)^""" + " " * indent + r"""(?:name|'name'|"name")[ \t]*:(.*)$"""
     matches = re.findall(pattern, source)
     if len(matches) > 1:
