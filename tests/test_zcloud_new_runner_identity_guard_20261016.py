@@ -59,6 +59,28 @@ class IdentityPolicyTests(unittest.TestCase):
                 self.assertEqual(g._runner(runner), "hosted")
                 self.assertEqual(g.unsafe_jobs(wf(runner, False)), {})
 
+    def test_hosted_runner_shadow_mapping_fails_closed(self):
+        for hidden in (
+            '    "runs-on": [self-hosted, vps]',
+            "    'runs-on': [self-hosted, zcloud]",
+            '    <<: *injected_runner',
+            '    ? runs-on: [self-hosted, vps]',
+            "    !key runs-on: [self-hosted, vps]",
+        ):
+            with self.subTest(hidden=hidden):
+                doc = wf("ubuntu-latest", False).replace(
+                    "    steps:", hidden + "\n    steps:"
+                )
+                with self.assertRaises(ValueError):
+                    g.unsafe_jobs(doc)
+
+    def test_hosted_job_with_legitimate_other_metadata(self):
+        doc = wf("ubuntu-24.04", False).replace(
+            "    steps:",
+            "    container: ubuntu:24.04\n    services: {redis: {image: redis:7}}\n    steps:",
+        )
+        self.assertEqual(g.unsafe_jobs(doc), {})
+
     def test_ftmo_dedicated_runner_outside_scope(self):
         self.assertEqual(g.unsafe_jobs(wf("[self-hosted, ftmo-research]", False)), {})
 
