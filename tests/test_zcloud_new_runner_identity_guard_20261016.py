@@ -148,6 +148,28 @@ class IdentityPolicyTests(unittest.TestCase):
         val = wf().replace("    steps:", "    env:\n      BUILD_MODE: offline\n    steps:")
         self.assertEqual(g.unsafe_jobs(val), {})
 
+    def test_quoted_workflow_environment_cannot_bypass_guard(self):
+        for key in ('"env"', "'env'", "!!str env", "? env"):
+            with self.subTest(root_key=key):
+                doc = wf().replace("jobs:", key + ":\n  BASH_ENV: /tmp/startup\njobs:")
+                self.assertIn("audit", g.unsafe_jobs(doc))
+
+    def test_root_environment_merge_or_alias_is_not_trusted(self):
+        for setting in ("env: *injected", "env: {BASH_ENV: /tmp/injected}",
+                        "env:\n  <<: *injected", "env:\n  PATH: /tmp/malicious",
+                        "env:\n  'PYTHONPATH': /tmp/modules"):
+            with self.subTest(setting=setting):
+                doc = wf().replace("jobs:", setting + "\njobs:")
+                self.assertIn("audit", g.unsafe_jobs(doc))
+
+    def test_workflow_environment_with_unrelated_flat_metadata_allowed(self):
+        doc = wf().replace("jobs:", "env:\n  BUILD_MODE: offline\n  LABEL: fixture\njobs:")
+        self.assertEqual(g.unsafe_jobs(doc), {})
+
+    def test_duplicate_workflow_env_mapping_is_not_trusted(self):
+        doc = wf().replace("jobs:", "env:\n  SAFE: one\nenv:\n  SAFE: two\njobs:")
+        self.assertIn("audit", g.unsafe_jobs(doc))
+
     def test_folded_guard_script_is_not_trustworthy(self):
         for scalar in (">", ">-"):
             with self.subTest(scalar=scalar):
