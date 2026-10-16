@@ -90,6 +90,12 @@ NODE_DYNAMIC_IMPORT = re.compile(
 )
 NODE_SUFFIXES = (".js", ".mjs", ".cjs")
 
+# The same opaque uses references can appear inside YAML flow collections.
+INLINE_OPAQUE_USES = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""([*&!][^\s,'"}\]]+|\$\{\{[^}\r\n]*\}\})"""
+)
+
 MAX_MANIFESTS = 2048
 MAX_BLOB = 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
@@ -284,7 +290,7 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                         ("missing-action:" + action_root).encode()
                     ).hexdigest()
                     sites[fingerprint] += 1
-            for match in OPAQUE_USES.finditer(text):
+            for match in chain(OPAQUE_USES.finditer(text), INLINE_OPAQUE_USES.finditer(text)):
                 edge = hashlib.sha256(
                     ("opaque-action:" + path + ":" + match.group(1)).encode()
                 ).hexdigest()
