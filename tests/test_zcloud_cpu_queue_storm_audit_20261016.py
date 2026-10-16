@@ -241,6 +241,22 @@ class QueueStormContract(unittest.TestCase):
         self.assertEqual(q["repeated_sha_groups"], [])
         self.assertFalse(q["complete"])
 
+    def test_nonfinite_exponent_json_fails_closed(self):
+        for raw in (b'{"bad":1e99999}', b'{"bad":-1e99999}',
+                    b'{"nested":[0.1,1e99999]}'):
+            with self.subTest(raw=raw), self.assertRaisesRegex(
+                    audit.Unavailable, "nonfinite_json"):
+                audit.strict_json(raw)
+        self.assertEqual(audit.strict_json(b'{"ok":2.5}')["ok"], 2.5)
+
+    def test_decoded_unicode_surrogates_are_never_accepted(self):
+        for raw in (b'{"bad":"\\ud800"}', b'{"\\udfff":1}',
+                    b'{"nested":[{"bad":"\\udc00"}]}'):
+            with self.subTest(raw=raw), self.assertRaisesRegex(
+                    audit.Unavailable, "surrogate_json"):
+                audit.strict_json(raw)
+        self.assertEqual(audit.strict_json('{"ok":"✅"}'.encode("utf-8"))["ok"], "✅")
+
     def test_duplicate_json_fields_rejected(self):
         with self.assertRaisesRegex(audit.Unavailable, "duplicate_json_key"):
             audit.strict_json(b'{"a": 1, "a": 2}')

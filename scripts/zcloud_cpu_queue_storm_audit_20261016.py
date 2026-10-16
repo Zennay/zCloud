@@ -10,6 +10,7 @@ import argparse
 from collections import defaultdict
 from datetime import datetime, timezone
 import json
+from math import isfinite
 import os
 import re
 from urllib.error import HTTPError, URLError
@@ -48,8 +49,15 @@ def strict_json(data: bytes) -> dict:
             obj[key] = value
         return obj
 
+    def finite_float(text):
+        number = float(text)
+        if not isfinite(number):
+            raise Unavailable("nonfinite_json")
+        return number
+
     try:
         value = json.loads(data.decode("utf-8"), object_pairs_hook=unique_pairs,
+                           parse_float=finite_float,
                            parse_constant=lambda _: (_ for _ in ()).throw(Unavailable("nonfinite_json")))
     except Unavailable:
         raise
@@ -57,6 +65,22 @@ def strict_json(data: bytes) -> dict:
         raise Unavailable("invalid_json") from exc
     if type(value) is not dict:
         raise Unavailable("nonobject_json")
+    # json.loads accepts unpaired surrogate escapes as strings. Refuse them
+    # anywhere in the bounded payload before projecting trusted receipt data.
+    pending = [value]
+    nodes = 0
+    while pending:
+        nodes += 1
+        if nodes > 100_000:
+            raise Unavailable("excessive_json_nodes")
+        node = pending.pop()
+        if type(node) is str and any(0xD800 <= ord(ch) <= 0xDFFF for ch in node):
+            raise Unavailable("surrogate_json")
+        if type(node) is dict:
+            pending.extend(node.keys())
+            pending.extend(node.values())
+        elif type(node) is list:
+            pending.extend(node)
     return value
 
 
