@@ -11,8 +11,11 @@ import hashlib
 import json
 import os
 import re
+import selectors
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 MAX_WORKFLOWS = 512
@@ -49,21 +52,58 @@ class InventoryError(Exception):
 
 
 def git(repo: Path, *args: str, max_output: int = MAX_TREE_BYTES) -> bytes:
-    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_OPTIONAL_LOCKS": "0",
-           "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+    """Bound child stdout *while reading*, not after subprocess.run has buffered it.
+
+    Git tree entries are attacker-controlled. The old capture-then-check path could
+    allocate far more than max_output; a stopped stdout or orphan child could also
+    exhaust the hosted job budget. Never follow Git redirects or invoke shell.
+    """
+    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+           "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+    process = None
+    output = bytearray()
+    deadline = time.monotonic() + 20.0
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             ["git", "-C", str(repo), *args], stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            timeout=20, check=False, env=env)
+            env=env, start_new_session=True,
+        )
+        assert process.stdout is not None
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    raise InventoryError("git_timeout")
+                ready = selector.select(min(remain, 0.25))
+                if not ready:
+                    continue
+                chunk = os.read(process.stdout.fileno(), min(65536, max_output - len(output) + 1))
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > max_output:
+                    raise InventoryError("git_output_too_large")
+        remain = deadline - time.monotonic()
+        if remain <= 0:
+            raise InventoryError("git_timeout")
+        if process.wait(timeout=remain) != 0:
+            raise InventoryError("git_read_failed")
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise InventoryError("git_unavailable") from exc
-    if completed.returncode != 0:
-        raise InventoryError("git_read_failed")
-    if len(completed.stdout) > max_output:
-        raise InventoryError("git_output_too_large")
-    return completed.stdout.strip() if args[0] == "rev-parse" else completed.stdout
-
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            if process.stdout is not None:
+                process.stdout.close()
+    result = bytes(output)
+    return result.strip() if args[0] == "rev-parse" else result
 
 def pinned(repo: Path, expected: str) -> None:
     if not SHA.fullmatch(expected):
