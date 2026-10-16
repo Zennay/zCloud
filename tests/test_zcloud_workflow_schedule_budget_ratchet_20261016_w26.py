@@ -155,6 +155,18 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             schedules("on:\n  schedule:\n    - cron: '0 9 * * *'\n      timezone:\n")
 
+    def test_duplicate_on_key_denied_instead_of_trusting_last(self):
+        with self.assertRaises(AdmissionError):
+            schedules("on: push\non:\n  schedule:\n    - cron: '*/5 * * * *'\n")
+
+    def test_quoted_duplicate_on_key_denied(self):
+        with self.assertRaises(AdmissionError):
+            schedules("on: pull_request\n'on': workflow_dispatch\n")
+
+    def test_explicit_yaml_mapping_key_denied(self):
+        with self.assertRaises(AdmissionError):
+            schedules("? on\n: {schedule: [{cron: '*/5 * * * *'}]}\n")
+
     def test_top_level_merge_cannot_inject_hidden_schedule(self):
         with self.assertRaises(AdmissionError):
             schedules("name: sample\n<<: *scheduled_events\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
