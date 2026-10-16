@@ -13,9 +13,9 @@ import sys
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 JOB = re.compile(r"^  ([A-Za-z0-9_.-]+):(?:\s*#.*)?\s*$")
-STEP = re.compile(r"^      -\s+(?:name|uses|run|id|if|shell|env|with)\s*:")
-USES = re.compile(r"^\s*(?:-\s*)?uses\s*:\s*['\"]?([^'\"\s#]+)")
-CLEAN = re.compile(r"^\s+clean\s*:\s*(.*)$")
+STEP = re.compile(r"^      -\s+['\"]?(?:name|uses|run|id|if|shell|env|with)['\"]?\s*:")
+USES = re.compile(r"^\s*(?:-\s*)?['\"]?uses['\"]?\s*:\s*['\"]?([^'\"\s#]+)")
+CLEAN = re.compile(r"^\s+['\"]?clean['\"]?\s*:\s*(.*)$")
 WORKFLOW_PREFIX = ".github/workflows/"
 MAX_FILES, MAX_BYTES = 512, 1024 * 1024
 
@@ -86,12 +86,12 @@ def analyze(source, path):
         # steps. Restrict runner-sequence entries to runs-on itself; a list
         # under a different job key must never declare the runner implicitly.
         runner_fields = [l for l in body
-                         if re.match(r"^    runs-on\s*:", l)]
+                         if re.match(r"^    ['\"]?runs-on['\"]?\s*:", l)]
         runner_items = []
         in_runner = False
         for line in body:
-            if re.match(r"^    [A-Za-z_-]+\s*:", line):
-                in_runner = bool(re.match(r"^    runs-on\s*:", line))
+            if re.match(r"^    ['\"]?[A-Za-z_-]+['\"]?\s*:", line):
+                in_runner = bool(re.match(r"^    ['\"]?runs-on['\"]?\s*:", line))
             elif in_runner and re.match(r"^      -\s*", line):
                 runner_items.append(line)
         runner_source = runner_fields + runner_items
@@ -103,7 +103,7 @@ def analyze(source, path):
             any(chr(36) + "{" in line or re.search(r":\s*[*&{]", line)
                 for line in runner_fields + runner_items)
             or (not runner_items and any(
-                re.match(r"^    runs-on\s*:\s*(?:#.*)?$", line)
+                re.match(r"^    ['\"]?runs-on['\"]?\s*:\s*(?:#.*)?$", line)
                 for line in runner_fields))
         )
         if dynamic_runner and any("checkout@" in line.lower() for line in body):
@@ -114,7 +114,7 @@ def analyze(source, path):
         # steps declaration cannot be checked by this source subset. Refuse
         # new instances rather than claiming they contain no dirty checkout.
         declarations = [line for line in body
-                        if re.match(r"^    steps\s*:", line)]
+                        if re.match(r"^    ['\"]?steps['\"]?\s*:", line)]
         for decl in declarations:
             tail = decl.split(":", 1)[1].split("#", 1)[0].strip()
             if tail and tail != "[]":
@@ -152,7 +152,7 @@ def analyze(source, path):
                 in_with = False
                 with_blocks = 0
                 for line in step_lines:
-                    if re.match(r"^(?:        |      -\s+)with\s*:", line):
+                    if re.match(r"^(?:        |      -\s+)['\"]?with['\"]?\s*:", line):
                         with_blocks += 1
                         in_with = True
                         with_value = line.split(":", 1)[1].split("#", 1)[0].strip()
@@ -161,7 +161,7 @@ def analyze(source, path):
                             # override clean; only a literal block is proven.
                             risks.append((path, job_name, str(index),
                                           "opaque-with-map"))
-                    elif re.match(r"^        [A-Za-z_-]+\s*:", line):
+                    elif re.match(r"^        ['\"]?[A-Za-z_-]+['\"]?\s*:", line):
                         in_with = False
                     elif in_with:
                         match = CLEAN.match(line)
@@ -177,8 +177,10 @@ def analyze(source, path):
                 for value in clean_values:
                     if value != "true":
                         risks.append((path, job_name, str(index), "unsafe-clean=" + value[:60]))
-            elif "checkout" in action and ("$" in action or "*" in action):
-                risks.append((path, job_name, str(index), "unresolved-checkout-action"))
+            elif (action.startswith(("*", "&", "!")) or chr(36) in action):
+                # Unknown action identities may resolve to checkout via YAML
+                # aliases/tags or expression-selected uses references.
+                risks.append((path, job_name, str(index), "unresolved-action-reference"))
     return risks
 
 
