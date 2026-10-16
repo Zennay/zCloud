@@ -23,6 +23,7 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
 ACTION = re.compile(r"\.github/actions/(?:[^/\0]+/)+action\.ya?ml\Z")
 ACTION_CODE = re.compile(r"\.github/actions/(?:[^/\0]+/)+[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
+HELPER_CODE = re.compile(r"(?:scripts|\.github/scripts)/(?:[^/\0]+/)*[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
 ACTION_ENTRY = re.compile(
     r"""(?m)^[ \t]{2,}(?:main|pre|post|['\"](?:main|pre|post)['\"])\s*:[ \t]*['\"]?([^'\"\s#]+)['\"]?[ \t]*(?:#.*)?$"""
 )
@@ -96,6 +97,14 @@ INLINE_OPAQUE_USES = re.compile(
     r"""([*&!][^\s,'"}\]]+|\$\{\{[^}\r\n]*\}\})"""
 )
 
+# Literal root-relative Python/shell/Node invocations from scheduled ancestry.
+# Never execute scripts or trust missing/out-of-tree helper source.
+LOCAL_HELPER_EXEC = re.compile(
+    r"""(?m)(?:\b(?:python(?:3(?:\.\d+)?)?|bash|sh|node)\s+"""
+    r"""(?:-[uBES]\s+)*|\./)"""
+    r"""(\.?/?(?:scripts|\.github/scripts)/[A-Za-z0-9_./-]+\.(?:py|sh|js|mjs|cjs))\b"""
+)
+
 MAX_MANIFESTS = 2048
 MAX_BLOB = 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
@@ -144,7 +153,7 @@ def git(repo: Path, *args: str) -> bytes:
 def manifest_map(repo: Path, sha: str) -> dict[str, str]:
     if not SHA.fullmatch(sha):
         raise ValueError("exact 40-character lowercase Git SHA required")
-    entries = git(repo, "ls-tree", "-r", "-z", sha, "--", ".github/workflows", ".github/actions").split(b"\0")
+    entries = git(repo, "ls-tree", "-r", "-z", sha, "--", ".github/workflows", ".github/actions", ".github/scripts", "scripts").split(b"\0")
     result: dict[str, str] = {}
     total = 0
     for record in entries:
@@ -156,7 +165,7 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
             path = path_bytes.decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError("invalid Git tree entry") from exc
-        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path)):
+        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path) or HELPER_CODE.fullmatch(path)):
             continue
         # A newline, terminal escape or delimiter hidden in a Git pathname
         # must never be folded into apparently ordinary evidence filenames.
@@ -240,7 +249,7 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
     """
     report: dict[str, Counter[str]] = {}
     for root, source in workflows.items():
-        if not scheduled(source):
+        if not WORKFLOW.fullmatch(root) or not scheduled(source):
             continue
         sites: Counter[str] = Counter()
         visiting = [root]
@@ -263,6 +272,22 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     ("site:" + path + ":" + signature).encode()
                 ).hexdigest()
                 sites[fingerprint] += count
+            for match in LOCAL_HELPER_EXEC.finditer(text):
+                reference = match.group(1)
+                target = posixpath.normpath(reference)
+                sites[hashlib.sha256(
+                    ("helper-exec:" + path + ":" + reference).encode()
+                ).hexdigest()] += 1
+                if not HELPER_CODE.fullmatch(target):
+                    sites[hashlib.sha256(
+                        ("opaque-helper-exec:" + path + ":" + reference).encode()
+                    ).hexdigest()] += 1
+                elif target not in workflows:
+                    sites[hashlib.sha256(
+                        ("missing-helper-exec:" + path + ":" + reference).encode()
+                    ).hexdigest()] += 1
+                else:
+                    visiting.append(target)
             for match in chain(REUSABLE.finditer(text), INLINE_REUSABLE.finditer(text)):
                 target = match.group(1)
                 # Every newly introduced/replaced delegation is risky even if
