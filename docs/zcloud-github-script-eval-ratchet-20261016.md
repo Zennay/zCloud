@@ -8,14 +8,14 @@
 
 ## What the guard enforces
 
-* Compares **two immutable, ancestor-related Git commit SHAs** through regular Git blobs; checks all `.github/workflows/*.yml|yaml` files, including untouched baselines, with object identity, UTF-8, symlink, file-count and byte budgets.
+* Compares **two immutable, ancestor-related Git commit SHAs** through regular Git blobs; checks workflow YAML plus root/nested composite Action manifests (`action.yml` / `action.yaml`), including untouched baselines, with object identity, UTF-8, symlink, file-count and byte budgets.
 * Finds normal, step-level `actions/github-script@` uses and their `with.script` scalar. Flags direct `${{ ... }}` expressions, Unicode-escaped expression delimiters and YAML alias/flow-map ambiguity. The existing dangerous step is recorded by its path, starting line and full-step hash; removing hazards decreases debt; new or changed dangerous steps are rejected.
 * Reports **only bounded counts and fixed reason labels**, never JavaScript or expressions, secrets, job names, tokens, or worker information. `release_authorized=false` and `production_mutation_authorized=false` in all success receipts.
 * Exit codes: `0` valid no-new-debt, `1` new risk, `2` invalid/incomplete evidence. Tests exercise real Git commits, SHA ancestry, symlinks and legacy behavior.
 
 ## Limitations
 
-This deliberately strict lexical tripwire is **not** a full YAML parser, JavaScript parser or comprehensive security scanner. Legacy source may contain risk; green means only *no new direct source risk under this defined grammar*. Complex YAML tags, aliases, computed `uses:` or atypical quoted mappings need independent review. Safe environment-variable binding itself does not guarantee safe downstream parsing. The PR cannot prove VPS availability or authorize production. The separately owned shell-expression guard PR #1464 covers `run:` shells, not this `with.script` boundary.
+This deliberately strict lexical tripwire is **not** a full YAML parser, JavaScript parser or comprehensive security scanner. Legacy source may contain risk; green means only *no new direct source risk under this defined grammar*. Complex YAML tags, aliases, computed `uses:` or atypical quoted mappings need independent review. Safe environment-variable binding itself does not guarantee safe downstream parsing. The PR cannot prove VPS availability or authorize production. Composite-action source is included, but only direct, lexically legible `actions/github-script` steps and bounded YAML ambiguity are covered. The separately owned shell-expression guard PR #1464 covers `run:` shells, not this `with.script` boundary.
 
 ## Review and integration
 
