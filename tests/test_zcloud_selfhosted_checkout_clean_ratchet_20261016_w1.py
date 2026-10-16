@@ -484,5 +484,48 @@ class ImmutableGitTreeTests(unittest.TestCase):
 
 
 
+class HostedPolicyWiringTests(unittest.TestCase):
+    """Prevent an otherwise green checker from being skipped by PR routing."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (PATH.parents[1] / ".github" / "workflows" /
+                      "zcloud-selfhosted-checkout-clean-ratchet-20261016-w1.yml"
+                      ).read_text(encoding="utf-8")
+
+    def test_every_main_pr_triggers_without_truncated_path_filter(self):
+        import re
+        header = self.source.split("permissions:", 1)[0]
+        self.assertRegex(header, r"(?m)^  pull_request:\s*$")
+        self.assertRegex(header, r"(?m)^    branches: \[main\]\s*$")
+        self.assertNotRegex(header, r"(?m)^\s+paths(?:-ignore)?:")
+        self.assertNotIn("workflow_dispatch:", header)
+
+    def test_only_github_hosted_ci_executes_pr_code(self):
+        self.assertIn("runs-on: ubuntu-latest", self.source)
+        self.assertNotIn("runs-on: [self-hosted", self.source)
+        self.assertIn("timeout-minutes: 10", self.source)
+
+    def test_candidate_checkout_pinned_to_exact_event_sha(self):
+        self.assertIn("ref: " + "$" + "{{ github.event.pull_request.head.sha }}",
+                      self.source)
+        self.assertIn("persist-credentials: false", self.source)
+        self.assertIn("submodules: false", self.source)
+
+    def test_same_repository_actor_and_first_attempt_are_required(self):
+        for literal in ("github.repository == 'Zennay/zCloud'",
+                        "github.event.pull_request.head.repo.full_name == github.repository",
+                        "github.event.pull_request.base.repo.full_name == github.repository",
+                        "github.actor == 'Zennay'",
+                        "github.run_attempt == 1"):
+            self.assertIn(literal, self.source)
+
+    def test_exact_fresh_main_required_before_untrusted_pr_script(self):
+        self.assertIn("git ls-remote --exit-code origin refs/heads/main", self.source)
+        self.assertIn('test "$GITHUB_REPOSITORY" =', self.source)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$HEAD_SHA"', self.source)
+
+
+
 if __name__ == "__main__":
     unittest.main()
