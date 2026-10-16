@@ -139,6 +139,20 @@ class GithubScriptRatchetTest(unittest.TestCase):
         b = self.commit(ESCAPED)
         self.assertEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_anchor_redefinition_cannot_reuse_legacy_alias_waiver(self):
+        a = self.commit("x-source: &remote_code core.info('safe')\n" + ALIASED)
+        b = self.commit("x-source: &remote_code core.info('different')\n" + ALIASED)
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_aliased_github_script_uses_denied(self):
+        a = self.commit(SAFE)
+        anchor = "x-action: &githubscript actions/github-script@0123456789012345678901234567890123456789\n"
+        b = self.commit(anchor + SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            "uses: *githubscript",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_script_in_unrelated_action_is_not_guarded(self):
         a = self.commit(OTHER)
         b = self.commit(OTHER + "\n# GitHub-script not invoked\n")
