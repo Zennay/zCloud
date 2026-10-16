@@ -20,11 +20,10 @@ import time
 from pathlib import Path
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
-_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?(?P<action>actions/download-artifact|dawidd6/action-download-artifact)@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
+_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?(?P<action>actions/download-artifact|dawidd6/action-download-artifact|step-security/action-download-artifact)@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
 _INPUT = re.compile(r"^(?P<indent> *)(?P<key>[\w-]+):\s*(?P<value>.*?)\s*$")
 _TARGETS = frozenset({"run-id", "repository", "github-token"})
-_VENDOR_TARGETS = frozenset({"run_id", "github_token", "repo", "workflow", "branch"})
-_DOWNLOAD_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
+_DOWNLOAD_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@", "step-security/action-download-artifact@")
 # Direct GitHub Actions artifact API routes bypass download-artifact and gh run.
 # Deliberately review ANY new endpoint reference in runnable workflow sources:
 # dynamically assembled IDs may hide the final /zip URL at authoring time.
@@ -197,8 +196,12 @@ def _risks(text: str, path: str) -> Counter[str]:
                 raise Refusal("duplicate_with_block")
             else:
                 with_indent = None
-        targets = _TARGETS | (_VENDOR_TARGETS if match.group("action").lower().startswith("dawidd6/") else frozenset())
-        if targets.intersection(fields):
+        # Unlike the official download action, dawidd6 and its maintained
+        # step-security replacement can select the latest previous workflow
+        # run even WITHOUT `run_id` or other explicit selectors.
+        # All newly added invocations of either must therefore be reviewed.
+        is_third_party = match.group("action").lower() != "actions/download-artifact"
+        if is_third_party or _TARGETS.intersection(fields):
             # Pin to exact source position as well as fields. Without the
             # location, moving an identical cross-run step between jobs in
             # the SAME workflow would be grandfathered by the old hash.
