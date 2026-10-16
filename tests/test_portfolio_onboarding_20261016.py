@@ -58,14 +58,14 @@ class PortfolioOnboardingTests(unittest.TestCase):
         )
         self.assertEqual(self.contracts["tradengine"]["autonomy"]["mode"], "ai_worker")
 
-    def test_new_projects_are_manually_operable_and_bounded(self):
+    def test_new_projects_are_auto_scheduled_and_bounded(self):
         active_ids = {p["id"] for p in self.projects if p["status"] != "archived"}
         self.assertEqual(active_ids, set(self.contracts) - {mode["id"] for mode in self.worker_modes})
         for pid in NEW_PROJECTS:
             with self.subTest(project=pid):
                 contract = self.contracts[pid]
                 self.assertEqual(contract["ai_worker_cap"], 1)
-                self.assertEqual(contract["autonomy"], {"mode": "ai_worker", "auto_start": False})
+                self.assertEqual(contract["autonomy"], {"mode": "ai_worker", "auto_start": True})
                 self.assertEqual(contract["queue_mode"], "execution")
                 self.assertEqual(contract["compute"]["pool"], "build")
                 self.assertEqual(contract["compute"]["priority"], "background")
@@ -89,7 +89,7 @@ class PortfolioOnboardingTests(unittest.TestCase):
             ):
                 state = server.project_autonomy_state(pid)
                 self.assertTrue(state["allow_ai"])
-                self.assertFalse(state["auto_start"])
+                self.assertTrue(state["auto_start"])
                 self.assertEqual(state["reason"], "bounded_ai_worker")
 
     def test_zsentinel_is_cross_project_worker_mode_not_project_card(self):
@@ -111,17 +111,14 @@ class PortfolioOnboardingTests(unittest.TestCase):
         self.assertTrue(jobs[0]["eligible"])
         self.assertIn("all projects", jobs[0]["completion_criteria"].lower())
 
-    def test_execution_routing_inventory_does_not_autostart_projects(self):
+    def test_execution_routing_inventory_seeds_one_bounded_task_per_new_project(self):
         # Required project inventory is not itself worker or production admission.
         execution_inventory = load("vps-execution-policy.json")["projects"]
         for pid in NEW_PROJECTS:
             self.assertIn(pid, execution_inventory)
-            self.assertFalse(self.contracts[pid]["autonomy"]["auto_start"])
+            self.assertTrue(self.contracts[pid]["autonomy"]["auto_start"])
             self.assertEqual("ai_worker", self.contracts[pid]["autonomy"]["mode"])
-            self.assertNotIn(pid, load("portfolio_queue.seed.json") and [
-                item["project_id"] for item in load("portfolio_queue.seed.json")
-                if item.get("queue_id", "").startswith("autostart-")
-            ])
+            self.assertEqual(1, len([item for item in load("portfolio_queue.seed.json") if item["project_id"] == pid and item["eligible"] and item["status"] == "queued"]))
 
 
 if __name__ == "__main__":
