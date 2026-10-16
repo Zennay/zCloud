@@ -219,6 +219,18 @@ jobs:
         self.assertIn(("__workflow__", "aggregate_matrix_groups:10"),
                       findings(workflow_with_matrix_groups(10)))
 
+    def test_yaml_nested_sequence_is_bounded(self):
+        # A syntactically valid deeply nested source must not spend
+        # unbounded stack/CPU in the custom YAML parser.
+        source = "name: bomb\njobs:\n  probe:\n    runs-on: [self-hosted]\n    strategy:\n      matrix: " + "[" * 70 + "x" + "]" * 70 + "\n"
+        with self.assertRaises(InvalidSource):
+            findings(source)
+
+    def test_yaml_node_count_is_bounded(self):
+        source = "name: bomb\njobs:\n  probe:\n    runs-on: [self-hosted]\n    strategy:\n      matrix: [" + ", ".join(["x"] * 30_001) + "]\n"
+        with self.assertRaises(InvalidSource):
+            findings(source)
+
     def test_duplicate_yaml_key_fail_closed(self):
         with self.assertRaises(InvalidSource):
             findings(workflow("      max-parallel: 1\n      max-parallel: 2\n"
