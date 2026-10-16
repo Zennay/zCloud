@@ -8,6 +8,8 @@ The workflow has **no PR path filter**: **every main-targeting pull request** st
 
 The scanner inventories regular `.github/workflows/*.yml` and `.yaml` blobs at immutable Git tree IDs for base and candidate. For workflows with a scheduled event (including inline, quoted and opaque alias-shaped triggers), it identifies direct `gh workflow run`, REST workflow dispatch, REST `repository_dispatch`, Octokit dispatch and dynamic workflow-ID variants. It also recognises the split Python REST URL used by the existing recovery workflow. All source stays local to the GitHub-hosted job.
 
+**Post-write main audit:** the same GitHub-hosted policy also runs on every `push` to `main`, using immutable `github.event.before` and `github.sha` commits and proving advertised current main is the after-SHA. This is **detective only**: failing CI cannot undo a direct main write. The actual protection/merge controls belong to the open [#922](https://github.com/Zennay/zCloud/issues/922) integration gate, not this PR.
+
 **Monotone fingerprint policy:** each matched dispatch site is hashed from its source line and counted as a multiset. A new site, duplicate site, changed command or changed dispatch target is rejected—even if the old site was removed so that raw call counts appear equal. An unchanged legacy site may remain while other non-dispatch code changes. Fingerprinting deliberately treats some formatting-only changes to the dispatch line as review-requiring, not as proof of new runtime behavior.
 
 ## Read-only acceptance
