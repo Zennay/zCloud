@@ -51,6 +51,16 @@ def _structural_lines(text: str) -> list[tuple[int, str]]:
             scalar_indent = None
         if not stripped or stripped.startswith("#"):
             continue
+        # A valid YAML key may have spaces before the colon, while a tabbed
+        # indentation cannot be interpreted by this bounded source reader.
+        if re.match(r"^ *\t", line) or re.match(
+            r"^\s*(?:-\s+)?(?:jobs|steps|uses|with|retention-days)\s+:",
+            line,
+        ):
+            raise RuntimeError("unresolved workflow key whitespace")
+        # A flow-style jobs collection can hide an entire upload list.
+        if re.match(r"^\s*jobs:\s*[\[{*&!]", line):
+            raise RuntimeError("unresolved workflow jobs collection")
         # This bounded source scanner intentionally does not resolve YAML
         # quoted mapping keys. Counting a partial set would be fail-open.
         if re.match(
@@ -144,7 +154,7 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
                 action = raw_action.strip(chr(39) + chr(34))
                 # A text-only audit cannot resolve YAML aliases, anchors, tags
                 # or folded action references. Never certify a partial list.
-                if action.startswith(("*", "&", "!", "|", ">")):
+                if action.startswith(("*", "&", "!", "|", ">", "${{")):
                     raise RuntimeError("unresolved action identity")
                 uses.append((number, action))
             if re.match(r"^ {" + str(field_indent) + r"}with:\s*(?:#.*)?$", line):
