@@ -332,6 +332,48 @@ class Tests(unittest.TestCase):
         self.assertIn('test "$PR_BASE" = ',workflow)
         self.assertIn('ZCLOUD_CROSS_RUN_FIRST_INTEGRATION_BOOTSTRAP=1',workflow)
 
+    def test_third_party_download_action_run_id_creates_review_debt(self):
+        candidate=SAFE.replace('actions/download-artifact@','dawidd6/action-download-artifact@')
+        candidate=candidate.replace('name: evidence','run_id: 12345')
+        self.assertEqual(sum(module._risks(candidate,'w.yml').values()),1)
+
+    def test_third_party_download_action_github_token_creates_review_debt(self):
+        candidate=SAFE.replace('actions/download-artifact@','dawidd6/action-download-artifact@')
+        candidate=candidate.replace('name: evidence','github_token: TOKEN_PLACEHOLDER')
+        self.assertEqual(sum(module._risks(candidate,'w.yml').values()),1)
+
+    def test_third_party_download_action_workflow_and_branch_require_review(self):
+        vendor=SAFE.replace('actions/download-artifact@','dawidd6/action-download-artifact@')
+        self.assertEqual(sum(module._risks(vendor.replace('name: evidence','workflow: build.yml'),'w.yml').values()),1)
+        self.assertEqual(sum(module._risks(vendor.replace('name: evidence','branch: main'),'w.yml').values()),1)
+
+    def test_third_party_download_action_in_new_nested_manifest_denied(self):
+        base=self.commit(SAFE)
+        manifest=self.repo/'vendor/steps/action.yaml'
+        manifest.parent.mkdir(parents=True)
+        value=SAFE.replace('actions/download-artifact@','dawidd6/action-download-artifact@')
+        manifest.write_text(value.replace('name: evidence','run_id: 12345'))
+        self.git('add','.'); self.git('commit','-qm','new vendor source')
+        head=self.git('rev-parse','HEAD')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_third_party_download_action_legacy_is_grandfathered(self):
+        base=self.commit(
+            SAFE.replace('actions/download-artifact@','dawidd6/action-download-artifact@')
+                .replace('name: evidence','run_id: 12345')
+        )
+        head=self.commit(
+            SAFE.replace('actions/download-artifact@','dawidd6/action-download-artifact@')
+                .replace('name: evidence','run_id: 12345')
+            + '\n# unrelated end note\n'
+        )
+        self.assertTrue(module.evaluate(self.repo,base,head)['ok'])
+
+    def test_third_party_quoted_yaml_alias_is_denied(self):
+        candidate='      - uses: "dawidd6/action-download-artifact@*alias"'
+        with self.assertRaises(module.Refusal):
+            module._risks(candidate,'w.yml')
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
