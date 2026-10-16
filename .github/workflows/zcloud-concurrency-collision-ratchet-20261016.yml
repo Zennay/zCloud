@@ -68,7 +68,28 @@ jobs:
           python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD"
           # Show only hashed group IDs, workflow paths and UNREVIEWED owner fields.
           # This is an audit queue, never review/deploy authorization.
-          python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD" --inventory-json
+          receipt="$(python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD" --inventory-json)"
+          # An inventory is deliberately NOT a release/merge approval; reject
+          # any drift in the emitted receipt before printing it for owners.
+          python3 -c '
+          import json, os, sys
+          d = json.load(sys.stdin)
+          required = ("reviewed", "merge_authorized", "production_mutation_authorized")
+          if any(d.get(field) is not False for field in required):
+              raise SystemExit("inventory unexpectedly asserts authority")
+          if d.get("base_commit_sha") != os.environ["BASE"] or d.get("head_commit_sha") != os.environ["HEAD"]:
+              raise SystemExit("inventory SHA does not match exact PR source")
+          if d.get("legacy_group_count") != len(d.get("group_summaries", [])):
+              raise SystemExit("inventory group counts are incoherent")
+          if d.get("legacy_collision_count") != len(d.get("review_items", [])):
+              raise SystemExit("inventory pair counts are incoherent")
+          if any(item.get("reviewed") is not False or
+                 item.get("production_mutation_authorized") is not False
+                 for item in d["group_summaries"]):
+              raise SystemExit("inventory group claims unauthorized review")
+          print("ZCLOUD_COLLISION_INVENTORY_DENY_ONLY_VALID=1")
+          ' <<<"$receipt"
+          printf '%s\\n' "$receipt"
           current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
           test "$current" = "$BASE"
           echo "ZCLOUD_COLLISION_SOURCE_ONLY_GREEN=1"
