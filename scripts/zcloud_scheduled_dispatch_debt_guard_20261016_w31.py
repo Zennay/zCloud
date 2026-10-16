@@ -110,6 +110,10 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
             raise ValueError("invalid Git tree entry") from exc
         if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path)):
             continue
+        # A newline, terminal escape or delimiter hidden in a Git pathname
+        # must never be folded into apparently ordinary evidence filenames.
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            raise ValueError("unsafe manifest path")
         if path in result or len(result) >= MAX_MANIFESTS:
             raise ValueError("duplicate or excessive workflow entry")
         if mode not in {"100644", "100755"}:
