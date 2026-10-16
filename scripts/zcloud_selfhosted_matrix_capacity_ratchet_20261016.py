@@ -94,11 +94,33 @@ def _blob(sha, path):
 
 
 def _candidate_runner(value):
-    if isinstance(value, str):
-        return "self-hosted" in value.lower() or "${{" in value
-    if isinstance(value, list):
-        return any(_candidate_runner(item) for item in value)
-    return isinstance(value, dict)  # group/labels expression needs review
+    """Fail closed on unusual runner selectors, cycles and alias expansion.
+
+    A plain hosted label is safe to exclude; dynamically selected, structured
+    or malformed runners cannot be assumed to be GitHub-hosted.
+    """
+    pending = [value]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        if current is None:
+            continue
+        if isinstance(current, str):
+            if "self-hosted" in current.lower() or "${{" in current:
+                return True
+        elif isinstance(current, list):
+            identity = id(current)
+            if identity in seen:
+                raise InvalidSource("cyclic_runner_selection")
+            seen.add(identity)
+            if len(seen) > 64 or len(current) > 64:
+                raise InvalidSource("oversized_runner_selection")
+            pending.extend(current)
+        else:
+            # Mapping selectors, unexpected scalars and custom tags all need
+            # owner review. A numeric or boolean runs-on is NOT hosted proof.
+            return True
+    return False
 
 
 def _matrix_count(matrix):
