@@ -95,7 +95,10 @@ def is_high_frequency(cron: str) -> bool:
     )
 
 
-def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tuple[str, ...]:
+def schedules(
+    source: str, *, timezone_metadata: list[str] | None = None,
+    timezone_bindings: list[tuple[str, str]] | None = None,
+) -> tuple[str, ...]:
     if len(source.encode("utf-8")) > LIMIT_BYTES:
         raise AdmissionError("workflow_source_oversized")
     # UTF-8 BOM is legal at the beginning of a YAML stream and must not
@@ -191,6 +194,14 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
                 raise AdmissionError("ambiguous_timezone_selector")
             if timezone_metadata is not None:
                 timezone_metadata.append("timezone: " + zone)
+            # Keep the IANA zone attached to its own cron entry. A flat
+            # timezone list cannot detect moving the only zone from the
+            # second entry to the first while preserving the cron sequence.
+            if timezone_bindings is not None:
+                if not timezone_bindings:
+                    raise AdmissionError("timezone_without_cron")
+                cron, _ = timezone_bindings[-1]
+                timezone_bindings[-1] = (cron, zone)
             continue
         match = CRON_RE.match(line)
         if match:
@@ -210,6 +221,8 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             if not scalar or "${{" in scalar:
                 raise AdmissionError("dynamic_cron_forbidden")
             entries.append(scalar)
+            if timezone_bindings is not None:
+                timezone_bindings.append((scalar, ""))
         else:
             # This subset only permits a cron item and its own optional
             # timezone. An extra quoted cron/timezone key or YAML alias
@@ -358,23 +371,27 @@ def audit(repo: Path, baseline_sha: str) -> dict:
     for path in paths:
         old_timezones: list[str] = []
         new_timezones: list[str] = []
+        old_bindings: list[tuple[str, str]] = []
+        new_bindings: list[tuple[str, str]] = []
         if path not in old:
             old_entries: tuple[str, ...] = ()
         else:
             old_entries = schedules(
                 git(repo, "show", f"{baseline_sha}:{path}"),
                 timezone_metadata=old_timezones,
+                timezone_bindings=old_bindings,
             )
         before = set(old_entries)
         after = schedules(
             (repo / path).read_text(encoding="utf-8"),
             timezone_metadata=new_timezones,
+            timezone_bindings=new_bindings,
         )
         # An unchanged legacy timezone is observationally grandfathered.
         # Altered cron/timezone combinations require a separate DST-aware
         # review: nominal wall-clock matches do not prove UTC spacing.
         if (old_timezones or new_timezones) and (
-            old_timezones != new_timezones or old_entries != after
+            old_bindings != new_bindings
         ):
             count += 1
             added.append({"workflow": path, "cron": "<timezone schedule change>",
