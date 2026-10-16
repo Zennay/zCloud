@@ -824,6 +824,45 @@ class NameCollisionRatchetTests(unittest.TestCase):
             self.assertEqual(receipt["candidate_reference_risk_count"], 0)
             self.assertFalse(receipt["merge_authorized"])
 
+
+    def test_real_git_cli_legacy_wildcard_new_matching_workflow_denied(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "watch.yml").write_text(
+                'name: Watcher\non:\n  workflow_run:\n    workflows: ["Build*"]\n')
+            (folder / "build.yml").write_text("name: Build\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "legacy wildcard trigger")
+            baseline = git("rev-parse", "HEAD")
+            (folder / "docs.yml").write_text("name: Documentation\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "unrelated new workflow")
+            unrelated = git("rev-parse", "HEAD")
+            command = [sys.executable, str(SCRIPT), "--root", root,
+                       "--base", baseline, "--head", unrelated]
+            safe = subprocess.run(command, capture_output=True, text=True, timeout=15)
+            self.assertEqual(safe.returncode, 0, safe.stdout)
+            self.assertEqual(json.loads(safe.stdout)["status"], "pass")
+            (folder / "build_extra.yml").write_text("name: Build extra\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "newly matched wildcard target")
+            risky = git("rev-parse", "HEAD")
+            command[-1] = risky
+            denied = subprocess.run(command, capture_output=True, text=True, timeout=15)
+            self.assertEqual(denied.returncode, 1, denied.stdout)
+            receipt = json.loads(denied.stdout)
+            self.assertEqual(receipt["source_commit_head"], risky)
+            self.assertEqual(receipt["added_reference_risks"][0]["reason"],
+                             "legacy_pattern_new_target")
+            self.assertIs(receipt["merge_authorized"], False)
+            self.assertIs(receipt["production_mutation_authorized"], False)
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
