@@ -114,6 +114,10 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
             with_indent = len(wm.group(1))
         if FLOW.search(line) or ("\\x" in line and "script" in line):
             why.add("ambiguous_yaml")
+        # YAML unescapes double-quoted mapping keys before the Action uses
+        # them. An encoded script key must not bypass the literal-key parser.
+        if with_indent >= 0 and re.match(r'^\s*["\x27][^\n]*\\\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})', line):
+            why.add("ambiguous_yaml")
         sm = SCRIPT_KEY.match(line)
         if sm is None:
             continue
@@ -169,6 +173,13 @@ def risks(sha: str) -> tuple[Counter, int]:
         if "\x00" in source:
             raise EvidenceError("workflow includes NUL byte")
         lines = source.splitlines(keepends=True)
+        # Flow mappings and escaped YAML uses keys may conceal an action that
+        # an ordinary line-level scanner would miss. Every literal reference
+        # must map to a plainly readable step or be treated as ambiguous.
+        declared_actions = len(re.findall(r"actions/github-script@", source, flags=re.I))
+        parsed_actions = sum(bool(USE.match(line)) for line in lines)
+        if declared_actions > parsed_actions:
+            found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
         # An alias can hide the action identity itself. If github-script appears
         # anywhere in a workflow, refuse a new unresolved uses alias even when
         # the step action is not spelled out on the uses line.
