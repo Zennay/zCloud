@@ -290,6 +290,28 @@ class GateTests(unittest.TestCase):
                 self.assertIn(expected, source)
         self.assertNotIn("runs-on: [self-hosted", source)
 
+
+    def test_indented_workflow_run_triggers_are_not_missed(self):
+        for depth in (1, 2, 4, 6):
+            source = "name: test\non:\n" + " " * depth + "workflow_run:\n" + " " * (depth + 2) + "types: [completed]\njobs:\n"
+            with self.subTest(depth=depth):
+                self.assertTrue(workflow_run_event(source))
+                self.assertTrue(classify(source + TEMPLATE.split("jobs:\n", 1)[1].replace("echo harmless", "gh workflow run target.yml").join(["jobs:\n", ""])))
+
+    def test_nested_workflow_run_is_not_an_event(self):
+        source = "on:\n    push:\n      workflow_run:\n        types: [completed]\njobs:\n"
+        self.assertFalse(workflow_run_event(source))
+
+    def test_variable_indentation_duplicate_and_alias_deny(self):
+        for source in (
+            "on:\n    push:\n    push:\njobs:\n",
+            "on:\n     <<: *old\n     push: {}\njobs:\n",
+            "on:\n     workflow_run: &old\njobs:\n",
+            "on:\njobs:\n",
+        ):
+            with self.subTest(source=source), self.assertRaises(EvidenceError):
+                workflow_run_event(source)
+
     def test_on_variants(self):
         self.assertTrue(workflow_run_event("on: [push, workflow_run]\njobs:\n"))
         self.assertTrue(workflow_run_event('"on": {workflow_run: {types: [completed]}}\njobs:\n'))

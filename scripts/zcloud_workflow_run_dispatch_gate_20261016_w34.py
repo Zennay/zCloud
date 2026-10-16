@@ -137,9 +137,22 @@ def workflow_run_event(source: str) -> bool:
     rest = source[start.end():]
     end = re.search(r"(?m)^[A-Za-z_][A-Za-z0-9_-]*\s*:", rest)
     block = rest[:end.start()] if end else rest
-    if re.search(r"(?m)^  <<\s*:|^  [^\n]*[&*][A-Za-z0-9_-]+", block):
+    if re.search(r"(?m)^ +(?:<<\s*:|[^\n]*[&*][A-Za-z0-9_-]+)", block):
         raise EvidenceError("aliased_event_mapping")
-    return bool(re.search(r"(?m)^  (?:workflow_run|'workflow_run'|\"workflow_run\")\s*:", block))
+    # Valid YAML event mappings may be indented by 1, 2 or 4+ spaces.
+    # Detect first-level mapping keys instead of assuming exactly two spaces;
+    # a nested workflow_run inside another event is NOT a top-level trigger.
+    rows = re.findall(
+        r"(?m)^( +)((?:[A-Za-z_][A-Za-z0-9_]*|'[A-Za-z_][A-Za-z0-9_]*'|\"[A-Za-z_][A-Za-z0-9_]*\"))\s*:",
+        block,
+    )
+    if not rows:
+        raise EvidenceError("missing_event_mapping")
+    minimum = min(len(spaces) for spaces, _ in rows)
+    keys = [key.strip("'\"") for spaces, key in rows if len(spaces) == minimum]
+    if len(keys) != len(set(keys)):
+        raise EvidenceError("duplicate_event")
+    return "workflow_run" in keys
 
 
 def executable_steps(source: str) -> list[str]:
