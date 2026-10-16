@@ -16,7 +16,13 @@ For Dutch operator-facing audit text instead of JSON codes:
 
     python3 scripts/zcloud_release_gate_receipt_20261016.py --input /path/to/release-receipt.json --format markdown
 
-Exit 0 means **the supplied claims satisfy this offline schema only**. Exit 2 means the receipt is missing, unsafe, malformed, stale or claims one or more missing gates. No network access or state mutation is performed.
+**Deny-first CLI semantics:** normal invocation now exits **2 even if all supplied claims look complete**. This avoids a shell deployment preflight treating a forged or unverified offline receipt as an authorized green gate. Both JSON and Dutch Markdown still display the complete offline classification, with `production_mutation_authorized=false` and `live_sources_verified=false`.
+
+To explicitly obtain exit 0 *only as an offline schema/claim-completeness diagnostic*, pass:
+
+    python3 scripts/zcloud_release_gate_receipt_20261016.py --input /path/to/release-receipt.json --exit-zero-on-offline-claims
+
+With that flag, exit 0 means **only the caller-supplied unverified claims are structurally complete**. Incomplete, unsafe, stale or malformed input still exits 2. Never use this flag as a release approval condition or in a production-authorizing CI job. No combination of flags can grant release, verify live GitHub/VPS signals, obtain review, or perform a write. No network access or state mutation is performed.
 
 The entire top-level object must contain exactly:
 
@@ -71,3 +77,7 @@ This prevents an embedded or future consumer of the renderer from accidentally d
 Wanneer `--format markdown` een onleesbaar, ontbrekend, onveilig of ongeldig lokaal bewijsbestand ontvangt, krijgt de operator voortaan niet alleen achtmaal **Niet beoordeelbaar**, maar ook één van zeven **vaste, Nederlandse invoerproblemen** met een concrete lokale herstelactie: JSON-structuur, onveilige tekens, ongeldige getallen, dubbele sleutels, te groot bestand, onveilig/ontbrekend pad, of niet-leesbare bron. De uitvoer bevat nooit ruwe JSON, bestandspaden, tokens of onbetrouwbare strings. Ook een inconsistent intern rapport wordt als onjuiste structuur uitgelegd. Alleen de invoer is mogelijk direct lokaal te herstellen; dit zegt niets over branchprotection, echte VPS-luisterstatus, zeven deploy-locks of het productievrijgavevenster.
 
 Dit lost een triageknelpunt op zonder brondata te delen of de denial-policy te verzwakken: **GEEN PRODUCTIEVRIJGAVE** en beide live-/productiemutatievlaggen blijven negatief. Dezelfde gerichte CLI en unittest-regressies bewijzen de foutcategorieën en redactie bij echte ongeldige JSON en een symlink-pad.
+
+## Release-admission exit-code confusion fix (16 October follow-up)
+
+The original CLI returned exit 0 on a forged but schema-complete all-true receipt. Although JSON clearly marked `production_mutation_authorized=false`, shell scripts sometimes gate writes using only subprocess exit status. The CLI is now **fail-closed by default for every possible unverified receipt** (`exit 2`). An intentionally named `--exit-zero-on-offline-claims` opt-in retains useful exit 0 semantics for **offline diagnostics only**; invalid/missing gates still return 2. Dedicated CLI tests verify JSON and Dutch Markdown default denial, opt-in negative cases, and that a real `bash -e` command cannot advance past a claimed-green default receipt. This is a backward-incompatible change within an unmerged standalone PR; no existing zCloud production workflow calls this new script. Integration owners must never treat opt-in claim success as independent release evidence.
