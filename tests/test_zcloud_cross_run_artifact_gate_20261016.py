@@ -653,6 +653,69 @@ class Tests(unittest.TestCase):
     def test_official_action_without_sensitive_inputs_is_still_allowed(self):
         self.assertEqual(sum(module._risks(SAFE,'w.yml').values()),0)
 
+    def test_extensionless_executable_cli_download_denied(self):
+        base=self.commit(SAFE)
+        script=self.repo/'bin/retrieve_artifact'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/usr/bin/env bash\ngh run download 54321\n')
+        script.chmod(0o755)
+        self.git('add','.'); self.git('commit','-qm','extensionless downloader')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_findings'],1)
+        self.assertEqual(report['new_finding_paths'],['bin/retrieve_artifact'])
+
+    def test_extensionless_executable_rest_zip_denied(self):
+        base=self.commit(SAFE)
+        script=self.repo/'bin/fetch'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/bin/sh\ncurl https://api.github.com/repos/a/b/actions/artifacts/42/zip\n')
+        script.chmod(0o755)
+        self.git('add','.'); self.git('commit','-qm','extensionless REST downloader')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_findings'],1)
+
+    def test_extensionless_executable_safe_program_allowed(self):
+        base=self.commit(SAFE)
+        script=self.repo/'bin/list_workers'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/bin/sh\necho workers\n')
+        script.chmod(0o755)
+        self.git('add','.'); self.git('commit','-qm','safe executable')
+        self.assertTrue(module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))['ok'])
+
+    def test_extensionless_unexecutable_plain_doc_not_scanned(self):
+        base=self.commit(SAFE)
+        doc=self.repo/'docs/README'
+        doc.parent.mkdir(parents=True)
+        doc.write_text('Notes for humans: gh run download 333\n')
+        self.git('add','.'); self.git('commit','-qm','non executable docs')
+        self.assertTrue(module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))['ok'])
+
+    def test_extensionless_executable_legacy_unchanged_allowed(self):
+        script=self.repo/'bin/fetch'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/bin/bash\ngh run download 123\n')
+        script.chmod(0o755)
+        base=self.commit(SAFE)
+        head=self.commit(SAFE+'\n# harmless note after step\n')
+        report=module.evaluate(self.repo,base,head)
+        self.assertTrue(report['ok'])
+        self.assertEqual(report['legacy_findings'],1)
+
+    def test_extensionless_executable_symlink_is_denied(self):
+        base=self.commit(SAFE)
+        link=self.repo/'bin/downloader'
+        link.parent.mkdir(parents=True)
+        link.symlink_to('/etc/passwd')
+        self.git('add','.'); self.git('commit','-qm','non regular executable')
+        # A symlink is ignored unless part of an inventoried executable or
+        # shell path. Use an explicit .sh name to exercise fail closed.
+        regular=self.repo/'bin/redirect.sh'
+        regular.symlink_to('/etc/passwd')
+        self.git('add','.'); self.git('commit','-qm','invalid source symlink')
+        with self.assertRaises(module.Refusal):
+            module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
