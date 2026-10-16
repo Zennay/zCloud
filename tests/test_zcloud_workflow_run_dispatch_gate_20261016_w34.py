@@ -446,6 +446,35 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("runs-on: [self-hosted", source)
 
 
+    def test_quoted_yaml_step_keys_cannot_hide_dispatch(self):
+        for quoted in ("'run'", '"run"'):
+            with self.subTest(key=quoted):
+                source = TEMPLATE.replace("      - run: |", "      - " + quoted + ": |")
+                source = source.replace("echo harmless", "gh workflow run hidden.yml")
+                self.assertTrue(classify(source))
+                base = self.commit(TEMPLATE)
+                head = self.commit(source)
+                self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+        for quoted in ("'uses'", '"uses"'):
+            with self.subTest(key=quoted):
+                source = TEMPLATE.replace(
+                    "      - run: |\n          echo harmless",
+                    "      - " + quoted + ": peter-evans/repository-dispatch@v3"
+                )
+                self.assertTrue(classify(source))
+                base = self.commit(TEMPLATE)
+                head = self.commit(source)
+                self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
+    def test_quoted_step_keys_with_safe_commands_do_not_raise_debt(self):
+        source = TEMPLATE.replace("      - run: |", '      - "run": |')
+        self.assertFalse(classify(source))
+        source = TEMPLATE.replace(
+            "      - run: |\n          echo harmless",
+            "      - 'uses': actions/checkout@v4"
+        )
+        self.assertFalse(classify(source))
+
     def test_compact_valid_yaml_steps_still_detect_dispatch(self):
         compact_prefix = (
             "on:\n workflow_run:\n  types: [completed]\n"

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 ON = re.compile(r"(?m)^(?:on|'on'|\"on\"):[ \t]*(.*)$")
-RUN = re.compile(r"(?m)^( +)(?:-[ \t]+)?run:[ \t]*(.*)$")
+RUN = re.compile(r"""(?m)^( +)(?:-[ \t]+)?(?:run|'run'|"run"):[ \t]*(.*)$""")
 # gh permits multiple global repository/hostname options before the verb.
 # The previous single-option recognizer allowed multi-flag dispatch calls to
 # evade the read-only no-new-recursion scan.
@@ -32,7 +32,7 @@ RISK = (
     re.compile(r"\bcurl\b[^\n]*", re.I),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch|reRunWorkflow|reRunWorkflowFailedJobs|reRunJob|rerunWorkflow)\b"),
 )
-STEP_USES = re.compile(r"(?m)^( +)(?:-\s+)?uses:[ \t]*(.*)$")
+STEP_USES = re.compile(r"""(?m)^( +)(?:-\s+)?(?:uses|'uses'|"uses"):[ \t]*(.*)$""")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
 # no attempt is made to execute, fetch or trust remote action code.
 DISPATCH_ACTIONS = {
