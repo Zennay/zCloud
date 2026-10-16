@@ -20,6 +20,10 @@ from pathlib import Path
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
 ACTION = re.compile(r"\.github/actions/(?:[^/\0]+/)+action\.ya?ml\Z")
+ACTION_CODE = re.compile(r"\.github/actions/(?:[^/\0]+/)+[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
+ACTION_ENTRY = re.compile(
+    r"""(?m)^[ \t]{2,}(?:main|pre|post):[ \t]*['"]?([^'"\s#]+)['"]?[ \t]*(?:#.*)?$"""
+)
 ON = re.compile(r"^(?:on|'on'|\"on\")\s*:(.*)$")
 SCHEDULE = re.compile(r"(?i)(?:^|[\s,{\[])['\"]?schedule['\"]?\s*(?:[:,}\]]|$)")
 DISPATCH = re.compile(
@@ -108,7 +112,7 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
             path = path_bytes.decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError("invalid Git tree entry") from exc
-        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path)):
+        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path)):
             continue
         # A newline, terminal escape or delimiter hidden in a Git pathname
         # must never be folded into apparently ordinary evidence filenames.
@@ -242,6 +246,22 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                         ("missing-action:" + action_root).encode()
                     ).hexdigest()
                     sites[fingerprint] += 1
+            if ACTION.fullmatch(path):
+                for match in ACTION_ENTRY.finditer(text):
+                    raw_entry = match.group(1)
+                    entry = raw_entry[2:] if raw_entry.startswith("./") else raw_entry
+                    parts = entry.split("/")
+                    if (any(part in {"", ".", ".."} for part in parts)
+                            or not re.fullmatch(r"[A-Za-z0-9_./-]+\.(?:js|mjs|cjs|py|sh)", entry)):
+                        raise ValueError("unsafe action entrypoint")
+                    # A Node/Python/shell action may dispatch from its entrypoint
+                    # while the surrounding scheduled workflow has no dispatch.
+                    target = path.rsplit("/", 1)[0] + "/" + entry
+                    edge = hashlib.sha256(
+                        ("action-script:" + path + ":" + entry).encode()
+                    ).hexdigest()
+                    sites[edge] += 1
+                    visiting.append(target)
         if sites:
             report[root] = sites
     return report
