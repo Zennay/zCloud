@@ -73,8 +73,14 @@ def source(sha: str, path: str) -> str | None:
         mode, kind, blob = metadata.split(" ")
         if treepath != path or mode not in {"100644", "100755"} or kind != "blob" or not SHA.fullmatch(blob):
             raise ValueError("unsafe_source_object")
+        # Check the immutable object size before materializing PR-controlled
+        # content. A size check after cat-file blob still allocates the entire
+        # hostile object and can exhaust the hosted policy runner.
+        raw_size = git("cat-file", "-s", blob)
+        if not re.fullmatch(rb"(?:0|[1-9][0-9]*)\n", raw_size) or int(raw_size) > 256_000:
+            raise ValueError("oversized_or_binary_workflow")
         data = git("cat-file", "blob", blob)
-        if len(data) > 256_000 or b"\0" in data:
+        if len(data) != int(raw_size) or b"\0" in data:
             raise ValueError("oversized_or_binary_workflow")
         return data.decode("utf-8", "strict")
     except subprocess.CalledProcessError as exc:
