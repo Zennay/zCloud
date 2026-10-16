@@ -303,23 +303,50 @@ def inventory(base: str, head: str) -> dict:
         raise AdmissionError("human review inventory budget exceeded")
     assert_commits(base, head)
     records = []
+    clusters = defaultdict(lambda: {"paths": set(), "members": set(), "pair_count": 0})
     for group_hash, first, second in sorted(legacy):
+        members = (first, second)
         records.append({
             "group_sha256": group_hash,
             "members": [
                 {"workflow_path": item[0], "scope": item[1],
                  "cancel_in_progress": item[2], "queue": item[3]}
-                for item in (first, second)
+                for item in members
             ],
             "reviewer": "UNASSIGNED",
             "owner": "UNASSIGNED",
             "disposition": "UNREVIEWED",
         })
+        cluster = clusters[group_hash]
+        cluster["pair_count"] += 1
+        for item in members:
+            cluster["paths"].add(item[0])
+            cluster["members"].add((item[0], item[1]))
+    summaries = [
+        {
+            "group_sha256": group_hash,
+            "pair_count": cluster["pair_count"],
+            "unique_workflow_count": len(cluster["paths"]),
+            "unique_scopes": len(cluster["members"]),
+            "workflow_paths": sorted(cluster["paths"]),
+            "owner": "UNASSIGNED",
+            "reviewer": "UNASSIGNED",
+            "disposition": "UNREVIEWED",
+            "reviewed": False,
+            "production_mutation_authorized": False,
+        }
+        for group_hash, cluster in sorted(clusters.items())
+    ]
     return {
         "evidence_type": "immutable_source_only",
         "base_commit_sha": base,
         "head_commit_sha": head,
         "legacy_collision_count": len(records),
+        "legacy_group_count": len(summaries),
+        "unique_affected_workflows": len({
+            path for cluster in clusters.values() for path in cluster["paths"]
+        }),
+        "group_summaries": summaries,
         "new_collisions_allowed": 0,
         "reviewed": False,
         "merge_authorized": False,
