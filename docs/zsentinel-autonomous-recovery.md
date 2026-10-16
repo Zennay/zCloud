@@ -47,6 +47,10 @@ python3 -m unittest tests.test_portfolio_onboarding_20261016 -v
 
 The classifier intentionally cannot claim a project is *recovered*: successful CI is not live evidence. At most it detects a high-confidence symptom that deserves investigation. Require independent verification that the active runner/service/queue and user-visible product are actually healthy before updating resolution.
 
+## Native zCloud project and worker ownership
+
+The `zsentinel` project is registered in `projects.json` and `project-layout.json`, with its own `project-contracts.json` entry, icon, milestones, Notion HQ and resource budget. Its jobs must use the existing zCloud project ID `zsentinel` and SQLite claims rather than a separate ChatGPT automation. It is intentionally `external_gate` / `auto_start=false` until source merge and safe runner preflight. After the gated activation, zCloud controls its worker slots, pause/force, resource allocation and progress telemetry like any other project.
+
 ## Continuous AI reasoning workflow
 
 On each authorized scheduled review:
@@ -70,6 +74,6 @@ On each authorized scheduled review:
 
 ## Security/release boundary
 
-New projects MixLab, Fuckball, Tuddy and zSentinel appear in the required `vps-execution-policy.json` routing inventory, **but this is not runnable admission**: all four use `external_gate`, `auto_start=false`, with one AI slot max. Running jobs still requires independent owner, queue, resource and release authorization. The project's scoped ChatGPT automation may inspect GitHub/Notion and propose/commit bounded non-production patches, but **registry changes alone start no VPS worker**. Production release stays with #580/PWQ-41/#1089, runner recovery with #1326, writer locks with #1447 and zCloud source ownership with existing active workers. Do not create hidden unrestricted agents.
+New projects MixLab, Fuckball, Tuddy and zSentinel appear in the required `vps-execution-policy.json` routing inventory, **but this is not runnable admission**: all four use `external_gate`, `auto_start=false`, with one AI slot max. Running jobs still requires independent owner, queue, resource and release authorization. The future **zCloud-native zSentinel worker**, scheduled through the existing portfolio queue after safe release/admission, may inspect GitHub/Notion and propose/commit bounded non-production patches. The separate hourly ChatGPT automation has been disabled; **registry changes alone start no VPS worker**. Production release stays with #580/PWQ-41/#1089, runner recovery with #1326, writer locks with #1447 and zCloud source ownership with existing active workers. Do not create hidden unrestricted agents.
 
 **Next integration milestone:** an authenticated *read-only* collector that polls Notion/GitHub and produces the input contract with durable observation IDs, then a tightly scoped PR-only repair executor. Collectors must redact credentials and untrusted prompt content.
