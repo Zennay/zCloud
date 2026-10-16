@@ -943,5 +943,166 @@ jobs:
         self.assertEqual(result["new_sites"], 0)
 
 
+    def test_scheduled_node_commonjs_helper_dispatch_mutation_rejected(self):
+        self.put("scheduled-import.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/imports
+""")
+        self.put_action("imports", """runs:
+  using: node20
+  main: dist/index.js
+""")
+        root = self.repo / ".github/actions/imports/dist"
+        root.mkdir(parents=True)
+        (root / "index.js").write_text("require('./helper.js');\\n", encoding="utf-8")
+        helper = root / "helper.js"
+        helper.write_text("console.log('safe');\\n", encoding="utf-8")
+        base = self.commit()
+        self.assertEqual(guard.evaluate(self.repo, base, base)["new_sites"], 0)
+        helper.write_text("github.rest.actions.createWorkflowDispatch({});\\n", encoding="utf-8")
+        verdict = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(verdict["status"], "reject")
+        self.assertIn(".github/workflows/scheduled-import.yml",
+                      verdict["changed_workflows_with_new_sites"])
+
+    def test_scheduled_node_extensionless_require_is_followed(self):
+        self.put("scheduled-require.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/require
+""")
+        self.put_action("require", """runs:
+  using: node20
+  main: index.js
+""")
+        root = self.repo / ".github/actions/require"
+        (root / "index.js").write_text("require('./dispatch');\\n", encoding="utf-8")
+        helper = root / "dispatch.js"
+        helper.write_text("console.log('safe');\\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("github.rest.repos.createDispatchEvent({});\\n",
+                          encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_scheduled_node_esm_from_import_is_followed(self):
+        self.put("scheduled-esm.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/esm
+""")
+        self.put_action("esm", """runs:
+  using: node20
+  main: dist/index.mjs
+""")
+        root = self.repo / ".github/actions/esm/dist"
+        root.mkdir(parents=True)
+        (root / "index.mjs").write_text(
+            "import { fire } from '../lib/worker.mjs';\\n", encoding="utf-8")
+        helper = root.parent / "lib/worker.mjs"
+        helper.parent.mkdir()
+        helper.write_text("export const fire = () => {};\\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("github.rest.actions.createWorkflowDispatch({});\\n",
+                          encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_scheduled_node_dynamic_literal_import_follows_helper(self):
+        self.put("scheduled-dynamic.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/dynamic
+""")
+        self.put_action("dynamic", """runs:
+  using: node20
+  main: index.mjs
+""")
+        root = self.repo / ".github/actions/dynamic"
+        (root / "index.mjs").write_text("await import('./helper.mjs');\\n", encoding="utf-8")
+        helper = root / "helper.mjs"
+        helper.write_text("export const ready = true;\\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("github.rest.repos.createDispatchEvent({});\\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_recursive_node_import_cycle_is_bounded(self):
+        self.put("scheduled-cycle.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/cycle
+""")
+        self.put_action("cycle", """runs:
+  using: node20
+  main: index.js
+""")
+        root = self.repo / ".github/actions/cycle"
+        (root / "index.js").write_text("require('./module.js');\\n", encoding="utf-8")
+        (root / "module.js").write_text("require('./index.js');\\n", encoding="utf-8")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_new_missing_relative_node_import_is_denied(self):
+        self.put("scheduled-missing-import.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/missing-import
+""")
+        self.put_action("missing-import", """runs:
+  using: node20
+  main: index.js
+""")
+        (self.repo / ".github/actions/missing-import/index.js").write_text(
+            "require('./nonexistent.js');\\n", encoding="utf-8")
+        self.check(self.commit(), "reject")
+
+    def test_manual_node_action_import_remains_outside_schedule_gate(self):
+        self.put("manual-node.yml", """on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/manual
+""")
+        self.put_action("manual", """runs:
+  using: node20
+  main: index.js
+""")
+        root = self.repo / ".github/actions/manual"
+        (root / "index.js").write_text("require('./helper.js');\\n", encoding="utf-8")
+        (root / "helper.js").write_text(
+            "github.rest.actions.createWorkflowDispatch({});\\n", encoding="utf-8")
+        self.check(self.commit(), "pass")
+
+    def test_scheduled_node_import_outside_action_tree_is_opaque(self):
+        self.put("scheduled-escape.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/escape-import
+""")
+        self.put_action("escape-import", """runs:
+  using: node20
+  main: index.js
+""")
+        (self.repo / ".github/actions/escape-import/index.js").write_text(
+            "require('../../../scripts/external.js');\\n", encoding="utf-8")
+        self.check(self.commit(), "reject")
+
+
 if __name__ == "__main__":
     unittest.main()
