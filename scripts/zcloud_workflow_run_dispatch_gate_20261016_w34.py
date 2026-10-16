@@ -33,6 +33,7 @@ RISK = (
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch|reRunWorkflow|reRunWorkflowFailedJobs|reRunJob|rerunWorkflow)\b"),
     re.compile(r"\bwget\b[^\n]*", re.I),
     re.compile(r"\b(?:Invoke-RestMethod|Invoke-WebRequest|irm|iwr)\b[^\n]*", re.I),
+    re.compile(r"\b(?:requests|httpx)\.(?:post|request)\s*\([^\n]*", re.I),
 )
 STEP_USES = re.compile(r"""(?m)^( +)(?:-\s+)?(?:uses|'uses'|"uses"):[ \t]*(.*)$""")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
@@ -264,12 +265,15 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
                                   if part.strip())
         for detector, pattern in enumerate(RISK):
             for match in pattern.finditer(normalized):
-                if detector in (2, 3, 5, 6):
+                if detector in (2, 3, 5, 6, 7):
                     fragment = match.group(0)
                     if "/dispatches" not in fragment and not REST_RERUN.search(fragment):
                         continue
                     methods = {2: GH_POST, 3: CURL_POST, 5: WGET_POST, 6: POWERSHELL_POST}
-                    if not methods[detector].search(fragment):
+                    if detector == 7:
+                        if not re.search(r"\.(?:post\s*\(|request\s*\(\s*['\"]POST['\"])", fragment, re.I):
+                            continue
+                    elif not methods[detector].search(fragment):
                         continue
                 start = normalized.rfind("\n", 0, match.start()) + 1
                 end = normalized.find("\n", match.end())

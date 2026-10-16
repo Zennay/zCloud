@@ -342,6 +342,35 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+    def test_python_http_clients_dispatch_post_is_recursion_risk(self):
+        commands = (
+            'python -c \'requests.post("https://api.github.com/repos/Zennay/zCloud/dispatches")\'',
+            "python -c 'httpx.post(\"https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun\")'",
+            'python -c \'requests.request("POST", "https://api.github.com/repos/Zennay/zCloud/actions/workflows/a.yml/dispatches")\'',
+            'python -c \'httpx.request("POST", "https://api.github.com/repos/Zennay/zCloud/actions/runs/18/rerun")\'',
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_python_http_clients_read_only_get_not_dispatch_risk(self):
+        commands = (
+            'python -c \'requests.get("https://api.github.com/repos/Zennay/zCloud/dispatches")\'',
+            'python -c \'httpx.request("GET", "https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun")\'',
+            'python -c \'requests.request("GET", "https://api.github.com/repos/Zennay/zCloud/dispatches")\'',
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_python_http_request_post_adds_real_git_debt(self):
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            'python -c \'httpx.request("POST", "https://api.github.com/repos/Zennay/zCloud/dispatches")\'',
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_powershell_http_aliases_post_are_recursive_dispatch(self):
         commands = (
             "irm -Method POST -Uri https://api.github.com/repos/Zennay/zCloud/dispatches",
