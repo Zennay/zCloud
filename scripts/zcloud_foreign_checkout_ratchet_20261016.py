@@ -112,6 +112,24 @@ def git(repo: str, *args: str) -> bytes:
     return p.stdout
 
 
+def verify_current_main(repo: str, expected_sha: str) -> None:
+    """Require canonical GitHub origin and one exact current-main advertisement."""
+    origin = git(repo, "remote", "get-url", "origin").decode("utf-8", errors="strict").strip()
+    if origin not in ("https://github.com/Zennay/zCloud", "https://github.com/Zennay/zCloud.git"):
+        raise ValueError("Git origin is not the canonical zCloud repository")
+    advertised = git(repo, "-c", "http.followRedirects=false", "ls-remote",
+                     "--exit-code", "origin", "refs/heads/main")
+    lines = advertised.decode("ascii", errors="strict").splitlines()
+    if len(lines) != 1:
+        raise ValueError("Current main advertisement is missing or ambiguous")
+    fields = lines[0].split()
+    if (len(fields) != 2 or not SHA.fullmatch(fields[0])
+            or fields[1] != "refs/heads/main"):
+        raise ValueError("Current main advertisement has invalid identity")
+    if fields[0].lower() != expected_sha.lower():
+        raise ValueError("Current main differs from approved base SHA")
+
+
 def tree(repo: str, sha: str) -> dict[str, str]:
     raw = git(repo, "ls-tree", "-r", "--name-only", "-z", sha)
     result = {}
@@ -152,13 +170,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".")
     parser.add_argument("--base", required=True, help="Exact 40-character base commit")
     parser.add_argument("--head", required=True, help="Exact 40-character candidate commit")
+    parser.add_argument("--require-current-main", action="store_true",
+                        help="Reverify canonical main SHA before and after tree scan")
     args = parser.parse_args(argv)
     try:
         if not SHA.fullmatch(args.base) or not SHA.fullmatch(args.head):
             raise ValueError("Both refs must be immutable 40-character SHAs")
+        if args.require_current_main:
+            verify_current_main(args.repo, args.base)
         base = tree(args.repo, args.base.lower())
         head = tree(args.repo, args.head.lower())
         findings = compare(base, head)
+        if args.require_current_main:
+            verify_current_main(args.repo, args.base)
         print(json.dumps({"base": args.base.lower(), "head": args.head.lower(),
                           "workflows_base": len(base), "workflows_head": len(head),
                           "new_findings": findings}, sort_keys=True))
