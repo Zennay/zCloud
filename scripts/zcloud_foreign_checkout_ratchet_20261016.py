@@ -12,6 +12,10 @@ import re
 import subprocess
 import sys
 
+MAX_MANIFESTS = 4096
+MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_INVENTORY_BYTES = 16 * 1024 * 1024
+
 SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 CHECKOUT = re.compile(r"\bactions/checkout@", re.I)
 STEP = re.compile(r"^(\s*)-\s+(?:[A-Za-z_-]+\s*:|\{)")
@@ -111,6 +115,7 @@ def git(repo: str, *args: str) -> bytes:
 def tree(repo: str, sha: str) -> dict[str, str]:
     raw = git(repo, "ls-tree", "-r", "--name-only", "-z", sha)
     result = {}
+    bytes_total = 0
     for candidate in raw.split(b"\x00"):
         if not candidate:
             continue
@@ -120,7 +125,21 @@ def tree(repo: str, sha: str) -> dict[str, str]:
             raise ValueError("Non-UTF8 tree path; refusing incomplete inventory") from e
         if not PATH.fullmatch(path):
             continue
+        if len(result) >= MAX_MANIFESTS:
+            raise ValueError("Manifest count exceeds bounded inventory")
+        size_text = git(repo, "cat-file", "-s", f"{sha}:{path}")
+        try:
+            size = int(size_text.decode("ascii").strip())
+        except (ValueError, UnicodeDecodeError) as e:
+            raise ValueError("Invalid git blob size; refusing inventory") from e
+        if size < 0 or size > MAX_MANIFEST_BYTES:
+            raise ValueError("Manifest exceeds single-file size budget")
+        bytes_total += size
+        if bytes_total > MAX_INVENTORY_BYTES:
+            raise ValueError("Manifest inventory exceeds total byte budget")
         content = git(repo, "show", f"{sha}:{path}")
+        if len(content) != size:
+            raise ValueError("Git content size mismatch; refusing inventory")
         try:
             result[path] = content.decode("utf-8", errors="strict")
         except UnicodeDecodeError as e:
