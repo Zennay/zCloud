@@ -6,6 +6,10 @@ on:
     paths:
       - '.github/workflows/**'
       - '.github/actions/**'
+      - '**/action.yml'
+      - '**/action.yaml'
+      - 'action.yml'
+      - 'action.yaml'
       - 'scripts/zcloud_foreign_checkout_ratchet_20261016.py'
       - 'tests/test_zcloud_foreign_checkout_ratchet_20261016.py'
       - '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
