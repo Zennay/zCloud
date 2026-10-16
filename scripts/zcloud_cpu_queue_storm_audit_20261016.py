@@ -120,7 +120,8 @@ def canonical_job(raw: object, run: dict, now: datetime) -> dict:
     if type(raw) is not dict:
         raise Unavailable("job_invalid")
     jid = check_positive_int(raw.get("id"), "job_id_invalid")
-    if (raw.get("run_id") != run["id"] or raw.get("run_attempt") != run["attempt"]
+    if (type(raw.get("run_id")) is not int or raw["run_id"] != run["id"]
+            or type(raw.get("run_attempt")) is not int or raw["run_attempt"] != run["attempt"]
             or raw.get("name") != "cpu-snapshot"
             or raw.get("workflow_name") != WORKFLOW_NAME
             or raw.get("head_sha") != run["sha"]
@@ -151,6 +152,15 @@ def canonical_job(raw: object, run: dict, now: datetime) -> dict:
         raise Unavailable("job_status_unexpected")
     if raw.get("conclusion") is not None:
         raise Unavailable("job_not_pending")
+    # An executing job must already have a real runner assignment. When the
+    # parent workflow is waiting for approval/prestart no job can yet run.
+    # These contradictory snapshots are unavailable evidence, not signs of a
+    # healthy listener or proof that a restart would be safe.
+    if status == "in_progress" and runner_id == 0:
+        raise Unavailable("unassigned_executing_job")
+    if run["status"] in ("waiting", "pending", "requested"):
+        if status != "queued" or runner_id != 0:
+            raise Unavailable("prestart_run_job_contradiction")
     created = utc_time(raw.get("created_at"))
     seconds = (now - created).total_seconds()
     if seconds < -5:
@@ -178,7 +188,7 @@ def read_sample(runs_payload: dict, jobs_by_run: dict, now: datetime, cap: int) 
             raise Unavailable("duplicate_run")
         seen_runs.add(run["id"])
         payload = jobs_by_run.get(run["id"])
-        if type(payload) is not dict or payload.get("total_count") != 1:
+        if type(payload) is not dict or type(payload.get("total_count")) is not int or payload["total_count"] != 1:
             raise Unavailable("job_page_incomplete")
         jobs = payload.get("jobs")
         if type(jobs) is not list or len(jobs) != 1:
@@ -223,6 +233,21 @@ def receipt(snapshot: dict, *, stable: bool) -> dict:
                           "sample_count": len(items), "run_ids": ids[:MAX_SAMPLE],
                           "oldest_job_minutes": max(x["job"]["age_seconds"] for x in items) // 60})
     duplicate.sort(key=lambda g: (-g["sample_count"], g["run_ids"][0]))
+    # A queue storm may consist of different PR heads, so same-SHA duplicates
+    # alone underreport pressure. Supply bounded aggregate metrics without
+    # exposing branches, job argv, secrets or assuming a dead runner.
+    queued_items = [item for item in snapshot["sampled"]
+                    if item["run"]["status"] == "queued"
+                    and item["job"]["status"] == "queued"
+                    and item["job"]["runner_id"] == 0]
+    event_counts = {"pull_request": 0, "workflow_dispatch": 0}
+    for item in queued_items:
+        event_counts[item["run"]["event"]] += 1
+    unique_heads = len({item["run"]["sha"] for item in queued_items})
+    oldest_unassigned_minutes = (
+        max((item["job"]["age_seconds"] for item in queued_items), default=0) // 60
+        if queued_items else None
+    )
     return {"schema": "zcloud-cpu-queue-storm-readonly-v1",
             "status": "STABLE_READONLY_SAMPLE" if stable else "EVIDENCE_CHANGED",
             "complete": snapshot["complete"] and stable,
@@ -232,6 +257,9 @@ def receipt(snapshot: dict, *, stable: bool) -> dict:
             "sampled_unassigned_over_15m": stale,
             "sampled_approval_or_prestart": approval,
             "sampled_assigned": assigned,
+            "sampled_unique_unassigned_heads": unique_heads,
+            "sampled_unassigned_by_event": event_counts,
+            "oldest_unassigned_job_minutes": oldest_unassigned_minutes,
             "repeated_sha_groups": duplicate if stable else [],
             "runner_offline_verified": False, "vps_health_verified": False,
             "cancel_authorized": False, "deploy_authorized": False,
