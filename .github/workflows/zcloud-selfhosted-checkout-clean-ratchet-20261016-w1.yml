@@ -1,0 +1,51 @@
+name: zCloud persistent checkout hygiene ratchet
+# Hosted source check only. Never touches a permanent runner or production.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-selfhosted-checkout-clean-ratchet-20261016-w1.yml
+      - scripts/zcloud_selfhosted_checkout_clean_ratchet_20261016_w1.py
+      - tests/test_zcloud_selfhosted_checkout_clean_ratchet_20261016_w1.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-checkout-clean-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.actor == 'Zennay' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout immutable PR source with no retained credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+          submodules: false
+      - name: Verify source identity and run bounded adversarial tests
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          python3 -m unittest -v tests.test_zcloud_selfhosted_checkout_clean_ratchet_20261016_w1
+          python3 scripts/zcloud_selfhosted_checkout_clean_ratchet_20261016_w1.py \
+            --base "$BASE_SHA" --head "$HEAD_SHA"
