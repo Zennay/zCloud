@@ -49,10 +49,20 @@ def reject_numeric(_: str):
 
 
 def read_json(path: Path, limit: int) -> dict:
-    """Read a bounded regular file, reject symlinks and special devices."""
+    """Bounded, fd-anchored read: no symlink in any parent or the final file."""
+    if not path.name or any(part == ".." for part in path.parts):
+        raise ReviewError("unsafe_path")
+    full = path if path.is_absolute() else Path.cwd() / path
+    directory_fd = None
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
-                     getattr(os, "O_NONBLOCK", 0))
+        directory_fd = os.open("/", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        for part in full.parts[1:-1]:
+            next_fd = os.open(part, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) |
+                              getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        fd = os.open(full.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) |
+                     getattr(os, "O_NONBLOCK", 0), dir_fd=directory_fd)
         with os.fdopen(fd, "rb") as handle:
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
@@ -62,6 +72,9 @@ def read_json(path: Path, limit: int) -> dict:
             raise ReviewError("unsafe_or_oversized_file")
     except (OSError, ValueError) as exc:
         raise ReviewError("unreadable_file") from exc
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
     try:
         parsed = json.loads(blob.decode("utf-8"),
                             object_pairs_hook=no_duplicates,
