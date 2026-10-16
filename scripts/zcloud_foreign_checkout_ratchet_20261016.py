@@ -63,6 +63,8 @@ def scan(text: str) -> Counter[str]:
         for snippet in lines[i:end]:
             if snippet.lstrip().startswith('#'):
                 continue
+            if re.match(r'^\s*with\s*:\s*(?:\*|&|\$\{\{)', snippet) or re.match(r'^\s*<<\s*:\s*\*', snippet):
+                findings['ambiguous-checkout-input-map'] += 1
             match = REPO.search(snippet)
             if match:
                 val = match.group(1).split(' #', 1)[0]
