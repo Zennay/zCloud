@@ -428,6 +428,38 @@ class GateTests(unittest.TestCase):
         ))
         self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
 
+    def test_multiline_http_calls_inside_shell_quoted_arguments(self):
+        scripts = (
+            "node -e 'fetch(\n"
+            ' "https://api.github.com/repos/Zennay/zCloud/dispatches",\n'
+            ' {method:"POST"}\n'
+            ")'",
+            "python -c 'requests.post(\n"
+            ' "https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",\n'
+            " json={}\n"
+            ")'",
+            "node -e 'octokit.request(\n"
+            ' "POST /repos/Zennay/zCloud/dispatches"\n'
+            ")'",
+        )
+        for code in scripts:
+            with self.subTest(code=code.splitlines()[0]):
+                src = TEMPLATE.replace("echo harmless", code.replace("\n", "\n          "))
+                self.assertTrue(classify(src))
+                base = self.commit(TEMPLATE)
+                head = self.commit(src)
+                self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
+    def test_quoted_multiline_http_get_remains_read_only(self):
+        source = TEMPLATE.replace(
+            "echo harmless",
+            "node -e 'fetch(\n"
+            '          "https://api.github.com/repos/Zennay/zCloud/dispatches",\n'
+            '          {method:"GET"}\n'
+            "          )'",
+        )
+        self.assertFalse(classify(source))
+
     def test_multiline_http_calls_cannot_hide_recursive_post(self):
         multiline = (
             'fetch(\n "https://api.github.com/repos/Zennay/zCloud/dispatches",\n {method:"POST"}\n)',

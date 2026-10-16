@@ -254,34 +254,49 @@ def action_dispatch_sites(source: str) -> Counter[tuple[int, str]]:
     return sites
 
 
-def join_wrapped_call_lines(source: str) -> str:
-    """Join lines only inside balanced call parentheses, not unrelated steps.
+HTTP_CALL_OPEN = re.compile(
+    r"\b(?:"
+    r"(?:requests|httpx)\.(?:post|request)"
+    r"|(?:session|client|http_client|api_client|requests\.Session\(\)|httpx\.(?:Client|AsyncClient)\(\))\.(?:post|request)"
+    r"|(?:urllib\.request\.)?Request"
+    r"|fetch|axios\.post|(?:octokit|github)\.request"
+    r")\s*\(",
+    re.I,
+)
 
-    This is bounded static analysis, not a general YAML or source interpreter.
+
+def join_wrapped_call_lines(source: str) -> str:
+    """Join newlines *within* HTTP calls, including shell-quoted node/python.
+
+    Starting at a known function's opening parenthesis avoids interpreting
+    shell quote characters before the call as Python/JavaScript string state.
+    The operation changes only newlines for this bounded static scan.
     """
-    result = []
-    depth = 0
-    quoted = None
-    escape = False
-    for ch in source:
-        if quoted is not None:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == quoted:
-                quoted = None
-        elif ch in ("'", '"', "\x60"):
-            quoted = ch
-        elif ch == "(":
-            depth += 1
-        elif ch == ")" and depth:
-            depth -= 1
-        if ch == "\n" and depth:
-            result.append(" ")
-        else:
-            result.append(ch)
-    return "".join(result)
+    chars = list(source)
+    for match in HTTP_CALL_OPEN.finditer(source):
+        depth = 0
+        quoted = None
+        escape = False
+        for pos in range(match.end() - 1, len(source)):
+            ch = source[pos]
+            if quoted is not None:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == quoted:
+                    quoted = None
+            elif ch in ("'", '"', "\x60"):
+                quoted = ch
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            if ch == "\n" and depth:
+                chars[pos] = " "
+    return "".join(chars)
 
 
 def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
