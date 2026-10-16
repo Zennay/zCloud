@@ -75,6 +75,15 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             schedules("on: {schedule: [{cron: '*/5 * * * *'}]}\n")
 
+    def test_four_space_event_block_detected(self):
+        self.assertEqual(schedules("on:\n    schedule:\n        - cron: '*/5 * * * *'\n"),
+                         ("*/5 * * * *",))
+        self.assertTrue(is_high_frequency(schedules("on:\n    schedule:\n        - cron: '*/5 * * * *'\n")[0]))
+
+    def test_invalid_event_indentation_denied(self):
+        with self.assertRaises(AdmissionError):
+            schedules("on:\n    push:\n  schedule:\n    - cron: '*/5 * * * *'\n")
+
     def test_quoted_schedule(self):
         self.assertEqual(schedules(workflow("30 8 * * 1-5")), ("30 8 * * 1-5",))
 
