@@ -350,7 +350,7 @@ class BacklogBriefTests(TestCase):
         report = brief.collect(CombinedReader({1: []}, {1: rows}),
                                NOW, include_issues=True)
         shown = brief.render(report)
-        self.assertIn("runner-owner", shown)
+        self.assertIn(brief._safe("runner-owner"), shown)
         self.assertIn("niet toegewezen", shown)
         self.assertIn("niet vrij", shown)
         self.assertFalse(report["merge_authorized"])
