@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
-_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?actions/download-artifact@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$")
+_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?actions/download-artifact@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
 _INPUT = re.compile(r"^(?P<indent> *)(?P<key>[\w-]+):\s*(?P<value>.*?)\s*$")
 _TARGETS = frozenset({"run-id", "repository", "github-token"})
 _MAX_FILE = 256_000
@@ -128,13 +128,13 @@ def _risks(text: str, path: str) -> Counter[str]:
     risky: Counter[str] = Counter()
     for index, line in enumerate(lines):
         # Reject indented tabs/ambiguous aliases where a download action is mentioned.
-        if "actions/download-artifact@" in line and ("\t" in line[:len(line)-len(line.lstrip())] or "*" in line.strip().split("#")[0]):
+        if "actions/download-artifact@" in line.lower() and ("\t" in line[:len(line)-len(line.lstrip())] or "*" in line.strip().split("#")[0]):
             raise Refusal("ambiguous_download_action")
         match = _USES.fullmatch(line)
         if not match:
             # Reject a syntactically unrecognized action reference, rather than
             # silently approving an additional renamed/quoted action invocation.
-            if re.search(r"\bactions/download-artifact@", line) and not line.lstrip().startswith("#"):
+            if re.search(r"\bactions/download-artifact@", line, re.IGNORECASE) and not line.lstrip().startswith("#"):
                 # Block scalar run scripts may quote the action as inert data;
                 # conservatively require human review instead of false approval.
                 raise Refusal("unparsed_download_action")
