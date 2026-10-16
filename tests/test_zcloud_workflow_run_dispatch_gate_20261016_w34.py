@@ -167,6 +167,25 @@ class GateTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(EvidenceError):
                 workflow_run_event(source)
 
+    def test_inline_map_duplicate_events_are_unverifiable(self):
+        for source in (
+            "on: {workflow_run: {types: [completed]}, workflow_run: {types: [requested]}}\njobs:\n",
+            "on: {'push': {}, \"push\": {}}\njobs:\n",
+            "on: {push: {}, 'push': {}}\njobs:\n",
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                EvidenceError, "duplicate_inline_event_mapping"
+            ):
+                workflow_run_event(source)
+
+    def test_inline_map_distinct_event_keys_still_classify(self):
+        self.assertTrue(workflow_run_event(
+            'on: {"workflow_run": {types: [completed]}, push: {}}\njobs:\n'
+        ))
+        self.assertFalse(workflow_run_event(
+            'on: {"push": {types: [completed]}, workflow_dispatch: {}}\njobs:\n'
+        ))
+
     def test_literal_inline_trigger_collections_still_classify(self):
         for source in (
             "on: [workflow_run]\njobs:\n",

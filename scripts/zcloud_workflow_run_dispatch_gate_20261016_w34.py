@@ -144,7 +144,16 @@ def workflow_run_event(source: str) -> bool:
                 raise EvidenceError("duplicate_event")
             return "workflow_run" in names
         if same_line.startswith("{") and same_line.endswith("}"):
-            return bool(re.search(r"(?:^|[, {])['\"]?workflow_run['\"]?\s*:", same_line))
+            # Duplicate inline YAML keys can be silently overwritten by
+            # different parsers. Their trigger semantics are not trustworthy.
+            possible_keys = re.findall(
+                r"""(?:^|[, {])(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)"|([A-Za-z_][A-Za-z0-9_]*))\s*:""",
+                same_line,
+            )
+            keys = [next(value for value in parts if value) for parts in possible_keys]
+            if len(keys) != len(set(keys)):
+                raise EvidenceError("duplicate_inline_event_mapping")
+            return "workflow_run" in keys
         if same_line in ("workflow_run", "'workflow_run'", '"workflow_run"'):
             return True
         if re.fullmatch(r"['\"]?[A-Za-z_]+['\"]?", same_line):
