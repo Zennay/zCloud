@@ -300,6 +300,34 @@ class Tests(unittest.TestCase):
         head=self.git('rev-parse','HEAD')
         self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
 
+    def test_candidate_policy_downgrade_cannot_change_immutable_base(self):
+        script=self.repo/'scripts/admission.py'
+        script.parent.mkdir()
+        script.write_text('raise SystemExit(7)\n')
+        base=self.commit(SAFE)
+        script.write_text('raise SystemExit(0)\n')
+        head=self.commit(SAFE+'\n# policy hijack\n')
+        self.assertNotEqual(base,head)
+        checkout_script=self.git('show',base+':scripts/admission.py')
+        self.assertEqual(checkout_script,'raise SystemExit(7)')
+        self.assertEqual(script.read_text(),'raise SystemExit(0)\n')
+
+    def test_workflow_runs_base_policy_first_after_bootstrap(self):
+        workflow=(SCRIPT.parent.parent/'.github/workflows/zcloud-cross-run-artifact-review-20261016.yml').read_text()
+        self.assertIn('git show "$PR_BASE:$scanner" > "$policy"',workflow)
+        self.assertIn('python3 "$policy" --repo-root . --base "$PR_BASE" --head "$PR_HEAD"',workflow)
+        self.assertIn('test "$PR_BASE" = ',workflow)
+        self.assertIn('ZCLOUD_CROSS_RUN_BASE_OWNED_POLICY_GREEN=1',workflow)
+        self.assertLess(workflow.index('python3 "$policy"'),workflow.index('python3 "$scanner"'))
+        self.assertNotIn('git show "$PR_HEAD:$scanner" > "$policy"',workflow)
+
+    def test_bootstrap_exception_exact_single_main_sha_only(self):
+        workflow=(SCRIPT.parent.parent/'.github/workflows/zcloud-cross-run-artifact-review-20261016.yml').read_text()
+        self.assertIn('d813cbe70ae5291246bc8f4977cba18bc066519a',workflow)
+        self.assertIn('git cat-file -e "$PR_BASE:$scanner"',workflow)
+        self.assertIn('test "$PR_BASE" = ',workflow)
+        self.assertIn('ZCLOUD_CROSS_RUN_FIRST_INTEGRATION_BOOTSTRAP=1',workflow)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
