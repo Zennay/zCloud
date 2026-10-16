@@ -27,7 +27,10 @@ def make_job(run, *, age=1800, status="queued", runner_id=0):
             "labels": ["self-hosted", "zcloud", "vps"], "status": status,
             "conclusion": None, "runner_id": runner_id,
             "runner_name": "zcloud-vps-1" if runner_id else "",
-            "created_at": (NOW - timedelta(seconds=age)).isoformat()}
+            "created_at": (NOW - timedelta(seconds=age)).isoformat(),
+            "run_url": f"{audit.BASE}/actions/runs/{run['id']}",
+            "url": f"{audit.BASE}/actions/jobs/{run['id'] + 100000}",
+            "html_url": f"https://github.com/{audit.REPO}/actions/runs/{run['id']}/job/{run['id'] + 100000}"}
 
 
 def payloads(runs):
@@ -107,6 +110,17 @@ class QueueStormContract(unittest.TestCase):
                         {"total_count": 2, "jobs": j[1]["jobs"]*2}, None):
             with self.subTest(invalid=invalid), self.assertRaises(audit.Unavailable):
                 audit.read_sample(p, {1: invalid}, NOW, 20)
+
+    def test_job_urls_must_bind_same_run_and_job_identity(self):
+        for field, value in (("run_url", f"{audit.BASE}/actions/runs/2"),
+                             ("url", f"{audit.BASE}/actions/jobs/1"),
+                             ("html_url", "https://github.com/Zennay/zCloud/actions/runs/1/job/999"),
+                             ("html_url", None)):
+            p, j = payloads([make_run(1)])
+            j[1]["jobs"][0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(
+                    audit.Unavailable, "job_url_binding_invalid"):
+                audit.read_sample(p, j, NOW, 20)
 
     def test_contradictory_runner_fields_and_labels_denied(self):
         for key, value in (("runner_id", True), ("runner_name", "fake"),
