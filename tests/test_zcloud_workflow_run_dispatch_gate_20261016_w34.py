@@ -253,6 +253,38 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+    def test_long_api_command_cannot_hide_dispatch_past_scan_limit(self):
+        padding = "x" * 550
+        for command in (
+            "gh api --header 'X-Audit-Pad: " + padding
+            + "' -X POST /repos/Zennay/zCloud/actions/jobs/42/rerun",
+            "curl --header 'X-Audit-Pad: " + padding
+            + "' -X POST https://api.github.com/repos/Zennay/zCloud/dispatches",
+        ):
+            with self.subTest(binary=command[:8]):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_long_read_only_api_command_is_not_dispatch_debt(self):
+        padding = "x" * 550
+        for command in (
+            "gh api --header 'X-Audit-Pad: " + padding
+            + "' -X GET /repos/Zennay/zCloud/actions/jobs/42/rerun",
+            "curl --header 'X-Audit-Pad: " + padding
+            + "' -X GET https://api.github.com/repos/Zennay/zCloud/dispatches",
+        ):
+            with self.subTest(binary=command[:8]):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_long_dispatch_is_new_finding_in_real_git(self):
+        padding = "x" * 550
+        command = (
+            "gh api --header 'X-Audit-Pad: " + padding
+            + "' -X POST /repos/Zennay/zCloud/actions/jobs/42/rerun"
+        )
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace("echo harmless", command))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_rest_job_rerun_get_remains_non_mutating(self):
         for command in (
             "gh api /repos/Zennay/zCloud/actions/jobs/42/rerun",
