@@ -82,6 +82,61 @@ def _runner(value: str) -> str:
     return "needs_guard"
 
 
+def _safe_checkout_step(lines: list[str]) -> bool:
+    """Only a minimal canonical checkout may precede VPS identity admission.
+
+    The checkout action executes before the identity guard. Reject alternative
+    repositories, ref/path overrides, extra actions configuration and YAML
+    syntax we cannot prove is a plain static input mapping.
+    """
+    inside_inputs = False
+    saw_inputs = False
+    inputs: dict[str, str] = {}
+    allowed = {"persist-credentials", "clean", "submodules", "lfs", "fetch-depth"}
+    for index, line in enumerate(lines):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        # First '- uses:' field is stored without original YAML indentation.
+        if index == 0:
+            if not re.fullmatch(r"(?:uses|name|id):[^\\n]+", line.strip()):
+                return False
+            continue
+        if line.startswith("          "):
+            if not inside_inputs:
+                return False
+            parsed = re.fullmatch(r"          ([a-z][a-z0-9-]*):\\s*([^#\\n]*)(?:#.*)?", line)
+            if not parsed:
+                return False
+            key, value = parsed.group(1), parsed.group(2).strip().strip("'\\\"")
+            if key in inputs or key not in allowed or "${{" in value:
+                return False
+            inputs[key] = value
+            continue
+        if not line.startswith("        "):
+            return False
+        field = line[8:]
+        if re.fullmatch(r"with:\\s*(?:#.*)?", field):
+            if saw_inputs:
+                return False
+            saw_inputs, inside_inputs = True, True
+        elif re.fullmatch(r"(?:name|id|uses):\\s*[^\\n]+", field):
+            inside_inputs = False
+        else:
+            # No inline/aliased 'with:', env, defaults or executable hooks.
+            return False
+    if not saw_inputs or inputs.get("persist-credentials") != "false":
+        return False
+    if inputs.get("clean", "true") != "true":
+        return False
+    if inputs.get("submodules", "false") != "false":
+        return False
+    if inputs.get("lfs", "false") != "false":
+        return False
+    if "fetch-depth" in inputs and not re.fullmatch(r"(?:0|[1-9][0-9]{0,3})", inputs["fetch-depth"]):
+        return False
+    return True
+
+
 def _early_guard(job: list[str]) -> bool:
     # If a later step uses a status-check override, it can run even after the
     # identity guard fails. No source-only admission can trust that sequence.
@@ -90,7 +145,7 @@ def _early_guard(job: list[str]) -> bool:
     if re.search(r"(?i)\b(?:always|failure|cancelled)\s*\(", "\n".join(job)):
         return False
     # Only a pinned checkout and shell 'set' may precede the actual guard command.
-    if any(re.match(r"^    (?:defaults|container):", line) for line in job):
+    if any(re.match(r"^    (?:defaults|container|services):", line) for line in job):
         return False
     headings = [n for n, line in enumerate(job)
                 if re.fullmatch(r"    steps:\s*(?:#.*)?", line)]
@@ -112,7 +167,7 @@ def _early_guard(job: list[str]) -> bool:
         if uses:
             if re.search(r"(?m)^\s*(?:if|continue-on-error):", text):
                 return False
-            if checkout_seen or not CHECKOUT.fullmatch(uses[0].strip()):
+            if checkout_seen or not CHECKOUT.fullmatch(uses[0].strip()) or not _safe_checkout_step(lines):
                 return False
             checkout_seen = True
             continue
