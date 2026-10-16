@@ -52,6 +52,13 @@ LOCAL_ACTION = re.compile(
     r"""(\./\.github/actions/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)"""
     r"""['"]?\s*(?:#.*)?$"""
 )
+# YAML alias/tag and expression-valued action references can conceal an
+# indirect workflow dispatch. Count new opaque scheduled edges for review.
+OPAQUE_USES = re.compile(
+    r"""(?m)^[ \\t]+(?:-[ \\t]*)?(?:uses|['\\"]uses['\\"])[ \\t]*:[ \\t]*"""
+    r"""(?:['\\"])?([*&!][^\\s#'\\"]*|\\$\\{\\{[^\\n]*)"""
+)
+
 MAX_MANIFESTS = 2048
 MAX_BLOB = 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
@@ -246,6 +253,11 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                         ("missing-action:" + action_root).encode()
                     ).hexdigest()
                     sites[fingerprint] += 1
+            for match in OPAQUE_USES.finditer(text):
+                edge = hashlib.sha256(
+                    ("opaque-action:" + path + ":" + match.group(1)).encode()
+                ).hexdigest()
+                sites[edge] += 1
             if ACTION.fullmatch(path):
                 for match in ACTION_ENTRY.finditer(text):
                     raw_entry = match.group(1)
