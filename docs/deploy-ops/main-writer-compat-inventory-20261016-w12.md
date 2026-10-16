@@ -18,7 +18,7 @@ The scanner reads every tracked YAML workflow blob under .github/workflows at th
 - The inventory does not infer whether a job is obsolete, actively required or a false positive. For each candidate, the workflow owner must classify one of: active and migrate to PR/artifact/status/comment evidence; terminal and retire via its existing owner; false positive/read-only, with reason and verified provenance.
 - Job trigger trust, privilege semantics, workflow provenance, recent PR-less branch ownership, runtime scheduler behavior and API writers outside workflows need separate scrutiny.
 - A complete inventory does not certify independent review, configured main protection, required status checks or production readiness. Both safe_to_enable_branch_protection and production_mutation_authorized are **invariantly false**.
-- Existing ownership of the writer workflows and governance work remains with #922/#1033/#580/PWQ-41/#1089 and their current PR owners. This PR introduces three uniquely named source/test/docs files; it must not alter those owners' files.
+- Existing ownership of the writer workflows and governance work remains with #922/#1033/#580/PWQ-41/#1089 and their current PR owners. This PR introduces uniquely named source/test/docs/hosted-workflow files; it must not alter those owners' files.
 
 ## Next owner-side acceptance
 
@@ -29,3 +29,38 @@ Run against a freshly verified canonical main SHA, retain the redacted JSON rece
 The new same-branch `.github/workflows/zcloud-main-writer-compat-inventory-20261016-w12.yml` runs only on pull requests to main, with explicit `contents: read`, a pinned checkout action, no checkout credentials persisted, and `ubuntu-latest` (never the VPS). It admits only same-repository heads; independently checks current origin/main against the PR base SHA and the live remote PR head against the event head SHA before and after tests. It runs the 19 real-Git tests, then inventories a local detached worktree at the exact pinned main SHA, outputting a human-readable candidate list and permanent denial flags. This job is diagnostic and cannot grant protection or production authority. A queued/self-hosted VPS diagnostic is not a substitute for this job's completed evidence.
 
 No remote Git ref, branch protection, workflow owner, production service or worker state is changed; the ephemeral hosted worktree and its local main ref are discarded with the job.
+
+## Owner review claims: offline triage, not admission to protected main
+
+After a GitHub-hosted inventory has produced `main-writer-receipt.json`, optionally create a local `reviews.json` containing one **untrusted, self-declared owner decision** per selected workflow:
+
+```json
+{
+  "schema": "zcloud-main-writer-review-v1",
+  "main_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "decisions": [
+    {
+      "path": ".github/workflows/example.yml",
+      "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "owner": "workflow-owner",
+      "reviewed_by": "independent-reviewer",
+      "decision": "migrate",
+      "evidence_url": "https://github.com/Zennay/zCloud/issues/922#issuecomment-12345"
+    }
+  ]
+}
+```
+
+The 40-character main SHA and 64-character committed blob digest shown are placeholders only. Use **exact actual values from the inventory**, never the example literals. Valid `decision` values: `migrate` (retain function but replace direct main writes), `retire` (obsolete, retire via workflow owner), `false_positive` (prove that the reported signal does not perform an incompatible write). Every claim needs an existing GitHub issue/PR link to the concrete evidence, a named owner, and a different named reviewer. Names and links are not independently authenticated, only validated syntactically; the applicable workflow owner must separately confirm their validity.
+
+```bash
+python3 scripts/zcloud_main_writer_review_admission_20261016_w12.py \
+  --inventory main-writer-receipt.json \
+  --reviews reviews.json \
+  --expected-main-sha EXACT_40_CHAR_SHA \
+  --format markdown
+```
+
+The reviewer consumes bounded local UTF-8 regular files (320 KiB inventory, 128 KiB reviews) and rejects duplicate keys, ambiguous numbers, surrogate/bidi control sequences, duplicate workflow decisions, mismatched source blob hash, stale main identity, unrecognized disposition, unsupported URLs, and conflicting inventory counts or authorization flags. A partially reviewed queue is allowed for honest progress reporting; the tool lists each remaining path. Every successfully claimed decision retains **unverified** provenance, even if all candidates have a submitted review: `review_claims_independently_verified=false`, `safe_to_enable_branch_protection=false`, `production_mutation_authorized=false`. Exit 0 means only "offline claims syntactically consistent"; exit 2 denies invalid data.
+
+The hosted workflow exercises both real Git source tests and owner-claim tests, and reports **zero review claims** against the actual main to avoid fabricating owner approvals. The operator must resolve each candidate in its original issue/PR ownership thread and maintain an external exact-sha review audit before any #922 branch rule change. Never feed self-declared offline review counts to a privileged gate.
