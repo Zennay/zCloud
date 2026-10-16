@@ -126,6 +126,12 @@ class IdentityPolicyTests(unittest.TestCase):
         value = wf().replace("jobs:", "defaults:\n  run:\n    shell: python\njobs:")
         self.assertIn("audit", g.unsafe_jobs(value))
 
+    def test_inline_workflow_default_shell_is_denied(self):
+        for defaults in ('defaults: {run: {shell: python}}', '"defaults": {run: {shell: pwsh}}'):
+            with self.subTest(defaults=defaults):
+                value = wf().replace("jobs:", defaults + "\njobs:")
+                self.assertIn("audit", g.unsafe_jobs(value))
+
     def test_must_have_literal_steps_mapping(self):
         value = wf().replace("    steps:", "    renamed_steps:")
         self.assertIn("audit", g.unsafe_jobs(value))
