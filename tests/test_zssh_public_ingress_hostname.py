@@ -19,7 +19,8 @@ class ZsshPublicIngressHostnameTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         for marker in (
             "workflow_dispatch:",
-            "docker inspect zssh-https",
+            "docker inspect --format",
+            "ZSSH_DOCKER_CADDY_TOPOLOGY_GREEN",
             "ZSSH_DOCKER_CADDY_TOPOLOGY_UNSUPPORTED",
             "expected_zssh_sha:",
             "confirm_sha:",
@@ -33,7 +34,7 @@ class ZsshPublicIngressHostnameTests(unittest.TestCase):
             'test "$GITHUB_SHA" = "$CONFIRM_SHA"',
             "git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main",
             "systemctl --user is-active --quiet zssh-public.service",
-            "install-public-caddy.sh",
+            "install-public-caddy-docker.sh",
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, text)
