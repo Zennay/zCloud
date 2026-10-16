@@ -16,7 +16,7 @@ NOW = datetime(2026, 10, 16, 18, 0, tzinfo=timezone.utc)
 
 def fixture(*, state='online', busy=False, labels=('self-hosted','zcloud','vps'), name='zcloud-vps-1'):
     return {'repository':'Zennay/zCloud', 'request_url':mod.API_URL, 'method':'GET', 'http_status':200, 'captured_at':'2026-10-16T17:59:30Z',
-            'response': {'total_count':1, 'runners':[{'id':21, 'name':name, 'status':state, 'busy':busy,
+            'response': {'total_count':1, 'runners':[{'id':21, 'name':name, 'status':state, 'busy':busy, 'os':'linux', 'ephemeral':False,
                 'labels':[{'name':label,'type':'custom'} for label in labels]}]}}
 
 
@@ -46,6 +46,22 @@ class RunnerEvidenceTests(unittest.TestCase):
 
     def test_filtered_unrelated_runner_fails_closed(self):
         self.denies(fixture(name='another'), 'runner_name_filter_mismatch')
+
+    def test_wrong_target_os_denied(self):
+        for os in ('windows', 'macos', 'Linux', None):
+            with self.subTest(os=os):
+                x=fixture(); x['response']['runners'][0]['os']=os
+                self.denies(x, 'unexpected_runner_os')
+
+    def test_ephemeral_or_invalid_lifecycle_denied(self):
+        for ephemeral in (True, None, 'false', 0):
+            with self.subTest(ephemeral=ephemeral):
+                x=fixture(); x['response']['runners'][0]['ephemeral']=ephemeral
+                self.denies(x, 'unexpected_runner_lifecycle')
+
+    def test_missing_platform_denied(self):
+        x=fixture(); del x['response']['runners'][0]['os']
+        self.denies(x, 'unexpected_runner_os')
 
     def test_name_filter_returns_only_target_or_empty(self):
         self.assertEqual(self.classify(fixture(name='ZCLOUD-VPS-1')), 'RUNNER_LISTED_ONLINE_IDLE')
