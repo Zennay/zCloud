@@ -461,6 +461,45 @@ class NameCollisionRatchetTests(unittest.TestCase):
         self.assertEqual(guard.workflow_run_targets(b'on: ["push", "release"]\n'), ())
         self.assertIsNone(guard.workflow_run_targets(b'on: "!strange"\n'))
 
+
+    def test_workflow_run_inline_target_list_accepts_trailing_yaml_comments(self):
+        sources = (
+            b'on:\n  workflow_run:\n    workflows: [Build, Lint] # ordinary comment\n',
+            b'on:\n  workflow_run:\n    workflows: ["Build", "Lint"] # explanation\n',
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual(guard.workflow_run_targets(source), ("Build", "Lint"))
+
+    def test_duplicate_workflow_run_keys_not_accepted_as_unambiguous(self):
+        source = (
+            b"on:\n"
+            b"  workflow_run:\n"
+            b"    workflows: [Build]\n"
+            b"  workflow_run:\n"
+            b"    workflows: [Other]\n"
+        )
+        self.assertIsNone(guard.workflow_run_targets(source))
+        first = {"build.yml": "Build"}
+        candidate = dict(first, **{"listener.yml": "Listener"})
+        outcome = guard.judge(first, candidate, {}, {
+            "listener.yml": guard.workflow_run_targets(source)})
+        self.assertEqual(outcome["status"], "deny")
+        self.assertEqual(outcome["added_reference_risks"][0]["reason"], "unknown_source")
+
+    def test_inline_comment_cannot_hide_extra_flow_list_data(self):
+        sources = (
+            b"on:\n  workflow_run:\n    workflows: [Build] garbage\n",
+            b"on:\n  workflow_run:\n    workflows: [Build]] garbage\n",
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertIsNone(guard.workflow_run_targets(source))
+
+    def test_simple_flow_list_workflow_trigger_comment_is_supported(self):
+        self.assertEqual(
+            guard.workflow_run_targets(b"on: [push, workflow_dispatch] # comment\n"), ())
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
