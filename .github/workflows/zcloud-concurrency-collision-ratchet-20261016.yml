@@ -1,0 +1,71 @@
+name: zCloud concurrency cancellation collision admission (hosted)
+# No VPS or mutation authority; admission remains source-only and deny-first.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_concurrency_group_collision_ratchet_20261016.py"
+      - "tests/test_zcloud_concurrency_group_collision_ratchet_20261016.py"
+permissions:
+  contents: read
+concurrency:
+  group: zcloud-collision-admission-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify trusted same-repository PR without checkout
+        shell: bash
+        env:
+          ACTUAL_REPO: ${{ github.repository }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          test "$EVENT" = "pull_request"
+          test "$ACTUAL_REPO" = "Zennay/zCloud"
+          test "$BASE_REPO" = "$ACTUAL_REPO"
+          test "$HEAD_REPO" = "$ACTUAL_REPO"
+          test "$GITHUB_BASE_REF" = "main"
+  source-only:
+    needs: [provenance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Immutable head checkout without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+      - name: Verify canonical base and exact checkout
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD"
+          git cat-file -e "$BASE^{commit}"
+          current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current" = "$BASE"
+      - name: Real Git policy regression and cancellation-collision ratchet
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.3'
+          python3 -m unittest -v tests.test_zcloud_concurrency_group_collision_ratchet_20261016
+          python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD"
+          current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$current" = "$BASE"
+          echo "ZCLOUD_COLLISION_SOURCE_ONLY_GREEN=1"
