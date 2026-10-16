@@ -111,7 +111,7 @@ class GithubScriptRatchetTest(unittest.TestCase):
 
     def test_insertion_legacy_script_is_allowed(self):
         a = self.commit(BAD)
-        b = self.commit(BAD + "\n# benign comment\n")
+        b = self.commit(BAD + "      - run: echo harmless\n")
         self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
 
     def test_modifying_legacy_risky_step_is_denied(self):
