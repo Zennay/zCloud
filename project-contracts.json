@@ -208,6 +208,57 @@
         "priority": "background",
         "protected": false
       }
+    },
+    "mixlab": {
+      "queue_mode": "execution",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "external_gate",
+        "auto_start": false
+      },
+      "lane_profile": "product",
+      "compute": {
+        "class": "build",
+        "pool": "build",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 512,
+        "priority": "background",
+        "protected": false
+      }
+    },
+    "fuckball": {
+      "queue_mode": "execution",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "external_gate",
+        "auto_start": false
+      },
+      "lane_profile": "product",
+      "compute": {
+        "class": "build",
+        "pool": "build",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 1024,
+        "priority": "background",
+        "protected": false
+      }
+    },
+    "tuddy": {
+      "queue_mode": "execution",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "external_gate",
+        "auto_start": false
+      },
+      "lane_profile": "device-product",
+      "compute": {
+        "class": "build",
+        "pool": "build",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 512,
+        "priority": "background",
+        "protected": false
+      }
     }
   }
 }
