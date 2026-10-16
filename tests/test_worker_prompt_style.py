@@ -42,8 +42,8 @@ class WorkerPromptStyleTests(unittest.TestCase):
             item = {**ITEM, "execution_lane": {"lane_id": lane}}
             prompt = server.project_worker_prompt("supa", "Supa", "", 1, 2, item)
             self.assertIn("Parallel focus 1/2: bugfix-delivery.", prompt)
-            self.assertIn("daadwerkelijke codewijzigingen", prompt)
-            self.assertIn("gerichte tests en verplichte gates", prompt)
+            self.assertIn("Bouw of repareer echte functionaliteit", prompt)
+            self.assertIn("test gericht en respecteer alle verplichte gates", prompt)
             self.assertNotIn("Focus: " + lane, prompt)
             self.assertLess(len(prompt), 1800)
 
@@ -57,9 +57,9 @@ class WorkerPromptStyleTests(unittest.TestCase):
             item = {**ITEM, "execution_lane": {"lane_id": lane}}
             prompt = server.project_worker_prompt(project_id, name, "", 1, 2, item)
             self.assertIn(f"Parallel focus 1/2: {lane}.", prompt)
-            self.assertIn("daadwerkelijke codewijzigingen", prompt)
-            self.assertIn("gerichte tests en verplichte gates", prompt)
-            self.assertIn("niet als zelfstandige quality-validation-worker", prompt)
+            self.assertIn("Bouw of repareer echte functionaliteit", prompt)
+            self.assertIn("test gericht en respecteer alle verplichte gates", prompt)
+            self.assertIn("geen eindeloze QA-rondes", prompt)
             self.assertLess(len(prompt), 1800)
 
     def test_parallel_lanes_produce_different_prompts_for_same_project(self):
