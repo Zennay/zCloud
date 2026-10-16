@@ -1,5 +1,7 @@
 """Real-Git acceptance cases for cross-run artifact download review ratchet."""
 import importlib.util
+import os
+from unittest.mock import patch
 from pathlib import Path
 import subprocess
 import tempfile
@@ -138,6 +140,16 @@ class Tests(unittest.TestCase):
             '- uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
         ).replace('          name: evidence','          run-id: 1234')
         self.assertEqual(sum(module._risks(text,'w.yml').values()),1)
+
+    def test_git_streaming_refuses_oversize_early(self):
+        bindir = self.repo / 'fake-bin'
+        bindir.mkdir()
+        binary = bindir / 'git'
+        binary.write_text('#!/usr/bin/env python3\nimport sys\nsys.stdout.write("x"*1000000)\n', encoding='utf-8')
+        binary.chmod(0o755)
+        with patch.dict(os.environ, {"PATH": str(bindir)+os.pathsep+os.environ["PATH"]}):
+            with self.assertRaisesRegex(module.Refusal, "git_output_oversized"):
+                module._git(self.repo, 'status', max_bytes=512)
 
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
