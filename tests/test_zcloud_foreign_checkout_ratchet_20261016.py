@@ -326,7 +326,7 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         self.assertEqual(len(starts), 5)
         starts.append(len(lines))
         for first, last in zip(starts, starts[1:]):
-            seen = set()
+            seen = {'uses'} if lines[first].lstrip().startswith('- uses:') else set()
             for line in lines[first:last]:
                 if not line.startswith('        ') or line.startswith('          '):
                     continue
