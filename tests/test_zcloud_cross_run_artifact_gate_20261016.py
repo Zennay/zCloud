@@ -723,6 +723,60 @@ class Tests(unittest.TestCase):
         with self.assertRaisesRegex(module.Refusal,'non_regular_workflow_or_action'):
             module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
 
+    def test_nonexecutable_extensionless_shebang_bash_denied(self):
+        base=self.commit(SAFE)
+        script=self.repo/'helpers/runartifact'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/usr/bin/env bash\ngh run download 2345\n')
+        self.git('add','.'); self.git('commit','-qm','bash script without execute bit')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_findings'],1)
+        self.assertEqual(report['new_finding_paths'],['helpers/runartifact'])
+
+    def test_nonexecutable_extensionless_script_directory_denied_no_shebang(self):
+        base=self.commit(SAFE)
+        script=self.repo/'scripts/retrieve'
+        script.parent.mkdir(exist_ok=True)
+        script.write_text('gh run download 123\n')
+        self.git('add','.'); self.git('commit','-qm','non executable helper')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_findings'],1)
+
+    def test_nonexecutable_extensionless_ops_helper_api_denied(self):
+        base=self.commit(SAFE)
+        script=self.repo/'ops/launch/download'
+        script.parent.mkdir(parents=True)
+        script.write_text('curl https://api.github.com/repos/x/y/actions/artifacts/123/zip\n')
+        self.git('add','.'); self.git('commit','-qm','ops helper')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_finding_paths'],['ops/launch/download'])
+
+    def test_nonexecutable_extensionless_readme_not_scanned(self):
+        base=self.commit(SAFE)
+        docs=self.repo/'docs/README'
+        docs.parent.mkdir(exist_ok=True)
+        docs.write_text('Example command: gh run download 12345\n')
+        self.git('add','.'); self.git('commit','-qm','README example')
+        self.assertTrue(module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))['ok'])
+
+    def test_nonexecutable_extensionless_safe_shebang_allowed(self):
+        base=self.commit(SAFE)
+        helper=self.repo/'tools/check'
+        helper.parent.mkdir()
+        helper.write_text('#!/bin/sh\necho ok\n')
+        self.git('add','.'); self.git('commit','-qm','safe checked-in helper')
+        self.assertTrue(module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))['ok'])
+
+    def test_nonexecutable_extensionless_unchanged_legacy_allowed(self):
+        helper=self.repo/'scripts/fetch'
+        helper.parent.mkdir(exist_ok=True)
+        helper.write_text('gh run download 2345\n')
+        base=self.commit(SAFE)
+        head=self.commit(SAFE+'\n# harmless workflow note\n')
+        report=module.evaluate(self.repo,base,head)
+        self.assertTrue(report['ok'])
+        self.assertEqual(report['legacy_findings'],1)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
