@@ -158,7 +158,9 @@ class RealGit(unittest.TestCase):
         (self.repo / ".github/workflows" / name).write_text(value, encoding="utf-8")
 
     def commit(self):
-        cmd(self.repo, "add", ".github")
+        # Include root-level scripts as well as Actions. A partial Git add
+        # would give false-green tests for changes to script dependencies.
+        cmd(self.repo, "add", "-A")
         cmd(self.repo, "commit", "-qm", "test fixture", "--allow-empty")
         return cmd(self.repo, "rev-parse", "HEAD")
 
