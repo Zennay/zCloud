@@ -14,7 +14,7 @@ A GitHub Actions step using actions/checkout can explicitly set with.repository 
 - Detect explicit foreign or dynamic repository overrides on actions/checkout steps even when YAML mapping keys put `with.repository` before `uses`, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
 - Compare per-path multiset counts. Existing debt is grandfathered, while new copies fail.
 - Exit 0 = no new risk, 1 = introduced risk, 2 = indeterminate. JSON includes exact SHA pair and reasons.
-- Run 86 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
+- Run 91 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
 
 ## Safety and limits
 
@@ -32,7 +32,7 @@ ambiguous checkout submodule inputs. Only a literal `false` (including quoted an
 inline-flow-map values) is admitted. The parser attributes submodule settings
 **only** to the checkout step's `with:` mapping, not a coincidentally named
 environment variable, step title or arbitrary scalar. Duplicate `with:` maps
-within the same checkout step fail closed as ambiguous YAML. Existing risky submodule uses remain visible
+within the same checkout step fail closed as ambiguous YAML. Inline `with: {submodules: false, submodules: true}` is also denied: **every** submodules key is independently inspected and repeated keys remain ambiguous even if both values are false. This closes an override bypass where only the first inline key was previously inspected. Existing risky submodule uses remain visible
 as grandfathered debt; new copies of them fail. This source-only protection does
 not inspect existing `.gitmodules` contents or enable unattended production use.
 
