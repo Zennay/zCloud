@@ -291,6 +291,34 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("runs-on: [self-hosted", source)
 
 
+    def test_compact_valid_yaml_steps_still_detect_dispatch(self):
+        compact_prefix = (
+            "on:\n workflow_run:\n  types: [completed]\n"
+            "jobs:\n build:\n  runs-on: ubuntu-latest\n  steps:\n"
+        )
+        steps = (
+            "   - run: |\n       gh workflow run other.yml\n",
+            "   - uses: peter-evans/repository-dispatch@v3\n"
+            "     with:\n      event-type: ping\n",
+            "   - name: dispatch\n     with:\n      event-type: ping\n"
+            "     uses: peter-evans/repository-dispatch@v3\n",
+        )
+        for source_step in steps:
+            with self.subTest(step=source_step):
+                self.assertTrue(classify(compact_prefix + source_step))
+                base = self.commit(compact_prefix + "   - run: echo harmless\n")
+                head = self.commit(compact_prefix + source_step)
+                self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
+    def test_compact_action_adjacent_change_is_inventory_only(self):
+        source = (
+            "on: [workflow_run]\njobs:\n build:\n  steps:\n"
+            "   - uses: peter-evans/repository-dispatch@v3\n"
+        )
+        base = self.commit(source)
+        head = self.commit(source + "# documentation only\n")
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [])
+
     def test_indented_workflow_run_triggers_are_not_missed(self):
         for depth in (1, 2, 4, 6):
             source = "name: test\non:\n" + " " * depth + "workflow_run:\n" + " " * (depth + 2) + "types: [completed]\njobs:\n"

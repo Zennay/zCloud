@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 ON = re.compile(r"(?m)^(?:on|'on'|\"on\"):[ \t]*(.*)$")
-RUN = re.compile(r"(?m)^( {6,})(?:-[ \\t]+)?run:[ \\t]*(.*)$")
+RUN = re.compile(r"(?m)^( +)(?:-[ \t]+)?run:[ \t]*(.*)$")
 RISK = (
     re.compile(r"\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+workflow\s+run\b", re.I),
     re.compile(r"\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+run\s+rerun\b", re.I),
@@ -28,7 +28,7 @@ RISK = (
     re.compile(r"\bcurl\b[^\n]{0,400}", re.I),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch|reRunWorkflow|reRunWorkflowFailedJobs|reRunJob|rerunWorkflow)\b"),
 )
-STEP_USES = re.compile(r"(?m)^ {6,}(?:-\s+)?uses:[ \t]*(.*)$")
+STEP_USES = re.compile(r"(?m)^( +)(?:-\s+)?uses:[ \t]*(.*)$")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
 # no attempt is made to execute, fetch or trust remote action code.
 DISPATCH_ACTIONS = {
@@ -175,32 +175,45 @@ def executable_steps(source: str) -> list[str]:
 
 
 def action_dispatch_sites(source: str) -> Counter[tuple[int, str]]:
-    """Fingerprint explicit dispatch actions and their whole YAML step inputs."""
+    """Fingerprint dispatch action steps independent of legal YAML indentation."""
     sites: Counter[tuple[int, str]] = Counter()
     lines = source.splitlines()
     for index, line in enumerate(lines):
         match = STEP_USES.match(line)
         if match is None:
             continue
-        reference = match.group(1).split("#", 1)[0].strip().strip("'\"")
+        reference = match.group(2).split("#", 1)[0].strip().strip("'\"")
         if reference.partition("@")[0].lower() not in DISPATCH_ACTIONS:
             continue
-        # Restrict the fingerprint to one list item, whether 'uses' is the first
-        # field or appears after 'name', 'with' or 'if' in the same step mapping.
+        uses_depth = len(match.group(1))
+        # Find the nearest enclosing step list item at an equal or shallower
+        # indentation. Do not reach into a preceding job or unrelated step.
         start = index
-        while start > 0 and not re.match(r"^ {6}- ", lines[start]):
-            if re.match(r"^ {0,4}\S", lines[start]):
-                raise EvidenceError("unbounded_dispatch_step")
-            start -= 1
-        if not re.match(r"^ {6}- ", lines[start]):
-            raise EvidenceError("missing_dispatch_step")
-        end = index + 1
-        while end < len(lines):
-            if re.match(r"^ {6}- |^ {0,4}\S", lines[end]):
+        while start >= 0:
+            candidate = re.match(r"^( +)- ", lines[start])
+            if candidate and len(candidate.group(1)) <= uses_depth:
                 break
+            text = lines[start]
+            if text.strip() and not text.lstrip().startswith("#"):
+                depth = len(text) - len(text.lstrip(" "))
+                if depth < uses_depth and not candidate:
+                    raise EvidenceError("unbounded_dispatch_step")
+            start -= 1
+        if start < 0:
+            raise EvidenceError("missing_dispatch_step")
+        step_depth = len(candidate.group(1))
+        end = start + 1
+        while end < len(lines):
+            text = lines[end]
+            if text.strip() and not text.lstrip().startswith("#"):
+                depth = len(text) - len(text.lstrip(" "))
+                if depth < step_depth or (
+                    depth == step_depth and re.match(r"^ +- ", text)
+                ):
+                    break
             end += 1
-        site = "\n".join(line.strip() for line in lines[start:end]
-                         if line.strip() and not line.lstrip().startswith("#"))
+        site = "\n".join(text.strip() for text in lines[start:end]
+                         if text.strip() and not text.lstrip().startswith("#"))
         digest = hashlib.sha256(site.encode("utf-8")).hexdigest()
         sites[(len(RISK), digest)] += 1
     return sites
