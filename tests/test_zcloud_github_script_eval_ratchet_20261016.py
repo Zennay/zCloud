@@ -256,6 +256,48 @@ runs:
         b = self.commit(OTHER + "\n# GitHub-script not invoked\n")
         self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
 
+    def test_comment_mention_is_not_an_action(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE + "# docs: actions/github-script@v7\n")
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_javascript_string_mention_is_not_an_action(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "core.info(title.length.toString());",
+            'const note = "actions/github-script@v7";\n            core.info(note);',
+        ))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_javascript_multiline_fake_uses_is_not_an_action(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "core.info(title.length.toString());",
+            'const literal = <TICK>\n            uses: actions/github-script@v7\n            <TICK>;\n            core.info(literal);'.replace("<TICK>", chr(96)),
+        ))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_quoted_github_script_uses_key_stays_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@",
+            "'uses': actions/github-script@",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_comment_mentions_dont_mask_new_direct_injection(self):
+        a = self.commit(SAFE + "# docs: actions/github-script@v7\n")
+        b = self.commit(BAD + "# docs: actions/github-script@v7\n")
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_yaml_code_block_with_fake_uses_plus_actual_danger(self):
+        a = self.commit(SAFE)
+        b = self.commit(BAD.replace(
+            "core.info(title.length.toString());",
+            'const literal = <TICK>\n            uses: actions/github-script@v7\n            <TICK>;\n            core.info(literal);'.replace("<TICK>", chr(96)),
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
         b = self.commit(BAD)
