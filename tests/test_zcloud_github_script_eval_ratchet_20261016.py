@@ -452,6 +452,27 @@ runs:
         ))
         self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
 
+    def test_folded_checkout_with_github_script_path_is_not_action(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE + """
+      - uses: >-
+          actions/checkout@0123456789012345678901234567890123456789
+        with:
+          path: local/actions/github-script@notes
+""")
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_folded_github_script_identity_with_following_inputs_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            "uses: >-\n          actions/github-script@0123456789012345678901234567890123456789",
+        ).replace(
+            "const title = process.env.PR_TITLE;",
+            "const title = '@EXPR@ github.event.issue.title }}';".replace("@EXPR@", "$" + "{{"),
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
         b = self.commit(BAD)
