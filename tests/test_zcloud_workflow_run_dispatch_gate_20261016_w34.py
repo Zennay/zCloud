@@ -569,6 +569,31 @@ class GateTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(EvidenceError):
                 workflow_run_event(source)
 
+    def test_valid_spaces_before_yaml_on_colon(self):
+        variants = (
+            "on :\n  workflow_run:\n    types: [completed]\njobs:\n",
+            "'on' : [workflow_run]\njobs:\n",
+            '"on" : {workflow_run: {types: [completed]}}\njobs:\n',
+        )
+        for source in variants:
+            with self.subTest(source=source):
+                self.assertTrue(workflow_run_event(source))
+                proof = source + "  proof:\n    runs-on: ubuntu-latest\n    steps:\n      - run: gh workflow run other.yml\n"
+                self.assertTrue(classify(proof))
+                baseline = self.commit(TEMPLATE)
+                candidate = self.commit(proof)
+                self.assertEqual(evaluate(self.repo, baseline, candidate)["new_findings"], [WORKFLOW])
+
+    def test_duplicate_on_headers_with_colon_spacing_fail_closed(self):
+        for source in (
+            "on : [push]\non: [workflow_run]\njobs:\n",
+            '"on" : [push]\n\'on\': [workflow_run]\njobs:\n',
+        ):
+            with self.subTest(source=source), self.assertRaisesRegex(
+                EvidenceError, "ambiguous_event_mapping"
+            ):
+                workflow_run_event(source)
+
     def test_on_variants(self):
         self.assertTrue(workflow_run_event("on: [push, workflow_run]\njobs:\n"))
         self.assertTrue(workflow_run_event('"on": {workflow_run: {types: [completed]}}\njobs:\n'))
