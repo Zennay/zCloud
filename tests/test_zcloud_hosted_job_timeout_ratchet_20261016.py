@@ -95,6 +95,27 @@ class HostedTimeoutPolicyTests(unittest.TestCase):
         after = self.commit(content(timeout=None, job="other"))
         self.assertEqual(policy.audit(legacy, after)[-1][0][-1], "missing_timeout")
 
+    def test_legacy_high_timeout_cannot_escalate_under_same_reason(self):
+        legacy = self.commit(content(timeout=60))
+        head = self.commit(content(timeout=360))
+        self.assertEqual(
+            policy.audit(legacy, head)[-1][0][-1],
+            "timeout_outside_1_to_30",
+        )
+
+    def test_legacy_high_timeout_survives_unrelated_step_edit(self):
+        legacy = self.commit(content(timeout=60))
+        head = self.commit(content(timeout=60, step="echo changed"))
+        self.assertEqual(policy.audit(legacy, head)[-1], [])
+
+    def test_legacy_dynamic_timeout_change_requires_full_remediation(self):
+        legacy = self.commit(content(timeout='"${{ inputs.a }}"'))
+        head = self.commit(content(timeout='"${{ inputs.b }}"'))
+        self.assertEqual(
+            policy.audit(legacy, head)[-1][0][-1],
+            "dynamic_or_invalid_timeout",
+        )
+
     def test_legacy_debt_cannot_hide_under_runner_change(self):
         legacy = self.commit(content(timeout=None))
         after = self.commit(content(runner="windows-latest", timeout=None))
