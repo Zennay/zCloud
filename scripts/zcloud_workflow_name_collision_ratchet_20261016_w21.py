@@ -171,7 +171,15 @@ SIMPLE_INLINE_EVENTS = frozenset({
 def _literal_inline_non_run_events(value):
     """Accept only an explicit, unaliased list/scalar of non-workflow_run events."""
     try:
-        items = _yaml_flow_items(value) if value.startswith("[") else (_scalar(value),)
+        if value.startswith("["):
+            # A YAML inline event list may have an ordinary trailing comment.
+            end = value.rfind("]")
+            if end < 0 or (value[end + 1:].strip() and
+                           not value[end + 1:].strip().startswith("#")):
+                return False
+            items = _yaml_flow_items(value[:end + 1])
+        else:
+            items = (_scalar(value),)
     except InvalidInventory:
         return False
     return bool(items) and all(item in SIMPLE_INLINE_EVENTS for item in items)
