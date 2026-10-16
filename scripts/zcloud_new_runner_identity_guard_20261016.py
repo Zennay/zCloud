@@ -242,7 +242,7 @@ def _unsafe_root_env(lines: list[str]) -> bool:
     for i, line in enumerate(lines):
         if re.match(r"""^\s*(?:["']?env["']?|[?!]\s*env)\s*:""", line) and not line.startswith((" ", "\t")):
             roots.append(i)
-        elif re.match(r"^(?:<<|[?!]\s+[^:]+)\s*:", line):
+        elif re.match(r"^(?:<<|[?!][^:]+)\s*:", line):
             return True
     if len(roots) > 1:
         return True
