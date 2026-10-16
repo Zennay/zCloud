@@ -291,6 +291,13 @@ class RatchetTests(unittest.TestCase):
         self.assertEqual(receipt["base_commit_sha"], base)
         self.assertEqual(receipt["head_commit_sha"], head)
         self.assertEqual(receipt["legacy_collision_count"], 1)
+        self.assertEqual(receipt["legacy_group_count"], 1)
+        self.assertEqual(receipt["unique_affected_workflows"], 2)
+        cluster = receipt["group_summaries"][0]
+        self.assertEqual(cluster["pair_count"], 1)
+        self.assertEqual(cluster["unique_workflow_count"], 2)
+        self.assertFalse(cluster["reviewed"])
+        self.assertFalse(cluster["production_mutation_authorized"])
         self.assertEqual(receipt["new_collisions_allowed"], 0)
         self.assertFalse(receipt["reviewed"])
         self.assertFalse(receipt["merge_authorized"])
@@ -303,6 +310,36 @@ class RatchetTests(unittest.TestCase):
                          {".github/workflows/first.yml", ".github/workflows/second.yaml"})
         self.assertEqual(len(item["group_sha256"]), 64)
         self.assertNotIn("private-audit", json.dumps(receipt))
+
+    def test_grouped_inventory_counts_pairs_without_owner_approval(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("third.yml", document("shared", False))
+        base = self.save()
+        self.write("third.yml", document("shared", False, extra="# safe edit\n"))
+        report = gate.inventory(base, self.save())
+        self.assertEqual(report["legacy_collision_count"], 3)
+        self.assertEqual(report["legacy_group_count"], 1)
+        self.assertEqual(report["unique_affected_workflows"], 3)
+        cluster = report["group_summaries"][0]
+        self.assertEqual(cluster["pair_count"], 3)
+        self.assertEqual(cluster["unique_workflow_count"], 3)
+        self.assertEqual(cluster["unique_scopes"], 3)
+        self.assertEqual(cluster["owner"], "UNASSIGNED")
+        self.assertEqual(cluster["reviewer"], "UNASSIGNED")
+        self.assertEqual(cluster["disposition"], "UNREVIEWED")
+        self.assertFalse(report["production_mutation_authorized"])
+
+    def test_group_summary_remains_sha_bound_across_safe_queue_migration(self):
+        base = self.base(document("shared", False), document("shared", False))
+        upgraded = document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max")
+        self.write("first.yml", upgraded)
+        head = self.save()
+        report = gate.inventory(base, head)
+        self.assertEqual(report["head_commit_sha"], head)
+        self.assertEqual(report["legacy_collision_count"], 1)
+        self.assertEqual(report["group_summaries"][0]["pair_count"], 1)
+        self.assertFalse(report["merge_authorized"])
 
     def test_inventory_refuses_new_collision_instead_of_approving(self):
         base = self.base(document("caution", False), document("separate", False))
