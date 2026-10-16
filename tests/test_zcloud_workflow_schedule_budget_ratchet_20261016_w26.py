@@ -125,6 +125,28 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             cross_schedule_bursts(("0 9 * * *",) * 33)
 
+    def test_weekly_midnight_is_not_a_daily_burst(self):
+        self.assertFalse(is_high_frequency("5,55 0,23 * * MON"))
+
+    def test_daily_midnight_is_a_real_burst(self):
+        self.assertTrue(is_high_frequency("5,55 0,23 * * *"))
+
+    def test_consecutive_selected_weekdays_cross_midnight(self):
+        self.assertTrue(is_high_frequency("5,55 0,23 * * MON,TUE"))
+
+    def test_monthly_midnight_does_not_invent_next_day(self):
+        self.assertFalse(is_high_frequency("5,55 0,23 1 * *"))
+
+    def test_nontrivial_day_steps_are_restricted(self):
+        from scripts.zcloud_workflow_schedule_budget_ratchet_20261016_w26 import (
+            _calendar_matches, _compiled_cron,
+        )
+        expr = _compiled_cron("0 9 */2 * MON")
+        self.assertFalse(expr["dom_wild"])
+        self.assertTrue(_calendar_matches(expr, 1, 3, 3))
+        self.assertFalse(_calendar_matches(expr, 1, 2, 3))
+        self.assertTrue(_calendar_matches(expr, 1, 2, 1))
+
     def test_timezone_merge_alias_not_allowed(self):
         with self.assertRaises(AdmissionError):
             schedules("on:\n  schedule:\n    - cron: '0 9 * * *'\n      <<: *hidden_timezone\n")
@@ -263,6 +285,22 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertTrue(audit(self.root, base)["accepted"])
         path.write_text(path.read_text() + "\n# Source-only comment\n")
         self.assertTrue(audit(self.root, base)["accepted"])
+
+    def test_removing_existing_timezone_requires_review(self):
+        path = self.directory / "safe.yml"
+        zoned = workflow("0 8 * * *").replace(
+            "jobs:", "      timezone: America/New_York\njobs:")
+        path.write_text(zoned, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "existing zoned schedule")
+        base = self.git("rev-parse", "HEAD")
+        path.write_text(workflow("0 8 * * *"), encoding="utf-8")
+        receipt = audit(self.root, base)
+        self.assertFalse(receipt["accepted"])
+        self.assertTrue(any(
+            item.get("reason") == "timezone_requires_independent_review"
+            for item in receipt["new_high_frequency"]
+        ))
 
     def test_existing_timezone_cron_mutation_denied(self):
         path = self.directory / "safe.yml"
