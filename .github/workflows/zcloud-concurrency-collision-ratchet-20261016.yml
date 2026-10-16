@@ -83,6 +83,20 @@ jobs:
               raise SystemExit("inventory group counts are incoherent")
           if d.get("legacy_collision_count") != len(d.get("review_items", [])):
               raise SystemExit("inventory pair counts are incoherent")
+          if d.get("legacy_opaque_expression_count") != len(d.get("unresolved_expression_reviews", [])):
+              raise SystemExit("unresolved-expression review count is incoherent")
+          if d.get("no_new_opaque_expressions") is not True:
+              raise SystemExit("new opaque concurrency expression requires owner review")
+          remaining = d.get("candidate_opaque_expression_count")
+          if type(remaining) is not int or remaining < 0:
+              raise SystemExit("invalid candidate opaque expression count")
+          if d.get("static_expression_coverage_complete") is not (remaining == 0):
+              raise SystemExit("static expression coverage must be explicit")
+          if any(item.get("owner") != "UNASSIGNED" or
+                 item.get("reviewer") != "UNASSIGNED" or
+                 item.get("disposition") != "UNREVIEWED"
+                 for item in d["unresolved_expression_reviews"]):
+              raise SystemExit("opaque review inventory contains unproven owner decisions")
           if any(item.get("reviewed") is not False or
                  item.get("production_mutation_authorized") is not False
                  for item in d["group_summaries"]):
