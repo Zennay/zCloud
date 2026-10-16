@@ -24,9 +24,13 @@ class ZSentinelModeTests(unittest.TestCase):
         self.assertIn("if project_id=='zsentinel':", server)
         self.assertIn("Werk verder aan zSentinel", server)
         self.assertIn("Kijk in Notion", server)
-        self.assertIn("ALLE open P0/P1-issues", server)
-        self.assertIn("onafgemaakte features", server)
-        self.assertIn("andere onafhankelijke veilige bug", server)
+        self.assertIn("PRIORITEIT 1: VERWIJDER BLOKKADES", server)
+        self.assertIn("PRIORITEIT 2: OPEN ISSUES EN FEATURES", server)
+        self.assertLess(server.index("PRIORITEIT 1: VERWIJDER"),server.index("PRIORITEIT 2: OPEN"))
+        self.assertIn("stuur vrije workers", server)
+        self.assertIn("alternatieve route", server)
+        self.assertIn("roadmapfeatures", server)
+        self.assertIn("ander veilig werk", server)
         self.assertIn("WORKER_MODES = _load_worker_modes()", server)
 
     def test_frontend_offers_role_in_dropdown_and_validates_it(self):
@@ -46,8 +50,9 @@ class ZSentinelModeTests(unittest.TestCase):
         self.assertEqual(len(queue), 1)
         self.assertEqual(queue[0]["priority"], "P1")
         self.assertTrue(queue[0]["eligible"])
-        self.assertIn("not just incidents", queue[0]["completion_criteria"])
-        self.assertIn("active claims", queue[0]["completion_criteria"])
+        self.assertTrue(queue[0]["completion_criteria"].startswith("PRIORITY 1: eliminate"))
+        self.assertLess(queue[0]["completion_criteria"].index("PRIORITY 1:"),queue[0]["completion_criteria"].index("PRIORITY 2:"))
+        self.assertIn("owner claims", queue[0]["completion_criteria"])
 
 if __name__ == "__main__":
     unittest.main()

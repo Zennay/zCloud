@@ -97,6 +97,8 @@ WORKER_LANES = (
 def _load_project_registry():
     """Load presentation metadata and hydrate runtime fields from the canonical contract."""
     projects=json.loads((ROOT/'projects.json').read_text())
+    # Do not render a legacy sentinel card from operator-owned live registry.
+    projects=[project for project in projects if project.get('id')!='zsentinel']
     for project in projects:
         project_id=str(project.get('id') or '').strip().lower()
         try:
@@ -115,7 +117,11 @@ def _load_project_registry():
 # Worker roles are queue-capable but NOT normal product/portfolio cards.
 WORKER_MODES_FILE = ROOT / 'worker-modes.json'
 def _load_worker_modes():
-    modes=json.loads(WORKER_MODES_FILE.read_text(encoding='utf-8'))
+    # Backend source may deploy before optional worker role presentation metadata.
+    modes=(json.loads(WORKER_MODES_FILE.read_text(encoding='utf-8'))
+           if WORKER_MODES_FILE.exists()
+           else [{'id':'zsentinel','name':'zSentinel · Vliegende keep',
+                  'goal':'Remove portfolio blockers before clearing remaining issues.'}])
     if not isinstance(modes,list) or not modes:
         raise ValueError('worker-modes.json must be a nonempty list')
     ids=[row.get('id') for row in modes if isinstance(row,dict)]
@@ -176,19 +182,15 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     if project_id=='zsentinel':
         return (
-            'Werk verder aan zSentinel als vliegende keep over ALLE zCloud-projecten; dit is een workerrol, geen apart portfolio-project. '
-            'Kijk in Notion naar de Project Genesis OS, Project Company OS, Portfolio Control Tower OS en relevante project-HQ/handoffs; controleer GitHub-issues, PRs, actieve branches, actuele main/CI en queue/workerclaims. '
-            'Begin met ALLE open P0/P1-issues. Pak daarna ook onopgeloste P2/P3-issues, onafgemaakte features, regressies, verouderde PRs en niet-uitgevoerde roadmaptaken op; beperk je NIET tot vastgelopen jobs. '
-            'Kies steeds de hoogste impact die vrij en veilig uitvoerbaar is. Neem een issue echt over als er geen actieve eigenaar is: reproduceer waar nodig, schrijf code/configuratie en tests, commit, rond PR en checks af en verifieer resultaat. '
-            'Zit iets vast? Zoek zelfstandig de oorzaak en een alternatieve herstelroute met beschikbare Notion-, GitHub-, self-hosted runner- of workerkanalen; wees oplossingsgericht en geef niet op na een mislukte route. '
-            'Pas wanneer veilig en geautoriseerd queueprioriteit, opvolgtaken en uitvoervolgorde aan op basis van aantoonbare impact. Verlaag/verhoog niet blind prioriteit en maak geen duplicaat van actief werk. '
-            'Houd de andere projecten echt aan het werk: stuur workers bij op basis van concrete claims, open issues en echte test-/runtimebewijzen, maar onderbreek geen lopende generatie of eigenaarstaak. '
-            'Als één onderdeel op CI, runner, review, apparaat of toestemmingsgate wacht, pak direct een andere onafhankelijke veilige bug of feature in een ander project. '
-            'Vraag niet routinematig om menselijke input: debug, herstel, test en implementeer zelfstandig. '
-            'Respecteer verplichte menselijke veiligheids-/productiegoedkeuring, scopeautorisatie, secrets, financiële research-holdouts, device-acceptatie en rechten; omzeil zulke harde gates niet. '
-            'Geen force-push, ongeautoriseerde live deploy of destructieve massale queuecancel. CI-groen is geen bewijs dat productie gezond is. '
-            'Voer meerdere materiële acties achtereenvolgens uit totdat er echt geen veilige uitvoerbare open taak over is; alleen lezen, rapporteren of één retrigger telt niet als voltooiing. '
-            'Sluit issues alleen na bewezen implementatie; vermeld kort code, tests, commits, PR, eventuele live acceptatie en resterende gates.'
+            'Werk verder aan zSentinel als vliegende keep voor ALLE zCloud-projecten, niet als portfolio-project.'
+            'Kijk in Notion in welke fase het project zit; lees Project Genesis OS, Company OS, Portfolio Control Tower OS, relevante HQ/handoffs, GitHub-issues/PRs/CI, branches, queue en workerclaims.'
+            'PRIORITEIT 1: VERWIJDER BLOKKADES. Onderzoek P0-stops, niet-toegewezen of vastgelopen workers, falende CI, runner-/queueproblemen en vastgelopen dependencies; onderscheid dit van bewuste research-, device- en releasegates.'
+            'Redeneer vanuit het hele portfolio. Bouw de ontbrekende oplossing: fix root-cause met code/tests, maak een veilige alternatieve route of stuur vrije workers naar zelfstandig uitvoerbaar werk. Pas waar toegestaan wachtrij, prioriteit of taken toe met bewijs en rollback. Neem geen actieve claim of generatie over.'
+            'Bewijs herstel met werkelijke taakvoortgang, commit, tests en runtime-signalen. Eén heartbeat, retry of groene hosted CI bewijst geen live herstel.'
+            'PRIORITEIT 2: OPEN ISSUES EN FEATURES. Pak daarna overgebleven P0/P1 en P2/P3-issues, bugs, onafgemaakte PRs en roadmapfeatures aan. Voer meerdere materiële fixes achter elkaar uit; switch bij een echte gate direct naar ander veilig werk, ook bij een ander project.'
+            'Vraag geen menselijke input voor normale debugs, onderzoek via Notion/GitHub en bestaande worker-/runnerkanalen en implementeer zelfstandig.'
+            'Respecteer rechten, actieve eigenaars, scoped security, secrets, FTMO-holdouts, fysieke devicevalidatie en verplichte productie-releasegates; nooit blind restart/deploy, massaal cancelen of gate omzeilen.'
+            'Sluit issues pas na bewezen resultaat; noem kort fix, tests, commit, PR en runtimeverificatie.'
         )
     return (
         f'Werk verder aan {name}. '

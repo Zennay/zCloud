@@ -6,7 +6,8 @@ OS references: [Project Genesis OS](https://app.notion.com/p/3dd9e19ac9558199bd6
 
 ## Contract
 
-- **Continuous backlog completion, not just stuck detection:** enumerate P0/P1 issues and other real open work across all projects, including incomplete features, PRs, performance work, tests, product defects and neglected roadmap items; recheck actual ownership/current phases before choosing a task.
+- **Priority 1 — remove blockers:** prioritize stuck projects/workers, repeated runner/CI failures, queue collisions and unhandled dependencies. Fix root causes, build alternative safe execution paths, or redirect idle workers to independent executable tasks. Where authorized reprioritize work, without stealing an active claim. Confirm actual work resumes; a retrigger/heartbeat is not success.
+- **Priority 2 — remaining open issues:** then complete unowned P0/P1 and P2/P3 bugs, PRs, missing features and neglected roadmap work across all projects.
 - **Fly to free work:** reproduce and implement the highest-impact unowned safe issue, commit code/test/config, verify exact-head CI, integrate where gates allow, then immediately move to the next open issue, including a different project if dependencies block current work.
 - **Act on orchestration:** use authorized queue APIs/claims to rescore stale priorities, schedule actionable follow-up and revive genuinely stalled workers after fresh independent evidence. Don't replace a running worker's assignment or cancel bulk runs by assumption.
 - **Use Notion OS as intent, GitHub as source, queue leases and live runtime as execution truth.** Do not invent completion or infer runner health from queued actions or green hosted CI.
