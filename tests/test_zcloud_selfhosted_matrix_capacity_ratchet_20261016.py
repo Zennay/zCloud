@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from scripts.zcloud_selfhosted_matrix_capacity_ratchet_20261016 import (
-    InvalidSource, _matrix_count, findings, inspect, main,
+    InvalidSource, _git, _matrix_count, findings, inspect, main,
 )
 
 ROOT = ".github/workflows/fixture.yml"
@@ -267,6 +267,14 @@ class GitTreeContract(unittest.TestCase):
         git("commit", "-qm", "add new workflow")
         risks = inspect(empty, git("rev-parse", "HEAD"))["new_risks"]
         self.assertIn("aggregate_matrix_groups:5", [risk["reason"] for risk in risks])
+
+    def test_git_stdout_has_streaming_size_cap(self):
+        with self.assertRaisesRegex(InvalidSource, "git_output_too_large"):
+            _git("rev-parse", "HEAD", max_output=4)
+
+    def test_git_nonzero_status_denied(self):
+        with self.assertRaisesRegex(InvalidSource, "git_source_unavailable"):
+            _git("rev-parse", "--bad-nonexistent-option", max_output=200)
 
     def test_refuses_noncommit_git_object(self):
         blob = git("rev-parse", f"{self.base}:" + ROOT)
