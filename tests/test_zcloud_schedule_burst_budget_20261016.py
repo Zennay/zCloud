@@ -50,6 +50,9 @@ class ScheduleParsingTests(unittest.TestCase):
             'on:\n  schedule:\n    - cron: "0 * * * *"\n'
             '    - cron: "0 * * * *"\non:\n  workflow_dispatch:\n',
             "on:\n  schedule:\n    - cron: ${{ inputs.cron }}\n",
+            'on:\n  <<: *scheduled\n  workflow_dispatch:\n',
+            'defaults: &scheduled\n  on:\n    schedule:\n'
+            '      - cron: "0 * * * *"\n<<: *scheduled\n',
         ):
             with self.subTest(source=source):
                 with self.assertRaises(ValueError):
