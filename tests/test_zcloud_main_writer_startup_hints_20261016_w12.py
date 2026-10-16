@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -154,7 +155,6 @@ class WriterStartupHintTests(unittest.TestCase):
         status, output = self.capture("markdown")
         self.assertEqual(status, 0)
         self.assertIn("GEEN VRIJGAVE", output)
-        self.assertIn("Kandidaten", output) if False else None
         self.assertIn("candidate_count: 1", output)
         self.assertNotIn("permissions:\n  contents: write", output)
 
@@ -192,7 +192,7 @@ class WriterStartupHintTests(unittest.TestCase):
             hints.audit(self.repo, self.git("rev-parse", "HEAD"))
 
     def test_untrusted_caller_git_dir_ignored(self):
-        with unittest.mock.patch.dict(os.environ, {"GIT_DIR": "/fake",
+        with mock.patch.dict(os.environ, {"GIT_DIR": "/fake",
                                                       "GIT_CONFIG_COUNT": "1",
                                                       "GIT_CONFIG_KEY_0": "core.bare",
                                                       "GIT_CONFIG_VALUE_0": "true"}):
