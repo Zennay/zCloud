@@ -6,6 +6,7 @@ self-hosted, dynamic and reusable jobs are owned by separate policies.
 No workflow is changed; no token/API/write authority is requested.
 """
 import argparse
+import hashlib
 import os
 import re
 import selectors
@@ -205,6 +206,7 @@ def violations(source):
             continue
         if "timeout-minutes" not in job:
             reason = "missing_timeout"
+            observed = "<missing>"
         else:
             timeout = job["timeout-minutes"]
             if isinstance(timeout, bool) or not isinstance(timeout, int):
@@ -213,8 +215,18 @@ def violations(source):
                 reason = "timeout_outside_1_to_30"
             else:
                 continue
+            try:
+                observed = repr(timeout)
+            except RecursionError as exc:
+                raise InvalidSource("recursive_timeout_value") from exc
         runner_name = runner if isinstance(runner, str) else ",".join(runner)
-        bad.add((job_id, runner_name, reason))
+        # Changes within the same broad risk category are *not* automatically
+        # grandfathered: changing 60 -> 360 minutes would increase runner cost
+        # while still looking like the same "timeout_outside" finding.
+        # Store only a digest, never interpolate arbitrary workflow input into
+        # status/log output. A legacy finding passes only when unchanged.
+        fingerprint = hashlib.sha256(observed.encode("utf-8")).hexdigest()[:20]
+        bad.add((job_id, runner_name, fingerprint, reason))
     return bad
 
 
@@ -237,7 +249,7 @@ def audit(base, head):
         old_count += len(baseline)
         new_count += len(current)
         examined += 1
-        for job_id, runner, reason in sorted(current - baseline):
+        for job_id, runner, _fingerprint, reason in sorted(current - baseline):
             denied.append((path, job_id, runner, reason))
     return examined, old_count, new_count, denied
 
