@@ -237,6 +237,57 @@ class CheckoutCleanTests(unittest.TestCase):
 
 
 
+    def test_quoted_clean_key_false_is_not_skipped(self):
+        source = sample("false").replace("          clean: false", "          'clean': false")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_double_quoted_clean_key_false_is_not_skipped(self):
+        source = sample("false").replace("          clean: false", '          "clean": false')
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_quoted_with_key_false_is_not_skipped(self):
+        source = sample("false").replace("        with:\n", '        "with":\n')
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_quoted_uses_step_key_false_is_not_skipped(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@", "      - 'uses': actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_nested_quoted_uses_step_key_false_is_not_skipped(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@", "      - name: Checkout\n        \"uses\": actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_quoted_selfhosted_runs_on_key_detected(self):
+        source = sample("false").replace("    runs-on:", "    'runs-on':")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_quoted_steps_mapping_parsed(self):
+        source = sample("false").replace("    steps:", '    "steps":')
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_alias_action_identity_is_untrusted_even_without_checkout_word(self):
+        source = sample("true", uses="*action")
+        self.assertTrue(any("unresolved-action-reference" in r[-1] for r in self.find(source)))
+
+    def test_dynamic_action_identity_is_untrusted(self):
+        source = sample("true", uses="$" + "{{ inputs.action }}")
+        self.assertTrue(any("unresolved-action-reference" in r[-1] for r in self.find(source)))
+
+    def test_dynamic_action_on_hosted_job_is_not_selfhosted_debt(self):
+        source = sample("true", runner="ubuntu-latest", uses="*action")
+        self.assertEqual(self.find(source), [])
+
+    def test_quoted_checkout_action_with_default_clean_is_safe(self):
+        source = sample("true").replace("          clean: true\n", "")
+        source = source.replace(
+            "      - uses: actions/checkout@0123456789abcdef",
+            '      - "uses": "actions/checkout@0123456789abcdef"')
+        self.assertEqual(self.find(source), [])
+
+
+
 class ImmutableGitTreeTests(unittest.TestCase):
     """Exercise the complete scanner with actual local Git objects and remote main."""
 
