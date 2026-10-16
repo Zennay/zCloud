@@ -385,6 +385,21 @@ runs:
         b = self.commit(BAD.replace("          script: |", r'          "s\u0063ript": |'))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_tagged_with_map_is_considered_ambiguous(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace("        with:", "        with: !!map"))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_anchored_with_map_is_considered_ambiguous(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace("        with:", "        with: &params"))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_modified_tagged_legacy_map_cannot_reuse_exemption(self):
+        a = self.commit(SAFE.replace("        with:", "        with: &params"))
+        b = self.commit(SAFE.replace("        with:", "        with: &changed"))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
         b = self.commit(BAD)
