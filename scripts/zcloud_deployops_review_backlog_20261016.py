@@ -12,7 +12,7 @@ API = "https://api.github.com/repos/" + REPO
 SHA = re.compile(r"^[0-9a-f]{40}$")
 PAGE_SIZE = 100
 MAX_PAGES = 12
-MAX_BYTES = 1024 * 1024
+MAX_BYTES = 5 * 1024 * 1024  # Actual 100-PR pages exceed 1 MiB (observed >2 MiB).
 
 
 class Denied(ValueError):
