@@ -11,7 +11,7 @@ import subprocess
 import sys
 from collections import Counter
 
-MAX_WORKFLOWS = 512
+MAX_WORKFLOWS = 768
 MAX_BLOB = 1_048_576
 MAX_TOTAL = 32 * 1_048_576
 MAX_FINDINGS = 4096
@@ -57,7 +57,7 @@ def digest(value: str) -> str:
 
 
 def inventory(sha: str) -> dict[str, str]:
-    raw = git("ls-tree", "-rz", "--full-tree", sha, ".github/workflows", cap=200_000)
+    raw = git("ls-tree", "-rz", "--full-tree", sha, cap=4_000_000)
     result: dict[str, str] = {}
     for item in raw.split(b"\0"):
         if not item:
@@ -68,7 +68,9 @@ def inventory(sha: str) -> dict[str, str]:
             path = name.decode("utf-8", "strict")
         except (ValueError, UnicodeError) as exc:
             raise EvidenceError("invalid workflow tree metadata") from exc
-        if not path.startswith(".github/workflows/") or not path.endswith((".yml", ".yaml")):
+        is_workflow = path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
+        is_composite = path in ("action.yml", "action.yaml") or path.endswith(("/action.yml", "/action.yaml"))
+        if not (is_workflow or is_composite):
             continue
         if mode != "100644" or kind != "blob" or not SHA.fullmatch(blob):
             raise EvidenceError("symlink or invalid workflow object denied")
@@ -214,8 +216,8 @@ def evaluate(base: str, head: str) -> dict:
         "schema": "zcloud-github-script-eval-ratchet-v1",
         "base_sha": base,
         "head_sha": head,
-        "baseline_workflows": old_count,
-        "candidate_workflows": new_count,
+        "baseline_manifests": old_count,
+        "candidate_manifests": new_count,
         "baseline_findings": sum(old.values()),
         "candidate_findings": sum(new.values()),
         "new_findings": sum(added.values()),
