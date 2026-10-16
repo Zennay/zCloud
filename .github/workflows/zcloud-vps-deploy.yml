@@ -666,7 +666,6 @@ jobs:
             --path server.py \
             --path project_runtime.py \
             --path project-contracts.json \
-            --path worker-modes.json \
             --path lane_generator.py \
             --path vps-execution-policy.json \
             --preserve-prechange-drift public/zcloud-worker.user.js \
