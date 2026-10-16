@@ -502,5 +502,17 @@ class ReleaseReceiptTests(unittest.TestCase):
 
 
 
+    def test_json_integer_boundary_consistent_across_python_interpreters(self):
+        inside = b'{"integer":' + b'9' * gate.MAX_INTEGER_DIGITS + b'}'
+        outside = b'{"integer":' + b'9' * (gate.MAX_INTEGER_DIGITS + 1) + b'}'
+        self.assertIn("integer", gate.decode_receipt(inside))
+        with self.assertRaisesRegex(ValueError, "invalid_json"):
+            gate.decode_receipt(outside)
+        with self.assertRaisesRegex(ValueError, "invalid_json"):
+            gate.decode_receipt(b'{"integer":-' +
+                                b'9' * (gate.MAX_INTEGER_DIGITS + 1) + b'}')
+
+
+
 if __name__ == "__main__":
     unittest.main()
