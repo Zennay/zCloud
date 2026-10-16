@@ -77,3 +77,21 @@ python3 scripts/zcloud_main_writer_compat_inventory_20261016_w12.py \
 ```
 
 This CSV includes immutable Git main SHA, workflow path, **SHA-256 of the workflow's committed Git blob bytes**, line/kind signal references and P1/P2 triage priority. All owner, reviewer, decision and evidence URL cells start blank. `review_verified` and `branch_protection_authorized` are always `false`. Each row is a candidate requiring human action and is not evidence that a workflow actually ran. The read-only GitHub-hosted job checks the generated CSV and exposes its bounded source-only rows in the job log, without uploading executable artifacts or GitHub write tokens. Independent identity/evidence confirmation and the #922 owner workflow remain mandatory.
+
+## Vul de CSV rechtstreeks in (geen handmatige JSON-conversie)
+
+De eerdere JSON-interface blijft beschikbaar, maar de reviewlijst uit GitHub-hosted CI of uit Notion is nu **rechtstreeks** bruikbaar. Vul in de originele CSV alléén de vier kolommen \`owner\`, \`reviewed_by\`, \`decision\` en \`evidence_url\` in, en laat elke onbesliste rij geheel leeg op deze vier velden. Gebruik uitsluitend de bestaande waarden \`migrate\`, \`retire\` of \`false_positive\`. Een ingevulde cel zonder de andere drie wordt geweigerd.
+
+\`\`\`bash
+python3 scripts/zcloud_main_writer_review_admission_20261016_w12.py \
+  --inventory main-writer-receipt.json \
+  --reviews-csv ingevulde-review-queue.csv \
+  --expected-main-sha EXACT_40_CHAR_MAIN_SHA \
+  --format markdown
+\`\`\`
+
+De oorspronkelijke CSV-kolommen voor main-SHA, workflowpad, workflow-SHA-256, signalen, prioriteit en beide autorisatievlaggen mogen **niet** veranderen. Alle kandidaten van dezelfde broninventaris moeten precies één keer in het bestand blijven staan. De controle weigert dubbele, ontbrekende, onbekende, verouderde of gemanipuleerde rijen, inclusief gewijzigde header, vervalste beveiligingsvlag, spreadsheet-formule als username, verborgen biditekens, onbetrouwbare bewijslink en deels ingevulde beoordelingen. Beoordelingen worden pas als *syntactisch volledig* meegeteld wanneer eigenaar en andere reviewer van elkaar verschillen; hun GitHub-identiteit en bewijs zijn **niet** door de offline tool geverifieerd.
+
+De source scanner ondersteunt ook shellregelvervolg (backslash), Git-opties als \`-C\`, \`-c\` en \`--git-dir\` voor een \`git push\`, en weigert control-karakters voordat regels worden opgesplitst. Git-omgevingvariabelen zoals \`GIT_DIR\` en \`GIT_CONFIG_COUNT\` uit de aanroepomgeving krijgen geen invloed op de vaste Git-bron. Onzichtbare schrijfpaden via variabelen of externe reusable Actions blijven een menselijke audittaak; nul gevonden signalen is nooit een vrijgave.
+
+De hosted workflow controleert dat de **echte, ongewijzigde main-inventaris** via JSON én CSV precies dezelfde openstaande beoordelingen en \`safe_to_enable_branch_protection=false\` geeft. Een lokaal ingevuld bestand wordt niet zonder expliciete onafhankelijke verificatie gebruikt voor een production release.
