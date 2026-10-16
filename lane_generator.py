@@ -23,10 +23,11 @@ PROFILE_LANES = {
             ),
         },
         {
-            "id": "qa-validation",
+            "id": "strategy-implementation",
             "keywords": (
-                "qa", "validation", "validate", "test", "gate", "walk-forward",
-                "walk forward", "holdout", "stress", "preregistration", "verify",
+                "walk-forward", "walk forward", "holdout", "risk", "execution",
+                "preregistration", "stress", "portfolio", "position",
+                "orders", "risk-model", "risk model", "reliability",
             ),
         },
         {
@@ -46,10 +47,11 @@ PROFILE_LANES = {
             ),
         },
         {
-            "id": "evaluation-validation",
+            "id": "model-improvement",
             "keywords": (
-                "arena", "evaluation", "validate", "validation", "benchmark",
-                "quality", "gate", "test", "champion",
+                "arena", "evaluation", "benchmark", "champion", "inference",
+                "latency", "gameplay", "performance", "improvement",
+                "tuning", "accuracy", "physics", "reliability",
             ),
         },
         {
@@ -99,10 +101,10 @@ PROFILE_LANES = {
             ),
         },
         {
-            "id": "quality-validation",
+            "id": "bugfix-delivery",
             "keywords": (
-                "test", "validation", "validate", "qa", "regression", "build",
-                "smoke", "accessibility",
+                "bug", "fix", "repair", "regression", "broken", "crash",
+                "error", "recovery", "reliability", "build", "accessibility",
             ),
         },
     ),
@@ -122,10 +124,11 @@ PROFILE_LANES = {
             ),
         },
         {
-            "id": "quality-validation",
+            "id": "bugfix-delivery",
             "keywords": (
-                "test", "validation", "validate", "qa", "regression", "build",
-                "battery", "false-positive", "smoke",
+                "bug", "fix", "repair", "regression", "broken", "crash",
+                "error", "recovery", "reliability", "build", "battery",
+                "false-positive",
             ),
         },
     ),
@@ -177,7 +180,7 @@ PROJECT_SCOPE_ALIASES = {
     ),
     ("zssh", "deploy-ops"): ("zssh-runtime-deploy",),
     ("ftmo", "critical-path"): ("ftmo-research-critical-path",),
-    ("ftmo", "qa-validation"): ("ftmo-validation",),
+    ("ftmo", "strategy-implementation"): ("ftmo-validation",),
     ("ftmo", "data-provenance"): ("ftmo-data-provenance",),
 }
 
