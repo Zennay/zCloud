@@ -302,7 +302,8 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         text = workflow_path.read_text(encoding='utf-8')
         self.assertIn('origin="$(git remote get-url origin)"', text)
         self.assertIn('http.followRedirects=false ls-remote --exit-code origin refs/heads/main', text)
-        self.assertIn('test "$advertised" = "$EXPECTED_BASE"', text)
+        self.assertIn('test "$advertised_sha" = "$EXPECTED_BASE"', text)
+        self.assertIn('test "$advertised_ref" = refs/heads/main', text)
 
     def test_precode_admission_never_checks_out_foreign_repository(self):
         workflow_path = Path(__file__).parents[1] / '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
