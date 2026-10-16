@@ -399,6 +399,46 @@ jobs:
         self.assertFalse(any("ambiguous-action" in item[-1] for item in findings))
 
 
+    def test_inline_job_mapping_is_never_mistaken_for_safe_workflow(self):
+        source = sample("true").replace(
+            "  inspect:\n    runs-on: [self-hosted, zcloud, vps]\n"
+            "    timeout-minutes: 5\n    steps:\n"
+            "      - uses: actions/checkout@0123456789abcdef\n"
+            "        with:\n          persist-credentials: false\n"
+            "          clean: true",
+            "  inspect: {runs-on: [self-hosted, vps], steps: [{uses: actions/checkout@v4, with: {clean: false}}]}")
+        self.assertTrue(any("opaque-job-entry" in r[-1] for r in self.find(source)))
+
+    def test_job_indented_four_spaces_is_not_skipped(self):
+        source = sample("false").replace(
+            "  inspect:\n", "    inspect:\n")
+        self.assertTrue(any("noncanonical-job-indent" in r[-1] for r in self.find(source)))
+
+    def test_job_indented_three_spaces_is_not_skipped(self):
+        source = sample("false").replace(
+            "  inspect:\n", "   inspect:\n")
+        self.assertTrue(any("noncanonical-job-indent" in r[-1] for r in self.find(source)))
+
+    def test_unknown_job_entry_with_tags_is_not_clean(self):
+        source = sample("true").replace(
+            "  inspect:\n", "  inspect: !custom-runner\n")
+        self.assertTrue(any("opaque-job-entry" in r[-1] for r in self.find(source)))
+
+    def test_other_root_maps_do_not_get_false_jobs_risks(self):
+        source = """name: Test
+env:
+  something: X
+  another: [x, y]
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+"""
+        self.assertEqual(self.find(source), [])
+
+
+
 class ImmutableGitTreeTests(unittest.TestCase):
     """Exercise the complete scanner with actual local Git objects and remote main."""
 
