@@ -201,6 +201,19 @@ def inspect(base, head):
         for job, reason in after:
             if (job, reason) not in prior:
                 new_risks.append({"path": path, "job": job, "reason": reason})
+        # Generic "unknown size" or "unsafe parallelism" debt must not
+        # become a bypass for replacing its underlying matrix expression
+        # with an even riskier one under the same classification.
+        common_risky_jobs = {job for job, reason in after if (job, reason) in prior}
+        if common_risky_jobs:
+            old_jobs = yaml.load(original, Loader=UniqueLoader)["jobs"]
+            new_jobs = yaml.load(candidate, Loader=UniqueLoader)["jobs"]
+            for job in sorted(common_risky_jobs):
+                old_job, new_job = old_jobs[job], new_jobs[job]
+                keys = ("runs-on", "uses", "strategy")
+                if any(old_job.get(key) != new_job.get(key) for key in keys):
+                    new_risks.append({"path": path, "job": job,
+                                      "reason": "legacy_matrix_configuration_changed"})
     return {"policy": POLICY, "base_sha": base, "head_sha": head,
             "workflow_paths_checked": len(paths), "new_risks": new_risks,
             "mutation_authorized": False, "merge_authorized": False,
