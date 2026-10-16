@@ -61,7 +61,20 @@ jobs:
           test "$current_main" = "$expected_main"
           python3 -m py_compile scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
           python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31
-          python3 scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py \
-            --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
+          # On subsequent PRs execute the immutable scanner from trusted main,
+          # never the candidate-provided checker. New guard bootstrap is
+          # explicitly provisional until this workflow has landed on main.
+          source_path="scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py"
+          base_entry="$(git ls-tree "$EXPECTED_BASE" -- "$source_path")"
+          if [[ -n "$base_entry" ]]; then
+            [[ "$base_entry" =~ ^100(644|755)[[:space:]]blob[[:space:]][0-9a-f]{40}[[:space:]]scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py$ ]]
+            trusted_guard="$RUNNER_TEMP/zcloud_trusted_scheduled_dispatch_guard.py"
+            git show "$EXPECTED_BASE:$source_path" > "$trusted_guard"
+            python3 -m py_compile "$trusted_guard"
+            python3 "$trusted_guard" --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
+          else
+            echo "::warning::BOOTSTRAP ONLY: no immutable guard exists on base; candidate scanner is not independently trusted"
+            python3 "$source_path" --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
+          fi
           current_main="$(timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)"
           test "$current_main" = "$expected_main"
