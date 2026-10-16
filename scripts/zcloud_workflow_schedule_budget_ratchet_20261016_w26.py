@@ -122,14 +122,14 @@ def schedules(source: str) -> tuple[str, ...]:
         if not in_on or not line.strip() or line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip(" "))
-        if indent == 0 or "\\t" in line[:indent]:
+        if indent == 0 or "\t" in line[:indent]:
             raise AdmissionError("ambiguous_event_indentation")
         if event_indent is None:
             event_indent = indent
         if indent < event_indent:
             raise AdmissionError("ambiguous_event_indentation")
         if indent == event_indent:
-            match = re.fullmatch(r"\\s*schedule\\s*:\\s*(.*?)\\s*", line)
+            match = re.fullmatch(r"\s*schedule\s*:\s*(.*?)\s*", line)
             if match:
                 if found_schedule or match.group(1):
                     raise AdmissionError("ambiguous_schedule_block")
