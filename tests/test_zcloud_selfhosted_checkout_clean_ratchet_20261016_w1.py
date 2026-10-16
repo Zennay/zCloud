@@ -338,6 +338,67 @@ jobs:
 
 
 
+    def test_checkout_after_continue_on_error_step_key_denied(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@",
+            "      - continue-on-error: false\n        uses: actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in finding[-1]
+                            for finding in self.find(source)))
+
+    def test_checkout_after_timeout_minutes_step_key_denied(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@",
+            "      - timeout-minutes: 3\n        uses: actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in finding[-1]
+                            for finding in self.find(source)))
+
+    def test_checkout_after_id_step_key_denied(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@",
+            "      - id: source\n        uses: actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in finding[-1]
+                            for finding in self.find(source)))
+
+    def test_bare_dash_mapping_checkout_denied(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@",
+            "      -\n        uses: actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in finding[-1]
+                            for finding in self.find(source)))
+
+    def test_aliased_step_sequence_entry_requires_review(self):
+        source = sample("true").replace(
+            "      - uses: actions/checkout@0123456789abcdef",
+            "      - *untrusted_checkout")
+        self.assertTrue(any("opaque-step-entry" in finding[-1]
+                            for finding in self.find(source)))
+
+    def test_tagged_step_sequence_entry_requires_review(self):
+        source = sample("true").replace(
+            "      - uses: actions/checkout@0123456789abcdef",
+            "      - !unsafe_checkout")
+        self.assertTrue(any("opaque-step-entry" in finding[-1]
+                            for finding in self.find(source)))
+
+    def test_runner_label_sequence_is_not_a_checkout_step(self):
+        source = sample("true", runner="\n      - self-hosted\n      - vps")
+        self.assertEqual(self.find(source), [])
+
+    def test_unrelated_hosted_timeout_first_step_is_not_debt(self):
+        source = sample("false", runner="ubuntu-latest").replace(
+            "      - uses: actions/checkout@",
+            "      - timeout-minutes: 3\n        uses: actions/checkout@")
+        self.assertEqual(self.find(source), [])
+
+    def test_sibling_uses_step_after_non_checkout_timeout_is_not_merged(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@",
+            "      - timeout-minutes: 2\n        uses: actions/setup-node@v4\n      - uses: actions/checkout@")
+        findings = self.find(source)
+        self.assertTrue(any("unsafe-clean" in item[-1] for item in findings))
+        self.assertFalse(any("ambiguous-action" in item[-1] for item in findings))
+
+
 class ImmutableGitTreeTests(unittest.TestCase):
     """Exercise the complete scanner with actual local Git objects and remote main."""
 
