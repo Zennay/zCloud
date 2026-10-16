@@ -212,6 +212,22 @@ runs:
         b = self.commit("unsafe: '@EXPR@ github.event.issue.title }}'\n".replace("@EXPR@", "$" + "{{"), path="other/sample.yml")
         self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
 
+    def test_unicode_escaped_github_script_action_name_is_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            r'uses: "actions/\u0067ithub-script@0123456789012345678901234567890123456789"',
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_unicode_escaped_uses_key_and_action_name_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            r'"u\u0073es": "actions/\u0067ithub-script@0123456789012345678901234567890123456789"',
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_script_in_unrelated_action_is_not_guarded(self):
         a = self.commit(OTHER)
         b = self.commit(OTHER + "\n# GitHub-script not invoked\n")
