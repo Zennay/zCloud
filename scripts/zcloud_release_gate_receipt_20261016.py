@@ -260,6 +260,41 @@ REPORT_GATES = (
 )
 
 
+
+# Fixed and deliberately value-free: malformed receipts must never reflect a
+# path, log excerpt, token, control character, or untrusted source string.
+INPUT_PROBLEMS = {
+    "invalid_schema": (
+        "Bewijsstructuur ongeldig of auditresultaat tegenstrijdig.",
+        "Lever een bestand met uitsluitend het afgesproken schema aan.",
+    ),
+    "invalid_json": (
+        "JSON bevat ongeldige of onveilige tekens of structuur.",
+        "Maak een nieuw geldig UTF-8 JSON-bestand zonder stuurtekens.",
+    ),
+    "nonfinite_json": (
+        "JSON bevat een ongeldig getal, bijvoorbeeld oneindig.",
+        "Gebruik uitsluitend eindige JSON-getallen.",
+    ),
+    "duplicate_json_key": (
+        "Eenzelfde JSON-sleutel komt meer dan één keer voor.",
+        "Schrijf elke sleutel eenmaal en controleer de bron.",
+    ),
+    "receipt_too_large": (
+        "Bewijsbestand overschrijdt de grens van 64 KiB.",
+        "Lever een beknopt bestand met alleen de vereiste velden aan.",
+    ),
+    "unsafe_or_missing_receipt": (
+        "Bewijsbestand ontbreekt of gebruikt een onveilig bestandspad.",
+        "Kies een bestaand gewoon bestand zonder symlinks of padminstappen.",
+    ),
+    "unreadable_receipt": (
+        "Bewijsbestand kon niet veilig worden beoordeeld.",
+        "Controleer toegang en bestandstype; verstuur geen geheimen.",
+    ),
+}
+
+
 def render_markdown(result: dict[str, Any]) -> str:
     """Produce bounded Dutch audit prose from known reason codes only.
 
@@ -311,6 +346,14 @@ def render_markdown(result: dict[str, Any]) -> str:
                   "Claim ontbreekt of is ongeldig" if reason in codes else
                   "Aangeleverd als compleet, niet geverifieerd")
         lines.append(f"| {title} | {status} | {action} |")
+    if invalid:
+        for code in codes:
+            title, action = INPUT_PROBLEMS.get(code, INPUT_PROBLEMS["invalid_schema"])
+            lines.extend([
+                "",
+                f"**Invoerprobleem:** {title}",
+                f"**Op te lossen zonder live toegang:** {action}",
+            ])
     lines.extend([
         "",
         "**Waarom geen release?** De gegevens zijn niet onafhankelijk",
