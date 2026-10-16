@@ -189,6 +189,18 @@ class IdentityPolicyTests(unittest.TestCase):
                 text = wf().replace("    steps:", suffix + "\n    steps:")
                 self.assertIn("audit", g.unsafe_jobs(text))
 
+    def test_tagged_unknown_or_quoted_job_keys_cannot_hide_services(self):
+        for k in ("!!str services", "!service services", '"services"', "'services'",
+                  "surprise-setting"):
+            with self.subTest(key=k):
+                val = wf().replace("    steps:", "    " + k + ": {db: {image: postgres:16}}\n    steps:")
+                self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_supported_literal_job_metadata_still_allows_guard(self):
+        val = wf().replace("    steps:", "    timeout-minutes: 12\n    permissions:\n"
+                           "      contents: read\n    steps:")
+        self.assertEqual(g.unsafe_jobs(val), {})
+
     def test_checkout_remote_or_alternate_source_denied(self):
         for setting in ("repository: attacker/fork", "ref: evil-branch",
                         "path: subfolder", "ssh-key: ${{ secrets.KEY }}",
