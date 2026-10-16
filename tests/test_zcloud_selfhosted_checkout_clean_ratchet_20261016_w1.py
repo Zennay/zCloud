@@ -225,5 +225,44 @@ class ImmutableGitTreeTests(unittest.TestCase):
             self.scan()
 
 
+    def test_aliased_selfhosted_steps_denied(self):
+        source = sample("true").replace(
+            "    steps:\n      - uses:", "    steps: *old_checkout\n      - uses:")
+        self.assertTrue(any("nonliteral-steps" in row[-1] for row in self.find(source)))
+
+    def test_dynamic_selfhosted_steps_denied(self):
+        source = sample("true").replace(
+            "    steps:\n", "    steps: $" + "{{ inputs.steps }}\n")
+        self.assertTrue(any("nonliteral-steps" in row[-1] for row in self.find(source)))
+
+    def test_inline_list_selfhosted_steps_denied(self):
+        source = sample("true").replace(
+            "    steps:\n", "    steps: [{uses: actions/checkout@v4, with: {clean: false}}]\n")
+        self.assertTrue(any("nonliteral-steps" in row[-1] for row in self.find(source)))
+
+    def test_duplicate_steps_map_denied(self):
+        source = sample("true").replace(
+            "    steps:\n", "    steps:\n    steps:\n")
+        self.assertTrue(any("duplicate-steps-map" in row[-1] for row in self.find(source)))
+
+    def test_flow_style_checkout_step_denied(self):
+        source = sample("true").replace(
+            "      - uses: actions/checkout@0123456789abcdef",
+            "      - {uses: actions/checkout@v4, with: {clean: false}}")
+        self.assertTrue(any("flow-step-unverified" in row[-1] for row in self.find(source)))
+
+    def test_flow_style_hosted_job_does_not_raise_new_selfhosted_debt(self):
+        source = sample("true", runner="ubuntu-latest").replace(
+            "      - uses: actions/checkout@0123456789abcdef",
+            "      - {uses: actions/checkout@v4, with: {clean: false}}")
+        self.assertEqual(self.find(source), [])
+
+    def test_empty_steps_syntax_not_automatically_risky(self):
+        source = sample("true").replace(
+            "    steps:\n      - uses:", "    steps: []\n      - uses:")
+        self.assertFalse(any("nonliteral-steps" in row[-1] for row in self.find(source)))
+
+
+
 if __name__ == "__main__":
     unittest.main()
