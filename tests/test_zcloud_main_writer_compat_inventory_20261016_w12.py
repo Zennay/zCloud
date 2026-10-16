@@ -304,6 +304,27 @@ class MainWriterInventoryTests(unittest.TestCase):
         result = audit.inventory(self.repo, self.rev())
         self.assertEqual(result["candidate_count"], 0)
 
+    def test_vertical_tab_cannot_hide_github_writer(self):
+        self.write("hidden.yml", "name: testing\u000bgit push origin HEAD:main\n")
+        self.commit()
+        with self.assertRaisesRegex(audit.InventoryError, "invalid_workflow_controls"):
+            audit.inventory(self.repo, self.rev())
+
+    def test_hidden_del_character_rejected(self):
+        self.write("hidden.yml", "name: testing\x7fgit push origin HEAD:main\n")
+        self.commit()
+        with self.assertRaisesRegex(audit.InventoryError, "invalid_workflow_controls"):
+            audit.inventory(self.repo, self.rev())
+
+    def test_crlf_workflow_line_endings_supported(self):
+        target = self.repo / ".github" / "workflows" / "crlf.yml"
+        target.write_bytes(b"name: crlf\r\njobs:\r\n  x:\r\n    steps:\r\n"
+                           b"      - run: git push origin HEAD:main\r\n")
+        self.commit()
+        row = next(row for row in audit.inventory(self.repo, self.rev())["candidates"]
+                   if row["path"].endswith("crlf.yml"))
+        self.assertIn({"line": 5, "kind": "direct_main_ref"}, row["signals"])
+
     def test_no_git_config_or_working_tree_trust(self):
         # Inspect committed blob only; working-tree change without commit is irrelevant.
         self.write("safe.yml", "run: git push origin HEAD:main\n")
