@@ -25,5 +25,14 @@
   },
   "tradengine": {
     "priority": "background"
+  },
+  "mixlab": {
+    "priority": "background"
+  },
+  "fuckball": {
+    "priority": "background"
+  },
+  "tuddy": {
+    "priority": "background"
   }
 }
