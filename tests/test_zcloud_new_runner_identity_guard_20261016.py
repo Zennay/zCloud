@@ -46,6 +46,15 @@ class IdentityPolicyTests(unittest.TestCase):
     def test_ftmo_dedicated_runner_outside_scope(self):
         self.assertEqual(g.unsafe_jobs(wf("[self-hosted, ftmo-research]", False)), {})
 
+    def test_generic_self_hosted_list_does_not_bypass_identity(self):
+        for value in ("[self-hosted]", "[self-hosted, unknown]", "[self-hosted, linux]",
+                      "[self-hosted, ftmo-research, extra]", "[self-hosted, label]", "SELF-HOSTED"):
+            with self.subTest(runner=value):
+                self.assertIn("audit", g.unsafe_jobs(wf(value, False)))
+
+    def test_dedicated_ftmo_label_order_is_scoped(self):
+        self.assertEqual(g.unsafe_jobs(wf("[ftmo-research, self-hosted]", False)), {})
+
     def test_dynamic_runner_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf("$" + "{{ inputs.runner }}", False)))
 
