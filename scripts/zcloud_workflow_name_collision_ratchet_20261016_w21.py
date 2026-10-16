@@ -224,7 +224,14 @@ def workflow_run_targets(source):
     for index in range(start + 1, event_end):
         line = lines[index]
         level = len(line) - len(line.lstrip(" "))
-        match = child.match(line[level:])
+        stripped = line[level:]
+        if not stripped or stripped.startswith("#"):
+            continue
+        # A YAML merge/complex key under on can synthesize a workflow_run
+        # event unseen by this literal-only parser.
+        if level > root and stripped.startswith(("<<:", "? ", "?[", "?{")):
+            return None
+        match = child.match(stripped)
         if not match or level <= root:
             continue
         if match.group(1).strip() not in {"", "#"}:
