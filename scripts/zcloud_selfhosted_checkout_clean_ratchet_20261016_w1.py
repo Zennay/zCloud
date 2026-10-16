@@ -95,6 +95,23 @@ def analyze(source, path):
         selfhosted = any("self-hosted" in l.lower() for l in run_lines)
         if not selfhosted:
             continue
+        # A self-hosted job using an aliased, expression-valued or flow-style
+        # steps declaration cannot be checked by this source subset. Refuse
+        # new instances rather than claiming they contain no dirty checkout.
+        declarations = [line for line in body
+                        if re.match(r"^    steps\s*:", line)]
+        for decl in declarations:
+            tail = decl.split(":", 1)[1].split("#", 1)[0].strip()
+            if tail and tail != "[]":
+                risks.append((path, job_name, "steps", "nonliteral-steps"))
+        if len(declarations) > 1:
+            risks.append((path, job_name, "steps", "duplicate-steps-map"))
+        for line in body:
+            # YAML flow-style steps bypass conventional `- uses:` scanners.
+            # Their nested action/input identity is not proven: require
+            # independent review for each newly introduced flow-style step.
+            if re.match(r"^      -\s*\\{", line):
+                risks.append((path, job_name, "steps", "flow-step-unverified"))
         steps = []
         step = None
         for line in body:
