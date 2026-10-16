@@ -291,17 +291,48 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
     return risks
 
 
+def _job_fingerprints(doc: str | None) -> dict[str, tuple[str, ...]]:
+    """Structural comparison of existing risky jobs, not unrelated jobs/comments."""
+    if doc is None:
+        return {}
+    lines = doc.splitlines()
+    root = next((i for i, line in enumerate(lines)
+                 if re.fullmatch(r"jobs:\s*(?:#.*)?", line)), None)
+    if root is None:
+        return {}
+    stop = next((i for i in range(root + 1, len(lines))
+                 if lines[i] and not lines[i][0].isspace()), len(lines))
+    body = lines[root + 1:stop]
+    ids = [(i, m.group(1)) for i, line in enumerate(body)
+           if (m := JOB.fullmatch(line))]
+    result = {}
+    for idx, (start, name) in enumerate(ids):
+        limit = ids[idx + 1][0] if idx + 1 < len(ids) else len(body)
+        meaningful = tuple(line.rstrip() for line in body[start:limit]
+                           if line.strip() and not line.lstrip().startswith("#"))
+        result[name] = meaningful
+    return result
+
+
 def evaluate(base: str, head: str) -> dict:
     paths = inventory(base, head)
     findings, old_count, new_count = [], 0, 0
     for path in paths:
-        old = unsafe_jobs(source(base, path))
-        new = unsafe_jobs(source(head, path))
+        old_doc, new_doc = source(base, path), source(head, path)
+        old = unsafe_jobs(old_doc)
+        new = unsafe_jobs(new_doc)
         old_count += len(old)
         new_count += len(new)
+        # Unchanged unsafe jobs remain grandfathered. Mutating the same
+        # unsafe job (even with an identical finding category) is fresh debt.
+        old_fp = _job_fingerprints(old_doc)
+        new_fp = _job_fingerprints(new_doc)
         for job, reason in sorted(new.items()):
             if job not in old or old[job] != reason:
                 findings.append({"path": path, "job": job, "reason": reason})
+            elif old_fp.get(job) != new_fp.get(job):
+                findings.append({"path": path, "job": job,
+                                 "reason": "modified_legacy_unsafe_job"})
     return {"source_only": True, "mutation_performed": False, "release_authorized": False,
             "changed_workflows": len(paths), "legacy_debt_in_changed_files": old_count,
             "remaining_debt_in_changed_files": new_count, "new_findings": findings}
