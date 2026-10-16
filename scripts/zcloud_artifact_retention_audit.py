@@ -34,7 +34,7 @@ def _structural_lines(text: str) -> list[tuple[int, str]]:
     result: list[tuple[int, str]] = []
     scalar_indent: int | None = None
     scalar_start = re.compile(
-        r"^\s*(?:-\s+)?[A-Za-z_][A-Za-z0-9_-]*:\s*[|>][+-]?\s*(?:#.*)?$"
+        r"^\s*(?:-\s+)?[A-Za-z_][A-Za-z0-9_-]*:\s*[|>](?:[1-9][+-]?|[+-][1-9]?)?\s*(?:#.*)?$"
     )
     for number, line in enumerate(text.splitlines(), 1):
         stripped = line.lstrip(" ")
@@ -162,7 +162,8 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
 
 def scan_repository(root: Path, *, max_days: int) -> list[ArtifactUpload]:
     workflows = root / WORKFLOW_DIR
-    if workflows.is_symlink():
+    # The workflow leaf can appear regular even when its parent is a symlink.
+    if (root / ".github").is_symlink() or workflows.is_symlink():
         raise RuntimeError("symlink workflow directory rejected")
     if not workflows.is_dir():
         raise FileNotFoundError(f"workflow directory not found: {workflows}")
