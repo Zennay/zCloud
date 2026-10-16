@@ -41,6 +41,41 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           clean: true
+      - name: Admit canonical current main before executing PR code
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          origin="$(git remote get-url origin)"
+          [[ "$origin" == "https://github.com/Zennay/zCloud" || "$origin" == "https://github.com/Zennay/zCloud.git" ]]
+          advertised="$(timeout 20 git -c http.followRedirects=false ls-remote --exit-code origin refs/heads/main)"
+          test "$advertised" = "$EXPECTED_BASE"
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 -m unittest -v tests.test_zcloud_foreign_checkout_ratchet_20261016
+      - name: Compare complete workflow and composite checkout inventory
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git diff --quiet -- scripts/zcloud_foreign_checkout_ratchet_20261016.py
+          git cat-file -e "$EXPECTED_BASE^{commit}"
+          git cat-file -e "$EXPECTED_HEAD^{commit}"
+          python3 scripts/zcloud_foreign_checkout_ratchet_20261016.py \
+            --base "$EXPECTED_BASE" --head "$EXPECTED_HEAD" --require-current-main
+\t'"refs/heads/main"
       - name: Verify exact checkout and execute offline regressions
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
