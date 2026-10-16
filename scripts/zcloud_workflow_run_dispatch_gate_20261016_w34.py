@@ -26,7 +26,7 @@ RISK = (
     re.compile(r"\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+run\s+rerun\b", re.I),
     re.compile(r"\bgh\s+api\b[^\n]{0,400}", re.I),
     re.compile(r"\bcurl\b[^\n]{0,400}", re.I),
-    re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch)\b"),
+    re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch|reRunWorkflow|reRunWorkflowFailedJobs|reRunJob|rerunWorkflow)\b"),
 )
 STEP_USES = re.compile(r"(?m)^ {6,}(?:-\s+)?uses:[ \t]*(.*)$")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
@@ -36,6 +36,10 @@ DISPATCH_ACTIONS = {
     "benc-uk/workflow-dispatch",
     "convictional/trigger-workflow-and-wait",
 }
+
+# GitHub REST rerun endpoints can recursively enqueue another attempt without
+# calling the workflow/repository dispatch API at all.
+REST_RERUN = re.compile(r"/actions/runs/[^/\\s]+/rerun(?:-failed-jobs)?(?:\\b|$)", re.I)
 
 GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field|--input)(?=[ =]))", re.I)
 CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json|-F|--form(?:-string)?)(?=[ =@]))", re.I)
@@ -207,7 +211,7 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
             for match in pattern.finditer(normalized):
                 if detector in (2, 3):
                     fragment = match.group(0)
-                    if "/dispatches" not in fragment:
+                    if "/dispatches" not in fragment and not REST_RERUN.search(fragment):
                         continue
                     if not (GH_POST if detector == 2 else CURL_POST).search(fragment):
                         continue

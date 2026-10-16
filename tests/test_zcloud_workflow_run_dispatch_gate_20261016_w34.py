@@ -169,6 +169,36 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+
+    def test_rest_workflow_rerun_post_is_recursion_risk(self):
+        for command in (
+            "gh api -X POST /repos/Zennay/zCloud/actions/runs/123/rerun",
+            "gh api /repos/Zennay/zCloud/actions/runs/123/rerun-failed-jobs --method POST",
+            "gh api /repos/Zennay/zCloud/actions/runs/123/rerun -f anything=value",
+            "curl --request POST https://api.github.com/repos/Zennay/zCloud/actions/runs/123/rerun",
+            "curl https://api.github.com/repos/Zennay/zCloud/actions/runs/123/rerun-failed-jobs --data '{}'",
+            "octokit.rest.actions.reRunWorkflow({ run_id: 123 })",
+            "octokit.rest.actions.reRunWorkflowFailedJobs({run_id: 123})",
+            "octokit.rest.actions.reRunJob({job_id: 42})",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_rest_workflow_rerun_get_is_not_a_post(self):
+        for command in (
+            "gh api /repos/Zennay/zCloud/actions/runs/123/rerun",
+            "curl -X GET https://api.github.com/repos/Zennay/zCloud/actions/runs/123/rerun",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_added_rest_rerun_to_existing_dispatch_workflow_is_new_debt(self):
+        base = self.commit(DANGEROUS)
+        head = self.commit(DANGEROUS.replace(
+            "gh workflow run unsafe.yml",
+            "gh workflow run unsafe.yml\\n          gh api -X POST /repos/Zennay/zCloud/actions/runs/123/rerun"))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_read_only_dispatch_endpoint_is_not_a_post(self):
         for command in (
             "gh api /repos/Zennay/zCloud/dispatches",
