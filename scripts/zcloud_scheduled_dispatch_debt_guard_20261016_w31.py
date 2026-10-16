@@ -69,7 +69,7 @@ INLINE_LOCAL_ACTION = re.compile(
 INLINE_RUNS = re.compile(r"""(?m)^[ \t]*runs:[ \t]*\{([^}\n]*)\}""")
 INLINE_ACTION_ENTRY = re.compile(
     r"""(?:^|,)\s*(?:main|pre|post|['"](?:main|pre|post)['"])\s*:\s*"""
-    r"""['"]?([^,'"\\s}]+)"""
+    r"""['"]?([^,'"\s}]+)"""
 )
 
 OPAQUE_USES = re.compile(
