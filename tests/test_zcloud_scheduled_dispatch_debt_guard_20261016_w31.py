@@ -332,6 +332,94 @@ jobs:
         ))
         self.check(self.commit(), "pass")
 
+    def test_new_scheduled_reusable_workflow_dispatch_rejected(self):
+        caller = """name: schedule-delegation
+on:
+  schedule:
+    - cron: '0 8 * * *'
+jobs:
+  delegate:
+    uses: ./.github/workflows/runner.yml
+"""
+        helper = """name: runner
+on: workflow_call
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run production.yml
+"""
+        self.put("schedule-caller.yml", caller)
+        self.put("runner.yml", helper)
+        result = self.check(self.commit(), "reject")
+        self.assertGreaterEqual(result["new_sites"], 1)
+
+    def test_existing_scheduled_caller_detects_new_helper_dispatch(self):
+        caller = """on:
+  schedule:
+    - cron: '0 8 * * *'
+jobs:
+  delegate:
+    uses: ./.github/workflows/runner.yml
+"""
+        helper = """on: workflow_call
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo safe
+"""
+        self.put("schedule-caller.yml", caller)
+        self.put("runner.yml", helper)
+        base = self.commit()
+        self.put("runner.yml", helper.replace("echo safe", "gh workflow run release.yml"))
+        candidate = self.commit()
+        result = guard.evaluate(self.repo, base, candidate)
+        self.assertEqual(result["status"], "reject")
+        self.assertIn(".github/workflows/schedule-caller.yml", result["changed_workflows_with_new_sites"])
+
+    def test_existing_scheduled_delegate_is_stable_when_unchanged(self):
+        self.put("schedule-caller.yml", """on:
+  schedule:
+    - cron: '0 8 * * *'
+jobs:
+  delegate:
+    uses: ./.github/workflows/runner.yml
+""")
+        self.put("runner.yml", """on: workflow_call
+jobs:
+  delegate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run deploy.yml
+""")
+        base = self.commit()
+        report = guard.evaluate(self.repo, base, base)
+        self.assertEqual(report["new_sites"], 0)
+        self.assertEqual(report["status"], "pass")
+
+    def test_remote_reusable_workflow_delegation_denied(self):
+        self.put("remote.yml", """on: schedule
+jobs:
+  call:
+    uses: outside/repo/.github/workflows/deploy.yml@main
+""")
+        self.check(self.commit(), "reject")
+
+    def test_cyclic_local_reusable_workflows_bounded(self):
+        self.put("schedule-caller.yml", """on: schedule
+jobs:
+  next:
+    uses: ./.github/workflows/loop.yml
+""")
+        self.put("loop.yml", """on: workflow_call
+jobs:
+  next:
+    uses: ./.github/workflows/schedule-caller.yml
+""")
+        report = self.check(self.commit(), "reject")
+        self.assertLessEqual(report["new_sites"], 4)
+
     def test_git_stdout_bounded_during_read(self):
         # With a tiny cap even ls-tree inventory output is excessive.
         with mock.patch.object(guard, "MAX_TOTAL", 20):
