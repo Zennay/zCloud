@@ -145,7 +145,12 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
     # and escapes cannot be safely interpreted by this intentionally strict scanner.
     if re.search(r'(?m)^\s*with\s*:\s*[*!]\S+', body):
         why.add("ambiguous_yaml")
-    if re.search(r'(?m)^\s*\?\s*(?:script|["\x27]script["\x27])\s*
+    if any(line.lstrip().startswith(("? script", "? \"script\"", "? 'script'")) for line in body.splitlines()):
+        why.add("ambiguous_yaml")
+    if with_indent >= 0 and any(line.lstrip().startswith("<<: *") for line in body.splitlines()):
+        why.add("ambiguous_yaml")
+    if not script_found and (FLOW.search(body) or re.search(r"\bscript\s*:\s*[*!]", body)):
+        why.add("ambiguous_yaml")
     if not why:
         return None
     # YAML aliases, escaped delimiters and flow mappings may be defined outside
