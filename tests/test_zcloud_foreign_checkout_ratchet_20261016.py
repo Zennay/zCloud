@@ -134,6 +134,25 @@ class CheckoutRepoGuardTest(unittest.TestCase):
     def test_ordinary_action_and_shell_text_remain_safe(self):
         self.assertFalse(guard.scan('steps:\n    - uses: actions/setup-node@v4\n    - run: echo "*checkout"\n'))
 
+    def test_composite_actions_outside_github_actions_are_checked(self):
+        outside = 'tools/internal/action.yaml'
+        self.assertTrue(guard.compare({}, {outside: workflow('external/vendor')}))
+
+    def test_root_composite_action_is_checked(self):
+        self.assertTrue(guard.compare({}, {'action.yml': 'steps:\n  - uses: *hidden_checkout\n'}))
+
+    def test_action_named_similarly_does_not_expand_surface(self):
+        self.assertEqual(
+            guard.compare({}, {'tools/internal/my-action.yml': workflow('outside/repo')}),
+            [],
+        )
+
+    def test_nonworkflow_nested_yaml_is_not_action_metadata(self):
+        self.assertEqual(
+            guard.compare({}, {'config/action-inputs.yaml': workflow('outside/repo')}),
+            [],
+        )
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
