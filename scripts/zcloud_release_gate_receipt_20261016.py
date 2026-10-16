@@ -412,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--input", required=True, help="Local bounded JSON receipt path")
     parser.add_argument("--format", choices=("json", "markdown"), default="json",
                         help="Machine-readable JSON (default), or Dutch human-readable audit")
+    parser.add_argument("--exit-zero-on-offline-claims", action="store_true",
+                        help="Explicit offline-only opt-in: exit 0 if all UNVERIFIED claims are well formed; never release authority")
     args = parser.parse_args(argv)
     try:
         result = evaluate(decode_receipt(read_receipt(Path(args.input))))
@@ -429,7 +431,12 @@ def main(argv: list[str] | None = None) -> int:
         print(render_markdown(result))
     else:
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
-    return 0 if result["offline_claims_complete"] else 2
+    # Deny by default: a forged but schema-complete offline claim must never
+    # look like a production admission success to a shell `set -e` gate.
+    # Opt-in 0 is strictly a diagnostic claim-completeness signal, not a
+    # verified GitHub / VPS / independent-review release decision.
+    return 0 if (args.exit_zero_on_offline_claims and
+                 result["offline_claims_complete"]) else 2
 
 
 if __name__ == "__main__":
