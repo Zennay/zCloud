@@ -139,6 +139,29 @@ class IdentityPolicyTests(unittest.TestCase):
                 for val in (root, job, step):
                     self.assertIn("audit", g.unsafe_jobs(val))
 
+    def test_job_env_yaml_merge_cannot_hide_pre_guard_loader(self):
+        variants = (
+            "    env:\n      <<: *injected\n",
+            "    env:\n      SAFE: &anchor value\n",
+            "    env:\n      SAFE: *malicious\n",
+            "    env:\n      SAFE: !!str innocent\n",
+            "    env:\n      SAFE: |\n        value\n",
+            "    env:\n      'SAFE': value\n",
+            "    env:\n      SAFE: one\n      SAFE: two\n",
+            "    env:\n      SAFE: {unexpected: object}\n",
+        )
+        for entry in variants:
+            with self.subTest(entry=entry):
+                doc = wf().replace("    steps:", entry + "    steps:")
+                self.assertIn("audit", g.unsafe_jobs(doc))
+
+    def test_duplicate_job_env_block_is_not_trusted(self):
+        doc = wf().replace(
+            "    steps:",
+            "    env:\n      FIRST: one\n    env:\n      SECOND: two\n    steps:",
+        )
+        self.assertIn("audit", g.unsafe_jobs(doc))
+
     def test_inline_shadowed_runtime_environment_is_denied(self):
         for val in (wf().replace("jobs:", "env: {BASH_ENV: /tmp/code}\njobs:"),
                     wf().replace("    steps:", "    env: {PYTHONPATH: /tmp/payload}\n    steps:")):
