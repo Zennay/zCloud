@@ -108,6 +108,8 @@ class PortfolioQueueWorkerPoolAndMobileProjectTests(unittest.TestCase):
             expected_auto_start = (
                 contract["queue_mode"] != "human-gated"
                 and project["mode"] not in {"external_gate", "manual"}
+                # Newly onboarded projects are manually selected by the user.
+                and project_id not in {"mixlab", "tuddy", "fuckball"}
             )
             self.assertEqual(expected_auto_start, project["auto_start"], project_id)
 

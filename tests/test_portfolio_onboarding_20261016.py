@@ -58,14 +58,14 @@ class PortfolioOnboardingTests(unittest.TestCase):
         )
         self.assertEqual(self.contracts["tradengine"]["autonomy"]["mode"], "ai_worker")
 
-    def test_new_projects_are_gated_and_bounded(self):
+    def test_new_projects_are_manually_operable_and_bounded(self):
         active_ids = {p["id"] for p in self.projects if p["status"] != "archived"}
         self.assertEqual(active_ids, set(self.contracts) - {mode["id"] for mode in self.worker_modes})
         for pid in NEW_PROJECTS:
             with self.subTest(project=pid):
                 contract = self.contracts[pid]
                 self.assertEqual(contract["ai_worker_cap"], 1)
-                self.assertEqual(contract["autonomy"], {"mode": "external_gate", "auto_start": False})
+                self.assertEqual(contract["autonomy"], {"mode": "ai_worker", "auto_start": False})
                 self.assertEqual(contract["queue_mode"], "execution")
                 self.assertEqual(contract["compute"]["pool"], "build")
                 self.assertEqual(contract["compute"]["priority"], "background")
@@ -74,6 +74,23 @@ class PortfolioOnboardingTests(unittest.TestCase):
                 self.assertEqual(self.units[pid], [])
                 self.assertEqual(self.layout["order"].count(pid), 1)
                 self.assertNotIn(pid, self.layout["archived"])
+
+    def test_manual_project_contract_allows_real_autonomy_dispatch(self):
+        from unittest.mock import patch
+        import server
+        for pid in NEW_PROJECTS:
+            with self.subTest(project=pid), patch.object(
+                server, "_autonomy_config", return_value={
+                    **self.contracts[pid]["autonomy"],
+                    "dispatch_mode": "vps",
+                    "continue_delay_seconds": 60,
+                    "min_ai_interval_seconds": 60,
+                },
+            ):
+                state = server.project_autonomy_state(pid)
+                self.assertTrue(state["allow_ai"])
+                self.assertFalse(state["auto_start"])
+                self.assertEqual(state["reason"], "bounded_ai_worker")
 
     def test_zsentinel_is_cross_project_worker_mode_not_project_card(self):
         project_ids = [p["id"] for p in self.projects]
@@ -100,7 +117,7 @@ class PortfolioOnboardingTests(unittest.TestCase):
         for pid in NEW_PROJECTS:
             self.assertIn(pid, execution_inventory)
             self.assertFalse(self.contracts[pid]["autonomy"]["auto_start"])
-            self.assertEqual("external_gate", self.contracts[pid]["autonomy"]["mode"])
+            self.assertEqual("ai_worker", self.contracts[pid]["autonomy"]["mode"])
             self.assertNotIn(pid, load("portfolio_queue.seed.json") and [
                 item["project_id"] for item in load("portfolio_queue.seed.json")
                 if item.get("queue_id", "").startswith("autostart-")
