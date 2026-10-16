@@ -163,6 +163,13 @@ class IdentityPolicyTests(unittest.TestCase):
         value = wf().replace("        with:", "        continue-on-error: true\n        with:")
         self.assertIn("audit", g.unsafe_jobs(value))
 
+    def test_identity_guard_must_execute_from_checked_out_repo_root(self):
+        for directory in ("/tmp/attacker", ".", "${{ runner.temp }}", "../other"):
+            with self.subTest(directory=directory):
+                val = wf().replace("        run: |",
+                                   "        working-directory: " + directory + "\n        run: |")
+                self.assertIn("audit", g.unsafe_jobs(val))
+
     def test_unpinned_checkout_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf().replace(PIN, "main")))
 
