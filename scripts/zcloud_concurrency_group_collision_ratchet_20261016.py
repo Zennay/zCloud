@@ -133,7 +133,23 @@ def _workflow_entries(commit: str):
             raise AdmissionError("workflow file budget exceeded")
     return out
 
-def _group_entry(path: str, scope: str, value: object):
+def _normalize_group(group: str, workflow_name: str) -> str:
+    """Compare simple evaluated expressions rather than their YAML whitespace.
+
+    github.workflow resolves to the *name* of the workflow, not its path.
+    A duplicate name in another file must never silently bypass this gate.
+    Complex GitHub expressions are left literal and require separate review.
+    """
+    def replace(match):
+        expr = match.group(1).strip()
+        if re.fullmatch(r"github\.workflow", expr, re.IGNORECASE):
+            return workflow_name
+        if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_0-9-]+)+", expr):
+            return "${{" + expr.casefold() + "}}"
+        return match.group(0)
+    return re.sub(r"\$\{\{([^{}]{0,256})\}\}", replace, group)
+
+def _group_entry(path: str, scope: str, value: object, workflow_name: str):
     if value is None:
         return None
     if not isinstance(value, dict):
@@ -157,10 +173,10 @@ def _group_entry(path: str, scope: str, value: object):
         mode = "dynamic"
     else:
         raise AdmissionError("invalid cancel-in-progress value")
-    # github.workflow scopes the group by the actual workflow name.
-    if re.search(r"\$\{\{\s*github\.workflow\s*\}\}", group, re.IGNORECASE):
-        return None
-    token = hashlib.sha256(group.casefold().encode("utf-8")).hexdigest()
+    # GitHub evaluates workflow-name interpolations and ignores simple
+    # expression whitespace; collisions can arise with duplicate names.
+    resolved_group = _normalize_group(group, workflow_name)
+    token = hashlib.sha256(resolved_group.casefold().encode("utf-8")).hexdigest()
     return (token, path, scope, mode, queue)
 
 def _entries_for_file(path: str, contents: bytes):
@@ -170,8 +186,11 @@ def _entries_for_file(path: str, contents: bytes):
         raise AdmissionError("ambiguous or invalid workflow YAML") from e
     if not isinstance(body, dict):
         raise AdmissionError("workflow must be a YAML mapping")
+    name = body.get("name", path)
+    if not isinstance(name, str) or not (1 <= len(name) <= 256):
+        raise AdmissionError("non-literal or invalid workflow name")
     entries = []
-    root = _group_entry(path, "workflow", body.get("concurrency"))
+    root = _group_entry(path, "workflow", body.get("concurrency"), name)
     if root:
         entries.append(root)
     jobs = body.get("jobs", {})
@@ -182,7 +201,7 @@ def _entries_for_file(path: str, contents: bytes):
             raise AdmissionError("unsafe workflow job ID")
         if not isinstance(definition, dict):
             raise AdmissionError("workflow job must be mapping")
-        item = _group_entry(path, "job:" + job_id, definition.get("concurrency"))
+        item = _group_entry(path, "job:" + job_id, definition.get("concurrency"), name)
         if item:
             entries.append(item)
     return entries
