@@ -1,0 +1,90 @@
+"""Offline contract: monotonic, disjoint, no runner/VPS side effects."""
+import importlib.util
+from pathlib import Path
+import tempfile
+import subprocess
+import unittest
+
+MODULE = Path(__file__).parents[1] / 'scripts/zcloud_foreign_checkout_ratchet_20261016.py'
+spec = importlib.util.spec_from_file_location('checkout_guard', MODULE)
+guard = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(guard)
+P = '.github/workflows/example.yml'
+Q = '.github/actions/tool/action.yaml'
+
+
+def workflow(repository=None, step='- uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803'):
+    return 'name: Test\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      ' + step + ('\n        with:\n          repository: ' + repository if repository is not None else '') + '\n      - run: echo safe\n'
+
+
+class CheckoutRepoGuardTest(unittest.TestCase):
+    def test_current_repository_default_safe(self):
+        self.assertFalse(guard.scan(workflow()))
+
+    def test_explicit_same_repo_safe(self):
+        self.assertFalse(guard.scan(workflow('Zennay/zCloud')))
+        self.assertFalse(guard.scan(workflow('${{ github.repository }}')))
+
+    def test_foreign_repository_rejected(self):
+        self.assertTrue(guard.scan(workflow('other/repo')))
+
+    def test_dynamic_repository_rejected(self):
+        self.assertTrue(guard.scan(workflow('${{ github.event.pull_request.head.repo.full_name }}')))
+
+    def test_duplicate_legacy_risk_rejected(self):
+        old = workflow('other/repo')
+        new = old.replace('      - run: echo safe', '      - uses: actions/checkout@v4\n        with:\n          repository: other/repo\n      - run: echo safe')
+        self.assertEqual(guard.compare({P: old}, {P: new})[0]['new_count'], 1)
+
+    def test_grandfather_existing_unchanged_risk(self):
+        old = workflow('other/repo')
+        self.assertEqual(guard.compare({P: old}, {P: old}), [])
+
+    def test_remove_old_risk(self):
+        self.assertEqual(guard.compare({P: workflow('other/repo')}, {P: workflow()}), [])
+
+    def test_separate_path_risk_rejected(self):
+        self.assertEqual(len(guard.compare({P: workflow('other/repo')}, {P: workflow('other/repo'), Q: workflow('other/repo')})), 1)
+
+    def test_comment_ignored(self):
+        self.assertFalse(guard.scan('# - uses: actions/checkout@v4\n# repository: untrusted/repo'))
+
+    def test_noncanonical_checkout_cannot_sneak_through(self):
+        self.assertIn('ambiguous-checkout-syntax', guard.scan('- name: test\n  run: echo actions/checkout@v4'))
+
+    def test_quoted_foreign_repo_rejected(self):
+        self.assertTrue(guard.scan(workflow('"other/repo"')))
+
+    def test_other_step_repository_not_associated(self):
+        text = workflow() + '      - uses: actions/setup-node@v4\n        with:\n          repository: other/repo\n'
+        self.assertFalse(guard.scan(text))
+
+    def test_paths_scoped_to_workflows_and_composites(self):
+        self.assertEqual(guard.compare({'README.md': ''}, {'README.md': workflow('other/repo')}), [])
+
+    def test_changed_whitespace_does_not_create_new_risk(self):
+        old = workflow('other/repo')
+        self.assertEqual(guard.compare({P: old}, {P: old.replace('repository: other', 'repository:  other')}), [])
+
+    def test_bad_refs_deny(self):
+        self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
+
+    def test_git_tree_acceptance(self):
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(['git', 'init', '-q', td], check=True)
+            subprocess.run(['git', '-C', td, 'config', 'user.name', 'test'], check=True)
+            subprocess.run(['git', '-C', td, 'config', 'user.email', 'test@example.com'], check=True)
+            p = Path(td) / P
+            p.parent.mkdir(parents=True)
+            p.write_text(workflow(), encoding='utf-8')
+            subprocess.run(['git', '-C', td, 'add', '.'], check=True)
+            subprocess.run(['git', '-C', td, 'commit', '-qm', 'baseline'], check=True)
+            old = subprocess.check_output(['git', '-C', td, 'rev-parse', 'HEAD'], text=True).strip()
+            p.write_text(workflow('evil/repo'), encoding='utf-8')
+            subprocess.run(['git', '-C', td, 'commit', '-qam', 'bad'], check=True)
+            new = subprocess.check_output(['git', '-C', td, 'rev-parse', 'HEAD'], text=True).strip()
+            self.assertEqual(guard.main(['--repo', td, '--base', old, '--head', new]), 1)
+
+
+if __name__ == '__main__':
+    unittest.main()
