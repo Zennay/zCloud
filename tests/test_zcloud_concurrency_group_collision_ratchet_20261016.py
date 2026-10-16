@@ -485,6 +485,45 @@ class RatchetTests(unittest.TestCase):
         self.assertFalse(receipt["production_mutation_authorized"])
         self.assertNotIn("stable-", str(receipt))
 
+    def test_existing_collision_cannot_gain_automatic_event(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("first.yml", document("shared", False).replace(
+            "on: push", "on: [push, workflow_dispatch]"))
+        self.denied(base, self.save())
+
+    def test_existing_collision_cannot_remove_branch_event_filter(self):
+        scoped = document("shared", False).replace(
+            "on: push", "on:\n  push:\n    branches: [main]")
+        base = self.base(scoped, document("shared", False))
+        self.write("first.yml", document("shared", False))
+        self.denied(base, self.save())
+
+    def test_legacy_colliding_job_cannot_relax_if_guard(self):
+        guarded = document("shared", False, job=True).replace(
+            "  check:\n", "  check:\n    if: false\n")
+        base = self.base(guarded, document("shared", False))
+        self.write("first.yml", document("shared", False, job=True))
+        self.denied(base, self.save())
+
+    def test_changing_legacy_job_guard_requires_owner_review_even_if_narrower(self):
+        original = document("shared", False, job=True)
+        base = self.base(original, document("shared", False))
+        self.write("first.yml", original.replace(
+            "  check:\n", "  check:\n    if: false\n"))
+        self.denied(base, self.save())
+
+    def test_noncolliding_workflow_can_change_event_trigger(self):
+        base = self.base(document("shared", False), document("separate", False))
+        self.write("second.yaml", document("separate", False).replace(
+            "on: push", "on: [push, workflow_dispatch]"))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_removed_collision_allows_owner_event_cleanup(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("first.yml", document("separate", False).replace(
+            "on: push", "on: workflow_dispatch"))
+        self.assertEqual(gate.check(base, self.save()), (1, 0))
+
     def test_invalid_shas_denied(self):
         base = self.base()
         for invalid in ("main", "f" * 39, "z" * 40):
