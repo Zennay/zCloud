@@ -1,6 +1,6 @@
 # zCloud deploy-ops — deny-first release evidence receipt (offline contract)
 
-This contract is an **offline, read-only diagnostic**. It does not query GitHub, validate the honesty of an evidence producer, acquire the production lock, grant approval or deploy anything. Its strongest possible verdict is **operational_gates_observed=true**; **production_mutation_authorized is always false**. Do not use a passing receipt as live release admission.
+This contract is an **offline, read-only diagnostic**. It does not query GitHub, validate the honesty of an evidence producer, acquire the production lock, grant approval or deploy anything. Its strongest possible verdict is **offline_claims_complete=true**; **production_mutation_authorized and live_sources_verified are always false**. Do not use a passing receipt as live release admission.
 
 ## Why this matters
 
