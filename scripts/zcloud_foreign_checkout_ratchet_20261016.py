@@ -106,7 +106,11 @@ def compare(base: dict[str, str], head: dict[str, str]) -> list[dict[str, object
 
 
 def git(repo: str, *args: str) -> bytes:
-    p = subprocess.run(["git", "-C", repo, *args], capture_output=True, check=False)
+    try:
+        p = subprocess.run(["git", "-C", repo, *args], capture_output=True,
+                           check=False, timeout=20)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("Git source read timed out; refusing partial evidence") from exc
     if p.returncode:
         raise ValueError("Git source read failed; refusing partial evidence")
     return p.stdout
