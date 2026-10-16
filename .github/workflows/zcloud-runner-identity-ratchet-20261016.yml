@@ -55,6 +55,7 @@ jobs:
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          POLICY_BLOB: e42fa4095d5033cba88c583f4be384dce9f6fde3
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
@@ -62,6 +63,12 @@ jobs:
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$HEAD_SHA"
           test "$(git cat-file -t "$BASE_SHA")" = commit
-          python3 -m py_compile scripts/zcloud_new_runner_identity_guard_20261016.py
+          # Execute an immutable policy blob pinned in this workflow, not
+          # arbitrary Python replaced alongside a candidate PR change.
+          [[ "$POLICY_BLOB" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git cat-file -t "$POLICY_BLOB")" = blob
+          test "$(git hash-object scripts/zcloud_new_runner_identity_guard_20261016.py)" = "$POLICY_BLOB"
+          git cat-file blob "$POLICY_BLOB" > "$RUNNER_TEMP/pinned-runner-identity-policy.py"
+          python3 -m py_compile "$RUNNER_TEMP/pinned-runner-identity-policy.py"
           python3 -m unittest -v tests.test_zcloud_new_runner_identity_guard_20261016
-          python3 scripts/zcloud_new_runner_identity_guard_20261016.py --base "$BASE_SHA" --head "$HEAD_SHA" | tee "$RUNNER_TEMP/zcloud-runner-identity.json"
+          python3 "$RUNNER_TEMP/pinned-runner-identity-policy.py" --base "$BASE_SHA" --head "$HEAD_SHA" | tee "$RUNNER_TEMP/zcloud-runner-identity.json"
