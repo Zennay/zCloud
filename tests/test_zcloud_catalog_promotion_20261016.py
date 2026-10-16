@@ -10,7 +10,8 @@ from unittest.mock import patch
 from scripts import zcloud_transactional_promote as promote
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-vps-deploy.yml"
+WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-catalog-activation-20261016.yml"
+PRODUCTION = ROOT / ".github" / "workflows" / "zcloud-vps-deploy.yml"
 
 
 class _ReachedCandidateValidation(Exception):
@@ -58,28 +59,48 @@ class LiveCatalogPromotionTests(unittest.TestCase):
             with self.assertRaises(_ReachedCandidateValidation):
                 promote.promote(**kwargs)
 
-    def test_workflow_serially_promotes_real_catalog_and_worker_modes(self):
+    def test_manual_workflow_serially_promotes_catalog_after_owner_preflight(self):
         text = WORKFLOW.read_text(encoding="utf-8")
-        first = text.index("- name: Promote audited project catalog with matching runtime contracts")
-        backend = text.index("- name: Promote backend runtime core")
-        role = text.index("- name: Promote zSentinel worker-mode registry")
-        seed = text.index("- name: Promote autonomy policies and queue seed")
-        self.assertLess(first, backend)
-        self.assertLess(backend, role)
-        self.assertLess(role, seed)
-        catalog_section = text[first:backend]
+        self.assertIn("workflow_dispatch:", text)
+        for binding in (
+            "github.repository == 'Zennay/zCloud'",
+            "github.ref == 'refs/heads/main'",
+            "github.actor == 'Zennay'",
+            "github.triggering_actor == 'Zennay'",
+            "github.run_attempt == 1",
+            "test \"$CONFIRMED_SHA\" = \"$GITHUB_SHA\"",
+            "git ls-remote --exit-code https://github.com/Zennay/zCloud.git",
+            "scripts/zcloud_vps_runner_guard.py",
+        ):
+            with self.subTest(binding=binding):
+                self.assertIn(binding, text)
+        first = text.index("- name: Promote the audited project catalog and matching autonomy contracts")
+        role = text.index("- name: Publish the zSentinel worker-role metadata")
+        assert_status = text.index("- name: Verify real runtime project and worker role inventory")
+        self.assertLess(first, role)
+        self.assertLess(role, assert_status)
+        catalog_section = text[first:role]
         self.assertIn("--path projects.json", catalog_section)
         self.assertIn("--path project-contracts.json", catalog_section)
         self.assertIn("--promote-reviewed-project-catalog", catalog_section)
-        self.assertIn("--preserve-schema-validated-runtime-config", catalog_section)
         self.assertNotIn("--path project-layout.json", catalog_section)
-        roles_section = text[role:seed]
+        self.assertIn("--preserve-schema-validated-runtime-config", catalog_section)
+        roles_section = text[role:assert_status]
         self.assertIn("--path worker-modes.json", roles_section)
         self.assertIn("--preserve-schema-validated-runtime-config", roles_section)
-        self.assertNotIn("--path projects.json", roles_section)
-        self.assertIn("concurrency:", text)
         self.assertIn("group: zcloud-production-deploy", text)
         self.assertIn("runs-on: [self-hosted, zcloud, vps]", text)
+        self.assertIn("zcloud_deploy_safe_idle.py enter", text)
+        self.assertIn("zcloud_deploy_safe_idle.py restore", text)
+        self.assertIn("if: always()", text)
+        self.assertNotIn("schedule:", text)
+
+    def test_automatic_production_deploy_remains_unchanged_and_excludes_catalog(self):
+        text = PRODUCTION.read_text(encoding="utf-8")
+        self.assertNotIn("--path projects.json", text)
+        self.assertNotIn("--path project-layout.json", text)
+        self.assertNotIn("--path worker-modes.json", text)
+        self.assertIn("group: zcloud-production-deploy", text)
 
     def test_sentinel_and_new_projects_have_noncolliding_catalog_entries(self):
         import json
