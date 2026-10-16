@@ -158,6 +158,32 @@ class RunnerEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.InvalidEvidence,'invalid_input_size'):
             mod.load_json(b' ' * (mod.MAX_INPUT + 1))
 
+    def test_explicit_false_or_zero_clock_fails_closed(self):
+        for now in (0, False, ''):
+            with self.subTest(now=now), self.assertRaisesRegex(mod.InvalidEvidence, 'unknown_clock'):
+                mod.inspect(fixture(), now=now)
+
+    def test_cli_uses_fixed_diagnostic_reason_on_good_claim(self):
+        x=fixture(); x['captured_at']=datetime.now(timezone.utc).isoformat()
+        p=subprocess.run([sys.executable,str(SCRIPT)],input=json.dumps(x).encode(),capture_output=True)
+        self.assertEqual(p.returncode, 2)
+        self.assertEqual(json.loads(p.stdout)['reason_code'], 'diagnostic_only')
+
+    def test_cli_reports_safe_origin_error_without_echoing_input(self):
+        x=fixture(); x['request_url']='https://evil.example/private?token=abc123'
+        p=subprocess.run([sys.executable,str(SCRIPT)],input=json.dumps(x).encode(),capture_output=True)
+        self.assertEqual(p.returncode,2)
+        report=json.loads(p.stdout)
+        self.assertEqual(report['reason_code'], 'unbound_api_response')
+        self.assertNotIn(b'abc123',p.stdout+p.stderr)
+
+    def test_cli_reports_redacted_missing_repo_reason(self):
+        x=fixture(); x['repository']='untrusted-secret-operator-data'
+        p=subprocess.run([sys.executable,str(SCRIPT)],input=json.dumps(x).encode(),capture_output=True)
+        self.assertEqual(p.returncode,2)
+        self.assertEqual(json.loads(p.stdout)['reason_code'], 'unbound_repository')
+        self.assertNotIn(b'untrusted-secret-operator-data',p.stdout+p.stderr)
+
     def test_cli_parses_current_claim_but_never_exits_success_or_leaks_identity(self):
         x=fixture()
         x['captured_at']=datetime.now(timezone.utc).isoformat()
