@@ -17,8 +17,8 @@ def row(pid=123, ppid=1, binary="/snap/firefox/usr/lib/firefox/firefox", port="6
 
 class LiveTabPortIdentityTests(unittest.TestCase):
     def test_positive_real_firefox_command(self):
-        self.assertEqual(detect_debugger_port([row()]), ("unique", 6000))
-        self.assertEqual(detect_debugger_port([row(binary="firefox-bin", port="9222")]), ("unique", 9222))
+        self.assertEqual(detect_debugger_port([row()], verify_executable=lambda pid: True), ("unique", 6000))
+        self.assertEqual(detect_debugger_port([row(binary="firefox-bin", port="9222")], verify_executable=lambda pid: True), ("unique", 9222))
 
     def test_no_match_stays_absent(self):
         self.assertEqual(detect_debugger_port(["42 1 /usr/bin/python3 worker.py"]), ("absent", None))
@@ -27,7 +27,7 @@ class LiveTabPortIdentityTests(unittest.TestCase):
     def test_child_content_process_excluded(self):
         self.assertEqual(detect_debugger_port([
             row(), row(pid=124) + " -contentproc 1",
-        ]), ("unique", 6000))
+        ], verify_executable=lambda pid: True), ("unique", 6000))
 
     def test_shell_python_and_grep_spoofs_are_not_valid_debugger(self):
         for binary in ("bash", "/usr/bin/python3", "grep", "/opt/firefox-fake", "evilfirefox"):
@@ -87,6 +87,10 @@ class LiveTabPortIdentityTests(unittest.TestCase):
             "42 1 /snap/firefox-not-browser -start-debugger-server 6000",
         ):
             self.assertEqual(detect_debugger_port([line]), ("ambiguous", None))
+
+    def test_ps_process_title_without_kernel_evidence_never_authorizes_rdp(self):
+        self.assertEqual(detect_debugger_port([row()]), ("ambiguous", None))
+        self.assertEqual(detect_debugger_port([row(binary="firefox-bin")]), ("ambiguous", None))
 
     def test_kernel_executable_attestation_allows_only_system_firefox(self):
         for executable in (
