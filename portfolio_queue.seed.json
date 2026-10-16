@@ -318,5 +318,35 @@
     "eligible": true,
     "completion_criteria": "PRIORITY 1: eliminate portfolio blockers and prove restored progress. Read canonical Notion Project Genesis, Company and Portfolio Control Tower OS and current GitHub P0 incidents, open issues, PRs, branches, CI, queue/worker ownership. Distinguish real stuck dependencies from intentional permission/research/release/device gates. Independently debug and fix root causes through code/tests, design and implement alternative safe execution routes, or redirect FREE nonbusy workers toward independent actionable tasks. Where authorized adjust queue priorities/sequence and stale unclaimed work with durable proof and rollback. Never interrupt live generation, steal owner claims, bypass release/security/research rights or force production deployment. Require actual work and tests, fresh claim and runtime evidence; heartbeat, retries and status alone are not completion. PRIORITY 2: then fix unresolved open P0/P1 and P2/P3 issues, incomplete PRs, bugs and roadmap features across all projects; if any individual task is blocked, switch directly to another safe unowned task rather than waiting for human input. Perform multiple material implementation steps.",
     "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
+  },
+  {
+    "queue_id": "mixlab-m0-m4-autonomous-product-build",
+    "project_id": "mixlab",
+    "title": "Build and validate MixLab's next unowned product milestone",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Follow MixLab Notion HQ, inspect issues and active PR ownership, implement and test the highest-impact unowned product milestone in Zennay/Mixlab. Commit concrete working code and validate CI; do not interrupt another worker or run unapproved production/device operations.",
+    "source_url": "https://app.notion.com/p/3e79e19ac95581a78ee3f24aa5e7e8b6"
+  },
+  {
+    "queue_id": "fuckball-gameplay-quality-autonomous-build",
+    "project_id": "fuckball",
+    "title": "Improve and test unowned Fuckball gameplay and AI",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Follow Fuckball Notion HQ and existing issue/PR owners; implement one safe unowned gameplay, team passing, goalkeeper timing or reliability improvement in Zennay/fuckball. Include reproducible tests and CI; preserve current protected physics settings and do not deploy while production release gates are open.",
+    "source_url": "https://app.notion.com/p/3f99e19ac95581bca947da243bd78f91"
+  },
+  {
+    "queue_id": "tuddy-m0-autonomous-android-foundation",
+    "project_id": "tuddy",
+    "title": "Implement the next unowned Tuddy Android milestone",
+    "priority": "P2",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Follow Tuddy Notion HQ; inspect existing branches and issues; implement a concrete nonconflicting Android product feature or build/test foundation in Zennay/Tuddy, validate with CI where available, and keep physical device validation and release gates intact.",
+    "source_url": "https://app.notion.com/p/3f89e19ac955810aa4a5e53871966f8f"
   }
 ]
