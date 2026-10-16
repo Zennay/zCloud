@@ -28,8 +28,17 @@ ACTION_CODE = re.compile(r"\.github/actions/(?:[^/\0]+/)+[^/\0]+\.(?:js|mjs|cjs|
 ACTION_DOCKERFILE = re.compile(
     r"\.github/actions/(?:[^/\0]+/)+Dockerfile(?:\.[A-Za-z0-9_.-]+)?\Z"
 )
+# Docker build contexts also consume non-executable text configuration files.
+# Only bounded Git blobs from an explicit extension/name allowlist are scanned,
+# never secrets, remote files, filesystem state, or unbounded binary assets.
+ACTION_DOCKER_ASSET = re.compile(
+    r"\.github/actions/(?:[^/\0]+/)+(?:\.dockerignore|Makefile|Gemfile|go\.mod|go\.sum|"
+    r"[^/\0]+\.(?:json|jsonc|ya?ml|toml|ini|cfg|conf|properties|txt|xml|lock|"
+    r"env|ts|tsx|jsx|ps1|psm1|go|rb|rs))\Z"
+)
 DOCKER_USING = re.compile(
-    r"""\busing\s*:\s*['"]?docker['"]?(?=\s*(?:[,}#]|$))""", re.MULTILINE
+    r"""(?:\busing|['"]using['"])\s*:\s*['"]?docker['"]?(?=\s*(?:[,}#]|$))""",
+    re.MULTILINE,
 )
 HELPER_CODE = re.compile(r"(?:scripts|\.github/scripts)/(?:[^/\0]+/)*[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
 ACTION_ENTRY = re.compile(
@@ -186,7 +195,7 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
             path = path_bytes.decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError("invalid Git tree entry") from exc
-        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path) or ACTION_DOCKERFILE.fullmatch(path) or HELPER_CODE.fullmatch(path)):
+        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path) or ACTION_DOCKERFILE.fullmatch(path) or ACTION_DOCKER_ASSET.fullmatch(path) or HELPER_CODE.fullmatch(path)):
             continue
         # A newline, terminal escape or delimiter hidden in a Git pathname
         # must never be folded into apparently ordinary evidence filenames.
@@ -364,6 +373,7 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                         for name, source in workflows.items()
                         if name.startswith(prefix)
                         and (ACTION_DOCKERFILE.fullmatch(name)
+                             or ACTION_DOCKER_ASSET.fullmatch(name)
                              or ACTION_CODE.fullmatch(name))
                     )
                     docker_signature = hashlib.sha256(json.dumps(
