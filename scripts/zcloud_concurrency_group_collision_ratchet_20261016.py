@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only no-new-debt admission for cross-workflow cancellation collisions."""
+"""Read-only admission against new cross-workflow cancellation and self-deadlock."""
 from __future__ import annotations
 import argparse
 import hashlib
@@ -238,7 +238,13 @@ def findings(commit: str):
                 # once its bounded capacity is exhausted. Same-group flows
                 # therefore cannot be assumed independent across workflows.
                 if first[0] == second[0]:
-                    continue
+                    # Within one workflow, sharing a group across the top-level
+                    # workflow and a nested job can block the job behind its
+                    # parent lock. Distinct sibling jobs may intentionally
+                    # serialize and remain outside this narrow self-deadlock
+                    # policy.
+                    if "workflow" not in (first[1], second[1]):
+                        continue
                 out.add((token, *sorted((first, second))))
                 if len(out) > MAX_FINDINGS:
                     raise AdmissionError("concurrency finding budget exceeded")
