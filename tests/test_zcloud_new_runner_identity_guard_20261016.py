@@ -191,7 +191,8 @@ class IdentityPolicyTests(unittest.TestCase):
 
     def test_must_have_literal_steps_mapping(self):
         value = wf().replace("    steps:", "    renamed_steps:")
-        self.assertIn("audit", g.unsafe_jobs(value))
+        with self.assertRaises(ValueError):
+            g.unsafe_jobs(value)
 
     def test_skipped_checkout_is_not_trusted(self):
         value = wf().replace("        with:", "        if: false\n        with:")
@@ -219,20 +220,23 @@ class IdentityPolicyTests(unittest.TestCase):
         for key in ('"services"', "'services'", '"container"', "'defaults'"):
             with self.subTest(key=key):
                 text = wf().replace("    steps:", "    " + key + ": {db: {image: postgres:16}}\n    steps:")
-                self.assertIn("audit", g.unsafe_jobs(text))
+                with self.assertRaises(ValueError):
+                    g.unsafe_jobs(text)
 
     def test_job_yaml_merge_cannot_synthesize_services_before_identity(self):
         for suffix in ("    <<: *preset", "    ? services: {db: {image: postgres:16}}"):
             with self.subTest(suffix=suffix):
                 text = wf().replace("    steps:", suffix + "\n    steps:")
-                self.assertIn("audit", g.unsafe_jobs(text))
+                with self.assertRaises(ValueError):
+                    g.unsafe_jobs(text)
 
     def test_tagged_unknown_or_quoted_job_keys_cannot_hide_services(self):
         for k in ("!!str services", "!service services", '"services"', "'services'",
                   "surprise-setting"):
             with self.subTest(key=k):
                 val = wf().replace("    steps:", "    " + k + ": {db: {image: postgres:16}}\n    steps:")
-                self.assertIn("audit", g.unsafe_jobs(val))
+                with self.assertRaises(ValueError):
+                    g.unsafe_jobs(val)
 
     def test_supported_literal_job_metadata_still_allows_guard(self):
         val = wf().replace("    steps:", "    timeout-minutes: 12\n    permissions:\n"
