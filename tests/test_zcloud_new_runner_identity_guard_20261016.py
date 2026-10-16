@@ -170,6 +170,52 @@ class IdentityPolicyTests(unittest.TestCase):
                                    "        working-directory: " + directory + "\n        run: |")
                 self.assertIn("audit", g.unsafe_jobs(val))
 
+    def test_pre_guard_service_container_denied(self):
+        for service in ("    services:\n      postgres:\n        image: postgres:16",
+                        "    services: {redis: {image: redis:7}}"):
+            with self.subTest(service=service):
+                val = wf().replace("    steps:", service + "\n    steps:")
+                self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_checkout_remote_or_alternate_source_denied(self):
+        for setting in ("repository: attacker/fork", "ref: evil-branch",
+                        "path: subfolder", "ssh-key: ${{ secrets.KEY }}",
+                        "token: ${{ secrets.ELEVATED_TOKEN }}",
+                        "sparse-checkout: scripts", "filter: blob:none",
+                        "submodules: true", "submodules: recursive", "lfs: true",
+                        "clean: false", "persist-credentials: true"):
+            with self.subTest(setting=setting):
+                val = wf().replace("          persist-credentials: false",
+                                   "          persist-credentials: false\n          " + setting)
+                self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_checkout_credentials_must_be_explicitly_disabled(self):
+        for val in (wf().replace("        with:\n          persist-credentials: false\n", ""),
+                    wf().replace("persist-credentials: false", "persist-credentials: true"),
+                    wf().replace("persist-credentials: false", "persist-credentials: ${{ inputs.flag }}")):
+            self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_checkout_rejects_duplicated_or_inline_inputs(self):
+        examples = (
+            wf().replace("          persist-credentials: false",
+                         "          persist-credentials: false\n          persist-credentials: false"),
+            wf().replace("        with:\n          persist-credentials: false",
+                         "        with: {persist-credentials: false}"),
+            wf().replace("        with:", "        with:\n          persist-credentials: false\n        with:"),
+        )
+        for val in examples:
+            self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_bounded_static_checkout_options_allowed(self):
+        val = wf().replace("          persist-credentials: false",
+                           "          persist-credentials: false\n          clean: true\n          submodules: false\n"
+                           "          lfs: false\n          fetch-depth: 1")
+        self.assertEqual(g.unsafe_jobs(val), {})
+
+    def test_checkout_pre_guard_environment_is_not_trusted(self):
+        val = wf().replace("        with:", "        env:\n          GIT_CONFIG_GLOBAL: /tmp/malicious\n        with:")
+        self.assertIn("audit", g.unsafe_jobs(val))
+
     def test_unpinned_checkout_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf().replace(PIN, "main")))
 
