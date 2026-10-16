@@ -259,6 +259,23 @@
         "priority": "background",
         "protected": false
       }
+    },
+    "zsentinel": {
+      "queue_mode": "execution",
+      "lane_profile": "platform",
+      "ai_worker_cap": 1,
+      "autonomy": {
+        "mode": "external_gate",
+        "auto_start": false
+      },
+      "compute": {
+        "class": "control-plane-observer",
+        "pool": "build",
+        "cpu_soft_cores": 1,
+        "memory_soft_mb": 512,
+        "priority": "high",
+        "protected": false
+      }
     }
   }
 }
