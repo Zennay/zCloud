@@ -7,7 +7,9 @@ on:
       - deployops/runner-registration-evidence-20261016-w33
     paths:
       - scripts/zcloud_runner_registration_evidence_20261016_w33.py
+      - scripts/zcloud_runner_registration_collect_20261016_w33.py
       - tests/test_zcloud_runner_registration_evidence_20261016_w33.py
+      - tests/test_zcloud_runner_registration_collect_20261016_w33.py
       - docs/deployops-runner-registration-evidence-20261016-w33.md
       - .github/workflows/zcloud-runner-registration-evidence-hosted-20261016-w33.yml
 
@@ -33,7 +35,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile scripts/zcloud_runner_registration_evidence_20261016_w33.py
-          python3 -m unittest discover -s tests -p 'test_zcloud_runner_registration_evidence_20261016_w33.py' -v
+          python3 -m py_compile scripts/zcloud_runner_registration_collect_20261016_w33.py
+          python3 -m unittest discover -s tests -p 'test_zcloud_runner_registration_*_20261016_w33.py' -v
   hosted-regression:
     # Independent source-only full-suite evidence: no self-hosted, secrets, or write token.
     if: >-
