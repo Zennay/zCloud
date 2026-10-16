@@ -30,8 +30,10 @@ MAX_GROUP_ENTRIES = 4096
 # group at runtime even if their selector source text differs. Treat newly
 # introduced values as unresolved, not proof of group uniqueness.
 STATIC_IDENTITY_SELECTORS = frozenset({
-    "github.workflow", "github.ref", "github.run_id", "github.run_attempt",
-    "github.sha", "github.repository", "github.event_name",
+    # github.workflow is substituted using the explicit static workflow name;
+    # another workflow with the same name is still compared as a collision.
+    # github.run_id is unique per workflow run (including run-scoped proofs).
+    "github.workflow", "github.run_id",
 })
 
 class AdmissionError(ValueError):
