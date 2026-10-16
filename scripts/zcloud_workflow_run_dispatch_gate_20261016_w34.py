@@ -99,10 +99,21 @@ def workflow_run_event(source: str) -> bool:
     start = headers[0]
     same_line = start.group(1).split("#", 1)[0].strip()
     if same_line:
-        if same_line.startswith("*") or same_line.startswith("&"):
+        # YAML aliases/merge mappings can change the effective trigger without
+        # changing any literal workflow_run token. Do not infer a safe trigger
+        # from a flow collection whose elements are partly unknown.
+        if re.search(r"(?<![A-Za-z0-9_])(?:[*&][A-Za-z_][A-Za-z0-9_-]*|<<\s*:)", same_line):
             raise EvidenceError("aliased_event_mapping")
         if same_line.startswith("[") and same_line.endswith("]"):
-            return "workflow_run" in {v.strip(" '\"") for v in same_line[1:-1].split(",")}
+            tokens = [entry.strip() for entry in same_line[1:-1].split(",")]
+            names = []
+            for token in tokens:
+                if not re.fullmatch(r"""(?:[A-Za-z_][A-Za-z0-9_]*|'[A-Za-z_][A-Za-z0-9_]*'|"[A-Za-z_][A-Za-z0-9_]*")""", token):
+                    raise EvidenceError("unsupported_event_mapping")
+                names.append(token.strip("'\""))
+            if len(names) != len(set(names)):
+                raise EvidenceError("duplicate_event")
+            return "workflow_run" in names
         if same_line.startswith("{") and same_line.endswith("}"):
             return bool(re.search(r"(?:^|[, {])['\"]?workflow_run['\"]?\s*:", same_line))
         if same_line in ("workflow_run", "'workflow_run'", '"workflow_run"'):

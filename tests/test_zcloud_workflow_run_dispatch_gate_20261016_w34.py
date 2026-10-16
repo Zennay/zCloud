@@ -120,6 +120,30 @@ class GateTests(unittest.TestCase):
             with self.assertRaises(EvidenceError):
                 workflow_run_event(src)
 
+    def test_inline_trigger_alias_and_ambiguous_list_deny(self):
+        malformed = (
+            "on: [*untrusted]\njobs:\n",
+            "on: [push, *untrusted]\njobs:\n",
+            "on: [workflow_run, *untrusted]\njobs:\n",
+            "on: {push: {}, workflow_run: *untrusted}\njobs:\n",
+            "on: {<<: *defaults, workflow_run: {}}\njobs:\n",
+            "on: [push, workflow_run, workflow_run]\njobs:\n",
+            "on: [push, !custom]\njobs:\n",
+            "on: []\njobs:\n",
+        )
+        for source in malformed:
+            with self.subTest(source=source), self.assertRaises(EvidenceError):
+                workflow_run_event(source)
+
+    def test_literal_inline_trigger_collections_still_classify(self):
+        for source in (
+            "on: [workflow_run]\njobs:\n",
+            "on: ['push', \"workflow_run\"]\njobs:\n",
+            "on: {workflow_run: {types: [completed]}, push: {}}\njobs:\n",
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(workflow_run_event(source))
+
     def test_run_body_detection(self):
         self.assertTrue(classify(DANGEROUS))
         self.assertTrue(classify(TEMPLATE.replace("echo harmless", "gh run rerun 123")))
