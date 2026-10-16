@@ -148,6 +148,25 @@ class CheckoutCleanTests(unittest.TestCase):
 
 
 
+    def test_quoted_double_selfhosted_sequence_runner(self):
+        source = sample("false", runner='\n      - "self-hosted"\n      - vps')
+        self.assertTrue(any("unsafe-clean" in row[-1] for row in self.find(source)))
+
+    def test_quoted_single_selfhosted_sequence_runner(self):
+        source = sample("false", runner="\n      - 'self-hosted'\n      - vps")
+        self.assertTrue(any("unsafe-clean" in row[-1] for row in self.find(source)))
+
+    def test_dynamic_runner_checkout_denied_as_unknown_destination(self):
+        source = sample("true", runner="$" + "{{ fromJSON(inputs.runner) }}")
+        self.assertTrue(any("dynamic-runner-checkout" in row[-1] for row in self.find(source)))
+
+    def test_dynamic_runner_without_checkout_does_not_trigger(self):
+        source = sample("true", runner="$" + "{{ inputs.runner }}",
+                        uses="actions/setup-node@v7")
+        self.assertEqual(self.find(source), [])
+
+
+
 class ImmutableGitTreeTests(unittest.TestCase):
     """Exercise the complete scanner with actual local Git objects and remote main."""
 
