@@ -36,6 +36,7 @@ RISK = (
     re.compile(r"\b(?:requests|httpx)\.(?:post|request)\s*\([^\n]*", re.I),
     re.compile(r"\bfetch\s*\([^\n]*", re.I),
     re.compile(r"\baxios\.post\s*\([^\n]*", re.I),
+    re.compile(r"\b(?:octokit|github)\.request\s*\([^\n]*", re.I),
 )
 STEP_USES = re.compile(r"""(?m)^( +)(?:-\s+)?(?:uses|'uses'|"uses"):[ \t]*(.*)$""")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
@@ -267,7 +268,7 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
                                   if part.strip())
         for detector, pattern in enumerate(RISK):
             for match in pattern.finditer(normalized):
-                if detector in (2, 3, 5, 6, 7, 8, 9):
+                if detector in (2, 3, 5, 6, 7, 8, 9, 10):
                     fragment = match.group(0)
                     if "/dispatches" not in fragment and not REST_RERUN.search(fragment):
                         continue
@@ -280,6 +281,9 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
                             continue
                     elif detector == 9:
                         pass  # axios.post always sends a POST
+                    elif detector == 10:
+                        if not re.search(r"\.request\s*\(\s*['\"]POST(?:\s|['\"])", fragment, re.I):
+                            continue
                     elif not methods[detector].search(fragment):
                         continue
                 start = normalized.rfind("\n", 0, match.start()) + 1

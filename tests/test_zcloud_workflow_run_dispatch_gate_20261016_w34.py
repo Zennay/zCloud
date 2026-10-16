@@ -342,6 +342,33 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+    def test_octokit_generic_post_request_dispatch_risk(self):
+        commands = (
+            'node -e \'octokit.request("POST /repos/Zennay/zCloud/dispatches", {})\'',
+            "node -e 'github.request(\"POST /repos/Zennay/zCloud/actions/jobs/42/rerun\")'",
+            "node -e 'octokit.request(\"POST /repos/Zennay/zCloud/actions/workflows/a.yml/dispatches\")'",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_octokit_generic_get_request_is_not_dispatch_risk(self):
+        commands = (
+            'node -e \'octokit.request("GET /repos/Zennay/zCloud/dispatches")\'',
+            "node -e 'github.request(\"GET /repos/Zennay/zCloud/actions/jobs/42/rerun\")'",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_octokit_generic_post_adds_new_immutable_debt(self):
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            "node -e 'octokit.request(\"POST /repos/Zennay/zCloud/dispatches\")'",
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_node_fetch_with_literal_post_dispatch(self):
         commands = (
             'node -e \'fetch("https://api.github.com/repos/Zennay/zCloud/dispatches", {method: "POST"})\'',
