@@ -1861,5 +1861,239 @@ jobs:
 
 
 
+    def test_docker_action_json_context_edit_rejected(self):
+        self.put("scheduled-docker-json.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/json-build
+""")
+        self.put_action("json-build", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/json-build"
+        (root / "Dockerfile").write_text(
+            "FROM alpine:3.20\nCOPY config.json /app/config.json\n", encoding="utf-8")
+        config = root / "config.json"
+        config.write_text('{"dispatch": false}\n', encoding="utf-8")
+        base = self.commit()
+        config.write_text('{"dispatch": true}\n', encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertEqual(result["new_sites"], 1)
+
+    def test_docker_action_dockerignore_change_rejected(self):
+        self.put("scheduled-docker-ignore.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/docker-ignore
+""")
+        self.put_action("docker-ignore", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/docker-ignore"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        ignore = root / ".dockerignore"
+        ignore.write_text("secrets/\n", encoding="utf-8")
+        base = self.commit()
+        ignore.write_text("not-secret/\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_config_addition_rejected(self):
+        self.put("scheduled-docker-config-add.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/config-add
+""")
+        self.put_action("config-add", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/config-add"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        (root / "settings.toml").write_text("release = true\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_lockfile_removal_rejected(self):
+        self.put("scheduled-docker-lock.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/lock-remove
+""")
+        self.put_action("lock-remove", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/lock-remove"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        lockfile = root / "package-lock.json"
+        lockfile.write_text('{"lockfileVersion": 3}\n', encoding="utf-8")
+        base = self.commit()
+        lockfile.unlink()
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_nested_yaml_config_change_rejected(self):
+        self.put("scheduled-docker-nested-config.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/nested-config
+""")
+        self.put_action("nested-config", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/nested-config"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        config = root / "config/job.yaml"
+        config.parent.mkdir()
+        config.write_text("dispatch: false\n", encoding="utf-8")
+        base = self.commit()
+        config.write_text("dispatch: true\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_quoted_using_single_detected(self):
+        self.put("scheduled-quoted-docker.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/quoted-docker
+""")
+        self.put_action("quoted-docker", """runs:
+  'using': 'docker'
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/quoted-docker"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        (root / "config.json").write_text('{"dispatch": true}\n', encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_quoted_using_double_flow_detected(self):
+        self.put("scheduled-quoted-flow-docker.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps: [{uses: ./.github/actions/flow-docker}]
+""")
+        self.put_action("flow-docker", """runs: {"using": "docker", image: Dockerfile}
+""")
+        root = self.repo / ".github/actions/flow-docker"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        (root / ".dockerignore").write_text("build/\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_manual_docker_context_edit_not_scheduled(self):
+        self.put("manual-docker-config.yml", """on: workflow_dispatch
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/manual-config
+""")
+        self.put_action("manual-config", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/manual-config"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        config = root / "config.json"
+        config.write_text('{"dispatch": false}\n', encoding="utf-8")
+        base = self.commit()
+        config.write_text('{"dispatch": true}\n', encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "pass")
+
+    def test_non_docker_action_json_edit_not_new_docker_debt(self):
+        self.put("scheduled-js-config.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/js-config
+""")
+        self.put_action("js-config", """runs:
+  using: node20
+  main: index.js
+""")
+        root = self.repo / ".github/actions/js-config"
+        (root / "index.js").write_text("console.log('safe');\n", encoding="utf-8")
+        config = root / "config.json"
+        config.write_text('{"dispatch": false}\n', encoding="utf-8")
+        base = self.commit()
+        config.write_text('{"dispatch": true}\n', encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "pass")
+
+    def test_scheduled_docker_unchanged_configuration_still_legacy(self):
+        self.put("scheduled-legacy-config.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/legacy-config
+""")
+        self.put_action("legacy-config", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/legacy-config"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        (root / ".dockerignore").write_text("secrets/\n", encoding="utf-8")
+        (root / "config.json").write_text('{"dispatch": true}\n', encoding="utf-8")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_docker_config_symlink_fails_closed(self):
+        self.put("scheduled-config-symlink.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/symlink-config
+""")
+        self.put_action("symlink-config", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/symlink-config"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        (root / "config.json").symlink_to("missing.json")
+        with self.assertRaises(ValueError):
+            guard.evaluate(self.repo, self.base, self.commit())
+
+    def test_nonutf8_docker_config_fails_closed(self):
+        self.put("scheduled-binary-config.yml", """on: schedule
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/binary-config
+""")
+        self.put_action("binary-config", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/binary-config"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        (root / "config.json").write_bytes(b'{"key": \xff}')
+        with self.assertRaises(ValueError):
+            guard.evaluate(self.repo, self.base, self.commit())
+
+
+
 if __name__ == "__main__":
     unittest.main()
