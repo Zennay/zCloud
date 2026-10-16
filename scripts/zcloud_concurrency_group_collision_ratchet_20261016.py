@@ -140,6 +140,11 @@ def _group_entry(path: str, scope: str, value: object):
         raise AdmissionError("invalid concurrency mapping")
     group = value.get("group")
     cancel = value.get("cancel-in-progress", False)
+    queue = value.get("queue", "single")
+    if queue not in ("single", "max") or not isinstance(queue, str):
+        raise AdmissionError("invalid concurrency queue mode")
+    if queue == "max" and cancel is not False:
+        raise AdmissionError("queue max conflicts with cancel-in-progress")
     if not isinstance(group, str) or not (1 <= len(group) <= MAX_GROUP_LENGTH):
         raise AdmissionError("non-literal or unbounded concurrency group")
     if re.search(r"[\x00-\x1f\x7f]", group):
@@ -156,7 +161,7 @@ def _group_entry(path: str, scope: str, value: object):
     if re.search(r"\$\{\{\s*github\.workflow\s*\}\}", group, re.IGNORECASE):
         return None
     token = hashlib.sha256(group.casefold().encode("utf-8")).hexdigest()
-    return (token, path, scope, mode)
+    return (token, path, scope, mode, queue)
 
 def _entries_for_file(path: str, contents: bytes):
     try:
@@ -190,13 +195,17 @@ def findings(commit: str):
         total += len(blob)
         if total > MAX_TOTAL_BYTES:
             raise AdmissionError("aggregate workflow source budget exceeded")
-        for token, p, scope, mode in _entries_for_file(path, blob):
-            grouped[token].append((p, scope, mode))
+        for token, p, scope, mode, queue in _entries_for_file(path, blob):
+            grouped[token].append((p, scope, mode, queue))
     out = set()
     for token, members in grouped.items():
         for i, first in enumerate(members):
             for second in members[i + 1:]:
-                if first[0] == second[0] or (first[2] == "false" and second[2] == "false"):
+                # Even cancel-in-progress:false replaces a previous *pending*
+                # run under the default queue:single; queue:max can cancel
+                # once its bounded capacity is exhausted. Same-group flows
+                # therefore cannot be assumed independent across workflows.
+                if first[0] == second[0]:
                     continue
                 out.add((token, *sorted((first, second))))
                 if len(out) > MAX_FINDINGS:
