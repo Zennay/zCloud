@@ -23,7 +23,7 @@ RUN = re.compile(r"(?m)^( {6,})(?:-[ \\t]+)?run:[ \\t]*(.*)$")
 RISK = (
     re.compile(r"\bgh\s+workflow\s+run\b", re.I),
     re.compile(r"\bgh\s+run\s+rerun\b", re.I),
-    re.compile(r"\bgh\s+api\b.{0,180}\b(?:-X\s+POST|--method(?:=|\s+)POST)\b.{0,200}/dispatches\b", re.I | re.S),
+    re.compile(r"\bgh\s+api\b.{0,180}(?:-X\s+POST|--method(?:=|\s+)POST)\b.{0,200}/dispatches\b", re.I | re.S),
     re.compile(r"\bcurl\b.{0,180}(?:-X\s+POST|--request\s+POST)\b.{0,200}/dispatches\b", re.I | re.S),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch)\b"),
 )
