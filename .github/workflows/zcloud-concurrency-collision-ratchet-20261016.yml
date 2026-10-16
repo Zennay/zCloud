@@ -74,7 +74,7 @@ jobs:
           # An inventory is deliberately NOT a release/merge approval; reject
           # any drift in the emitted receipt before printing it for owners.
           python3 -c '
-          import json, os, sys
+          import json, os, re, sys
           d = json.load(sys.stdin)
           required = ("reviewed", "merge_authorized", "production_mutation_authorized")
           if any(d.get(field) is not False for field in required):
@@ -87,6 +87,33 @@ jobs:
               raise SystemExit("inventory pair counts are incoherent")
           if d.get("legacy_opaque_expression_count") != len(d.get("unresolved_expression_reviews", [])):
               raise SystemExit("unresolved-expression review count is incoherent")
+          pair_counts = {}
+          for pair in d["review_items"]:
+              group = pair.get("group_sha256", "")
+              if not re.fullmatch(r"[0-9a-f]{64}", group):
+                  raise SystemExit("review pair group identity is not hashed")
+              members = pair.get("members", [])
+              if len(members) != 2:
+                  raise SystemExit("review pair has malformed members")
+              pair_counts[group] = pair_counts.get(group, 0) + 1
+              for member in members:
+                  if not re.fullmatch(r"\\.github/workflows/[A-Za-z0-9_./-]+\\.ya?ml",
+                                      member.get("workflow_path", "")):
+                      raise SystemExit("review contains unsafe workflow path")
+                  digest = member.get("cancel_expression_sha256")
+                  if member.get("cancel_in_progress") == "dynamic":
+                      if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                          raise SystemExit("dynamic cancel expression has no redacted fingerprint")
+                  elif digest != "":
+                      raise SystemExit("static cancellation unexpectedly contains expression hash")
+          if len(pair_counts) != d["legacy_group_count"]:
+              raise SystemExit("group count disagrees with collision identities")
+          for group in d["group_summaries"]:
+              if group.get("pair_count") != pair_counts.get(group.get("group_sha256")):
+                  raise SystemExit("review group pair counts disagree")
+              if (group.get("reviewed") is not False or
+                  group.get("production_mutation_authorized") is not False):
+                  raise SystemExit("review group unexpectedly asserts authority")
           if d.get("no_new_opaque_expressions") is not True:
               raise SystemExit("new opaque concurrency expression requires owner review")
           remaining = d.get("candidate_opaque_expression_count")
