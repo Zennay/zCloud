@@ -14,7 +14,7 @@ A GitHub Actions step using actions/checkout can explicitly set with.repository 
 - Detect explicit foreign or dynamic repository overrides on actions/checkout steps even when YAML mapping keys put `with.repository` before `uses`, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
 - Compare per-path multiset counts. Existing debt is grandfathered, while new copies fail.
 - Exit 0 = no new risk, 1 = introduced risk, 2 = indeterminate. JSON includes exact SHA pair and reasons.
-- Run 67 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
+- Run 79 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
 
 ## Safety and limits
 
@@ -22,6 +22,16 @@ This is a conservative source-level heuristic, **not** a YAML-spec-complete pars
 
 CI runs on a GitHub-hosted runner with contents: read, not the VPS. No VPS/Firefox/systemd/SQLite/worker/queue changes, no runner job cancellation, no write token or production deployment.
 
+
+## Foreign Git submodule source expansion
+
+An explicit `actions/checkout` on the canonical zCloud repository can still retrieve
+unreviewed third-party Git source when `with.submodules` is `true`, `recursive`, or
+PR-controlled. The monotone source ratchet now rejects **new** enabled, dynamic or
+ambiguous checkout submodule inputs. Only a literal `false` (including quoted and
+inline-flow-map values) is admitted. Existing risky submodule uses remain visible
+as grandfathered debt; new copies of them fail. This source-only protection does
+not inspect existing `.gitmodules` contents or enable unattended production use.
 
 ## Checkout mapping-key order protection
 
