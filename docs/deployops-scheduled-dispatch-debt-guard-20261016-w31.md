@@ -17,7 +17,7 @@ The scanner inventories regular `.github/workflows/*.yml` and `.yaml` blobs at i
 
 Outputs contain only repo-relative workflow filenames, bounded counts, Git SHAs and permit/deny status; they never echo workflow content, secrets, command arguments or event payloads. Exit codes: 0 unchanged/no-new-debt; 1 new sites; 2 malformed/incomplete evidence. `mutation_performed=false` and `deploy_authorized=false` always.
 
-Source guard validates SHA syntax, regular blob mode, tree entries, content size, UTF-8 and Git object lengths. The Git subprocess timeout is 20 seconds and its response is rejected if over 16 MiB. This is a post-capture output bound (not a streaming-memory guarantee).
+Source guard validates SHA syntax, regular blob mode, tree entries, content size, UTF-8 and Git object lengths. Git subprocess stdout is **stream-read** through a bounded 64-KiB read loop, rejected immediately above 16 MiB and limited by a 20-second end-to-end deadline. The process is killed on excessive output, timeout or source failure, without exposing its stderr or the source payload.
 
 ## Explicit non-claims
 
