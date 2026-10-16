@@ -66,14 +66,14 @@ class CronPolicyTests(unittest.TestCase):
 
     def test_inline_event_alias_refused(self):
         with self.assertRaises(AdmissionError):
-            schedules("on: *events\\njobs:\\n  test:\\n    runs-on: ubuntu-latest\\n")
+            schedules("on: *events\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
 
     def test_inline_event_list_allowed(self):
-        self.assertEqual(schedules("on: [push, pull_request]\\n"), ())
+        self.assertEqual(schedules("on: [push, pull_request]\n"), ())
 
     def test_inline_schedule_mapping_refused(self):
         with self.assertRaises(AdmissionError):
-            schedules("on: {schedule: [{cron: '*/5 * * * *'}]}\\n")
+            schedules("on: {schedule: [{cron: '*/5 * * * *'}]}\n")
 
     def test_quoted_schedule(self):
         self.assertEqual(schedules(workflow("30 8 * * 1-5")), ("30 8 * * 1-5",))
