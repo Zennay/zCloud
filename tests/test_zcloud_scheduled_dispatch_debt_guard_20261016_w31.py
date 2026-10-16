@@ -47,6 +47,17 @@ class WorkflowAdmission(unittest.TestCase):
         self.assertIn("reopened", trigger)
         self.assertIn("ready_for_review", trigger)
 
+    def test_source_gate_requires_fresh_main_before_and_after_scan(self):
+        source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
+        self.assertEqual(
+            source.count("git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main"),
+            2,
+        )
+        self.assertEqual(source.count('test "$current_main" = "$expected_main"'), 2)
+        self.assertIn("expected_main=", source)
+        self.assertIn("refs/heads/main", source)
+        self.assertIn('test "$(git cat-file -t "$EXPECTED_BASE")" = commit', source)
+
     def test_hosted_only_immutable_pr_checkout(self):
         source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
         self.assertIn("runs-on: ubuntu-latest", source)
