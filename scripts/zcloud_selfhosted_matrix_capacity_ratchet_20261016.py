@@ -143,7 +143,7 @@ def _blob(sha, path):
 # labels) can route to self-hosted hardware. An unknown must never be treated
 # as evidence of GitHub-hosted execution.
 _HOSTED_RUNNER = re.compile(
-    r"^(?:ubuntu-(?:latest|(?:22|24)\\.04(?:-arm)?|slim)|"
+    r"^(?:ubuntu-(?:latest|(?:22|24)\.04(?:-arm)?|slim)|"
     r"windows-(?:latest|(?:2022|2025)(?:-arm)?)|"
     r"macos-(?:latest|(?:13|14|15|26)(?:-large|-xlarge|-intel)?))$"
 )
