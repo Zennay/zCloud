@@ -144,7 +144,7 @@ def analyze(source, path):
             # runner and checkout. Never report an incomplete scan as clean.
             risks.append((path, "workflow", "jobs", "opaque-job-entry"))
             current = None
-        elif in_jobs and not jobs and line.startswith("    ") and line.strip() and (
+        elif in_jobs and not jobs and line.startswith("   ") and line.strip() and (
                 not line.lstrip().startswith("#")):
             # YAML permits indents other than two spaces for jobs. This
             # textual subset only recognizes the canonical form; reject
