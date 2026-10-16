@@ -14,6 +14,10 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - '.github/workflows/**'
+      - '**/action.yml'
+      - '**/action.yaml'
+      - 'action.yml'
+      - 'action.yaml'
       - scripts/zcloud_github_script_eval_ratchet_20261016.py
       - tests/test_zcloud_github_script_eval_ratchet_20261016.py
       - .github/workflows/zcloud-github-script-eval-ratchet-20261016.yml
