@@ -21,7 +21,7 @@ SHA = re.compile(r"^[0-9a-f]{40}$")
 USE = re.compile(r"^\s*(?:-\s*)?uses\s*:\s*['\"]?actions/github-script@[^\s#'\"]+", re.I)
 LIST_KEY = re.compile(r"^(\s*)-\s*(?:[\w-]+|'[^']+'|\"[^\"]+\")\s*:")
 SCRIPT_KEY = re.compile(r"^(\s*)(?:script|'script'|\"script\")\s*:\s*(.*)$")
-WITH_KEY = re.compile(r"""^(\s*)(?:with|'with'|"with")\s*:""")
+WITH_KEY = re.compile(r"""^(\s*)(?:-\s*)?(?:with|'with'|"with")\s*:""")
 EXPR = re.compile(r"\$\s*\{\{")
 ESCAPE = re.compile(r"\\(?:x24|u0024|U00000024|x7b|u007b|U0000007b)", re.I)
 AMBIG = re.compile(r"(?:^|\s)(?:\*[\w-]+|![\w!]+)\s*(?:#.*)?$")
@@ -182,16 +182,38 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
     why: set[str] = set()
     script_found = False
     with_indent = -1
+    with_child_indent: int | None = None
+    # The top-level keys of a YAML sequence step may appear in any order:
+    # "- uses:" is a property at indent+2, while "- with:" is the same
+    # logical property level, even though its physical indentation is less.
+    uses_line = next((line for line in yaml_lines if USE.match(line)), None)
+    if uses_line is None:
+        raise EvidenceError("github-script step identity unavailable")
+    step_level = len(uses_line) - len(uses_line.lstrip(" "))
+    if uses_line.lstrip().startswith("- "):
+        step_level += 2
     for i in range(start, end):
         line = yaml_lines[i - start]
+        if not line.strip():
+            continue
+        physical_level = len(line) - len(line.lstrip(" "))
         wm = WITH_KEY.match(line)
-        if wm:
-            with_indent = len(wm.group(1))
+        logical_level = physical_level + (2 if line.lstrip().startswith("- ") else 0)
+        if wm and logical_level == step_level:
+            with_indent = physical_level
+            with_child_indent = None
             # YAML anchors and explicit type tags can change mapping semantics
             # without spelling a normal script key on this line. Treat them
             # as source ambiguity, with a full-manifest legacy fingerprint.
             if re.match(r"\s*[&!]", line[wm.end():]):
                 why.add("ambiguous_yaml")
+        elif with_indent >= 0 and logical_level <= step_level:
+            # "env:", "uses:" and other step siblings end the direct
+            # with.script mapping; nested env.with.script is not JS source.
+            with_indent = -1
+            with_child_indent = None
+        if with_indent >= 0 and physical_level > step_level and with_child_indent is None:
+            with_child_indent = physical_level
         if FLOW.search(line) or ("\\x" in line and "script" in line):
             why.add("ambiguous_yaml")
         # YAML unescapes double-quoted mapping keys before the Action uses
@@ -202,7 +224,7 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
         if sm is None:
             continue
         script_indent = len(sm.group(1))
-        if with_indent < 0 or script_indent <= with_indent:
+        if with_indent < 0 or with_child_indent is None or script_indent != with_child_indent:
             continue
         script_found = True
         scalar = sm.group(2)
