@@ -10,7 +10,9 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: zcloud-collision-admission-${{ github.event.pull_request.number }}
+  # Source-only proof has no mutable shared state; unique run identity avoids
+  # any pending-run replacement across pull_request revisions.
+  group: zcloud-collision-admission-${{ github.run_id }}
   cancel-in-progress: false
 jobs:
   provenance:
