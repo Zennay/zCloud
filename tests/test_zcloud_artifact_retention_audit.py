@@ -217,6 +217,82 @@ jobs:
             with self.assertRaisesRegex(RuntimeError, "workflow too large"):
                 audit.scan_repository(root, max_days=30)
 
+    def test_duplicate_step_uses_cannot_hide_an_upload(self):
+        text = """jobs:
+  verify:
+    steps:
+      - uses: actions/upload-artifact@v4
+        uses: actions/checkout@v4
+        with:
+          retention-days: 14
+      - uses: actions/checkout@v4
+        uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+"""
+        rows = audit.inspect_workflow("ambiguous.yml", text, max_days=30)
+        self.assertEqual(2, len(rows))
+        self.assertEqual(["dynamic_or_invalid"] * 2, [row.status for row in rows])
+        self.assertEqual([None] * 2, [row.retention_days for row in rows])
+
+    def test_duplicate_with_or_retention_cannot_become_bounded(self):
+        text = """jobs:
+  verify:
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 90
+        with:
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 45
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 7
+          name: safe
+"""
+        rows = audit.inspect_workflow("ambiguous.yml", text, max_days=30)
+        self.assertEqual(
+            ["dynamic_or_invalid", "dynamic_or_invalid", "bounded"],
+            [row.status for row in rows],
+        )
+        self.assertEqual([None, None, 7], [row.retention_days for row in rows])
+
+    def test_retention_rejects_quoted_hash_unicode_and_leading_zero(self):
+        text = """jobs:
+  verify:
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: "14#not-a-comment"
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: '07'
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: '١٤'
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: '14' # legitimate comment
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 45 # beyond policy
+"""
+        rows = audit.inspect_workflow("ambiguous.yml", text, max_days=30)
+        self.assertEqual(
+            [
+                "dynamic_or_invalid",
+                "dynamic_or_invalid",
+                "dynamic_or_invalid",
+                "bounded",
+                "over_limit",
+            ],
+            [row.status for row in rows],
+        )
+        self.assertEqual([None, None, None, 14, 45], [r.retention_days for r in rows])
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
