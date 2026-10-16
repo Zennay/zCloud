@@ -29,10 +29,15 @@ class LiveTabPortIdentityTests(unittest.TestCase):
     def test_shell_python_and_grep_spoofs_are_not_valid_debugger(self):
         for binary in ("bash", "/usr/bin/python3", "grep", "/opt/firefox-fake", "evilfirefox"):
             with self.subTest(binary=binary):
-                self.assertEqual(detect_debugger_port([row(binary=binary)]), ("ambiguous", None))
+                # A non-Firefox process with no Firefox reference is not a candidate.
+                if "firefox" not in binary:
+                    self.assertEqual(detect_debugger_port([row(binary=binary)]), ("absent", None))
+                # A forged argv which *mentions* Firefox must never establish
+                # (or silently coexist with) debugger uniqueness.
+                self.assertEqual(detect_debugger_port([row(binary=binary) + " /firefox"]), ("ambiguous", None))
 
     def test_spoof_invalidates_valid_single_debugger_proof(self):
-        self.assertEqual(detect_debugger_port([row(), row(pid=999, binary="python3")]), ("ambiguous", None))
+        self.assertEqual(detect_debugger_port([row(), row(pid=999, binary="python3") + " /firefox"]), ("ambiguous", None))
 
     def test_bad_process_fields(self):
         for line in (
