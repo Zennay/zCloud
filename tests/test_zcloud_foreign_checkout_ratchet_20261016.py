@@ -13,6 +13,10 @@ P = '.github/workflows/example.yml'
 Q = '.github/actions/tool/action.yaml'
 
 
+def tree_entry(path, mode='100644', kind='blob', object_id='a' * 40):
+    return (mode + ' ' + kind + ' ' + object_id + '\t' + path).encode('utf-8') + b'\x00'
+
+
 def workflow(repository=None, step='- uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803'):
     return 'name: Test\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      ' + step + ('\n        with:\n          repository: ' + repository if repository is not None else '') + '\n      - run: echo safe\n'
 
@@ -159,7 +163,7 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         def fake_git(_repo, *args):
             calls.append(args[0])
             if args[0] == 'ls-tree':
-                return b'.github/workflows/example.yml\x00'
+                return tree_entry(P)
             if args[0] == 'cat-file':
                 return str(guard.MAX_MANIFEST_BYTES + 1).encode('ascii')
             raise AssertionError('Oversized manifest must never be read')
@@ -170,7 +174,7 @@ class CheckoutRepoGuardTest(unittest.TestCase):
 
     def test_manifest_count_budget_denies_early(self):
         from unittest.mock import patch
-        with patch.object(guard, 'git', return_value=b'.github/workflows/example.yml\x00'):
+        with patch.object(guard, 'git', return_value=tree_entry(P)):
             with patch.object(guard, 'MAX_MANIFESTS', 0):
                 with self.assertRaisesRegex(ValueError, 'Manifest count'):
                     guard.tree('.', 'a' * 40)
@@ -181,7 +185,7 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         def fake_git(_repo, *args):
             calls.append(args[0])
             if args[0] == 'ls-tree':
-                return b'action.yml\x00'
+                return tree_entry('action.yml')
             if args[0] == 'cat-file':
                 return b'1'
             raise AssertionError('Total budget breach must preempt read')
@@ -195,7 +199,7 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         from unittest.mock import patch
         def fake_git(_repo, *args):
             if args[0] == 'ls-tree':
-                return b'action.yml\x00'
+                return tree_entry('action.yml')
             if args[0] == 'cat-file':
                 return b'999'
             if args[0] == 'show':
@@ -204,6 +208,79 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         with patch.object(guard, 'git', side_effect=fake_git):
             with self.assertRaisesRegex(ValueError, 'size mismatch'):
                 guard.tree('.', 'a' * 40)
+
+    def test_symlink_manifest_rejected_before_blob_read(self):
+        from unittest.mock import patch
+        calls = []
+        def fake_git(repo, *args):
+            calls.append(args[0])
+            if args[0] == 'ls-tree':
+                return tree_entry(P, mode='120000')
+            raise AssertionError('Symlink manifest must not be interpreted as YAML')
+        with patch.object(guard, 'git', side_effect=fake_git):
+            with self.assertRaisesRegex(ValueError, 'ordinary immutable Git blob'):
+                guard.tree('.', 'a' * 40)
+        self.assertEqual(calls, ['ls-tree'])
+
+    def test_gitlink_manifest_rejected(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=tree_entry('action.yml', mode='160000', kind='commit')):
+            with self.assertRaisesRegex(ValueError, 'ordinary immutable Git blob'):
+                guard.tree('.', 'a' * 40)
+
+    def test_unexpected_git_tree_mode_rejected(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=tree_entry(P, mode='100600')):
+            with self.assertRaisesRegex(ValueError, 'ordinary immutable Git blob'):
+                guard.tree('.', 'a' * 40)
+
+    def test_malformed_metadata_rejected_before_blob_read(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=b'100644 blob\taction.yml\x00'):
+            with self.assertRaisesRegex(ValueError, 'metadata'):
+                guard.tree('.', 'a' * 40)
+
+    def test_missing_tree_separator_denied(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=b'100644 blob ' + b'a' * 40 + b'action.yml\x00'):
+            with self.assertRaisesRegex(ValueError, 'record'):
+                guard.tree('.', 'a' * 40)
+
+    def test_invalid_git_object_oid_denied(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=tree_entry('action.yml', object_id='f' * 39 + 'x')):
+            with self.assertRaisesRegex(ValueError, 'ordinary immutable Git blob'):
+                guard.tree('.', 'a' * 40)
+
+    def test_duplicate_manifest_path_denied(self):
+        from unittest.mock import patch
+        def fake_git(repo, *args):
+            if args[0] == 'ls-tree':
+                return tree_entry(P) + tree_entry(P)
+            if args[0] == 'cat-file':
+                return b'0'
+            if args[0] == 'show':
+                return b''
+            raise AssertionError(args)
+        with patch.object(guard, 'git', side_effect=fake_git):
+            with self.assertRaisesRegex(ValueError, 'Duplicate manifest path'):
+                guard.tree('.', 'a' * 40)
+
+    def test_real_git_symlink_manifest_denied(self):
+        import os
+        with tempfile.TemporaryDirectory() as td:
+            subprocess.run(['git', 'init', '-q', td], check=True)
+            subprocess.run(['git', '-C', td, 'config', 'user.name', 'test'], check=True)
+            subprocess.run(['git', '-C', td, 'config', 'user.email', 'test@example.com'], check=True)
+            target = Path(td) / 'target.txt'
+            target.write_text(workflow('foreign/repo'), encoding='utf-8')
+            action_path = Path(td) / 'action.yml'
+            os.symlink('target.txt', action_path)
+            subprocess.run(['git', '-C', td, 'add', '.'], check=True)
+            subprocess.run(['git', '-C', td, 'commit', '-qm', 'add symlink'], check=True)
+            sha = subprocess.check_output(['git', '-C', td, 'rev-parse', 'HEAD'], text=True).strip()
+            with self.assertRaisesRegex(ValueError, 'ordinary immutable Git blob'):
+                guard.tree(td, sha)
 
     def test_canonical_main_accepts_exact_sha(self):
         from unittest.mock import patch
