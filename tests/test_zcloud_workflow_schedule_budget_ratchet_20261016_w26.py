@@ -195,6 +195,40 @@ class CronPolicyTests(unittest.TestCase):
         self.assertEqual(schedules(expr, timezone_metadata=zones), ())
         self.assertEqual(zones, [])
 
+    def test_double_quoted_schedule_event_and_cron_key(self):
+        source = 'on:\n  "schedule":\n    - "cron": "*/5 * * * *"\n'
+        self.assertEqual(schedules(source), ("*/5 * * * *",))
+        self.assertTrue(is_high_frequency(schedules(source)[0]))
+
+    def test_single_quoted_schedule_event_and_cron_key(self):
+        source = "on:\n  'schedule':\n    - 'cron': '*/2 * * * *'\n"
+        self.assertEqual(schedules(source), ("*/2 * * * *",))
+
+    def test_quoted_timezone_key_and_canonical_metadata(self):
+        zones = []
+        source = 'on:\n  schedule:\n    - cron: "0 9 * * *"\n      "timezone": America/New_York\n'
+        self.assertEqual(schedules(source, timezone_metadata=zones), ("0 9 * * *",))
+        self.assertEqual(zones, ["timezone: America/New_York"])
+
+    def test_quoted_non_schedule_event_does_not_get_rejected(self):
+        self.assertEqual(schedules('on:\n  "pull_request":\n    branches: [main]\n'), ())
+
+    def test_escaped_event_key_cannot_hide_schedule(self):
+        with self.assertRaises(AdmissionError):
+            schedules('on:\n  "sch\\u0065dule":\n    - cron: "*/5 * * * *"\n')
+
+    def test_escaped_root_on_key_cannot_hide_schedule(self):
+        with self.assertRaises(AdmissionError):
+            schedules('"\\u006fn":\n  schedule:\n    - cron: "*/5 * * * *"\n')
+
+    def test_utf8_bom_does_not_hide_schedule_trigger(self):
+        self.assertEqual(schedules('\ufeffon:\n  schedule:\n    - cron: "*/5 * * * *"\n'),
+                         ("*/5 * * * *",))
+
+    def test_quoted_timezone_selector_alias_rejected(self):
+        with self.assertRaises(AdmissionError):
+            schedules('on:\n  schedule:\n    - cron: "0 9 * * *"\n      "timezone": *zone_alias\n')
+
     def test_quoted_schedule(self):
         self.assertEqual(schedules(workflow("30 8 * * 1-5")), ("30 8 * * 1-5",))
 
@@ -260,6 +294,25 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertFalse(receipt["accepted"])
         self.assertTrue(any(item.get("reason") == "cross_schedule_burst"
                             for item in receipt["new_high_frequency"]))
+
+    def test_quoted_cron_schedule_is_denied_in_a_real_repo(self):
+        path = self.directory / "safe.yml"
+        path.write_text('on:\n  "schedule":\n    - "cron": "*/5 * * * *"\n'
+                        'jobs:\n  check:\n    runs-on: ubuntu-latest\n',
+                        encoding="utf-8")
+        result = audit(self.root, self.baseline)
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["new_high_frequency"][0]["cron"], "*/5 * * * *")
+
+    def test_quoted_timezone_requires_review_in_real_repo(self):
+        path = self.directory / "safe.yml"
+        path.write_text(workflow("0 8 * * *").replace(
+            "jobs:", '      "timezone": America/New_York\njobs:'),
+            encoding="utf-8")
+        result = audit(self.root, self.baseline)
+        self.assertFalse(result["accepted"])
+        self.assertTrue(any(entry.get("reason") == "timezone_requires_independent_review"
+                            for entry in result["new_high_frequency"]))
 
     def test_existing_duplicate_pair_does_not_approve_third_duplicate(self):
         path = self.directory / "safe.yml"
