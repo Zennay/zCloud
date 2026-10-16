@@ -372,6 +372,97 @@ jobs:
             self.assertNotIn("private_alias", result.stdout + result.stderr)
             self.assertEqual(original, path.read_bytes())
 
+    def test_yaml_flow_step_collections_refuse_partial_scan(self):
+        cases = (
+            "    steps: [{uses: actions/upload-artifact@v4, with: {retention-days: 7}}]",
+            "    steps: *shared_steps",
+            "    steps: &named_steps",
+        )
+        for candidate in cases:
+            with self.subTest(candidate=candidate):
+                text = "jobs:\n  proof:\n" + candidate + "\n"
+                with self.assertRaisesRegex(
+                    RuntimeError, "unresolved workflow steps collection"
+                ):
+                    audit.inspect_workflow("flow.yml", text, max_days=30)
+
+    def test_yaml_flow_step_item_cannot_be_skipped(self):
+        text = """jobs:
+  proof:
+    steps:
+      - {uses: actions/upload-artifact@v4, with: {retention-days: 7}}
+"""
+        with self.assertRaisesRegex(RuntimeError, "unresolved flow-style workflow step"):
+            audit.inspect_workflow("flow-item.yml", text, max_days=30)
+
+    def test_indentless_step_sequence_fails_closed(self):
+        text = """jobs:
+  proof:
+    steps:
+    - uses: actions/upload-artifact@v4
+      with:
+        retention-days: 14
+"""
+        with self.assertRaisesRegex(RuntimeError, "unresolved indentless steps collection"):
+            audit.inspect_workflow("indentless.yml", text, max_days=30)
+
+    def test_quoted_mapping_keys_cannot_hide_uploads(self):
+        cases = (
+            '    "steps":',
+            "      - 'uses': actions/upload-artifact@v4",
+            '        "with":',
+            "          'retention-days': 12",
+        )
+        for candidate in cases:
+            with self.subTest(candidate=candidate):
+                text = (
+                    "jobs:\n  proof:\n    steps:\n"
+                    "      - uses: actions/upload-artifact@v4\n"
+                    "        with:\n          retention-days: 14\n"
+                    + candidate + "\n"
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, "unresolved workflow mapping key"
+                ):
+                    audit.inspect_workflow("quoted-key.yml", text, max_days=30)
+
+    def test_empty_inline_steps_remains_harmless(self):
+        text = """jobs:
+  no_steps:
+    steps: [] # intentionally empty
+  actual:
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 14
+"""
+        rows = audit.inspect_workflow("empty-inline.yml", text, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("bounded", rows[0].status)
+
+    def test_flow_step_cli_rejects_without_echoing_yaml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            path = folder / "ambiguous.yml"
+            path.write_text(
+                "jobs:\n  proof:\n"
+                "    steps: *PRIVATE_SCAN_TOKEN\n", encoding="utf-8"
+            )
+            original = path.read_bytes()
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--repo-root", str(root)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(2, result.returncode)
+            self.assertEqual(
+                {"ok": False, "error": "RuntimeError"},
+                json.loads(result.stdout),
+            )
+            self.assertNotIn("PRIVATE_SCAN_TOKEN", result.stdout + result.stderr)
+            self.assertEqual(original, path.read_bytes())
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
