@@ -44,8 +44,8 @@ class NameCollisionRatchetTests(unittest.TestCase):
         self.assertEqual(guard.workflow_name(path, b"name: 'Build: fast'\n"), "Build: fast")
         self.assertEqual(guard.workflow_name(path, b"name: 'CI''s check'\n"), "CI's check")
 
-    def test_missing_name_uses_filename(self):
-        self.assertEqual(guard.workflow_name(".github/workflows/a.yml", b"on: push\n"), "a.yml")
+    def test_missing_name_uses_repository_relative_path(self):
+        self.assertEqual(guard.workflow_name(".github/workflows/a.yml", b"on: push\n"), ".github/workflows/a.yml")
 
     def test_ambiguous_names_denied(self):
         invalid = (b"name: A\nname: B\n", b"name: \xff\n",
@@ -86,7 +86,7 @@ class NameCollisionRatchetTests(unittest.TestCase):
     def test_nested_job_and_step_names_do_not_override_root(self):
         path = ".github/workflows/runner.yml"
         source = b"on: push\njobs:\n  test:\n    name: Job title\n    steps:\n      - name: Step title\n"
-        self.assertEqual(guard.workflow_name(path, source), "runner.yml")
+        self.assertEqual(guard.workflow_name(path, source), path)
 
     def test_empty_or_flow_mapping_workflow_refused(self):
         for source in (b"", b"   # comment only\n", b'{"name": "Aliased CI"}\n'):
@@ -281,6 +281,52 @@ class NameCollisionRatchetTests(unittest.TestCase):
             self.assertEqual(report["added_reference_risk_count"], 0)
             self.assertEqual(report["added_cycle_edge_count"], 2)
             self.assertEqual(report["status"], "deny")
+
+
+    def test_unnamed_default_path_does_not_match_filename_only(self):
+        path = ".github/workflows/build.yml"
+        name = guard.workflow_name(path, b"on: push\n")
+        self.assertEqual(name, path)
+        risk = guard.reference_risks({path: name, "l.yml": "Listener"},
+                                    {"l.yml": ("build.yml",)})
+        self.assertIn(("l.yml", "missing_target", "build.yml"), risk)
+        self.assertEqual(guard.reference_risks({path: name, "l.yml": "Listener"},
+                                               {"l.yml": (path,)}), set())
+
+    def test_documented_workflow_run_globs_require_independent_review(self):
+        names = {"a.yml": "Build", "b.yml": "Build-staging", "listener.yml": "Listener"}
+        for pattern in ("Build*", "Build?", "Build+", "!(Tests)", "Build[0-9]",
+                        "Build{,-staging}"):
+            with self.subTest(pattern=pattern):
+                risk = guard.reference_risks(names, {"listener.yml": (pattern,)})
+                self.assertIn(("listener.yml", "pattern_needs_review", pattern), risk)
+
+    def test_explicitly_escaped_glob_characters_are_literal(self):
+        names = {"a.yml": "Build*", "b.yml": "Listener"}
+        self.assertEqual(guard.literal_workflow_filter(r"Build\*"), "Build*")
+        self.assertEqual(guard.reference_risks(names, {"b.yml": (r"Build\*",)}), set())
+        self.assertEqual(guard.cyclic_reference_edges(names, {"b.yml": (r"Build\*",)}), set())
+
+    def test_new_unescaped_glob_pattern_denied_even_if_name_exists(self):
+        names = {"a.yml": "Build*", "b.yml": "Listener"}
+        verdict = guard.judge(names, names, {}, {"b.yml": ("Build*",)})
+        self.assertEqual(verdict["status"], "deny")
+        self.assertEqual(verdict["added_reference_risk_count"], 1)
+        self.assertEqual(verdict["added_reference_risks"][0]["reason"], "pattern_needs_review")
+        self.assertEqual(verdict["added_cycle_edge_count"], 0)
+
+    def test_old_glob_debt_is_not_new_and_fix_is_allowed(self):
+        names = {"a.yml": "Build", "b.yml": "Listener"}
+        legacy = {"b.yml": ("Build*",)}
+        exact = {"b.yml": ("Build",)}
+        self.assertEqual(guard.judge(names, names, legacy, legacy)["status"], "pass")
+        self.assertEqual(guard.judge(names, names, legacy, exact)["status"], "pass")
+        self.assertEqual(guard.judge(names, names, exact, legacy)["status"], "deny")
+
+    def test_unsupported_backslash_escape_and_trailing_escape_denied(self):
+        self.assertIsNone(guard.literal_workflow_filter("Build" + chr(92)))
+        self.assertIsNone(guard.literal_workflow_filter(r"Build\z"))
+        self.assertEqual(guard.literal_workflow_filter("Build"), "Build")
 
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
