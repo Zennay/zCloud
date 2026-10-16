@@ -241,6 +241,25 @@ class GateTests(unittest.TestCase):
             "echo harmless", "curl\n          -X GET\n          https://api.github.com/repos/Zennay/zCloud/dispatches")
         self.assertFalse(classify(source))
 
+    def test_hosted_validation_requires_trusted_first_push(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-workflow-run-dispatch-ratchet-20261016-w34.yml")
+        source = workflow.read_text("utf-8")
+        for expected in (
+            "github.event_name == 'push'",
+            "github.repository == 'Zennay/zCloud'",
+            "github.actor == 'Zennay'",
+            "github.triggering_actor == 'Zennay'",
+            "github.run_attempt == 1",
+            "persist-credentials: false",
+            "submodules: false",
+            "contents: read",
+            "runs-on: ubuntu-latest",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, source)
+        self.assertNotIn("runs-on: [self-hosted", source)
+
     def test_on_variants(self):
         self.assertTrue(workflow_run_event("on: [push, workflow_run]\njobs:\n"))
         self.assertTrue(workflow_run_event('"on": {workflow_run: {types: [completed]}}\njobs:\n'))

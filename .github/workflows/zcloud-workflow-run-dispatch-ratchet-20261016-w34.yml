@@ -12,8 +12,11 @@ permissions:
 jobs:
   hosted-source-only:
     if: >-
+      github.event_name == 'push' &&
       github.repository == 'Zennay/zCloud' &&
       github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       github.ref == 'refs/heads/deployops/workflow-run-dispatch-ratchet-20261016-w34'
     runs-on: ubuntu-latest
     timeout-minutes: 7
