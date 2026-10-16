@@ -19,7 +19,12 @@ ON = re.compile(r"^(?:on|'on'|\"on\")\s*:(.*)$")
 SCHEDULE = re.compile(r"(?i)(?:^|[\s,{])['\"]?schedule['\"]?\s*(?:[:,}\]]|$)")
 DISPATCH = re.compile(
     r"(?i)\bgh\s+workflow\s+run\b"
-    r"|/actions/workflows/[a-zA-Z0-9_./{}-]+/dispatches\b"
+    # A dynamic workflow ID can be passed as a shell/environment variable.
+    r"|/actions/workflows/[^\s'\"\n]{1,256}/dispatches\b"
+    # POST repos/owner/repo/dispatches invokes repository_dispatch.
+    r"|\brepos/[^\s'\"\n]{1,256}/dispatches\b"
+    r"|\bcreateDispatchEvent\b"
+    r"|\bcreateRepositoryDispatch\b"
     r"|\b[\w.-]+\.ya?ml/dispatches\b"
     r"|\bcreateWorkflowDispatch\b"
     r"|\bcreate_workflow_dispatch\b"
