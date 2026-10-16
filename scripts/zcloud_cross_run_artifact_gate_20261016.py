@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only, fail-closed no-new-debt tripwire for cross-run artifact downloads.
+"""Read-only, fail-closed workflow/composite-action cross-run artifact ratchet.
 
 This is a conservative source check, not a YAML interpreter or an authorization
 for consuming untrusted artifacts. Existing identical legacy steps are recorded
@@ -86,8 +86,15 @@ def _git(root: Path, *args: str, max_bytes: int = 2_000_000) -> bytes:
 
 
 def _inventory(root: Path, sha: str) -> dict[str, str]:
-    data = _git(root, "ls-tree", "-rz", sha, "--", ".github/workflows", max_bytes=400_000)
+    """Enumerate workflows AND composite action manifests at arbitrary paths.
+
+    Checking only .github/workflows misses an action.yml where a workflow
+    indirectly invokes download-artifact through a local uses reference.
+    Git trees are the immutable source of truth; no working-tree traversal.
+    """
+    data = _git(root, "ls-tree", "-rz", sha, max_bytes=2_000_000)
     result: dict[str, str] = {}
+    workflows = 0
     for item in data.split(b"\x00"):
         if not item:
             continue
@@ -97,18 +104,21 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
             path = raw_path.decode("utf-8", errors="strict")
         except (ValueError, UnicodeDecodeError) as exc:
             raise Refusal("invalid_git_tree_entry") from exc
-        if not path.startswith(".github/workflows/"):
-            raise Refusal("unsafe_workflow_path")
-        if not path.endswith((".yml", ".yaml")):
+        is_workflow = path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
+        is_action = path.rsplit("/", 1)[-1] in {"action.yml", "action.yaml"}
+        if not (is_workflow or is_action):
             continue
+        if path.startswith("/") or "/../" in "/" + path + "/" or not path.strip():
+            raise Refusal("unsafe_source_path")
         if mode not in {"100644", "100664"} or kind != "blob" or not _SHA.fullmatch(oid):
-            raise Refusal("non_regular_workflow")
+            raise Refusal("non_regular_workflow_or_action")
         if path in result:
-            raise Refusal("duplicate_workflow_path")
+            raise Refusal("duplicate_source_path")
         result[path] = oid
+        workflows += int(is_workflow)
         if len(result) > _MAX_WORKFLOWS:
-            raise Refusal("workflow_inventory_too_large")
-    if not result:
+            raise Refusal("source_inventory_too_large")
+    if not workflows:
         raise Refusal("no_workflows")
     return result
 
