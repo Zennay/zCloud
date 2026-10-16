@@ -37,6 +37,7 @@ RISK = (
     re.compile(r"\bfetch\s*\([^\n]*", re.I),
     re.compile(r"\baxios\.post\s*\([^\n]*", re.I),
     re.compile(r"\b(?:octokit|github)\.request\s*\([^\n]*", re.I),
+    re.compile(r"\b(?:session|client|http_client|api_client|requests\.Session\(\)|httpx\.(?:Client|AsyncClient)\(\))\.(?:post|request)\s*\([^\n]*", re.I),
 )
 STEP_USES = re.compile(r"""(?m)^( +)(?:-\s+)?(?:uses|'uses'|"uses"):[ \t]*(.*)$""")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
@@ -299,14 +300,14 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
         wrapped = join_wrapped_call_lines(normalized)
         for detector, pattern in enumerate(RISK):
             # HTTP client methods can accept arguments across several lines.
-            inspected = wrapped if detector in (7, 8, 9, 10) else normalized
+            inspected = wrapped if detector in (7, 8, 9, 10, 11) else normalized
             for match in pattern.finditer(inspected):
-                if detector in (2, 3, 5, 6, 7, 8, 9, 10):
+                if detector in (2, 3, 5, 6, 7, 8, 9, 10, 11):
                     fragment = match.group(0)
                     if "/dispatches" not in fragment and not REST_RERUN.search(fragment):
                         continue
                     methods = {2: GH_POST, 3: CURL_POST, 5: WGET_POST, 6: POWERSHELL_POST}
-                    if detector == 7:
+                    if detector in (7, 11):
                         if not re.search(r"\.(?:post\s*\(|request\s*\(\s*['\"]POST['\"])", fragment, re.I):
                             continue
                     elif detector == 8:

@@ -369,6 +369,37 @@ class GateTests(unittest.TestCase):
         ))
         self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
 
+    def test_python_http_sessions_and_clients_dispatch_post(self):
+        examples = (
+            'session.post("https://api.github.com/repos/Zennay/zCloud/dispatches")',
+            'client.post("https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun")',
+            'http_client.request("POST", "https://api.github.com/repos/Zennay/zCloud/dispatches")',
+            'requests.Session().post("https://api.github.com/repos/Zennay/zCloud/dispatches")',
+            'httpx.Client().post("https://api.github.com/repos/Zennay/zCloud/actions/runs/42/rerun")',
+            'httpx.AsyncClient().request("POST", "https://api.github.com/repos/Zennay/zCloud/dispatches")',
+        )
+        for command in examples:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_python_session_read_only_calls_do_not_report_dispatch(self):
+        examples = (
+            'session.get("https://api.github.com/repos/Zennay/zCloud/dispatches")',
+            'client.request("GET", "https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun")',
+            'httpx.Client().request("GET", "https://api.github.com/repos/Zennay/zCloud/dispatches")',
+        )
+        for command in examples:
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_http_session_dispatch_in_immutable_git_is_new_debt(self):
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            'session.post("https://api.github.com/repos/Zennay/zCloud/dispatches")',
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_multiline_http_calls_cannot_hide_recursive_post(self):
         multiline = (
             'fetch(\n "https://api.github.com/repos/Zennay/zCloud/dispatches",\n {method:"POST"}\n)',
