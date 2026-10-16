@@ -27,6 +27,12 @@ The operator must also record the exact HTTPS request URL, GET method and HTTP
 200 status alongside the JSON response; a wrong repository path, host, query,
 method or status is denied. These fields are **operator assertions**, not signed
 origin evidence: the checker deliberately cannot authenticate GitHub itself.
+The JSON report includes an allowlisted `reason_code`, such as
+`unbound_api_response`, `stale_observation` or `incomplete_runner_inventory`,
+without copying any raw input. A correctly parsed claim uses
+`reason_code=diagnostic_only` and **still exits 2**; unknown exceptions are
+collapsed to `unknown_error` rather than exposing their messages.
+
 
 Even an apparent positive classification is only an **unauthenticated,
 operator-supplied claim**: the tool cannot validate the origin of the JSON,
