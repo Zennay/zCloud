@@ -59,6 +59,16 @@ def github_job_identity(github: dict[str, Any], project_id: str) -> str:
     return "|".join(parts)
 
 
+def runtime_claim_identity(runtime: dict[str, Any], project_id: str) -> str:
+    """Scope a stalled-runtime incident to its claim; never expose raw claim IDs."""
+    if "claim_id" not in runtime:
+        return ""  # Legacy sources are still classified conservatively.
+    value = runtime["claim_id"]
+    if not isinstance(value, str) or len(value) > 128 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", value):
+        raise ValueError(f"{project_id}.runtime.claim_id: bounded opaque token required")
+    return "claim:" + value
+
+
 def verdict(project: str, state: str, reason: str, action: str,
             kind: str = "", sha: str = "", identity: str = "") -> dict[str, str]:
     item = {"project_id": project, "state": state, "reason": reason, "next_action": action}
@@ -148,10 +158,11 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
         seconds = runtime.get("heartbeat_interval_seconds")
         if not isinstance(seconds, int) or isinstance(seconds, bool) or not 15 <= seconds <= 3600:
             raise ValueError(f"{pid}.runtime.heartbeat_interval_seconds: 15..3600 required")
+        claim_identity = runtime_claim_identity(runtime, pid)
         if now - hb > timedelta(seconds=max(seconds * 3, 300)):
             return verdict(pid, "stalled", "runtime_progress_missing",
                            "Read project claim identity and progress events; reproduce staleness before proposing an owner-scoped repair.",
-                           "runtime-no-progress")
+                           "runtime-no-progress", identity=claim_identity)
         return verdict(pid, "in_progress", "recent_runtime_heartbeat",
                        "Keep existing worker ownership; verify material progress, not heartbeat alone.")
     if state in ("paused", "waiting", "blocked"):
