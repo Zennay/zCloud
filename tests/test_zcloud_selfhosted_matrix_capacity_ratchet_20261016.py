@@ -28,6 +28,22 @@ jobs:
 """
 
 
+def workflow_with_matrix_groups(count):
+    """Independent max-parallel:1 jobs can still run simultaneously."""
+    header = "name: Matrix aggregate fixture\\non: [workflow_dispatch]\\njobs:\\n"
+    job = (
+        "  probe{index}:\\n"
+        "    runs-on: [self-hosted, zcloud, vps]\\n"
+        "    strategy:\\n"
+        "      max-parallel: 1\\n"
+        "      matrix:\\n"
+        "        shard: [a, b]\\n"
+        "    steps:\\n"
+        "      - run: echo safe\\n"
+    )
+    return header + "".join(job.format(index=i) for i in range(count))
+
+
 def git(*args):
     return subprocess.check_output(["git", *args], stderr=subprocess.DEVNULL).decode().strip()
 
@@ -100,6 +116,15 @@ jobs:
         shard: [1, 2]
 """
         self.assertEqual(findings(src), [])
+
+    def test_aggregate_matrix_jobs_limit_four(self):
+        self.assertEqual(findings(workflow_with_matrix_groups(4)), [])
+        self.assertIn(("__workflow__", "aggregate_matrix_groups:5"),
+                      findings(workflow_with_matrix_groups(5)))
+
+    def test_aggregate_capacity_no_debt_bypass(self):
+        self.assertIn(("__workflow__", "aggregate_matrix_groups:10"),
+                      findings(workflow_with_matrix_groups(10)))
 
     def test_duplicate_yaml_key_fail_closed(self):
         with self.assertRaises(InvalidSource):
@@ -178,6 +203,39 @@ class GitTreeContract(unittest.TestCase):
         baseline = self.commit(old)
         latest = self.commit(old.replace("echo safe", "echo changed"))
         self.assertEqual(inspect(baseline, latest)["new_risks"], [])
+
+    def test_git_rejects_new_fifth_individually_bounded_matrix(self):
+        base = self.commit(workflow_with_matrix_groups(4))
+        head = self.commit(workflow_with_matrix_groups(5))
+        risks = inspect(base, head)["new_risks"]
+        self.assertIn("aggregate_matrix_groups:5", [risk["reason"] for risk in risks])
+
+    def test_git_rejects_relabelled_legacy_aggregate_matrix(self):
+        old = workflow_with_matrix_groups(5)
+        base = self.commit(old)
+        latest = self.commit(old.replace("probe4:", "renamed_probe4:"))
+        risks = inspect(base, latest)["new_risks"]
+        self.assertIn("legacy_aggregate_matrix_configuration_changed",
+                      [risk["reason"] for risk in risks])
+
+    def test_git_preserves_legacy_aggregate_on_step_only_change(self):
+        old = workflow_with_matrix_groups(5)
+        base = self.commit(old)
+        latest = self.commit(old.replace("echo safe", "echo changed"))
+        self.assertEqual(inspect(base, latest)["new_risks"], [])
+
+    def test_git_new_workflow_with_five_serial_matrix_groups_denied(self):
+        # A new added workflow has no baseline and cannot hide behind
+        # individually bounded per-job strategies.
+        Path(ROOT).unlink()
+        git("add", "-A")
+        git("commit", "-qm", "remove baseline workflow")
+        empty = git("rev-parse", "HEAD")
+        Path(ROOT).write_text(workflow_with_matrix_groups(5))
+        git("add", ".")
+        git("commit", "-qm", "add new workflow")
+        risks = inspect(empty, git("rev-parse", "HEAD"))["new_risks"]
+        self.assertIn("aggregate_matrix_groups:5", [risk["reason"] for risk in risks])
 
     def test_refuses_noncommit_git_object(self):
         blob = git("rev-parse", f"{self.base}:" + ROOT)
