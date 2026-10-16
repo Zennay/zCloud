@@ -146,7 +146,11 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             continue
         # GitHub supports IANA timezone selectors, including DST. Never infer
         # UTC proximity from them when a schedule is added or changed.
-        if re.fullmatch(r"\s*timezone\s*:\s*.+", line):
+        if line.lstrip().startswith("<<:"):
+            raise AdmissionError("yaml_schedule_merge_forbidden")
+        if re.fullmatch(r"\s*timezone\s*:\s*.*", line):
+            if not line.partition(":")[2].strip():
+                raise AdmissionError("empty_timezone_selector")
             if timezone_metadata is not None:
                 timezone_metadata.append(line.strip())
             continue
