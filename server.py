@@ -202,7 +202,6 @@ def project_runner_prompt(project_id, name):
         'Check actuele main, open issues/PRs, branch-eigenaars en CI; kies urgent open werk in de ACTUELE fase. '
         'Rond open PRs af vóór nieuwe branches in de ontwikkelfase; integreer op actuele main en merge zelfstandig na groene exact-head CI en branchchecks. Geen extra review tenzij GitHub die verplicht; maak drafts eerst reviewklaar. Na uitrol gelden release-gates; merge is geen live deploy of toestemming voor security-, broker- of researchacties. '
         'Bouw echte functionaliteit en fix bugs; geen eindeloze QA-rondes of toekomstfase-drafts zonder productblokkade. '
-        'Behandel tests en verplichte CI als onderdeel van opleveren, niet als zelfstandige quality-validation-worker. '
         'Test wijzigingen gericht; de uurlijkse audit doet de brede kwaliteits- en voortgangsreview. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet na één actie, commit, retrigger of statuscheck. '
         'HOLD alleen bij falende CI, scopeconflict of bewezen risico voor veiligheid, rechten, research of productie; beperk het tot de getroffen actie en herstel waar mogelijk. '
@@ -230,9 +229,7 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
             else 'bugfix-delivery'
         )
     implementation_focus = (
-        ' Lever daadwerkelijke codewijzigingen of een concreet herstelde bug op. '
-        'Gebruik gerichte tests en verplichte gates als bewijs van de fix; '
-        'start geen zelfstandige QA- of quality-validation-ronde.'
+        ' Bouw of repareer echte functionaliteit; test gericht en respecteer alle verplichte gates.'
         if lane_id in {'strategy-implementation', 'model-improvement', 'bugfix-delivery'} else ''
     )
     if lane_id:
