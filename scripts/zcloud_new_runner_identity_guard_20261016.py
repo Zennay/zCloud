@@ -147,7 +147,10 @@ def _early_guard(job: list[str]) -> bool:
     if re.search(r"(?i)\b(?:always|failure|cancelled)\s*\(", "\n".join(job)):
         return False
     # Only a pinned checkout and shell 'set' may precede the actual guard command.
-    if any(re.match(r"^    (?:defaults|container|services):", line) for line in job):
+    # YAML quoted keys and merge aliases must not synthesize a container or
+    # pre-step service behind our literal mapping scan.
+    forbidden = re.compile(r"""^    (?:["']?(?:defaults|container|services)["']?|<<|\?\s*\S+)\s*:""")
+    if any(forbidden.match(line) for line in job):
         return False
     headings = [n for n, line in enumerate(job)
                 if re.fullmatch(r"    steps:\s*(?:#.*)?", line)]
