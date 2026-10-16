@@ -205,6 +205,91 @@ class CheckoutRepoGuardTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'size mismatch'):
                 guard.tree('.', 'a' * 40)
 
+    def test_canonical_main_accepts_exact_sha(self):
+        from unittest.mock import patch
+        sha = 'a' * 40
+        def fake_git(repo, *args):
+            if args[:3] == ('remote', 'get-url', 'origin'):
+                return b'https://github.com/Zennay/zCloud.git\n'
+            if args[-3:] == ('--exit-code', 'origin', 'refs/heads/main'):
+                return (sha + '\trefs/heads/main\n').encode('ascii')
+            raise AssertionError(args)
+        with patch.object(guard, 'git', side_effect=fake_git):
+            guard.verify_current_main('.', sha)
+
+    def test_canonical_main_url_without_git_suffix_accepted(self):
+        from unittest.mock import patch
+        sha = 'e' * 40
+        with patch.object(guard, 'git', side_effect=[
+            b'https://github.com/Zennay/zCloud\n',
+            (sha + '\trefs/heads/main\n').encode('ascii'),
+        ]):
+            guard.verify_current_main('.', sha)
+
+    def test_foreign_git_remote_denied_before_network(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=b'https://github.com/attacker/zCloud.git\n') as fake:
+            with self.assertRaisesRegex(ValueError, 'canonical'):
+                guard.verify_current_main('.', 'a' * 40)
+        self.assertEqual(fake.call_count, 1)
+
+    def test_ssh_origin_not_mistaken_for_canonical_https(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=b'git@github.com:Zennay/zCloud.git\n'):
+            with self.assertRaises(ValueError):
+                guard.verify_current_main('.', 'a' * 40)
+
+    def test_current_main_sha_mismatch_denied(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', side_effect=[
+            b'https://github.com/Zennay/zCloud.git\n',
+            ('b' * 40 + '\trefs/heads/main\n').encode('ascii'),
+        ]):
+            with self.assertRaisesRegex(ValueError, 'differs'):
+                guard.verify_current_main('.', 'a' * 40)
+
+    def test_wrong_advertised_ref_denied(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', side_effect=[
+            b'https://github.com/Zennay/zCloud.git\n',
+            ('a' * 40 + '\trefs/heads/staging\n').encode('ascii'),
+        ]):
+            with self.assertRaisesRegex(ValueError, 'identity'):
+                guard.verify_current_main('.', 'a' * 40)
+
+    def test_multiple_advertisements_denied(self):
+        from unittest.mock import patch
+        line = 'a' * 40 + '\trefs/heads/main\n'
+        with patch.object(guard, 'git', side_effect=[
+            b'https://github.com/Zennay/zCloud.git\n',
+            (line + line).encode('ascii'),
+        ]):
+            with self.assertRaisesRegex(ValueError, 'ambiguous'):
+                guard.verify_current_main('.', 'a' * 40)
+
+    def test_invalid_sha_advertisement_denied(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', side_effect=[
+            b'https://github.com/Zennay/zCloud.git\n',
+            b'HEAD\trefs/heads/main\n',
+        ]):
+            with self.assertRaisesRegex(ValueError, 'identity'):
+                guard.verify_current_main('.', 'a' * 40)
+
+    def test_main_proof_rechecked_after_inventory(self):
+        from unittest.mock import patch
+        sha = 'a' * 40
+        with patch.object(guard, 'verify_current_main', side_effect=[None, ValueError('main moved')]) as fresh:
+            with patch.object(guard, 'tree', side_effect=[{}, {}]):
+                self.assertEqual(guard.main(['--base', sha, '--head', 'b'*40, '--require-current-main']), 2)
+        self.assertEqual(fresh.call_count, 2)
+
+    def test_git_timeout_is_indeterminate(self):
+        from unittest.mock import patch
+        with patch.object(guard.subprocess, 'run', side_effect=guard.subprocess.TimeoutExpired('git', 20)):
+            with self.assertRaisesRegex(ValueError, 'timed out'):
+                guard.git('.', 'ls-tree', '-r', 'a'*40)
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
