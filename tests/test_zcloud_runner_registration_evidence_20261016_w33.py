@@ -15,7 +15,7 @@ NOW = datetime(2026, 10, 16, 18, 0, tzinfo=timezone.utc)
 
 
 def fixture(*, state='online', busy=False, labels=('self-hosted','zcloud','vps'), name='zcloud-vps-1'):
-    return {'repository':'Zennay/zCloud', 'captured_at':'2026-10-16T17:59:30Z',
+    return {'repository':'Zennay/zCloud', 'request_url':mod.API_URL, 'method':'GET', 'http_status':200, 'captured_at':'2026-10-16T17:59:30Z',
             'response': {'total_count':1, 'runners':[{'id':21, 'name':name, 'status':state, 'busy':busy,
                 'labels':[{'name':label,'type':'custom'} for label in labels]}]}}
 
@@ -90,6 +90,32 @@ class RunnerEvidenceTests(unittest.TestCase):
     def test_missing_labels_denied(self):
         x=fixture(); del x['response']['runners'][0]['labels']
         self.denies(x,'invalid_runner_labels')
+
+    def test_cross_repository_api_origin_denied(self):
+        x = fixture(); x['request_url'] = 'https://api.github.com/repos/Zennay/Ftmo/actions/runners?per_page=100'
+        self.denies(x, 'unbound_api_response')
+
+    def test_altered_path_and_query_denied(self):
+        for path in ('https://api.github.com/repos/Zennay/zCloud/actions/runners?per_page=1',
+                     'https://evil.example/repos/Zennay/zCloud/actions/runners?per_page=100',
+                     mod.API_URL + '&page=2'):
+            with self.subTest(path=path):
+                x = fixture(); x['request_url'] = path
+                self.denies(x, 'unbound_api_response')
+
+    def test_missing_origin_denied(self):
+        x = fixture(); del x['request_url']
+        self.denies(x, 'unbound_api_response')
+
+    def test_non_get_http_provenance_denied(self):
+        x = fixture(); x['method'] = 'POST'
+        self.denies(x, 'unbound_api_response')
+
+    def test_http_error_or_boolean_status_denied(self):
+        for status in (403, 500, True, '200', None):
+            with self.subTest(status=status):
+                x = fixture(); x['http_status'] = status
+                self.denies(x, 'unbound_api_response')
 
     def test_foreign_repo_denied(self):
         x=fixture(); x['repository']='Zennay/Ftmo'
