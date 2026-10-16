@@ -159,3 +159,20 @@ workflow with unknown YAML/runner syntax. All 45 still require the original
 owner to decide migrate, retire or evidenced false positive. The GitHub-hosted
 workflow cross-checks source-digest identity and the deny flags on these new
 columns against the exact main/PR head.
+
+
+### Literal own-workflow push path triage
+
+An additional \`push_paths_mentions_own_yaml_literal_hint\` field counts the
+candidate workflows whose **observed** \`on.push.paths\` sequence includes
+the exact original workflow file name as a quoted or plain literal. For
+example, a legacy recovery workflow often lists its own
+\`.github/workflows/name.yml\`, making it useful for a human to distinguish
+source-change-activated recovery receipts from scheduled writes.
+
+This positive hint does **not** assert that the filter contains *only* the
+workflow file, that no wildcard or other path patterns match, that the source
+is currently enabled, that the workflow actually ran, or that zCloud main is
+its push destination. No parser output is allowed to certify automatic event
+reachability, effective path filters, manual-only mode or branch-protection
+safety. The source digest and canonical main SHA are still mandatory.
