@@ -32,7 +32,7 @@ RISK = (
     re.compile(r"\bcurl\b[^\n]*", re.I),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch|reRunWorkflow|reRunWorkflowFailedJobs|reRunJob|rerunWorkflow)\b"),
     re.compile(r"\bwget\b[^\n]*", re.I),
-    re.compile(r"\b(?:Invoke-RestMethod|Invoke-WebRequest)\b[^\n]*", re.I),
+    re.compile(r"\b(?:Invoke-RestMethod|Invoke-WebRequest|irm|iwr)\b[^\n]*", re.I),
 )
 STEP_USES = re.compile(r"""(?m)^( +)(?:-\s+)?(?:uses|'uses'|"uses"):[ \t]*(.*)$""")
 # Explicit workflow-dispatch action families. Other custom actions still need review;

@@ -342,6 +342,33 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+    def test_powershell_http_aliases_post_are_recursive_dispatch(self):
+        commands = (
+            "irm -Method POST -Uri https://api.github.com/repos/Zennay/zCloud/dispatches",
+            "iwr -Uri https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun -Method 'POST'",
+            'irm -Method "POST" -Uri https://api.github.com/repos/Zennay/zCloud/actions/workflows/a.yml/dispatches',
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_powershell_http_aliases_get_do_not_raise_debt(self):
+        commands = (
+            "irm -Method GET -Uri https://api.github.com/repos/Zennay/zCloud/dispatches",
+            "iwr https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_alias_post_is_new_immutable_git_finding(self):
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            "iwr -Method POST -Uri https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_wget_and_powershell_get_are_not_mutating_dispatch(self):
         commands = (
             "wget https://api.github.com/repos/Zennay/zCloud/dispatches",
