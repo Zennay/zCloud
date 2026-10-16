@@ -672,6 +672,40 @@ class RatchetTests(unittest.TestCase):
             "      - run: echo changed\n"))
         self.assertEqual(gate.check(base, self.save()), (1, 1))
 
+    def _job_with_strategy_yaml(self, strategy):
+        return document("shared", False, job=True).replace(
+            "    runs-on: ubuntu-latest\n",
+            "    strategy:\n      matrix:\n" + strategy
+            + "    runs-on: ubuntu-latest\n")
+
+    def test_yaml_alias_expansion_budget_denies_untrusted_legacy_matrix(self):
+        anchors = "        a0: &a0 [a, b, c, d, e]\n"
+        for n in range(1, 8):
+            refs = ", ".join(["*a%d" % (n - 1)] * 5)
+            anchors += "        a%d: &a%d [%s]\n" % (n, n, refs)
+        first = self._job_with_strategy_yaml(anchors)
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first + "# benign source edit\n")
+        with self.assertRaisesRegex(
+            gate.AdmissionError, "activation JSON expansion budget exceeded"
+        ):
+            gate.check(base, self.save())
+
+    def test_yaml_cycle_fails_closed_in_activation_receipt(self):
+        first = self._job_with_strategy_yaml(
+            "        target: &loop [*loop]\n")
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first + "# non-concurrency change\n")
+        self.denied(base, self.save())
+
+    def test_small_yaml_anchors_are_allowed_in_unchanged_legacy_job(self):
+        first = self._job_with_strategy_yaml(
+            "        a0: &items [a, b]\n"
+            "        a1: *items\n")
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first + "# harmless edit\n")
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
     def test_noncolliding_workflow_can_change_event_trigger(self):
         base = self.base(document("shared", False), document("separate", False))
         self.write("second.yaml", document("separate", False).replace(
