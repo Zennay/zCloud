@@ -115,6 +115,35 @@ class MatrixContract(unittest.TestCase):
             "      matrix:\n        shard: [1, 2]",
             runner="${{ matrix.runner }}")))
 
+    def test_bare_custom_runner_label_is_vps_capable(self):
+        for label in ("vps", "zcloud", "my-private-runner",
+                      "ubuntu-latest-evil", "ubuntu-24x04", "self-hosted"):
+            with self.subTest(label=label):
+                risks = findings(workflow(
+                    "      matrix:\n        shard: [one, two]", runner=label))
+                self.assertIn(("probe", "unsafe_max_parallel:None"), risks)
+
+    def test_canonical_hosted_labels_stay_out_of_vps_policy(self):
+        for label in ("ubuntu-latest", "ubuntu-22.04", "ubuntu-24.04",
+                      "ubuntu-24.04-arm", "windows-latest", "windows-2022",
+                      "macos-latest", "macos-15-intel"):
+            with self.subTest(label=label):
+                self.assertEqual(findings(workflow(
+                    "      matrix:\n        shard: [one, two, three, four, five]",
+                    runner=label)), [])
+
+    def test_mixed_hosted_and_custom_label_requires_review(self):
+        self.assertIn(("probe", "unsafe_max_parallel:None"),
+                      findings(workflow(
+                          "      matrix:\n        shard: [1, 2]",
+                          runner="[ubuntu-latest, custom-vps]")))
+
+    def test_unknown_or_empty_runner_selector_fails_closed(self):
+        self.assertIn(("probe", "unsafe_max_parallel:None"),
+                      findings(workflow(
+                          "      matrix:\n        shard: [1, 2]",
+                          runner="null")))
+
     def test_numeric_runner_selector_is_not_hosted_proof(self):
         risks = findings(workflow(
             "      matrix:\n        shard: [1, 2]",
