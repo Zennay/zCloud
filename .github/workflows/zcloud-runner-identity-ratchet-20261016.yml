@@ -55,7 +55,7 @@ jobs:
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          POLICY_BLOB: 06afc435ac2913ccc7cff80282b7ec8bf2c936b0
+          POLICY_BLOB: 13b4fb6216df15dacd8057b7b72a4ad1dfd29cce
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
