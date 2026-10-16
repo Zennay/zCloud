@@ -401,6 +401,66 @@ class NameCollisionRatchetTests(unittest.TestCase):
             self.assertIs(result["production_mutation_authorized"], False)
             self.assertNotIn("Traceback", denied.stderr)
 
+
+    def test_inline_trigger_alias_and_mapping_are_not_assumed_safe(self):
+        unknown = (
+            b"on: *shared_events\njobs: {}\n",
+            b"on: &events push\njobs: {}\n",
+            b"on: {push: {}, workflow_run: {workflows: [Test]}}\n",
+            b"on: {push: {}}\n",
+            b"on: [push, *shared_events]\n",
+            b'on: "!custom"\n',
+            b"on: workflow_run\n",
+            b"on: [workflow_run]\n",
+        )
+        for source in unknown:
+            with self.subTest(source=source):
+                self.assertIsNone(guard.workflow_run_targets(source))
+
+    def test_simple_inline_non_run_events_are_unambiguous(self):
+        accepted = (
+            b"on: push\n",
+            b"on: [push, workflow_dispatch]\n",
+            b'on: "pull_request"\n',
+            b"on: 'release' # comment\n",
+            b"on: [push, release] # comment\n",
+            b"on: push # comment\n",
+            b"on:\n  push:\n    branches: [main]\n",
+        )
+        for source in accepted:
+            with self.subTest(source=source):
+                self.assertEqual(guard.workflow_run_targets(source), ())
+
+    def test_root_yaml_merge_and_complex_event_keys_not_assumed_absent(self):
+        unknown = (
+            b"<<: *event_config\nname: Build\njobs: {}\n",
+            b"? on\n: {workflow_run: {workflows: [Build]}}\n",
+            b"on:\n  <<: *events\njobs: {}\n",
+            b"on:\n  push: {}\n  <<: *some_events\n",
+            b"on:\n  ? workflow_run\n  : {workflows: [Build]}\n",
+        )
+        for source in unknown:
+            with self.subTest(source=source):
+                self.assertIsNone(guard.workflow_run_targets(source))
+
+    def test_new_alias_event_field_is_new_debt_old_alias_is_baseline(self):
+        alias_source = b"on: *triggers\n"
+        self.assertIsNone(guard.workflow_run_targets(alias_source))
+        original_names = {"a.yml": "Build"}
+        candidate_names = {"a.yml": "Build", "new.yml": "New"}
+        old_refs = {"a.yml": ()}
+        new_refs = {"a.yml": (), "new.yml": guard.workflow_run_targets(alias_source)}
+        decision = guard.judge(original_names, candidate_names, old_refs, new_refs)
+        self.assertEqual(decision["status"], "deny")
+        self.assertEqual(decision["added_reference_risks"][0]["reason"], "unknown_source")
+        self.assertEqual(guard.judge(candidate_names, candidate_names, new_refs, new_refs)["status"],
+                         "pass")
+        self.assertFalse(decision["production_mutation_authorized"])
+
+    def test_inline_event_supported_and_unsupported_quoted(self):
+        self.assertEqual(guard.workflow_run_targets(b'on: ["push", "release"]\n'), ())
+        self.assertIsNone(guard.workflow_run_targets(b'on: "!strange"\n'))
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
