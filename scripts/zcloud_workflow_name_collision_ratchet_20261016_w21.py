@@ -2,6 +2,7 @@
 """Read-only Git object ratchet: deny newly duplicated GitHub Actions workflow names."""
 import argparse
 import itertools
+import fnmatch
 import json
 import re
 import subprocess
@@ -390,6 +391,49 @@ def reference_risks(names, references):
     return findings
 
 
+
+def _could_match_historical_pattern(name, pattern):
+    """Conservatively screen additions against an unresolved legacy pattern.
+
+    Python's simple glob semantics can prove an ordinary * or ? pattern is
+    disjoint. GitHub's extended glob grammar is broader: when its syntax is
+    present do not pretend fnmatch is an authoritative negative proof.
+    """
+    if any(char in pattern for char in "!+@(){}[]\\"):
+        return True
+    return fnmatch.fnmatchcase(name, pattern)
+
+
+def newly_activated_legacy_targets(base, candidate, base_refs, candidate_refs):
+    """Find candidate destinations that activate an unchanged historic trigger.
+
+    An unchanged reference previously missing its destination, or an old
+    wildcard, can suddenly acquire a new target when a different workflow is
+    added/renamed. Comparing only finding-set deltas would miss that change.
+    """
+    additions = [(path, name) for path, name in candidate.items()
+                 if base.get(path) != name]
+    if not additions:
+        return set()
+    previous_counts = Counter(base.values())
+    findings = set()
+    for consumer, target_names in candidate_refs.items():
+        old_targets = base_refs.get(consumer)
+        if old_targets is None or target_names is None:
+            continue
+        for target in target_names:
+            if target not in old_targets:
+                continue
+            exact = literal_workflow_filter(target)
+            for path, display in additions:
+                if exact is None:
+                    if _could_match_historical_pattern(display, target):
+                        findings.add((consumer, "legacy_pattern_new_target", path))
+                elif previous_counts[exact] == 0 and display == exact:
+                    findings.add((consumer, "missing_target_activated", path))
+    return findings
+
+
 def cyclic_reference_edges(names, references):
     """Find only resolvable workflow_run edges inside cyclic components.
 
@@ -479,6 +523,9 @@ def judge(base, candidate, base_refs=None, candidate_refs=None,
                     reference_new.append(
                         (path, "unknown_source_changed", "<git-blob-changed>"))
         reference_new.sort()
+    reference_new.extend(sorted(newly_activated_legacy_targets(
+        base, candidate, base_refs or {}, candidate_refs or {})))
+    reference_new = sorted(set(reference_new))
     cycle_new = sorted(cyclic_reference_edges(candidate, candidate_refs or {}) -
                        cyclic_reference_edges(base, base_refs or {}))
     return {
