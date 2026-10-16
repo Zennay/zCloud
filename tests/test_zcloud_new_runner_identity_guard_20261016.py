@@ -91,6 +91,25 @@ class IdentityPolicyTests(unittest.TestCase):
     def test_custom_policy_override_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf().replace("--json", "--policy /tmp/forged.json")))
 
+    def test_inherited_runtime_env_cannot_shadow_guard(self):
+        for key in ("BASH_ENV", "PYTHONPATH", "PYTHONHOME", "PATH"):
+            with self.subTest(key=key):
+                root = wf().replace("jobs:", "env:\n  " + key + ": /tmp/unsafe\njobs:")
+                job = wf().replace("    steps:", "    env:\n      " + key + ": /tmp/unsafe\n    steps:")
+                step = wf().replace("        run: |",
+                                    "        env:\n          " + key + ": /tmp/unsafe\n        run: |")
+                for val in (root, job, step):
+                    self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_inline_shadowed_runtime_environment_is_denied(self):
+        for val in (wf().replace("jobs:", "env: {BASH_ENV: /tmp/code}\njobs:"),
+                    wf().replace("    steps:", "    env: {PYTHONPATH: /tmp/payload}\n    steps:")):
+            self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_unrelated_environment_is_permitted(self):
+        val = wf().replace("    steps:", "    env:\n      BUILD_MODE: offline\n    steps:")
+        self.assertEqual(g.unsafe_jobs(val), {})
+
     def test_folded_guard_script_is_not_trustworthy(self):
         for scalar in (">", ">-"):
             with self.subTest(scalar=scalar):
