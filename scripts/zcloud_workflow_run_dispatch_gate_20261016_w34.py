@@ -28,6 +28,15 @@ RISK = (
     re.compile(r"\bcurl\b[^\n]{0,400}", re.I),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch)\b"),
 )
+STEP_USES = re.compile(r"(?m)^ {6,}(?:-\s+)?uses:[ \t]*(.*)$")
+# Explicit workflow-dispatch action families. Other custom actions still need review;
+# no attempt is made to execute, fetch or trust remote action code.
+DISPATCH_ACTIONS = {
+    "peter-evans/repository-dispatch",
+    "benc-uk/workflow-dispatch",
+    "convictional/trigger-workflow-and-wait",
+}
+
 GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field)(?=[ =]))", re.I)
 CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json)(?=[ =]))", re.I)
 
@@ -148,11 +157,44 @@ def executable_steps(source: str) -> list[str]:
     return steps
 
 
+def action_dispatch_sites(source: str) -> Counter[tuple[int, str]]:
+    """Fingerprint explicit dispatch actions and their whole YAML step inputs."""
+    sites: Counter[tuple[int, str]] = Counter()
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        match = STEP_USES.match(line)
+        if match is None:
+            continue
+        reference = match.group(1).split("#", 1)[0].strip().strip("'\"")
+        if reference.partition("@")[0].lower() not in DISPATCH_ACTIONS:
+            continue
+        # Restrict the fingerprint to one list item, whether 'uses' is the first
+        # field or appears after 'name', 'with' or 'if' in the same step mapping.
+        start = index
+        while start > 0 and not re.match(r"^ {6}- ", lines[start]):
+            if re.match(r"^ {0,4}\S", lines[start]):
+                raise EvidenceError("unbounded_dispatch_step")
+            start -= 1
+        if not re.match(r"^ {6}- ", lines[start]):
+            raise EvidenceError("missing_dispatch_step")
+        end = index + 1
+        while end < len(lines):
+            if re.match(r"^ {6}- |^ {0,4}\S", lines[end]):
+                break
+            end += 1
+        site = "\n".join(line.strip() for line in lines[start:end]
+                         if line.strip() and not line.lstrip().startswith("#"))
+        digest = hashlib.sha256(site.encode("utf-8")).hexdigest()
+        sites[(len(RISK), digest)] += 1
+    return sites
+
+
 def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
     """Count every distinct executable site, including repeated commands."""
     if not workflow_run_event(source):
         return Counter()
     sites: Counter[tuple[int, str]] = Counter()
+    sites.update(action_dispatch_sites(source))
     for body in executable_steps(source):
         normalized = re.sub(r"\\\s*\n", " ", body)
         for detector, pattern in enumerate(RISK):

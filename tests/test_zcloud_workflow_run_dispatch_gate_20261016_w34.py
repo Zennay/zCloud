@@ -179,6 +179,51 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
 
+
+    def test_dispatch_actions_are_counted_as_recursive_sites(self):
+        for action in (
+            "peter-evans/repository-dispatch@v3",
+            "benc-uk/workflow-dispatch@v1",
+            "convictional/trigger-workflow-and-wait@v1",
+        ):
+            with self.subTest(action=action):
+                source = TEMPLATE.replace(
+                    "      - run: |\n          echo harmless",
+                    "      - uses: " + action + "\n        with:\n          event-type: ping",
+                )
+                self.assertTrue(classify(source))
+        self.assertFalse(classify(TEMPLATE.replace(
+            "      - run: |\n          echo harmless",
+            "      - uses: actions/checkout@v4",
+        )))
+
+    def test_dispatch_action_changed_input_is_new_debt(self):
+        source = TEMPLATE.replace(
+            "      - run: |\n          echo harmless",
+            "      - name: Release notice\n        uses: peter-evans/repository-dispatch@v3\n        with:\n          event-type: trigger",
+        )
+        base = self.commit(source)
+        head = self.commit(source.replace("event-type: trigger", "event-type: different"))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
+    def test_dispatch_action_reordered_step_keys_detected(self):
+        source = TEMPLATE.replace(
+            "      - run: |\n          echo harmless",
+            "      - with:\n          event-type: ping\n        uses: peter-evans/repository-dispatch@v3",
+        )
+        self.assertTrue(classify(source))
+
+    def test_dispatch_action_duplication_is_new_debt(self):
+        original_step = "      - uses: peter-evans/repository-dispatch@v3"
+        source = TEMPLATE.replace(
+            "      - run: |\n          echo harmless", original_step)
+        base = self.commit(source)
+        head = self.commit(source.replace(original_step, original_step+"\n"+original_step))
+        report = evaluate(self.repo, base, head)
+        self.assertEqual(report["previous_findings"], 1)
+        self.assertEqual(report["current_findings"], 2)
+        self.assertEqual(report["new_findings"], [WORKFLOW])
+
     def test_on_variants(self):
         self.assertTrue(workflow_run_event("on: [push, workflow_run]\njobs:\n"))
         self.assertTrue(workflow_run_event('"on": {workflow_run: {types: [completed]}}\njobs:\n'))
