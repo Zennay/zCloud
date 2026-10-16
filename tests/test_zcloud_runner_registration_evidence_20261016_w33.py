@@ -123,6 +123,11 @@ class RunnerEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(mod.InvalidEvidence,'malformed_json'):
             mod.load_json(b'{"x":"\\ud800"}')
 
+    def test_nonfinite_float_overflow_denied(self):
+        for value in (b'{"x":1e999}', b'{"x":-1e999}'):
+            with self.subTest(value=value), self.assertRaisesRegex(mod.InvalidEvidence,'nonfinite_number'):
+                mod.load_json(value)
+
     def test_oversized_input_denied(self):
         with self.assertRaisesRegex(mod.InvalidEvidence,'invalid_input_size'):
             mod.load_json(b' ' * (mod.MAX_INPUT + 1))
