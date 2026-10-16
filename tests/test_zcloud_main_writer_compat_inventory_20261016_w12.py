@@ -103,6 +103,8 @@ class MainWriterInventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(audit.InventoryError, "invalid_expected_sha"):
             audit.inventory(self.repo, "abc")
         self.run_git("checkout", "-qb", "topic")
+        self.write("branch-only.yml", "name: divergent\\n".replace("\\n","\n"))
+        self.commit()
         with self.assertRaisesRegex(audit.InventoryError, "main_sha_drift"):
             audit.inventory(self.repo, self.sha)
 
@@ -163,6 +165,25 @@ class MainWriterInventoryTests(unittest.TestCase):
                       "historical_activity_verified", "github_branch_protection_verified",
                       "pr_branch_ownership_verified"):
             self.assertIs(payload[field], False)
+
+    def test_size_cap_denies_oversized_workflow(self):
+        (self.repo / ".github" / "workflows" / "large.yml").write_bytes(
+            b"#" * (audit.MAX_BLOB_BYTES + 1))
+        self.commit()
+        with self.assertRaisesRegex(audit.InventoryError, "workflow_blob_out_of_bounds"):
+            audit.inventory(self.repo, self.rev())
+
+    def test_nul_in_workflow_blob_denied(self):
+        (self.repo / ".github" / "workflows" / "nul.yml").write_bytes(b"name: a\\x00b\\n".replace(b"\\x00", b"\\x00"))
+        self.commit()
+        with self.assertRaisesRegex(audit.InventoryError, "invalid_workflow_blob"):
+            audit.inventory(self.repo, self.rev())
+
+    def test_missing_workflow_tree_denied(self):
+        self.run_git("rm", "-r", ".github/workflows")
+        self.commit()
+        with self.assertRaisesRegex(audit.InventoryError, "missing_workflow_tree"):
+            audit.inventory(self.repo, self.rev())
 
     def test_no_git_config_or_working_tree_trust(self):
         # Inspect committed blob only; working-tree change without commit is irrelevant.
