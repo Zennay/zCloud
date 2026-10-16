@@ -175,6 +175,49 @@ class ZSentinelEvidenceContractTests(unittest.TestCase):
                 self.assertEqual("intentional_wait", inspect(project)["projects"][0]["state"])
 
 
+    def test_same_runtime_claim_is_stably_deduplicated(self):
+        example = {"id": "cloud", "runtime": {"execution_state": "running",
+                   "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60,
+                   "claim_id": "queue-123:worker_1"}}
+        first = inspect(example)["incidents"][0]["incident_id"]
+        second = inspect(example)["incidents"][0]["incident_id"]
+        self.assertEqual(first, second)
+        self.assertNotIn("queue-123", str(inspect(example)))
+
+    def test_different_runtime_claims_produce_distinct_incidents(self):
+        keys = []
+        for claim in ("queue-123:worker_1", "queue-124:worker_1", "queue-123:worker_2"):
+            project = {"id": "cloud", "runtime": {"execution_state": "running",
+                       "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60,
+                       "claim_id": claim}}
+            keys.append(inspect(project)["incidents"][0]["incident_id"])
+        self.assertEqual(3, len(set(keys)))
+
+    def test_runtime_without_claim_remains_backward_compatible(self):
+        project = {"id": "cloud", "runtime": {"execution_state": "running",
+                   "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60}}
+        self.assertEqual(sentinel.incident_id("cloud", "runtime-no-progress"),
+                         inspect(project)["incidents"][0]["incident_id"])
+
+    def test_untrusted_runtime_claim_rejected_on_running_state(self):
+        for bad in ("", " ", "task id with spaces", "https://secret", "a" * 129,
+                    None, True, 12, {}, ["x"], "emoji-🔐", "foo\nbar"):
+            with self.subTest(bad=repr(bad)):
+                project = {"id": "cloud", "runtime": {"execution_state": "running",
+                           "heartbeat_at": timestamp(-25), "heartbeat_interval_seconds": 60,
+                           "claim_id": bad}}
+                with self.assertRaisesRegex(ValueError, "runtime.claim_id"):
+                    inspect(project)
+
+    def test_healthy_running_claim_never_counts_as_recovered(self):
+        project = {"id": "cloud", "runtime": {"execution_state": "running",
+                   "heartbeat_at": timestamp(-1), "heartbeat_interval_seconds": 60,
+                   "claim_id": "task-1"}}
+        report = inspect(project)
+        self.assertEqual("in_progress", report["projects"][0]["state"])
+        self.assertEqual([], report["incidents"])
+        self.assertFalse(report["deploy_authorized"])
+
 
 if __name__ == "__main__":
     unittest.main()
