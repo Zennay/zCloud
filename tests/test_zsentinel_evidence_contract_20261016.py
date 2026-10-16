@@ -218,6 +218,38 @@ class ZSentinelEvidenceContractTests(unittest.TestCase):
         self.assertEqual([], report["incidents"])
         self.assertFalse(report["deploy_authorized"])
 
+    def test_unhashable_github_status_rejected_with_sanitized_value_error(self):
+        for bad in ([], {}, ["queued"], {"value": "queued"}, 1, True):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "github.job_status"):
+                    inspect(queued(job_status=bad))
+
+    def test_unhashable_conclusions_cannot_crash_comparison(self):
+        for bad in ([], {}, ["failure"], 123, True, None):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "github.conclusion"):
+                    inspect(failed(conclusion=bad))
+
+    def test_falsy_nonstring_commit_identity_cannot_bypass_schema(self):
+        for bad in ([], {}, None, False, 0, ["a" * 40], "A" * 40, "abc"):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "github.head_sha"):
+                    inspect(queued(head_sha=bad))
+
+    def test_unknown_commit_remains_non_authorizing_legacy_diagnostic(self):
+        project = queued(head_sha="")
+        report = inspect(project)
+        self.assertEqual("github_job_unassigned", report["incidents"][0]["reason"])
+        self.assertFalse(report["deploy_authorized"])
+        self.assertFalse(report["mutations_performed"])
+
+    def test_nonstring_runtime_states_rejected(self):
+        for bad in ([], {}, True, 99):
+            with self.subTest(value=repr(bad)):
+                with self.assertRaisesRegex(ValueError, "runtime.execution_state"):
+                    inspect({"id": "cloud", "runtime": {"execution_state": bad}})
+
+
 
 if __name__ == "__main__":
     unittest.main()
