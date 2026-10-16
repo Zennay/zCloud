@@ -500,6 +500,37 @@ class NameCollisionRatchetTests(unittest.TestCase):
         self.assertEqual(
             guard.workflow_run_targets(b"on: [push, workflow_dispatch] # comment\n"), ())
 
+
+    def test_escaped_yaml_on_root_key_is_not_silently_skipped(self):
+        sources = (
+            b'"o\\u006e":\n  workflow_run:\n    workflows: [Build]\n',
+            b'"\\u006fn":\n  workflow_run:\n    workflows: [Build]\n',
+            b'"o\\x6e":\n  workflow_run:\n    workflows: [Build]\n',
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertIsNone(guard.workflow_run_targets(source))
+
+    def test_escaped_yaml_name_root_key_is_not_filename_fallback(self):
+        path = ".github/workflows/build.yml"
+        for escaped in (
+            b'"n\\u0061me": Build\non: push\n',
+            b'"na\\x6de": Build\non: push\n',
+        ):
+            with self.subTest(source=escaped), self.assertRaisesRegex(
+                    guard.InvalidInventory, "ambiguous_escaped_root_key"):
+                guard.workflow_name(path, escaped)
+
+    def test_ordinary_quoted_root_keys_and_escaped_values_continue_working(self):
+        path = ".github/workflows/build.yml"
+        valid = b'"name": "Build: \\u2713"\n"on": [push, workflow_dispatch]\n'
+        self.assertEqual(guard.workflow_name(path, valid), "Build: \u2713")
+        self.assertEqual(guard.workflow_run_targets(valid), ())
+
+    def test_value_backslash_not_mistaken_for_escaped_mapping_key(self):
+        source = b'name: "Build \\\\ logs"\non: push\n'
+        self.assertEqual(guard.workflow_run_targets(source), ())
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
