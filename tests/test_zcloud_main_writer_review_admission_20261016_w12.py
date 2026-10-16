@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import csv
 import copy
 import io
 import json
@@ -69,6 +70,40 @@ class OfflineWriterReviewTests(unittest.TestCase):
         self.inventory_file.write_text(json.dumps(i), encoding="utf-8")
         self.review_file.write_text(json.dumps(r), encoding="utf-8")
 
+    def csv_queue(self, overrides=None, rows=None):
+        fields = admission.CSV_HEADERS
+        row = {
+            "main_sha": MAIN, "workflow_path": PATH,
+            "source_sha256": HASH, "signal_lines_and_kinds": "7:direct_main_ref",
+            "priority": "P1", "owner": "", "reviewed_by": "",
+            "decision": "", "evidence_url": "",
+            "review_verified": "false", "branch_protection_authorized": "false",
+        }
+        row.update(overrides or {})
+        stream = io.StringIO()
+        writer = csv.writer(stream, lineterminator="\n")
+        writer.writerow(fields)
+        for record in rows if rows is not None else [row]:
+            writer.writerow([record.get(field, "") for field in fields])
+        path = self.directory / "editable-review-queue.csv"
+        path.write_text(stream.getvalue(), encoding="utf-8")
+        return path
+
+    def capture_csv(self, path):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            status = admission.main(
+                ["--inventory", str(self.inventory_file),
+                 "--reviews-csv", str(path), "--expected-main-sha", MAIN])
+        return status, json.loads(output.getvalue())
+
+    def denied_csv(self, updates, code):
+        status, receipt = self.capture_csv(self.csv_queue(overrides=updates))
+        self.assertEqual(status, 2)
+        self.assertEqual(receipt["error"], code)
+        self.assertFalse(receipt["safe_to_enable_branch_protection"])
+        self.assertFalse(receipt["production_mutation_authorized"])
+
     def capture(self, fmt="json"):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -88,6 +123,110 @@ class OfflineWriterReviewTests(unittest.TestCase):
         self.assertIs(parsed["review_claims_independently_verified"], False)
         if code is not None:
             self.assertEqual(parsed["error"], code)
+
+    def test_editable_csv_empty_review_queue_keeps_all_candidates_pending(self):
+        status, receipt = self.capture_csv(self.csv_queue())
+        self.assertEqual(status, 0)
+        self.assertEqual(receipt["candidate_count"], 1)
+        self.assertEqual(receipt["review_claim_count"], 0)
+        self.assertEqual(receipt["pending_owner_review_count"], 1)
+        self.assertFalse(receipt["safe_to_enable_branch_protection"])
+
+    def test_filled_csv_review_syntactically_valid_but_not_authority(self):
+        status, receipt = self.capture_csv(self.csv_queue(overrides={
+            "owner": "workflow-owner", "reviewed_by": "independent-reviewer",
+            "decision": "retire", "evidence_url": REVIEW_URL,
+        }))
+        self.assertEqual(status, 0)
+        self.assertEqual(receipt["review_claim_count"], 1)
+        self.assertTrue(receipt["offline_review_claims_complete"])
+        self.assertIs(receipt["review_claims_independently_verified"], False)
+        self.assertIs(receipt["safe_to_enable_branch_protection"], False)
+        self.assertIs(receipt["production_mutation_authorized"], False)
+
+    def test_incomplete_csv_review_denied(self):
+        self.denied_csv({"owner": "workflow-owner"}, "incomplete_csv_review")
+
+    def test_changed_csv_main_denied(self):
+        self.denied_csv({"main_sha": "c" * 40}, "tampered_csv_provenance")
+
+    def test_changed_csv_blob_hash_denied(self):
+        self.denied_csv({"source_sha256": "c" * 64}, "tampered_csv_provenance")
+
+    def test_changed_csv_signals_denied(self):
+        self.denied_csv({"signal_lines_and_kinds": "99:direct_main_ref"},
+                        "tampered_csv_provenance")
+
+    def test_changed_csv_priority_denied(self):
+        self.denied_csv({"priority": "P2"}, "tampered_csv_provenance")
+
+    def test_forged_csv_review_verified_denied(self):
+        self.denied_csv({"review_verified": "true"}, "forged_csv_authorization")
+
+    def test_forged_csv_protection_authorized_denied(self):
+        self.denied_csv({"branch_protection_authorized": "true"},
+                        "forged_csv_authorization")
+
+    def test_duplicate_csv_row_denied(self):
+        p = self.csv_queue()
+        contents = p.read_text()
+        header, row = contents.split("\n", 1)
+        p.write_text(header + "\n" + row + row, encoding="utf-8")
+        status, receipt = self.capture_csv(p)
+        self.assertEqual(status, 2)
+        self.assertEqual(receipt["error"], "duplicate_or_unknown_csv_candidate")
+
+    def test_missing_csv_row_denied(self):
+        p = self.csv_queue(rows=[])
+        status, receipt = self.capture_csv(p)
+        self.assertEqual(status, 2)
+        self.assertEqual(receipt["error"], "missing_csv_candidates")
+
+    def test_unknown_csv_candidate_denied(self):
+        self.denied_csv({"workflow_path": ".github/workflows/unknown.yml"},
+                        "duplicate_or_unknown_csv_candidate")
+
+    def test_csv_formula_injection_denied(self):
+        self.denied_csv({"owner": "=HYPERLINK(A1)", "reviewed_by": "reviewer",
+                         "decision": "migrate", "evidence_url": REVIEW_URL},
+                        "invalid_review_identity")
+
+    def test_csv_duplicate_header_denied(self):
+        p = self.csv_queue()
+        raw = p.read_text()
+        p.write_text(raw.replace("source_sha256", "workflow_path", 1),
+                     encoding="utf-8")
+        status, receipt = self.capture_csv(p)
+        self.assertEqual(status, 2)
+        self.assertEqual(receipt["error"], "invalid_csv_header_or_size")
+
+    def test_csv_hidden_bidi_control_denied(self):
+        p = self.csv_queue()
+        p.write_text(p.read_text().replace("false", "fal\u202ese", 1),
+                     encoding="utf-8")
+        status, receipt = self.capture_csv(p)
+        self.assertEqual(status, 2)
+        self.assertEqual(receipt["error"], "unsafe_csv_controls")
+
+    def test_csv_symlink_parent_denied(self):
+        real = self.directory / "evidence"
+        real.mkdir()
+        (real / "queue.csv").write_text(self.csv_queue().read_text(), encoding="utf-8")
+        link = self.directory / "shortcut"
+        link.symlink_to(real, target_is_directory=True)
+        status, receipt = self.capture_csv(link / "queue.csv")
+        self.assertEqual(status, 2)
+        self.assertEqual(receipt["error"], "unreadable_file")
+
+    def test_csv_unknown_decision_denied(self):
+        self.denied_csv({"owner": "workflow-owner", "reviewed_by": "reviewer",
+                         "decision": "approved", "evidence_url": REVIEW_URL},
+                        "invalid_review_decision")
+
+    def test_csv_forged_external_evidence_denied(self):
+        self.denied_csv({"owner": "workflow-owner", "reviewed_by": "reviewer",
+                         "decision": "retire", "evidence_url": "https://evil.example"},
+                        "invalid_review_evidence")
 
     def test_one_complete_review_is_still_never_authority(self):
         status, stdout = self.capture()
