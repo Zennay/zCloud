@@ -1,0 +1,70 @@
+name: zCloud artifact retention no-new-debt guard
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_artifact_retention_audit.py"
+      - "tests/test_zcloud_artifact_retention_audit.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-artifact-retention-ratchet-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact candidate revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Prove exact candidate and fetch exact base read only
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$BASE_SHA" != ""
+          if [[ "$BASE_SHA" != "$EXPECTED_SHA" ]]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          test "$(git rev-parse "$BASE_SHA^{commit}")" = "$BASE_SHA"
+
+      - name: Reject new artifact-retention debt
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/zcloud-artifact-retention-ratchet.json"
+          python3 scripts/zcloud_artifact_retention_audit.py \
+            --repo-root . \
+            --max-days 30 \
+            --base-ref "$BASE_SHA" \
+            --require-no-new-debt | tee "$report"
+          REPORT="$report" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          payload = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          assert payload["policy"] == "github-actions-artifact-retention-audit-v1"
+          assert payload["mutation_performed"] is False
+          assert payload["new_debt_count"] == 0
+          print(
+              "ZCLOUD_ARTIFACT_RETENTION_RATCHET_GREEN="
+              f"uploads:{payload['upload_count']}:findings:{payload['finding_count']}"
+          )
+          PY

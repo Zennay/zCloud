@@ -12,6 +12,7 @@ from scripts import zcloud_artifact_retention_audit as audit
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "zcloud_artifact_retention_audit.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-artifact-retention-audit.yml"
+RATCHET_WORKFLOW = ROOT / ".github" / "workflows" / "zcloud-artifact-retention-ratchet.yml"
 
 
 class ArtifactRetentionAuditTests(unittest.TestCase):
@@ -85,6 +86,107 @@ jobs:
             {"path", "line", "retention_days", "status"},
             set(payload["findings"][0]),
         )
+
+    def test_new_debt_preserves_existing_debt_and_flags_new_upload_identity(self):
+        base = [
+            audit.ArtifactUpload(".github/workflows/a.yml", 10, None, "missing"),
+            audit.ArtifactUpload(".github/workflows/a.yml", 20, 14, "bounded"),
+        ]
+        head = [
+            audit.ArtifactUpload(".github/workflows/a.yml", 12, None, "missing"),
+            audit.ArtifactUpload(".github/workflows/a.yml", 22, 14, "bounded"),
+            audit.ArtifactUpload(".github/workflows/b.yml", 5, None, "missing"),
+        ]
+        introduced = audit.new_debt(base, head)
+        self.assertEqual(
+            [(".github/workflows/b.yml", "missing")],
+            [(row.path, row.status) for row in introduced],
+        )
+
+    def test_scan_git_ref_and_cli_reject_new_debt_without_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.email", "audit@example.invalid"],
+                check=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(root), "config", "user.name", "Audit Test"],
+                check=True,
+            )
+            workflows = root / ".github" / "workflows"
+            workflows.mkdir(parents=True)
+            path = workflows / "demo.yml"
+            path.write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n"
+                "        with:\n          retention-days: 14\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "commit", "-q", "-m", "baseline"],
+                check=True,
+            )
+            base = subprocess.run(
+                ["git", "-C", str(root), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+            path.write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n"
+                "        with:\n          retention-days: 14\n"
+                "      - uses: actions/upload-artifact@v4\n"
+                "        with:\n          name: new-debt\n",
+                encoding="utf-8",
+            )
+            before = path.read_bytes()
+            run = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--repo-root",
+                    str(root),
+                    "--base-ref",
+                    base,
+                    "--require-no-new-debt",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(1, run.returncode, run.stderr)
+            self.assertEqual(before, path.read_bytes())
+            payload = json.loads(run.stdout)
+            self.assertEqual(1, payload["new_debt_count"])
+            self.assertEqual("missing", payload["new_debt"][0]["status"])
+            self.assertFalse(payload["mutation_performed"])
+
+    def test_ratchet_workflow_is_hosted_exact_base_read_only_and_repo_wide(self):
+        text = RATCHET_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn('      - ".github/workflows/**"', text)
+        self.assertIn("runs-on: ubuntu-latest", text)
+        self.assertNotIn("self-hosted", text)
+        self.assertIn("permissions:\n  contents: read", text)
+        self.assertIn("github.event.pull_request.head.sha", text)
+        self.assertIn("github.event.pull_request.base.sha", text)
+        self.assertIn('git fetch --no-tags --depth=1 origin "$BASE_SHA"', text)
+        self.assertIn('--base-ref "$BASE_SHA"', text)
+        self.assertIn("--require-no-new-debt", text)
+        self.assertIn('assert payload["new_debt_count"] == 0', text)
+        for forbidden in (
+            "contents: write",
+            "actions: write",
+            "workflow_dispatch:",
+            "sudo ",
+            "systemctl ",
+            "git push",
+        ):
+            self.assertNotIn(forbidden, text)
 
     def test_repository_scan_rejects_symlink_workflow(self):
         with tempfile.TemporaryDirectory() as tmp:
