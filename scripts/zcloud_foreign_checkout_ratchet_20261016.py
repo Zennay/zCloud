@@ -26,7 +26,7 @@ USES = re.compile(r"^\s*-?\s*uses\s*:\s*['\"]?actions/checkout@", re.I)
 INDIRECT_USE = re.compile(r"""^\s*-?\s*uses\s*:\s*['"]?(?:\*|\$\{\{)""", re.I)
 INDIRECT_STEP = re.compile(r"""^\s*-\s*(?:(?:['"])?\*[A-Za-z_][\w-]*['"]?(?:\s+#.*)?|<<\s*:\s*\*[A-Za-z_][\w-]*)\s*$""")
 REPO = re.compile(r"(?:^|[,\s{])['\"]?repository['\"]?\s*:\s*(.*)$", re.I)
-SUBMODULES = re.compile(r"(?:^|[,\s{])['\"]?submodules['\"]?\s*:\s*(.*)$", re.I)
+SUBMODULES = re.compile(r"(?:^|[,\s{])['\"]?submodules['\"]?\s*:\s*([^,}]*)", re.I)
 SAFE = {"${{ github.repository }}", "zennay/zcloud"}
 PATH = re.compile(r"\A(?:\.github/workflows/[^/]+\.ya?ml|(?:[^/]+/)*action\.ya?ml)\Z")
 
@@ -97,15 +97,13 @@ def scan(text: str) -> Counter[str]:
             if match_with:
                 with_maps += 1
                 with_indent = snippet_indent
-                inline = SUBMODULES.search(snippet[match_with.end():])
-                if inline:
+                for inline in SUBMODULES.finditer(snippet[match_with.end():]):
                     submodule_values.append(inline.group(1).strip())
             elif with_indent is not None:
                 if snippet.strip() and snippet_indent <= with_indent:
                     with_indent = None
                 elif re.match(r"^\s*['\"]?submodules['\"]?\s*:", snippet, re.I):
-                    submodules = SUBMODULES.search(snippet)
-                    if submodules:
+                    for submodules in SUBMODULES.finditer(snippet):
                         submodule_values.append(submodules.group(1).strip())
         for v in values:
             if v.lower() not in SAFE:
@@ -117,6 +115,8 @@ def scan(text: str) -> Counter[str]:
         # checkout normally ignores submodules. A new true/recursive or
         # expression-controlled setting can fetch code from unrelated Git
         # repositories even when checkout.repository is canonical.
+        if len(submodule_values) > 1:
+            findings["multiple-checkout-submodules-inputs"] += 1
         for val in submodule_values:
             # Only a literal false (including YAML quoted forms) is safe.
             # Inline flow mappings may follow it with another comma key.
