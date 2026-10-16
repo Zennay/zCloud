@@ -378,8 +378,26 @@ def _activation_fingerprints(commit: str, members: set) -> dict:
                 # the existing workflow owner's independent review.
                 strategy = job.get("strategy")
                 prerequisites = job.get("needs")
+            # A workflow-level lock spans every job. Matrix fan-out, job
+            # dependencies and admission filters in *any* job may increase
+            # occupancy of the shared writer lock without changing its group.
+            # Do not let changes to a nested job bypass the workflow-level
+            # participant's existing owner-review requirement.
+            topology = None
+            if scope == "workflow":
+                topology = {}
+                if len(jobs) > MAX_JOBS_PER_WORKFLOW:
+                    raise AdmissionError("legacy group job topology budget exceeded")
+                for job_name, job in sorted(jobs.items()):
+                    if not isinstance(job_name, str) or not isinstance(job, dict):
+                        raise AdmissionError("unsafe legacy group job topology")
+                    topology[job_name] = {
+                        "if": job.get("if"), "needs": job.get("needs"),
+                        "strategy": job.get("strategy")
+                    }
             source = {"events": body.get("on"), "job_if": conditional,
-                      "job_strategy": strategy, "job_needs": prerequisites}
+                      "job_strategy": strategy, "job_needs": prerequisites,
+                      "workflow_job_topology": topology}
             try:
                 serialized = json.dumps(source, sort_keys=True, separators=(",", ":"),
                                         ensure_ascii=True, default=str)
