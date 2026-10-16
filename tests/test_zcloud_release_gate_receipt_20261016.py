@@ -480,5 +480,27 @@ class ReleaseReceiptTests(unittest.TestCase):
 
 
 
+    def test_json_nesting_explicit_boundary_is_platform_independent(self):
+        for depth in (1, 16, gate.MAX_JSON_DEPTH):
+            with self.subTest(depth=depth):
+                gate._check_json_nesting(b"[" * depth + b"0" + b"]" * depth)
+        for depth in (gate.MAX_JSON_DEPTH + 1, 1200):
+            with self.subTest(depth=depth):
+                with self.assertRaisesRegex(ValueError, "invalid_json"):
+                    gate._check_json_nesting(b"[" * depth + b"0" + b"]" * depth)
+
+    def test_json_nesting_ignores_quoted_and_escaped_structural_brackets(self):
+        raw = json.dumps({
+            "payload": '{"[ ] escaped \\" braces {" : [ repeated "' * 100,
+        }).encode("utf-8")
+        gate._check_json_nesting(raw)
+        self.assertEqual(1, len(gate.decode_receipt(raw)))
+
+    def test_json_nesting_rejects_unbalanced_close_without_traceback(self):
+        with self.assertRaisesRegex(ValueError, "invalid_json"):
+            gate.decode_receipt(b'{"foo":0}}')
+
+
+
 if __name__ == "__main__":
     unittest.main()
