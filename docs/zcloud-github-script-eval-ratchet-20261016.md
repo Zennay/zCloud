@@ -10,8 +10,10 @@
 
 * Compares **two immutable, ancestor-related Git commit SHAs** through regular Git blobs; checks workflow YAML plus root/nested composite Action manifests (`action.yml` / `action.yaml`), including untouched baselines, with object identity, UTF-8, symlink, file-count and byte budgets.
 * Finds normal, step-level `actions/github-script@` uses and their `with.script` scalar. Flags direct `${{ ... }}` expressions, Unicode-escaped expression delimiters and YAML alias/flow-map ambiguity. The existing dangerous step is recorded by its path, starting line and full-step hash; removing hazards decreases debt; new or changed dangerous steps are rejected.
+* YAML action discovery ignores comments and block-scalar JavaScript data; a harmless reference to `actions/github-script@` in a JS string no longer counts as a new action. The detector still refuses quoted/escaped `uses` keys, flow mappings, aliases and live direct-expression insertions.
+* Git subprocess stdout is consumed **incrementally with an enforced limit before buffering**; exceeding the byte/time budget terminates the subprocess and denies admission, rather than buffering unbounded Git output first. Failing subprocesses, malformed limits and timeouts cannot return a successful receipt.
 * Reports **only bounded counts and fixed reason labels**, never JavaScript or expressions, secrets, job names, tokens, or worker information. `release_authorized=false` and `production_mutation_authorized=false` in all success receipts.
-* Exit codes: `0` valid no-new-debt, `1` new risk, `2` invalid/incomplete evidence. Tests exercise real Git commits, SHA ancestry, symlinks and legacy behavior.
+* Exit codes: `0` valid no-new-debt, `1` new risk, `2` invalid/incomplete evidence. Tests exercise real Git commits, SHA ancestry, symlinks, legacy behavior, comment/JS-string false positives and simulated oversized or failing Git subprocesses.
 
 ## Limitations
 
