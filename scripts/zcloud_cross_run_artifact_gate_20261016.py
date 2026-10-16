@@ -124,7 +124,11 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
         # Extensionless executable scripts are frequently invoked by a job's
         # run step. Ignore non-executable extensionless documentation.
         is_extensionless_executable = mode == "100755" and not Path(path).suffix
-        if not (is_workflow or is_action or is_shell or is_extensionless_executable):
+        # An extensionless symlink can run an otherwise unclassified helper
+        # via a shell. Treat it like executable source, then reject its Git
+        # symlink mode below instead of silently overlooking the path.
+        is_extensionless_symlink = mode == "120000" and not Path(path).suffix
+        if not (is_workflow or is_action or is_shell or is_extensionless_executable or is_extensionless_symlink):
             continue
         if path.startswith("/") or "/../" in "/" + path + "/" or not path.strip():
             raise Refusal("unsafe_source_path")
