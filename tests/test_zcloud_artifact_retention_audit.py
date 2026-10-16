@@ -293,6 +293,45 @@ jobs:
         )
         self.assertEqual([None, None, None, 14, 45], [r.retention_days for r in rows])
 
+    def test_yaml_explicit_indentation_scalar_cannot_forge_upload(self):
+        text = """jobs:
+  audit:
+    steps:
+      - name: Inline YAML example
+        run: |2-
+          steps:
+            - uses: actions/upload-artifact@v4
+              with:
+                retention-days: 2
+      - name: Folded YAML example
+        run: >+2
+          steps:
+            - uses: actions/upload-artifact@v4
+              with:
+                retention-days: 3
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 14
+"""
+        rows = audit.inspect_workflow("explicit-scalar.yml", text, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual(["bounded"], [r.status for r in rows])
+        self.assertEqual([14], [r.retention_days for r in rows])
+
+    def test_repository_scan_denies_symlink_github_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "outside"
+            (outside / "workflows").mkdir(parents=True)
+            (outside / "workflows" / "proof.yml").write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n",
+                encoding="utf-8",
+            )
+            (root / ".github").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "symlink workflow directory"):
+                audit.scan_repository(root, max_days=30)
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
