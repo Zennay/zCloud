@@ -287,6 +287,26 @@ def render(data):
                      f"| {_safe(title)} | {age} | {'ja' if is_draft else 'nee'} |")
     if not stale:
         lines.append("| — | Geen verouderde PR-updates | — | — |")
+    # Read-only reviewer attention shortlist, never a mergeability verdict.
+    # HEAD CI, file ownership, approvals and branch protection are NOT checked.
+    reviewer_queue = sorted(
+        (row for row in prs if row[2] is False and row[5] == "main"),
+        key=lambda row: (row[6], row[0]), reverse=True)
+    lines.extend([
+        "", "### PR's voor onafhankelijke beoordeling (niet mergegoedgekeurd)", "",
+        f"- {len(reviewer_queue)} niet-concept-PR's gericht op main;",
+        "  de 12 laatst bijgewerkte staan hieronder, zonder CI-/eigenaarsoordeel.",
+        "- **Niet automatisch mergegereed; actieve workers en releasegates",
+        "  blijven beschermd.**",
+        "", "| PR | Titel | Laatste update (UTC) |",
+        "| --- | --- | --- |",
+    ])
+    for number, title, _, _, _, _, updated in reviewer_queue[:12]:
+        lines.append(
+            f"| [#{number}](https://github.com/{REPO}/pull/{number}) "
+            f"| {_safe(title)} | {updated} |")
+    if not reviewer_queue:
+        lines.append("| — | Geen niet-concept-main-PR's gevonden | — |")
     lines.extend(["", "Eerst onafhankelijke review: eigenaars, gewijzigde bestanden,",
                   "PR-loze branches, exacte HEAD-CI en releasegates apart controleren.",
                   "VPS, runner, Firefox, SQLite en workerstatus niet geverifieerd."])
