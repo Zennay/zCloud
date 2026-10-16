@@ -28,11 +28,14 @@ SAFE_PATH = re.compile(r"\.github/workflows/[A-Za-z0-9_./+-]{1,190}\Z")
 
 # Signals are review hints. In particular, a contents:write grant is NOT a
 # finding that a job ran or wrote main; a missing signal does NOT prove safety.
+# Git global options can sit between "git" and "push".
+GIT_PUSH = (r"\bgit\s+(?:(?:-c|-C|--git-dir|--work-tree)\s+\S+\s+|"
+            r"--(?:git-dir|work-tree)=\S+\s+|-\S+\s+)*push\b")
 SIGNALS = (
     ("direct_main_ref", re.compile(
-        r"\bgit\s+(?:-[^\s]+\s+)*push\b[^\r\n]{0,240}"
+        GIT_PUSH + r"[^\r\n]{0,240}"
         r"(?:HEAD:main\b|refs/heads/main\b|\borigin\s+main\b|:main\b)", re.I)),
-    ("other_git_push", re.compile(r"\bgit\s+(?:-[^\s]+\s+)*push\b", re.I)),
+    ("other_git_push", re.compile(GIT_PUSH, re.I)),
     ("git_refs_api", re.compile(
         r"(?:/git/refs(?:/heads/main)?\b|"
         r"\b(?:updateRef|createRef|deleteRef|forceUpdateRef)\s*\(|"
@@ -59,8 +62,13 @@ def git(repo: Path, *args: str, max_output: int = MAX_TREE_BYTES) -> bytes:
     allocate far more than max_output; a stopped stdout or orphan child could also
     exhaust the hosted job budget. Never follow Git redirects or invoke shell.
     """
-    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
-           "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+    # Reject inherited GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_COUNT and
+    # other caller-supplied overrides of the pinned source repository.
+    env = {key: value for key, value in os.environ.items()
+           if not key.upper().startswith("GIT_")}
+    env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0",
+                "GIT_PAGER": "cat"})
     process = None
     output = bytearray()
     deadline = time.monotonic() + 20.0
@@ -105,6 +113,30 @@ def git(repo: Path, *args: str, max_output: int = MAX_TREE_BYTES) -> bytes:
                 process.stdout.close()
     result = bytes(output)
     return result.strip() if args[0] == "rev-parse" else result
+
+def logical_shell_lines(content: str):
+    """Join shell backslash continuations and preserve first physical line number.
+
+    The source is bounded at 512 KiB and never executed. This only handles
+    a common shell idiom; indirection and external actions still require review.
+    """
+    lines = content.splitlines()
+    index = 0
+    while index < len(lines):
+        start = index + 1
+        current = lines[index]
+        if current.lstrip().startswith("#") or not current.strip():
+            index += 1
+            continue
+        while current.rstrip().endswith("\\") and index + 1 < len(lines):
+            next_line = lines[index + 1]
+            if next_line.lstrip().startswith("#"):
+                break
+            current = current.rstrip()[:-1] + " " + next_line.lstrip()
+            index += 1
+        yield start, current
+        index += 1
+
 
 def pinned(repo: Path, expected: str) -> None:
     if not SHA.fullmatch(expected):
@@ -166,9 +198,7 @@ def inventory(repo: Path, expected: str) -> dict:
         except UnicodeDecodeError as exc:
             raise InventoryError("invalid_workflow_encoding") from exc
         signals = []
-        for lineno, line in enumerate(content.splitlines(), 1):
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
+        for lineno, line in logical_shell_lines(content):
             if any(ord(char) < 32 and char != "\t" for char in line):
                 raise InventoryError("invalid_workflow_controls")
             for name, regex in SIGNALS:
