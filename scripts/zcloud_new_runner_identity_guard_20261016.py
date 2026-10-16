@@ -258,6 +258,25 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
     risks = {}
     for n, (index, name) in enumerate(indices):
         body = region[index + 1:indices[n + 1][0] if n + 1 < len(indices) else len(region)]
+        # Check the *entire* job mapping before exempting GitHub-hosted
+        # runners: a quoted/merged shadow of 'runs-on' must not disappear
+        # behind an apparently safe ubuntu-latest declaration.
+        for line in body:
+            if not line.startswith("    ") or line.startswith("     ") or not line.strip():
+                continue
+            if line.lstrip().startswith("#"):
+                continue
+            key = re.match(r"^    ([a-z][a-z0-9-]*):", line)
+            if not key:
+                raise ValueError("unsupported_job_mapping_key")
+            if key.group(1) not in {
+                "name", "runs-on", "needs", "permissions", "if",
+                "timeout-minutes", "continue-on-error", "strategy",
+                "concurrency", "env", "environment", "outputs",
+                "steps", "uses", "with", "secrets", "container",
+                "services", "defaults",
+            }:
+                raise ValueError("unknown_job_mapping_key")
         runners = [f.group(1) for l in body if (f := re.fullmatch(r"    runs-on:\s*(.*)", l))]
         if not runners:
             if not any(re.match(r"^    uses:\s*", l) for l in body):
