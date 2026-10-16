@@ -20,9 +20,9 @@ For Dutch operator-facing audit text instead of JSON codes:
 
 To explicitly obtain exit 0 *only as an offline schema/claim-completeness diagnostic*, pass:
 
-    python3 scripts/zcloud_release_gate_receipt_20261016.py --input /path/to/release-receipt.json --exit-zero-on-offline-claims
+    python3 scripts/zcloud_release_gate_receipt_20261016.py --input /path/to/release-receipt.json --expected-main-sha <operator-supplied-40char-lowercase-sha> --exit-zero-on-offline-claims
 
-With that flag, exit 0 means **only the caller-supplied unverified claims are structurally complete**. Incomplete, unsafe, stale or malformed input still exits 2. Never use this flag as a release approval condition or in a production-authorizing CI job. No combination of flags can grant release, verify live GitHub/VPS signals, obtain review, or perform a write. No network access or state mutation is performed.
+With that flag **and** an operator-supplied `--expected-main-sha`, exit 0 means **only the caller-supplied unverified claims are structurally complete and match that separately supplied immutable main revision**. An absent, malformed, uppercase or mismatching expected SHA refuses the diagnostic with exit 2. Neither the supplied SHA nor the receipt proves current GitHub main: a trusted human must independently retrieve and confirm it. Incomplete, unsafe, stale or malformed input still exits 2. Never use this flag as a release approval condition or in a production-authorizing CI job. No combination of flags can grant release, verify live GitHub/VPS signals, obtain review, or perform a write. No network access or state mutation is performed.
 
 The entire top-level object must contain exactly:
 
@@ -81,3 +81,7 @@ Dit lost een triageknelpunt op zonder brondata te delen of de denial-policy te v
 ## Release-admission exit-code confusion fix (16 October follow-up)
 
 The original CLI returned exit 0 on a forged but schema-complete all-true receipt. Although JSON clearly marked `production_mutation_authorized=false`, shell scripts sometimes gate writes using only subprocess exit status. The CLI is now **fail-closed by default for every possible unverified receipt** (`exit 2`). An intentionally named `--exit-zero-on-offline-claims` opt-in retains useful exit 0 semantics for **offline diagnostics only**; invalid/missing gates still return 2. Dedicated CLI tests verify JSON and Dutch Markdown default denial, opt-in negative cases, and that a real `bash -e` command cannot advance past a claimed-green default receipt. This is a backward-incompatible change within an unmerged standalone PR; no existing zCloud production workflow calls this new script. Integration owners must never treat opt-in claim success as independent release evidence.
+
+## Offline SHA binding for explicit diagnostic success (16 October follow-up)
+
+The explicit `--exit-zero-on-offline-claims` opt-in now **also requires** `--expected-main-sha <40-lowercase-hex>` and compares that separately supplied value to **both** the untrusted receipt's candidate and canonical main SHAs. If the operator omits the expected SHA or gives a malformed, uppercase, stale or mismatched SHA, `candidate_not_exact_current_main` is returned, `offline_claims_complete=false` and process exit is **2**. This closes a practical false-positive scenario where a claimed-complete stale receipt could otherwise return offline diagnostic success with no outside reference at all. The default remains exit 2 for every claim, and the tool never contacts GitHub or proves that the operator's value reflects actual current main. Exact revision confirmation and independent approvals stay with the separately authorized release operator. Tests cover valid, missing, malformed, wrong, uppercase and drifted revisions as well as both JSON and Dutch CLI modes.
