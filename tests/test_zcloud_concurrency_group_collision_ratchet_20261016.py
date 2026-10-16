@@ -187,14 +187,14 @@ class RatchetTests(unittest.TestCase):
 
     def test_unique_workflow_names_keep_namespaced_groups_separate(self):
         base = self.base()
-        group = "${{ github.workflow }}-${{ github.ref }}"
+        group = "${{ github.workflow }}"
         self.write("first.yml", document(group, True).replace("name: Test", "name: First"))
         self.write("second.yaml", document(group, True).replace("name: Test", "name: Second"))
         self.assertEqual(gate.check(base, self.save()), (0, 0))
 
     def test_duplicate_workflow_names_can_collide_despite_namespacing(self):
         base = self.base()
-        group = "${{ github.workflow }}-${{ github.ref }}"
+        group = "${{ github.workflow }}"
         self.write("first.yml", document(group, False))
         self.write("second.yaml", document(group, False))
         self.denied(base, self.save())
@@ -207,8 +207,8 @@ class RatchetTests(unittest.TestCase):
 
     def test_simple_expression_whitespace_does_not_hide_collision(self):
         base = self.base()
-        self.write("first.yml", document("prefix-${{github.ref}}", False))
-        self.write("second.yaml", document("prefix-${{ github.ref }}", False))
+        self.write("first.yml", document("prefix-${{github.workflow}}", False))
+        self.write("second.yaml", document("prefix-${{ github.workflow }}", False))
         self.denied(base, self.save())
 
     def test_non_string_workflow_name_denied(self):
@@ -461,11 +461,11 @@ class RatchetTests(unittest.TestCase):
         self.write("first.yml", upgraded)
         self.assertEqual(gate.check(base, self.save()), (0, 0))
 
-    def test_simple_dotted_expression_is_statically_admitted(self):
+    def test_ref_selector_requires_review_even_with_unique_prefix(self):
         base = self.base()
         self.write("second.yaml", document("separate", False).replace(
             "group: separate", "group: \"prefix-${{ github.ref }}\""))
-        self.assertEqual(gate.check(base, self.save()), (0, 0))
+        self.denied(base, self.save())
 
     def test_new_event_number_selector_cannot_claim_static_distinctness(self):
         base = self.base()
@@ -518,6 +518,24 @@ class RatchetTests(unittest.TestCase):
         self.write("first.yml", legacy.replace("github.event.number",
                                                "github.event.pull_request.number"))
         self.denied(base, self.save())
+
+    def test_new_predictable_dotted_contexts_are_not_uniqueness_proofs(self):
+        for expr in ("github.event_name", "github.run_attempt",
+                     "github.repository", "github.sha", "github.ref"):
+            with self.subTest(selector=expr):
+                base = self.base()
+                self.write("second.yaml", document("separate", False).replace(
+                    "group: separate", 'group: "value-${{ ' + expr + ' }}"'))
+                self.denied(base, self.save())
+                # Reset the fixture to a clean base for the next expression.
+                self.write("second.yaml", document("separate", False))
+                self.save()
+
+    def test_static_workflow_name_selector_remains_admitted(self):
+        base = self.base()
+        self.write("second.yaml", document("${{ github.workflow }}", False).replace(
+            "name: Test", "name: Unique Workflow"))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
 
     def test_opaque_inventory_never_claims_complete_static_coverage(self):
         baseline = document("old", False).replace(
