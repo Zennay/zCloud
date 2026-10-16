@@ -19,6 +19,7 @@ from pathlib import Path
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
+ACTION = re.compile(r"\.github/actions/(?:[^/\0]+/)+action\.ya?ml\Z")
 ON = re.compile(r"^(?:on|'on'|\"on\")\s*:(.*)$")
 SCHEDULE = re.compile(r"(?i)(?:^|[\s,{\[])['\"]?schedule['\"]?\s*(?:[:,}\]]|$)")
 DISPATCH = re.compile(
@@ -41,6 +42,11 @@ REUSABLE = re.compile(
     r"""(?m)^\s+(?:-\s*)?uses:\s*['"]?"""
     r"""((?:\./\.github/workflows/|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/)"""
     r"""[A-Za-z0-9_.-]+\.ya?ml(?:@[^\s'"#]+)?)['"]?\s*(?:#.*)?$"""
+)
+LOCAL_ACTION = re.compile(
+    r"""(?m)^\s+(?:-\s*)?uses:\s*['"]?"""
+    r"""(\./\.github/actions/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)"""
+    r"""['"]?\s*(?:#.*)?$"""
 )
 MAX_MANIFESTS = 2048
 MAX_BLOB = 1024 * 1024
@@ -90,7 +96,7 @@ def git(repo: Path, *args: str) -> bytes:
 def manifest_map(repo: Path, sha: str) -> dict[str, str]:
     if not SHA.fullmatch(sha):
         raise ValueError("exact 40-character lowercase Git SHA required")
-    entries = git(repo, "ls-tree", "-r", "-z", sha, "--", ".github/workflows").split(b"\0")
+    entries = git(repo, "ls-tree", "-r", "-z", sha, "--", ".github/workflows", ".github/actions").split(b"\0")
     result: dict[str, str] = {}
     total = 0
     for record in entries:
@@ -102,7 +108,7 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
             path = path_bytes.decode("utf-8")
         except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError("invalid Git tree entry") from exc
-        if not WORKFLOW.fullmatch(path):
+        if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path)):
             continue
         if path in result or len(result) >= MAX_MANIFESTS:
             raise ValueError("duplicate or excessive workflow entry")
@@ -215,6 +221,23 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                 sites[edge] += 1
                 if target.startswith("./.github/workflows/"):
                     visiting.append(target[2:])
+            for match in LOCAL_ACTION.finditer(text):
+                action_root = match.group(1)[2:]
+                edge = hashlib.sha256(
+                    ("action:" + path + ":" + action_root).encode()
+                ).hexdigest()
+                sites[edge] += 1
+                found = False
+                for suffix in ("/action.yml", "/action.yaml"):
+                    manifest = action_root + suffix
+                    if manifest in workflows:
+                        visiting.append(manifest)
+                        found = True
+                if not found:
+                    fingerprint = hashlib.sha256(
+                        ("missing-action:" + action_root).encode()
+                    ).hexdigest()
+                    sites[fingerprint] += 1
         if sites:
             report[root] = sites
     return report
