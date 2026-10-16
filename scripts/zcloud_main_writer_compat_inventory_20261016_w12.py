@@ -225,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
                               "production_mutation_authorized": False}, sort_keys=True))
         return 2
     if args.format == "csv":
-        writer = csv.writer(sys.stdout, lineterminator="\\n")
+        writer = csv.writer(sys.stdout, lineterminator="\n")
         writer.writerow(["main_sha", "workflow_path", "source_sha256",
                          "signal_lines_and_kinds", "priority",
                          "owner", "reviewed_by", "decision", "evidence_url",
