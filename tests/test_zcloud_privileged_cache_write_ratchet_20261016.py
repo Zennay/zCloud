@@ -145,6 +145,50 @@ class CacheWriteGuardTests(TestCase):
         self.assertFalse("deploy" in guard.__doc__.lower() and "authorized: true" in guard.__doc__.lower())
 
 
+    def test_yaml_step_mapping_alias_is_resolved(self):
+        source = ("on: [workflow_run]\njobs:\n  a:\n    steps:\n"
+                  "      - &shared\n        uses: actions/cache/save@v4\n"
+                  "        with: {path: /tmp, key: cache}\n      - *shared\n")
+        self.assertEqual(sum(guard.cache_writers("a.yml", source).values()), 2)
+
+    def test_privileged_step_merge_is_denied(self):
+        source = ("on: [pull_request_target]\nshared: &step\n"
+                  "  uses: actions/cache@v4\njobs:\n  x:\n"
+                  "    steps:\n      - <<: *step\n")
+        with self.assertRaises(guard.Denied):
+            guard.cache_writers("a.yml", source)
+
+    def test_privileged_cache_input_merge_is_denied(self):
+        source = ("on: [workflow_run]\nshared: &inputs {path: /tmp, key: abc}\n"
+                  "jobs:\n  x:\n    steps:\n      - uses: actions/cache@v4\n"
+                  "        with:\n          <<: *inputs\n")
+        with self.assertRaises(guard.Denied):
+            guard.cache_writers("a.yml", source)
+
+    def test_privileged_cyclic_alias_is_denied(self):
+        source = ("on: [issue_comment]\nshared: &loop [*loop]\n"
+                  "jobs:\n  x:\n    steps: []\n")
+        with self.assertRaises(guard.Denied):
+            guard.cache_writers("a.yml", source)
+
+    def test_unprivileged_yaml_merge_remains_out_of_scope(self):
+        source = ("on: [pull_request]\nshared: &step {uses: actions/cache@v4}\n"
+                  "jobs:\n  x:\n    steps:\n      - <<: *step\n")
+        self.assertFalse(guard.cache_writers("a.yml", source))
+
+    def test_aliased_with_mapping_is_fingerprinted(self):
+        source = ("on: [pull_request_target]\nshared: &inputs {path: /tmp, key: abc}\n"
+                  "jobs:\n  x:\n    steps:\n      - uses: actions/cache@v4\n"
+                  "        with: *inputs\n")
+        self.assertEqual(sum(guard.cache_writers("a.yml", source).values()), 1)
+
+    def test_deep_nested_yaml_is_denied(self):
+        nested = {}
+        for _ in range(66):
+            nested = {"a": nested}
+        with self.assertRaises(guard.Denied):
+            guard.reject_ambiguous_merges(nested)
+
 if __name__ == "__main__":
     import unittest
     unittest.main()
