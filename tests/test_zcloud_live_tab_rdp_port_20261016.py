@@ -1,8 +1,11 @@
 """Offline negative tests for the live-tab debugger-port process boundary."""
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.zcloud_live_tab_rdp_port_20261016 import detect_debugger_port
+from scripts.zcloud_live_tab_rdp_port_20261016 import (
+    detect_debugger_port, trusted_firefox_executable,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/zcloud-live-tab-version-probe.yml"
@@ -85,6 +88,68 @@ class LiveTabPortIdentityTests(unittest.TestCase):
         ):
             self.assertEqual(detect_debugger_port([line]), ("ambiguous", None))
 
+    def test_kernel_executable_attestation_allows_only_system_firefox(self):
+        for executable in (
+            "/snap/firefox/777/usr/lib/firefox/firefox",
+            "/snap/firefox/12/usr/lib/firefox/firefox-bin",
+            "/usr/lib/firefox/firefox",
+            "/usr/lib/firefox-esr/firefox-esr",
+            "/usr/bin/firefox",
+        ):
+            with self.subTest(executable=executable):
+                with patch("scripts.zcloud_live_tab_rdp_port_20261016.os.readlink",
+                           return_value=executable) as readlink:
+                    self.assertTrue(trusted_firefox_executable(123))
+                    self.assertEqual(readlink.call_args.args, ("/proc/123/exe",))
+                    self.assertEqual(
+                        detect_debugger_port([row()],
+                                             verify_executable=trusted_firefox_executable),
+                        ("unique", 6000),
+                    )
+
+    def test_kernel_executable_attestation_denies_fake_binary_and_deleted_file(self):
+        for executable in (
+            "/tmp/firefox", "/home/ubuntu/firefox",
+            "/snap/other/12/usr/lib/firefox/firefox",
+            "/usr/lib/firefox/firefox-malware",
+            "/snap/firefox/777/usr/lib/firefox/firefox (deleted)",
+            "firefox", "",
+        ):
+            with self.subTest(executable=executable):
+                with patch("scripts.zcloud_live_tab_rdp_port_20261016.os.readlink",
+                           return_value=executable):
+                    self.assertFalse(trusted_firefox_executable(123))
+                    self.assertEqual(
+                        detect_debugger_port([row()],
+                                             verify_executable=trusted_firefox_executable),
+                        ("ambiguous", None),
+                    )
+
+    def test_kernel_identity_unreadable_or_bad_pid_fails_closed(self):
+        for invalid in (0, -1, 4294967296, True, "123", None):
+            with self.subTest(pid=invalid):
+                self.assertFalse(trusted_firefox_executable(invalid))
+        with patch("scripts.zcloud_live_tab_rdp_port_20261016.os.readlink",
+                   side_effect=OSError("permission denied")):
+            self.assertFalse(trusted_firefox_executable(123))
+            self.assertEqual(
+                detect_debugger_port([row()],
+                                     verify_executable=trusted_firefox_executable),
+                ("ambiguous", None),
+            )
+
+    def test_executable_callback_failure_never_allows_port(self):
+        self.assertEqual(
+            detect_debugger_port([row()], verify_executable=lambda pid: False),
+            ("ambiguous", None),
+        )
+        def raises(_pid):
+            raise RuntimeError("untrusted proc evidence")
+        self.assertEqual(
+            detect_debugger_port([row()], verify_executable=raises),
+            ("ambiguous", None),
+        )
+
     def test_not_authorization_and_no_process_or_network_io(self):
         source = (ROOT / "scripts/zcloud_live_tab_rdp_port_20261016.py").read_text()
         self.assertNotIn("socket.", source)
@@ -106,7 +171,9 @@ class LiveTabPortIdentityTests(unittest.TestCase):
             "persist-credentials: false",
             "python3 scripts/zcloud_vps_runner_guard.py --json",
             "test \"$current_main\" = \"$GITHUB_SHA\"",
-            "from scripts.zcloud_live_tab_rdp_port_20261016 import detect_debugger_port",
+            "from scripts.zcloud_live_tab_rdp_port_20261016 import (",
+            "trusted_firefox_executable",
+            "verify_executable=trusted_firefox_executable",
             "status,port=detect_debugger_port(proc.stdout.splitlines())",
             "python3 -m unittest -v tests.test_zcloud_live_tab_rdp_port_20261016",
         ):
