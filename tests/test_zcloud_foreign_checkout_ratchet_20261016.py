@@ -153,6 +153,58 @@ class CheckoutRepoGuardTest(unittest.TestCase):
             [],
         )
 
+    def test_manifest_oversize_denied_before_git_show(self):
+        from unittest.mock import patch
+        calls = []
+        def fake_git(_repo, *args):
+            calls.append(args[0])
+            if args[0] == 'ls-tree':
+                return b'.github/workflows/example.yml\x00'
+            if args[0] == 'cat-file':
+                return str(guard.MAX_MANIFEST_BYTES + 1).encode('ascii')
+            raise AssertionError('Oversized manifest must never be read')
+        with patch.object(guard, 'git', side_effect=fake_git):
+            with self.assertRaisesRegex(ValueError, 'single-file size budget'):
+                guard.tree('.', 'a' * 40)
+        self.assertNotIn('show', calls)
+
+    def test_manifest_count_budget_denies_early(self):
+        from unittest.mock import patch
+        with patch.object(guard, 'git', return_value=b'.github/workflows/example.yml\x00'):
+            with patch.object(guard, 'MAX_MANIFESTS', 0):
+                with self.assertRaisesRegex(ValueError, 'Manifest count'):
+                    guard.tree('.', 'a' * 40)
+
+    def test_manifest_total_budget_denies_before_read(self):
+        from unittest.mock import patch
+        calls = []
+        def fake_git(_repo, *args):
+            calls.append(args[0])
+            if args[0] == 'ls-tree':
+                return b'action.yml\x00'
+            if args[0] == 'cat-file':
+                return b'1'
+            raise AssertionError('Total budget breach must preempt read')
+        with patch.object(guard, 'git', side_effect=fake_git):
+            with patch.object(guard, 'MAX_INVENTORY_BYTES', 0):
+                with self.assertRaisesRegex(ValueError, 'total byte budget'):
+                    guard.tree('.', 'a' * 40)
+        self.assertNotIn('show', calls)
+
+    def test_manifest_blob_size_disagreement_denied(self):
+        from unittest.mock import patch
+        def fake_git(_repo, *args):
+            if args[0] == 'ls-tree':
+                return b'action.yml\x00'
+            if args[0] == 'cat-file':
+                return b'999'
+            if args[0] == 'show':
+                return b'YAML'
+            raise AssertionError('Unexpected git operation')
+        with patch.object(guard, 'git', side_effect=fake_git):
+            with self.assertRaisesRegex(ValueError, 'size mismatch'):
+                guard.tree('.', 'a' * 40)
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
