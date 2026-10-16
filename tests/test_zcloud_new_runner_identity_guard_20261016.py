@@ -102,6 +102,18 @@ class IdentityPolicyTests(unittest.TestCase):
                 value = wf().replace("        run: |", "        shell: " + shell + "\n        run: |")
                 self.assertIn("audit", g.unsafe_jobs(value))
 
+    def test_post_guard_failure_status_override_denied(self):
+        for condition in ("always()", "failure()", "!cancelled()", "${{ success() || always() }}"):
+            with self.subTest(condition=condition):
+                val = wf().replace("      - run: echo after",
+                                   "      - if: " + condition + "\n        run: systemctl restart zcloud")
+                self.assertIn("audit", g.unsafe_jobs(val))
+
+    def test_post_guard_normal_success_step_allowed(self):
+        val = wf().replace("      - run: echo after",
+                           "      - if: success()\n        run: echo safe")
+        self.assertEqual(g.unsafe_jobs(val), {})
+
     def test_explicit_bash_shell_preserves_safe_guard(self):
         value = wf().replace("        run: |", "        shell: bash\n        run: |")
         self.assertEqual(g.unsafe_jobs(value), {})
