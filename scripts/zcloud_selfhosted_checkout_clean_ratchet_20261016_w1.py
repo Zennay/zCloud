@@ -18,6 +18,10 @@ USES = re.compile(r"^\s*(?:-\s*)?['\"]?uses['\"]?\s*:\s*['\"]?([^'\"\s#]+)")
 CLEAN = re.compile(r"^\s+['\"]?clean['\"]?\s*:\s*(.*)$")
 WORKFLOW_PREFIX = ".github/workflows/"
 MAX_FILES, MAX_BYTES = 512, 1024 * 1024
+CANONICAL_ORIGINS = frozenset({
+    "https://github.com/Zennay/zCloud",
+    "https://github.com/Zennay/zCloud.git",
+})
 
 
 class Denied(ValueError):
@@ -200,9 +204,20 @@ def inventory(sha):
     return collections.Counter(findings)
 
 
-def run(base, head):
+def run(base, head, *, trusted_origins=None):
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
         raise Denied("invalid_commit")
+    # PR candidate code is only executed on GitHub-hosted runners, but the
+    # Git history scanner must still reject redirected or replaced origins.
+    # The alternate allowlist exists exclusively for local temporary Git
+    # fixtures; the public CLI always uses the canonical origins above.
+    allowed = CANONICAL_ORIGINS if trusted_origins is None else frozenset(trusted_origins)
+    try:
+        origin_lines = git("remote", "get-url", "origin").decode("utf-8", "strict").splitlines()
+    except UnicodeDecodeError:
+        raise Denied("invalid_git_origin") from None
+    if len(origin_lines) != 1 or origin_lines[0] not in allowed:
+        raise Denied("foreign_checkout_origin")
     if git("rev-parse", "HEAD").decode().strip() != head:
         raise Denied("not_exact_head")
     if git("merge-base", "--is-ancestor", base, head) != b"":
@@ -219,6 +234,7 @@ def run(base, head):
             "base": base, "head": head,
             "baseline_findings": sum(old.values()),
             "candidate_findings": sum(new.values()),
+            "canonical_origin_verified": trusted_origins is None,
             "new_findings": additions[:100],
             "new_finding_count": len(additions),
             "deploy_authorized": False,
