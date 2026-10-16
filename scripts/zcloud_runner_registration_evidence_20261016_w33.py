@@ -34,12 +34,20 @@ def _unique_pairs(pairs):
     return result
 
 
+def _finite_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise InvalidEvidence('nonfinite_number')
+    return number
+
+
 def load_json(raw: bytes):
     if not isinstance(raw, bytes) or not raw or len(raw) > MAX_INPUT:
         raise InvalidEvidence('invalid_input_size')
     try:
         obj = json.loads(raw.decode('utf-8'), object_pairs_hook=_unique_pairs,
-                         parse_constant=lambda _: (_ for _ in ()).throw(InvalidEvidence('nonfinite_number')))
+                         parse_constant=lambda _: (_ for _ in ()).throw(InvalidEvidence('nonfinite_number')),
+                         parse_float=lambda n: _finite_float(n))
         # json.loads accepts escaped lone surrogates; they cannot be valid canonical evidence.
         json.dumps(obj, ensure_ascii=False).encode('utf-8')
     except InvalidEvidence:
