@@ -16,9 +16,11 @@ import sys
 
 WORKFLOW_DIR = ".github/workflows"
 LIMIT_BYTES = 256_000
-CRON_RE = re.compile(r"^\s*-\s*cron\s*:\s*(.+?)\s*$")
-SCHEDULE_RE = re.compile(r"^\s{2}schedule\s*:\s*(.*?)\s*$")
+CRON_RE = re.compile(r"""^\s*-\s*(?:cron|'cron'|"cron")\s*:\s*(.+?)\s*$""")
+SCHEDULE_RE = re.compile(r"""^\s*(?:schedule|'schedule'|"schedule")\s*:\s*(.*?)\s*$""")
 TOP_LEVEL_RE = re.compile(r"^[^\s#][^:]*\s*:")
+EVENT_KEY_RE = re.compile(r"""^\s*(?:([A-Za-z_][A-Za-z_0-9-]*)|'([A-Za-z_][A-Za-z_0-9-]*)'|"([A-Za-z_][A-Za-z_0-9-]*)")\s*:\s*(.*?)\s*$""")
+TIMEZONE_RE = re.compile(r"""^\s*(?:timezone|'timezone'|"timezone")\s*:\s*(.*?)\s*$""")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 MIN_GAP = 15
 MONTHS = dict(zip("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(), range(1, 13)))
@@ -96,6 +98,9 @@ def is_high_frequency(cron: str) -> bool:
 def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tuple[str, ...]:
     if len(source.encode("utf-8")) > LIMIT_BYTES:
         raise AdmissionError("workflow_source_oversized")
+    # UTF-8 BOM is legal at the beginning of a YAML stream and must not
+    # turn the sole on: mapping into an invisible different root key.
+    source = source.removeprefix("\ufeff")
     entries: list[str] = []
     in_on = False
     in_schedule = False
@@ -108,7 +113,10 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
         if line.startswith("? ") or line.startswith("?-") or line == "?":
             raise AdmissionError("ambiguous_explicit_mapping_key")
         if TOP_LEVEL_RE.match(line):
-            key = line.partition(":")[0].strip().strip("'\"")
+            raw_key = line.partition(":")[0].strip()
+            if "\\" in raw_key:
+                raise AdmissionError("ambiguous_root_key_encoding")
+            key = raw_key.strip("'\"")
             # Root YAML merge keys can synthesize an on.schedule trigger
             # that a line-scanner would otherwise never inspect.
             if key == "<<":
@@ -146,9 +154,12 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             # without spelling out schedule here; refuse this trust bypass.
             if line.lstrip().startswith("<<:") or line.lstrip().startswith("&"):
                 raise AdmissionError("yaml_event_merge_forbidden")
-            match = re.fullmatch(r"\s*schedule\s*:\s*(.*?)\s*", line)
-            if match:
-                if found_schedule or match.group(1):
+            match = EVENT_KEY_RE.fullmatch(line)
+            if match is None:
+                raise AdmissionError("ambiguous_event_key")
+            event_name = next(part for part in match.groups()[:3] if part is not None)
+            if event_name == "schedule":
+                if found_schedule or match.group(4):
                     raise AdmissionError("ambiguous_schedule_block")
                 found_schedule = True
                 in_schedule = True
@@ -161,11 +172,13 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
         # UTC proximity from them when a schedule is added or changed.
         if line.lstrip().startswith("<<:"):
             raise AdmissionError("yaml_schedule_merge_forbidden")
-        if re.fullmatch(r"\s*timezone\s*:\s*.*", line):
-            if not line.partition(":")[2].strip():
-                raise AdmissionError("empty_timezone_selector")
+        timezone_match = TIMEZONE_RE.fullmatch(line)
+        if timezone_match:
+            zone = timezone_match.group(1).strip()
+            if not zone or zone.startswith(("*", "&", "!", "[", "{")):
+                raise AdmissionError("ambiguous_timezone_selector")
             if timezone_metadata is not None:
-                timezone_metadata.append(line.strip())
+                timezone_metadata.append("timezone: " + zone)
             continue
         match = CRON_RE.match(line)
         if match:
