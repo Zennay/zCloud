@@ -336,7 +336,7 @@ class ImmutableGitTreeTests(unittest.TestCase):
         old = Path.cwd()
         try:
             os.chdir(self.work)
-            return guard.run(self.base, self.rev())
+            return guard.run(self.base, self.rev(), trusted_origins=(str(self.remote),))
         finally:
             os.chdir(old)
 
@@ -401,6 +401,29 @@ class ImmutableGitTreeTests(unittest.TestCase):
         self.workflow("different.yml", sample("false"))
         self.commit("unrelated root")
         with self.assertRaises(guard.Denied):
+            self.scan()
+
+
+
+    def test_real_git_disallows_untrusted_local_origin_by_default(self):
+        with self.assertRaisesRegex(guard.Denied, "foreign_checkout_origin"):
+            guard.run(self.base, self.rev())
+
+    def test_real_git_rejects_renamed_origin_even_when_source_refs_match(self):
+        other = self.root / "other.git"
+        import subprocess
+        subprocess.run(["git", "init", "--bare", str(other)],
+                       check=True, capture_output=True)
+        self.git("remote", "add", "other", str(other))
+        self.git("push", "other", "main")
+        self.git("remote", "set-url", "origin", str(other))
+        with self.assertRaisesRegex(guard.Denied, "foreign_checkout_origin"):
+            self.scan()
+
+    def test_real_git_rejects_rewritten_checkout_origin(self):
+        self.git("config", 'url.https://untrusted.invalid/.insteadOf',
+                 str(self.remote))
+        with self.assertRaisesRegex(guard.Denied, "foreign_checkout_origin"):
             self.scan()
 
 
