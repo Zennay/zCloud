@@ -470,7 +470,9 @@ class Tests(unittest.TestCase):
 
     def test_new_findings_report_paths_not_secret_values(self):
         base=self.commit(SAFE)
-        head=self.commit(CROSS.replace('DYNAMIC_VALUE','SENSITIVE_CANARY_7X'))
+        canary=CROSS.replace('github.token','SENSITIVE_CANARY_7X')
+        self.assertIn('SENSITIVE_CANARY_7X',canary)
+        head=self.commit(canary)
         report=module.evaluate(self.repo,base,head)
         self.assertEqual(report['new_finding_paths'],['.github/workflows/sample.yml'])
         self.assertNotIn('SENSITIVE_CANARY_7X',str(report))
