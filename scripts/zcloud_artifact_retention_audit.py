@@ -55,6 +55,10 @@ def _structural_lines(text: str) -> list[tuple[int, str]]:
             line,
         ):
             raise RuntimeError("unresolved workflow mapping key")
+        # YAML merge maps may inherit 'uses' or 'with' from a hidden anchor.
+        # A lexical source audit cannot prove the effective merged identity.
+        if re.match(r"""^\s*(?:-\s+)?(?:<<|['"]<<['"])\s*:""", line):
+            raise RuntimeError("unresolved YAML merge mapping")
         # Flow-style or aliased step collections cannot be audited by the
         # block-sequence reader below. Reject rather than report zero uploads.
         steps_value = re.match(r"^\s*steps:\s*(.*)$", line)
@@ -101,6 +105,8 @@ def _step_blocks(text: str) -> Iterable[tuple[int, list[tuple[int, str]], int]]:
             first = i
             if re.match(r"^\s*-\s*[\[{]", lines[first][1]):
                 raise RuntimeError("unresolved flow-style workflow step")
+            if re.match(r"^\s*-\s*[&*!]", lines[first][1]):
+                raise RuntimeError("unresolved anchored workflow step")
             i += 1
             while i < len(lines):
                 following = lines[i][1]
