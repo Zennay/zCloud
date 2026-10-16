@@ -131,7 +131,8 @@ class BacklogBriefTests(TestCase):
         ]
         output = brief.render(brief.collect(Reader({1: rows}), NOW))
         self.assertIn("2 niet-concept-PR's gericht op main", output)
-        shortlist = output.split("### PR's voor onafhankelijke beoordeling", 1)[1]
+        shortlist = (output.split("### PR's voor onafhankelijke beoordeling", 1)[1]
+                     .split("### PR's gericht op andere branches", 1)[0])
         self.assertLess(shortlist.index("[#4]"), shortlist.index("[#1]"))
         self.assertNotIn("[#2]", shortlist)
         self.assertNotIn("[#3]", shortlist)
@@ -142,7 +143,8 @@ class BacklogBriefTests(TestCase):
         report = brief.collect(
             Reader({1: [pr(n, draft=False) for n in range(1, 21)]}), NOW)
         output = brief.render(report)
-        shortlist = output.split("### PR's voor onafhankelijke beoordeling", 1)[1]
+        shortlist = (output.split("### PR's voor onafhankelijke beoordeling", 1)[1]
+                     .split("### PR's gericht op andere branches", 1)[0])
         self.assertEqual(12, shortlist.count("https://github.com/Zennay/zCloud/pull/"))
         self.assertIn("20 niet-concept-PR's gericht op main", shortlist)
         self.assertIn("[#20]", shortlist)
