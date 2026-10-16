@@ -21,7 +21,7 @@ class ZsshPublicIngressHostnameTests(unittest.TestCase):
             "workflow_dispatch:",
             "docker inspect --format",
             "ZSSH_DOCKER_CADDY_TOPOLOGY_GREEN",
-            "ZSSH_DOCKER_CADDY_TOPOLOGY_UNSUPPORTED",
+            "ZSSH_DOCKER_CADDY_TOPOLOGY_GREEN",
             "expected_zssh_sha:",
             "confirm_sha:",
             "INSTALL_ZSSH_PUBLIC_INGRESS",
