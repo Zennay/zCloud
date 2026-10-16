@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 import hashlib
+import json
 import os
 import re
 import selectors
@@ -241,12 +242,50 @@ def check(base: str, head: str):
         raise AdmissionError(f"new cross-workflow cancellation collisions ({len(escalations)}): {', '.join(paths[:10])}")
     return len(old), len(new)
 
+def inventory(base: str, head: str) -> dict:
+    """Human-review queue with immutable evidence, never production authority."""
+    check(base, head)
+    legacy = findings(base)
+    if len(legacy) > 128:
+        raise AdmissionError("human review inventory budget exceeded")
+    assert_commits(base, head)
+    records = []
+    for group_hash, first, second in sorted(legacy):
+        records.append({
+            "group_sha256": group_hash,
+            "members": [
+                {"workflow_path": item[0], "scope": item[1],
+                 "cancel_in_progress": item[2], "queue": item[3]}
+                for item in (first, second)
+            ],
+            "reviewer": "UNASSIGNED",
+            "owner": "UNASSIGNED",
+            "disposition": "UNREVIEWED",
+        })
+    return {
+        "evidence_type": "immutable_source_only",
+        "base_commit_sha": base,
+        "head_commit_sha": head,
+        "legacy_collision_count": len(records),
+        "new_collisions_allowed": 0,
+        "reviewed": False,
+        "merge_authorized": False,
+        "production_mutation_authorized": False,
+        "review_items": records,
+    }
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument("--inventory-json", action="store_true",
+                        help="Print only SHA-bound review evidence, never release authorization")
     args = parser.parse_args()
     try:
+        if args.inventory_json:
+            print(json.dumps(inventory(args.base, args.head), sort_keys=True,
+                             separators=(",", ":"), ensure_ascii=True))
+            return 0
         before, after = check(args.base, args.head)
     except AdmissionError as e:
         print(f"ZCLOUD_CONCURRENCY_COLLISION_SOURCE_DENY: {e}", file=sys.stderr)
