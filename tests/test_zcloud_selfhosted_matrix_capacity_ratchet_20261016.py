@@ -30,16 +30,16 @@ jobs:
 
 def workflow_with_matrix_groups(count):
     """Independent max-parallel:1 jobs can still run simultaneously."""
-    header = "name: Matrix aggregate fixture\\non: [workflow_dispatch]\\njobs:\\n"
+    header = "name: Matrix aggregate fixture\non: [workflow_dispatch]\njobs:\n"
     job = (
-        "  probe{index}:\\n"
-        "    runs-on: [self-hosted, zcloud, vps]\\n"
-        "    strategy:\\n"
-        "      max-parallel: 1\\n"
-        "      matrix:\\n"
-        "        shard: [a, b]\\n"
-        "    steps:\\n"
-        "      - run: echo safe\\n"
+        "  probe{index}:\n"
+        "    runs-on: [self-hosted, zcloud, vps]\n"
+        "    strategy:\n"
+        "      max-parallel: 1\n"
+        "      matrix:\n"
+        "        shard: [a, b]\n"
+        "    steps:\n"
+        "      - run: echo safe\n"
     )
     return header + "".join(job.format(index=i) for i in range(count))
 
