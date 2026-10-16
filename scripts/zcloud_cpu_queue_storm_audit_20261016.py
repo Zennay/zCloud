@@ -21,6 +21,8 @@ REPO = "Zennay/zCloud"
 WORKFLOW = "vps-cpu-diagnostic.yml"
 WORKFLOW_PATH = f".github/workflows/{WORKFLOW}"
 WORKFLOW_NAME = "VPS CPU diagnostic snapshot"
+# Verified from canonical queued workflow run 38932928384.
+WORKFLOW_ID = 375859343
 BASE = f"https://api.github.com/repos/{REPO}"
 REQUIRED = frozenset(("self-hosted", "zcloud", "vps"))
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -114,11 +116,17 @@ def canonical_run(raw: object, now: datetime) -> dict:
     if not (type(repo) is dict and type(head_repo) is dict
             and repo.get("full_name") == REPO and head_repo.get("full_name") == REPO):
         raise Unavailable("repo_provenance_invalid")
-    raw_path = raw.get("path")
-    if (type(raw_path) is not str
-            or raw_path.split("@", 1)[0] != WORKFLOW_PATH
-            or raw.get("name") != WORKFLOW_NAME):
+    # Require the canonical Actions workflow identity and source links.
+    # A matching prefix with a fabricated @ref suffix is not sufficient.
+    if (raw.get("path") != WORKFLOW_PATH
+            or raw.get("name") != WORKFLOW_NAME
+            or type(raw.get("workflow_id")) is not int
+            or raw["workflow_id"] != WORKFLOW_ID):
         raise Unavailable("workflow_provenance_invalid")
+    if (raw.get("url") != f"{BASE}/actions/runs/{rid}"
+            or raw.get("html_url") != f"https://github.com/{REPO}/actions/runs/{rid}"
+            or raw.get("jobs_url") != f"{BASE}/actions/runs/{rid}/jobs"):
+        raise Unavailable("run_url_binding_invalid")
     branch = raw.get("head_branch")
     head_sha = raw.get("head_sha")
     if (type(branch) is not str or not branch or len(branch) > 255

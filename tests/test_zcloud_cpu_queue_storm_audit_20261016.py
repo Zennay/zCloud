@@ -17,7 +17,10 @@ NOW = datetime(2026, 10, 16, 15, 46, tzinfo=timezone.utc)
 def make_run(index, *, sha="a" * 40, branch="one", age=1900, status="queued", event="pull_request"):
     return {"id": index, "repository": {"full_name": audit.REPO},
             "head_repository": {"full_name": audit.REPO}, "name": audit.WORKFLOW_NAME,
-            "path": audit.WORKFLOW_PATH + "@refs/heads/" + branch,
+            "path": audit.WORKFLOW_PATH, "workflow_id": audit.WORKFLOW_ID,
+            "url": f"{audit.BASE}/actions/runs/{index}",
+            "html_url": f"https://github.com/{audit.REPO}/actions/runs/{index}",
+            "jobs_url": f"{audit.BASE}/actions/runs/{index}/jobs",
             "head_branch": branch, "head_sha": sha, "run_attempt": 1,
             "event": event, "status": status, "conclusion": None,
             "created_at": (NOW - timedelta(seconds=age+3)).isoformat()}
@@ -113,6 +116,30 @@ class QueueStormContract(unittest.TestCase):
                         {"total_count": 2, "jobs": j[1]["jobs"]*2}, None):
             with self.subTest(invalid=invalid), self.assertRaises(audit.Unavailable):
                 audit.read_sample(p, {1: invalid}, NOW, 20)
+
+    def test_run_workflow_identity_and_canonical_links_are_bound(self):
+        wrong = (
+            ("workflow_id", True), ("workflow_id", audit.WORKFLOW_ID + 1),
+            ("workflow_id", None), ("url", f"{audit.BASE}/actions/runs/2"),
+            ("jobs_url", f"{audit.BASE}/actions/runs/2/jobs"),
+            ("html_url", "https://github.com/Zennay/zCloud/actions/runs/2"),
+            ("path", audit.WORKFLOW_PATH + "@refs/heads/fake"),
+            ("path", audit.WORKFLOW_PATH + "/../vps-cpu-diagnostic.yml")
+        )
+        for field, value in wrong:
+            p, j = payloads([make_run(1)])
+            p["workflow_runs"][0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(audit.Unavailable):
+                audit.read_sample(p, j, NOW, 20)
+        p, j = payloads([make_run(1)])
+        self.assertTrue(audit.read_sample(p, j, NOW, 20)["complete"])
+
+    def test_missing_parent_run_identity_fails_closed(self):
+        for field in ("workflow_id", "url", "html_url", "jobs_url"):
+            p, j = payloads([make_run(1)])
+            del p["workflow_runs"][0][field]
+            with self.subTest(field=field), self.assertRaises(audit.Unavailable):
+                audit.read_sample(p, j, NOW, 20)
 
     def test_job_urls_must_bind_same_run_and_job_identity(self):
         for field, value in (("run_url", f"{audit.BASE}/actions/runs/2"),
