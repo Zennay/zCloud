@@ -52,13 +52,20 @@ filtered reply containing another runner name is rejected instead of being
 mistaken for a complete absence check. This also avoids a repository-wide
 multi-page listing when only the canonical zCloud listener matters.
 The canonical registration must additionally report `os=linux` and
-`ephemeral=false`. Other operating systems, missing lifecycle fields or
+`ephemeral=false`. Routing labels must preserve GitHub's actual metadata:
+`self-hosted` is a `read-only` default label; `zcloud` and `vps` are
+`custom` labels. A missing/invalid label type, or a wrong type for a required
+routing label, produces a deny-only diagnostic. The realistic GitHub response
+may also contain `Linux` / `X64` read-only labels and `version` metadata,
+which are handled without treating them as deployment authorization.
+This contract matches the public GitHub REST runner example (2026-03-10):
+https://docs.github.com/en/rest/actions/self-hosted-runners?apiVersion=2026-03-10 . Other operating systems, missing lifecycle fields or
 an ephemeral lookalike are denied before any online/idle conclusion. Do **not** place API keys, headers,
 process arguments or the raw runner inventory in PR logs/artifacts. This tool
 accepts only a complete single-page response (<=100 entries), supplied on stdin:
 
 ```json
-{"repository":"Zennay/zCloud","request_url":"https://api.github.com/repos/Zennay/zCloud/actions/runners?name=zcloud-vps-1&per_page=100","method":"GET","http_status":200,"captured_at":"2026-10-16T17:59:30Z","response":{"total_count":1,"runners":[{"id":21,"name":"zcloud-vps-1","status":"offline","busy":false,"os":"linux","ephemeral":false,"labels":[{"name":"self-hosted"},{"name":"zcloud"},{"name":"vps"}]}]}}
+{"repository":"Zennay/zCloud","request_url":"https://api.github.com/repos/Zennay/zCloud/actions/runners?name=zcloud-vps-1&per_page=100","method":"GET","http_status":200,"captured_at":"2026-10-16T17:59:30Z","response":{"total_count":1,"runners":[{"id":21,"name":"zcloud-vps-1","status":"offline","busy":false,"os":"linux","ephemeral":false,"labels":[{"id":5,"name":"self-hosted","type":"read-only"},{"id":21,"name":"zcloud","type":"custom"},{"id":22,"name":"vps","type":"custom"}]}]}}
 ```
 
 `python3 scripts/zcloud_runner_registration_evidence_20261016_w33.py < operator-private.json`

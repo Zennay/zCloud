@@ -22,7 +22,7 @@ def fixture(*, os='linux', ephemeral=False, name='zcloud-vps-1'):
     return {'total_count': 1, 'runners': [
         {'id': 25, 'name': name, 'status': 'online', 'busy': False,
          'os': os, 'ephemeral': ephemeral,
-         'labels': [{'name': k} for k in ('self-hosted', 'zcloud', 'vps')]}
+         'labels': [{'name': k, 'type': ('read-only' if k == 'self-hosted' else 'custom')} for k in ('self-hosted', 'zcloud', 'vps')]}
     ]}
 
 

@@ -17,7 +17,7 @@ NOW = datetime(2026, 10, 16, 18, 0, tzinfo=timezone.utc)
 def fixture(*, state='online', busy=False, labels=('self-hosted','zcloud','vps'), name='zcloud-vps-1'):
     return {'repository':'Zennay/zCloud', 'request_url':mod.API_URL, 'method':'GET', 'http_status':200, 'captured_at':'2026-10-16T17:59:30Z',
             'response': {'total_count':1, 'runners':[{'id':21, 'name':name, 'status':state, 'busy':busy, 'os':'linux', 'ephemeral':False,
-                'labels':[{'name':label,'type':'custom'} for label in labels]}]}}
+                'labels':[{'name':label,'type':('read-only' if label.casefold() in ('self-hosted', 'linux', 'x64') else 'custom')} for label in labels]}]}}
 
 
 class RunnerEvidenceTests(unittest.TestCase):
@@ -108,6 +108,42 @@ class RunnerEvidenceTests(unittest.TestCase):
 
     def test_unknown_status_denied(self):
         self.denies(fixture(state='starting'),'invalid_runner_state')
+
+
+    def test_github_documented_runner_response_shape(self):
+        x=fixture()
+        x['response']['runners'][0].update({
+            'version':'2.323.0',
+            'labels':[
+                {'id':5, 'name':'self-hosted', 'type':'read-only'},
+                {'id':7, 'name':'X64', 'type':'read-only'},
+                {'id':11, 'name':'Linux', 'type':'read-only'},
+                {'id':24, 'name':'zcloud', 'type':'custom'},
+                {'id':25, 'name':'vps', 'type':'custom'},
+            ],
+        })
+        self.assertEqual(self.classify(x),'RUNNER_LISTED_ONLINE_IDLE')
+
+    def test_fake_custom_self_hosted_label_denied(self):
+        x=fixture()
+        x['response']['runners'][0]['labels'][0]['type']='custom'
+        self.denies(x,'invalid_runner_label_provenance')
+
+    def test_runner_custom_routing_label_must_not_be_default(self):
+        for label in ('zcloud','vps'):
+            x=fixture()
+            for record in x['response']['runners'][0]['labels']:
+                if record['name']==label:
+                    record['type']='read-only'
+            with self.subTest(label=label):
+                self.denies(x,'invalid_runner_label_provenance')
+
+    def test_runner_label_type_missing_or_unknown_denied(self):
+        for kind in (None, '', True, 'read_only', 'READ-ONLY'):
+            x=fixture()
+            x['response']['runners'][0]['labels'][0]['type']=kind
+            with self.subTest(kind=kind):
+                self.denies(x,'invalid_runner_labels')
 
     def test_duplicate_casefold_labels_denied(self):
         self.denies(fixture(labels=('self-hosted','ZCloud','zcloud','vps')),'duplicate_runner_label')

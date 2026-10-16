@@ -29,6 +29,7 @@ SAFE_DENIAL_REASONS = frozenset({
     'invalid_runner_identity', 'ambiguous_runner_identity', 'invalid_runner_state',
     'invalid_runner_labels', 'duplicate_runner_label', 'runner_name_filter_mismatch',
     'unexpected_runner_os', 'unexpected_runner_lifecycle',
+    'invalid_runner_label_provenance',
 })
 
 class InvalidEvidence(ValueError):
@@ -136,9 +137,18 @@ def inspect(envelope, *, now=None):
             n = label.get('name')
             if type(n) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', n):
                 raise InvalidEvidence('invalid_runner_labels')
-            if n.casefold() in normalized:
+            label_kind = label.get('type')
+            if label_kind not in ('read-only', 'custom'):
+                raise InvalidEvidence('invalid_runner_labels')
+            canonical = n.casefold()
+            if canonical in normalized:
                 raise InvalidEvidence('duplicate_runner_label')
-            normalized.add(n.casefold())
+            # GitHub assigns the default self-hosted label as read-only.
+            # zcloud and vps are custom operator labels, not implicit host facts.
+            if ((canonical == 'self-hosted' and label_kind != 'read-only')
+                    or (canonical in ('zcloud', 'vps') and label_kind != 'custom')):
+                raise InvalidEvidence('invalid_runner_label_provenance')
+            normalized.add(canonical)
         if name.casefold() == RUNNER.casefold():
             # This is the permanent Linux VPS listener, not an ephemeral
             # runner provisioned with a coincidentally matching name.
