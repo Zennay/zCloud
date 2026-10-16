@@ -159,8 +159,21 @@ def _issue_inventory(reader, now):
                 names.append(name)
             if len(set(names)) != len(names):
                 raise Denied("duplicate_label")
+            people = item.get("assignees")
+            if not isinstance(people, list) or len(people) > 50:
+                raise Denied("bad_assignees")
+            logins = []
+            for person in people:
+                login = person.get("login") if isinstance(person, dict) else None
+                if (not isinstance(login, str) or not 1 <= len(login) <= 100
+                        or any(ord(c) < 32 or ord(c) == 127 for c in login)):
+                    raise Denied("bad_assignee")
+                logins.append(login)
+            if len(set(logins)) != len(logins):
+                raise Denied("duplicate_assignee")
             _date(item.get("updated_at"), now)
-            rows.append((n, title, is_pr, item["updated_at"], tuple(sorted(names))))
+            rows.append((n, title, is_pr, item["updated_at"], tuple(sorted(names)),
+                         tuple(sorted(logins))))
         if len(batch) < PAGE_SIZE:
             return tuple(sorted(rows))
     raise Denied("issue_pagination_cap")
@@ -245,19 +258,21 @@ def render(data):
             f"- Apart geteld: {len(issues)} open issues; GitHub PR-issue-records uitgesloten.",
             f"- Bronlabels/titel signaleren P0: {p0}, P1: {p1} (niet onafhankelijk geverifieerd).",
             "- Volledige PR/issue-cohortcontrole in twee afzonderlijke uitleesrondes.",
+            "- **GitHub-toewijzing is geen volledige code-/PR-/Notion-eigendomsaudit; niet toegewezen is niet vrij.**",
             "- **Een issue is niet automatisch vrij, opgelost of releasegerechtigd.**",
-            "", "| Issue | Titel | Bronurgentie | Dagen zonder update |",
-            "| --- | --- | --- | ---: |",
+            "", "| Issue | Titel | Bronurgentie | GitHub-toewijzing | Dagen zonder update |",
+            "| --- | --- | --- | --- | ---: |",
         ]
-        for n, title, _, updated, labels in issue_rows[:20]:
+        for n, title, _, updated, labels, assignees in issue_rows[:20]:
             age = max(0, int((now - _date(updated, now)).total_seconds() // 86400))
             urgency = ("P0" if _priority(title, labels) == 0 else
                        "P1" if _priority(title, labels) == 1 else "niet gemarkeerd")
+            owners = ", ".join(_safe(login) for login in assignees) if assignees else "niet toegewezen"
             issue_section.append(
                 f"| [#{n}](https://github.com/{REPO}/issues/{n}) "
-                f"| {_safe(title)} | {urgency} | {age} |")
+                f"| {_safe(title)} | {urgency} | {owners} | {age} |")
         if not issue_rows:
-            issue_section.append("| — | Geen open issues | — | — |")
+            issue_section.append("| — | Geen open issues | — | — | — |")
         lines = issue_section + [""] + lines
     for number, title, is_draft, _, _, _, updated in stale[:15]:
         age = int((now - _date(updated, now)).total_seconds() // 86400)
