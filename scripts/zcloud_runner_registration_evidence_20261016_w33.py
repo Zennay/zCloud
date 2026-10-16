@@ -14,6 +14,7 @@ import re
 import sys
 
 REPO = 'Zennay/zCloud'
+API_URL = 'https://api.github.com/repos/Zennay/zCloud/actions/runners?per_page=100'
 RUNNER = 'zcloud-vps-1'
 REQUIRED_LABELS = frozenset({'self-hosted', 'zcloud', 'vps'})
 MAX_INPUT = 262144
@@ -75,6 +76,13 @@ def inspect(envelope, *, now=None):
     """Validate a complete single-page repo runner sample; report claimed state only."""
     if not isinstance(envelope, dict) or envelope.get('repository') != REPO:
         raise InvalidEvidence('unbound_repository')
+    # Require the precise repository-scoped endpoint and successful GET receipt.
+    # These fields are operator-supplied claims, NOT network authenticity proof.
+    if (envelope.get('request_url') != API_URL
+            or envelope.get('method') != 'GET'
+            or type(envelope.get('http_status')) is not int
+            or envelope['http_status'] != 200):
+        raise InvalidEvidence('unbound_api_response')
     now = now or datetime.now(timezone.utc)
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise InvalidEvidence('unknown_clock')
