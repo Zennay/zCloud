@@ -359,13 +359,15 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     # change, removal or addition cannot bypass the ratchet.
                     # No Docker build, remote resolution or runtime execution.
                     prefix = path.rsplit("/", 1)[0] + "/"
-                    dockerfiles = sorted(
+                    action_sources = sorted(
                         (name, hashlib.sha256(source.encode("utf-8")).hexdigest())
                         for name, source in workflows.items()
-                        if name.startswith(prefix) and ACTION_DOCKERFILE.fullmatch(name)
+                        if name.startswith(prefix)
+                        and (ACTION_DOCKERFILE.fullmatch(name)
+                             or ACTION_CODE.fullmatch(name))
                     )
                     docker_signature = hashlib.sha256(json.dumps(
-                        [text, dockerfiles], ensure_ascii=True
+                        [text, action_sources], ensure_ascii=True
                     ).encode("utf-8")).hexdigest()
                     sites[hashlib.sha256(
                         ("docker-action-source:" + path + ":" + docker_signature).encode()
