@@ -35,6 +35,29 @@ def cmd(repo, *args):
     return subprocess.check_output(["git", "-C", str(repo), *args]).decode().strip()
 
 
+class WorkflowAdmission(unittest.TestCase):
+    def test_guard_runs_for_every_main_targeting_pr(self):
+        source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
+        self.assertIn("  pull_request:\n    branches: [main]", source)
+        trigger = source.split("  pull_request:", 1)[1].split("\npermissions:", 1)[0]
+        self.assertNotIn("    paths:", trigger)
+        self.assertNotIn("    paths-ignore:", trigger)
+        self.assertNotIn("    branches-ignore:", trigger)
+        self.assertIn("synchronize", trigger)
+        self.assertIn("reopened", trigger)
+        self.assertIn("ready_for_review", trigger)
+
+    def test_hosted_only_immutable_pr_checkout(self):
+        source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
+        self.assertIn("runs-on: ubuntu-latest", source)
+        self.assertNotIn("runs-on: [self-hosted", source)
+        self.assertNotIn("actions: write", source)
+        self.assertIn("permissions:\n  contents: read", source)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", source)
+        self.assertIn("persist-credentials: false", source)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"', source)
+
+
 class RealGit(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
