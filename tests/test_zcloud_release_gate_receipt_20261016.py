@@ -4,11 +4,13 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts import zcloud_release_gate_receipt_20261016 as gate
 
@@ -362,6 +364,119 @@ class ReleaseReceiptTests(unittest.TestCase):
             self.assertEqual(["unsafe_or_missing_receipt"], result["reason_codes"])
             self.assertFalse(result["production_mutation_authorized"])
             self.assertFalse(result["live_sources_verified"])
+
+
+
+    def test_json_exponential_overflow_denied_not_silently_infinite(self):
+        for raw in (b'{"num":1e309}', b'{"num":-1e999999}'):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, "nonfinite_json"):
+                    gate.decode_receipt(raw)
+
+    def test_json_overdeep_structure_returns_stable_redacted_error(self):
+        raw = b'[' * 1200 + b'0' + b']' * 1200
+        with self.assertRaisesRegex(ValueError, "invalid_json"):
+            gate.decode_receipt(raw)
+
+    def test_json_integer_digit_overflow_returns_stable_error(self):
+        raw = b'{"number":' + b'9' * 10000 + b'}'
+        with self.assertRaisesRegex(ValueError, "invalid_json"):
+            gate.decode_receipt(raw)
+
+    def test_no_follow_reader_allows_regular_nested_absolute_and_relative_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            nested = root / "nested" / "inner"
+            nested.mkdir(parents=True)
+            proof = nested / "proof.json"
+            expected = json.dumps(receipt()).encode()
+            proof.write_bytes(expected)
+            self.assertEqual(expected, gate.read_receipt(proof))
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                self.assertEqual(expected, gate.read_receipt(
+                    Path("nested/inner/proof.json")
+                ))
+            finally:
+                os.chdir(old_cwd)
+
+    def test_no_follow_reader_denies_dotdot_and_missing_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "good.json").write_text(json.dumps(receipt()))
+            for filename in (root / ".." / root.name / "good.json",
+                             root / "missing.json", root):
+                with self.subTest(filename=str(filename)):
+                    with self.assertRaisesRegex(ValueError,
+                                                "unsafe_or_missing_receipt"):
+                        gate.read_receipt(filename)
+
+    def test_no_follow_reader_denies_regular_file_with_symlinked_parent(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = root / "target"
+            target.mkdir()
+            (target / "proof.json").write_text(json.dumps(receipt()))
+            alias = root / "alias"
+            alias.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "unsafe_or_missing_receipt"):
+                gate.read_receipt(alias / "proof.json")
+
+    def test_no_follow_reader_denies_nonregular_fifo_without_hanging(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("POSIX FIFO required")
+        with tempfile.TemporaryDirectory() as temp:
+            fifo = Path(temp) / "wait-for-reader.fifo"
+            os.mkfifo(fifo)
+            with self.assertRaisesRegex(ValueError, "unsafe_or_missing_receipt"):
+                gate.read_receipt(fifo)
+
+    def test_directory_swap_race_cannot_redirect_evidence_to_attacker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            trusted = root / "trusted"
+            trusted.mkdir()
+            moved = root / "moved"
+            attacker = root / "attacker"
+            attacker.mkdir()
+            authentic = b'{"trusted":true}'
+            forged = b'{"attacker":true}'
+            (trusted / "receipt.json").write_bytes(authentic)
+            (attacker / "receipt.json").write_bytes(forged)
+            original_open = os.open
+            swapped = [False]
+
+            def racing_open(name, flags, *, dir_fd=None):
+                if name == "receipt.json" and dir_fd is not None and not swapped[0]:
+                    swapped[0] = True
+                    trusted.rename(moved)
+                    trusted.symlink_to(attacker, target_is_directory=True)
+                return original_open(name, flags, dir_fd=dir_fd)
+
+            with patch.object(gate.os, "open", side_effect=racing_open):
+                value = gate.read_receipt(trusted / "receipt.json")
+            self.assertTrue(swapped[0])
+            self.assertEqual(authentic, value)
+            self.assertNotEqual(forged, value)
+
+    def test_cli_json_overflow_has_no_traceback_and_no_release(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proof = Path(temp) / "overflow.json"
+            for raw in (b'{"num":1e4000}',
+                        b'[' * 1300 + b'0' + b']' * 1300):
+                with self.subTest(length=len(raw)):
+                    proof.write_bytes(raw)
+                    call = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--input", str(proof)],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertEqual(2, call.returncode, call.stderr)
+                    self.assertNotIn("Traceback", call.stdout + call.stderr)
+                    evidence = json.loads(call.stdout)
+                    self.assertFalse(evidence["live_sources_verified"])
+                    self.assertFalse(evidence["production_mutation_authorized"])
+                    self.assertTrue(evidence["reason_codes"])
 
 
 
