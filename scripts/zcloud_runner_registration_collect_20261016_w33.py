@@ -10,8 +10,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import os
+import selectors
 import subprocess
 import sys
+import time
 
 from zcloud_runner_registration_evidence_20261016_w33 import (
     API_URL, MAX_INPUT, SCHEMA, InvalidEvidence, inspect, load_json,
@@ -23,9 +26,55 @@ GH_GET = (
 )
 
 
-def collect(*, executor=subprocess.run, clock=None):
+
+def _bounded_gh_read(argv, *, check, shell, timeout, stdin, stdout, stderr):
+    """Stream a fixed CLI response with a real memory cap and deadline.
+
+    Unlike subprocess.run(..., stdout=PIPE), this never buffers an unbounded
+    reply in process memory before validating MAX_INPUT. It performs no writes.
+    """
+    if (tuple(argv) != GH_GET or check is not False or shell is not False
+            or stdin != subprocess.DEVNULL or stdout != subprocess.PIPE
+            or stderr != subprocess.DEVNULL or not 0 < timeout <= 12):
+        raise InvalidEvidence('unexpected_runner_request')
+    deadline = time.monotonic() + timeout
+    proc = subprocess.Popen(
+        argv, shell=False, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            chunks, size = [], 0
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not selector.select(remaining):
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                chunk = os.read(proc.stdout.fileno(), min(8192, MAX_INPUT + 1 - size))
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_INPUT:
+                    raise InvalidEvidence('invalid_input_size')
+                chunks.append(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(argv, timeout)
+        status = proc.wait(timeout=remaining)
+        return subprocess.CompletedProcess(argv, status, b''.join(chunks))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        if proc.stdout is not None:
+            proc.stdout.close()
+
+
+def collect(*, executor=None, clock=None):
     """Return sanitized untrusted diagnostic result, never runner source JSON."""
     try:
+        if executor is None:
+            executor = _bounded_gh_read
         # Constant argv: no arbitrary request URL, host, runner name or shell.
         proc = executor(
             GH_GET, check=False, shell=False, timeout=12,

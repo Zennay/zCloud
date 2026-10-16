@@ -128,9 +128,49 @@ class CollectorTests(unittest.TestCase):
                 self.check_safe(result)
                 self.assertEqual(result['classification'], 'RUNNER_LISTED_ONLINE_IDLE')
 
+    def test_real_bounded_capture_limits_bytes_before_buffering(self):
+        # Exercises only Python subprocesses on the hosted test machine.
+        cmd = (sys.executable, '-c', "import sys;sys.stdout.buffer.write(b'x'*500000);sys.stdout.flush()")
+        with mock.patch.object(collector, 'GH_GET', cmd):
+            with self.assertRaisesRegex(collector.InvalidEvidence, 'invalid_input_size'):
+                collector._bounded_gh_read(
+                    cmd, check=False, shell=False, timeout=5,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+
+    def test_real_bounded_capture_accepts_small_response(self):
+        cmd = (sys.executable, '-c', "import sys;sys.stdout.buffer.write(b'{}');sys.stdout.flush()")
+        with mock.patch.object(collector, 'GH_GET', cmd):
+            done = collector._bounded_gh_read(
+                cmd, check=False, shell=False, timeout=5,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+        self.assertEqual(done.returncode, 0)
+        self.assertEqual(done.stdout, b'{}')
+
+    def test_real_bounded_capture_times_out_without_waiting_forever(self):
+        cmd = (sys.executable, '-c', "import time;time.sleep(2)")
+        with mock.patch.object(collector, 'GH_GET', cmd):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                collector._bounded_gh_read(
+                    cmd, check=False, shell=False, timeout=0.05,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+
+    def test_bounded_capture_does_not_accept_untrusted_command(self):
+        with self.assertRaisesRegex(collector.InvalidEvidence, 'unexpected_runner_request'):
+            collector._bounded_gh_read(
+                ('gh', 'api', 'other/repo'), check=False, shell=False, timeout=5,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+
     def test_no_dynamic_shell_or_writes(self):
         source = SRC.read_text()
-        for pattern in ('shell=True', 'systemctl', 'sudo ', 'os.system', 'open(', 'write_text(',
+        for pattern in ('shell=True', 'systemctl', 'sudo ', 'os.system', 'with open(', 'write_text(',
                         'GH_TOKEN', 'GITHUB_TOKEN', 'requests.', 'urllib.request'):
             self.assertNotIn(pattern, source)
 

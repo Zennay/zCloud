@@ -17,7 +17,10 @@ The command makes exactly one fixed authenticated `gh api --hostname github.com
 --method GET` request for the canonical runner name `zcloud-vps-1`. It accepts
 no user-supplied URL, process name, label, shell command, token or arbitrary
 arguments. It neither writes the API response to disk nor echoes it to stdout
-or stderr. A 12-second timeout bounds the read. A blocked request remains
+or stderr. The CLI stdout is read incrementally with a strict 256 KiB
+memory ceiling and 12-second monotonic deadline (instead of accepting an
+unbounded subprocess.run capture). Overlarge or timed-out replies terminate
+the subprocess before any classification. A blocked request remains
 `EVIDENCE_UNAVAILABLE` but now includes a fixed, secret-safe `reason_code`:
 `github_cli_not_installed` means install/sign in to the trusted `gh` binary;
 `github_runner_read_failed` means the GitHub CLI request failed for an
