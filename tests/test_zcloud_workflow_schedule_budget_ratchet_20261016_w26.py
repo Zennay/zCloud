@@ -189,6 +189,25 @@ class CronPolicyTests(unittest.TestCase):
         self.assertEqual(schedules(expr, timezone_metadata=zones), ("0 9 * * *",))
         self.assertEqual(zones, ["timezone: America/New_York"])
 
+    def test_timezone_associations_retain_unzoned_slots(self):
+        bindings = []
+        source = ("on:\n  schedule:\n"
+                  "    - cron: '0 8 * * *'\n"
+                  "    - cron: '0 9 * * *'\n      timezone: America/New_York\n")
+        self.assertEqual(schedules(source, timezone_bindings=bindings),
+                         ("0 8 * * *", "0 9 * * *"))
+        self.assertEqual(bindings, [("0 8 * * *", ""),
+                                    ("0 9 * * *", "America/New_York")])
+
+    def test_identical_crons_preserve_timezone_slot_identity(self):
+        bindings = []
+        source = ("on:\n  schedule:\n"
+                  "    - cron: '0 9 * * *'\n"
+                  "    - cron: '0 9 * * *'\n      timezone: America/New_York\n")
+        schedules(source, timezone_bindings=bindings)
+        self.assertEqual(bindings, [("0 9 * * *", ""),
+                                    ("0 9 * * *", "America/New_York")])
+
     def test_timezone_not_in_unrelated_jobs(self):
         zones = []
         expr = "on:\n  push:\n    branches: [main]\njobs:\n  test:\n    timezone: Asia/Tokyo\n"
@@ -460,6 +479,53 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertTrue(audit(self.root, base)["accepted"])
         path.write_text(path.read_text() + "\n# Source-only comment\n")
         self.assertTrue(audit(self.root, base)["accepted"])
+
+    def test_move_timezone_to_different_cron_denied(self):
+        path = self.directory / "safe.yml"
+        start = ("on:\n  schedule:\n"
+                 "    - cron: '0 8 * * *'\n"
+                 "    - cron: '0 9 * * *'\n      timezone: America/New_York\n"
+                 "jobs:\n  check:\n    runs-on: ubuntu-latest\n")
+        path.write_text(start, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "legacy second zoned cron")
+        baseline = self.git("rev-parse", "HEAD")
+        self.assertTrue(audit(self.root, baseline)["accepted"])
+        moved = start.replace(
+            "    - cron: '0 8 * * *'\n",
+            "    - cron: '0 8 * * *'\n      timezone: America/New_York\n"
+        ).replace(
+            "    - cron: '0 9 * * *'\n      timezone: America/New_York\n",
+            "    - cron: '0 9 * * *'\n"
+        )
+        path.write_text(moved, encoding="utf-8")
+        result = audit(self.root, baseline)
+        self.assertFalse(result["accepted"])
+        self.assertTrue(any(
+            item.get("reason") == "timezone_requires_independent_review"
+            for item in result["new_high_frequency"]
+        ))
+
+    def test_move_timezone_between_identical_crons_denied(self):
+        path = self.directory / "safe.yml"
+        old = ("on:\n  schedule:\n"
+               "    - cron: '0 8 * * *'\n"
+               "    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n")
+        path.write_text(old, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "legacy equal-time zoned cron")
+        baseline = self.git("rev-parse", "HEAD")
+        self.assertTrue(audit(self.root, baseline)["accepted"])
+        moved = ("on:\n  schedule:\n"
+                 "    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n"
+                 "    - cron: '0 8 * * *'\n")
+        path.write_text(moved, encoding="utf-8")
+        result = audit(self.root, baseline)
+        self.assertFalse(result["accepted"])
+        self.assertTrue(any(
+            item.get("reason") == "timezone_requires_independent_review"
+            for item in result["new_high_frequency"]
+        ))
 
     def test_removing_existing_timezone_requires_review(self):
         path = self.directory / "safe.yml"
