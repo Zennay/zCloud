@@ -188,9 +188,13 @@ def render(data):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output")
+    parser.add_argument("--expected-main-sha", help="Require workflow checkout SHA to still be current main")
     args = parser.parse_args(argv)
     try:
-        brief = render(collect())
+        snapshot = collect()
+        if args.expected_main_sha is not None and snapshot["main_sha"] != _sha(args.expected_main_sha):
+            raise Denied("main_not_checkout_sha")
+        brief = render(snapshot)
         if args.output:
             from pathlib import Path
             Path(args.output).write_text(brief, encoding="utf-8")
