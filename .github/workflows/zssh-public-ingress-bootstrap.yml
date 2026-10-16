@@ -70,6 +70,16 @@ jobs:
           test "$(id -u)" -ne 0
           sudo -n true
 
+      - name: Refuse systemd Caddy promotion when the existing Docker ingress is present
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if command -v docker >/dev/null 2>&1 && docker inspect zssh-https >/dev/null 2>&1; then
+            echo "ZSSH_DOCKER_CADDY_TOPOLOGY_UNSUPPORTED: zssh-https exists; refusing to install or reload host systemd Caddy until a container-aware transactional promotion is implemented." >&2
+            exit 2
+          fi
+          echo "ZSSH_SYSTEMD_CADDY_TOPOLOGY_ALLOWED"
+
       - name: Require production DNS to point directly at this VPS
         shell: bash
         run: |
