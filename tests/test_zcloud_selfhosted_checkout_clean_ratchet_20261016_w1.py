@@ -690,6 +690,39 @@ class ImmutableGitTreeTests(unittest.TestCase):
             os.chdir(cwd)
 
 
+    def test_real_git_denies_new_timeout_first_dirty_checkout(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@",
+            "      - timeout-minutes: 5\n        uses: actions/checkout@")
+        self.workflow("timeout-first.yml", source)
+        self.commit("introduce disguised dirty checkout")
+        report = self.scan()
+        self.assertEqual(report["new_finding_count"], 1)
+        self.assertTrue(any("unsafe-clean=false" in str(row)
+                            for row in report["new_findings"]))
+        self.assertFalse(report["deploy_authorized"])
+
+    def test_real_git_denies_new_inline_opaque_job(self):
+        source = sample("true").replace(
+            "  inspect:\n    runs-on: [self-hosted, zcloud, vps]",
+            "  inspect: {runs-on: [self-hosted, vps], steps: [{uses: actions/checkout@v4, with: {clean: false}}]}\n  dummy:\n    runs-on: ubuntu-latest")
+        self.workflow("flow-job.yml", source)
+        self.commit("introduce inline job bypass")
+        report = self.scan()
+        self.assertGreaterEqual(report["new_finding_count"], 1)
+        self.assertTrue(any("opaque-job-entry" in str(row)
+                            for row in report["new_findings"]))
+
+    def test_real_git_denies_noncanonical_indent_job(self):
+        source = sample("true").replace("  inspect:", "    inspect:")
+        self.workflow("indented-job.yml", source)
+        self.commit("introduce noncanonical job indentation")
+        report = self.scan()
+        self.assertGreaterEqual(report["new_finding_count"], 1)
+        self.assertTrue(any("noncanonical-job-indent" in str(row)
+                            for row in report["new_findings"]))
+
+
 class HostedPolicyWiringTests(unittest.TestCase):
     """Prevent an otherwise green checker from being skipped by PR routing."""
 
