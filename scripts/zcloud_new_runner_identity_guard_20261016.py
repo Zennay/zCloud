@@ -191,10 +191,45 @@ def _safe_identity_step_fields(lines: list[str]) -> bool:
     return "run" in seen
 
 
+def _unsafe_job_env(job: list[str]) -> bool:
+    """Reject YAML merge/alias/shadowed environment inherited by first guard.
+
+    The job-level env block is the last pre-execution inheritance boundary.
+    Checking only visible BASH_ENV/PATH keys misses YAML '<<' merges and
+    duplicate or tagged mappings that can synthesize them at runtime.
+    """
+    headings = [i for i, line in enumerate(job)
+                if re.fullmatch(r"    env:\\s*(?:#.*)?", line)]
+    if len(headings) > 1:
+        return True
+    if not headings:
+        return False
+    start = headings[0] + 1
+    stop = next((i for i in range(start, len(job))
+                 if job[i].startswith("    ") and not job[i].startswith("     ")
+                 and job[i].strip() and not job[i].lstrip().startswith("#")),
+                len(job))
+    seen: set[str] = set()
+    for line in job[start:stop]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        item = re.fullmatch(r"      ([A-Za-z_][A-Za-z0-9_]*):[ \\t]*([^\\n]*)", line)
+        if item is None:
+            return True
+        key, value = item.group(1), item.group(2).lstrip()
+        if key in seen or PRE_GUARD_ENV.fullmatch(key):
+            return True
+        if value.startswith(("*", "&", "!", "|", ">", "{", "[")):
+            return True
+        seen.add(key)
+    return False
+
+
 def _early_guard(job: list[str]) -> bool:
     # If a later step uses a status-check override, it can run even after the
     # identity guard fails. No source-only admission can trust that sequence.
-    if SHELL_HIJACK.search("\n".join(job)) or INLINE_HIJACK.search("\n".join(job)):
+    if (_unsafe_job_env(job) or SHELL_HIJACK.search("\n".join(job))
+            or INLINE_HIJACK.search("\n".join(job))):
         return False
     # Aliased/flow-style job env cannot prove the interpreter's startup
     # environment is harmless. Explicit unrelated scalar env remains valid.
