@@ -231,6 +231,43 @@ class RatchetTests(unittest.TestCase):
         }):
             self.assertEqual(gate.check(base, head), (0, 0))
 
+    def test_inventory_contains_sha_bound_reviewable_paths_without_authority(self):
+        import json
+        base = self.base(document("private-audit", False),
+                         document("private-audit", False))
+        self.write("first.yml", document("private-audit", False,
+                                         extra="# harmless update\n"))
+        head = self.save()
+        receipt = gate.inventory(base, head)
+        self.assertEqual(receipt["base_commit_sha"], base)
+        self.assertEqual(receipt["head_commit_sha"], head)
+        self.assertEqual(receipt["legacy_collision_count"], 1)
+        self.assertEqual(receipt["new_collisions_allowed"], 0)
+        self.assertFalse(receipt["reviewed"])
+        self.assertFalse(receipt["merge_authorized"])
+        self.assertFalse(receipt["production_mutation_authorized"])
+        item = receipt["review_items"][0]
+        self.assertEqual(item["owner"], "UNASSIGNED")
+        self.assertEqual(item["reviewer"], "UNASSIGNED")
+        self.assertEqual(item["disposition"], "UNREVIEWED")
+        self.assertEqual({m["workflow_path"] for m in item["members"]},
+                         {".github/workflows/first.yml", ".github/workflows/second.yaml"})
+        self.assertEqual(len(item["group_sha256"]), 64)
+        self.assertNotIn("private-audit", json.dumps(receipt))
+
+    def test_inventory_refuses_new_collision_instead_of_approving(self):
+        base = self.base(document("caution", False), document("separate", False))
+        self.write("second.yaml", document("caution", False))
+        with self.assertRaises(gate.AdmissionError):
+            gate.inventory(base, self.save())
+
+    def test_inventory_requires_exact_head(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", True))
+        head = self.save()
+        with self.assertRaises(gate.AdmissionError):
+            gate.inventory(head, base)
+
     def test_invalid_shas_denied(self):
         base = self.base()
         for invalid in ("main", "f" * 39, "z" * 40):
