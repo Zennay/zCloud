@@ -85,6 +85,45 @@ class WriterStartupHintTests(unittest.TestCase):
         self.assertEqual(r["automatic_event_hints"], ["schedule"])
         self.assertEqual(r["manual_event_hints"], ["workflow_dispatch"])
 
+    def test_push_path_and_branch_filter_keys_are_only_hints(self):
+        result = hints.observe(
+            "on:\n  push:\n    branches: [main]\n"
+            "    paths:\n      - .github/workflows/example.yml\n"
+            "  workflow_dispatch:\n"
+        )
+        self.assertTrue(result["push_paths_filter_key_hint"])
+        self.assertTrue(result["push_branches_filter_key_hint"])
+        self.assertIs(result["push_filter_effectiveness_verified"], False)
+        self.assertIs(result["manual_only_verified"], False)
+
+    def test_push_without_filter_keys_does_not_invent_filter(self):
+        result = hints.observe("on:\n  push:\n")
+        self.assertFalse(result["push_paths_filter_key_hint"])
+        self.assertFalse(result["push_branches_filter_key_hint"])
+
+    def test_other_event_path_filters_do_not_count_as_push(self):
+        result = hints.observe("on:\n  pull_request:\n    paths:\n      - scripts/**\n")
+        self.assertFalse(result["push_paths_filter_key_hint"])
+        self.assertFalse(result["push_branches_filter_key_hint"])
+
+    def test_paths_key_outside_on_root_not_a_push_filter(self):
+        result = hints.observe("on: push\njobs:\n  x:\n    paths:\n      - scripts/**\n")
+        self.assertFalse(result["push_paths_filter_key_hint"])
+
+    def test_schedule_never_gets_push_filter_by_accident(self):
+        result = hints.observe("on:\n  schedule:\n    - cron: '0 8 * * *'\n")
+        self.assertEqual(result["automatic_event_hints"], ["schedule"])
+        self.assertFalse(result["push_paths_filter_key_hint"])
+
+    def test_push_scope_evidence_counts_real_git_workflow(self):
+        receipt = hints.audit(self.repo, self.sha)
+        row = receipt["candidates"][0]
+        self.assertTrue(row["push_branches_filter_key_hint"])
+        self.assertFalse(row["push_paths_filter_key_hint"])
+        self.assertEqual(receipt["push_branches_key_hint_count"], 1)
+        self.assertEqual(receipt["push_paths_key_hint_count"], 0)
+        self.assertFalse(receipt["safe_to_enable_branch_protection"])
+
     def test_inline_yaml_trigger_collection(self):
         r = hints.observe("on: [push, pull_request, workflow_dispatch]\n")
         self.assertEqual(r["automatic_event_hints"], ["pull_request", "push"])
