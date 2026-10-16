@@ -72,7 +72,21 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PR_HEAD"
           test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$PR_BASE"
-          python3 scripts/zcloud_cross_run_artifact_gate_20261016.py \
-            --repo-root . --base "$PR_BASE" --head "$PR_HEAD"
+          scanner=scripts/zcloud_cross_run_artifact_gate_20261016.py
+          # Once integrated, the unmodified, immutable MAIN policy must veto
+          # a candidate that edits or disables its own scanner. This initial
+          # add-only PR bootstraps only from its exact original main commit.
+          if git cat-file -e "$PR_BASE:$scanner" 2>/dev/null; then
+            policy="$RUNNER_TEMP/zcloud-cross-run-trusted-base-policy.py"
+            git show "$PR_BASE:$scanner" > "$policy"
+            test -s "$policy"
+            python3 "$policy" --repo-root . --base "$PR_BASE" --head "$PR_HEAD"
+            echo 'ZCLOUD_CROSS_RUN_BASE_OWNED_POLICY_GREEN=1'
+          else
+            test "$PR_BASE" = 'd813cbe70ae5291246bc8f4977cba18bc066519a'
+            echo 'ZCLOUD_CROSS_RUN_FIRST_INTEGRATION_BOOTSTRAP=1'
+          fi
+          # Candidate may be stricter but can never override base policy.
+          python3 "$scanner" --repo-root . --base "$PR_BASE" --head "$PR_HEAD"
           echo 'ZCLOUD_CROSS_RUN_DOWNLOAD_NO_NEW_DEBT_VALID=1'
           echo 'PRODUCTION_MUTATION_AUTHORIZED=false'
