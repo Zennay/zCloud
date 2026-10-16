@@ -83,6 +83,22 @@ def _risks(text: str, path: str) -> Counter[str]:
                 raise Refusal("unparsed_download_action")
             continue
         indent = len(match.group("indent"))
+        # YAML mapping order is not fixed. A preceding 'with:' can supply
+        # privileged cross-run inputs even when 'uses:' appears last. Refuse
+        # this shape rather than silently treating it as a safe download.
+        for preceding in reversed(lines[:index]):
+            stripped_pre = preceding.strip()
+            if not stripped_pre or stripped_pre.startswith("#"):
+                continue
+            level_pre = len(preceding) - len(preceding.lstrip(" "))
+            if level_pre < indent - 2:
+                break
+            if stripped_pre.startswith("- ") and level_pre <= indent:
+                if stripped_pre.startswith("- with:"):
+                    raise Refusal("preceding_artifact_with_block")
+                break
+            if stripped_pre == "with:" and level_pre == indent:
+                raise Refusal("preceding_artifact_with_block")
         with_indent: int | None = None
         fields: dict[str, str] = {}
         for following in lines[index+1:]:
