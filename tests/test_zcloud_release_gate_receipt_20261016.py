@@ -214,7 +214,8 @@ class ReleaseReceiptTests(unittest.TestCase):
             data["observed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             path.write_text(json.dumps(data), encoding="utf-8")
             call = subprocess.run([sys.executable, str(SCRIPT), "--input", str(path),
-                                   "--exit-zero-on-offline-claims"],
+                                   "--exit-zero-on-offline-claims",
+                                   "--expected-main-sha", SHA],
                                   capture_output=True, text=True, timeout=5)
             self.assertEqual(0, call.returncode, call.stderr)
             result = json.loads(call.stdout)
@@ -337,7 +338,8 @@ class ReleaseReceiptTests(unittest.TestCase):
             path.write_text(json.dumps(data), encoding="utf-8")
             call = subprocess.run(
                 [sys.executable, str(SCRIPT), "--input", str(path),
-                 "--format", "markdown", "--exit-zero-on-offline-claims"], capture_output=True,
+                 "--format", "markdown", "--exit-zero-on-offline-claims",
+                 "--expected-main-sha", SHA], capture_output=True,
                 text=True, timeout=5,
             )
             self.assertEqual(0, call.returncode, call.stderr)
@@ -745,6 +747,88 @@ class ReleaseReceiptTests(unittest.TestCase):
             )
             self.assertEqual(2, call.returncode, call.stderr)
             self.assertNotIn("SHOULD_NOT_DEPLOY", call.stdout + call.stderr)
+
+
+
+    def test_expected_main_sha_binds_all_positive_offline_claims(self):
+        for mismatch in (OTHER_SHA, "A" * 40, "a" * 39, "", "bad", "0" * 40):
+            with self.subTest(mismatch=mismatch):
+                result = gate.evaluate(receipt(), now=NOW,
+                                       expected_main_sha=mismatch)
+                self.assertFalse(result["offline_claims_complete"])
+                self.assertIn("candidate_not_exact_current_main",
+                              result["reason_codes"])
+                self.assertIs(result["production_mutation_authorized"], False)
+                self.assertIs(result["live_sources_verified"], False)
+        result = gate.evaluate(receipt(), now=NOW, expected_main_sha=SHA)
+        self.assertTrue(result["offline_claims_complete"])
+        self.assertFalse(result["production_mutation_authorized"])
+
+    def test_opt_in_requires_explicit_exact_main_sha(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "claimed.json"
+            data = receipt()
+            data["observed_at"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+            path.write_text(json.dumps(data), encoding="utf-8")
+            cases = ([], ["--expected-main-sha", OTHER_SHA],
+                     ["--expected-main-sha", "A" * 40],
+                     ["--expected-main-sha", ""],
+                     ["--expected-main-sha", "0" * 40])
+            for extra in cases:
+                with self.subTest(extra=extra):
+                    call = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--input", str(path),
+                         "--exit-zero-on-offline-claims", *extra],
+                        capture_output=True, text=True, timeout=5)
+                    self.assertEqual(2, call.returncode, call.stderr)
+                    result = json.loads(call.stdout)
+                    self.assertFalse(result["offline_claims_complete"])
+                    self.assertIn("candidate_not_exact_current_main",
+                                  result["reason_codes"])
+                    self.assertFalse(result["production_mutation_authorized"])
+                    self.assertFalse(result["live_sources_verified"])
+            call = subprocess.run(
+                [sys.executable, str(SCRIPT), "--input", str(path),
+                 "--expected-main-sha", SHA, "--exit-zero-on-offline-claims"],
+                capture_output=True, text=True, timeout=5)
+            self.assertEqual(0, call.returncode, call.stderr)
+            result = json.loads(call.stdout)
+            self.assertTrue(result["offline_claims_complete"])
+            self.assertFalse(result["production_mutation_authorized"])
+            self.assertFalse(result["live_sources_verified"])
+
+    def test_expected_main_mismatch_refused_in_default_cli_both_formats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "claimed.json"
+            data = receipt()
+            data["observed_at"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+            path.write_text(json.dumps(data), encoding="utf-8")
+            for fmt in ("json", "markdown"):
+                with self.subTest(fmt=fmt):
+                    cmd = [sys.executable, str(SCRIPT), "--input", str(path),
+                           "--expected-main-sha", OTHER_SHA, "--format", fmt]
+                    call = subprocess.run(cmd, capture_output=True,
+                                          text=True, timeout=5)
+                    self.assertEqual(2, call.returncode, call.stderr)
+                    if fmt == "json":
+                        self.assertIn("candidate_not_exact_current_main",
+                                      json.loads(call.stdout)["reason_codes"])
+                    else:
+                        self.assertIn("Claim ontbreekt of is ongeldig",
+                                      call.stdout)
+                        self.assertIn("GEEN PRODUCTIEVRIJGAVE", call.stdout)
+                    self.assertNotIn(SHA, call.stdout + call.stderr)
+                    self.assertNotIn(OTHER_SHA, call.stdout + call.stderr)
+
+    def test_expected_main_sha_must_match_canonical_not_only_candidate(self):
+        data = receipt()
+        data["candidate_sha"] = OTHER_SHA
+        result = gate.evaluate(data, now=NOW, expected_main_sha=OTHER_SHA)
+        self.assertFalse(result["offline_claims_complete"])
+        self.assertEqual(["candidate_not_exact_current_main"],
+                          result["reason_codes"])
 
 
 
