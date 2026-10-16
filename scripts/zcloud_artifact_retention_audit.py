@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -200,50 +202,90 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
 
 
 def scan_repository(root: Path, *, max_days: int) -> list[ArtifactUpload]:
+    """Open workflow files relative to pinned directories, without following links.
+
+    Preflight the complete bounded inventory before parsing. Directory-relative
+    file descriptors also close the symlink-swap gap between stat() and read().
+    """
     workflows = root / WORKFLOW_DIR
-    # The workflow leaf can appear regular even when its parent is a symlink.
     if (root / ".github").is_symlink() or workflows.is_symlink():
         raise RuntimeError("symlink workflow directory rejected")
     if not workflows.is_dir():
         raise FileNotFoundError(f"workflow directory not found: {workflows}")
 
-    # A maliciously oversized repository must not monopolise hosted workers.
-    # Bound directory entries before sorting and size-check the whole inventory
-    # before parsing a single blob (so no misleading partial report is emitted).
-    candidates: list[Path] = []
-    for entry in workflows.iterdir():
-        candidates.append(entry)
-        if len(candidates) > MAX_WORKFLOW_ENTRIES:
-            raise RuntimeError("workflow inventory too large")
-    selected: list[Path] = []
-    total_bytes = 0
-    for path in sorted(candidates):
-        if path.suffix.lower() not in WORKFLOW_SUFFIXES:
-            continue
-        if path.is_symlink():
-            raise RuntimeError("symlink workflow rejected")
-        if not path.is_file():
-            continue
-        size = path.stat().st_size
-        if size > MAX_WORKFLOW_BYTES:
-            raise RuntimeError("workflow too large to audit")
-        total_bytes += size
-        if total_bytes > MAX_TOTAL_WORKFLOW_BYTES:
-            raise RuntimeError("workflow inventory bytes exceeded")
-        selected.append(path)
-    uploads: list[ArtifactUpload] = []
-    for path in selected:
-        text = path.read_text(encoding="utf-8")
-        uploads.extend(
-            inspect_workflow(
-                path.relative_to(root).as_posix(),
-                text,
-                max_days=max_days,
-            )
-        )
-        if len(uploads) > MAX_ARTIFACT_UPLOADS:
-            raise RuntimeError("artifact upload inventory too large")
-    return uploads
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    root_fd = os.open(root, directory_flags)
+    try:
+        github_fd = os.open(".github", directory_flags, dir_fd=root_fd)
+        try:
+            workflows_fd = os.open("workflows", directory_flags, dir_fd=github_fd)
+            try:
+                names: list[str] = []
+                with os.scandir(workflows_fd) as entries:
+                    for entry in entries:
+                        names.append(entry.name)
+                        if len(names) > MAX_WORKFLOW_ENTRIES:
+                            raise RuntimeError("workflow inventory too large")
+                selected: list[tuple[str, os.stat_result]] = []
+                total_bytes = 0
+                for name in sorted(names):
+                    if Path(name).suffix.lower() not in WORKFLOW_SUFFIXES:
+                        continue
+                    identity = os.stat(
+                        name, dir_fd=workflows_fd, follow_symlinks=False
+                    )
+                    if stat.S_ISLNK(identity.st_mode):
+                        raise RuntimeError("symlink workflow rejected")
+                    if not stat.S_ISREG(identity.st_mode):
+                        continue
+                    if identity.st_size > MAX_WORKFLOW_BYTES:
+                        raise RuntimeError("workflow too large to audit")
+                    total_bytes += identity.st_size
+                    if total_bytes > MAX_TOTAL_WORKFLOW_BYTES:
+                        raise RuntimeError("workflow inventory bytes exceeded")
+                    selected.append((name, identity))
+
+                uploads: list[ArtifactUpload] = []
+                for name, identity in selected:
+                    # O_NONBLOCK avoids hanging on a FIFO swapped into place;
+                    # O_NOFOLLOW denies symlinks swapped after inventory.
+                    file_fd = os.open(
+                        name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                        dir_fd=workflows_fd,
+                    )
+                    with os.fdopen(file_fd, "r", encoding="utf-8") as stream:
+                        before = os.fstat(stream.fileno())
+                        if (
+                            not stat.S_ISREG(before.st_mode)
+                            or (before.st_dev, before.st_ino)
+                            != (identity.st_dev, identity.st_ino)
+                            or before.st_size > MAX_WORKFLOW_BYTES
+                        ):
+                            raise RuntimeError("workflow changed during audit")
+                        text = stream.read(MAX_WORKFLOW_BYTES + 1)
+                        after = os.fstat(stream.fileno())
+                        if (
+                            len(text.encode("utf-8")) > MAX_WORKFLOW_BYTES
+                            or (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_size)
+                            != (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_size)
+                        ):
+                            raise RuntimeError("workflow changed during audit")
+                    uploads.extend(
+                        inspect_workflow(
+                            (WORKFLOW_DIR / name).as_posix(),
+                            text,
+                            max_days=max_days,
+                        )
+                    )
+                    if len(uploads) > MAX_ARTIFACT_UPLOADS:
+                        raise RuntimeError("artifact upload inventory too large")
+                return uploads
+            finally:
+                os.close(workflows_fd)
+        finally:
+            os.close(github_fd)
+    finally:
+        os.close(root_fd)
 
 
 def summarize(uploads: list[ArtifactUpload], *, max_days: int) -> dict[str, object]:
