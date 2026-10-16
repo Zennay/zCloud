@@ -827,8 +827,11 @@ class ReleaseReceiptTests(unittest.TestCase):
         data["candidate_sha"] = OTHER_SHA
         result = gate.evaluate(data, now=NOW, expected_main_sha=OTHER_SHA)
         self.assertFalse(result["offline_claims_complete"])
-        self.assertEqual(["candidate_not_exact_current_main"],
-                          result["reason_codes"])
+        self.assertIn("candidate_not_exact_current_main",
+                      result["reason_codes"])
+        self.assertIn("ci_not_exact_head_success", result["reason_codes"])
+        self.assertIn("independent_review_missing", result["reason_codes"])
+        self.assertIs(result["production_mutation_authorized"], False)
 
 
 
