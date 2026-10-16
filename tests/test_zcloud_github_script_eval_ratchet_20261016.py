@@ -174,6 +174,44 @@ class GithubScriptRatchetTest(unittest.TestCase):
         b = self.commit(SAFE.replace("script: |", r'"scr\u0069pt": |'))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_nested_composite_action_manifest_is_scanned(self):
+        safe = """name: local
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@0123456789012345678901234567890123456789
+      with:
+        script: |
+          core.info(process.env.MESSAGE);
+"""
+        a = self.commit(safe, path=".github/actions/local/action.yml")
+        b = self.commit(safe.replace(
+            "core.info(process.env.MESSAGE);",
+            "core.info('@EXPR@ inputs.message }}');".replace("@EXPR@", "$" + "{{"),
+        ), path=".github/actions/local/action.yml")
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_root_composite_action_manifest_is_scanned(self):
+        safe = """name: local
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@0123456789012345678901234567890123456789
+      with:
+        script: core.info(process.env.MESSAGE);
+"""
+        a = self.commit(safe, path="action.yaml")
+        b = self.commit(safe.replace(
+            "script: core.info(process.env.MESSAGE);",
+            "script: core.info('@EXPR@ github.event.issue.title }}');".replace("@EXPR@", "$" + "{{"),
+        ), path="action.yaml")
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_nonmanifest_yaml_is_not_scanned(self):
+        a = self.commit("safe: yes\n", path="other/sample.yml")
+        b = self.commit("unsafe: '@EXPR@ github.event.issue.title }}'\n".replace("@EXPR@", "$" + "{{"), path="other/sample.yml")
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
     def test_script_in_unrelated_action_is_not_guarded(self):
         a = self.commit(OTHER)
         b = self.commit(OTHER + "\n# GitHub-script not invoked\n")
