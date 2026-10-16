@@ -55,8 +55,8 @@ LOCAL_ACTION = re.compile(
 # YAML alias/tag and expression-valued action references can conceal an
 # indirect workflow dispatch. Count new opaque scheduled edges for review.
 OPAQUE_USES = re.compile(
-    r"""(?m)^[ \\t]+(?:-[ \\t]*)?(?:uses|['\\"]uses['\\"])[ \\t]*:[ \\t]*"""
-    r"""(?:['\\"])?([*&!][^\\s#'\\"]*|\\$\\{\\{[^\\n]*)"""
+    r"""(?m)^[ \t]+(?:-[ \t]*)?(?:uses|['"]uses['"])[ \t]*:[ \t]*"""
+    r"""(?:['"])?([*&!][^\s#'"]*|\$\{\{[^\n]*)"""
 )
 
 MAX_MANIFESTS = 2048
