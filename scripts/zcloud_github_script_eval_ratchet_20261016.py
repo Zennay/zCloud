@@ -116,7 +116,7 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
             why.add("ambiguous_yaml")
         # YAML unescapes double-quoted mapping keys before the Action uses
         # them. An encoded script key must not bypass the literal-key parser.
-        if with_indent >= 0 and re.match(r'^\s*["\x27][^\n]*\\\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})', line):
+        if with_indent >= 0 and line.lstrip().startswith((chr(34), chr(39))) and any(chr(92) + mark in line for mark in ("x", "u", "U")):
             why.add("ambiguous_yaml")
         sm = SCRIPT_KEY.match(line)
         if sm is None:
