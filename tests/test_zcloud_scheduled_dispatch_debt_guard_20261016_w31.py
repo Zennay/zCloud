@@ -622,6 +622,98 @@ runs:
 """)
         self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "pass")
 
+    def test_node_action_entrypoint_dispatch_rejected(self):
+        self.put("scheduled-node.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/notify
+""")
+        self.put_action("notify", """name: notify
+runs:
+  using: node20
+  main: dist/index.js
+""")
+        js = self.repo / ".github/actions/notify/dist/index.js"
+        js.parent.mkdir(parents=True)
+        js.write_text(
+            "await github.rest.actions.createWorkflowDispatch({workflow_id: 'deploy.yml'});\n",
+            encoding="utf-8",
+        )
+        result = self.check(self.commit(), "reject")
+        self.assertGreaterEqual(result["new_sites"], 2)
+
+    def test_changed_node_action_entrypoint_is_tracked(self):
+        self.put("scheduled-node.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/notify
+""")
+        self.put_action("notify", """name: notify
+runs:
+  using: node20
+  main: dist/index.js
+""")
+        js = self.repo / ".github/actions/notify/dist/index.js"
+        js.parent.mkdir(parents=True)
+        js.write_text("console.log('safe');\n", encoding="utf-8")
+        base = self.commit()
+        js.write_text("github.rest.repos.createDispatchEvent({});\n", encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertIn(".github/workflows/scheduled-node.yml", result["changed_workflows_with_new_sites"])
+
+    def test_missing_node_entrypoint_fails_new_admission(self):
+        self.put("scheduled-node.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/missing
+""")
+        self.put_action("missing", """runs:
+  using: node20
+  main: index.js
+""")
+        self.check(self.commit(), "reject")
+
+    def test_script_reference_can_not_escape_action_directory(self):
+        self.put("scheduled-node.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/escape
+""")
+        self.put_action("escape", """runs:
+  using: node20
+  main: ../../workflows/other.js
+""")
+        with self.assertRaisesRegex(ValueError, "unsafe action entrypoint"):
+            guard.evaluate(self.repo, self.base, self.commit())
+
+    def test_unchanged_node_action_dispatch_does_not_grow_debt(self):
+        self.put("scheduled-node.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/notify
+""")
+        self.put_action("notify", """runs:
+  using: node20
+  main: dist/index.js
+""")
+        js = self.repo / ".github/actions/notify/dist/index.js"
+        js.parent.mkdir(parents=True)
+        js.write_text("github.rest.actions.createWorkflowDispatch({});\n", encoding="utf-8")
+        base = self.commit()
+        self.assertEqual(guard.evaluate(self.repo, base, base)["status"], "pass")
+        self.assertEqual(guard.evaluate(self.repo, base, base)["new_sites"], 0)
+
     def test_git_stdout_bounded_during_read(self):
         # With a tiny cap even ls-tree inventory output is excessive.
         with mock.patch.object(guard, "MAX_TOTAL", 20):
