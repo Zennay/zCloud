@@ -216,7 +216,12 @@ def _group_entry(path: str, scope: str, value: object, workflow_name: str, *, na
     unresolved_workflow_name = bool(uses_workflow_name and (
         not name_explicit or "${{" in workflow_name or "}}" in workflow_name
     ))
-    return (token, path, scope, mode, queue,
+    # Do not collapse distinct dynamic running-cancellation predicates into
+    # the same literal 'dynamic' bucket: changing a predicate can increase
+    # the chance of cancelling a different workflow's active run.
+    cancel_digest = (hashlib.sha256(cancel.encode("utf-8")).hexdigest()
+                     if mode == "dynamic" else "")
+    return (token, path, scope, mode, queue, cancel_digest,
             _is_opaque_expression(group) or unresolved_workflow_name)
 
 def _entries_for_file(path: str, contents: bytes):
@@ -265,8 +270,8 @@ def findings(commit: str, *, include_opaque: bool = False):
         total_entries += len(entries)
         if total_entries > MAX_GROUP_ENTRIES:
             raise AdmissionError("repository concurrency entry budget exceeded")
-        for token, p, scope, mode, queue, is_opaque in entries:
-            grouped[token].append((p, scope, mode, queue))
+        for token, p, scope, mode, queue, cancel_digest, is_opaque in entries:
+            grouped[token].append((p, scope, mode, queue, cancel_digest))
             if is_opaque:
                 opaque.add((p, scope, token))
     out = set()
@@ -311,6 +316,9 @@ def _non_escalating_endpoint(previous, candidate) -> bool:
         return False
     old_mode, old_queue = previous[2], previous[3]
     new_mode, new_queue = candidate[2], candidate[3]
+    if (old_mode == new_mode == "dynamic"
+            and previous[4] != candidate[4]):
+        return False
     if old_mode != new_mode and new_mode != "false":
         return False
     if old_queue != new_queue and (old_queue, new_queue) != ("single", "max"):
@@ -424,7 +432,8 @@ def inventory(base: str, head: str) -> dict:
             "group_sha256": group_hash,
             "members": [
                 {"workflow_path": item[0], "scope": item[1],
-                 "cancel_in_progress": item[2], "queue": item[3]}
+                 "cancel_in_progress": item[2], "queue": item[3],
+                 "cancel_expression_sha256": item[4]}
                 for item in members
             ],
             "reviewer": "UNASSIGNED",
