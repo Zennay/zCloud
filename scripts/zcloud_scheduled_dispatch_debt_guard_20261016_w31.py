@@ -186,6 +186,7 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
     entries = git(repo, "ls-tree", "-r", "-z", sha, "--", ".github/workflows", ".github/actions", ".github/scripts", "scripts").split(b"\0")
     result: dict[str, str] = {}
     total = 0
+    docker_context_candidates: list[tuple[str, str, str, str]] = []
     for record in entries:
         if not record:
             continue
@@ -196,6 +197,11 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
         except (ValueError, UnicodeDecodeError) as exc:
             raise ValueError("invalid Git tree entry") from exc
         if not (WORKFLOW.fullmatch(path) or ACTION.fullmatch(path) or ACTION_CODE.fullmatch(path) or ACTION_DOCKERFILE.fullmatch(path) or ACTION_DOCKER_ASSET.fullmatch(path) or HELPER_CODE.fullmatch(path)):
+            # Keep nonstandard context sources for reachable local Docker
+            # actions. An arbitrary file extension or binary cannot be
+            # assumed inert when a Dockerfile copies the entire context.
+            if path.startswith(".github/actions/"):
+                docker_context_candidates.append((path, mode, kind, oid))
             continue
         # A newline, terminal escape or delimiter hidden in a Git pathname
         # must never be folded into apparently ordinary evidence filenames.
@@ -218,6 +224,35 @@ def manifest_map(repo: Path, sha: str) -> dict[str, str]:
             result[path] = blob.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError("non-UTF8 workflow source") from exc
+
+    # Docker build contexts are not restricted to script/config extensions.
+    # For Docker action directories only, fingerprint EVERY tracked Git blob,
+    # including binary files or files with extensionless names. Byte contents
+    # are never included in policy reports. No Docker build or remote fetch.
+    docker_prefixes = tuple(
+        path.rsplit("/", 1)[0] + "/"
+        for path, value in result.items()
+        if ACTION.fullmatch(path) and DOCKER_USING.search(value)
+    )
+    for path, mode, kind, oid in docker_context_candidates:
+        if not any(path.startswith(prefix) for prefix in docker_prefixes):
+            continue
+        if any(ord(char) < 32 or ord(char) == 127 for char in path):
+            raise ValueError("unsafe Docker context path")
+        if path in result or len(result) >= MAX_MANIFESTS:
+            raise ValueError("duplicate or excessive Docker context source")
+        if mode not in {"100644", "100755"} or kind != "blob" or not SHA.fullmatch(oid):
+            raise ValueError("non-regular Docker context source rejected")
+        size = int(git(repo, "cat-file", "-s", oid).decode("ascii").strip())
+        total += size
+        if size < 0 or size > MAX_BLOB or total > MAX_TOTAL:
+            raise ValueError("Docker context blob bound exceeded")
+        blob = git(repo, "cat-file", "blob", oid)
+        if len(blob) != size:
+            raise ValueError("Docker context blob length drift")
+        # Use a domain-prefixed digest, never the source contents, for opaque
+        # context assets; readable scripts/configs remain in the normal map.
+        result[path] = "docker-blob-sha256:" + hashlib.sha256(blob).hexdigest()
     return result
 
 
@@ -371,10 +406,7 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     action_sources = sorted(
                         (name, hashlib.sha256(source.encode("utf-8")).hexdigest())
                         for name, source in workflows.items()
-                        if name.startswith(prefix)
-                        and (ACTION_DOCKERFILE.fullmatch(name)
-                             or ACTION_DOCKER_ASSET.fullmatch(name)
-                             or ACTION_CODE.fullmatch(name))
+                        if name.startswith(prefix) and name != path
                     )
                     docker_signature = hashlib.sha256(json.dumps(
                         [text, action_sources], ensure_ascii=True
