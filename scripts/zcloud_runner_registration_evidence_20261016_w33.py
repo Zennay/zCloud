@@ -152,7 +152,8 @@ def main():
     try:
         data = sys.stdin.buffer.read(MAX_INPUT + 1)
         result = inspect(load_json(data))
-        code = 0
+        # Exit is NEVER an admission signal: diagnostic claims always deny by default.
+        code = 2
     except (InvalidEvidence, ValueError, TypeError, OverflowError):
         result = {'schema': SCHEMA, 'classification': 'EVIDENCE_UNAVAILABLE',
                   'registration_claim_parsed': False, 'independent_registration_verified': False,
