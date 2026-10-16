@@ -76,12 +76,15 @@ def detect_debugger_port(
             return "ambiguous", None
         # ps argv[0] can be forged (exec -a firefox). The real manual workflow
         # supplies a kernel /proc exe check before accepting a local RDP port.
-        if verify_executable is not None:
-            try:
-                if not verify_executable(pid):
-                    return "ambiguous", None
-            except Exception:
+        # Never return a connectable port from process argv alone.
+        # Callers must explicitly provide trustworthy executable evidence.
+        if verify_executable is None:
+            return "ambiguous", None
+        try:
+            if not verify_executable(pid):
                 return "ambiguous", None
+        except Exception:
+            return "ambiguous", None
         seen.add(pid)
         ports = PORT.findall(args)
         if len(ports) != 1:
