@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from scripts.zcloud_workflow_schedule_budget_ratchet_20261016_w26 import (
-    AdmissionError, audit, field_values, is_high_frequency, schedules,
+    AdmissionError, audit, cross_schedule_bursts, field_values, is_high_frequency, schedules,
 )
 
 def workflow(expr: str) -> str:
@@ -84,6 +84,47 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             schedules("on:\n    push:\n  schedule:\n    - cron: '*/5 * * * *'\n")
 
+    def test_two_hourly_entries_five_minutes_apart(self):
+        pair = ("0 * * * *", "5 * * * *")
+        self.assertEqual(cross_schedule_bursts(pair), {pair})
+
+    def test_disjoint_weekdays_not_false_positive(self):
+        self.assertFalse(cross_schedule_bursts(
+            ("0 10 * * MON", "5 10 * * TUE")))
+
+    def test_same_weekday_entry_pair_denied(self):
+        self.assertTrue(cross_schedule_bursts(
+            ("0 10 * * MON", "5 10 * * MON")))
+
+    def test_two_months_not_false_positive(self):
+        self.assertFalse(cross_schedule_bursts(
+            ("0 10 10 JAN *", "5 10 10 FEB *")))
+
+    def test_cross_midnight_burst(self):
+        self.assertTrue(cross_schedule_bursts(
+            ("55 23 * * *", "5 0 * * *")))
+
+    def test_cross_midnight_fifteen_minutes_allowed(self):
+        self.assertFalse(cross_schedule_bursts(
+            ("45 23 * * *", "0 0 * * *")))
+
+    def test_cross_midnight_disjoint_weekdays(self):
+        self.assertFalse(cross_schedule_bursts(
+            ("55 23 * * MON", "5 0 * * WED")))
+
+    def test_leap_day_across_midnight(self):
+        self.assertTrue(cross_schedule_bursts(
+            ("55 23 28 FEB *", "5 0 29 FEB *")))
+
+    def test_day_of_month_or_weekday_semantics(self):
+        # 1st of a month can be a Tuesday, despite the Monday alternative.
+        self.assertTrue(cross_schedule_bursts(
+            ("0 9 1 * MON", "5 9 * * TUE")))
+
+    def test_cross_entry_bounded(self):
+        with self.assertRaises(AdmissionError):
+            cross_schedule_bursts(("0 9 * * *",) * 33)
+
     def test_quoted_schedule(self):
         self.assertEqual(schedules(workflow("30 8 * * 1-5")), ("30 8 * * 1-5",))
 
@@ -140,6 +181,40 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         path = self.directory / "legacy.yml"
         path.write_text(path.read_text(encoding="utf-8") + "\n# Step-only edit\n")
         self.assertTrue(audit(self.root, self.baseline)["accepted"])
+
+    def test_new_cross_entry_burst_denied(self):
+        path = self.directory / "safe.yml"
+        path.write_text(workflow("0 * * * *").replace(
+            "jobs:", "    - cron: '5 * * * *'\\njobs:"))
+        receipt = audit(self.root, self.baseline)
+        self.assertFalse(receipt["accepted"])
+        self.assertTrue(any(item.get("reason") == "cross_schedule_burst"
+                            for item in receipt["new_high_frequency"]))
+
+    def test_legacy_pair_grandfathered_exactly(self):
+        legacy = self.directory / "legacy.yml"
+        legacy.write_text(workflow("0 * * * *").replace(
+            "jobs:", "    - cron: '5 * * * *'\\njobs:"))
+        self.git("add", ".")
+        self.git("commit", "-qm", "preexisting two-entry legacy")
+        base = self.git("rev-parse", "HEAD")
+        self.assertTrue(audit(self.root, base)["accepted"])
+        legacy.write_text(legacy.read_text() + "\\n# unrelated step")
+        self.assertTrue(audit(self.root, base)["accepted"])
+
+    def test_new_pair_not_hidden_by_legacy_pair(self):
+        path = self.directory / "legacy.yml"
+        path.write_text(workflow("0 * * * *").replace(
+            "jobs:", "    - cron: '5 * * * *'\\njobs:"))
+        self.git("add", ".")
+        self.git("commit", "-qm", "legacy source pair")
+        base = self.git("rev-parse", "HEAD")
+        path.write_text(path.read_text().replace(
+            "jobs:", "    - cron: '10 * * * *'\\njobs:"))
+        result = audit(self.root, base)
+        self.assertFalse(result["accepted"])
+        self.assertTrue(any("10 * * * *" in item["cron"]
+                            for item in result["new_high_frequency"]))
 
     def test_missing_or_invalid_baseline_denied(self):
         with self.assertRaises(AdmissionError):
