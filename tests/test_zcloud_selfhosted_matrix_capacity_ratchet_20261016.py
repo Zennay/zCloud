@@ -69,6 +69,31 @@ class MatrixContract(unittest.TestCase):
         self.assertIn(("probe", "unknown_matrix_size"), findings(
             workflow("      max-parallel: 1\n      matrix: ${{ fromJSON(inputs.matrix) }}")))
 
+    def test_dynamic_expression_inside_literal_matrix_axis_is_unknown(self):
+        risks = findings(workflow(
+            "      max-parallel: 1\n"
+            "      matrix:\n"
+            '        shard: [first, "${{ fromJSON(inputs.dynamic) }}"]'))
+        self.assertIn(("probe", "unknown_matrix_size"), risks)
+
+    def test_dynamic_matrix_include_row_is_unknown(self):
+        risks = findings(workflow(
+            "      max-parallel: 1\n"
+            "      matrix:\n"
+            "        shard: [first]\n"
+            '        include: [{shard: "${{ fromJSON(inputs.dynamic) }}"}]'))
+        self.assertIn(("probe", "unknown_matrix_size"), risks)
+
+    def test_yaml_nonfinite_matrix_values_are_denied(self):
+        self.assertIn(("probe", "unknown_matrix_size"), findings(
+            workflow("      max-parallel: 1\n"
+                     "      matrix:\n"
+                     "        shard: [.nan, ok]")))
+        self.assertEqual(findings(workflow(
+            "      max-parallel: 1\n"
+            "      matrix:\n"
+            "        shard: [1, 2.5]")), [])
+
     def test_product_over_four_denied(self):
         risks = findings(workflow(
             "      max-parallel: 1\n      matrix:\n        a: [1, 2, 3]\n        b: [x, y]"))
