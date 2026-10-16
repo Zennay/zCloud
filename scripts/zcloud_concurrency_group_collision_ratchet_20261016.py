@@ -244,14 +244,55 @@ def findings(commit: str):
                     raise AdmissionError("concurrency finding budget exceeded")
     return out
 
+def _pair_identity(pair):
+    """Stable source identity separate from monotonic risk attributes."""
+    group_hash, first, second = pair
+    return group_hash, (first[0], first[1]), (second[0], second[1])
+
+
+def _non_escalating_endpoint(previous, candidate) -> bool:
+    """Allow only equal risk or provably safer edits of an existing pair.
+
+    'single' to 'max' preserves GitHub's finite capacity but stops routine
+    replacement of pending runs. It cannot remove all overload risk, so the
+    pair remains a legacy finding requiring owner review. 'true' or dynamic
+    cancel to literal false is also monotonic; other changes fail closed.
+    """
+    if previous[:2] != candidate[:2]:
+        return False
+    old_mode, old_queue = previous[2], previous[3]
+    new_mode, new_queue = candidate[2], candidate[3]
+    if old_mode != new_mode and new_mode != "false":
+        return False
+    if old_queue != new_queue and (old_queue, new_queue) != ("single", "max"):
+        return False
+    return True
+
+
+def _non_escalating_pair(previous, candidate) -> bool:
+    return (
+        _pair_identity(previous) == _pair_identity(candidate)
+        and _non_escalating_endpoint(previous[1], candidate[1])
+        and _non_escalating_endpoint(previous[2], candidate[2])
+    )
+
+
 def check(base: str, head: str):
     assert_commits(base, head)
     old, new = findings(base), findings(head)
     assert_commits(base, head)
-    escalations = new - old
+    existing = {_pair_identity(pair): pair for pair in old}
+    escalations = []
+    for pair in new:
+        previous = existing.get(_pair_identity(pair))
+        if previous is None or not _non_escalating_pair(previous, pair):
+            escalations.append(pair)
     if escalations:
         paths = sorted({m[0] for risk in escalations for m in risk[1:]})
-        raise AdmissionError(f"new cross-workflow cancellation collisions ({len(escalations)}): {', '.join(paths[:10])}")
+        raise AdmissionError(
+            f"new or escalating cross-workflow cancellation collisions "
+            f"({len(escalations)}): {', '.join(paths[:10])}"
+        )
     return len(old), len(new)
 
 def inventory(base: str, head: str) -> dict:
