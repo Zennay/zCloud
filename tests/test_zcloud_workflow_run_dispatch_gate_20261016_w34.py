@@ -369,6 +369,41 @@ class GateTests(unittest.TestCase):
         ))
         self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
 
+    def test_multiline_http_calls_cannot_hide_recursive_post(self):
+        multiline = (
+            'fetch(\n "https://api.github.com/repos/Zennay/zCloud/dispatches",\n {method:"POST"}\n)',
+            'requests.post(\n "https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",\n json={}\n)',
+            'httpx.request(\n "POST",\n "https://api.github.com/repos/Zennay/zCloud/actions/runs/42/rerun"\n)',
+            'axios.post(\n "https://api.github.com/repos/Zennay/zCloud/dispatches",\n {}\n)',
+            'octokit.request(\n "POST /repos/Zennay/zCloud/dispatches",\n {}\n)',
+        )
+        for code in multiline:
+            with self.subTest(code=code.splitlines()[0]):
+                source = TEMPLATE.replace("echo harmless", code.replace("\n", "\n          "))
+                self.assertTrue(classify(source))
+                base = self.commit(TEMPLATE)
+                head = self.commit(source)
+                self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
+    def test_multiline_http_get_is_not_recursive_dispatch(self):
+        examples = (
+            'fetch(\n "https://api.github.com/repos/Zennay/zCloud/dispatches",\n {method:"GET"}\n)',
+            'requests.get(\n "https://api.github.com/repos/Zennay/zCloud/dispatches"\n)',
+            'octokit.request(\n "GET /repos/Zennay/zCloud/dispatches",\n {}\n)',
+        )
+        for code in examples:
+            with self.subTest(code=code.splitlines()[0]):
+                source = TEMPLATE.replace("echo harmless", code.replace("\n", "\n          "))
+                self.assertFalse(classify(source))
+
+    def test_adjacent_lines_not_merged_into_single_http_call(self):
+        source = TEMPLATE.replace(
+            "echo harmless",
+            'fetch("https://api.github.com/repos/Zennay/zCloud/dispatches")\n'
+            '          echo "method: POST"',
+        )
+        self.assertFalse(classify(source))
+
     def test_node_fetch_with_literal_post_dispatch(self):
         commands = (
             'node -e \'fetch("https://api.github.com/repos/Zennay/zCloud/dispatches", {method: "POST"})\'',

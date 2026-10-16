@@ -252,6 +252,36 @@ def action_dispatch_sites(source: str) -> Counter[tuple[int, str]]:
     return sites
 
 
+def join_wrapped_call_lines(source: str) -> str:
+    """Join lines only inside balanced call parentheses, not unrelated steps.
+
+    This is bounded static analysis, not a general YAML or source interpreter.
+    """
+    result = []
+    depth = 0
+    quoted = None
+    escape = False
+    for ch in source:
+        if quoted is not None:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quoted:
+                quoted = None
+        elif ch in ("'", '"', "\x60"):
+            quoted = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+        if ch == "\n" and depth:
+            result.append(" ")
+        else:
+            result.append(ch)
+    return "".join(result)
+
+
 def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
     """Count every distinct executable site, including repeated commands."""
     if not workflow_run_event(source):
@@ -266,8 +296,11 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
         if body.lstrip().startswith(">"):
             normalized = " ".join(part.strip() for part in normalized.splitlines()
                                   if part.strip())
+        wrapped = join_wrapped_call_lines(normalized)
         for detector, pattern in enumerate(RISK):
-            for match in pattern.finditer(normalized):
+            # HTTP client methods can accept arguments across several lines.
+            inspected = wrapped if detector in (7, 8, 9, 10) else normalized
+            for match in pattern.finditer(inspected):
                 if detector in (2, 3, 5, 6, 7, 8, 9, 10):
                     fragment = match.group(0)
                     if "/dispatches" not in fragment and not REST_RERUN.search(fragment):
@@ -286,11 +319,11 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
                             continue
                     elif not methods[detector].search(fragment):
                         continue
-                start = normalized.rfind("\n", 0, match.start()) + 1
-                end = normalized.find("\n", match.end())
+                start = inspected.rfind("\n", 0, match.start()) + 1
+                end = inspected.find("\n", match.end())
                 if end < 0:
-                    end = len(normalized)
-                line = normalized[start:end].strip()
+                    end = len(inspected)
+                line = inspected[start:end].strip()
                 digest = hashlib.sha256(line.encode("utf-8")).hexdigest()
                 sites[(detector, digest)] += 1
     return sites
