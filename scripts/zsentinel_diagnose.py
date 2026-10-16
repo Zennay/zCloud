@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -210,13 +212,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only evidence-based portfolio diagnoses")
     parser.add_argument("snapshot", type=Path)
     args = parser.parse_args()
-    # Bounded input; no arbitrary file/output writes.
-    if args.snapshot.stat().st_size > 1_000_000:
-        parser.error("snapshot size exceeds 1MB")
+    # Open a single regular file without following symlinks, blocking on FIFOs,
+    # or reading oversized content. All input failures have a bounded exit 2.
     try:
-        snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        if args.snapshot.is_symlink():
+            raise ValueError("snapshot symlinks are not permitted")
+        fd = os.open(args.snapshot, flags)
+        with os.fdopen(fd, "rb") as source:
+            file_stat = os.fstat(source.fileno())
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ValueError("snapshot must be a regular file")
+            if file_stat.st_size > 1_000_000:
+                raise ValueError("snapshot size exceeds 1MB")
+            raw = source.read(1_000_001)
+            if len(raw) > 1_000_000:
+                raise ValueError("snapshot size exceeds 1MB")
+        snapshot = json.loads(raw.decode("utf-8"))
         print(json.dumps(diagnose(snapshot), sort_keys=True, indent=2))
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
         parser.exit(2, f"zSentinel evidence rejected: {exc}\n")
     return 0
 
