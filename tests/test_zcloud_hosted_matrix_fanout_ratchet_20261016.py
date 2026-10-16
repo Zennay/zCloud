@@ -243,7 +243,7 @@ class HostedMatrixPolicyTests(unittest.TestCase):
 
     def test_job_identifier_control_character_rejected(self):
         source = fixture().replace(
-            "  test:\n", '  "bad\\\njob":\n'
+            "  test:\n", '  "bad\\njob":\n'
         )
         after = self.commit(source)
         with self.assertRaisesRegex(policy.InvalidSource, "job_identifier_control_character"):
