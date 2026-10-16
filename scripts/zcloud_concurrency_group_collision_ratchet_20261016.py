@@ -413,6 +413,10 @@ def _activation_fingerprints(commit: str, members: set) -> dict:
                     if total_chars > MAX_ACTIVATION_JSON_CHARS:
                         raise AdmissionError("legacy activation JSON expansion budget exceeded")
                     digest.update(chunk.encode("ascii"))
+            except AdmissionError:
+                # Preserve the precise bounded-expansion denial; AdmissionError
+                # subclasses ValueError and must not be masked by the catch-all.
+                raise
             except (TypeError, ValueError, RecursionError, OverflowError) as e:
                 raise AdmissionError("unreadable trigger evidence") from e
             out[(path, scope)] = digest.hexdigest()
