@@ -406,8 +406,14 @@ class ImmutableGitTreeTests(unittest.TestCase):
 
 
     def test_real_git_disallows_untrusted_local_origin_by_default(self):
-        with self.assertRaisesRegex(guard.Denied, "foreign_checkout_origin"):
-            guard.run(self.base, self.rev())
+        import os
+        cwd = Path.cwd()
+        try:
+            os.chdir(self.work)
+            with self.assertRaisesRegex(guard.Denied, "foreign_checkout_origin"):
+                guard.run(self.base, self.rev())
+        finally:
+            os.chdir(cwd)
 
     def test_real_git_rejects_renamed_origin_even_when_source_refs_match(self):
         other = self.root / "other.git"
