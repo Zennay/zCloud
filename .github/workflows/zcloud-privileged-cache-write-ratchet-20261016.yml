@@ -1,0 +1,65 @@
+name: zCloud privileged cache writer no-new-debt ratchet
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_privileged_cache_write_ratchet_20261016.py'
+      - 'tests/test_zcloud_privileged_cache_write_ratchet_20261016.py'
+
+permissions:
+  contents: read
+
+jobs:
+  privileged-cache-write:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.base.repo.full_name == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == 'Zennay/zCloud' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check out immutable PR revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+      - name: Admit exact canonical main before executing candidate source
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$(git remote get-url origin)" = "https://github.com/Zennay/zCloud" ||
+            test "$(git remote get-url origin)" = "https://github.com/Zennay/zCloud.git"
+          actual="$(timeout 20 git -c http.followRedirects=false ls-remote --exit-code origin refs/heads/main)"
+          test "$actual" = "$(printf '%s\t%s' "$EXPECTED_BASE" refs/heads/main)"
+          git cat-file -e "$EXPECTED_BASE^{commit}"
+      - name: Install fixed version of YAML parser for source-only tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check 'PyYAML==6.0.3'
+      - name: Execute adversarial offline test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_privileged_cache_write_ratchet_20261016
+      - name: Compare immutable base and PR head cache risk
+        shell: bash
+        env:
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 scripts/zcloud_privileged_cache_write_ratchet_20261016.py \
+            --base "$EXPECTED_BASE" --head "$EXPECTED_HEAD" --require-current-main
