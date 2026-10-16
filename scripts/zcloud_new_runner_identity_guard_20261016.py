@@ -17,6 +17,14 @@ HOSTED = re.compile(r"(?:ubuntu|windows|macos)-[A-Za-z0-9_.-]+\Z")
 JOB = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_-]*):(?:\s*(?:#.*)?)?$")
 CHECKOUT = re.compile(r"actions/checkout@[0-9a-f]{40}(?:\s*(?:#.*)?)?$")
 GUARD = re.compile(r"python3\s+(?:\./)?scripts/zcloud_vps_runner_guard\.py(?:\s+--json)?\s*(?:#.*)?$")
+# Pre-shell hooks and Python module/path shadowing can run attacker-supplied
+# code before the first guard command even if that command is visually first.
+SHELL_HIJACK = re.compile(
+    r"""(?m)^\s+["']?(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)["']?\s*:"""
+)
+INLINE_HIJACK = re.compile(
+    r"""(?m)^\s*env:\s*\{[^\n}]*(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)\s*:"""
+)
 
 
 def git(*args: str) -> bytes:
@@ -77,6 +85,8 @@ def _runner(value: str) -> str:
 def _early_guard(job: list[str]) -> bool:
     # If a later step uses a status-check override, it can run even after the
     # identity guard fails. No source-only admission can trust that sequence.
+    if SHELL_HIJACK.search("\n".join(job)) or INLINE_HIJACK.search("\n".join(job)):
+        return False
     if re.search(r"(?i)\b(?:always|failure|cancelled)\s*\(", "\n".join(job)):
         return False
     # Only a pinned checkout and shell 'set' may precede the actual guard command.
@@ -143,6 +153,9 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
     lines = doc.splitlines()
     # Root defaults.run.shell can override the trusted first-run interpreter.
     workflow_defaults = bool(re.search(r"""(?m)^(?:defaults|["\']defaults["\']|[?!]\s*defaults)\s*:""", doc))
+    # Repository-level env is inherited by each guarded job.
+    root_env = bool(re.search(r"""(?m)^env:\s*(?:#.*)?\n(?:  [^\n]*\n)*?  ["']?(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)["']?\s*:""", doc))
+    root_env = root_env or bool(re.search(r"""(?m)^env:\s*\{[^\n}]*(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)\s*:""", doc))
     roots = [i for i, l in enumerate(lines) if re.fullmatch(r"jobs:\s*(?:#.*)?", l)]
     if len(roots) != 1:
         raise ValueError("ambiguous_jobs_root")
@@ -169,7 +182,7 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
         if len(runners) != 1:
             risks[name] = "ambiguous_runner"
         elif _runner(runners[0]) not in {"hosted", "other_self_hosted"} and (
-            workflow_defaults or not _early_guard(body)
+            workflow_defaults or root_env or not _early_guard(body)
         ):
             risks[name] = "missing_early_runner_guard"
     return risks
