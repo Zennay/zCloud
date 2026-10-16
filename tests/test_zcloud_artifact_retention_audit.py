@@ -859,6 +859,66 @@ jobs:
             self.assertNotIn("SECRET_ACTION", result.stdout + result.stderr)
             self.assertEqual(before, path.read_bytes())
 
+    def test_quoted_action_hash_is_data_not_yaml_comment(self):
+        source = """jobs:
+  audit:
+    steps:
+      - uses: "actions/upload-artifact@v4#not-a-comment"
+        with:
+          retention-days: 7
+      - uses: 'actions/upload-artifact@v4' # valid comment
+        with:
+          retention-days: 14
+      - uses: actions/upload-artifact@v4#not-a-comment
+        with:
+          retention-days: 45
+      - uses: actions/upload-artifact@v4 # valid comment
+        with:
+          retention-days: 7
+"""
+        rows = audit.inspect_workflow("quote-comment.yml", source, max_days=30)
+        self.assertEqual(2, len(rows))
+        self.assertEqual(["bounded", "bounded"], [row.status for row in rows])
+        self.assertEqual([14, 7], [row.retention_days for row in rows])
+
+    def test_unterminated_quoted_action_denied_without_partial_inventory(self):
+        for value in ('"actions/upload-', "'actions/upload-"):
+            with self.subTest(value=value):
+                source = (
+                    "jobs:\n  audit:\n    steps:\n"
+                    "      - uses: " + value + "\n"
+                    "        with:\n          retention-days: 7\n"
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, "unresolved quoted action identity"
+                ):
+                    audit.inspect_workflow("multiline-action.yml", source, max_days=30)
+
+    def test_unquoted_action_hash_without_whitespace_is_not_comment(self):
+        source = """jobs:
+  audit:
+    steps:
+      - uses: actions/upload-artifact@v4#suffix
+        with:
+          retention-days: 14
+      - uses: actions/upload-artifact@v4 # comment
+        with:
+          retention-days: 14
+"""
+        rows = audit.inspect_workflow("plain-hash.yml", source, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("bounded", rows[0].status)
+
+    def test_tab_indented_workflow_lines_fail_closed(self):
+        source = (
+            "jobs:\n  audit:\n    steps:\n"
+            "\t- uses: actions/upload-artifact@v4\n"
+        )
+        with self.assertRaisesRegex(
+            RuntimeError, "unresolved workflow key whitespace"
+        ):
+            audit.inspect_workflow("tab-step.yml", source, max_days=30)
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
