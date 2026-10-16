@@ -582,6 +582,61 @@ class RatchetTests(unittest.TestCase):
             "  check:\n", "  check:\n    if: false\n"))
         self.denied(base, self.save())
 
+    def test_legacy_shared_job_matrix_new_fanout_requires_owner_review(self):
+        first = document("shared", False, job=True)
+        base = self.base(first, document("shared", False))
+        changed = first.replace(
+            "    runs-on: ubuntu-latest\n",
+            "    strategy:\n      matrix:\n        platform: [linux, windows]\n"
+            "    runs-on: ubuntu-latest\n")
+        self.write("first.yml", changed)
+        self.denied(base, self.save())
+
+    def test_legacy_shared_job_matrix_expansion_requires_owner_review(self):
+        first = document("shared", False, job=True).replace(
+            "    runs-on: ubuntu-latest\n",
+            "    strategy:\n      matrix:\n        target: [a]\n"
+            "    runs-on: ubuntu-latest\n")
+        base = self.base(first, document("shared", False))
+        changed = first.replace("target: [a]", "target: [a, b, c]")
+        self.write("first.yml", changed)
+        self.denied(base, self.save())
+
+    def test_legacy_shared_job_dependency_edit_requires_owner_review(self):
+        first = document("shared", False, job=True)
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first.replace(
+            "    runs-on: ubuntu-latest\n",
+            "    needs: [prepare]\n    runs-on: ubuntu-latest\n"))
+        self.denied(base, self.save())
+
+    def test_legacy_shared_job_keeps_strategy_on_harmless_edit(self):
+        first = document("shared", False, job=True).replace(
+            "    runs-on: ubuntu-latest\n",
+            "    strategy:\n      matrix:\n        target: [a, b]\n"
+            "    needs: [prepare]\n    runs-on: ubuntu-latest\n")
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first + "# comment only\n")
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_job_matrix_edit_is_allowed_without_collision(self):
+        first = document("shared", False, job=True)
+        base = self.base(first, document("separate", False))
+        self.write("first.yml", first.replace(
+            "    runs-on: ubuntu-latest\n",
+            "    strategy:\n      matrix:\n        target: [a, b]\n"
+            "    runs-on: ubuntu-latest\n"))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_legacy_workflow_level_group_unrelated_job_matrix_change_is_allowed(self):
+        first = document("shared", False, job=False)
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first.replace(
+            "    runs-on: ubuntu-latest\n",
+            "    strategy:\n      matrix:\n        platform: [linux, macos]\n"
+            "    runs-on: ubuntu-latest\n"))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
     def test_noncolliding_workflow_can_change_event_trigger(self):
         base = self.base(document("shared", False), document("separate", False))
         self.write("second.yaml", document("separate", False).replace(
