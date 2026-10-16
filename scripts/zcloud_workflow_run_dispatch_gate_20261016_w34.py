@@ -24,7 +24,7 @@ RUN = re.compile(r"(?m)^( +)(?:-[ \t]+)?run:[ \t]*(.*)$")
 # gh permits multiple global repository/hostname options before the verb.
 # The previous single-option recognizer allowed multi-flag dispatch calls to
 # evade the read-only no-new-recursion scan.
-GH_GLOBAL_ARGS = r"(?:\s+(?:(?:-R|--repo|--hostname)(?:=|\s+)\S+)){0,4}"
+GH_GLOBAL_ARGS = r"(?:\s+(?:(?:-R|--repo|--hostname)(?:=|\s+)\S+))*"
 RISK = (
     re.compile(r"\bgh" + GH_GLOBAL_ARGS + r"\s+workflow\s+run\b", re.I),
     re.compile(r"\bgh" + GH_GLOBAL_ARGS + r"\s+run\s+rerun\b", re.I),

@@ -246,6 +246,23 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+    def test_more_than_four_gh_global_flags_cannot_hide_dispatch(self):
+        flags = " ".join(["--hostname github.com"] * 5)
+        for command in (
+            "gh " + flags + " --repo Zennay/zCloud workflow run other.yml",
+            "gh " + flags + " api -X POST /repos/Zennay/zCloud/actions/jobs/42/rerun",
+        ):
+            with self.subTest(command=command[-55:]):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_many_gh_flags_read_only_get_is_not_dispatch(self):
+        flags = " ".join(["--hostname github.com"] * 6)
+        command = (
+            "gh " + flags + " api -X GET "
+            "/repos/Zennay/zCloud/actions/jobs/42/rerun"
+        )
+        self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
     def test_multiple_gh_global_flags_get_not_mutation(self):
         source = TEMPLATE.replace(
             "echo harmless",
