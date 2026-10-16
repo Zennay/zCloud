@@ -43,7 +43,10 @@ DISPATCH_ACTIONS = {
 
 # GitHub REST rerun endpoints can recursively enqueue another attempt without
 # calling the workflow/repository dispatch API at all.
-REST_RERUN = re.compile(r"/actions/runs/[^/\s]+/rerun(?:-failed-jobs)?(?:\b|$)", re.I)
+REST_RERUN = re.compile(
+    r"/actions/(?:runs/[^/\s]+/rerun(?:-failed-jobs)?|jobs/[^/\s]+/rerun)(?:\b|$)",
+    re.I,
+)
 
 GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field|--input)(?=[ =]))", re.I)
 CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json|-F|--form(?:-string)?)(?=[ =@]))", re.I)

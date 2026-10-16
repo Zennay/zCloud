@@ -242,6 +242,35 @@ class GateTests(unittest.TestCase):
         ))
         self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
 
+    def test_rest_job_rerun_post_is_recursion_risk(self):
+        for command in (
+            "gh api -X POST /repos/Zennay/zCloud/actions/jobs/42/rerun",
+            "gh api /repos/Zennay/zCloud/actions/jobs/42/rerun --method POST",
+            "gh api /repos/Zennay/zCloud/actions/jobs/42/rerun -f enable_debug_logging=true",
+            "curl -X POST https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+            "curl https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun -d '{}' ",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_rest_job_rerun_get_remains_non_mutating(self):
+        for command in (
+            "gh api /repos/Zennay/zCloud/actions/jobs/42/rerun",
+            "gh api /repos/Zennay/zCloud/actions/jobs/42/rerun -X GET",
+            "curl -X GET https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_rest_job_rerun_in_existing_workflow_is_new_debt(self):
+        base = self.commit(DANGEROUS)
+        head = self.commit(DANGEROUS.replace(
+            "gh workflow run unsafe.yml",
+            "gh workflow run unsafe.yml\n"
+            "          gh api -X POST /repos/Zennay/zCloud/actions/jobs/42/rerun",
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_rest_workflow_rerun_get_is_not_a_post(self):
         for command in (
             "gh api /repos/Zennay/zCloud/actions/runs/123/rerun",
