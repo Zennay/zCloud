@@ -647,6 +647,34 @@ class NameCollisionRatchetTests(unittest.TestCase):
                 json.loads(cli.stdout)["added_reference_risks"][0]["reason"],
                 "unknown_source_changed")
 
+
+    def test_yaml_flow_comment_brackets_do_not_change_target(self):
+        source = b'on:\n  workflow_run:\n    workflows: [Build] # comment includes ] and [\n'
+        self.assertEqual(guard.workflow_run_targets(source), ("Build",))
+        self.assertEqual(
+            guard.workflow_run_targets(b"on: [push, release] # comment with ]\n"), ())
+
+    def test_brackets_inside_quoted_flow_item_are_not_collection_end(self):
+        source = b'on:\n  workflow_run:\n    workflows: ["Build] quality", "CI"] # check ]\n'
+        self.assertEqual(guard.workflow_run_targets(source), ("Build] quality", "CI"))
+        self.assertEqual(
+            guard.workflow_run_targets(
+                b"on:\n  workflow_run:\n    workflows: ['CI''s [Build]', Lint]\n"),
+            ("CI's [Build]", "Lint"))
+
+    def test_extra_unquoted_closing_delimiter_is_rejected(self):
+        for source in (
+            b"on:\n  workflow_run:\n    workflows: [Build]]\n",
+            b"on:\n  workflow_run:\n    workflows: [Build], Lint\n",
+            b"on:\n  workflow_run:\n    workflows: [Build, [Nested]]\n",
+        ):
+            with self.subTest(source=source):
+                self.assertIsNone(guard.workflow_run_targets(source))
+
+    def test_quoted_flow_values_with_escaped_quotes(self):
+        source = b'on:\n  workflow_run:\n    workflows: ["Build \\"Done\\"", CI]\n'
+        self.assertEqual(guard.workflow_run_targets(source), ('Build "Done"', "CI"))
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
