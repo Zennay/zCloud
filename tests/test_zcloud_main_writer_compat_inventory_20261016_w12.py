@@ -243,6 +243,67 @@ class MainWriterInventoryTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("source_sha256", rows[0])
 
+    def test_git_config_option_direct_push_is_reviewed(self):
+        self.write("option.yml", "run: git -c core.logAllRefUpdates=true push origin HEAD:main\n")
+        self.commit()
+        row = next(r for r in audit.inventory(self.repo, self.rev())["candidates"]
+                   if r["path"].endswith("option.yml"))
+        self.assertEqual(row["classification"], "direct_writer_candidate")
+        self.assertIn("direct_main_ref", {signal["kind"] for signal in row["signals"]})
+
+    def test_git_worktree_argument_direct_push_is_reviewed(self):
+        self.write("worktree.yml", "run: git -C /tmp/repo push --force origin HEAD:main\n")
+        self.commit()
+        result = audit.inventory(self.repo, self.rev())
+        self.assertEqual(result["direct_writer_candidate_count"], 1)
+
+    def test_git_gitdir_equals_argument_direct_push_is_reviewed(self):
+        self.write("gitdir.yml", "run: git --git-dir=/opt/src/.git push origin refs/heads/main\n")
+        self.commit()
+        result = audit.inventory(self.repo, self.rev())
+        self.assertEqual(result["direct_writer_candidate_count"], 1)
+
+    def test_multiline_git_push_backslash_is_strong_candidate(self):
+        self.write("continued.yml", "jobs:\n  build:\n    steps:\n"
+                   "      - run: |\n          git \\\n            push origin HEAD:main\n")
+        self.commit()
+        result = audit.inventory(self.repo, self.rev())
+        row = next(r for r in result["candidates"] if r["path"].endswith("continued.yml"))
+        self.assertEqual(row["classification"], "direct_writer_candidate")
+        self.assertIn({"line": 5, "kind": "direct_main_ref"}, row["signals"])
+
+    def test_multiline_gh_pr_merge_backslash_is_strong_candidate(self):
+        self.write("continued-merge.yml", "run: |\n  gh pr \\\n    merge --squash 42\n")
+        self.commit()
+        row = next(r for r in audit.inventory(self.repo, self.rev())["candidates"]
+                   if r["path"].endswith("continued-merge.yml"))
+        self.assertIn({"line": 2, "kind": "pull_request_merge"}, row["signals"])
+
+    def test_backslash_comment_does_not_create_fake_command(self):
+        self.write("comment.yml", "run: |\n  # git \\\n  push origin HEAD:main\n")
+        self.commit()
+        self.assertEqual(audit.inventory(self.repo, self.rev())["candidate_count"], 0)
+
+    def test_git_config_and_dir_override_from_environment_ignored(self):
+        forged = self.repo / "bogus.git"
+        with mock.patch.dict(os.environ, {
+            "GIT_DIR": str(forged),
+            "GIT_WORK_TREE": "/ignored",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "core.repositoryformatversion",
+            "GIT_CONFIG_VALUE_0": "999",
+        }):
+            result = audit.inventory(self.repo, self.sha)
+        self.assertEqual(result["workflows_scanned"], 1)
+        self.assertEqual(result["main_sha"], self.sha)
+        self.assertFalse(result["safe_to_enable_branch_protection"])
+
+    def test_multiline_safe_source_stays_unreviewed(self):
+        self.write("long.yml", "run: |\n  printf 'hello' \\\n      'world'\n")
+        self.commit()
+        result = audit.inventory(self.repo, self.rev())
+        self.assertEqual(result["candidate_count"], 0)
+
     def test_no_git_config_or_working_tree_trust(self):
         # Inspect committed blob only; working-tree change without commit is irrelevant.
         self.write("safe.yml", "run: git push origin HEAD:main\n")
