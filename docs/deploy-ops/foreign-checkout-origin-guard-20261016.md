@@ -14,7 +14,7 @@ A GitHub Actions step using actions/checkout can explicitly set with.repository 
 - Detect explicit foreign or dynamic repository overrides on actions/checkout steps, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
 - Compare per-path multiset counts. Existing debt is grandfathered, while new copies fail.
 - Exit 0 = no new risk, 1 = introduced risk, 2 = indeterminate. JSON includes exact SHA pair and reasons.
-- Run 53 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
+- Run 54 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
 
 ## Safety and limits
 
@@ -22,6 +22,10 @@ This is a conservative source-level heuristic, **not** a YAML-spec-complete pars
 
 CI runs on a GitHub-hosted runner with contents: read, not the VPS. No VPS/Firefox/systemd/SQLite/worker/queue changes, no runner job cancellation, no write token or production deployment.
 
+
+## Source-workflow syntax regression
+
+The hosted workflow includes an offline contract test requiring five distinct steps and disallowing duplicate top-level step keys. This protects against silently malformed YAML during future guard edits; GitHub's own workflow parser must also accept the final source before the run counts as green.
 
 ## Canonical-main freshness admission
 
