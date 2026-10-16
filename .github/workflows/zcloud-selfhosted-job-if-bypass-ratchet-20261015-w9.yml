@@ -1,0 +1,76 @@
+name: zCloud self-hosted job condition admission guard
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_selfhosted_job_condition_guard_20261015_w9.py"
+      - "tests/test_selfhosted_job_condition_guard_20261015_w9.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-selfhosted-job-condition-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Admit immutable same-repo owner source before checkout
+        shell: bash
+        env:
+          SOURCE: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$SOURCE" = Zennay/zCloud
+          [[ "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]]
+      - name: Check out exact PR head without stored credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 0
+      - name: Verify exact HEAD and live canonical main before testing
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$BASE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+      - name: Run adversarial real Git source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_selfhosted_job_condition_guard_20261015_w9
+          python3 -m py_compile scripts/zcloud_selfhosted_job_condition_guard_20261015_w9.py
+      - name: Deny newly introduced self-hosted admission status bypass
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_selfhosted_job_condition_guard_20261015_w9.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Fail closed on any post-test source/main drift
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$BASE_SHA"
