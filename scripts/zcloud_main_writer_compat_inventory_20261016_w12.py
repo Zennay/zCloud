@@ -7,6 +7,7 @@ No GitHub API, network calls, workflow execution, writes, or release authority.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -208,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Offline main writer compatibility audit")
     parser.add_argument("--repo", default=".")
     parser.add_argument("--expected-main-sha", required=True)
-    parser.add_argument("--format", choices=("json", "markdown"), default="json")
+    parser.add_argument("--format", choices=("json", "markdown", "csv"), default="json")
     args = parser.parse_args(argv)
     try:
         result = inventory(Path(args.repo), args.expected_main_sha)
@@ -223,6 +224,20 @@ def main(argv: list[str] | None = None) -> int:
                               "safe_to_enable_branch_protection": False,
                               "production_mutation_authorized": False}, sort_keys=True))
         return 2
+    if args.format == "csv":
+        writer = csv.writer(sys.stdout, lineterminator="\\n")
+        writer.writerow(["main_sha", "workflow_path", "source_sha256",
+                         "signal_lines_and_kinds", "priority",
+                         "owner", "reviewed_by", "decision", "evidence_url",
+                         "review_verified", "branch_protection_authorized"])
+        for candidate in result["candidates"]:
+            signal_pairs = "|".join(str(signal["line"]) + ":" + signal["kind"]
+                                    for signal in candidate["signals"])
+            writer.writerow([result["main_sha"], candidate["path"],
+                             candidate["source_sha256"], signal_pairs,
+                             "P1" if candidate["classification"] == "direct_writer_candidate"
+                             else "P2", "", "", "", "", "false", "false"])
+        return 0
     if args.format == "markdown":
         print("## zCloud main-schrijvers — alleen-lezen broninventaris\n")
         print("Vaste main SHA: " + result["main_sha"])
