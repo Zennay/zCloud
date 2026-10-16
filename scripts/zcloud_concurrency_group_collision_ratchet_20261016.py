@@ -25,6 +25,14 @@ MAX_GROUP_LENGTH = 256
 MAX_FINDINGS = 20000
 MAX_JOBS_PER_WORKFLOW = 256
 MAX_GROUP_ENTRIES = 4096
+# Only these stable GitHub contexts have a constrained source-level identity.
+# Event payload, inputs, matrix, needs and custom contexts can alias another
+# group at runtime even if their selector source text differs. Treat newly
+# introduced values as unresolved, not proof of group uniqueness.
+STATIC_IDENTITY_SELECTORS = frozenset({
+    "github.workflow", "github.ref", "github.run_id", "github.run_attempt",
+    "github.sha", "github.repository", "github.event_name",
+})
 
 class AdmissionError(ValueError):
     pass
@@ -157,6 +165,8 @@ def _is_opaque_expression(group: str) -> bool:
 
     Leave existing expressions for owner review, but never let changed/new
     opaque expressions silently bypass collision detection by text inequality.
+    Only a narrow documented allowlist of GitHub runtime identities is
+    compared statically; arbitrary dotted selectors remain unresolved.
     """
     expression = re.compile(r"\$\{\{([^{}]{0,256})\}\}")
     residual = expression.sub("", group)
@@ -164,9 +174,12 @@ def _is_opaque_expression(group: str) -> bool:
         return True
     for match in expression.finditer(group):
         expr = match.group(1).strip()
+        # A syntactically simple dotted selector is NOT necessarily a
+        # statically unique runtime identity. For example, github.event.number
+        # and github.event.pull_request.number may resolve to equal values.
         if not re.fullmatch(
             r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_0-9-]+)+", expr
-        ):
+        ) or expr.casefold() not in STATIC_IDENTITY_SELECTORS:
             return True
     return False
 
