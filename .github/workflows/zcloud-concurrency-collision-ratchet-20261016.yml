@@ -66,6 +66,9 @@ jobs:
           python3 -m pip install --disable-pip-version-check --no-input 'PyYAML==6.0.3'
           python3 -m unittest -v tests.test_zcloud_concurrency_group_collision_ratchet_20261016
           python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD"
+          # Show only hashed group IDs, workflow paths and UNREVIEWED owner fields.
+          # This is an audit queue, never review/deploy authorization.
+          python3 scripts/zcloud_concurrency_group_collision_ratchet_20261016.py --base "$BASE" --head "$HEAD" --inventory-json
           current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
           test "$current" = "$BASE"
           echo "ZCLOUD_COLLISION_SOURCE_ONLY_GREEN=1"
