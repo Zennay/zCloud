@@ -1,12 +1,10 @@
 name: zCloud scheduled dispatch no-new-debt (hosted-only)
 
 on:
+  # A change to ANY workflow must be checked, not only changes to this guard.
   pull_request:
     branches: [main]
-    paths:
-      - .github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml
-      - scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
-      - tests/test_zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
