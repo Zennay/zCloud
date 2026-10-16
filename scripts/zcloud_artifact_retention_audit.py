@@ -40,7 +40,7 @@ def _structural_lines(text: str) -> list[tuple[int, str]]:
     result: list[tuple[int, str]] = []
     scalar_indent: int | None = None
     scalar_start = re.compile(
-        r"^\\s*(?:-\\s+)?[A-Za-z_][A-Za-z0-9_-]*:\\s*[|>][+-]?\\s*(?:#.*)?$"
+        r"^\s*(?:-\s+)?[A-Za-z_][A-Za-z0-9_-]*:\s*[|>][+-]?\s*(?:#.*)?$"
     )
     for number, line in enumerate(text.splitlines(), 1):
         stripped = line.lstrip(" ")
@@ -60,8 +60,8 @@ def _structural_lines(text: str) -> list[tuple[int, str]]:
 def _step_blocks(text: str) -> Iterable[tuple[int, list[tuple[int, str]], int]]:
     """Yield only actual items under a steps: mapping, never shell examples."""
     lines = _structural_lines(text)
-    steps_key = re.compile(r"^([ ]*)steps:\\s*(?:#.*)?$")
-    item_key = re.compile(r"^([ ]*)-\\s+")
+    steps_key = re.compile(r"^([ ]*)steps:\s*(?:#.*)?$")
+    item_key = re.compile(r"^([ ]*)-\s+")
     i = 0
     while i < len(lines):
         match = steps_key.match(lines[i][1])
@@ -105,15 +105,15 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
         field_indent = indent + 2
         for position, (number, line) in enumerate(step):
             if position == 0:
-                candidate = re.match(r"^\\s*-\\s+uses:\\s*(.+?)\\s*$", line)
+                candidate = re.match(r"^\s*-\s+uses:\s*(.+?)\s*$", line)
             else:
-                candidate = re.match(r"^ {" + str(field_indent) + r"}uses:\\s*(.+?)\\s*$", line)
+                candidate = re.match(r"^ {" + str(field_indent) + r"}uses:\s*(.+?)\s*$", line)
             if candidate:
                 uses_line = number
-                action = candidate.group(1).split("#", 1)[0].strip().strip("\\'\\\"")
-            if re.match(r"^ {" + str(field_indent) + r"}with:\\s*(?:#.*)?$", line):
+                action = candidate.group(1).split("#", 1)[0].strip().strip("\'\\"")
+            if re.match(r"^ {" + str(field_indent) + r"}with:\s*(?:#.*)?$", line):
                 with_pos = position
-        if not action or not re.match(r"^actions/upload-artifact@[^\\s]+$", action):
+        if not action or not re.match(r"^actions/upload-artifact@[^\s]+$", action):
             continue
 
         retention: int | None = None
@@ -127,10 +127,10 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
                 # demonstration or a sibling env value is not an input.
                 if depth != field_indent + 2:
                     continue
-                match = re.match(r"^\\s*retention-days:\\s*(.*?)\\s*$", line)
+                match = re.match(r"^\s*retention-days:\s*(.*?)\s*$", line)
                 if not match:
                     continue
-                raw = match.group(1).split("#", 1)[0].strip().strip("\\'\\\"")
+                raw = match.group(1).split("#", 1)[0].strip().strip("\'\\"")
                 try:
                     retention = int(raw)
                 except ValueError:
