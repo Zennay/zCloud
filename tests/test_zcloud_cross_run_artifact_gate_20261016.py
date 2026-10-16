@@ -707,13 +707,20 @@ class Tests(unittest.TestCase):
         link=self.repo/'bin/downloader'
         link.parent.mkdir(parents=True)
         link.symlink_to('/etc/passwd')
-        self.git('add','.'); self.git('commit','-qm','non regular executable')
-        # A symlink is ignored unless part of an inventoried executable or
-        # shell path. Use an explicit .sh name to exercise fail closed.
-        regular=self.repo/'bin/redirect.sh'
-        regular.symlink_to('/etc/passwd')
-        self.git('add','.'); self.git('commit','-qm','invalid source symlink')
-        with self.assertRaises(module.Refusal):
+        self.git('add','.'); self.git('commit','-qm','extensionless redirect')
+        with self.assertRaisesRegex(module.Refusal,'non_regular_workflow_or_action'):
+            module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+
+    def test_extensionless_git_symlink_to_checked_in_helper_denied(self):
+        base=self.commit(SAFE)
+        script=self.repo/'bin/actual'
+        script.parent.mkdir(parents=True)
+        script.write_text('#!/bin/bash\ngh run download 444\n')
+        script.chmod(0o755)
+        link=self.repo/'bin/alias'
+        link.symlink_to('actual')
+        self.git('add','.'); self.git('commit','-qm','symlink indirection')
+        with self.assertRaisesRegex(module.Refusal,'non_regular_workflow_or_action'):
             module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
 
     def test_named_step_with_input(self):
