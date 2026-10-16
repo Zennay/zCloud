@@ -138,20 +138,30 @@ def _blob(sha, path):
     return _git("cat-file", "blob", entry[2], max_output=MAX_BLOB)
 
 
-def _candidate_runner(value):
-    """Fail closed on unusual runner selectors, cycles and alias expansion.
+# Only these canonical GitHub-managed hosted runner labels can be excluded.
+# Arbitrary labels (including 'vps', 'zcloud', custom larger runners and future
+# labels) can route to self-hosted hardware. An unknown must never be treated
+# as evidence of GitHub-hosted execution.
+_HOSTED_RUNNER = re.compile(
+    r"^(?:ubuntu-(?:latest|(?:22|24)\\.04(?:-arm)?|slim)|"
+    r"windows-(?:latest|(?:2022|2025)(?:-arm)?)|"
+    r"macos-(?:latest|(?:13|14|15|26)(?:-large|-xlarge|-intel)?))$"
+)
 
-    A plain hosted label is safe to exclude; dynamically selected, structured
-    or malformed runners cannot be assumed to be GitHub-hosted.
+
+def _candidate_runner(value):
+    """Treat unknown labels as VPS-capable; only known hosted labels exclude.
+
+    Never use substring matching: 'ubuntu-latest-my-vps' is not hosted proof.
     """
     pending = [value]
     seen = set()
     while pending:
         current = pending.pop()
         if current is None:
-            continue
+            return True  # no runs-on = unknown, not hosted evidence
         if isinstance(current, str):
-            if "self-hosted" in current.lower() or "${{" in current:
+            if not _HOSTED_RUNNER.fullmatch(current):
                 return True
         elif isinstance(current, list):
             identity = id(current)
@@ -162,8 +172,8 @@ def _candidate_runner(value):
                 raise InvalidSource("oversized_runner_selection")
             pending.extend(current)
         else:
-            # Mapping selectors, unexpected scalars and custom tags all need
-            # owner review. A numeric or boolean runs-on is NOT hosted proof.
+            # group/labels mappings, complex scalar values, or unknown tags
+            # cannot establish that the runner is GitHub hosted.
             return True
     return False
 
