@@ -400,6 +400,58 @@ runs:
         b = self.commit(SAFE.replace("        with:", "        with: &changed"))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_folded_uses_github_script_action_is_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            "uses: >-\n          actions/github-script@0123456789012345678901234567890123456789",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_literal_uses_github_script_action_is_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            "uses: |\n          actions/github-script@0123456789012345678901234567890123456789",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_folded_uses_unrelated_action_is_not_github_script(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE + """
+      - name: unrelated source
+        uses: >-
+          actions/checkout@0123456789012345678901234567890123456789
+""")
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_quoted_folded_uses_github_script_is_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            "'uses': >-\n          actions/github-script@0123456789012345678901234567890123456789",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_modified_legacy_folded_action_is_rejected(self):
+        a = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            "uses: >-\n          actions/github-script@0123456789012345678901234567890123456789",
+        ))
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@0123456789012345678901234567890123456789",
+            "uses: >-\n          actions/github-script@1123456789012345678901234567890123456789",
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_script_data_fake_folded_uses_is_not_an_action(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "core.info(title.length.toString());",
+            'const sample = <TICK>\n            uses: >-\n              actions/github-script@0123456789012345678901234567890123456789\n            <TICK>;\n            core.info(sample);'.replace("<TICK>", chr(96)),
+        ))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
         b = self.commit(BAD)
