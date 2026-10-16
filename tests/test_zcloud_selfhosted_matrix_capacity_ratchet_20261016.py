@@ -274,7 +274,7 @@ class GitTreeContract(unittest.TestCase):
 
     def test_git_nonzero_status_denied(self):
         with self.assertRaisesRegex(InvalidSource, "git_source_unavailable"):
-            _git("rev-parse", "--bad-nonexistent-option", max_output=200)
+            _git("cat-file", "-t", "0" * 40, max_output=200)
 
     def test_refuses_noncommit_git_object(self):
         blob = git("rev-parse", f"{self.base}:" + ROOT)
