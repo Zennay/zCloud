@@ -314,9 +314,13 @@ def inspect(base, head):
             path = raw_path.decode("utf-8")
         except UnicodeError as exc:
             raise InvalidSource("invalid_workflow_filename") from exc
-        if (not path.startswith(".github/workflows/")
-                or path.count("/") != 2
-                or not path.endswith((".yml", ".yaml"))):
+        if not path.startswith(".github/workflows/") or path.count("/") != 2:
+            continue
+        if not path.endswith((".yml", ".yaml")):
+            # Git tooling and hosting platforms differ on extension casing.
+            # Never silently certify uppercase workflow YAML as not a file.
+            if path.lower().endswith((".yml", ".yaml")):
+                raise InvalidSource("noncanonical_workflow_extension")
             continue
         candidate = _blob(head, path)
         if candidate is None:
