@@ -244,6 +244,27 @@ def _snapshot(root: Path, sha: str) -> Counter[str]:
     return risk
 
 
+
+def _risk_source_path(key: str) -> str:
+    """Return source path without copying any action arguments or tokens.
+
+    Keys are emitted as path:line:fingerprint for Actions, or as
+    path:line:kind:fingerprint for GitHub CLI and API routes. rsplit is
+    deliberate: legitimate Git paths may themselves contain a colon.
+    """
+    if ":gh-run-download:" in key or ":github-api-artifact-path:" in key:
+        return key.rsplit(":", 3)[0]
+    return key.rsplit(":", 2)[0]
+
+
+def _new_risk_paths(before: Counter[str], after: Counter[str]) -> list[str]:
+    return sorted({
+        _risk_source_path(key)
+        for key, count in after.items()
+        if count > before[key]
+    })
+
+
 def evaluate(root: Path, base: str, head: str) -> dict[str, object]:
     if not _SHA.fullmatch(base) or not _SHA.fullmatch(head) or base == head:
         raise Refusal("invalid_or_identical_sha")
@@ -253,12 +274,15 @@ def evaluate(root: Path, base: str, head: str) -> dict[str, object]:
         raise Refusal("base_not_ancestor")
     before, after = _snapshot(root, base), _snapshot(root, head)
     new = sum(max(0, count-before[key]) for key, count in after.items())
+    new_paths = _new_risk_paths(before, after)
     return {
         "policy": "cross-run-artifact-download-no-new-debt-v1",
         "base": base, "head": head,
         "legacy_findings": sum(before.values()),
         "candidate_findings": sum(after.values()),
         "new_findings": new,
+        # Paths only. Never echo matching input lines, tokens or expressions.
+        "new_finding_paths": new_paths,
         "ok": new == 0,
         "mutation_performed": False,
         "production_mutation_authorized": False,
