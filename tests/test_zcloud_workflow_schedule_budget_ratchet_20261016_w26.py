@@ -512,6 +512,44 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         path.write_text(path.read_text() + "\n# Source-only comment\n")
         self.assertTrue(audit(self.root, base)["accepted"])
 
+    def test_deleting_entire_zoned_schedule_reduces_debt(self):
+        path = self.directory / "safe.yml"
+        old = workflow("0 8 * * *").replace(
+            "jobs:", "      timezone: Europe/Amsterdam\njobs:")
+        path.write_text(old, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "existing zoned schedule")
+        baseline = self.git("rev-parse", "HEAD")
+        path.write_text("on: pull_request\njobs:\n  check:\n"
+                        "    runs-on: ubuntu-latest\n", encoding="utf-8")
+        result = audit(self.root, baseline)
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["new_high_frequency"], [])
+
+    def test_deleting_only_zoned_cron_preserves_unzoned_entry(self):
+        path = self.directory / "safe.yml"
+        old = ("on:\n  schedule:\n"
+               "    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n"
+               "    - cron: '0 10 * * *'\n")
+        path.write_text(old, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "mixed legacy schedule")
+        baseline = self.git("rev-parse", "HEAD")
+        path.write_text("on:\n  schedule:\n    - cron: '0 10 * * *'\n",
+                        encoding="utf-8")
+        self.assertTrue(audit(self.root, baseline)["accepted"])
+
+    def test_reorder_preserves_identity_of_each_zoned_schedule(self):
+        path = self.directory / "safe.yml"
+        first = ("    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n")
+        second = ("    - cron: '0 10 * * *'\n      timezone: Asia/Tokyo\n")
+        path.write_text("on:\n  schedule:\n" + first + second, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "two zoned schedules")
+        baseline = self.git("rev-parse", "HEAD")
+        path.write_text("on:\n  schedule:\n" + second + first, encoding="utf-8")
+        self.assertTrue(audit(self.root, baseline)["accepted"])
+
     def test_quoted_timezone_does_not_require_spurious_review(self):
         path = self.directory / "safe.yml"
         plain = workflow("0 8 * * *").replace(
