@@ -182,15 +182,19 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     if project_id=='zsentinel':
         return (
-            'Werk verder aan zSentinel als vliegende keep voor ALLE zCloud-projecten, niet als portfolio-project.'
-            'Kijk in Notion in welke fase het project zit; lees Project Genesis OS, Company OS, Portfolio Control Tower OS, relevante HQ/handoffs, GitHub-issues/PRs/CI, branches, queue en workerclaims.'
-            'PRIORITEIT 1: VERWIJDER BLOKKADES. Onderzoek P0-stops, niet-toegewezen of vastgelopen workers, falende CI, runner-/queueproblemen en vastgelopen dependencies; onderscheid dit van bewuste research-, device- en releasegates.'
-            'Redeneer vanuit het hele portfolio. Bouw de ontbrekende oplossing: fix root-cause met code/tests, maak een veilige alternatieve route of stuur vrije workers naar zelfstandig uitvoerbaar werk. Pas waar toegestaan wachtrij, prioriteit of taken toe met bewijs en rollback. Neem geen actieve claim of generatie over.'
-            'Bewijs herstel met werkelijke taakvoortgang, commit, tests en runtime-signalen. Eén heartbeat, retry of groene hosted CI bewijst geen live herstel.'
-            'PRIORITEIT 2: OPEN ISSUES EN FEATURES. Pak daarna overgebleven P0/P1 en P2/P3-issues, bugs, onafgemaakte PRs en roadmapfeatures aan. Voer meerdere materiële fixes achter elkaar uit; switch bij een echte gate direct naar ander veilig werk, ook bij een ander project.'
-            'Vraag geen menselijke input voor normale debugs, onderzoek via Notion/GitHub en bestaande worker-/runnerkanalen en implementeer zelfstandig.'
-            'Respecteer rechten, actieve eigenaars, scoped security, secrets, FTMO-holdouts, fysieke devicevalidatie en verplichte productie-releasegates; nooit blind restart/deploy, massaal cancelen of gate omzeilen.'
-            'Sluit issues pas na bewezen resultaat; noem kort fix, tests, commit, PR en runtimeverificatie.'
+            'Werk verder aan het herstel van ANDERE zCloud-projecten als zSentinel · Vliegende keep. '
+            'DIT IS EEN WERKERROL EN EEN PORTFOLIOBREDE HERSTELPROMPT, GEEN PRODUCT OF PROJECT. '
+            'Maak geen zSentinel-project, zSentinel-roadmap, zSentinel-issues of zSentinel-QA-PRs. '
+            'Werk uitsluitend aan de rolcode zelf wanneer een concreet defect aantoonbaar het herstellen van andere projecten blokkeert. '
+            'Kijk in Notion in welke fase het project zit dat je daadwerkelijk gaat herstellen; lees de relevante project-HQs, Project Genesis OS, Company OS en Portfolio Control Tower OS. '
+            'Onderzoek de actuele problemen in ALLE 13 echte projecten via GitHub issues, branches, PRs, CI, de uitvoerwachtrij, deployments en workerclaims. '
+            'PRIORITEIT 1: verwijder echte P0/P1-blokkades: falende CI, gebroken services, niet-toegewezen of vastgelopen workers en mislukte dependencies. '
+            'Kies het hoogste-impact onbeheerde probleem in een ECHT portfolio-project, los de oorzaak materieel op, test en verifieer daadwerkelijke voortgang. '
+            'Respecteer bestaande eigenaren, claims, geheime gegevens, FTMO-holdouts en veiligheids-, apparaat- en releasegates; forceer niets buiten autorisatie. '
+            'PRIORITEIT 2: werk open bugs, issues, onafgemaakte PRs en features in andere projecten af. '
+            'Als een onderdeel wacht op CI, review of VPS, kies meteen ander vrij uitvoerbaar herstelwerk in een ander project. '
+            'Voer meerdere concrete fixes na elkaar uit en stop niet bij een statuscheck, nieuwe taak, enkele commit of een groene heartbeat. '
+            'Rapporteer steeds het echte doelproject, de fix, tests, PR/commit, runtimebewijs en resterende blockers. '
         )
     return (
         f'Werk verder aan {name}. '
@@ -208,6 +212,9 @@ def project_runner_prompt(project_id, name):
 
 
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
+    # zSentinel is a cross-portfolio recovery ROLE. Never attach a project-specific QA lane.
+    if project_id=='zsentinel':
+        return project_runner_prompt(project_id, name)
     prompt = project_runner_prompt(project_id, name)
     worker_total = max(1, int(total or 1))
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
@@ -2854,6 +2861,24 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         with connect() as c:
             sequence=c.execute('SELECT COUNT(*) FROM portfolio_queue WHERE project_id=?',(project_id,)).fetchone()[0]+1
         parent_queue_id=f'auto-refill-{project_id}-{sequence}'
+    if project_id=='zsentinel':
+        # A role can be queue-addressable without becoming a roadmap/project.
+        # The generic per-project continuation would accidentally make workers
+        # implement zSentinel itself instead of repairing other projects.
+        return portfolio_queue_enqueue(
+            project_id,
+            'Fix blockers, broken workers and open issues across OTHER portfolio projects',
+            'P1',
+            'PRIORITY 1: pick the highest-impact unowned actionable blocker in one of the 13 real projects. '
+            'Fix the underlying failure with code, tests, runtime verification and scoped permissions. '
+            'Read current Notion HQ/handoff and GitHub issues, PRs, CI, worker claims and deployment evidence '
+            'for the affected real project. Do not create a zSentinel product roadmap, '
+            'zSentinel QA tasks or zSentinel feature PRs. Do not steal existing ownership or skip gates. '
+            'PRIORITY 2: move to another safe unowned open issue, broken workflow or unfinished feature '
+            'in a real project; implement multiple material fixes across projects without waiting on a blocked task.',
+            project.get('notion_url') or '',
+            parent_queue_id=parent_queue_id,
+        )
     criteria=(
         f'Read the current {name} HQ/handoff and execute a substantial multi-step work package, not a single micro-task. '
         'Treat this assignment as a long-running implementation block: identify the highest-value safe unblocked roadmap area, '
