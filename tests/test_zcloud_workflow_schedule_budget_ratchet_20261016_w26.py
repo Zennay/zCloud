@@ -125,6 +125,14 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             cross_schedule_bursts(("0 9 * * *",) * 33)
 
+    def test_timezone_merge_alias_not_allowed(self):
+        with self.assertRaises(AdmissionError):
+            schedules("on:\n  schedule:\n    - cron: '0 9 * * *'\n      <<: *hidden_timezone\n")
+
+    def test_empty_timezone_selector_denied(self):
+        with self.assertRaises(AdmissionError):
+            schedules("on:\n  schedule:\n    - cron: '0 9 * * *'\n      timezone:\n")
+
     def test_yaml_merge_cannot_hide_schedule_trigger(self):
         with self.assertRaises(AdmissionError):
             schedules("on:\n  <<: *schedule_alias\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
