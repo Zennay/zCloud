@@ -250,6 +250,32 @@ class ZSentinelEvidenceContractTests(unittest.TestCase):
                     inspect({"id": "cloud", "runtime": {"execution_state": bad}})
 
 
+    def test_nonterminal_github_jobs_cannot_have_final_conclusions(self):
+        for status in ("queued", "waiting", "pending", "running", "in_progress"):
+            for final in ("success", "failure", "cancelled", "timed_out"):
+                with self.subTest(status=status, final=final):
+                    item = queued(job_status=status, conclusion=final)
+                    with self.assertRaisesRegex(ValueError, "nonterminal"):
+                        inspect(item)
+
+    def test_null_conclusion_is_allowed_for_running_jobs(self):
+        for status in ("running", "in_progress"):
+            item = queued(job_status=status, conclusion=None)
+            self.assertEqual("unknown", inspect(item)["projects"][0]["state"])
+
+    def test_queue_timestamp_after_observation_is_rejected(self):
+        entry = queued(observed_at=timestamp(-15), queued_at=timestamp(-1))
+        with self.assertRaisesRegex(ValueError, "queued_at"):
+            inspect(entry)
+
+    def test_valid_observed_queued_boundary_retains_no_false_incident(self):
+        entry = queued(observed_at=timestamp(-1), queued_at=timestamp(-30))
+        item = inspect(entry)["projects"][0]
+        self.assertEqual("stalled", item["state"])
+        entry["github"]["queued_at"] = timestamp(-29)
+        self.assertEqual("in_progress", inspect(entry)["projects"][0]["state"])
+
+
 
 if __name__ == "__main__":
     unittest.main()
