@@ -31,6 +31,10 @@ PROJECT_UNITS = {
     "zssh": ["zssh.service"],
     "lightup": [],
     "tradengine": [],  # Research-only, no managed systemd trading service.
+    "mixlab": [],
+    "fuckball": [],
+    "tuddy": [],
+    "zsentinel": [],
 }
 _RESOURCE_PREV = {}
 _RESOURCE_HOST_PREV = None
