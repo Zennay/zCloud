@@ -272,8 +272,11 @@ def receipt(snapshot: dict, *, stable: bool) -> dict:
         max((item["job"]["age_seconds"] for item in queued_items), default=0) // 60
         if queued_items else None
     )
+    status = ("EVIDENCE_CHANGED" if not stable else
+              "PARTIAL_READONLY_SAMPLE" if not snapshot["complete"] else
+              "STABLE_READONLY_SAMPLE")
     return {"schema": "zcloud-cpu-queue-storm-readonly-v1",
-            "status": "STABLE_READONLY_SAMPLE" if stable else "EVIDENCE_CHANGED",
+            "status": status,
             "complete": snapshot["complete"] and stable,
             "total_queued_workflow_runs": snapshot["total_count"],
             "sample_count": len(snapshot["sampled"]),
@@ -325,6 +328,8 @@ def collect(token: str, cap: int = 20, *, getter=None, now=None) -> dict:
 
     def single_pass():
         payload = getter(url)
+        if type(payload) is not dict:
+            raise Unavailable("inventory_invalid")
         runs = payload.get("workflow_runs")
         if type(runs) is not list or len(runs) > cap:
             raise Unavailable("sample_size_invalid")
@@ -349,7 +354,10 @@ def main() -> int:
     args = parser.parse_args()
     try:
         out = collect(os.environ.get("GH_TOKEN", ""), cap=args.sample)
-        code = 0 if out["status"] == "STABLE_READONLY_SAMPLE" else 2
+        # Exit 0 requires BOTH a stable result and an exhaustive inventory.
+        # A bounded sample is useful for triage, never full-population proof.
+        code = 0 if (out["status"] == "STABLE_READONLY_SAMPLE"
+                     and out.get("complete") is True) else 2
     except (Unavailable, TypeError, ValueError, OverflowError):
         out = {"schema": "zcloud-cpu-queue-storm-readonly-v1",
                "status": "EVIDENCE_UNAVAILABLE", "cancel_authorized": False,

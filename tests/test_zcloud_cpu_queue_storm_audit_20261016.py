@@ -1,5 +1,8 @@
 """Offline test suite for a source-only VPS diagnostic queue auditor."""
 import importlib.util
+import io
+from contextlib import redirect_stdout
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import unittest
@@ -187,8 +190,54 @@ class QueueStormContract(unittest.TestCase):
         p["total_count"] = 7
         q = audit.receipt(audit.read_sample(p, j, NOW, 2), stable=True)
         self.assertFalse(q["complete"])
+        self.assertEqual(q["status"], "PARTIAL_READONLY_SAMPLE")
         self.assertEqual(q["total_queued_workflow_runs"], 7)
         self.assertEqual(q["sample_count"], 2)
+
+    def test_cli_fails_closed_for_stable_but_partial_inventory(self):
+        p, jobs = payloads([make_run(1), make_run(2)])
+        p["total_count"] = 19
+        partial = audit.receipt(audit.read_sample(p, jobs, NOW, 2), stable=True)
+        self.assertEqual(partial["status"], "PARTIAL_READONLY_SAMPLE")
+        output = io.StringIO()
+        with patch.object(audit, "collect", return_value=partial), \
+                patch("sys.argv", ["queue_audit", "--sample", "2"]), \
+                redirect_stdout(output):
+            exit_code = audit.main()
+        self.assertEqual(exit_code, 2)
+        import json
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["sample_count"], 2)
+        self.assertFalse(result["complete"])
+        self.assertFalse(result["cancel_authorized"])
+
+    def test_cli_requires_explicit_true_completeness_even_when_stable(self):
+        for reported in (None, False, 1, "true"):
+            fake = {"status": "STABLE_READONLY_SAMPLE", "complete": reported}
+            with self.subTest(reported=reported), \
+                    patch.object(audit, "collect", return_value=fake), \
+                    patch("sys.argv", ["queue_audit"]), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(audit.main(), 2)
+        good = {"status": "STABLE_READONLY_SAMPLE", "complete": True}
+        with patch.object(audit, "collect", return_value=good), \
+                patch("sys.argv", ["queue_audit"]), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(audit.main(), 0)
+
+    def test_bad_source_container_does_not_crash_without_receipt(self):
+        for payload in (None, False, [], "queued", 0):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(audit.Unavailable, "inventory_invalid"):
+                    audit.collect("offline-token", now=NOW, getter=lambda _url: payload)
+        # The CLI's exception pathway still yields a machine-readable denial.
+        with patch.object(audit, "collect", side_effect=audit.Unavailable("inventory_invalid")), \
+                patch("sys.argv", ["queue_audit"]):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(audit.main(), 2)
+        self.assertIn('"status": "EVIDENCE_UNAVAILABLE"', output.getvalue())
+        self.assertNotIn("inventory_invalid", output.getvalue())
 
     def test_incomplete_under_reported_page_denied(self):
         p, j = payloads([make_run(1), make_run(2)])
