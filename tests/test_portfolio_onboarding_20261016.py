@@ -75,11 +75,17 @@ class PortfolioOnboardingTests(unittest.TestCase):
                 self.assertEqual(self.layout["order"].count(pid), 1)
                 self.assertNotIn(pid, self.layout["archived"])
 
-    def test_registry_does_not_authorize_vps_execution(self):
-        # Runtime access is gated separately; presentation alone must not grant it.
-        execution_allowed = load("vps-execution-policy.json")["projects"]
+    def test_execution_routing_inventory_does_not_autostart_projects(self):
+        # Required project inventory is not itself worker or production admission.
+        execution_inventory = load("vps-execution-policy.json")["projects"]
         for pid in NEW_PROJECTS:
-            self.assertNotIn(pid, execution_allowed)
+            self.assertIn(pid, execution_inventory)
+            self.assertFalse(self.contracts[pid]["autonomy"]["auto_start"])
+            self.assertEqual("external_gate", self.contracts[pid]["autonomy"]["mode"])
+            self.assertNotIn(pid, load("portfolio_queue.seed.json") and [
+                item["project_id"] for item in load("portfolio_queue.seed.json")
+                if item.get("queue_id", "").startswith("autostart-")
+            ])
 
 
 if __name__ == "__main__":
