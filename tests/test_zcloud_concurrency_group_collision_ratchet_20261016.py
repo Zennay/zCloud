@@ -419,6 +419,72 @@ class RatchetTests(unittest.TestCase):
         with patch.object(gate, "MAX_GROUP_ENTRIES", 1):
             self.denied(base, head)
 
+    def test_new_opaque_format_expression_denied_without_static_proof(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", "group: \"${{ format('zcloud-{0}', github.ref) }}\""))
+        self.denied(base, self.save())
+
+    def test_new_opaque_fallback_expression_denied(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", "group: \"${{ github.head_ref || github.ref }}\""))
+        self.denied(base, self.save())
+
+    def test_new_incomplete_expression_denied(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", "group: \"prefix-${{ github.ref\""))
+        self.denied(base, self.save())
+
+    def test_legacy_opaque_expression_is_grandfathered(self):
+        baseline = document("old", False).replace(
+            "group: old", "group: \"${{ format('stable-{0}', github.ref) }}\"")
+        base = self.base(baseline, document("separate", False))
+        self.write("first.yml", baseline + "# unrelated text change\n")
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_rewriting_existing_opaque_expression_denied(self):
+        baseline = document("old", False).replace(
+            "group: old", "group: \"${{ format('stable-{0}', github.ref) }}\"")
+        base = self.base(baseline, document("separate", False))
+        revised = baseline.replace("stable-{0}", "updated-{0}")
+        self.write("first.yml", revised)
+        self.denied(base, self.save())
+
+    def test_unchanged_opaque_expression_allows_queue_hardening(self):
+        baseline = document("old", False).replace(
+            "group: old", "group: \"${{ format('stable-{0}', github.ref) }}\"")
+        base = self.base(baseline, document("separate", False))
+        upgraded = baseline.replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max")
+        self.write("first.yml", upgraded)
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_simple_dotted_expression_is_statically_admitted(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", "group: \"prefix-${{ github.ref }}\""))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_opaque_inventory_never_claims_complete_static_coverage(self):
+        baseline = document("old", False).replace(
+            "group: old", "group: \"${{ format('stable-{0}', github.ref) }}\"")
+        base = self.base(baseline, document("separate", False))
+        self.write("first.yml", baseline + "# harmless edit\n")
+        receipt = gate.inventory(base, self.save())
+        self.assertEqual(receipt["legacy_opaque_expression_count"], 1)
+        self.assertEqual(receipt["candidate_opaque_expression_count"], 1)
+        self.assertFalse(receipt["static_expression_coverage_complete"])
+        self.assertTrue(receipt["no_new_opaque_expressions"])
+        self.assertEqual(len(receipt["unresolved_expression_reviews"]), 1)
+        item = receipt["unresolved_expression_reviews"][0]
+        self.assertEqual(item["workflow_path"], ".github/workflows/first.yml")
+        self.assertEqual(item["disposition"], "UNREVIEWED")
+        self.assertFalse(receipt["merge_authorized"])
+        self.assertFalse(receipt["production_mutation_authorized"])
+        self.assertNotIn("stable-", str(receipt))
+
     def test_invalid_shas_denied(self):
         base = self.base()
         for invalid in ("main", "f" * 39, "z" * 40):
