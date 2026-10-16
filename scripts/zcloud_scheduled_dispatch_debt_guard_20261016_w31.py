@@ -9,8 +9,11 @@ from __future__ import annotations
 import argparse
 import json
 import hashlib
+import os
 import re
+import selectors
 import subprocess
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -36,16 +39,43 @@ MAX_TOTAL = 16 * 1024 * 1024
 
 
 def git(repo: Path, *args: str) -> bytes:
-    p = subprocess.run(
-        ["git", "-C", str(repo), *args],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
-        check=False,
+    """Read Git stdout with a hard streaming cap and an overall deadline.
+
+    Silencing Git stderr keeps repository-local path/credential details out of
+    CI errors; any nonzero return is a non-authorizing failure.
+    """
+    command = ["git", "-C", str(repo), *args]
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
     )
-    if p.returncode:
-        raise ValueError("Git source inventory failed closed")
-    if len(p.stdout) > MAX_TOTAL:
-        raise ValueError("Git inventory output exceeds bounds")
-    return p.stdout
+    output = bytearray()
+    deadline = time.monotonic() + 20
+    try:
+        assert process.stdout is not None
+        with selectors.DefaultSelector() as reader:
+            reader.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not reader.select(remaining):
+                    raise subprocess.TimeoutExpired(command, 20)
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                output.extend(chunk)
+                if len(output) > MAX_TOTAL:
+                    raise ValueError("Git output exceeds streaming bounds")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, 20)
+        if process.wait(timeout=remaining) != 0:
+            raise ValueError("Git source inventory failed closed")
+        return bytes(output)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        if process.stdout is not None:
+            process.stdout.close()
 
 
 def manifest_map(repo: Path, sha: str) -> dict[str, str]:
