@@ -31,6 +31,8 @@ RISK = (
     re.compile(r"\bgh" + GH_GLOBAL_ARGS + r"\s+api\b[^\n]*", re.I),
     re.compile(r"\bcurl\b[^\n]*", re.I),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch|reRunWorkflow|reRunWorkflowFailedJobs|reRunJob|rerunWorkflow)\b"),
+    re.compile(r"\bwget\b[^\n]*", re.I),
+    re.compile(r"\b(?:Invoke-RestMethod|Invoke-WebRequest)\b[^\n]*", re.I),
 )
 STEP_USES = re.compile(r"""(?m)^( +)(?:-\s+)?(?:uses|'uses'|"uses"):[ \t]*(.*)$""")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
@@ -50,6 +52,8 @@ REST_RERUN = re.compile(
 
 GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field|--input)(?=[ =]))", re.I)
 CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json|-F|--form(?:-string)?)(?=[ =@]))", re.I)
+WGET_POST = re.compile(r"(?:--method(?:=|\s+)POST\b|--post-(?:data|file)(?:=|\s+))", re.I)
+POWERSHELL_POST = re.compile(r"-Method\s+(?:['\"]?POST['\"]?)(?:\s|$)", re.I)
 
 MAX_PATHS = 400
 MAX_SOURCE = 200_000
@@ -260,11 +264,12 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
                                   if part.strip())
         for detector, pattern in enumerate(RISK):
             for match in pattern.finditer(normalized):
-                if detector in (2, 3):
+                if detector in (2, 3, 5, 6):
                     fragment = match.group(0)
                     if "/dispatches" not in fragment and not REST_RERUN.search(fragment):
                         continue
-                    if not (GH_POST if detector == 2 else CURL_POST).search(fragment):
+                    methods = {2: GH_POST, 3: CURL_POST, 5: WGET_POST, 6: POWERSHELL_POST}
+                    if not methods[detector].search(fragment):
                         continue
                 start = normalized.rfind("\n", 0, match.start()) + 1
                 end = normalized.find("\n", match.end())

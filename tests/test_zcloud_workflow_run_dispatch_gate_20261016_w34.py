@@ -321,6 +321,51 @@ class GateTests(unittest.TestCase):
         head = self.commit(TEMPLATE.replace("echo harmless", command))
         self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
 
+    def test_wget_post_dispatch_and_rerun_denied(self):
+        commands = (
+            "wget --method=POST https://api.github.com/repos/Zennay/zCloud/dispatches",
+            "wget --post-data='{}' https://api.github.com/repos/Zennay/zCloud/actions/workflows/a.yml/dispatches",
+            "wget --post-file=request.json https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+            "wget https://api.github.com/repos/Zennay/zCloud/actions/runs/14/rerun --method POST",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_powershell_post_dispatch_and_rerun_denied(self):
+        commands = (
+            "Invoke-RestMethod -Method POST -Uri https://api.github.com/repos/Zennay/zCloud/dispatches",
+            "Invoke-WebRequest -Uri https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun -Method 'POST'",
+            'Invoke-RestMethod -Method "POST" -Uri https://api.github.com/repos/Zennay/zCloud/actions/workflows/a.yml/dispatches',
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_wget_and_powershell_get_are_not_mutating_dispatch(self):
+        commands = (
+            "wget https://api.github.com/repos/Zennay/zCloud/dispatches",
+            "wget --method=GET https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+            "Invoke-RestMethod -Method GET -Uri https://api.github.com/repos/Zennay/zCloud/dispatches",
+            "Invoke-WebRequest -Uri https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_added_wget_or_powershell_dispatch_is_new_debt(self):
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            "wget --post-data='{}' https://api.github.com/repos/Zennay/zCloud/dispatches",
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+        another = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            "Invoke-RestMethod -Method POST -Uri https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun",
+        ))
+        self.assertEqual(evaluate(self.repo, base, another)["new_findings"], [WORKFLOW])
+
     def test_rest_job_rerun_get_remains_non_mutating(self):
         for command in (
             "gh api /repos/Zennay/zCloud/actions/jobs/42/rerun",
