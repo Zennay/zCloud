@@ -234,6 +234,18 @@ class Tests(unittest.TestCase):
         with self.assertRaises(module.Refusal):
             module._risks(value,'w.yml')
 
+    def test_moving_legacy_step_within_same_file_denied(self):
+        base=self.commit(CROSS)
+        moved=CROSS.replace('      - name: Recover old evidence',
+                             '      # change step placement\n      - name: Recover old evidence')
+        head=self.commit(moved)
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_unrelated_workflow_edit_after_legacy_step_allowed(self):
+        base=self.commit(CROSS)
+        head=self.commit(CROSS+'\n# other documentation\n')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],0)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
