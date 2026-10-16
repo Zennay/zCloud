@@ -32,6 +32,42 @@ GIT_ENV["GIT_CONFIG_NOSYSTEM"] = "1"
 GIT_ENV["GIT_NO_REPLACE_OBJECTS"] = "1"
 GIT_ENV["GIT_TERMINAL_PROMPT"] = "0"
 
+ACTION_DECLARED = re.compile(
+    r"""^\s*(?:-\s*)?(?:uses|'uses'|"uses")\s*:\s*['"]?actions/github-script@""", re.I
+)
+FLOW_USE = re.compile(
+    r"""^\s*-\s*\{[^#\n]*?\buses\s*:\s*['"]?actions/github-script@""", re.I
+)
+BLOCK_HEADER = re.compile(
+    r"""^\s*(?:-\s*)?(?:[\w.-]+|'[^']+'|"[^"]+")\s*:\s*[|>][0-9+-]*\s*(?:#.*)?$"""
+)
+
+
+def structural_lines(lines: list[str]) -> list[str]:
+    """Ignore YAML comments and nested block-scalar *data* when finding action keys.
+
+    The original lines remain available to inspect_step for JavaScript text.
+    An indented JS string mentioning 'uses:' must not become a fake action step.
+    """
+    visible: list[str] = []
+    block_indent: int | None = None
+    for line in lines:
+        trimmed = line.lstrip(" ")
+        indent = len(line) - len(trimmed)
+        if block_indent is not None:
+            if not trimmed.strip() or trimmed.startswith("#") or indent > block_indent:
+                visible.append("")
+                continue
+            block_indent = None
+        if trimmed.startswith("#"):
+            visible.append("")
+            continue
+        visible.append(line)
+        if BLOCK_HEADER.match(line):
+            block_indent = indent
+    return visible
+
+
 
 class EvidenceError(Exception):
     pass
@@ -181,11 +217,13 @@ def risks(sha: str) -> tuple[Counter, int]:
         if "\x00" in source:
             raise EvidenceError("workflow includes NUL byte")
         lines = source.splitlines(keepends=True)
-        # Flow mappings and escaped YAML uses keys may conceal an action that
-        # an ordinary line-level scanner would miss. Every literal reference
-        # must map to a plainly readable step or be treated as ambiguous.
-        declared_actions = len(re.findall(r"actions/github-script@", source, flags=re.I))
-        parsed_actions = sum(bool(USE.match(line)) for line in lines)
+        visible = structural_lines(lines)
+        # Count actual YAML action declarations, not text in comments or JS.
+        # Quoted keys and inline flow mappings remain deliberately ambiguous.
+        declared_actions = sum(
+            bool(ACTION_DECLARED.match(line) or FLOW_USE.search(line)) for line in visible
+        )
+        parsed_actions = sum(bool(USE.match(line)) for line in visible)
         if declared_actions > parsed_actions:
             found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
         # YAML decoding can reveal an executable action name hidden by
@@ -196,17 +234,17 @@ def risks(sha: str) -> tuple[Counter, int]:
              line.lstrip().startswith((chr(34), chr(39))))
             and any(chr(92) + kind in line for kind in ("x", "u", "U"))
             and ":" in line
-            for line in lines
+            for line in visible
         )
         if escaped_yaml_key_or_uses:
             found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
         # An alias can hide the action identity itself. If github-script appears
         # anywhere in a workflow, refuse a new unresolved uses alias even when
         # the step action is not spelled out on the uses line.
-        if "actions/github-script@" in source.lower() and re.search(r"(?m)^\s*(?:-\s*)?uses\s*:\s*\*", source):
+        if "actions/github-script@" in source.lower() and re.search(r"(?m)^\s*(?:-\s*)?uses\s*:\s*\*", "\n".join(visible)):
             found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
         processed: set[tuple[int, int]] = set()
-        for i, line in enumerate(lines):
+        for i, line in enumerate(visible):
             if USE.match(line):
                 start, end = steps_for_use(lines, i)
                 if (start, end) in processed:
