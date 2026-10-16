@@ -654,6 +654,40 @@ class RealGitEvidenceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     g.evaluate(base, self.rev(tmp))
 
+    def test_real_git_oversize_workflow_refused_before_materializing_blob(self):
+        # The prior implementation only checked length after reading the
+        # complete attacker-controlled blob into memory.
+        with self.fixture() as (tmp, file, base):
+            file.write_text("name: padded\\n" + "#" * 256_010, encoding="utf-8")
+            self.commit(tmp)
+            large_blob = subprocess.check_output(
+                ["git", "-C", tmp, "hash-object", str(file)], text=True
+            ).strip()
+            with self.active_git(tmp), self.active_merge(tmp):
+                original_git = g.git
+                observed = []
+
+                def recording_git(*args):
+                    observed.append(args)
+                    return original_git(*args)
+
+                with mock.patch.object(g, "git", side_effect=recording_git):
+                    with self.assertRaisesRegex(ValueError, "oversized_or_binary_workflow"):
+                        g.evaluate(base, self.rev(tmp))
+            self.assertIn(("cat-file", "-s", large_blob), observed)
+            self.assertNotIn(("cat-file", "blob", large_blob), observed)
+
+    def test_real_git_exact_size_limit_is_readable(self):
+        with self.fixture() as (tmp, file, base):
+            prefix = "name: bounded\\njobs:\\n  hosted:\\n    runs-on: ubuntu-latest\\n"
+            file.write_bytes(prefix.encode("utf-8") + b"#" * (256_000 - len(prefix)))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                # At the exact bound the blob may be read. No self-hosted
+                # runner is introduced, so the admission has zero findings.
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(report["new_findings"], [])
+
     def test_real_git_blob_not_commit_rejected(self):
         with self.fixture() as (tmp, file, base):
             blob = subprocess.check_output(["git", "-C", tmp, "hash-object", str(file)], text=True).strip()
