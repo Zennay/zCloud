@@ -174,6 +174,108 @@ def workflow_paths(root: Path) -> list[str]:
     return paths
 
 
+
+def _compiled_cron(cron: str) -> dict:
+    """Normalized, bounded POSIX cron fields without invoking repository code."""
+    parts = cron.split()
+    if len(parts) != 5:
+        raise AdmissionError("cron_requires_five_fields")
+    minute, hour, dom, month, weekday = parts
+    minutes = field_values(minute, 0, 59)
+    hours = field_values(hour, 0, 23)
+    weekdays = {day % 7 for day in field_values(weekday, 0, 7, WEEKDAYS)}
+    return {
+        "times": sorted(hour * 60 + minute for hour in hours for minute in minutes),
+        "dom": field_values(dom, 1, 31),
+        "month": field_values(month, 1, 12, MONTHS),
+        "dow": weekdays,
+        "dom_wild": dom.startswith("*"),
+        "dow_wild": weekday.startswith("*"),
+    }
+
+
+def _calendar_matches(spec: dict, month: int, day: int, weekday: int) -> bool:
+    if month not in spec["month"]:
+        return False
+    dom = day in spec["dom"]
+    dow = weekday in spec["dow"]
+    # POSIX cron: if both day fields are restricted, either can match.
+    if not spec["dom_wild"] and not spec["dow_wild"]:
+        return dom or dow
+    return dom and dow
+
+
+def _calendar_overlap(a: dict, b: dict, *, next_day: bool) -> bool:
+    """Exact existence check over the 400-year Gregorian weekday cycle.
+
+    Every valid month/day appears on all seven weekdays within the cycle.
+    February 28 has two legal successors (leap / ordinary year).
+    """
+    month_days = (0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    for month in range(1, 13):
+        if month not in a["month"]:
+            continue
+        for day in range(1, month_days[month] + 1):
+            if next_day:
+                if month == 2 and day == 28:
+                    successors = ((2, 29), (3, 1))
+                elif day == month_days[month]:
+                    successors = (((month % 12) + 1, 1),)
+                else:
+                    successors = ((month, day + 1),)
+            else:
+                successors = ((month, day),)
+            for weekday in range(7):
+                if not _calendar_matches(a, month, day, weekday):
+                    continue
+                for follow_month, follow_day in successors:
+                    follow_weekday = (weekday + int(next_day)) % 7
+                    if _calendar_matches(b, follow_month, follow_day, follow_weekday):
+                        return True
+    return False
+
+
+def _times_near(a: list[int], b: list[int], *, offset: int = 0) -> bool:
+    """Linear scan detects strictly sub-15-minute gaps (including ties)."""
+    i = j = 0
+    while i < len(a) and j < len(b):
+        gap = a[i] - (b[j] + offset)
+        if abs(gap) < MIN_GAP:
+            return True
+        if gap < 0:
+            i += 1
+        else:
+            j += 1
+    return False
+
+
+def cross_schedule_bursts(expressions: tuple[str, ...]) -> set[tuple[str, str]]:
+    """Pairs of individually acceptable crons that together oversubscribe a workflow."""
+    if len(expressions) > 32:
+        raise AdmissionError("schedule_entry_budget_exceeded")
+    compiled = [_compiled_cron(cron) for cron in expressions]
+    findings: set[tuple[str, str]] = set()
+    for i, left in enumerate(compiled):
+        for j in range(i + 1, len(compiled)):
+            right = compiled[j]
+            adjacent = (
+                _times_near(left["times"], right["times"])
+                and _calendar_overlap(left, right, next_day=False)
+            )
+            # A 23:55 run on day D + 00:05 on D+1 is also a 10-min burst.
+            forward = (
+                _times_near(left["times"], right["times"], offset=1440)
+                and _calendar_overlap(left, right, next_day=True)
+            )
+            reverse = (
+                _times_near(right["times"], left["times"], offset=1440)
+                and _calendar_overlap(right, left, next_day=True)
+            )
+            if adjacent or forward or reverse:
+                findings.add(tuple(sorted((expressions[i], expressions[j]))))
+    return findings
+
+
 def audit(repo: Path, baseline_sha: str) -> dict:
     if not SHA_RE.fullmatch(baseline_sha):
         raise AdmissionError("invalid_baseline_sha")
@@ -184,10 +286,20 @@ def audit(repo: Path, baseline_sha: str) -> dict:
     count = 0
     for path in paths:
         if path not in old:
-            before: set[str] = set()
+            old_entries: tuple[str, ...] = ()
         else:
-            before = set(schedules(git(repo, "show", f"{baseline_sha}:{path}")))
+            old_entries = schedules(git(repo, "show", f"{baseline_sha}:{path}"))
+        before = set(old_entries)
         after = schedules((repo / path).read_text(encoding="utf-8"))
+        # A workflow can schedule the same job from multiple cron entries:
+        # independently hourly 10:00 and 10:05 still creates a burst.
+        prior_pairs = cross_schedule_bursts(old_entries)
+        candidate_pairs = cross_schedule_bursts(after)
+        for pair in sorted(candidate_pairs):
+            count += 1
+            finding = {"workflow": path, "cron": " | ".join(pair),
+                       "reason": "cross_schedule_burst"}
+            (existing if pair in prior_pairs else added).append(finding)
         for cron in after:
             if is_high_frequency(cron):
                 count += 1
