@@ -318,6 +318,23 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         self.assertIn('--require-current-main', text)
         self.assertIn('git diff --quiet -- scripts/zcloud_foreign_checkout_ratchet_20261016.py', text)
 
+    def test_hosted_workflow_step_keys_do_not_duplicate(self):
+        workflow_path = Path(__file__).parents[1] / '.github/workflows/zcloud-foreign-checkout-origin-ratchet-20261016.yml'
+        lines = workflow_path.read_text(encoding='utf-8').splitlines()
+        starts = [i for i, line in enumerate(lines) if line.startswith('      - ') ]
+        self.assertEqual(len(starts), 5)
+        starts.append(len(lines))
+        for first, last in zip(starts, starts[1:]):
+            seen = set()
+            for line in lines[first:last]:
+                if not line.startswith('        ') or line.startswith('          '):
+                    continue
+                key = line.strip().split(':', 1)[0]
+                if key in ('name', 'uses', 'with', 'env', 'run', 'shell'):
+                    self.assertNotIn(key, seen, (first, key))
+                    seen.add(key)
+            self.assertTrue('run' in seen or 'uses' in seen, first)
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
