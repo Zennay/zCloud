@@ -104,6 +104,10 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
     for line in source.splitlines():
         if TOP_LEVEL_RE.match(line):
             key = line.partition(":")[0].strip().strip("'\"")
+            # Root YAML merge keys can synthesize an on.schedule trigger
+            # that a line-scanner would otherwise never inspect.
+            if key == "<<":
+                raise AdmissionError("yaml_root_merge_forbidden")
             in_on = key == "on"
             in_schedule = False
             event_indent = None
