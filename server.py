@@ -86,13 +86,13 @@ FEATURE_FLAG_DEFINITIONS = {
 }
 WORKER_LANES = (
     'kritieke pad / eerstvolgende veilige projectgate',
-    'tests, validatie, determinisme en race-condition checks',
+    'bugfix-implementatie, regressieherstel en gerichte tests',
     'data, provider-validatie, preprocessing en provenance',
     'VPS-infra, performance, concurrency en resourceveiligheid',
     'stress-tests, transactiekosten, diagnostics en challenge-simulaties',
     'voorbereidend werk voor de volgende generatie zonder verborgen OOS-resultaten',
     'telemetrie, documentatie en reproduceerbaarheid',
-    'onafhankelijke QA van open werk zonder bestaand werk te dupliceren',
+    'uitvoerbare issues oplossen zonder bestaand werk te dupliceren',
 )
 def _load_project_registry():
     """Load presentation metadata and hydrate runtime fields from the canonical contract."""
@@ -202,6 +202,7 @@ def project_runner_prompt(project_id, name):
         'Check actuele main, open issues/PRs, branch-eigenaars en CI; kies urgent open werk in de ACTUELE fase. '
         'Rond open PRs af vóór nieuwe branches in de ontwikkelfase; integreer op actuele main en merge zelfstandig na groene exact-head CI en branchchecks. Geen extra review tenzij GitHub die verplicht; maak drafts eerst reviewklaar. Na uitrol gelden release-gates; merge is geen live deploy of toestemming voor security-, broker- of researchacties. '
         'Bouw echte functionaliteit en fix bugs; geen eindeloze QA-rondes of toekomstfase-drafts zonder productblokkade. '
+        'Behandel tests en verplichte CI als onderdeel van opleveren, niet als zelfstandige quality-validation-worker. '
         'Test wijzigingen gericht; de uurlijkse audit doet de brede kwaliteits- en voortgangsreview. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet na één actie, commit, retrigger of statuscheck. '
         'HOLD alleen bij falende CI, scopeconflict of bewezen risico voor veiligheid, rechten, research of productie; beperk het tot de getroffen actie en herstel waar mogelijk. '
@@ -220,9 +221,19 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
     lane_id = re.sub(r'[^a-zA-Z0-9._:/-]+', '-', lane_id).strip('-')[:80]
-    qa_closure = (
-        ' Rond bestaande QA-PRs af of herstel een bewezen regressie; zonder bug geen nieuwe QA-ronde.'
-        if lane_id in {'quality-validation', 'qa-validation', 'evaluation-validation'} else ''
+    # Existing active assignments may carry an old QA-only lane ID.
+    # Keep their ownership/queue untouched; normalize only the new prompt.
+    if lane_id in {'quality-validation', 'qa-validation', 'evaluation-validation'}:
+        lane_id = (
+            'strategy-implementation' if project_id in {'ftmo', 'tradengine'}
+            else 'model-improvement' if project_id == 'haxlab'
+            else 'bugfix-delivery'
+        )
+    implementation_focus = (
+        ' Lever daadwerkelijke codewijzigingen of een concreet herstelde bug op. '
+        'Gebruik gerichte tests en verplichte gates als bewijs van de fix; '
+        'start geen zelfstandige QA- of quality-validation-ronde.'
+        if lane_id in {'strategy-implementation', 'model-improvement', 'bugfix-delivery'} else ''
     )
     if lane_id:
         if worker_total > 1:
@@ -230,11 +241,11 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
                 prompt
                 + f' Parallel focus {int(slot or 1)}/{worker_total}: {lane_id}. '
                 'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
-                'dat al actief door een andere worker wordt uitgevoerd.' + qa_closure
+                'dat al actief door een andere worker wordt uitgevoerd.' + implementation_focus
             )
         return (
             prompt
-            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.' + qa_closure
+            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.' + implementation_focus
         )
     if worker_total <= 1:
         return prompt
