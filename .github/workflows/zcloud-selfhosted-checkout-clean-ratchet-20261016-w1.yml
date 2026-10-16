@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - .github/workflows/zcloud-selfhosted-checkout-clean-ratchet-20261016-w1.yml
+      # Mandatory: watch every workflow, not just this guard's own source.
+      - ".github/workflows/**"
       - scripts/zcloud_selfhosted_checkout_clean_ratchet_20261016_w1.py
       - tests/test_zcloud_selfhosted_checkout_clean_ratchet_20261016_w1.py
 
