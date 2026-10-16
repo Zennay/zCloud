@@ -516,6 +516,44 @@ class CheckoutRepoGuardTest(unittest.TestCase):
     def test_submodules_in_full_comment_is_ignored(self):
         self.assertFalse(guard.scan(workflow() + '# submodules: true\n'))
 
+    def test_checkout_step_name_submodules_text_is_not_a_setting(self):
+        text = ('steps:\n  - name: "Fetch repo submodules: true"\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertFalse(guard.scan(text))
+
+    def test_checkout_environment_submodules_not_an_input(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    env:\n      submodules: true\n')
+        self.assertFalse(guard.scan(text))
+
+    def test_checkout_unrelated_step_scalar_does_not_set_submodules(self):
+        text = ('steps:\n  - name: Fetch submodules: true\n'
+                '    uses: actions/checkout@v4\n'
+                '    env:\n      NOTE: "submodules: recursive"\n')
+        self.assertFalse(guard.scan(text))
+
+    def test_checkout_duplicate_with_maps_are_denied(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with:\n      submodules: false\n'
+                '    with:\n      submodules: false\n')
+        self.assertIn('multiple-checkout-input-maps', guard.scan(text))
+
+    def test_checkout_submodules_inside_second_with_map_still_denied(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with:\n      persist-credentials: false\n'
+                '    with:\n      submodules: recursive\n')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_checkout_step_with_inline_map_and_safe_submodules(self):
+        text = ('steps:\n  - uses: actions/checkout@v4\n'
+                '    with: {repository: Zennay/zCloud, submodules: false}\n')
+        self.assertNotIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
+    def test_checkout_submodules_nested_before_uses(self):
+        text = ('steps:\n  - with:\n      submodules: recursive\n'
+                '    uses: actions/checkout@v4\n')
+        self.assertIn('checkout-submodules-enabled-or-dynamic', guard.scan(text))
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
