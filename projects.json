@@ -574,5 +574,145 @@
         "progress": 15
       }
     ]
+  },
+  {
+    "id": "mixlab",
+    "name": "MixLab",
+    "eyebrow": "OFFLINE AI DJ · TRANSITION LAB",
+    "goal": "Build an evidence-first AI DJ that analyzes music, renders transitions and tests the results before planning full sets.",
+    "icon": "pulse",
+    "accent": "#eaa5da",
+    "repo_url": "https://github.com/Zennay/Mixlab",
+    "notion_url": "https://app.notion.com/p/3e79e19ac95581a78ee3f24aa5e7e8b6",
+    "handoff_url": "https://app.notion.com/p/3e79e19ac95581f4bf15c26a833da642",
+    "phase": "M0 foundation + partial M1 Transition Lab · real-audio validation open",
+    "status": "active",
+    "priority": "low",
+    "next_step": "Complete existing ML-01 release/admission gates and ML-02 data validation; do not start live rendering before safe VPS admission.",
+    "milestone_revision": "mixlab-m0-m4-onboarding-20261016",
+    "progress_basis": "Build-only synthetic/software evidence. Real-audio quality and listener preference remain unverified.",
+    "milestones": [
+      {
+        "title": "M0 · Offline foundation and synthetic renderer",
+        "done": false,
+        "progress": 75
+      },
+      {
+        "title": "M1 · Real-track Transition Lab and blind benchmark",
+        "done": false,
+        "progress": 15
+      },
+      {
+        "title": "M2 · Segment-level music discovery",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M3 · Full-set builder",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "M4 · Personal and crowd-aware assistant",
+        "done": false,
+        "progress": 0
+      }
+    ]
+  },
+  {
+    "id": "fuckball",
+    "name": "Fuckball",
+    "eyebrow": "ONLINE FOOTBALL · MULTIPLAYER",
+    "goal": "Deliver a HaxBall-inspired competitive browser football game with online rooms, accurate simulation, accounts and competitive modes.",
+    "icon": "game",
+    "accent": "#ff9875",
+    "repo_url": "https://github.com/Zennay/fuckball",
+    "notion_url": "https://app.notion.com/p/3f99e19ac95581bca947da243bd78f91",
+    "phase": "Live multiplayer foundation · matchmaking and social roadmap open",
+    "status": "active",
+    "priority": "low",
+    "next_step": "Verify hosted release and HaxBall parity, then build ranked quick match, custom-room benches and account-backed match history without disturbing live VPS.",
+    "milestone_revision": "fuckball-online-onboarding-20261016",
+    "progress_basis": "Feature milestones reflect source and Notion roadmap; neither official physics parity nor new matchmaking features are claimed complete.",
+    "milestones": [
+      {
+        "title": "HaxBall-inspired game and online-room foundation",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Client prediction and network stability",
+        "done": false,
+        "progress": 85
+      },
+      {
+        "title": "Custom rooms, spectators and substitutions",
+        "done": false,
+        "progress": 40
+      },
+      {
+        "title": "Skill-matched multiplayer quick match",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Accounts, clubs, history and replays",
+        "done": false,
+        "progress": 20
+      },
+      {
+        "title": "Advanced tactical AI and competitive validation",
+        "done": false,
+        "progress": 15
+      }
+    ]
+  },
+  {
+    "id": "tuddy",
+    "name": "Tuddy",
+    "eyebrow": "PRIVACY-FIRST LIVE TRANSLATION",
+    "goal": "Enable accessible, bilingual real-time subtitles with synchronized original and translated text and offline-first Android speech recognition.",
+    "icon": "pulse",
+    "accent": "#79d8db",
+    "repo_url": "https://github.com/Zennay/Tuddy",
+    "notion_url": "https://app.notion.com/p/3f89e19ac955810aa4a5e53871966f8f",
+    "phase": "Android MVP source import and hosted APK proof pending",
+    "status": "active",
+    "priority": "low",
+    "next_step": "Import existing Android source, pass hosted APK build and on-device offline tests before any VPS/runtime admission.",
+    "milestone_revision": "tuddy-m0-genesis-20261016",
+    "progress_basis": "Repository exists, but Android source import, APK CI and physical device acceptance are not yet proven.",
+    "milestones": [
+      {
+        "title": "Tuddy repository and product specification",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Import existing Android offline-MVP source",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Hosted reproducible Android APK build",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "On-device offline speech and translation acceptance",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "More languages, subtitles and accessible UX",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Privacy and reliability release gate",
+        "done": false,
+        "progress": 0
+      }
+    ]
   }
 ]
