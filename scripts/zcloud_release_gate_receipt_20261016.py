@@ -9,8 +9,11 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import math
+import os
 from pathlib import Path
 import re
+import stat
 import sys
 from typing import Any
 
@@ -45,14 +48,26 @@ def _reject_constant(_value: str) -> None:
     raise ValueError("nonfinite_json")
 
 
+def _finite_float(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("nonfinite_json")
+    return result
+
+
 def decode_receipt(raw: bytes) -> dict[str, Any]:
     if len(raw) > MAX_BYTES:
         raise ValueError("receipt_too_large")
     try:
         result = json.loads(raw.decode("utf-8", errors="strict"),
                             object_pairs_hook=_unique_object,
-                            parse_constant=_reject_constant)
-    except (UnicodeError, json.JSONDecodeError) as error:
+                            parse_constant=_reject_constant,
+                            parse_float=_finite_float)
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+        raise ValueError("invalid_json") from error
+    except ValueError as error:
+        if str(error) in {"duplicate_json_key", "nonfinite_json"}:
+            raise
         raise ValueError("invalid_json") from error
     if type(result) is not dict:
         raise ValueError("invalid_schema")
@@ -231,6 +246,43 @@ def render_markdown(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def read_receipt(path: Path) -> bytes:
+    """Read one regular file through no-follow directory FDs, without TOCTOU.
+
+    Every parent component is opened O_DIRECTORY|O_NOFOLLOW and kept by fd
+    until its child is opened. A renamed or replaced symlink cannot redirect
+    the final read, including in the short interval between path inspection
+    and open. No writes, network calls or unbounded reads are performed.
+    """
+    parts = path.parts[1:] if path.is_absolute() else path.parts
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        raise ValueError("unsafe_or_missing_receipt")
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+    try:
+        parent_fd = os.open("/" if path.is_absolute() else ".", dir_flags)
+        try:
+            for name in parts[:-1]:
+                next_fd = os.open(name, dir_flags, dir_fd=parent_fd)
+                os.close(parent_fd)
+                parent_fd = next_fd
+            file_fd = os.open(parts[-1], file_flags, dir_fd=parent_fd)
+            try:
+                if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                    raise ValueError("unsafe_or_missing_receipt")
+                with os.fdopen(file_fd, "rb", closefd=True) as reader:
+                    file_fd = -1  # fdopen now owns this descriptor
+                    return reader.read(MAX_BYTES + 1)
+            finally:
+                if file_fd != -1:
+                    os.close(file_fd)
+        finally:
+            os.close(parent_fd)
+    except OSError as error:
+        # Do not include paths, filesystem names or OS diagnostics in output.
+        raise ValueError("unsafe_or_missing_receipt") from error
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Local bounded JSON receipt path")
@@ -238,12 +290,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="Machine-readable JSON (default), or Dutch human-readable audit")
     args = parser.parse_args(argv)
     try:
-        path = Path(args.input)
-        if any(part.is_symlink() for part in (path, *path.parents)) or not path.is_file():
-            raise ValueError("unsafe_or_missing_receipt")
-        with path.open("rb") as stream:
-            raw = stream.read(MAX_BYTES + 1)
-        result = evaluate(decode_receipt(raw))
+        result = evaluate(decode_receipt(read_receipt(Path(args.input))))
     except (OSError, ValueError, TypeError) as error:
         allowed = {"receipt_too_large", "duplicate_json_key", "nonfinite_json",
                    "invalid_json", "invalid_schema", "unsafe_or_missing_receipt"}
