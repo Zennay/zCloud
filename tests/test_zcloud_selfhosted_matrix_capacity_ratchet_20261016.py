@@ -162,6 +162,23 @@ class GitTreeContract(unittest.TestCase):
         self.assertEqual(inspect(self.base, head)["new_risks"][0]["reason"],
                          "matrix_fanout:5")
 
+    def test_modified_legacy_unbounded_matrix_cannot_hide_as_same_risk(self):
+        old = workflow("      max-parallel: 1\\n"
+                       "      matrix: ${{ fromJSON(inputs.small) }}")
+        baseline = self.commit(old)
+        latest = self.commit(workflow("      max-parallel: 1\\n"
+                                      "      matrix: ${{ fromJSON(inputs.huge) }}"))
+        risks = inspect(baseline, latest)["new_risks"]
+        self.assertIn("legacy_matrix_configuration_changed",
+                      [risk["reason"] for risk in risks])
+
+    def test_step_only_change_preserves_existing_baseline_risk(self):
+        old = workflow("      max-parallel: 1\\n"
+                       "      matrix: ${{ fromJSON(inputs.risky) }}")
+        baseline = self.commit(old)
+        latest = self.commit(old.replace("echo safe", "echo changed"))
+        self.assertEqual(inspect(baseline, latest)["new_risks"], [])
+
     def test_refuses_noncommit_git_object(self):
         blob = git("rev-parse", f"{self.base}:" + ROOT)
         with self.assertRaises(InvalidSource):
