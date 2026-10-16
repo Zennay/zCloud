@@ -231,7 +231,8 @@ class BacklogBriefTests(TestCase):
         self.assertEqual(3, len(report["issues"]))
         self.assertEqual(2, len(report["prs"]))
         self.assertEqual([("main", 0), ("pulls", 1), ("pulls", 1),
-                          ("issues", 1), ("issues", 1), ("main", 0)], reader.calls)
+                          ("issues", 1), ("issues", 1), ("pulls", 1),
+                          ("main", 0)], reader.calls)
         summary = brief.render(report)
         self.assertIn("3 open issues", summary)
         self.assertIn("P0: 1, P1: 1", summary)
@@ -239,6 +240,49 @@ class BacklogBriefTests(TestCase):
         self.assertLess(summary.index("[#2]"), summary.index("[#3]"))
         self.assertIn("2 open PR", summary)
         self.assertFalse(report["merge_authorized"])
+
+    def test_cross_stream_pr_head_drift_denied_after_issues_are_stable(self):
+        """A PR can change while two individually stable /issues passes run."""
+        pr_reads = 0
+        def reader(kind, page):
+            nonlocal pr_reads
+            if kind == "main":
+                return {"commit": {"sha": SHA}}
+            if kind == "issues":
+                return [issue(20, is_pr=True), issue(2)]
+            pr_reads += 1
+            head = SHA if pr_reads < 3 else OTHER
+            return [pr(20, head={"sha": head})]
+        with self.assertRaisesRegex(brief.Denied, "pr_drift_across_issue_scan"):
+            brief.collect(reader, NOW, include_issues=True)
+        self.assertEqual(3, pr_reads)
+
+    def test_cross_stream_pr_title_and_draft_drift_denied(self):
+        for changed in (
+            {"title": "changed while issue pages were read"},
+            {"draft": False},
+            {"updated_at": "2026-10-02T08:00:00Z"},
+            {"base": {"ref": "main", "sha": OTHER}},
+        ):
+            with self.subTest(changed=changed):
+                pr_reads = 0
+                def reader(kind, page):
+                    nonlocal pr_reads
+                    if kind == "main":
+                        return {"commit": {"sha": SHA}}
+                    if kind == "issues":
+                        return [issue(20, is_pr=True)]
+                    pr_reads += 1
+                    return [pr(20, **(changed if pr_reads == 3 else {}))]
+                with self.assertRaisesRegex(brief.Denied, "pr_drift_across_issue_scan"):
+                    brief.collect(reader, NOW, include_issues=True)
+                self.assertEqual(3, pr_reads)
+
+    def test_pr_only_does_not_consume_extra_api_inventory(self):
+        reader = Reader({1: [pr(20)]})
+        brief.collect(reader, NOW, include_issues=False)
+        self.assertEqual([("main", 0), ("pulls", 1), ("pulls", 1),
+                          ("main", 0)], reader.calls)
 
     def test_issue_assignees_are_visible_but_never_ownership_admission(self):
         rows = [issue(1, title="P0: safe-triage", assignees=[{"login": "runner-owner"}]),
