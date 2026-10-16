@@ -135,21 +135,37 @@ def verify_current_main(repo: str, expected_sha: str) -> None:
 
 
 def tree(repo: str, sha: str) -> dict[str, str]:
-    raw = git(repo, "ls-tree", "-r", "--name-only", "-z", sha)
+    # Read Git object modes in the same immutable tree census as filenames.
+    # --name-only hides symlinks (120000), which must never be treated as safe
+    # workflow/action manifests based on their plain-text link targets.
+    raw = git(repo, "ls-tree", "-r", "-z", sha)
     result = {}
     bytes_total = 0
     for candidate in raw.split(b"\x00"):
         if not candidate:
             continue
+        fields, separator, raw_path = candidate.partition(b"\t")
+        if not separator:
+            raise ValueError("Malformed Git tree record")
         try:
-            path = candidate.decode("utf-8", errors="strict")
+            path = raw_path.decode("utf-8", errors="strict")
         except UnicodeDecodeError as e:
             raise ValueError("Non-UTF8 tree path; refusing incomplete inventory") from e
         if not PATH.fullmatch(path):
             continue
+        parts = fields.split()
+        if len(parts) != 3:
+            raise ValueError("Malformed Git tree metadata")
+        mode, kind, object_id = parts
+        if (mode not in (b"100644", b"100755") or kind != b"blob"
+                or not SHA.fullmatch(object_id.decode("ascii", errors="replace"))):
+            raise ValueError("Manifest is not an ordinary immutable Git blob")
+        if path in result:
+            raise ValueError("Duplicate manifest path in immutable Git tree")
         if len(result) >= MAX_MANIFESTS:
             raise ValueError("Manifest count exceeds bounded inventory")
-        size_text = git(repo, "cat-file", "-s", f"{sha}:{path}")
+        oid = object_id.decode("ascii", errors="strict").lower()
+        size_text = git(repo, "cat-file", "-s", oid)
         try:
             size = int(size_text.decode("ascii").strip())
         except (ValueError, UnicodeDecodeError) as e:
@@ -159,7 +175,7 @@ def tree(repo: str, sha: str) -> dict[str, str]:
         bytes_total += size
         if bytes_total > MAX_INVENTORY_BYTES:
             raise ValueError("Manifest inventory exceeds total byte budget")
-        content = git(repo, "show", f"{sha}:{path}")
+        content = git(repo, "show", oid)
         if len(content) != size:
             raise ValueError("Git content size mismatch; refusing inventory")
         try:
