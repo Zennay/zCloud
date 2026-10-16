@@ -108,7 +108,7 @@ def workflow_name(path, source):
     matches = re.findall(pattern, source)
     if len(matches) > 1:
         raise InvalidInventory("duplicate_name_field")
-    return _scalar(matches[0]) if matches else PurePosixPath(path).name
+    return _scalar(matches[0]) if matches else str(PurePosixPath(path))
 
 
 
@@ -246,6 +246,34 @@ def workflow_run_targets(source):
     return tuple(sorted(set(results)))
 
 
+
+def literal_workflow_filter(value):
+    """Return only a *literal* workflow_run target; never approximate glob matching.
+
+    GitHub accepts extglob/wildcard syntax in workflow_run.workflows. This
+    conservative source gate must not mistake a pattern for one workflow.
+    Escaping a reserved symbol is allowed; unknown backslash escapes are not.
+    """
+    reserved = set("*?+!@[]{}()")
+    result = []
+    escaped = False
+    for char in value:
+        if escaped:
+            if char not in reserved and char != "\\":
+                return None
+            result.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char in reserved:
+            return None
+        else:
+            result.append(char)
+    if escaped:
+        return None
+    return "".join(result)
+
+
 def reference_risks(names, references):
     counts = Counter(names.values())
     findings = set()
@@ -254,10 +282,13 @@ def reference_risks(names, references):
             findings.add((path, "unknown_source", "<unparsed>"))
             continue
         for value in targets:
-            if counts[value] == 0:
-                findings.add((path, "missing_target", value))
-            elif counts[value] > 1:
-                findings.add((path, "ambiguous_target", value))
+            literal = literal_workflow_filter(value)
+            if literal is None:
+                findings.add((path, "pattern_needs_review", value))
+            elif counts[literal] == 0:
+                findings.add((path, "missing_target", literal))
+            elif counts[literal] > 1:
+                findings.add((path, "ambiguous_target", literal))
     return findings
 
 
@@ -276,7 +307,8 @@ def cyclic_reference_edges(names, references):
         if source not in graph or targets is None:
             continue
         for target_name in targets:
-            dest = unique_names.get(target_name)
+            literal = literal_workflow_filter(target_name)
+            dest = unique_names.get(literal) if literal is not None else None
             if dest is not None:
                 graph[source].add(dest)
 
