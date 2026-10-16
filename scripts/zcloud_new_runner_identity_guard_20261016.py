@@ -158,7 +158,7 @@ def _safe_identity_step_fields(lines: list[str]) -> bool:
     seen: set[str] = set()
     for i, line in enumerate(lines):
         if i == 0:
-            first = re.fullmatch(r"- (name|id|run):\s*[^\n]*", line)
+            first = re.fullmatch(r"(name|id|run):\s*[^\n]*", line)
             if not first:
                 return False
             seen.add(first.group(1))
