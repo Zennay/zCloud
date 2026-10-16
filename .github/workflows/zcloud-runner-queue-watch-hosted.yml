@@ -13,6 +13,7 @@ on:
       - tests/test_zcloud_runner_queue_watch_20261014.py
       - tests/test_deployops_runner_queue_chronology_20261014_w8.py
       - tests/test_deployops_runner_queue_two_pass_20261014_w10.py
+      - tests/test_deployops_runner_queue_approval_20261016.py
 
 permissions:
   contents: read
@@ -43,7 +44,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           python3 -m py_compile scripts/zcloud_runner_queue_watch_20261014.py
-          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014 tests.test_deployops_runner_queue_chronology_20261014_w8 tests.test_deployops_runner_queue_two_pass_20261014_w10
+          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014 tests.test_deployops_runner_queue_chronology_20261014_w8 tests.test_deployops_runner_queue_two_pass_20261014_w10 tests.test_deployops_runner_queue_approval_20261016
 
   observe:
     if: >-
@@ -70,7 +71,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = 1
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
-          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014 tests.test_deployops_runner_queue_chronology_20261014_w8 tests.test_deployops_runner_queue_two_pass_20261014_w10
+          python3 -m unittest -v tests.test_zcloud_runner_queue_watch_20261014 tests.test_deployops_runner_queue_chronology_20261014_w8 tests.test_deployops_runner_queue_two_pass_20261014_w10 tests.test_deployops_runner_queue_approval_20261016
       - name: Observe newest canonical CPU diagnostic jobs from GitHub Actions API
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,6 +105,7 @@ jobs:
               f"- **Longest observed queue (minutes):** {result.get('oldest_queued_minutes', 'unavailable')}",
               f"- **Already assigned but still queued jobs:** {result.get('queued_with_assigned_runner', 'unavailable')}",
               f"- **Cancelled before any runner assignment:** {result.get('cancelled_before_assignment', 'unavailable')}",
+              f"- **Approval/prestart (not runner evidence):** {result.get('approval_or_prestart', 'unavailable')}",
               f"- **Recent assigned CPU jobs:** {result.get('recent_assignments', 'unavailable')}",
               f"- **Assigned but failed jobs:** {result.get('assigned_failures', 'unavailable')}",
               f"- **Recent runs inside 24h:** {result.get('inspected_recent_runs', 'unavailable')}",
