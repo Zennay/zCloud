@@ -121,6 +121,43 @@ class RealGit(unittest.TestCase):
         self.put("alias.yml", LEGACY.replace("on:\n  schedule:\n    - cron: '*/15 * * * *'", "on: *trigger"))
         self.check(self.commit(), "reject")
 
+
+    def test_existing_recovery_split_url_counts_as_legacy(self):
+        # Mirrors production-status-recovery where two Python string literals
+        # compose the REST dispatch endpoint.
+        real_shape = """name: real-recovery
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+jobs:
+  rearm:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          request = Request(
+              f"https://api.github.com/repos/{repo}/actions/workflows/"
+              "zcloud-regression-smoke.yml/dispatches",
+              method="POST")
+"""
+        self.put("existing.yml", real_shape)
+        clean_base = self.commit()
+        self.assertEqual(guard.evaluate(self.repo, clean_base, clean_base)["baseline_sites"], 1)
+        self.put("plain.yml", PLAIN.replace("on: pull_request", "on: schedule")
+                 .replace("echo ok", "gh workflow run extra.yml"))
+        result = guard.evaluate(self.repo, clean_base, self.commit())
+        self.assertEqual(result["new_sites"], 1)
+
+    def test_inline_scalar_schedule_is_detected(self):
+        self.put("new.yml", LEGACY.replace(
+            "on:\n  schedule:\n    - cron: '*/15 * * * *'", "on: schedule"))
+        self.check(self.commit(), "reject")
+
+    def test_shell_continuation_cannot_hide_dispatch(self):
+        self.put("new.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "gh workflow \\\n              run zcloud-regression-smoke.yml"))
+        self.check(self.commit(), "reject")
+
     def test_deletion_of_legacy_site_is_allowed(self):
         self.put("existing.yml", LEGACY.replace("gh workflow run zcloud-regression-smoke.yml", "echo safe"))
         self.check(self.commit(), "pass")
