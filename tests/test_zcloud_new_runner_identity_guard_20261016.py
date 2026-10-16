@@ -614,6 +614,37 @@ class RealGitEvidenceTests(unittest.TestCase):
             self.assertIn("delegated_runner_unverified",
                           [f["reason"] for f in report["new_findings"]])
 
+    def test_real_git_unsafe_root_environment_is_new_runner_debt(self):
+        with self.fixture() as (tmp, file, base):
+            file.write_text(wf().replace(
+                "jobs:", '"env":\n  NODE_OPTIONS: --require=/tmp/agent.js\njobs:'))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(report["new_findings"][0]["reason"],
+                             "missing_early_runner_guard")
+            self.assertFalse(report["mutation_performed"])
+
+    def test_real_git_unknown_checkout_sha_is_new_runner_debt(self):
+        with self.fixture() as (tmp, file, base):
+            file.write_text(wf().replace(PIN, "a" * 40))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(report["new_findings"][0]["reason"],
+                             "missing_early_runner_guard")
+            self.assertFalse(report["release_authorized"])
+
+    def test_real_git_quoted_guard_run_shadow_is_new_runner_debt(self):
+        with self.fixture() as (tmp, file, base):
+            file.write_text(wf().replace(
+                "        run: |", '        run: |\n        "run": echo injected'))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(report["new_findings"][0]["reason"],
+                             "missing_early_runner_guard")
+
     def test_real_git_symlink_workflow_rejected(self):
         with self.fixture() as (tmp, file, base):
             file.unlink()
