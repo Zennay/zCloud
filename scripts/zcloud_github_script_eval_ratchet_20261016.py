@@ -277,11 +277,18 @@ def risks(sha: str) -> tuple[Counter, int]:
             if not MULTILINE_USE.match(line):
                 continue
             header_indent = len(line) - len(line.lstrip(" "))
+            scalar_indent: int | None = None
             body: list[str] = []
             for continuation in lines[i + 1:]:
                 if continuation.strip():
                     depth = len(continuation) - len(continuation.lstrip(" "))
                     if depth <= header_indent:
+                        break
+                    if scalar_indent is None:
+                        scalar_indent = depth
+                    elif depth < scalar_indent:
+                        # This is a sibling YAML input (e.g. "with:"), not
+                        # part of the folded/literal uses action identity.
                         break
                 body.append(continuation)
             if "actions/github-script@" in "".join(body).lower():
