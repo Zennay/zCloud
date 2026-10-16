@@ -184,6 +184,11 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
         wm = WITH_KEY.match(line)
         if wm:
             with_indent = len(wm.group(1))
+            # YAML anchors and explicit type tags can change mapping semantics
+            # without spelling a normal script key on this line. Treat them
+            # as source ambiguity, with a full-manifest legacy fingerprint.
+            if re.match(r"\\s*[&!]", line[wm.end():]):
+                why.add("ambiguous_yaml")
         if FLOW.search(line) or ("\\x" in line and "script" in line):
             why.add("ambiguous_yaml")
         # YAML unescapes double-quoted mapping keys before the Action uses
