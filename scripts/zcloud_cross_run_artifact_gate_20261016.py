@@ -20,9 +20,11 @@ import time
 from pathlib import Path
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
-_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?actions/download-artifact@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
+_USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?(?P<action>actions/download-artifact|dawidd6/action-download-artifact)@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
 _INPUT = re.compile(r"^(?P<indent> *)(?P<key>[\w-]+):\s*(?P<value>.*?)\s*$")
 _TARGETS = frozenset({"run-id", "repository", "github-token"})
+_VENDOR_TARGETS = frozenset({"run_id", "github_token", "repo", "workflow", "branch"})
+_DOWNLOAD_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
 # GitHub CLI downloads bypass actions/download-artifact but have the same
 # cross-run artifact trust boundary. A syntactic match requires review, not
 # permission to retrieve or execute any artifact.
@@ -136,13 +138,13 @@ def _risks(text: str, path: str) -> Counter[str]:
     risky: Counter[str] = Counter()
     for index, line in enumerate(lines):
         # Reject indented tabs/ambiguous aliases where a download action is mentioned.
-        if "actions/download-artifact@" in line.lower() and ("\t" in line[:len(line)-len(line.lstrip())] or "*" in line.strip().split("#")[0]):
+        if any(item in line.lower() for item in _DOWNLOAD_ACTIONS) and ("\t" in line[:len(line)-len(line.lstrip())] or "*" in line.strip().split("#")[0]):
             raise Refusal("ambiguous_download_action")
         match = _USES.fullmatch(line)
         if not match:
             # Reject a syntactically unrecognized action reference, rather than
             # silently approving an additional renamed/quoted action invocation.
-            if re.search(r"\bactions/download-artifact@", line, re.IGNORECASE) and not line.lstrip().startswith("#"):
+            if any(item in line.lower() for item in _DOWNLOAD_ACTIONS) and not line.lstrip().startswith("#"):
                 # Block scalar run scripts may quote the action as inert data;
                 # conservatively require human review instead of false approval.
                 raise Refusal("unparsed_download_action")
@@ -190,7 +192,8 @@ def _risks(text: str, path: str) -> Counter[str]:
                 raise Refusal("duplicate_with_block")
             else:
                 with_indent = None
-        if _TARGETS.intersection(fields):
+        targets = _TARGETS | (_VENDOR_TARGETS if match.group("action").lower().startswith("dawidd6/") else frozenset())
+        if targets.intersection(fields):
             # Pin to exact source position as well as fields. Without the
             # location, moving an identical cross-run step between jobs in
             # the SAME workflow would be grandfathered by the old hash.
