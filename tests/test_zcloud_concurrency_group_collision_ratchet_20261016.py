@@ -467,6 +467,58 @@ class RatchetTests(unittest.TestCase):
             "group: separate", "group: \"prefix-${{ github.ref }}\""))
         self.assertEqual(gate.check(base, self.save()), (0, 0))
 
+    def test_new_event_number_selector_cannot_claim_static_distinctness(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", 'group: "gate-${{ github.event.number }}"'))
+        self.denied(base, self.save())
+
+    def test_new_pull_request_event_number_selector_is_not_proven_unique(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate",
+            'group: "gate-${{ github.event.pull_request.number }}"'))
+        self.denied(base, self.save())
+
+    def test_new_matrix_selector_requires_owner_proof(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", 'group: "gate-${{ matrix.target }}"'))
+        self.denied(base, self.save())
+
+    def test_new_input_selector_requires_owner_proof(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", 'group: "gate-${{ inputs.name }}"'))
+        self.denied(base, self.save())
+
+    def test_run_id_identity_is_allowed_for_read_only_workflows(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "group: separate", 'group: "gate-${{ github.run_id }}"'))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_dotted_legacy_unknown_context_requires_review_not_breaking_fix(self):
+        legacy = document("old", False).replace(
+            "group: old", 'group: "gate-${{ github.event.number }}"')
+        base = self.base(legacy, document("separate", False))
+        self.write("first.yml", legacy + "# harmless edit\n")
+        receipt = gate.inventory(base, self.save())
+        self.assertEqual(receipt["legacy_opaque_expression_count"], 1)
+        self.assertEqual(receipt["candidate_opaque_expression_count"], 1)
+        self.assertFalse(receipt["static_expression_coverage_complete"])
+        self.assertEqual(receipt["unresolved_expression_reviews"][0]["workflow_path"],
+                         ".github/workflows/first.yml")
+        self.assertFalse(receipt["production_mutation_authorized"])
+
+    def test_rewriting_legacy_dotted_selector_is_denied(self):
+        legacy = document("old", False).replace(
+            "group: old", 'group: "gate-${{ github.event.number }}"')
+        base = self.base(legacy, document("separate", False))
+        self.write("first.yml", legacy.replace("github.event.number",
+                                               "github.event.pull_request.number"))
+        self.denied(base, self.save())
+
     def test_opaque_inventory_never_claims_complete_static_coverage(self):
         baseline = document("old", False).replace(
             "group: old", "group: \"${{ format('stable-{0}', github.ref) }}\"")
