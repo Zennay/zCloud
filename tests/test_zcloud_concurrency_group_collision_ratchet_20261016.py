@@ -520,10 +520,10 @@ class RatchetTests(unittest.TestCase):
         self.denied(base, self.save())
 
     def test_new_predictable_dotted_contexts_are_not_uniqueness_proofs(self):
+        base = self.base()
         for expr in ("github.event_name", "github.run_attempt",
                      "github.repository", "github.sha", "github.ref"):
             with self.subTest(selector=expr):
-                base = self.base()
                 self.write("second.yaml", document("separate", False).replace(
                     "group: separate", 'group: "value-${{ ' + expr + ' }}"'))
                 self.denied(base, self.save())
