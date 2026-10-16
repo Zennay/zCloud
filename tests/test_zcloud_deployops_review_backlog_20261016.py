@@ -39,7 +39,8 @@ def issue(n, *, is_pr=False, labels=None, **changes):
         "number": n, "title": f"Issue {n}",
         "html_url": f"https://github.com/Zennay/zCloud/{'pull' if is_pr else 'issues'}/{n}",
         "updated_at": "2026-10-01T08:00:00Z",
-        "labels": [{"name": name} for name in (labels or [])],
+        "labels": ([{"name": name} for name in labels] if isinstance(labels, (list, tuple))
+                   else [] if labels is None else labels),
         "assignees": [],
     }
     if is_pr:
