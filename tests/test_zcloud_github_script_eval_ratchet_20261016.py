@@ -498,19 +498,19 @@ runs:
     def test_env_script_is_not_github_script_js(self):
         a = self.commit(SAFE)
         b = self.commit(SAFE.replace(
-            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}",
-            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}\n"
-            "          script: '@EXPR@ github.event.issue.title }}'",
+            "        env:\n",
+            "        env:\n"
+            "          script: '@EXPR@ github.event.issue.title }}'\n".replace("@EXPR@", "$" + "{{"),
         ))
         self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
 
     def test_nested_env_with_script_is_not_action_with_script(self):
         a = self.commit(SAFE)
         b = self.commit(SAFE.replace(
-            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}",
-            "          PR_TITLE: @EXPR@ github.event.pull_request.title }}\n"
+            "        env:\n",
+            "        env:\n"
             "          with:\n"
-            "            script: '@EXPR@ github.event.issue.title }}'",
+            "            script: '@EXPR@ github.event.issue.title }}'\n".replace("@EXPR@", "$" + "{{"),
         ))
         self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
 
