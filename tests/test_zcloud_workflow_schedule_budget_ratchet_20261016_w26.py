@@ -155,6 +155,14 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             schedules("on:\n  schedule:\n    - cron: '0 9 * * *'\n      timezone:\n")
 
+    def test_top_level_merge_cannot_inject_hidden_schedule(self):
+        with self.assertRaises(AdmissionError):
+            schedules("name: sample\n<<: *scheduled_events\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+
+    def test_quoted_top_level_merge_also_denied(self):
+        with self.assertRaises(AdmissionError):
+            schedules("name: sample\n'<<': *scheduled_events\non: push\n")
+
     def test_yaml_merge_cannot_hide_schedule_trigger(self):
         with self.assertRaises(AdmissionError):
             schedules("on:\n  <<: *schedule_alias\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
