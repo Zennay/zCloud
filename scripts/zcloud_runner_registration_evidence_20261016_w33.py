@@ -14,7 +14,7 @@ import re
 import sys
 
 REPO = 'Zennay/zCloud'
-API_URL = 'https://api.github.com/repos/Zennay/zCloud/actions/runners?per_page=100'
+API_URL = 'https://api.github.com/repos/Zennay/zCloud/actions/runners?name=zcloud-vps-1&per_page=100'
 RUNNER = 'zcloud-vps-1'
 REQUIRED_LABELS = frozenset({'self-hosted', 'zcloud', 'vps'})
 MAX_INPUT = 262144
@@ -27,7 +27,7 @@ SAFE_DENIAL_REASONS = frozenset({
     'unknown_clock', 'stale_observation', 'future_observation', 'missing_runner_response',
     'incomplete_runner_inventory', 'unbounded_runner_inventory', 'malformed_runner',
     'invalid_runner_identity', 'ambiguous_runner_identity', 'invalid_runner_state',
-    'invalid_runner_labels', 'duplicate_runner_label',
+    'invalid_runner_labels', 'duplicate_runner_label', 'runner_name_filter_mismatch',
 })
 
 class InvalidEvidence(ValueError):
@@ -116,10 +116,13 @@ def inspect(envelope, *, now=None):
         rid, name = runner.get('id'), runner.get('name')
         if type(rid) is not int or rid <= 0 or type(name) is not str or not (1 <= len(name) <= 128):
             raise InvalidEvidence('invalid_runner_identity')
-        if rid in ids or name in names:
+        if rid in ids or name.casefold() in names:
             raise InvalidEvidence('ambiguous_runner_identity')
         ids.add(rid)
-        names.add(name)
+        names.add(name.casefold())
+        # A name-filtered API request must not return unrelated runner records.
+        if name.casefold() != RUNNER.casefold():
+            raise InvalidEvidence('runner_name_filter_mismatch')
         if runner.get('status') not in ('online', 'offline') or type(runner.get('busy')) is not bool:
             raise InvalidEvidence('invalid_runner_state')
         labels = runner.get('labels')
@@ -135,7 +138,7 @@ def inspect(envelope, *, now=None):
             if n.casefold() in normalized:
                 raise InvalidEvidence('duplicate_runner_label')
             normalized.add(n.casefold())
-        if name == RUNNER:
+        if name.casefold() == RUNNER.casefold():
             target = (runner['status'], runner['busy'], normalized)
     if target is None:
         category, next_action = 'RUNNER_NOT_LISTED', 'check_repository_runner_registration_and_group_entitlement'
