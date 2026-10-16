@@ -11,10 +11,10 @@ A GitHub Actions step using actions/checkout can explicitly set with.repository 
 - Add a read-only, GitHub-hosted PR job, limited to workflow, composite action and guard changes.
 - Admit only first-party PRs targeting main, verify exact immutable Git HEAD, and read both exact SHA trees.
 - Inventory every .github/workflows/*.yml|yaml and every tracked root or nested action.yml|yaml (including composite actions outside .github/actions) at base and head. Trigger the hosted source gate on additions or edits in any action manifest directory. Refuse partial inventories. Validate each Git-tree record's object ID, blob type and ordinary file mode (100644 or 100755); reject symlink manifests (120000), gitlinks (160000), malformed tree records and duplicate manifest paths before parsing. Read immutable object IDs rather than path-addressed blobs. Check each Git blob size **before** reading it; enforce 1 MiB per manifest, 16 MiB cumulative inventory, 4096 manifest maximum, and an exact content-size match. Oversize or inconsistent source produces a nonzero indeterminate result rather than a partial allow.
-- Detect explicit foreign or dynamic repository overrides on actions/checkout steps, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
+- Detect explicit foreign or dynamic repository overrides on actions/checkout steps even when YAML mapping keys put `with.repository` before `uses`, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
 - Compare per-path multiset counts. Existing debt is grandfathered, while new copies fail.
 - Exit 0 = no new risk, 1 = introduced risk, 2 = indeterminate. JSON includes exact SHA pair and reasons.
-- Run 62 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
+- Run 67 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
 
 ## Safety and limits
 
@@ -22,6 +22,10 @@ This is a conservative source-level heuristic, **not** a YAML-spec-complete pars
 
 CI runs on a GitHub-hosted runner with contents: read, not the VPS. No VPS/Firefox/systemd/SQLite/worker/queue changes, no runner job cancellation, no write token or production deployment.
 
+
+## Checkout mapping-key order protection
+
+YAML step keys may appear in any order. The scanner now walks the whole enclosing YAML step from its first `- name`, `- with` or `- uses` line through the next step; it does not start at `uses:`. Adversarial tests prove both `repository` and aliased `with` before `uses` are denied, while unrelated previous action steps remain isolated.
 
 ## Git tree identity and symlink protection
 
