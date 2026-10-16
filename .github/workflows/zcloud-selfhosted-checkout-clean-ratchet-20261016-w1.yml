@@ -14,13 +14,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted-event:
+    name: Explicitly fail untrusted checkout hygiene PR events
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Deny fork, alternate base, actor or rerun before any checkout
+        shell: bash
+        env:
+          EVENT_KIND: ${{ github.event_name }}
+          SOURCE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_REF: ${{ github.base_ref }}
+          SOURCE_ACTOR: ${{ github.actor }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_KIND" = pull_request
+          test "$SOURCE_REPO" = Zennay/zCloud
+          test "$HEAD_REPO" = "$SOURCE_REPO"
+          test "$BASE_REPO" = "$SOURCE_REPO"
+          test "$BASE_REF" = main
+          test "$SOURCE_ACTOR" = Zennay
+          test "$ATTEMPT" = 1
+          echo "CHECKOUT_CLEAN_EVENT_ADMITTED=1"
   validate:
-    if: >-
-      github.repository == 'Zennay/zCloud' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.repo.full_name == github.repository &&
-      github.actor == 'Zennay' &&
-      github.run_attempt == 1
+    needs: trusted-event
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
