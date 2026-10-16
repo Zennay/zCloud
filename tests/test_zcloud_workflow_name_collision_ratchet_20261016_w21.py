@@ -531,6 +531,23 @@ class NameCollisionRatchetTests(unittest.TestCase):
         source = b'name: "Build \\\\ logs"\non: push\n'
         self.assertEqual(guard.workflow_run_targets(source), ())
 
+
+    def test_yaml_merge_synthesized_workflow_name_rejected(self):
+        path = ".github/workflows/name.yml"
+        sources = (
+            b"common: &defaults\n  name: Hidden name\n<<: *defaults\non: push\n",
+            b"? name\n: Hidden name\non: push\n",
+            b"on: push\n<<: *defaults\n",
+        )
+        for source in sources:
+            with self.subTest(source=source), self.assertRaisesRegex(
+                    guard.InvalidInventory, "ambiguous_workflow_name_root"):
+                guard.workflow_name(path, source)
+
+    def test_yaml_root_scan_does_not_misread_nested_yaml_merges(self):
+        source = b"name: Literal\njobs:\n  test:\n    <<: *job_template\non: push\n"
+        self.assertEqual(guard.workflow_name(".github/workflows/a.yml", source), "Literal")
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
