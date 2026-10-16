@@ -12,12 +12,6 @@ from typing import Iterable
 
 WORKFLOW_DIR = Path(".github/workflows")
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
-UPLOAD_RE = re.compile(
-    r"^(?P<indent>\s*)(?:-\s+)?uses:\s+actions/upload-artifact@[^\s#]+",
-    re.MULTILINE,
-)
-RETENTION_RE = re.compile(r"(?m)^\s+retention-days:\s*(?P<value>[^#\n]+?)\s*$")
-
 
 @dataclass(frozen=True)
 class ArtifactUpload:
@@ -95,58 +89,70 @@ def _step_blocks(text: str) -> Iterable[tuple[int, list[tuple[int, str]], int]]:
 
 
 def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpload]:
+    """Count only real upload steps; deny ambiguous YAML instead of guessing."""
     uploads: list[ArtifactUpload] = []
+    literal_days = re.compile(
+        r"""(?P<quote>['"]?)(?P<days>-?(?:0|[1-9][0-9]*))(?P=quote)(?:\s+#.*)?"""
+    )
     for first_line, step, indent in _step_blocks(text):
-        # The first entry may be '- uses:', subsequent mapping keys must
-        # belong to the step itself, not an env/with/run child mapping.
-        uses_line: int | None = None
-        action: str | None = None
-        with_pos: int | None = None
+        uses: list[tuple[int, str]] = []
+        with_positions: list[int] = []
         field_indent = indent + 2
         for position, (number, line) in enumerate(step):
             if position == 0:
                 candidate = re.match(r"^\s*-\s+uses:\s*(.+?)\s*$", line)
             else:
-                candidate = re.match(r"^ {" + str(field_indent) + r"}uses:\s*(.+?)\s*$", line)
+                candidate = re.match(
+                    r"^ {" + str(field_indent) + r"}uses:\s*(.+?)\s*$", line
+                )
             if candidate:
-                uses_line = number
-                action = candidate.group(1).split("#", 1)[0].strip().strip(chr(39) + chr(34))
+                raw_action = candidate.group(1).split("#", 1)[0].strip()
+                uses.append((number, raw_action.strip(chr(39) + chr(34))))
             if re.match(r"^ {" + str(field_indent) + r"}with:\s*(?:#.*)?$", line):
-                with_pos = position
-        if not action or not re.match(r"^actions/upload-artifact@[^\s]+$", action):
+                with_positions.append(position)
+
+        upload_lines = [
+            number for number, action in uses
+            if re.fullmatch(r"actions/upload-artifact@[^\s]+", action)
+        ]
+        if not upload_lines:
             continue
 
         retention: int | None = None
         status = "missing"
-        if with_pos is not None:
-            for _, line in step[with_pos + 1:]:
+        # Duplicate uses/with keys have YAML-loader-dependent interpretation.
+        # Neither a clean result nor a guessed last value is evidence.
+        if len(uses) != 1 or len(with_positions) > 1:
+            status = "dynamic_or_invalid"
+        elif with_positions:
+            values: list[str] = []
+            for _, line in step[with_positions[0] + 1:]:
                 depth = len(line) - len(line.lstrip(" "))
                 if depth <= field_indent:
                     break
-                # Only direct inputs in the with: mapping count. A nested
-                # demonstration or a sibling env value is not an input.
                 if depth != field_indent + 2:
                     continue
                 match = re.match(r"^\s*retention-days:\s*(.*?)\s*$", line)
-                if not match:
-                    continue
-                raw = match.group(1).split("#", 1)[0].strip().strip(chr(39) + chr(34))
-                try:
-                    retention = int(raw)
-                except ValueError:
+                if match:
+                    values.append(match.group(1).strip())
+            if len(values) > 1:
+                status = "dynamic_or_invalid"
+            elif values:
+                value = literal_days.fullmatch(values[0])
+                if value is None:
                     status = "dynamic_or_invalid"
                 else:
+                    retention = int(value.group("days"))
                     if not 1 <= retention <= 90:
                         status = "invalid"
                     elif retention > max_days:
                         status = "over_limit"
                     else:
                         status = "bounded"
-                break
         uploads.append(
             ArtifactUpload(
                 path=path,
-                line=uses_line or first_line,
+                line=upload_lines[0] or first_line,
                 retention_days=retention,
                 status=status,
             )
