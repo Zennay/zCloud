@@ -91,6 +91,9 @@ def _early_guard(job: list[str]) -> bool:
             checkout_seen = True
             continue
         if runs:
+            # The identity check may not be skipped or demoted to nonfatal.
+            if re.search(r"(?m)^\s*(?:if|continue-on-error):", text):
+                return False
             if not checkout_seen or runs[0].strip() not in {"", "|", "|-", ">", ">-"}:
                 return False
             seen_run = False
@@ -147,7 +150,7 @@ def evaluate(base: str, head: str) -> dict:
         old_count += len(old)
         new_count += len(new)
         for job, reason in sorted(new.items()):
-            if job not in old:
+            if job not in old or old[job] != reason:
                 findings.append({"path": path, "job": job, "reason": reason})
     return {"source_only": True, "mutation_performed": False, "release_authorized": False,
             "changed_workflows": len(paths), "legacy_debt_in_changed_files": old_count,
