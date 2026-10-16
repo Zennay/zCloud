@@ -99,7 +99,7 @@ def inventory(root: Path, sha: str) -> dict[str, str]:
         # a multi-GB YAML blob; checking len() after capture_output=True
         # already incurred the memory allocation and could OOM hosted CI.
         size_bytes = git(root, "cat-file", "-s", oid)
-        if not re.fullmatch(rb"[0-9]{1,12}\\n?", size_bytes):
+        if not re.fullmatch(rb"[0-9]{1,12}\n?", size_bytes):
             raise EvidenceError("unverifiable_blob_size")
         declared_size = int(size_bytes)
         if declared_size > MAX_SOURCE:
