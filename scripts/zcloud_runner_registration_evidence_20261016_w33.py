@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Offline, strictly read-only triage of a captured zCloud repository runner list.
+
+Accepts an operator-captured GitHub REST Actions runners response from stdin.
+This is a *claim* inspection: no bearer token, GET, shell, service or write.
+It NEVER proves fresh runner health/registration-group access or authorizes a restart.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import math
+import re
+import sys
+
+REPO = 'Zennay/zCloud'
+RUNNER = 'zcloud-vps-1'
+REQUIRED_LABELS = frozenset({'self-hosted', 'zcloud', 'vps'})
+MAX_INPUT = 262144
+MAX_AGE = 300
+MAX_FUTURE_SKEW = 15
+SCHEMA = 'zcloud-runner-registration-evidence-v1'
+
+class InvalidEvidence(ValueError):
+    pass
+
+
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise InvalidEvidence('duplicate_json_key')
+        result[key] = value
+    return result
+
+
+def load_json(raw: bytes):
+    if not isinstance(raw, bytes) or not raw or len(raw) > MAX_INPUT:
+        raise InvalidEvidence('invalid_input_size')
+    try:
+        obj = json.loads(raw.decode('utf-8'), object_pairs_hook=_unique_pairs,
+                         parse_constant=lambda _: (_ for _ in ()).throw(InvalidEvidence('nonfinite_number')))
+        # json.loads accepts escaped lone surrogates; they cannot be valid canonical evidence.
+        json.dumps(obj, ensure_ascii=False).encode('utf-8')
+    except InvalidEvidence:
+        raise
+    except (UnicodeError, ValueError, RecursionError, TypeError) as exc:
+        raise InvalidEvidence('malformed_json') from exc
+    if not isinstance(obj, dict):
+        raise InvalidEvidence('not_object')
+    return obj
+
+
+def _timestamp(value):
+    if type(value) is not str or len(value) > 40 or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?(?:Z|[+-]\d\d:\d\d)', value):
+        raise InvalidEvidence('bad_observation_time')
+    try:
+        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise InvalidEvidence('bad_observation_time') from exc
+    if dt.tzinfo is None:
+        raise InvalidEvidence('bad_observation_time')
+    return dt.astimezone(timezone.utc)
+
+
+def inspect(envelope, *, now=None):
+    """Validate a complete single-page repo runner sample; report claimed state only."""
+    if not isinstance(envelope, dict) or envelope.get('repository') != REPO:
+        raise InvalidEvidence('unbound_repository')
+    now = now or datetime.now(timezone.utc)
+    if not isinstance(now, datetime) or now.tzinfo is None:
+        raise InvalidEvidence('unknown_clock')
+    dt = _timestamp(envelope.get('captured_at'))
+    age = (now.astimezone(timezone.utc) - dt).total_seconds()
+    if age > MAX_AGE:
+        raise InvalidEvidence('stale_observation')
+    if age < -MAX_FUTURE_SKEW:
+        raise InvalidEvidence('future_observation')
+    payload = envelope.get('response')
+    if not isinstance(payload, dict):
+        raise InvalidEvidence('missing_runner_response')
+    total = payload.get('total_count')
+    entries = payload.get('runners')
+    if type(total) is not int or total < 0 or total > 100 or not isinstance(entries, list) or len(entries) != total:
+        raise InvalidEvidence('incomplete_runner_inventory')
+    if len(entries) > 100:
+        raise InvalidEvidence('unbounded_runner_inventory')
+    ids, names, target = set(), set(), None
+    for runner in entries:
+        if not isinstance(runner, dict):
+            raise InvalidEvidence('malformed_runner')
+        rid, name = runner.get('id'), runner.get('name')
+        if type(rid) is not int or rid <= 0 or type(name) is not str or not (1 <= len(name) <= 128):
+            raise InvalidEvidence('invalid_runner_identity')
+        if rid in ids or name in names:
+            raise InvalidEvidence('ambiguous_runner_identity')
+        ids.add(rid)
+        names.add(name)
+        if runner.get('status') not in ('online', 'offline') or type(runner.get('busy')) is not bool:
+            raise InvalidEvidence('invalid_runner_state')
+        labels = runner.get('labels')
+        if not isinstance(labels, list) or len(labels) > 64:
+            raise InvalidEvidence('invalid_runner_labels')
+        normalized = set()
+        for label in labels:
+            if not isinstance(label, dict):
+                raise InvalidEvidence('invalid_runner_labels')
+            n = label.get('name')
+            if type(n) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', n):
+                raise InvalidEvidence('invalid_runner_labels')
+            if n.casefold() in normalized:
+                raise InvalidEvidence('duplicate_runner_label')
+            normalized.add(n.casefold())
+        if name == RUNNER:
+            target = (runner['status'], runner['busy'], normalized)
+    if target is None:
+        category, next_action = 'RUNNER_NOT_LISTED', 'check_repository_runner_registration_and_group_entitlement'
+    elif not REQUIRED_LABELS.issubset(target[2]):
+        category, next_action = 'LABEL_MISMATCH', 'check_canonical_labels_in_github_runner_settings'
+    elif target[0] == 'offline':
+        category, next_action = 'RUNNER_LISTED_OFFLINE', 'inspect_listener_and_active_worker_on_independent_authorized_host'
+    elif target[1]:
+        category, next_action = 'RUNNER_LISTED_BUSY', 'preserve_active_worker_and_check_concurrency'
+    else:
+        category, next_action = 'RUNNER_LISTED_ONLINE_IDLE', 'correlate_queued_run_approval_labels_and_group_access'
+    return {'schema': SCHEMA, 'classification': category, 'next_action': next_action,
+            'runner_target': RUNNER, 'required_labels': sorted(REQUIRED_LABELS),
+            'sampled_runner_count': total, 'observation_age_seconds': max(0, int(age)),
+            'registration_claim_parsed': True, 'independent_registration_verified': False,
+            'runner_group_access_verified': False, 'live_runner_health_verified': False,
+            'service_idle_verified': False, 'production_deploy_verified': False,
+            'restart_authorized': False, 'dispatch_authorized': False, 'mutation_performed': False}
+
+
+def main():
+    try:
+        data = sys.stdin.buffer.read(MAX_INPUT + 1)
+        result = inspect(load_json(data))
+        code = 0
+    except (InvalidEvidence, ValueError, TypeError, OverflowError):
+        result = {'schema': SCHEMA, 'classification': 'EVIDENCE_UNAVAILABLE',
+                  'registration_claim_parsed': False, 'independent_registration_verified': False,
+                  'runner_group_access_verified': False, 'live_runner_health_verified': False,
+                  'service_idle_verified': False, 'production_deploy_verified': False,
+                  'restart_authorized': False, 'dispatch_authorized': False, 'mutation_performed': False}
+        code = 2
+    print(json.dumps(result, sort_keys=True, separators=(',', ':')))
+    return code
+
+
+if __name__ == '__main__':
+    sys.exit(main())
