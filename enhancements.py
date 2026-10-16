@@ -34,6 +34,7 @@ PROJECT_UNITS = {
     "mixlab": [],
     "fuckball": [],
     "tuddy": [],
+    "zsentinel": [],
 }
 _RESOURCE_PREV = {}
 _RESOURCE_HOST_PREV = None
