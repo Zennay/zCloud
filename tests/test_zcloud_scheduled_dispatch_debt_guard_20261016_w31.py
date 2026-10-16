@@ -480,6 +480,21 @@ jobs:
 """)
         self.check(self.commit(), "reject")
 
+    def test_control_character_manifest_filename_is_rejected(self):
+        suspicious = self.repo / ".github/workflows/launch\nspoof.yml"
+        suspicious.write_text(LEGACY, encoding="utf-8")
+        candidate = self.commit()
+        with self.assertRaisesRegex(ValueError, "unsafe manifest"):
+            guard.evaluate(self.repo, self.base, candidate)
+
+    def test_action_control_character_filename_is_rejected(self):
+        suspicious = self.repo / ".github/actions/invisible\rhidden"
+        suspicious.mkdir(parents=True, exist_ok=True)
+        (suspicious / "action.yml").write_text("runs: {using: composite, steps: []}", encoding="utf-8")
+        candidate = self.commit()
+        with self.assertRaisesRegex(ValueError, "unsafe manifest"):
+            guard.evaluate(self.repo, self.base, candidate)
+
     def test_action_symlink_manifest_denied(self):
         directory = self.repo / ".github" / "actions" / "rearm"
         directory.mkdir(parents=True, exist_ok=True)
