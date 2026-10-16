@@ -1,4 +1,4 @@
-name: zCloud deploy-ops public PR backlog brief
+name: zCloud deploy-ops issue-first and PR backlog brief
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   hosted-brief:
-    name: Read-only complete PR backlog brief
+    name: Read-only complete issues and PR backlog brief
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
@@ -43,4 +43,5 @@ jobs:
           set -euo pipefail
           python3 scripts/zcloud_deployops_review_backlog_20261016.py \
             --expected-main-sha "$GITHUB_SHA" \
+            --include-issues \
             --output "$GITHUB_STEP_SUMMARY"
