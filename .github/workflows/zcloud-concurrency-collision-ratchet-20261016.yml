@@ -89,7 +89,7 @@ jobs:
               raise SystemExit("inventory group claims unauthorized review")
           print("ZCLOUD_COLLISION_INVENTORY_DENY_ONLY_VALID=1")
           ' <<<"$receipt"
-          printf '%s\\n' "$receipt"
+          printf '%s\n' "$receipt"
           current="$(GIT_TERMINAL_PROMPT=0 timeout 20 git -c credential.helper= ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
           test "$current" = "$BASE"
           echo "ZCLOUD_COLLISION_SOURCE_ONLY_GREEN=1"
