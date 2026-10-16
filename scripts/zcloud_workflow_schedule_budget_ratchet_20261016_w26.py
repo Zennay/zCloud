@@ -101,7 +101,7 @@ def canonical_timezone(raw: str) -> str:
     value = raw.strip()
     if value.startswith(("'", '"')):
         quote = value[0]
-        match = re.fullmatch(r"(['\"])([^'\"\\]*)\\1(?:[ \t]+#.*)?", value)
+        match = re.fullmatch(r"(['\"])([^'\"\\]*)\1(?:[ \t]+#.*)?", value)
         if not match or match.group(1) != quote:
             raise AdmissionError("ambiguous_timezone_selector")
         value = match.group(2)
