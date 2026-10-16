@@ -217,10 +217,12 @@ def collect(reader=fetch, now=None, *, include_issues=False):
 
 
 def _safe(text):
+    # GitHub issue titles and assignee names are untrusted Markdown input.
+    # Truncate BEFORE escaping so no trailing escape can swallow table markup.
     text = re.sub(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]", " ", text)
-    for char in ("\\", "|", "[", "]", "<", ">"):
-        text = text.replace(char, "\\" + char)
-    return " ".join(text.split())[:160]
+    text = " ".join(text.split())[:160]
+    unsafe = frozenset("\\`*_{}[]()#+-.!|<>~")
+    return "".join("\\" + char if char in unsafe else char for char in text)
 
 
 def render(data):
