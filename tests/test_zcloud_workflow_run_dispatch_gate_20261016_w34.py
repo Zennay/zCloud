@@ -369,6 +369,34 @@ class GateTests(unittest.TestCase):
         ))
         self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
 
+    def test_urllib_request_post_and_data_implied_post(self):
+        for command in (
+            'urllib.request.Request("https://api.github.com/repos/Zennay/zCloud/dispatches", method="POST")',
+            'Request("https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun", data=b"{}")',
+            'urllib.request.Request(\n "https://api.github.com/repos/Zennay/zCloud/actions/runs/42/rerun",\n method="POST"\n)',
+        ):
+            with self.subTest(command=command.splitlines()[0]):
+                source = TEMPLATE.replace("echo harmless", command.replace("\n", "\n          "))
+                self.assertTrue(classify(source))
+
+    def test_urllib_request_get_not_classified_as_post(self):
+        for command in (
+            'Request("https://api.github.com/repos/Zennay/zCloud/dispatches")',
+            'urllib.request.Request("https://api.github.com/repos/Zennay/zCloud/dispatches", method="GET")',
+            'Request("https://api.github.com/repos/Zennay/zCloud/dispatches", data=b"{}", method="GET")',
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_new_urllib_implicit_post_is_real_git_debt(self):
+        base = self.commit(TEMPLATE)
+        source = TEMPLATE.replace(
+            "echo harmless",
+            'urllib.request.Request("https://api.github.com/repos/Zennay/zCloud/dispatches", data=b"{}")',
+        )
+        head = self.commit(source)
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_python_http_sessions_and_clients_dispatch_post(self):
         examples = (
             'session.post("https://api.github.com/repos/Zennay/zCloud/dispatches")',
