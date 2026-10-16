@@ -34,6 +34,14 @@ DISPATCH = re.compile(
     r"|\bcreateWorkflowDispatch\b"
     r"|\bcreate_workflow_dispatch\b"
 )
+# Recognise job-level reusable-workflow dependencies without executing YAML.
+# References are review-requiring in scheduled ancestry even if the helper is
+# currently inert: a later helper edit could activate another dispatch path.
+REUSABLE = re.compile(
+    r"""(?m)^\s+(?:-\s*)?uses:\s*['"]?"""
+    r"""((?:\./\.github/workflows/|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/)"""
+    r"""[A-Za-z0-9_.-]+\.ya?ml(?:@[^\s'"#]+)?)['"]?\s*(?:#.*)?$"""
+)
 MAX_MANIFESTS = 2048
 MAX_BLOB = 1024 * 1024
 MAX_TOTAL = 16 * 1024 * 1024
@@ -139,9 +147,9 @@ def scheduled(text: str) -> bool:
     return False
 
 
-def dispatch_sites(text: str) -> Counter[str]:
+def dispatch_sites(text: str, *, assume_scheduled: bool = False) -> Counter[str]:
     """Count stable site fingerprints, never disclose source or credentials."""
-    if not scheduled(text):
+    if not assume_scheduled and not scheduled(text):
         return Counter()
     active = "\n".join(line for line in text.splitlines()
                        if not line.lstrip().startswith("#"))
@@ -166,8 +174,50 @@ def dispatch_count(text: str) -> int:
 
 
 def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
-    return {path: sites for path, content in workflows.items()
-            if (sites := dispatch_sites(content))}
+    """Trace scheduled callers into local reusable-workflow definitions.
+
+    Each reachable workflow is visited once, so local cycles are bounded. The
+    site identity also includes the providing workflow path, distinguishing
+    otherwise identical dispatch commands in different helper workflows.
+    """
+    report: dict[str, Counter[str]] = {}
+    for root, source in workflows.items():
+        if not scheduled(source):
+            continue
+        sites: Counter[str] = Counter()
+        visiting = [root]
+        seen: set[str] = set()
+        while visiting:
+            path = visiting.pop()
+            if path in seen:
+                continue
+            seen.add(path)
+            text = workflows.get(path)
+            if text is None:
+                # Missing reusable definitions cannot be independently trusted.
+                fingerprint = hashlib.sha256(("missing:" + path).encode()).hexdigest()
+                sites[fingerprint] += 1
+                continue
+            for signature, count in dispatch_sites(
+                text, assume_scheduled=True
+            ).items():
+                fingerprint = hashlib.sha256(
+                    ("site:" + path + ":" + signature).encode()
+                ).hexdigest()
+                sites[fingerprint] += count
+            for match in REUSABLE.finditer(text):
+                target = match.group(1)
+                # Every newly introduced/replaced delegation is risky even if
+                # its target currently has no explicit dispatch command.
+                edge = hashlib.sha256(
+                    ("uses:" + path + ":" + target).encode()
+                ).hexdigest()
+                sites[edge] += 1
+                if target.startswith("./.github/workflows/"):
+                    visiting.append(target[2:])
+        if sites:
+            report[root] = sites
+    return report
 
 
 def evaluate(repo: Path, base: str, candidate: str) -> dict[str, object]:
