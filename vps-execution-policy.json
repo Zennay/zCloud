@@ -25,7 +25,11 @@
     "ulab",
     "zssh",
     "lightup",
-    "zguard"
+    "zguard",
+    "mixlab",
+    "fuckball",
+    "tuddy",
+    "zsentinel"
   ],
   "capabilities": [
     "local-shell",
