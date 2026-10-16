@@ -151,6 +151,56 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(module.Refusal, "git_output_oversized"):
                 module._git(self.repo, 'status', max_bytes=512)
 
+    def test_composite_manifest_new_cross_run_denied(self):
+        base=self.commit(SAFE)
+        manifest=self.repo/'custom/helpers/level-three/action.yml'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(CROSS.replace('on: pull_request','runs:\n  using: composite'),encoding='utf-8')
+        self.git('add','.'); self.git('commit','-qm','new nested composite')
+        head=self.git('rev-parse','HEAD')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_composite_manifest_previous_debt_grandfathered(self):
+        manifest=self.repo/'pkg/step/action.yaml'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(CROSS,encoding='utf-8')
+        base=self.commit(SAFE)
+        head=self.commit(SAFE+'\n# harmless note\n')
+        proof=module.evaluate(self.repo,base,head)
+        self.assertTrue(proof['ok'])
+        self.assertEqual(proof['legacy_findings'],1)
+
+    def test_composite_manifest_duplication_denied(self):
+        original=self.repo/'pkg/action.yml'
+        original.parent.mkdir(parents=True)
+        original.write_text(CROSS)
+        base=self.commit(SAFE)
+        other=self.repo/'another/deep/pkg/action.yaml'
+        other.parent.mkdir(parents=True)
+        other.write_text(CROSS)
+        self.git('add','.'); self.git('commit','-qm','copy composite')
+        head=self.git('rev-parse','HEAD')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_composite_manifest_symlink_refused(self):
+        base=self.commit(SAFE)
+        link=self.repo/'nested/action.yml'
+        link.parent.mkdir()
+        link.symlink_to('/etc/passwd')
+        self.git('add','.'); self.git('commit','-qm','symlink action')
+        head=self.git('rev-parse','HEAD')
+        with self.assertRaises(module.Refusal):
+            module.evaluate(self.repo,base,head)
+
+    def test_unrelated_plain_yaml_does_not_claim_action_manifest(self):
+        base=self.commit(SAFE)
+        other=self.repo/'docs/overview.yml'
+        other.parent.mkdir()
+        other.write_text(CROSS)
+        self.git('add','.'); self.git('commit','-qm','non runnable doc')
+        head=self.git('rev-parse','HEAD')
+        self.assertTrue(module.evaluate(self.repo,base,head)['ok'])
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
