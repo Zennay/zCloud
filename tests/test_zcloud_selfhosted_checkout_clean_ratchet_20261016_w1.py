@@ -72,7 +72,7 @@ class CheckoutCleanTests(unittest.TestCase):
         data = sample("true").replace(
             "        with:\n          persist-credentials: false\n          clean: true",
             "        with: {clean: false}")
-        self.assertTrue(any("inline-with" in row[-1] for row in self.find(data)))
+        self.assertTrue(any("opaque-with-map" in row[-1] for row in self.find(data)))
 
     def test_unsafe_unrelated_job_not_scored(self):
         data = sample("false", runner="ubuntu-latest") + """  other:
@@ -164,6 +164,76 @@ class CheckoutCleanTests(unittest.TestCase):
         source = sample("true", runner="$" + "{{ inputs.runner }}",
                         uses="actions/setup-node@v7")
         self.assertEqual(self.find(source), [])
+
+
+
+    def test_checkout_before_runner_mapping_is_not_skipped(self):
+        source = sample("false").replace(
+            "    runs-on: [self-hosted, zcloud, vps]\n", "")
+        source = source.replace("          clean: false\n",
+                                "          clean: false\n    runs-on: [self-hosted, zcloud, vps]\n")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_multiline_runner_after_checkout_is_not_skipped(self):
+        source = sample("false").replace(
+            "    runs-on: [self-hosted, zcloud, vps]\n", "")
+        source = source.replace("          clean: false\n",
+            "          clean: false\n    runs-on:\n      - self-hosted\n      - vps\n")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_stepline_extended_whitespace_not_skipped(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@", "      -   uses: actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_uses_space_before_colon_not_skipped(self):
+        source = sample("false").replace(
+            "- uses: actions/checkout@", "- uses : actions/checkout@")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
+
+    def test_alias_with_mapping_denied(self):
+        source = sample("true").replace(
+            "        with:\n          persist-credentials: false\n          clean: true",
+            "        with: *checkout_with_defaults")
+        self.assertTrue(any("opaque-with-map" in r[-1] for r in self.find(source)))
+
+    def test_expression_with_mapping_denied(self):
+        source = sample("true").replace(
+            "        with:\n          persist-credentials: false\n          clean: true",
+            "        with: $" + "{{ fromJSON(inputs.checkout) }}")
+        self.assertTrue(any("opaque-with-map" in r[-1] for r in self.find(source)))
+
+    def test_duplicate_with_maps_denied_even_safe_values(self):
+        source = sample("true").replace("          clean: true\n",
+            "          clean: true\n        with:\n          clean: true\n")
+        self.assertTrue(any("duplicate-with-map" in r[-1] for r in self.find(source)))
+
+    def test_dynamic_alias_runner_with_checkout_is_suspicious(self):
+        source = sample("true", runner="*runner_target")
+        self.assertTrue(any("dynamic-runner-checkout" in r[-1] for r in self.find(source)))
+
+    def test_multiline_runner_mapping_with_checkout_is_suspicious(self):
+        source = sample("true", runner="\n      group: example\n      labels: custom")
+        self.assertTrue(any("dynamic-runner-checkout" in r[-1] for r in self.find(source)))
+
+    def test_hosted_after_steps_stays_out_of_selfhosted_scope(self):
+        source = sample("false", runner="ubuntu-latest").replace(
+            "    runs-on: ubuntu-latest\n", "")
+        source = source.replace("          clean: false\n",
+                                "          clean: false\n    runs-on: ubuntu-latest\n")
+        self.assertEqual(self.find(source), [])
+
+    def test_other_step_name_cannot_mark_checkout_from_uses_text(self):
+        source = sample("false", uses="actions/setup-node@pinned")
+        source = source.replace("      - uses: actions/setup-node@pinned",
+                                "      - name: checkout reference\n        uses: actions/setup-node@pinned")
+        self.assertEqual(self.find(source), [])
+
+    def test_reordered_with_before_uses_is_covered(self):
+        source = sample("false").replace(
+            "      - uses: actions/checkout@0123456789abcdef\n        with:\n          persist-credentials: false\n          clean: false",
+            "      - with:\n          persist-credentials: false\n          clean: false\n        uses: actions/checkout@0123456789abcdef")
+        self.assertTrue(any("unsafe-clean" in r[-1] for r in self.find(source)))
 
 
 
