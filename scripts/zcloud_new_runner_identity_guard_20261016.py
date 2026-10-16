@@ -152,6 +152,19 @@ def _early_guard(job: list[str]) -> bool:
     forbidden = re.compile(r"""^    (?:["']?(?:defaults|container|services)["']?|<<|\?\s*\S+)\s*:""")
     if any(forbidden.match(line) for line in job):
         return False
+    # Tagged/quoted/unknown job keys can alias pre-step resources. Parse only
+    # literal, known job-level keys; nested keys belong to their own mapping.
+    allowed_job_keys = {
+        "name", "runs-on", "needs", "permissions", "if", "timeout-minutes",
+        "strategy", "concurrency", "env", "environment", "outputs", "steps",
+    }
+    for line in job:
+        if line.startswith("    ") and not line.startswith("     ") and line.strip():
+            if line.lstrip().startswith("#"):
+                continue
+            key = re.match(r"^    ([a-z][a-z0-9-]*):", line)
+            if not key or key.group(1) not in allowed_job_keys:
+                return False
     headings = [n for n, line in enumerate(job)
                 if re.fullmatch(r"    steps:\s*(?:#.*)?", line)]
     if len(headings) != 1:
