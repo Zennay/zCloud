@@ -314,6 +314,27 @@ def _job_fingerprints(doc: str | None) -> dict[str, tuple[str, ...]]:
     return result
 
 
+def _workflow_envelope(doc: str | None) -> tuple[str, ...]:
+    """Preserve root triggers/privileges around legacy unsafe jobs.
+
+    This excludes job bodies so adding an independent, safe hosted job does
+    not itself increase the exposure attributed to a legacy VPS job.
+    """
+    if doc is None:
+        return ()
+    lines = doc.splitlines()
+    root = next((i for i, line in enumerate(lines)
+                 if re.fullmatch(r"jobs:\s*(?:#.*)?", line)), None)
+    if root is None:
+        return tuple(line.rstrip() for line in lines if line.strip()
+                     and not line.lstrip().startswith("#"))
+    end = next((i for i in range(root + 1, len(lines))
+                if lines[i] and not lines[i][0].isspace()), len(lines))
+    surrounding = lines[:root + 1] + lines[end:]
+    return tuple(line.rstrip() for line in surrounding if line.strip()
+                 and not line.lstrip().startswith("#"))
+
+
 def evaluate(base: str, head: str) -> dict:
     paths = inventory(base, head)
     findings, old_count, new_count = [], 0, 0
@@ -327,12 +348,16 @@ def evaluate(base: str, head: str) -> dict:
         # unsafe job (even with an identical finding category) is fresh debt.
         old_fp = _job_fingerprints(old_doc)
         new_fp = _job_fingerprints(new_doc)
+        envelope_changed = _workflow_envelope(old_doc) != _workflow_envelope(new_doc)
         for job, reason in sorted(new.items()):
             if job not in old or old[job] != reason:
                 findings.append({"path": path, "job": job, "reason": reason})
             elif old_fp.get(job) != new_fp.get(job):
                 findings.append({"path": path, "job": job,
                                  "reason": "modified_legacy_unsafe_job"})
+            elif envelope_changed:
+                findings.append({"path": path, "job": job,
+                                 "reason": "modified_legacy_unsafe_workflow_envelope"})
     return {"source_only": True, "mutation_performed": False, "release_authorized": False,
             "changed_workflows": len(paths), "legacy_debt_in_changed_files": old_count,
             "remaining_debt_in_changed_files": new_count, "new_findings": findings}
