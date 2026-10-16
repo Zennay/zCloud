@@ -1448,5 +1448,106 @@ jobs:
 
 
 
+    def test_scheduled_root_node_helper_import_change_rejected(self):
+        self.put("scheduled-root-import.yml", """on: schedule
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: node scripts/entry.js
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "entry.js").write_text("require('./worker');\n", encoding="utf-8")
+        helper = root / "worker.js"
+        helper.write_text("console.log('safe');\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("github.rest.actions.createWorkflowDispatch({});\n",
+                          encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertIn(".github/workflows/scheduled-root-import.yml",
+                      result["changed_workflows_with_new_sites"])
+
+    def test_scheduled_github_scripts_node_import_change_rejected(self):
+        self.put("scheduled-gh-import.yml", """on: schedule
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: node .github/scripts/start.mjs
+""")
+        root = self.repo / ".github/scripts"
+        root.mkdir(parents=True)
+        (root / "start.mjs").write_text("import './nested.mjs';\n", encoding="utf-8")
+        helper = root / "nested.mjs"
+        helper.write_text("export const healthy = true;\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("github.rest.repos.createDispatchEvent({});\n",
+                          encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_scheduled_root_node_dynamic_import_is_opaque(self):
+        self.put("scheduled-node-variable.yml", """on: schedule
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: node scripts/entry.js
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "entry.js").write_text("require(process.env.SOURCE);\n", encoding="utf-8")
+        self.check(self.commit(), "reject")
+
+    def test_scheduled_root_node_import_outside_allowed_dir_is_opaque(self):
+        self.put("scheduled-node-outside.yml", """on: schedule
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: node scripts/entry.js
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "entry.js").write_text(
+            "import '../other-source/outside.js';\n", encoding="utf-8")
+        self.check(self.commit(), "reject")
+
+    def test_scheduled_root_node_import_cycle_unchanged_is_bounded(self):
+        self.put("scheduled-node-cycle.yml", """on: schedule
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: node scripts/entry.js
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "entry.js").write_text("require('./loop.js');\n", encoding="utf-8")
+        (root / "loop.js").write_text("require('./entry.js');\n", encoding="utf-8")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_unrelated_manual_root_node_import_remains_unrestricted(self):
+        self.put("manual-root-node.yml", """on: workflow_dispatch
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: node scripts/entry.js
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "entry.js").write_text("require('./worker.js');\n", encoding="utf-8")
+        (root / "worker.js").write_text(
+            "github.rest.actions.createWorkflowDispatch({});\n",
+            encoding="utf-8")
+        self.check(self.commit(), "pass")
+
+
+
 if __name__ == "__main__":
     unittest.main()
