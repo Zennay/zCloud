@@ -57,10 +57,10 @@ class NameCollisionRatchetTests(unittest.TestCase):
 
     def test_yaml_quoted_name_keys_and_alias_shadow(self):
         path = ".github/workflows/a.yml"
-        self.assertEqual(guard.workflow_name(path, b"'name': Build\\n"), "Build")
-        self.assertEqual(guard.workflow_name(path, b'"name": Build\\n'), "Build")
+        self.assertEqual(guard.workflow_name(path, b"'name': Build\n"), "Build")
+        self.assertEqual(guard.workflow_name(path, b'"name": Build\n'), "Build")
         with self.assertRaises(guard.InvalidInventory):
-            guard.workflow_name(path, b"'name': One\\nname: Two\\n")
+            guard.workflow_name(path, b"'name': One\nname: Two\n")
 
     def test_giant_git_blob_rejected_before_read(self):
         with tempfile.TemporaryDirectory() as root:
@@ -71,7 +71,7 @@ class NameCollisionRatchetTests(unittest.TestCase):
             git("config", "user.email", "test@example.com")
             folder = Path(root) / ".github/workflows"
             folder.mkdir(parents=True)
-            (folder / "oversized.yml").write_bytes(b"name: Too big\\n" + b"x" * 132000)
+            (folder / "oversized.yml").write_bytes(b"name: Too big\n" + b"x" * 132000)
             git("add", ".")
             git("commit", "-qm", "oversized")
             with self.assertRaisesRegex(guard.InvalidInventory, "workflow_blob_too_large"):
