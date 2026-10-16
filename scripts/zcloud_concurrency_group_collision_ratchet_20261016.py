@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""Read-only no-new-debt admission for cross-workflow cancellation collisions."""
+from __future__ import annotations
+import argparse
+import hashlib
+import os
+import re
+import selectors
+import signal
+import subprocess
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+import yaml
+
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.\-/]+\.ya?ml\Z")
+MAX_PATHS = 512
+MAX_TREE_BYTES = 512 * 1024
+MAX_BLOB_BYTES = 256 * 1024
+MAX_TOTAL_BYTES = 8 * 1024 * 1024
+MAX_GROUP_LENGTH = 256
+MAX_FINDINGS = 20000
+
+class AdmissionError(ValueError):
+    pass
+
+class StrictLoader(yaml.SafeLoader):
+    """SafeLoader with duplicate-key rejection and non-boolean 'on' key."""
+StrictLoader.yaml_implicit_resolvers = {
+    k: [(tag, p) for tag, p in vs if tag != "tag:yaml.org,2002:bool"]
+    for k, vs in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+StrictLoader.add_implicit_resolver("tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|false)$", re.IGNORECASE), list("TtFf"))
+
+def _strict_mapping(loader, node):
+    loader.flatten_mapping(node)
+    result = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if not isinstance(key, (str, int, float, bool)) or key in result:
+            raise AdmissionError("duplicate or non-scalar YAML key")
+        result[key] = loader.construct_object(value_node, deep=True)
+    return result
+StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _strict_mapping)
+
+def git_bytes(*args: str, limit: int) -> bytes:
+    """Bound stdout/stderr while streaming; bound wall clock and child lifetime."""
+    env = {k: v for k, v in os.environ.items() if not
+           (k.startswith("GIT_CONFIG_") or k in {
+              "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_TRACE",
+              "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXEC_PATH"})}
+    env.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0",
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    p = subprocess.Popen(["git", "-c", "core.pager=cat", *args],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        start_new_session=True, env=env)
+    sel = selectors.DefaultSelector()
+    parts = {"out": bytearray(), "err": bytearray()}
+    try:
+        assert p.stdout and p.stderr
+        sel.register(p.stdout, selectors.EVENT_READ, "out")
+        sel.register(p.stderr, selectors.EVENT_READ, "err")
+        deadline = time.monotonic() + 15
+        while sel.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AdmissionError("git deadline exceeded")
+            for key, _ in sel.select(remaining):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    sel.unregister(key.fileobj)
+                    continue
+                buf = parts[key.data]
+                buf.extend(chunk)
+                if len(buf) > (limit if key.data == "out" else 8192):
+                    raise AdmissionError("git output limit exceeded")
+        if p.wait(timeout=max(0.1, deadline - time.monotonic())) != 0:
+            raise AdmissionError("git command failed")
+        return bytes(parts["out"])
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise AdmissionError("git execution failed") from e
+    finally:
+        sel.close()
+        if p.poll() is None:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait(timeout=3)
+        if p.stdout:
+            p.stdout.close()
+        if p.stderr:
+            p.stderr.close()
+
+def _sha(value: str) -> str:
+    if not SHA.fullmatch(value):
+        raise AdmissionError("invalid immutable commit SHA")
+    return value
+
+def _git_ref(*args: str) -> str:
+    return _sha(git_bytes(*args, limit=200).decode("ascii").strip())
+
+def assert_commits(base: str, head: str) -> None:
+    base, head = _sha(base), _sha(head)
+    if _git_ref("rev-parse", "HEAD") != head:
+        raise AdmissionError("working checkout is not exact PR head")
+    for ref in (base, head):
+        if _git_ref("rev-parse", "--verify", ref + "^{commit}") != ref:
+            raise AdmissionError("not a commit")
+    if _git_ref("merge-base", base, head) != base:
+        raise AdmissionError("head is not descendant of immutable base")
+
+def _workflow_entries(commit: str):
+    raw = git_bytes("ls-tree", "-r", "-z", commit, "--", ".github/workflows",
+                    limit=MAX_TREE_BYTES)
+    out = []
+    for item in raw.split(b"\x00"):
+        if not item:
+            continue
+        try:
+            meta, path = item.split(b"\t", 1)
+            mode, kind, sha = meta.decode("ascii").split(" ")
+            name = path.decode("ascii")
+        except (ValueError, UnicodeError) as e:
+            raise AdmissionError("unreadable workflow tree entry") from e
+        if not name.endswith((".yml", ".yaml")):
+            continue
+        if not WORKFLOW.fullmatch(name) or ".." in Path(name).parts:
+            raise AdmissionError("unsafe workflow source path")
+        if mode not in ("100644", "100755") or kind != "blob" or not SHA.fullmatch(sha):
+            raise AdmissionError("unsafe workflow object (including symlink)")
+        out.append((name, sha))
+        if len(out) > MAX_PATHS:
+            raise AdmissionError("workflow file budget exceeded")
+    return out
+
+def _group_entry(path: str, scope: str, value: object):
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise AdmissionError("invalid concurrency mapping")
+    group = value.get("group")
+    cancel = value.get("cancel-in-progress", False)
+    if not isinstance(group, str) or not (1 <= len(group) <= MAX_GROUP_LENGTH):
+        raise AdmissionError("non-literal or unbounded concurrency group")
+    if re.search(r"[\x00-\x1f\x7f]", group):
+        raise AdmissionError("control characters in group")
+    if cancel is True:
+        mode = "true"
+    elif cancel is False:
+        mode = "false"
+    elif isinstance(cancel, str) and "${{" in cancel and "}}" in cancel:
+        mode = "dynamic"
+    else:
+        raise AdmissionError("invalid cancel-in-progress value")
+    # github.workflow scopes the group by the actual workflow name.
+    if re.search(r"\$\{\{\s*github\.workflow\s*\}\}", group, re.IGNORECASE):
+        return None
+    token = hashlib.sha256(group.casefold().encode("utf-8")).hexdigest()
+    return (token, path, scope, mode)
+
+def _entries_for_file(path: str, contents: bytes):
+    try:
+        body = yaml.load(contents.decode("utf-8"), Loader=StrictLoader)
+    except (UnicodeError, yaml.YAMLError, AdmissionError, RecursionError) as e:
+        raise AdmissionError("ambiguous or invalid workflow YAML") from e
+    if not isinstance(body, dict):
+        raise AdmissionError("workflow must be a YAML mapping")
+    entries = []
+    root = _group_entry(path, "workflow", body.get("concurrency"))
+    if root:
+        entries.append(root)
+    jobs = body.get("jobs", {})
+    if not isinstance(jobs, dict):
+        raise AdmissionError("workflow jobs must be mapping")
+    for job_id, definition in jobs.items():
+        if not isinstance(job_id, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]{0,120}", job_id):
+            raise AdmissionError("unsafe workflow job ID")
+        if not isinstance(definition, dict):
+            raise AdmissionError("workflow job must be mapping")
+        item = _group_entry(path, "job:" + job_id, definition.get("concurrency"))
+        if item:
+            entries.append(item)
+    return entries
+
+def findings(commit: str):
+    grouped = defaultdict(list)
+    total = 0
+    for path, sha in _workflow_entries(commit):
+        blob = git_bytes("cat-file", "blob", sha, limit=MAX_BLOB_BYTES)
+        total += len(blob)
+        if total > MAX_TOTAL_BYTES:
+            raise AdmissionError("aggregate workflow source budget exceeded")
+        for token, p, scope, mode in _entries_for_file(path, blob):
+            grouped[token].append((p, scope, mode))
+    out = set()
+    for token, members in grouped.items():
+        for i, first in enumerate(members):
+            for second in members[i + 1:]:
+                if first[0] == second[0] or (first[2] == "false" and second[2] == "false"):
+                    continue
+                out.add((token, *sorted((first, second))))
+                if len(out) > MAX_FINDINGS:
+                    raise AdmissionError("concurrency finding budget exceeded")
+    return out
+
+def check(base: str, head: str):
+    assert_commits(base, head)
+    old, new = findings(base), findings(head)
+    assert_commits(base, head)
+    escalations = new - old
+    if escalations:
+        paths = sorted({m[0] for risk in escalations for m in risk[1:]})
+        raise AdmissionError(f"new cross-workflow cancellation collisions ({len(escalations)}): {', '.join(paths[:10])}")
+    return len(old), len(new)
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--head", required=True)
+    args = parser.parse_args()
+    try:
+        before, after = check(args.base, args.head)
+    except AdmissionError as e:
+        print(f"ZCLOUD_CONCURRENCY_COLLISION_SOURCE_DENY: {e}", file=sys.stderr)
+        return 2
+    print(f"ZCLOUD_CONCURRENCY_COLLISION_SOURCE_ONLY_GREEN=1 baseline={before} candidate={after}")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
