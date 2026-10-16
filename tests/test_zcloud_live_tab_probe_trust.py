@@ -59,7 +59,7 @@ class LiveTabProbeTrustTests(unittest.TestCase):
         self.assertIn("if: github.event_name == 'pull_request' || github.event_name == 'push'", hosted)
         self.assertIn("runs-on: ubuntu-latest", hosted)
         self.assertNotIn("self-hosted", hosted)
-        self.assertIn("runs-on: [self-hosted, ftmo-research]", inspect)
+        self.assertIn("runs-on: [self-hosted, zcloud, vps]", inspect)
         self.assertNotIn("pull_request", inspect.split("runs-on:", 1)[0].replace(
             "github.event_name == 'push'", "").replace("github.event_name == 'workflow_dispatch'", ""))
 
@@ -80,6 +80,11 @@ class LiveTabProbeTrustTests(unittest.TestCase):
             'test "$(hostname)" = "vps-bb300bba"',
         ):
             self.assertIn(guard, inspect)
+        self.assertIn("python3 scripts/zcloud_vps_runner_guard.py --json", inspect)
+        self.assertLess(
+            inspect.index("python3 scripts/zcloud_vps_runner_guard.py --json"),
+            inspect.index("python3 - <<'PY'"),
+        )
         self.assertLess(inspect.index('test "${GITHUB_REPOSITORY:-}"'),
                         inspect.index("python3 - <<'PY'"))
 
