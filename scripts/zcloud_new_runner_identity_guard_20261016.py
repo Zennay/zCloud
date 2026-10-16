@@ -116,6 +116,9 @@ def _early_guard(job: list[str]) -> bool:
 def unsafe_jobs(doc: str | None) -> dict[str, str]:
     if doc is None:
         return {}
+    # Quoted/tagged/merge root keys can shadow or synthesize jobs invisibly.
+    if re.search(r"(?m)^(?:[\"']jobs[\"']|[?!]\s*jobs|<<)\s*:", doc):
+        raise ValueError("unsupported_jobs_mapping")
     lines = doc.splitlines()
     roots = [i for i, l in enumerate(lines) if re.fullmatch(r"jobs:\s*(?:#.*)?", l)]
     if len(roots) != 1:
@@ -123,6 +126,12 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
     start = roots[0] + 1
     stop = next((i for i in range(start, len(lines)) if lines[i] and not lines[i][0].isspace()), len(lines))
     region = lines[start:stop]
+    for line in region:
+        # Inline mapping, aliases and quoted job keys cannot vanish from inventory.
+        if (line.startswith("  ") and not line.startswith("   ")
+                and line.strip() and not line.lstrip().startswith("#")
+                and not JOB.fullmatch(line)):
+            raise ValueError("unsupported_job_mapping")
     indices = [(i, JOB.fullmatch(l).group(1)) for i, l in enumerate(region) if JOB.fullmatch(l)]
     if not indices or len(indices) > 150 or len({x[1] for x in indices}) != len(indices):
         raise ValueError("ambiguous_job_ids")
