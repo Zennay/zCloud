@@ -339,6 +339,43 @@ class IdentityPolicyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 g.evaluate("a" * 40, "b" * 40)
 
+    def test_unchanged_legacy_job_can_coexist_with_safe_work(self):
+        base = wf(guard=False).replace("      - run: echo after", "")
+        head = base + (
+            "  hosted:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo safe\n"
+        )
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[base, head]):
+            report = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(report["new_findings"], [])
+
+    def test_mutating_same_legacy_unsafe_job_is_fresh_debt(self):
+        base = wf(guard=False)
+        head = base.replace("echo untrusted", "echo untrusted && echo again")
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[base, head]):
+            report = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(report["new_findings"][0]["reason"], "modified_legacy_unsafe_job")
+
+    def test_legacy_job_changed_runner_but_same_risk_category_denied(self):
+        base = wf("[self-hosted, vps]", False)
+        head = wf("[self-hosted, zcloud]", False)
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[base, head]):
+            report = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(report["new_findings"][0]["reason"], "modified_legacy_unsafe_job")
+
+    def test_comment_only_risky_job_change_not_new_debt(self):
+        base = wf(guard=False)
+        head = base.replace("      - run: echo after", "      # review note\n      - run: echo after")
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[base, head]):
+            report = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(report["new_findings"], [])
+
     def test_changed_only_regression(self):
         with mock.patch.object(g, "inventory", return_value=[".github/workflows/new.yml"]), \
              mock.patch.object(g, "source", side_effect=[None, wf(guard=False)]):
