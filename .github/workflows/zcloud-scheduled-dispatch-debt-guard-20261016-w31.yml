@@ -39,6 +39,17 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
           [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git cat-file -t "$EXPECTED_BASE")" = commit
+          # Reject evidence tied to a superseded base; use a fixed canonical origin.
+          expected_main="$EXPECTED_BASE" scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
+          python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31
+          python3 scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py \\
+            --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
+          current_main="$(timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)"
+          test "$current_main" = "$expected_main"
+\\t'"refs/heads/main"
+          current_main="$(timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)"
+          test "$current_main" = "$expected_main"
           python3 -m py_compile scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
           python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31
           python3 scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py             --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
