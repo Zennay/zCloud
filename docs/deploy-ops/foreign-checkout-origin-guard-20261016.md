@@ -11,14 +11,14 @@ A GitHub Actions step using actions/checkout can explicitly set with.repository 
 - Add a read-only, GitHub-hosted PR job, limited to workflow, composite action and guard changes.
 - Admit only first-party PRs targeting main, verify exact immutable Git HEAD, and read both exact SHA trees.
 - Inventory every .github/workflows/*.yml|yaml and nested .github/actions/**/action.yml|yaml at base and head. Refuse partial inventories.
-- Detect explicit foreign or dynamic repository overrides on actions/checkout steps, duplicate overrides, aliased/computed checkout input maps, and unrecognised checkout syntax.
+- Detect explicit foreign or dynamic repository overrides on actions/checkout steps, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
 - Compare per-path multiset counts. Existing debt is grandfathered, while new copies fail.
 - Exit 0 = no new risk, 1 = introduced risk, 2 = indeterminate. JSON includes exact SHA pair and reasons.
-- Run 21 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
+- Run 31 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
 
 ## Safety and limits
 
-This is a conservative source-level heuristic, **not** a YAML-spec-complete parser or a trusted attestation of executable source. YAML alias inputs are now denied when evident inside a checkout step, but dynamically generated jobs, alias indirection outside that step, reusable workflows and checkout post-processing still require separate scrutiny. A same-repository checkout override is not itself proof of an immutable trusted revision. PR-head code can weaken its own advisory check; independent code review and existing admission gates remain required.
+This is a conservative source-level heuristic, **not** a YAML-spec-complete parser or a trusted attestation of executable source. YAML aliases are now denied on checkout input maps, step-level uses action identities, and whole-step alias/merge imports. This conservatively rejects new indirect references even for actions other than checkout, since they can conceal checkout origin. Dynamically generated jobs, complex YAML merge semantics, reusable workflows and checkout post-processing still require separate scrutiny. A same-repository checkout override is not itself proof of an immutable trusted revision. PR-head code can weaken its own advisory check; independent code review and existing admission gates remain required.
 
 CI runs on a GitHub-hosted runner with contents: read, not the VPS. No VPS/Firefox/systemd/SQLite/worker/queue changes, no runner job cancellation, no write token or production deployment.
 
