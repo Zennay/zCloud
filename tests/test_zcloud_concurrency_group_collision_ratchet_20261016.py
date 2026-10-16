@@ -606,6 +606,42 @@ class RatchetTests(unittest.TestCase):
         self.assertFalse(receipt["static_expression_coverage_complete"])
         self.assertFalse(receipt["merge_authorized"])
 
+    def test_dynamic_cancel_predicate_rewrite_is_not_silent(self):
+        first = document("shared", "dynamic")
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first.replace("push", "schedule"))
+        self.denied(base, self.save())
+
+    def test_dynamic_cancel_predicate_whitespace_change_is_reviewed(self):
+        first = document("shared", "dynamic")
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first.replace("github.event_name ==",
+                                              "github.event_name   =="))
+        self.denied(base, self.save())
+
+    def test_unchanged_dynamic_cancel_predicate_allows_harmless_edit(self):
+        first = document("shared", "dynamic")
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first + "# unrelated edit\n")
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_dynamic_cancel_predicate_review_receipt_is_hashed(self):
+        import json
+        first = document("shared", "dynamic")
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first + "# harmless change\n")
+        receipt = gate.inventory(base, self.save())
+        hashes = [
+            m["cancel_expression_sha256"]
+            for x in receipt["review_items"] for m in x["members"]
+            if m["cancel_in_progress"] == "dynamic"
+        ]
+        self.assertEqual(len(hashes), 1)
+        self.assertEqual(len(hashes[0]), 64)
+        self.assertNotIn("github.event_name", json.dumps(receipt))
+        self.assertFalse(receipt["merge_authorized"])
+        self.assertFalse(receipt["production_mutation_authorized"])
+
     def test_invalid_shas_denied(self):
         base = self.base()
         for invalid in ("main", "f" * 39, "z" * 40):
