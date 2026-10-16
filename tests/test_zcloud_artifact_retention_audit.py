@@ -332,6 +332,46 @@ jobs:
             with self.assertRaisesRegex(RuntimeError, "symlink workflow directory"):
                 audit.scan_repository(root, max_days=30)
 
+    def test_unresolved_yaml_uses_identity_fails_closed(self):
+        for unusual in (
+            "*shared_artifact",
+            "&save actions/upload-artifact@v4",
+            "!!str actions/upload-artifact@v4",
+            "|-",
+        ):
+            with self.subTest(unusual=unusual):
+                workflow = (
+                    "jobs:\n  proof:\n    steps:\n"
+                    "      - uses: " + unusual + "\n"
+                    "        with:\n          retention-days: 14\n"
+                )
+                with self.assertRaisesRegex(RuntimeError, "unresolved action identity"):
+                    audit.inspect_workflow("alias.yml", workflow, max_days=30)
+
+    def test_unresolved_action_cli_refuses_success_without_content_leak(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflow_dir = root / ".github" / "workflows"
+            workflow_dir.mkdir(parents=True)
+            path = workflow_dir / "redacted.yml"
+            path.write_text(
+                "jobs:\n  proof:\n    steps:\n      - uses: *private_alias\n",
+                encoding="utf-8",
+            )
+            original = path.read_bytes()
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--repo-root", str(root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(2, result.returncode)
+            payload = json.loads(result.stdout)
+            self.assertIs(payload["ok"], False)
+            self.assertEqual("RuntimeError", payload["error"])
+            self.assertNotIn("private_alias", result.stdout + result.stderr)
+            self.assertEqual(original, path.read_bytes())
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
