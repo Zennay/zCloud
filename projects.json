@@ -574,5 +574,53 @@
         "progress": 15
       }
     ]
+  },
+  {
+    "id": "tuddy",
+    "name": "Tuddy",
+    "eyebrow": "OFFLINE TRANSLATION · ANDROID",
+    "goal": "Accessible, privacy-first bilingual captions and offline translation for real conversations.",
+    "icon": "pulse",
+    "accent": "#bca5ff",
+    "repo_url": "https://github.com/Zennay/Tuddy",
+    "notion_url": "https://app.notion.com/p/3f89e19ac955810aa4a5e53871966f8f",
+    "phase": "Incubation · Android APK + airplane-mode device acceptance",
+    "status": "paused",
+    "priority": "normal",
+    "next_step": "Complete Tuddy #1 Android source import and hosted APK build, then validate offline speech/translation and security on a real Android 12+ device before enabling any zCloud workers.",
+    "milestone_revision": "tuddy-incubation-v1",
+    "progress_basis": "Milestone progress only. Draft code and CI are NOT a tested APK or a released device app.",
+    "milestones": [
+      {
+        "title": "Dedicated GitHub repository + Notion mapping",
+        "done": true,
+        "progress": 100
+      },
+      {
+        "title": "Native Android source imported and reviewed",
+        "done": false,
+        "progress": 25
+      },
+      {
+        "title": "Hosted reproducible debug APK build",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "On-device airplane-mode and privacy acceptance",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Licensed Kurdish/Pashto offline language packs",
+        "done": false,
+        "progress": 0
+      },
+      {
+        "title": "Resource admission and worker enablement",
+        "done": false,
+        "progress": 0
+      }
+    ]
   }
 ]

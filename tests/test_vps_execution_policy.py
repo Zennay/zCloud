@@ -12,7 +12,16 @@ class VpsExecutionPolicyTests(unittest.TestCase):
     def test_policy_is_enabled_for_every_registered_project(self):
         policy = json.loads((ROOT / "vps-execution-policy.json").read_text(encoding="utf-8"))
         self.assertTrue(policy["enabled"])
-        self.assertEqual(set(policy["projects"]), set(server.PROJECT_INDEX))
+        # Human-gated incubating projects are visible on the dashboard but must
+        # NOT acquire the blanket self-hosted VPS execution capability.
+        contracts = json.loads((ROOT / "project-contracts.json").read_text(encoding="utf-8"))
+        gated = {
+            project_id
+            for project_id, contract in contracts["projects"].items()
+            if contract["compute"]["pool"] == "disabled" and contract["ai_worker_cap"] == 0
+        }
+        self.assertEqual(set(policy["projects"]), set(server.PROJECT_INDEX) - gated)
+        self.assertNotIn("tuddy", policy["projects"])
         self.assertIn("github-actions-self-hosted-runner", policy["transport"])
         self.assertIn("vps-bb300bba", policy["runner"]["host"])
         self.assertIn("haxlab", policy["runner"]["forbidden_name_tokens"])
