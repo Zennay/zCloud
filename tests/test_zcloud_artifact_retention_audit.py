@@ -138,6 +138,85 @@ jobs:
             self.assertFalse(payload["ok"])
             self.assertFalse(payload["mutation_performed"])
 
+    def test_only_actual_steps_count_not_shell_documentation(self):
+        source = """jobs:
+  check:
+    steps:
+      - name: Show a sample (not a real upload)
+        run: |
+          cat <<'EXAMPLE'
+          steps:
+            - uses: actions/upload-artifact@v4
+              with:
+                retention-days: 3
+          EXAMPLE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: real
+          retention-days: 14
+"""
+        rows = audit.inspect_workflow("sample.yml", source, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("bounded", rows[0].status)
+        self.assertEqual(14, rows[0].retention_days)
+
+    def test_retention_input_must_be_in_upload_steps_with_mapping(self):
+        source = """jobs:
+  check:
+    steps:
+      - uses: actions/upload-artifact@v4
+        env:
+          retention-days: 7
+        with:
+          name: evidence
+      - uses: actions/upload-artifact@v4
+        with:
+          name: second
+          unrelated:
+            retention-days: 1
+      - uses: "actions/upload-artifact@v4"
+        with:
+          retention-days: '20'
+"""
+        rows = audit.inspect_workflow("sample.yml", source, max_days=30)
+        self.assertEqual(["missing", "missing", "bounded"], [r.status for r in rows])
+        self.assertEqual([None, None, 20], [r.retention_days for r in rows])
+
+    def test_comments_nested_or_non_step_uses_do_not_count(self):
+        source = """# - uses: actions/upload-artifact@v4
+jobs:
+  check:
+    steps:
+      - name: demo
+        run: >-
+          - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v4
+        with:
+          extra: uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4 # a real step
+        with:
+          retention-days: ${{ inputs.retention_days }}
+"""
+        rows = audit.inspect_workflow("sample.yml", source, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("dynamic_or_invalid", rows[0].status)
+
+    def test_rejects_symlink_workflow_dir_and_oversized_workflow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "outside"
+            outside.mkdir()
+            (root / ".github").mkdir()
+            (root / ".github" / "workflows").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "symlink workflow directory"):
+                audit.scan_repository(root, max_days=30)
+            (root / ".github" / "workflows").unlink()
+            work = root / ".github" / "workflows"
+            work.mkdir()
+            (work / "huge.yml").write_bytes(b"x" * (1024 * 1024 + 1))
+            with self.assertRaisesRegex(RuntimeError, "workflow too large"):
+                audit.scan_repository(root, max_days=30)
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
