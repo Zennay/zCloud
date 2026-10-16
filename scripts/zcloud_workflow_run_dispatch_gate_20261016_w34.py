@@ -38,7 +38,7 @@ DISPATCH_ACTIONS = {
 }
 
 GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field|--input)(?=[ =]))", re.I)
-CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json|-F|--form(?:-string)?)(?=[ =@'"]))", re.I)
+CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json|-F|--form(?:-string)?)(?=[ =@]))", re.I)
 
 MAX_PATHS = 400
 MAX_SOURCE = 200_000
