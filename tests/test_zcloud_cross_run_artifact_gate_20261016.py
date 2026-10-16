@@ -468,6 +468,48 @@ class Tests(unittest.TestCase):
     def test_official_current_run_default_remains_safe(self):
         self.assertEqual(sum(module._risks(SAFE,'w.yml').values()),0)
 
+    def test_new_findings_report_paths_not_secret_values(self):
+        base=self.commit(SAFE)
+        head=self.commit(CROSS.replace('DYNAMIC_VALUE','SENSITIVE_CANARY_7X'))
+        report=module.evaluate(self.repo,base,head)
+        self.assertEqual(report['new_finding_paths'],['.github/workflows/sample.yml'])
+        self.assertNotIn('SENSITIVE_CANARY_7X',str(report))
+        self.assertFalse(report['ok'])
+
+    def test_safe_snapshot_has_no_new_finding_paths(self):
+        base=self.commit(SAFE)
+        head=self.commit(SAFE+'\n# harmless post-step note\n')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_finding_paths'],[])
+
+    def test_nested_composite_reports_exact_path_not_action_values(self):
+        base=self.commit(SAFE)
+        manifest=self.repo/'actions/tools/action.yml'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('runs:\n  using: composite\n  steps:\n    - run: gh run download 12345\n      shell: bash\n')
+        self.git('add','.'); self.git('commit','-qm','nested downloader')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_finding_paths'],['actions/tools/action.yml'])
+
+    def test_two_new_risks_in_one_file_emit_single_path(self):
+        base=self.commit(SAFE)
+        head=self.commit(CROSS+'\n      - run: gh run download 12345\n')
+        report=module.evaluate(self.repo,base,head)
+        self.assertEqual(report['new_findings'],2)
+        self.assertEqual(report['new_finding_paths'],['.github/workflows/sample.yml'])
+
+    def test_path_with_colon_roundtrips_in_safe_remediation_report(self):
+        base=self.commit(SAFE)
+        colon=self.repo/'.github/workflows/group:variant.yaml'
+        colon.write_text(CROSS)
+        self.git('add','.'); self.git('commit','-qm','artifact debt in colon path')
+        report=module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))
+        self.assertEqual(report['new_finding_paths'],['.github/workflows/group:variant.yaml'])
+
+    def test_gh_and_api_kind_path_helpers_allow_colons(self):
+        for kind in ('gh-run-download','github-api-artifact-path'):
+            self.assertEqual(module._risk_source_path('a:b/c.yml:44:'+kind+':hash'),'a:b/c.yml')
+        self.assertEqual(module._risk_source_path('a:b/c.yml:44:hash'),'a:b/c.yml')
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
