@@ -514,5 +514,56 @@ class ReleaseReceiptTests(unittest.TestCase):
 
 
 
+    def test_json_escaped_surrogate_values_rejected(self):
+        for raw in (b'{"field":"\ud800"}', b'{"field":"\udfff"}',
+                    b'{"field":["ok", {"nested":"\ud800"}]}'):
+            with self.subTest(raw=raw):
+                with self.assertRaisesRegex(ValueError, "invalid_json"):
+                    gate.decode_receipt(raw)
+
+    def test_json_escaped_surrogate_keys_rejected(self):
+        with self.assertRaisesRegex(ValueError, "invalid_json"):
+            gate.decode_receipt(b'{"good":{"bad\ud800key":"value"}}')
+
+    def test_json_invisible_control_and_direction_override_rejected(self):
+        for escape in (rb"\u0000", rb"\u000a", rb"\u007f",
+                       rb"\u202e", rb"\u202a", rb"\u200d",
+                       rb"\ufeff", rb"\u2066"):
+            raw = b'{"x":"' + escape + b'"}'
+            with self.subTest(escape=escape):
+                with self.assertRaisesRegex(ValueError, "invalid_json"):
+                    gate.decode_receipt(raw)
+
+    def test_json_valid_nonascii_text_and_surrogate_pairs_are_allowed(self):
+        raw = b'{"text":"caf\xc3\xa9 \ud83d\ude80"}'
+        self.assertEqual("café 🚀", gate.decode_receipt(raw)["text"])
+        self.assertEqual("é", gate.decode_receipt(
+            json.dumps({"text": "é"}).encode("utf-8")
+        )["text"])
+
+    def test_cli_invisible_unicode_rejected_without_reflecting_payload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "malformed.json"
+            data = json.dumps(receipt()).replace(
+                '"zcloud-release-evidence-v1"',
+                '"zcloud-release-evidence-v1\\u202e"',
+                1,
+            )
+            path.write_bytes(data.encode("utf-8"))
+            for output_format in ("json", "markdown"):
+                with self.subTest(output_format=output_format):
+                    call = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--input", str(path),
+                         "--format", output_format],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertEqual(2, call.returncode, call.stderr)
+                    self.assertNotIn(r"\u202e", call.stdout + call.stderr)
+                    self.assertIn("GEEN PRODUCTIEVRIJGAVE" if output_format ==
+                                  "markdown" else "invalid_json", call.stdout)
+                    self.assertNotIn("Traceback", call.stdout + call.stderr)
+
+
+
 if __name__ == "__main__":
     unittest.main()
