@@ -20,6 +20,9 @@ SCHEDULE_RE = re.compile(r"^\s{2}schedule\s*:\s*(.*?)\s*$")
 TOP_LEVEL_RE = re.compile(r"^[^\s#][^:]*\s*:")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 MIN_GAP = 15
+MONTHS = dict(zip("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(), range(1, 13)))
+WEEKDAYS = dict(zip("SUN MON TUE WED THU FRI SAT".split(), range(7)))
+SAFE_INLINE_EVENTS = re.compile(r"^(?:push|pull_request|workflow_dispatch|workflow_call|workflow_run|issues|issue_comment|release)$")
 
 
 class AdmissionError(ValueError):
@@ -36,7 +39,10 @@ def git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
-def field_values(text: str, low: int, high: int) -> set[int]:
+def field_values(text: str, low: int, high: int, names: dict[str, int] | None = None) -> set[int]:
+    if names:
+        text = re.sub(r"[A-Za-z]{3}", lambda m: str(names[m.group(0).upper()])
+                      if m.group(0).upper() in names else m.group(0), text)
     values: set[int] = set()
     for token in text.split(","):
         token = token.strip()
@@ -78,8 +84,8 @@ def is_high_frequency(cron: str) -> bool:
     hours = field_values(parts[1], 0, 23)
     # Validate remaining fields enough to reject nonliteral or macro syntax.
     field_values(parts[2], 1, 31)
-    field_values(parts[3], 1, 12)
-    field_values(parts[4], 0, 6)
+    field_values(parts[3], 1, 12, MONTHS)
+    field_values(parts[4], 0, 7, WEEKDAYS)
     times = sorted(60 * hour + minute for hour in hours for minute in minutes)
     if not times:
         raise AdmissionError("empty_cron_times")
@@ -100,10 +106,15 @@ def schedules(source: str) -> tuple[str, ...]:
             in_on = key == "on"
             in_schedule = False
             if in_on and line.partition(":")[2].strip() not in ("", "# workflow events"):
-                # Simple inline triggers are valid but have no cron settings.
-                # Inline YAML mentioning schedule cannot be safely parsed.
-                if "schedule" in line.partition(":")[2]:
-                    raise AdmissionError("ambiguous_inline_schedule")
+                # Inline aliases, maps, YAML tags or schedule directives could
+                # hide a cron job. Only simple event names/lists are exempt.
+                raw_event = line.partition(":")[2].split(" #", 1)[0].strip()
+                if raw_event.startswith("[") and raw_event.endswith("]"):
+                    events = [event.strip().strip("'\\\"") for event in raw_event[1:-1].split(",")]
+                else:
+                    events = [raw_event.strip("'\\\"")]
+                if not events or any(not SAFE_INLINE_EVENTS.fullmatch(event) for event in events):
+                    raise AdmissionError("ambiguous_inline_on")
                 in_on = False
             continue
         if not in_on or not line.strip() or line.lstrip().startswith("#"):
