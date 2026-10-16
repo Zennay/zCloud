@@ -129,12 +129,17 @@ jobs:
           print("RDP_EXPECTED_SCRIPT_VERSION="+expected_version)
           # Only read Firefox RDP actor data. Never navigate, close, reload
           # tabs or print private conversation titles, URLs or prompts.
-          from scripts.zcloud_live_tab_rdp_port_20261016 import detect_debugger_port
+          from scripts.zcloud_live_tab_rdp_port_20261016 import (
+              detect_debugger_port, trusted_firefox_executable,
+          )
           proc=subprocess.run(["ps","-eo","pid=,ppid=,args="],text=True,capture_output=True,timeout=5)
           if proc.returncode != 0:
               print("RDP_SAFE_PROBE_UNAVAILABLE=ps_error")
               raise SystemExit(0)
-          status,port=detect_debugger_port(proc.stdout.splitlines())
+          status,port=detect_debugger_port(
+              proc.stdout.splitlines(),
+              verify_executable=trusted_firefox_executable,
+          )
           print("FIREFOX_DEBUGGER_UNIQUE="+str(status=="unique").lower())
           if status=="absent":
               print("RDP_AVAILABLE=false")
