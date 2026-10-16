@@ -65,8 +65,12 @@ def _runner(value: str) -> str:
         return "needs_guard"
     if val == "self-hosted" or not val or "${{" in val or val.startswith("{"):
         return "needs_guard"
-    if "self-hosted" in val.lower():
-        return "other_self_hosted"  # dedicated FTMO/other runner has its own policy
+    # Only a specific dedicated non-zCloud label set is exempt. Generic
+    # [self-hosted] and unrecognised labels can schedule on the zCloud VPS.
+    if val.startswith("[") and val.endswith("]"):
+        labels = [label.strip().strip("'\\\"").lower() for label in val[1:-1].split(",")]
+        if len(labels) == 2 and set(labels) == {"self-hosted", "ftmo-research"}:
+            return "other_self_hosted"
     return "needs_guard"
 
 
