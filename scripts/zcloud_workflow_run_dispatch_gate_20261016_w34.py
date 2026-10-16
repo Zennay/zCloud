@@ -37,8 +37,8 @@ DISPATCH_ACTIONS = {
     "convictional/trigger-workflow-and-wait",
 }
 
-GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field)(?=[ =]))", re.I)
-CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json)(?=[ =]))", re.I)
+GH_POST = re.compile(r"(?:-X(?:=|\s*)POST|--method(?:=|\s+)POST|(?:-f|-F|--field|--raw-field|--input)(?=[ =]))", re.I)
+CURL_POST = re.compile(r"(?:-X(?:=|\s*)POST|--request(?:=|\s+)POST|(?:-d|--data(?:-raw|-binary|-urlencode)?|--json|-F|--form(?:-string)?)(?=[ =@'"]))", re.I)
 
 MAX_PATHS = 400
 MAX_SOURCE = 200_000
@@ -197,6 +197,12 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
     sites.update(action_dispatch_sites(source))
     for body in executable_steps(source):
         normalized = re.sub(r"\\\s*\n", " ", body)
+        # YAML folded block scalars (>, >-, >+) join adjacent physical lines
+        # into one shell command even without explicit backslashes. Treat
+        # those lines as a single command for dispatch API origin detection.
+        if body.lstrip().startswith(">"):
+            normalized = " ".join(part.strip() for part in normalized.splitlines()
+                                  if part.strip())
         for detector, pattern in enumerate(RISK):
             for match in pattern.finditer(normalized):
                 if detector in (2, 3):

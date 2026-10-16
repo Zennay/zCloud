@@ -224,6 +224,23 @@ class GateTests(unittest.TestCase):
         self.assertEqual(report["current_findings"], 2)
         self.assertEqual(report["new_findings"], [WORKFLOW])
 
+
+    def test_folded_yaml_dispatch_post_infers_single_command(self):
+        for command in (
+            "gh api\n          --input request.json\n          /repos/Zennay/zCloud/actions/workflows/a.yml/dispatches",
+            "curl\n          --form ref=main\n          https://api.github.com/repos/Zennay/zCloud/actions/workflows/a.yml/dispatches",
+            "curl\n          -d@request.json\n          https://api.github.com/repos/Zennay/zCloud/dispatches",
+        ):
+            with self.subTest(command=command):
+                source = TEMPLATE.replace("      - run: |", "      - run: >-").replace(
+                    "echo harmless", command)
+                self.assertTrue(classify(source))
+
+    def test_literal_yaml_multiline_get_remains_read_only(self):
+        source = TEMPLATE.replace("      - run: |", "      - run: >-").replace(
+            "echo harmless", "curl\n          -X GET\n          https://api.github.com/repos/Zennay/zCloud/dispatches")
+        self.assertFalse(classify(source))
+
     def test_on_variants(self):
         self.assertTrue(workflow_run_event("on: [push, workflow_run]\njobs:\n"))
         self.assertTrue(workflow_run_event('"on": {workflow_run: {types: [completed]}}\njobs:\n'))
