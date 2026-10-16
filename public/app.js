@@ -381,7 +381,7 @@ function globalWorkerRows(){
       delete GLOBAL_WORKER_PROJECT_REQUESTS[slot];delete GLOBAL_WORKER_REQUEST_RESULTS[slot];delete GLOBAL_WORKER_REQUEST_AT[slot];
     }
     const choice=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:assigned;
-    const options=(DATA?.projects||[]).map(p=>'<option value="'+esc(p.id)+'"'+(choice===p.id?' selected':'')+'>'+esc(p.name)+'</option>').join('');
+    const options=[...(DATA?.projects||[]),...(DATA?.archived_projects||[]),...(DATA?.worker_modes||[])].map(p=>'<option value="'+esc(p.id)+'"'+(choice===p.id?' selected':'')+'>'+esc(p.name)+'</option>').join('');
     const pending=GLOBAL_WORKER_REQUEST_RESULTS[slot]||'';
     const waiting=(pending.startsWith('Project priority requested')||pending.startsWith('Force voor worker'))&&Date.now()-Number(GLOBAL_WORKER_REQUEST_AT[slot]||0)<WORKER_REQUEST_RETRY_MS;
     const verdict=verified?(w?(VERDICT_LABEL[w.verdict]||w.verdict):'Beschikbaar'):'Status niet geverifieerd';
@@ -406,7 +406,7 @@ function globalWorkerRows(){
     return '<article class="global-worker-row" data-global-slot="'+slot+'">'
       +'<div class="global-worker-identity"><span class="global-worker-index">'+String(slot).padStart(2,'0')+'</span><div><strong>Worker '+slot+'</strong><small>'+esc(provider)+'</small></div></div>'
       +'<div class="global-worker-state '+(w?verdictClass(w.verdict):'idle')+'"><span class="global-worker-dot" aria-hidden="true"></span><span>'+esc(verdict)+'</span></div>'
-      +'<label class="global-worker-project"><span>Project</span><select data-global-worker-project="'+slot+'" aria-label="Project voor worker '+slot+'"'+(!verified?' disabled':'')+'><option value=""'+(!choice?' selected':'')+'>Geen project</option>'+options+'</select></label>'
+      +'<label class="global-worker-project"><span>Project</span><select data-global-worker-project="'+slot+'" aria-label="Project voor worker '+slot+'"><option value=""'+(!choice?' selected':'')+'>Geen project</option>'+options+'</select></label>'
       +'<div class="global-worker-actions" aria-label="Bediening worker '+slot+'">'
       +'<button type="button" class="worker-icon-action worker-play" data-global-worker-play="'+slot+'" aria-label="Start worker '+slot+'" title="Start worker"'+disabled(canPlay,'Kies een project of wacht totdat de worker beschikbaar is')+'>'+workerControlIcon('play')+'</button>'
       +'<button type="button" class="worker-icon-action worker-pause" data-worker-action="pause" data-worker-id="'+esc(workerId)+'" aria-label="Pauzeer worker '+slot+'" title="Pauzeer worker"'+disabled(canPause,'Geen draaiende worker om te pauzeren')+'>'+workerControlIcon('pause')+'</button>'
@@ -456,7 +456,7 @@ async function requestGlobalWorkerProject(slot,button,force=false){
   const target=String(selector.value||'');
   const observed=(WORKER_DEBUG?.workers||[]).find(w=>Number(w.global_slot)===slot);
   if(!target){GLOBAL_WORKER_REQUEST_RESULTS[slot]='Automatic queue selection is already active. No project was reassigned.';render();return}
-  if(!(DATA?.projects||[]).some(p=>p.id===target)){window.alert('Choose a valid project.');return}
+  if(![...(DATA?.projects||[]),...(DATA?.archived_projects||[]),...(DATA?.worker_modes||[])].some(p=>p.id===target)){window.alert('Choose a valid project or worker role.');return}
   if(observed&&observed.project!==target&&['generating','prompt-sent'].includes(observed.verdict)){
     window.alert('This worker is busy. Finish or stop its current task before requesting a different project.');return;
   }

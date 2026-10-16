@@ -318,6 +318,7 @@ def validate(
     server_path: Path,
     enhancements_path: Path,
     db_path: Path | None,
+    worker_modes_path: Path | None = None,
 ) -> dict:
     errors: list[str] = []
     try:
@@ -353,21 +354,44 @@ def validate(
 
     project_ids = validate_projects(projects, errors)
     validate_layout(layout, project_ids, errors)
+    mode_path=worker_modes_path or projects_path.with_name("worker-modes.json")
+    role_ids=set()
+    if mode_path.exists():
+        try:
+            modes=load_json(mode_path)
+            if not isinstance(modes,list):
+                raise ValueError("worker-modes.json: array required")
+            for mode in modes:
+                if not isinstance(mode,dict):
+                    errors.append("worker-modes.json: object role required")
+                    continue
+                pid=mode.get("id")
+                if not isinstance(pid,str) or not ID_RE.fullmatch(pid):
+                    errors.append("worker-modes.json: invalid role id")
+                elif pid in project_ids or pid in role_ids:
+                    errors.append(f"worker-modes.json: duplicate/colliding role {pid!r}")
+                else:
+                    role_ids.add(pid)
+                if not isinstance(mode.get("name"),str) or not mode["name"].strip():
+                    errors.append("worker-modes.json: role name required")
+        except ValueError as exc:
+            errors.append(str(exc))
+    executable_ids=project_ids | role_ids
     runtime_contracts = validate_project_contracts(
         project_contracts,
-        project_ids,
+        executable_ids,
         set(priority_weights) if isinstance(priority_weights, dict) else set(),
         errors,
     )
     validate_resource_policy(
         resources,
-        project_ids,
+        executable_ids,
         set(priority_weights) if isinstance(priority_weights, dict) else set(),
         set(project_units) if isinstance(project_units, dict) else set(),
         errors,
     )
     worker_state = (
-        validate_worker_state(db_path, project_ids, max_workers, errors)
+        validate_worker_state(db_path, executable_ids, max_workers, errors)
         if db_path is not None and isinstance(max_workers, int) and max_workers > 0
         else {"checked": False}
     )
@@ -376,6 +400,7 @@ def validate(
         "errors": errors,
         "contracts": {
             "project_count": len(project_ids),
+            "worker_role_count": len(role_ids),
             "max_workers": max_workers,
             "priorities": sorted(priority_weights) if isinstance(priority_weights, dict) else [],
             "resource_projects": sorted(project_units) if isinstance(project_units, dict) else [],
@@ -394,6 +419,7 @@ def main(argv=None) -> int:
     parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--enhancements", type=Path, required=True)
     parser.add_argument("--db", type=Path)
+    parser.add_argument("--worker-modes", type=Path)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     result = validate(
@@ -404,6 +430,7 @@ def main(argv=None) -> int:
         server_path=args.server.resolve(),
         enhancements_path=args.enhancements.resolve(),
         db_path=args.db.resolve() if args.db else None,
+        worker_modes_path=args.worker_modes.resolve() if args.worker_modes else None,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

@@ -105,6 +105,7 @@ CREATABLE_PATHS = {
     # promoted by the guarded backend allowlist; bootstrap only this exact path.
     "lane_generator.py",
     "project-contracts.json",
+    "worker-modes.json",
     "autonomy-policy.json",
     "portfolio_queue.seed.json",
     # This policy is part of the deploy allowlist and may be bootstrapped on
@@ -567,7 +568,7 @@ def needs_service_restart(paths: list[str]) -> bool:
     # Static dashboard/userscript assets are served from disk and do not
     # require restarting the control-plane HTTP service. Restart only when
     # Python/service/deployment sources change.
-    service_paths = {"server.py", "enhancements.py"}
+    service_paths = {"server.py", "enhancements.py", "worker-modes.json"}
     service_prefixes = ("scripts/", "deploy/")
     return any(
         str(rel) in service_paths or str(rel).startswith(service_prefixes)
@@ -974,6 +975,15 @@ def run_config_validation(
         "--db", str(root / "history.db"),
         "--json",
     ]
+    # The live worker-role metadata is an optional presentation file. Older VPS
+    # installs do not contain it; server.py has an identical in-source fallback.
+    # Validate the immutable candidate role definition while promoting its
+    # backend contract, without silently writing optional runtime metadata.
+    worker_modes = effective("worker-modes.json")
+    if not worker_modes.is_file() and (candidate / "worker-modes.json").is_file():
+        worker_modes = candidate / "worker-modes.json"
+    if worker_modes.is_file():
+        args.extend(["--worker-modes", str(worker_modes)])
     proc = run(args, check=False)
     payload = parse_json_output(proc, "config schema validator")
     if proc.returncode or not payload.get("ok"):

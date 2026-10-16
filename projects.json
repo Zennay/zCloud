@@ -714,53 +714,5 @@
         "progress": 0
       }
     ]
-  },
-  {
-    "id": "zsentinel",
-    "name": "zSentinel",
-    "eyebrow": "AUTONOMOUS PORTFOLIO RELIABILITY",
-    "goal": "Continuously detect genuinely stuck projects, reason over the canonical Notion operating systems, autonomously debug and safely repair independently owned faults, and prove recovery.",
-    "icon": "shield",
-    "accent": "#89c9ff",
-    "repo_url": "https://github.com/Zennay/zCloud",
-    "notion_url": "https://app.notion.com/p/3fb9e19ac95581f2b686f01ed9e4dee0",
-    "phase": "M0 · autonomous recovery supervisor foundation",
-    "status": "active",
-    "priority": "high",
-    "next_step": "Read-only incident classifier + continuous Notion/GitHub supervisor; prove one bounded GitHub fix and exact-head CI before automated remediation is promoted. No production/runner restarts without authorized release gate.",
-    "milestone_revision": "zsentinel-m0-genesis-20261016",
-    "progress_basis": "Integration and reproducible diagnostics only. Recurring checks or a green CI run alone do not prove autonomous recovery.",
-    "milestones": [
-      {
-        "title": "M0 · Notion OS linked project + registry",
-        "done": false,
-        "progress": 80
-      },
-      {
-        "title": "M1 · Reliable blocked versus intentional-wait detection",
-        "done": false,
-        "progress": 25
-      },
-      {
-        "title": "M2 · Issue ownership and dependency-aware root cause",
-        "done": false,
-        "progress": 0
-      },
-      {
-        "title": "M3 · Scoped auto-repair PR plus exact-head tests",
-        "done": false,
-        "progress": 0
-      },
-      {
-        "title": "M4 · Scheduled full-portfolio health and intervention",
-        "done": false,
-        "progress": 0
-      },
-      {
-        "title": "M5 · Verified live recovery and emergency stop",
-        "done": false,
-        "progress": 0
-      }
-    ]
   }
 ]

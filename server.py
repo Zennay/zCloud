@@ -97,6 +97,8 @@ WORKER_LANES = (
 def _load_project_registry():
     """Load presentation metadata and hydrate runtime fields from the canonical contract."""
     projects=json.loads((ROOT/'projects.json').read_text())
+    # Do not render a legacy sentinel card from operator-owned live registry.
+    projects=[project for project in projects if project.get('id')!='zsentinel']
     for project in projects:
         project_id=str(project.get('id') or '').strip().lower()
         try:
@@ -112,7 +114,26 @@ def _load_project_registry():
         project['lane_profile']=str(contract.get('lane_profile') or '')
     return projects
 
-PROJECT_INDEX = {p['id']: p for p in _load_project_registry()}
+# Worker roles are queue-capable but NOT normal product/portfolio cards.
+WORKER_MODES_FILE = ROOT / 'worker-modes.json'
+def _load_worker_modes():
+    # Backend source may deploy before optional worker role presentation metadata.
+    modes=(json.loads(WORKER_MODES_FILE.read_text(encoding='utf-8'))
+           if WORKER_MODES_FILE.exists()
+           else [{'id':'zsentinel','name':'zSentinel · Vliegende keep',
+                  'goal':'Remove portfolio blockers before clearing remaining issues.'}])
+    if not isinstance(modes,list) or not modes:
+        raise ValueError('worker-modes.json must be a nonempty list')
+    ids=[row.get('id') for row in modes if isinstance(row,dict)]
+    if len(ids)!=len(modes) or len(set(ids))!=len(ids) or not all(isinstance(pid,str) and pid for pid in ids):
+        raise ValueError('Duplicate or malformed worker mode identifier')
+    return modes
+
+WORKER_MODES = _load_worker_modes()
+PORTFOLIO_PROJECT_INDEX = {p['id']:p for p in _load_project_registry()}
+if set(PORTFOLIO_PROJECT_INDEX) & {role['id'] for role in WORKER_MODES}:
+    raise ValueError('Worker role cannot also be a portfolio project')
+PROJECT_INDEX = {**PORTFOLIO_PROJECT_INDEX, **{role['id']:role for role in WORKER_MODES}}
 
 VPS_EXECUTION_POLICY_FILE = ROOT / 'vps-execution-policy.json'
 
@@ -159,6 +180,18 @@ def action_request_allowed(handler):
     return same_origin and fetch_site in ('same-origin', 'same-site')
 
 def project_runner_prompt(project_id, name):
+    if project_id=='zsentinel':
+        return (
+            'Werk verder aan zSentinel als vliegende keep voor ALLE zCloud-projecten, niet als portfolio-project.'
+            'Kijk in Notion in welke fase het project zit; lees Project Genesis OS, Company OS, Portfolio Control Tower OS, relevante HQ/handoffs, GitHub-issues/PRs/CI, branches, queue en workerclaims.'
+            'PRIORITEIT 1: VERWIJDER BLOKKADES. Onderzoek P0-stops, niet-toegewezen of vastgelopen workers, falende CI, runner-/queueproblemen en vastgelopen dependencies; onderscheid dit van bewuste research-, device- en releasegates.'
+            'Redeneer vanuit het hele portfolio. Bouw de ontbrekende oplossing: fix root-cause met code/tests, maak een veilige alternatieve route of stuur vrije workers naar zelfstandig uitvoerbaar werk. Pas waar toegestaan wachtrij, prioriteit of taken toe met bewijs en rollback. Neem geen actieve claim of generatie over.'
+            'Bewijs herstel met werkelijke taakvoortgang, commit, tests en runtime-signalen. Eén heartbeat, retry of groene hosted CI bewijst geen live herstel.'
+            'PRIORITEIT 2: OPEN ISSUES EN FEATURES. Pak daarna overgebleven P0/P1 en P2/P3-issues, bugs, onafgemaakte PRs en roadmapfeatures aan. Voer meerdere materiële fixes achter elkaar uit; switch bij een echte gate direct naar ander veilig werk, ook bij een ander project.'
+            'Vraag geen menselijke input voor normale debugs, onderzoek via Notion/GitHub en bestaande worker-/runnerkanalen en implementeer zelfstandig.'
+            'Respecteer rechten, actieve eigenaars, scoped security, secrets, FTMO-holdouts, fysieke devicevalidatie en verplichte productie-releasegates; nooit blind restart/deploy, massaal cancelen of gate omzeilen.'
+            'Sluit issues pas na bewezen resultaat; noem kort fix, tests, commit, PR en runtimeverificatie.'
+        )
     return (
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
@@ -275,7 +308,9 @@ def live_receipt_status(data):
 def public_status(data):
     live_data=live_receipt_status(data)
     visible, archived, layout=project_views(live_data)
-    return {**live_data,'projects':visible,'archived_projects':archived,'project_layout':layout,'alerts':enhancements.list_alerts(DB,8,False)}
+    return {**live_data,'projects':visible,'archived_projects':archived,'project_layout':layout,
+            'worker_modes':[{'id':role['id'],'name':role['name'],'description':role.get('goal','')} for role in WORKER_MODES],
+            'alerts':enhancements.list_alerts(DB,8,False)}
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def cmd(args):
@@ -2805,6 +2840,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     priority_by_project={
         'lightup':'P0',
         'zssh':'P1',
+        'zsentinel':'P1',
         'ftmo':'P1',
         'zguard':'P2',
         'cloud':'P2',

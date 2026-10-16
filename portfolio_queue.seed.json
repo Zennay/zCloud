@@ -308,5 +308,15 @@
     "eligible": true,
     "completion_criteria": "Build a small, tested independent equity research foundation in Zennay/tradengine: point-in-time fundamentals with publication timestamps/provenance, explainable value-quality-growth scoring, missing-data safety, bias regression tests, and repeatable fixture-based validation. No real orders, broker credentials, or FTMO integration. Check existing PRs and avoid conflicting work.",
     "source_url": "https://app.notion.com/p/3fa9e19ac955813280b9e2a4395c2137"
+  },
+  {
+    "queue_id": "zsentinel-cross-project-flying-fixer-v1",
+    "project_id": "zsentinel",
+    "title": "First unblock stalled projects and workers, then clear remaining open issues",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "PRIORITY 1: eliminate portfolio blockers and prove restored progress. Read canonical Notion Project Genesis, Company and Portfolio Control Tower OS and current GitHub P0 incidents, open issues, PRs, branches, CI, queue/worker ownership. Distinguish real stuck dependencies from intentional permission/research/release/device gates. Independently debug and fix root causes through code/tests, design and implement alternative safe execution routes, or redirect FREE nonbusy workers toward independent actionable tasks. Where authorized adjust queue priorities/sequence and stale unclaimed work with durable proof and rollback. Never interrupt live generation, steal owner claims, bypass release/security/research rights or force production deployment. Require actual work and tests, fresh claim and runtime evidence; heartbeat, retries and status alone are not completion. PRIORITY 2: then fix unresolved open P0/P1 and P2/P3 issues, incomplete PRs, bugs and roadmap features across all projects; if any individual task is blocked, switch directly to another safe unowned task rather than waiting for human input. Perform multiple material implementation steps.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
   }
 ]
