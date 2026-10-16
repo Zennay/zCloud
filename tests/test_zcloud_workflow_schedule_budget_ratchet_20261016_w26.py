@@ -125,6 +125,14 @@ class CronPolicyTests(unittest.TestCase):
         with self.assertRaises(AdmissionError):
             cross_schedule_bursts(("0 9 * * *",) * 33)
 
+    def test_yaml_merge_cannot_hide_schedule_trigger(self):
+        with self.assertRaises(AdmissionError):
+            schedules("on:\n  <<: *schedule_alias\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
+
+    def test_anchor_cannot_replace_event_approval(self):
+        with self.assertRaises(AdmissionError):
+            schedules("on: &event_alias\n  schedule:\n    - cron: '*/5 * * * *'\n")
+
     def test_timezone_metadata_parsed(self):
         zones = []
         expr = "on:\n  schedule:\n    - cron: '0 9 * * *'\n      timezone: America/New_York\n"
@@ -264,6 +272,18 @@ class RealGitNoNewDebtTests(unittest.TestCase):
 
     def test_symlinked_workflow_denied(self):
         (self.directory / "alias.yml").symlink_to(self.directory / "legacy.yml")
+        with self.assertRaises(AdmissionError):
+            audit(self.root, self.baseline)
+
+    def test_symlinked_workflow_directory_denied(self):
+        self.directory.rename(self.root / ".github/workflows-original")
+        self.directory.symlink_to(self.root / ".github/workflows-original", target_is_directory=True)
+        with self.assertRaises(AdmissionError):
+            audit(self.root, self.baseline)
+
+    def test_symlinked_github_parent_denied(self):
+        self.directory.parent.rename(self.root / "github-original")
+        (self.root / ".github").symlink_to(self.root / "github-original", target_is_directory=True)
         with self.assertRaises(AdmissionError):
             audit(self.root, self.baseline)
 
