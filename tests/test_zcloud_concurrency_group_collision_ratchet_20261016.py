@@ -65,10 +65,41 @@ class RatchetTests(unittest.TestCase):
         self.write("second.yaml", document("shared", False))
         self.denied(base, self.save())
 
-    def test_two_false_groups_do_not_cancel(self):
+    def test_two_false_groups_still_replace_pending_runs(self):
         base = self.base(document("shared", False))
         self.write("second.yaml", document("shared", False))
-        self.assertEqual(gate.check(base, self.save()), (0, 0))
+        self.denied(base, self.save())
+
+    def test_legacy_false_false_collision_remains_grandfathered(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("first.yml", document("shared", False, extra="# benign step edit\n"))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_queue_max_does_not_make_cross_workflow_collision_safe(self):
+        base = self.base(document("shared", False))
+        self.write("first.yml", document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
+        self.write("second.yaml", document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
+        self.denied(base, self.save())
+
+    def test_queue_max_with_true_cancel_fails_closed(self):
+        base = self.base()
+        self.write("second.yaml", document("shared", True).replace(
+            "cancel-in-progress: true", "cancel-in-progress: true\n  queue: max"))
+        self.denied(base, self.save())
+
+    def test_invalid_queue_setting_denied(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: [max]"))
+        self.denied(base, self.save())
+
+    def test_changing_legacy_pending_queue_requires_review(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("first.yml", document("shared", False).replace(
+            "cancel-in-progress: false", "cancel-in-progress: false\n  queue: max"))
+        self.denied(base, self.save())
 
     def test_new_cancellation_on_existing_shared_group_denied(self):
         base = self.base(document("shared", False), document("shared", False))
