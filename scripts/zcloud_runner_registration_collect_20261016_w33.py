@@ -54,11 +54,20 @@ def collect(*, executor=subprocess.run, clock=None):
         report['reason_code'] = 'diagnostic_only'
         return report
     except (InvalidEvidence, subprocess.TimeoutExpired, OSError, ValueError,
-            TypeError, OverflowError):
-        # Raw exception messages can include HTTP credentials and paths.
+            TypeError, OverflowError) as error:
+        # Only fixed safe constants: never echo subprocess stderr, HTTP data,
+        # token-bearing argv or exception text to the operator or CI logs.
+        if isinstance(error, FileNotFoundError):
+            reason = 'github_cli_not_installed'
+        elif isinstance(error, subprocess.TimeoutExpired):
+            reason = 'github_runner_read_timeout'
+        elif type(error) is InvalidEvidence and str(error) == 'runner_admin_read_unavailable':
+            reason = 'github_runner_admin_read_denied'
+        else:
+            reason = 'untrusted_runner_response'
         return {
             'schema': SCHEMA, 'classification': 'EVIDENCE_UNAVAILABLE',
-            'reason_code': 'trusted_runner_read_unavailable',
+            'reason_code': reason,
             'registration_claim_parsed': False,
             'independent_registration_verified': False,
             'runner_group_access_verified': False,
