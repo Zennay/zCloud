@@ -14,7 +14,7 @@ A GitHub Actions step using actions/checkout can explicitly set with.repository 
 - Detect explicit foreign or dynamic repository overrides on actions/checkout steps, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
 - Compare per-path multiset counts. Existing debt is grandfathered, while new copies fail.
 - Exit 0 = no new risk, 1 = introduced risk, 2 = indeterminate. JSON includes exact SHA pair and reasons.
-- Run 49 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
+- Run 53 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
 
 ## Safety and limits
 
@@ -24,6 +24,8 @@ CI runs on a GitHub-hosted runner with contents: read, not the VPS. No VPS/Firef
 
 
 ## Canonical-main freshness admission
+
+Before executing any PR-head Python, the hosted workflow independently checks the HTTPS origin and exact current-main SHA in an admission shell step. The source scanner then independently re-verifies main around its own inventory; it does not rely solely on the PR-head script to admit execution.
 
 The hosted PR check additionally verifies that the git origin URL is exactly the public HTTPS
 `https://github.com/Zennay/zCloud[.git]` and obtains only the advertised
