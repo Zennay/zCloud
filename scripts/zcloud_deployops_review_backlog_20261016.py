@@ -233,8 +233,11 @@ def render(data):
         raise Denied("untrusted_inventory")
     _sha(data.get("main_sha"))
     now, prs = data["checked_at"], data["prs"]
+    if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise Denied("bad_snapshot_clock")
     if not isinstance(prs, tuple) or len(prs) > MAX_PAGES * PAGE_SIZE:
         raise Denied("bad_inventory")
+    scan_start = now.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     stale = sorted((row for row in prs if now - _date(row[6], now)
                     >= timedelta(days=7)), key=lambda row: (row[6], row[0]))
     draft = sum(row[2] for row in prs)
@@ -246,6 +249,7 @@ def render(data):
             raise Denied("invalid_issue_inventory")
     lines = [
         "## zCloud deploy-ops — open PR's (alleen-lezen)", "",
+        f"- Uitleesstart (UTC): {scan_start}; geen atomair momentoverzicht.",
         f"- Main SHA: {data['main_sha']}",
         f"- Volledig twee keer gelezen: {len(prs)} open PR's.",
         f"- Concepten: {draft}; niet-concepten: {len(prs) - draft}.",
