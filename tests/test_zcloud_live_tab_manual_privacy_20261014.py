@@ -67,8 +67,10 @@ class LiveTabPrivacyTests(unittest.TestCase):
         self.assertIn('print("RDP_IS_TARGET_SCRIPT_LIVE="', SOURCE)
 
     def test_ambiguous_or_invalid_debugger_denied(self):
-        self.assertIn("from scripts.zcloud_live_tab_rdp_port_20261016 import detect_debugger_port", SOURCE)
-        self.assertIn('status,port=detect_debugger_port(proc.stdout.splitlines())', SOURCE)
+        self.assertIn("from scripts.zcloud_live_tab_rdp_port_20261016 import (", SOURCE)
+        self.assertIn("trusted_firefox_executable", SOURCE)
+        self.assertIn("verify_executable=trusted_firefox_executable", SOURCE)
+        self.assertIn('status,port=detect_debugger_port(', SOURCE)
         self.assertIn('if status!="unique" or port is None:', SOURCE)
         self.assertNotIn("if len(matches)!=1", SOURCE)
         self.assertIn("RDP_SAFE_PROBE_UNAVAILABLE=ambiguous_debugger", SOURCE)
