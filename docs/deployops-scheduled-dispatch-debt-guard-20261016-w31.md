@@ -12,6 +12,12 @@ The scanner inventories regular `.github/workflows/*.yml`/`.yaml` and `.github/a
 
 **Monotone fingerprint policy:** each matched dispatch site is hashed from its source line and counted as a multiset; local/remote reusable edges are fingerprinted too. Source paths are included in dispatch fingerprints to distinguish a shared helper from its callers. A new site, duplicate site, changed command or changed dispatch target is rejected—even if the old site was removed so that raw call counts appear equal. An unchanged legacy site may remain while other non-dispatch code changes. Fingerprinting deliberately treats some formatting-only changes to the dispatch line as review-requiring, not as proof of new runtime behavior.
 
+## Trusted policy execution and bootstrap
+
+On later PRs and main pushes, the admission job reads the scanner implementation from **the immutable exact base commit** using `git ls-tree` for regular Git blob mode and `git show BASE:scripts/...py`. It executes this trusted baseline scanner against the new candidate Git object tree. This prevents a candidate PR changing its own checker script to return success while introducing a new dispatch elsewhere. Candidate-source unit tests are still run for code quality, but **not** used as the enforcement authority once a trusted baseline exists.
+
+**Bootstrap limitation:** PR #1502 introduces this file for the first time, so `main` has no baseline checker at present. The job explicitly emits a `BOOTSTRAP ONLY` warning and executes the candidate checker for development feedback. **Green bootstrap CI is not an independently trusted security approval**; an independent reviewer must inspect the guard and its workflow before integrating it. PR-provided workflow source is likewise not an independent trust root for the initial PR. After a reviewed merge, a protected default-branch workflow must become the source of this gate. Main-branch protection remains a separate responsibility under issue #922.
+
 ## Read-only acceptance
 
 - `python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31`
