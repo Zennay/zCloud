@@ -318,6 +318,7 @@ def validate(
     server_path: Path,
     enhancements_path: Path,
     db_path: Path | None,
+    worker_modes_path: Path | None = None,
 ) -> dict:
     errors: list[str] = []
     try:
@@ -353,7 +354,7 @@ def validate(
 
     project_ids = validate_projects(projects, errors)
     validate_layout(layout, project_ids, errors)
-    mode_path=projects_path.with_name("worker-modes.json")
+    mode_path=worker_modes_path or projects_path.with_name("worker-modes.json")
     role_ids=set()
     if mode_path.exists():
         try:
@@ -418,6 +419,7 @@ def main(argv=None) -> int:
     parser.add_argument("--server", type=Path, required=True)
     parser.add_argument("--enhancements", type=Path, required=True)
     parser.add_argument("--db", type=Path)
+    parser.add_argument("--worker-modes", type=Path)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     result = validate(
@@ -428,6 +430,7 @@ def main(argv=None) -> int:
         server_path=args.server.resolve(),
         enhancements_path=args.enhancements.resolve(),
         db_path=args.db.resolve() if args.db else None,
+        worker_modes_path=args.worker_modes.resolve() if args.worker_modes else None,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
