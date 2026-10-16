@@ -16,6 +16,11 @@ SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
 CHECKOUT = re.compile(r"\bactions/checkout@", re.I)
 STEP = re.compile(r"^(\s*)-\s+(?:[A-Za-z_-]+\s*:|\{)")
 USES = re.compile(r"^\s*-?\s*uses\s*:\s*['\"]?actions/checkout@", re.I)
+# GitHub Actions supports YAML anchors. An action or whole step imported through
+# an alias can resolve to checkout without the word "checkout" on the using line.
+# Without evaluating the complete YAML graph, deny *new* indirections.
+INDIRECT_USE = re.compile(r"""^\s*-?\s*uses\s*:\s*['"]?(?:\*|\$\{\{)""", re.I)
+INDIRECT_STEP = re.compile(r"""^\s*-\s*(?:(?:['"])?\*[A-Za-z_][\w-]*['"]?(?:\s+#.*)?|<<\s*:\s*\*[A-Za-z_][\w-]*)\s*$""")
 REPO = re.compile(r"(?:^|[,\s{])['\"]?repository['\"]?\s*:\s*(.*)$", re.I)
 SAFE = {"${{ github.repository }}", "zennay/zcloud"}
 PATH = re.compile(r"\A\.github/(?:workflows/[^/]+\.ya?ml|actions/(?:[^/]+/)+action\.ya?ml)\Z")
@@ -39,7 +44,12 @@ def scan(text: str) -> Counter[str]:
     lines = text.splitlines()
     findings: Counter[str] = Counter()
     for i, line in enumerate(lines):
-        if not CHECKOUT.search(line) or line.lstrip().startswith('#'):
+        if line.lstrip().startswith('#'):
+            continue
+        if INDIRECT_USE.match(line) or INDIRECT_STEP.match(line):
+            findings["indirect-action-identity"] += 1
+            continue
+        if not CHECKOUT.search(line):
             continue
         if not USES.search(line):
             findings["ambiguous-checkout-syntax"] += 1
