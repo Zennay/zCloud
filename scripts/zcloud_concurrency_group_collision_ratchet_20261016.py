@@ -48,10 +48,9 @@ StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _st
 
 def git_bytes(*args: str, limit: int) -> bytes:
     """Bound stdout/stderr while streaming; bound wall clock and child lifetime."""
-    env = {k: v for k, v in os.environ.items() if not
-           (k.startswith("GIT_CONFIG_") or k in {
-              "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_TRACE",
-              "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXEC_PATH"})}
+    # Ignore all inherited Git knobs, including alternate object stores,
+    # namespaces, config injection, SSH helpers and trace sinks.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0",
                GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
     p = subprocess.Popen(["git", "-c", "core.pager=cat", *args],
