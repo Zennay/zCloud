@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py"
@@ -268,6 +269,19 @@ jobs:
             "      - run: echo other\n      - run: gh workflow run zcloud-regression-smoke.yml"
         ))
         self.check(self.commit(), "pass")
+
+    def test_git_stdout_bounded_during_read(self):
+        # With a tiny cap even ls-tree inventory output is excessive.
+        with mock.patch.object(guard, "MAX_TOTAL", 20):
+            with self.assertRaisesRegex(ValueError, "streaming bounds"):
+                guard.evaluate(self.repo, self.base, self.base)
+
+    def test_git_stream_keeps_exact_sha_bytes(self):
+        self.assertEqual(guard.git(self.repo, "rev-parse", "HEAD").decode().strip(), self.base)
+
+    def test_git_nonzero_exit_denies_without_source_echo(self):
+        with self.assertRaisesRegex(ValueError, "failed closed"):
+            guard.git(self.repo, "show", "nonexistent-tag")
 
     def test_bad_sha_fails_closed(self):
         with self.assertRaises(ValueError):
