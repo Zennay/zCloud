@@ -97,13 +97,14 @@ class LiveTabPortIdentityTests(unittest.TestCase):
         workflow = WORKFLOW.read_text()
         for marker in (
             "runs-on: ubuntu-latest",
-            "runs-on: [self-hosted, ftmo-research]",
+            "runs-on: [self-hosted, zcloud, vps]",
             "github.event_name == 'workflow_dispatch'",
             "github.triggering_actor == 'Zennay'",
             "github.run_attempt == 1",
             "inputs.approve_readonly_probe == true",
             "inputs.confirm_sha == github.sha",
             "persist-credentials: false",
+            "python3 scripts/zcloud_vps_runner_guard.py --json",
             "test \"$current_main\" = \"$GITHUB_SHA\"",
             "from scripts.zcloud_live_tab_rdp_port_20261016 import detect_debugger_port",
             "status,port=detect_debugger_port(proc.stdout.splitlines())",
