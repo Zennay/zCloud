@@ -74,6 +74,33 @@ class MatrixContract(unittest.TestCase):
             "      matrix:\n        shard: [1, 2]",
             runner="${{ matrix.runner }}")))
 
+    def test_reusable_workflow_caller_may_fan_out_to_vps(self):
+        src = """name: Reusable caller
+on: [workflow_dispatch]
+jobs:
+  delegated:
+    uses: ./.github/workflows/worker-vps.yml
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+"""
+        risks = findings(src)
+        self.assertIn(("delegated", "unsafe_max_parallel:None"), risks)
+        self.assertIn(("delegated", "matrix_fanout:5"), risks)
+
+    def test_reusable_caller_with_bounded_serial_matrix(self):
+        src = """name: Safe bounded delegation
+on: [workflow_dispatch]
+jobs:
+  delegated:
+    uses: ./.github/workflows/reusable.yml
+    strategy:
+      max-parallel: 1
+      matrix:
+        shard: [1, 2]
+"""
+        self.assertEqual(findings(src), [])
+
     def test_duplicate_yaml_key_fail_closed(self):
         with self.assertRaises(InvalidSource):
             findings(workflow("      max-parallel: 1\n      max-parallel: 2\n"
@@ -136,8 +163,7 @@ class GitTreeContract(unittest.TestCase):
                          "matrix_fanout:5")
 
     def test_refuses_noncommit_git_object(self):
-        blob = git("hash-object", "--stdin") if False else git("rev-parse", f"{self.base}:"
-                                                          + ROOT)
+        blob = git("rev-parse", f"{self.base}:" + ROOT)
         with self.assertRaises(InvalidSource):
             inspect(self.base, blob)
 
