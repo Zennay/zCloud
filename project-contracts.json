@@ -208,6 +208,23 @@
         "priority": "background",
         "protected": false
       }
+    },
+    "tuddy": {
+      "queue_mode": "human-gated",
+      "lane_profile": "human-gated",
+      "ai_worker_cap": 0,
+      "autonomy": {
+        "mode": "external_gate",
+        "auto_start": false
+      },
+      "compute": {
+        "class": "device-product-incubation",
+        "pool": "disabled",
+        "cpu_soft_cores": 0,
+        "memory_soft_mb": 0,
+        "priority": "background",
+        "protected": false
+      }
     }
   }
 }
