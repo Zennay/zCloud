@@ -2095,5 +2095,166 @@ jobs:
 
 
 
+    def test_docker_action_binary_payload_mutation_rejected(self):
+        self.put("scheduled-docker-binary.yml", """on: schedule
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/binary-payload
+""")
+        self.put_action("binary-payload", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/binary-payload"
+        (root / "Dockerfile").write_text(
+            "FROM alpine:3.20\nCOPY payload.bin /app/payload.bin\n",
+            encoding="utf-8")
+        payload = root / "payload.bin"
+        payload.write_bytes(b"\x00\xff\xfe")
+        base = self.commit()
+        payload.write_bytes(b"\x00\xff\xfd")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertEqual(result["new_sites"], 1)
+
+    def test_docker_action_extensionless_config_mutation_rejected(self):
+        self.put("scheduled-docker-extensionless.yml", """on: schedule
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/extensionless
+""")
+        self.put_action("extensionless", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/extensionless"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        helper = root / "entrypoint"
+        helper.write_text("echo safe\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("gh workflow run deploy.yml\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_nested_arbitrary_binary_source_rejected(self):
+        self.put("scheduled-docker-nested-binary.yml", """on: schedule
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/nested-payload
+""")
+        self.put_action("nested-payload", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/nested-payload"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        payload = root / "resources/worker.dat"
+        payload.parent.mkdir()
+        payload.write_bytes(b"\x81\xfe")
+        base = self.commit()
+        payload.write_bytes(b"\x81\xfd")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_binary_source_addition_rejected(self):
+        self.put("scheduled-docker-payload-add.yml", """on: schedule
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/payload-add
+""")
+        self.put_action("payload-add", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/payload-add"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        (root / "binary").write_bytes(b"\x00\xff")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_extensionless_symlink_fails_closed(self):
+        self.put("scheduled-docker-other-symlink.yml", """on: schedule
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/other-symlink
+""")
+        self.put_action("other-symlink", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/other-symlink"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        (root / "opaque-payload").symlink_to("missing")
+        with self.assertRaises(ValueError):
+            guard.evaluate(self.repo, self.base, self.commit())
+
+    def test_docker_action_oversize_binary_context_fails_closed(self):
+        self.put("scheduled-docker-oversized.yml", """on: schedule
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/big-payload
+""")
+        self.put_action("big-payload", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/big-payload"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        (root / "payload.bin").write_bytes(b"\xff" * (guard.MAX_BLOB + 1))
+        with self.assertRaises(ValueError):
+            guard.evaluate(self.repo, self.base, self.commit())
+
+    def test_unrelated_manual_docker_binary_context_edit_is_allowed(self):
+        self.put("manual-docker-binary.yml", """on: workflow_dispatch
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/manual-binary
+""")
+        self.put_action("manual-binary", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/manual-binary"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        payload = root / "worker.blob"
+        payload.write_bytes(b"\x00\xff")
+        base = self.commit()
+        payload.write_bytes(b"\x00\xfe")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "pass")
+
+    def test_non_docker_unrecognized_binary_context_not_in_policy(self):
+        self.put("scheduled-node-payload.yml", """on: schedule
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/node-with-blob
+""")
+        self.put_action("node-with-blob", """runs:
+  using: node20
+  main: index.js
+""")
+        root = self.repo / ".github/actions/node-with-blob"
+        (root / "index.js").write_text("console.log('safe');\n", encoding="utf-8")
+        payload = root / "opaque.blob"
+        payload.write_bytes(b"\x00\xff")
+        base = self.commit()
+        payload.write_bytes(b"\x00\xfe")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "pass")
+
+
+
 if __name__ == "__main__":
     unittest.main()
