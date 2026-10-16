@@ -338,6 +338,26 @@ class GitTreeContract(unittest.TestCase):
         with self.assertRaisesRegex(InvalidSource, "git_source_unavailable"):
             _git("cat-file", "-t", "0" * 40, max_output=200)
 
+    def test_git_revision_denies_custom_label_but_not_hosted(self):
+        hosted = workflow(
+            "      matrix:\n        shard: [a, b, c, d, e]",
+            runner="ubuntu-latest")
+        base = self.commit(hosted)
+        unsafe = self.commit(workflow(
+            "      matrix:\n        shard: [a, b, c, d, e]",
+            runner="vps"))
+        result = inspect(base, unsafe)
+        self.assertEqual(
+            {row["reason"] for row in result["new_risks"]},
+            {"unsafe_max_parallel:None", "matrix_fanout:5"})
+        self.assertFalse(result["mutation_authorized"])
+        self.assertFalse(result["merge_authorized"])
+        self.assertFalse(result["production_authorized"])
+        self.assertEqual(main(["--base", base, "--head", unsafe]), 1)
+        healed = self.commit(hosted)
+        self.assertEqual(inspect(unsafe, healed)["new_risks"], [])
+        self.assertEqual(main(["--base", unsafe, "--head", healed]), 0)
+
     def test_refuses_noncommit_git_object(self):
         blob = git("rev-parse", f"{self.base}:" + ROOT)
         with self.assertRaises(InvalidSource):
