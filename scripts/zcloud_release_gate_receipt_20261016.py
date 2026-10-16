@@ -164,7 +164,8 @@ def _utc_stamp(value: Any) -> datetime | None:
     return stamp
 
 
-def evaluate(receipt: Any, *, now: datetime | None = None) -> dict[str, Any]:
+def evaluate(receipt: Any, *, now: datetime | None = None,
+             expected_main_sha: str | None = None) -> dict[str, Any]:
     """Classify untrusted claimed evidence without ever authorizing a live write."""
     reason_codes: list[str] = []
     output: dict[str, Any] = {
@@ -184,7 +185,10 @@ def evaluate(receipt: Any, *, now: datetime | None = None) -> dict[str, Any]:
 
     candidate = receipt["candidate_sha"]
     main = receipt["canonical_main_sha"]
-    if not _valid_sha(candidate) or not _valid_sha(main) or candidate != main:
+    if (not _valid_sha(candidate) or not _valid_sha(main) or
+            candidate != main or
+            (expected_main_sha is not None and
+             (not _valid_sha(expected_main_sha) or main != expected_main_sha))):
         reason_codes.append("candidate_not_exact_current_main")
 
     clock = now if now is not None else datetime.now(timezone.utc)
@@ -412,11 +416,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--input", required=True, help="Local bounded JSON receipt path")
     parser.add_argument("--format", choices=("json", "markdown"), default="json",
                         help="Machine-readable JSON (default), or Dutch human-readable audit")
+    parser.add_argument("--expected-main-sha",
+                        help="Operator-supplied exact lowercase 40-char main SHA (NOT verified live)")
     parser.add_argument("--exit-zero-on-offline-claims", action="store_true",
                         help="Explicit offline-only opt-in: exit 0 if all UNVERIFIED claims are well formed; never release authority")
     args = parser.parse_args(argv)
     try:
-        result = evaluate(decode_receipt(read_receipt(Path(args.input))))
+        result = evaluate(
+            decode_receipt(read_receipt(Path(args.input))),
+            expected_main_sha=args.expected_main_sha
+        )
+        # An explicit diagnostic success must be bound to a separately
+        # supplied exact main SHA. Missing context can never yield exit 0.
+        # This does NOT fetch GitHub or turn the supplied SHA into live proof.
+        if (args.exit_zero_on_offline_claims and
+                args.expected_main_sha is None):
+            if "candidate_not_exact_current_main" not in result["reason_codes"]:
+                result["reason_codes"].append("candidate_not_exact_current_main")
+            result["offline_claims_complete"] = False
     except (OSError, ValueError, TypeError) as error:
         allowed = {"receipt_too_large", "duplicate_json_key", "nonfinite_json",
                    "invalid_json", "invalid_schema", "unsafe_or_missing_receipt"}
