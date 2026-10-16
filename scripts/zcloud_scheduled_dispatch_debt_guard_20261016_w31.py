@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import hashlib
 import re
 import subprocess
 from collections import Counter
@@ -107,32 +108,52 @@ def scheduled(text: str) -> bool:
     return False
 
 
-def dispatch_count(text: str) -> int:
+def dispatch_sites(text: str) -> Counter[str]:
+    """Count stable site fingerprints, never disclose source or credentials."""
     if not scheduled(text):
-        return 0
+        return Counter()
     active = "\n".join(line for line in text.splitlines()
                        if not line.lstrip().startswith("#"))
-    # Shell line continuation can split a dispatch command over source lines.
+    # Join shell continuations before looking for a command.
     active = active.replace("\\\n", "")
-    return len(DISPATCH.findall(active))
+    result: Counter[str] = Counter()
+    for match in DISPATCH.finditer(active):
+        start = active.rfind("\n", 0, match.start()) + 1
+        end = active.find("\n", match.end())
+        if end == -1:
+            end = len(active)
+        # A changed target, method or argument is new risk, even if the old
+        # invocation disappeared and the total number of sites did not grow.
+        site = active[start:end].strip()
+        signature = hashlib.sha256(site.encode("utf-8")).hexdigest()
+        result[signature] += 1
+    return result
 
 
-def findings(workflows: dict[str, str]) -> Counter[str]:
-    return Counter({path: count for path, text in workflows.items()
-                    if (count := dispatch_count(text)) > 0})
+def dispatch_count(text: str) -> int:
+    return sum(dispatch_sites(text).values())
+
+
+def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
+    return {path: sites for path, content in workflows.items()
+            if (sites := dispatch_sites(content))}
 
 
 def evaluate(repo: Path, base: str, candidate: str) -> dict[str, object]:
     before = findings(manifest_map(repo, base))
     after = findings(manifest_map(repo, candidate))
-    growth = {path: count - before.get(path, 0)
-              for path, count in sorted(after.items())
-              if count > before.get(path, 0)}
+    # Multiset subtraction prevents offsetting newly introduced dispatches
+    # with a deletion or an unrelated existing occurrence in the same file.
+    growth = {
+        path: sum((sites - before.get(path, Counter())).values())
+        for path, sites in sorted(after.items())
+    }
+    growth = {path: count for path, count in growth.items() if count > 0}
     return {
         "policy": "zcloud-scheduled-dispatch-no-new-debt-v1",
         "base_sha": base, "candidate_sha": candidate,
-        "baseline_sites": sum(before.values()),
-        "candidate_sites": sum(after.values()),
+        "baseline_sites": sum(sum(x.values()) for x in before.values()),
+        "candidate_sites": sum(sum(x.values()) for x in after.values()),
         "new_sites": sum(growth.values()),
         "changed_workflows_with_new_sites": sorted(growth),
         "status": "reject" if growth else "pass",
