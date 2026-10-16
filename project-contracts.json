@@ -213,7 +213,7 @@
       "queue_mode": "execution",
       "ai_worker_cap": 1,
       "autonomy": {
-        "mode": "external_gate",
+        "mode": "ai_worker",
         "auto_start": false
       },
       "lane_profile": "product",
@@ -230,7 +230,7 @@
       "queue_mode": "execution",
       "ai_worker_cap": 1,
       "autonomy": {
-        "mode": "external_gate",
+        "mode": "ai_worker",
         "auto_start": false
       },
       "lane_profile": "product",
@@ -247,7 +247,7 @@
       "queue_mode": "execution",
       "ai_worker_cap": 1,
       "autonomy": {
-        "mode": "external_gate",
+        "mode": "ai_worker",
         "auto_start": false
       },
       "lane_profile": "device-product",
