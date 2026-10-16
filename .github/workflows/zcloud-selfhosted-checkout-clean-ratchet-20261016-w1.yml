@@ -1,13 +1,10 @@
 name: zCloud persistent checkout hygiene ratchet
 # Hosted source check only. Never touches a permanent runner or production.
 on:
+  # No paths filter: GitHub can omit matches beyond the changed-file cap,
+  # so a large PR must not silently skip the repository-wide policy.
   pull_request:
     branches: [main]
-    paths:
-      # Mandatory: watch every workflow, not just this guard's own source.
-      - ".github/workflows/**"
-      - scripts/zcloud_selfhosted_checkout_clean_ratchet_20261016_w1.py
-      - tests/test_zcloud_selfhosted_checkout_clean_ratchet_20261016_w1.py
 
 permissions:
   contents: read
