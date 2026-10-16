@@ -130,6 +130,70 @@ class BacklogBriefTests(TestCase):
                 self.assertEqual(2, brief.main(["--expected-main-sha", OTHER]))
                 self.assertIn("DENIED", stderr.getvalue())
 
+    def test_public_http_fetch_accepts_exact_json(self):
+        class Response:
+            status = 200
+            headers = {"Content-Type": "application/json; charset=utf-8"}
+            def __init__(self, url, raw):
+                self.url, self.raw = url, raw
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def geturl(self):
+                return self.url
+            def read(self, size):
+                return self.raw[:size]
+        url = brief.API + "/branches/main"
+        with mock.patch.object(brief.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = Response(
+                url, json.dumps({"commit": {"sha": SHA}}).encode())
+            self.assertEqual(SHA, brief.fetch("main")["commit"]["sha"])
+
+    def test_public_http_fetch_denies_redirect_wrong_mime_and_oversize(self):
+        class Response:
+            status = 200
+            def __init__(self, url, raw, mime):
+                self.url, self.raw = url, raw
+                self.headers = {"Content-Type": mime}
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def geturl(self):
+                return self.url
+            def read(self, size):
+                return self.raw[:size]
+        url = brief.API + "/branches/main"
+        samples = [
+            Response("https://evil.example/branches/main", b"{}", "application/json"),
+            Response(url, b"{}", "text/html"),
+            Response(url, b"x" * (brief.MAX_BYTES + 1), "application/json"),
+        ]
+        for fake in samples:
+            with self.subTest(url=fake.url, length=len(fake.raw)):
+                with mock.patch.object(brief.urllib.request, "build_opener") as opener:
+                    opener.return_value.open.return_value = fake
+                    with self.assertRaises(brief.Denied):
+                        brief.fetch("main")
+
+    def test_public_http_duplicate_json_denied_without_output(self):
+        class Response:
+            status = 200
+            headers = {"Content-Type": "application/json"}
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def geturl(self):
+                return brief.API + "/branches/main"
+            def read(self, size):
+                return b'{"commit":{},"commit":{}}'
+        with mock.patch.object(brief.urllib.request, "build_opener") as opener:
+            opener.return_value.open.return_value = Response()
+            with self.assertRaises(brief.Denied):
+                brief.fetch("main")
+
     def test_reader_never_accepts_other_method_or_url(self):
         with self.assertRaisesRegex(brief.Denied, "unsupported_endpoint"):
             brief.fetch("workflow_dispatch", 1)
