@@ -524,6 +524,36 @@ class RatchetTests(unittest.TestCase):
             "on: push", "on: workflow_dispatch"))
         self.assertEqual(gate.check(base, self.save()), (1, 0))
 
+    def test_unnamed_workflow_expression_is_not_proven_unique(self):
+        base = self.base()
+        unnamed = document("${{ github.workflow }}", False).replace(
+            "name: Test\n", "")
+        self.write("second.yaml", unnamed)
+        self.denied(base, self.save())
+
+    def test_dynamic_workflow_display_name_does_not_prove_group(self):
+        base = self.base()
+        dynamic_name = document("${{ github.workflow }}", False).replace(
+            "name: Test", "name: \"${{ github.ref }}\"")
+        self.write("second.yaml", dynamic_name)
+        self.denied(base, self.save())
+
+    def test_static_named_workflow_expression_is_admitted_without_collision(self):
+        base = self.base()
+        unique = document("${{ github.workflow }}", False).replace(
+            "name: Test", "name: Clearly Separated")
+        self.write("second.yaml", unique)
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_unnamed_workflow_name_legacy_requires_review(self):
+        legacy = document("${{ github.workflow }}", False).replace("name: Test\n", "")
+        base = self.base(legacy, document("separate", False))
+        self.write("first.yml", legacy + "# unrelated edit\n")
+        receipt = gate.inventory(base, self.save())
+        self.assertEqual(receipt["legacy_opaque_expression_count"], 1)
+        self.assertFalse(receipt["static_expression_coverage_complete"])
+        self.assertFalse(receipt["merge_authorized"])
+
     def test_invalid_shas_denied(self):
         base = self.base()
         for invalid in ("main", "f" * 39, "z" * 40):
