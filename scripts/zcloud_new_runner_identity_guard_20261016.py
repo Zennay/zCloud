@@ -72,8 +72,14 @@ def _runner(value: str) -> str:
 
 def _early_guard(job: list[str]) -> bool:
     # Only a pinned checkout and shell 'set' may precede the actual guard command.
+    if any(re.match(r"^    (?:defaults|container):", line) for line in job):
+        return False
+    headings = [n for n, line in enumerate(job)
+                if re.fullmatch(r"    steps:\s*(?:#.*)?", line)]
+    if len(headings) != 1:
+        return False
     steps = []
-    for line in job:
+    for line in job[headings[0] + 1:]:
         if re.match(r"^      -\s+", line):
             steps.append([line[8:]])
         elif steps:
@@ -86,6 +92,8 @@ def _early_guard(job: list[str]) -> bool:
         if len(uses) > 1 or len(runs) > 1 or (uses and runs):
             return False
         if uses:
+            if re.search(r"(?m)^\s*(?:if|continue-on-error):", text):
+                return False
             if checkout_seen or not CHECKOUT.fullmatch(uses[0].strip()):
                 return False
             checkout_seen = True
@@ -94,7 +102,12 @@ def _early_guard(job: list[str]) -> bool:
             # The identity check may not be skipped or demoted to nonfatal.
             if re.search(r"(?m)^\s*(?:if|continue-on-error):", text):
                 return False
-            if not checkout_seen or runs[0].strip() not in {"", "|", "|-", ">", ">-"}:
+            # Folded YAML scripts join lines and do not prove a standalone
+            # early executable guard command.
+            if not checkout_seen or runs[0].strip() not in {"|", "|-"}:
+                return False
+            shells = re.findall(r"(?m)^\s*shell:\s*([^\n#]+)", text)
+            if any(value.strip().strip("'\"") != "bash" for value in shells):
                 return False
             seen_run = False
             for line in lines:
@@ -120,6 +133,8 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
     if re.search(r"(?m)^(?:[\"']jobs[\"']|[?!]\s*jobs|<<)\s*:", doc):
         raise ValueError("unsupported_jobs_mapping")
     lines = doc.splitlines()
+    # Root defaults.run.shell can override the trusted first-run interpreter.
+    workflow_defaults = bool(re.search(r"(?m)^defaults:\s*(?:#.*)?$", doc))
     roots = [i for i, l in enumerate(lines) if re.fullmatch(r"jobs:\s*(?:#.*)?", l)]
     if len(roots) != 1:
         raise ValueError("ambiguous_jobs_root")
@@ -145,7 +160,9 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
             continue
         if len(runners) != 1:
             risks[name] = "ambiguous_runner"
-        elif _runner(runners[0]) not in {"hosted", "other_self_hosted"} and not _early_guard(body):
+        elif _runner(runners[0]) not in {"hosted", "other_self_hosted"} and (
+            workflow_defaults or not _early_guard(body)
+        ):
             risks[name] = "missing_early_runner_guard"
     return risks
 
