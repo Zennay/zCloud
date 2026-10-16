@@ -268,6 +268,24 @@ class RatchetTests(unittest.TestCase):
         with self.assertRaises(gate.AdmissionError):
             gate.inventory(head, base)
 
+    def test_workflow_job_budget_denied_before_pairwise_analysis(self):
+        base = self.base()
+        jobs = "".join(
+            "  job_%s:\n    runs-on: ubuntu-latest\n    steps:\n"
+            "      - run: echo ok\n" % i
+            for i in range(gate.MAX_JOBS_PER_WORKFLOW + 1)
+        )
+        self.write("second.yaml", "name: Excessive\non: push\njobs:\n" + jobs)
+        self.denied(base, self.save())
+
+    def test_repository_entry_budget_denied(self):
+        from unittest.mock import patch
+        base = self.base()
+        self.write("second.yaml", document("new_group", True))
+        head = self.save()
+        with patch.object(gate, "MAX_GROUP_ENTRIES", 1):
+            self.denied(base, head)
+
     def test_invalid_shas_denied(self):
         base = self.base()
         for invalid in ("main", "f" * 39, "z" * 40):
