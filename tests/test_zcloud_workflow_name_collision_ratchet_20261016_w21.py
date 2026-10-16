@@ -761,6 +761,69 @@ class NameCollisionRatchetTests(unittest.TestCase):
                              "missing_target_activated")
             self.assertIs(verdict["production_mutation_authorized"], False)
 
+
+    def test_unresolved_historical_debt_is_visible_even_when_passed(self):
+        names = {"a.yml": "Build", "b.yml": "Build", "watch.yml": "Watcher"}
+        references = {"a.yml": None, "watch.yml": ("Build", "Ghost")}
+        verdict = guard.judge(names, names, references, references)
+        self.assertEqual(verdict["status"], "pass")
+        self.assertEqual(verdict["baseline_collision_count"], 1)
+        self.assertEqual(verdict["baseline_reference_risk_count"], 3)
+        self.assertEqual(verdict["candidate_reference_risk_count"], 3)
+        self.assertEqual(verdict["added_reference_risk_count"], 0)
+        self.assertEqual(verdict["baseline_cycle_edge_count"], 0)
+        self.assertFalse(verdict["production_mutation_authorized"])
+
+    def test_reference_baseline_preview_is_bounded_and_deterministic(self):
+        names = {"watch.yml": "Watcher"}
+        references = {"watch.yml": tuple("Missing %03d" % x for x in range(40))}
+        outcome = guard.judge(names, names, references, references)
+        self.assertEqual(outcome["baseline_reference_risk_count"], 40)
+        self.assertEqual(len(outcome["baseline_reference_risks"]), 10)
+        self.assertEqual(outcome["baseline_reference_risks"][0]["target"], "Missing 000")
+        self.assertEqual(outcome["baseline_reference_risks"][-1]["target"], "Missing 009")
+        self.assertEqual(outcome["status"], "pass")
+
+    def test_existing_cycle_is_explicit_in_pass_evidence(self):
+        names = {"a.yml": "A", "b.yml": "B"}
+        refs = {"a.yml": ("B",), "b.yml": ("A",)}
+        status = guard.judge(names, names, refs, refs)
+        self.assertEqual(status["status"], "pass")
+        self.assertEqual(status["baseline_cycle_edge_count"], 2)
+        self.assertEqual(status["candidate_cycle_edge_count"], 2)
+        self.assertEqual(status["added_cycle_edge_count"], 0)
+
+    def test_real_git_cli_receipt_binds_both_exact_commit_shas(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "build.yml").write_text("name: Build\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "baseline")
+            baseline = git("rev-parse", "HEAD")
+            (folder / "additional.yml").write_text("name: Additional\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "unique new workflow")
+            candidate = git("rev-parse", "HEAD")
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT), "--root", root,
+                 "--base", baseline, "--head", candidate],
+                capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt["source_commit_base"], baseline)
+            self.assertEqual(receipt["source_commit_head"], candidate)
+            self.assertEqual(receipt["workflow_count_base"], 1)
+            self.assertEqual(receipt["workflow_count_head"], 2)
+            self.assertEqual(receipt["baseline_reference_risk_count"], 0)
+            self.assertEqual(receipt["candidate_reference_risk_count"], 0)
+            self.assertFalse(receipt["merge_authorized"])
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
