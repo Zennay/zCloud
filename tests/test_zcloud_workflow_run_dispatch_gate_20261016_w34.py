@@ -196,7 +196,7 @@ class GateTests(unittest.TestCase):
         base = self.commit(DANGEROUS)
         head = self.commit(DANGEROUS.replace(
             "gh workflow run unsafe.yml",
-            "gh workflow run unsafe.yml\\n          gh api -X POST /repos/Zennay/zCloud/actions/runs/123/rerun"))
+            "gh workflow run unsafe.yml\n          gh api -X POST /repos/Zennay/zCloud/actions/runs/123/rerun"))
         self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
 
     def test_read_only_dispatch_endpoint_is_not_a_post(self):
