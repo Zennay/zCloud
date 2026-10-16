@@ -23,6 +23,14 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _USES = re.compile(r"^(?P<indent> *)-?\s*uses:\s*['\"]?actions/download-artifact@(?P<ref>[^\s'\"#]+)['\"]?\s*(?:#.*)?$", re.IGNORECASE)
 _INPUT = re.compile(r"^(?P<indent> *)(?P<key>[\w-]+):\s*(?P<value>.*?)\s*$")
 _TARGETS = frozenset({"run-id", "repository", "github-token"})
+# GitHub CLI downloads bypass actions/download-artifact but have the same
+# cross-run artifact trust boundary. A syntactic match requires review, not
+# permission to retrieve or execute any artifact.
+_GH_RUN_DOWNLOAD = re.compile(
+    r"(?<![\\w/-])(?:gh|/(?:usr/)?(?:local/)?bin/gh)\\s+"
+    r"(?:(?:(?:-R|--repo)(?:=\\S+|\\s+\\S+))\\s+)*"
+    r"run\\s+download(?=\\s|$|[;&|])", re.IGNORECASE,
+)
 _MAX_FILE = 256_000
 _MAX_WORKFLOWS = 500
 
@@ -191,6 +199,21 @@ def _risks(text: str, path: str) -> Counter[str]:
             raw = "\n".join(lines[index:index+1]) + "\n" + "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
             key = path + ":" + str(index + 1) + ":" + sha256(raw.encode("utf-8")).hexdigest()
             risky[key] += 1
+    # Review new direct GitHub CLI artifact downloads as well. Many hosted
+    # workflows use inline run blocks rather than an explicit download action.
+    # Join bounded shell backslash continuations so a split command is not
+    # silently invisible. This is a conservative source indicator.
+    for number, source in enumerate(lines):
+        if source.lstrip().startswith("#"):
+            continue
+        logical = source
+        following = number + 1
+        while logical.rstrip().endswith("\\\\") and following < len(lines) and following <= number + 8:
+            logical = logical.rstrip()[:-1] + " " + lines[following].strip()
+            following += 1
+        if _GH_RUN_DOWNLOAD.search(logical):
+            token = sha256(logical.encode("utf-8")).hexdigest()
+            risky[f"{path}:{number+1}:gh-run-download:{token}"] += 1
     return risky
 
 
