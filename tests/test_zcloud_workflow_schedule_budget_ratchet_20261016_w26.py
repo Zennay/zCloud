@@ -195,6 +195,19 @@ class CronPolicyTests(unittest.TestCase):
         self.assertEqual(schedules(expr, timezone_metadata=zones), ())
         self.assertEqual(zones, [])
 
+    def test_valid_schedule_comment_and_quoted_cron_inline_comment(self):
+        source = ('on:\n  "schedule": # nightly interval\n'
+                  '    - "cron": "*/5 * * * *" # accepted YAML comment\n')
+        self.assertEqual(schedules(source), ("*/5 * * * *",))
+
+    def test_unquoted_cron_value_with_yaml_comment(self):
+        source = 'on:\n  schedule: # routine\n    - cron: 0 9 * * * # daily\n'
+        self.assertEqual(schedules(source), ("0 9 * * *",))
+
+    def test_comment_does_not_authorize_inline_event(self):
+        with self.assertRaises(AdmissionError):
+            schedules('on:\n  schedule: *hidden # alias\n')
+
     def test_duplicate_quoted_cron_cannot_override_safe_cron(self):
         source = 'on:\n  schedule:\n    - cron: "0 9 * * *"\n      "cron": "*/5 * * * *"\n'
         with self.assertRaises(AdmissionError):
@@ -333,6 +346,15 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertFalse(receipt["accepted"])
         self.assertTrue(any(item.get("reason") == "cross_schedule_burst"
                             for item in receipt["new_high_frequency"]))
+
+    def test_quoted_high_frequency_with_trailing_comment_denied(self):
+        path = self.directory / "safe.yml"
+        path.write_text('on:\n  "schedule": # audit me\n'
+                        '    - "cron": "*/5 * * * *" # expensive\n',
+                        encoding="utf-8")
+        result = audit(self.root, self.baseline)
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["new_high_frequency"][0]["cron"], "*/5 * * * *")
 
     def test_quoted_override_is_denied_in_real_git_audit(self):
         path = self.directory / "safe.yml"
