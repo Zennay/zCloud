@@ -82,6 +82,41 @@ class IdentityPolicyTests(unittest.TestCase):
     def test_custom_policy_override_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf().replace("--json", "--policy /tmp/forged.json")))
 
+    def test_folded_guard_script_is_not_trustworthy(self):
+        for scalar in (">", ">-"):
+            with self.subTest(scalar=scalar):
+                self.assertIn("audit", g.unsafe_jobs(wf().replace("run: |", "run: " + scalar)))
+
+    def test_custom_step_shell_cannot_hide_runner_guard(self):
+        for shell in ("python", "pwsh", "sh", "bash -c 'true' {0}"):
+            with self.subTest(shell=shell):
+                value = wf().replace("        run: |", "        shell: " + shell + "\n        run: |")
+                self.assertIn("audit", g.unsafe_jobs(value))
+
+    def test_explicit_bash_shell_preserves_safe_guard(self):
+        value = wf().replace("        run: |", "        shell: bash\n        run: |")
+        self.assertEqual(g.unsafe_jobs(value), {})
+
+    def test_job_shell_defaults_cannot_override_guard(self):
+        value = wf().replace("    steps:", "    defaults:\n      run:\n        shell: python\n    steps:")
+        self.assertIn("audit", g.unsafe_jobs(value))
+
+    def test_workflow_shell_defaults_cannot_override_guard(self):
+        value = wf().replace("jobs:", "defaults:\n  run:\n    shell: python\njobs:")
+        self.assertIn("audit", g.unsafe_jobs(value))
+
+    def test_must_have_literal_steps_mapping(self):
+        value = wf().replace("    steps:", "    renamed_steps:")
+        self.assertIn("audit", g.unsafe_jobs(value))
+
+    def test_skipped_checkout_is_not_trusted(self):
+        value = wf().replace("        with:", "        if: false\n        with:")
+        self.assertIn("audit", g.unsafe_jobs(value))
+
+    def test_continue_on_error_checkout_is_not_trusted(self):
+        value = wf().replace("        with:", "        continue-on-error: true\n        with:")
+        self.assertIn("audit", g.unsafe_jobs(value))
+
     def test_unpinned_checkout_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf().replace(PIN, "main")))
 
