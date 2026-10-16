@@ -279,8 +279,12 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
                 raise ValueError("unknown_job_mapping_key")
         runners = [f.group(1) for l in body if (f := re.fullmatch(r"    runs-on:\s*(.*)", l))]
         if not runners:
-            if not any(re.match(r"^    uses:\s*", l) for l in body):
-                risks[name] = "unknown_runner"
+            # A reusable job delegates its runner selection to another
+            # workflow. The caller cannot prove the callee avoids this VPS;
+            # do not silently admit new delegation as a hosted runner.
+            risks[name] = ("delegated_runner_unverified"
+                           if any(re.match(r"^    uses:\s*", l) for l in body)
+                           else "unknown_runner")
             continue
         if len(runners) != 1:
             risks[name] = "ambiguous_runner"
