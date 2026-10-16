@@ -124,5 +124,57 @@ class ZSentinelEvidenceContractTests(unittest.TestCase):
         self.assertEqual("owner_held", inspect(guarded)["projects"][0]["state"])
 
 
+    def test_stringified_safety_flags_are_rejected_before_any_diagnosis(self):
+        examples = (
+            ("notion", "human_gate"),
+            ("github", "active_owner_pr"),
+            ("github", "runner_assigned"),
+            ("runtime", "ownership_locked"),
+        )
+        for source, field in examples:
+            for bad in ("true", "false", "1", 1, 0, None):
+                with self.subTest(source=source, field=field, bad=bad):
+                    project = queued()
+                    project.setdefault(source, {})[field] = bad
+                    with self.assertRaisesRegex(ValueError, field):
+                        inspect(project)
+
+    def test_boolean_stop_gates_preempt_old_stalled_github_evidence(self):
+        for source, field, expected in (
+            ("notion", "human_gate", "intentional_wait"),
+            ("github", "active_owner_pr", "owner_held"),
+            ("runtime", "ownership_locked", "owner_held"),
+        ):
+            with self.subTest(field=field):
+                project = queued()
+                project.setdefault(source, {})[field] = True
+                report = inspect(project)
+                self.assertEqual(expected, report["projects"][0]["state"])
+                self.assertEqual([], report["incidents"])
+
+    def test_explicit_false_gates_keep_unassigned_job_detectable(self):
+        project = queued()
+        project["notion"] = {"human_gate": False, "posture": "Active"}
+        project["github"]["active_owner_pr"] = False
+        project["runtime"] = {"ownership_locked": False}
+        self.assertEqual("github_job_unassigned", inspect(project)["incidents"][0]["reason"])
+
+    def test_unrecognized_notion_posture_cannot_silently_drop_stop_gate(self):
+        for bad in (None, True, "unknown", "Human_Blocked", 1):
+            with self.subTest(bad=bad):
+                project = queued()
+                project["notion"] = {"posture": bad}
+                with self.assertRaisesRegex(ValueError, "notion.posture"):
+                    inspect(project)
+
+    def test_canonical_project_postures_preserve_intentional_waits(self):
+        for posture in ("Human-Blocked", "Paused", "Parked"):
+            with self.subTest(posture=posture):
+                project = queued()
+                project["notion"] = {"posture": posture}
+                self.assertEqual("intentional_wait", inspect(project)["projects"][0]["state"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
