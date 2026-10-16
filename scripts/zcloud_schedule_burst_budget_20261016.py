@@ -80,7 +80,7 @@ def schedules(document):
             raise ValueError("tab-indented YAML cannot be classified")
         line = original.strip()
         if indentation == 0:
-            if re.match(r"^<<\\s*:", line):
+            if re.match(r"^<<\s*:", line):
                 raise ValueError("top-level YAML merge may conceal scheduled triggers")
             in_schedule = False
             in_on = False
@@ -95,7 +95,7 @@ def schedules(document):
         if not in_on:
             continue
         if indentation == 2:
-            if re.match(r"^<<\\s*:", line):
+            if re.match(r"^<<\s*:", line):
                 raise ValueError("trigger YAML merge may conceal schedule")
             in_schedule = False
             if re.match(r"^schedule\s*:", line):
