@@ -609,7 +609,7 @@ class RatchetTests(unittest.TestCase):
     def test_dynamic_cancel_predicate_rewrite_is_not_silent(self):
         first = document("shared", "dynamic")
         base = self.base(first, document("shared", False))
-        self.write("first.yml", first.replace("push", "schedule"))
+        self.write("first.yml", first.replace("''push''", "''schedule''"))
         self.denied(base, self.save())
 
     def test_dynamic_cancel_predicate_whitespace_change_is_reviewed(self):
