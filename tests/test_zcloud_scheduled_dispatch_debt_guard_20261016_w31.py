@@ -487,6 +487,77 @@ jobs:
         with self.assertRaisesRegex(ValueError, "non-regular"):
             guard.evaluate(self.repo, self.base, self.commit())
 
+    def test_nested_composite_action_dispatch_is_reachable(self):
+        self.put("schedule-actions.yml", """on: schedule
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/outer
+""")
+        self.put_action("outer", """name: outer
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/inner
+""")
+        self.put_action("inner", """name: inner
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: gh workflow run release.yml
+""")
+        result = self.check(self.commit(), "reject")
+        self.assertGreaterEqual(result["new_sites"], 3)
+
+    def test_action_yaml_alternative_is_traversed(self):
+        self.put("schedule-actions.yml", """on: schedule
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/alternate
+""")
+        target = self.repo / ".github/actions/alternate/action.yaml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("""name: alternate
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: gh workflow run release.yml
+""", encoding="utf-8")
+        result = self.check(self.commit(), "reject")
+        self.assertGreaterEqual(result["new_sites"], 2)
+
+    def test_unchanged_action_graph_keeps_existing_debt(self):
+        self.put("schedule-actions.yml", """on: schedule
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/rearm
+""")
+        self.put_action("rearm", """name: rearm
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: gh workflow run deploy.yml
+""")
+        base = self.commit()
+        self.assertEqual(guard.evaluate(self.repo, base, base)["new_sites"], 0)
+        self.put_action("rearm", """name: rearm
+# Documentation-only change must not add a dispatch site.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: gh workflow run deploy.yml
+""")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "pass")
+
     def test_git_stdout_bounded_during_read(self):
         # With a tiny cap even ls-tree inventory output is excessive.
         with mock.patch.object(guard, "MAX_TOTAL", 20):
