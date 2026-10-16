@@ -975,7 +975,13 @@ def run_config_validation(
         "--db", str(root / "history.db"),
         "--json",
     ]
+    # The live worker-role metadata is an optional presentation file. Older VPS
+    # installs do not contain it; server.py has an identical in-source fallback.
+    # Validate the immutable candidate role definition while promoting its
+    # backend contract, without silently writing optional runtime metadata.
     worker_modes = effective("worker-modes.json")
+    if not worker_modes.is_file() and (candidate / "worker-modes.json").is_file():
+        worker_modes = candidate / "worker-modes.json"
     if worker_modes.is_file():
         args.extend(["--worker-modes", str(worker_modes)])
     proc = run(args, check=False)
