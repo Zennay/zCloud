@@ -180,11 +180,13 @@ def _risks(text: str, path: str) -> Counter[str]:
             else:
                 with_indent = None
         if _TARGETS.intersection(fields):
-            # The raw step and source location are deliberately bound together.
-            # An identical historical step may remain, but moving/copying it or
-            # changing its trust-sensitive inputs requires independent review.
+            # Pin to exact source position as well as fields. Without the
+            # location, moving an identical cross-run step between jobs in
+            # the SAME workflow would be grandfathered by the old hash.
+            # Harmless edits shifting a legacy step require manual review;
+            # this conservative no-new-debt check prefers a false refusal.
             raw = "\n".join(lines[index:index+1]) + "\n" + "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
-            key = path + ":" + sha256(raw.encode("utf-8")).hexdigest()
+            key = path + ":" + str(index + 1) + ":" + sha256(raw.encode("utf-8")).hexdigest()
             risky[key] += 1
     return risky
 
