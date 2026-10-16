@@ -305,6 +305,49 @@ def _non_escalating_pair(previous, candidate) -> bool:
     )
 
 
+def _activation_fingerprints(commit: str, members: set) -> dict:
+    """Hash event triggers and job 'if' for existing collision participants.
+
+    A legacy writer gaining a new automatic trigger or a weaker job guard
+    increases exposure despite unchanged group and cancel mode. Changes
+    require the original workflow owner to review, not silent admission.
+    """
+    tree = dict(_workflow_entries(commit))
+    by_path = defaultdict(set)
+    for path, scope in members:
+        by_path[path].add(scope)
+    out = {}
+    for path, scopes in sorted(by_path.items()):
+        sha = tree.get(path)
+        if sha is None:
+            continue
+        raw = git_bytes("cat-file", "blob", sha, limit=MAX_BLOB_BYTES)
+        try:
+            body = yaml.load(raw.decode("utf-8"), Loader=StrictLoader)
+        except (UnicodeError, yaml.YAMLError, AdmissionError, RecursionError) as e:
+            raise AdmissionError("unsafe trigger evidence source") from e
+        if not isinstance(body, dict):
+            raise AdmissionError("unsafe trigger evidence structure")
+        jobs = body.get("jobs", {})
+        if not isinstance(jobs, dict):
+            raise AdmissionError("invalid trigger evidence jobs")
+        for scope in scopes:
+            conditional = None
+            if scope.startswith("job:"):
+                job = jobs.get(scope[4:])
+                if not isinstance(job, dict):
+                    raise AdmissionError("missing legacy collision job")
+                conditional = job.get("if")
+            source = {"events": body.get("on"), "job_if": conditional}
+            try:
+                serialized = json.dumps(source, sort_keys=True, separators=(",", ":"),
+                                        ensure_ascii=True, default=str)
+            except (TypeError, ValueError, RecursionError) as e:
+                raise AdmissionError("unreadable trigger evidence") from e
+            out[(path, scope)] = hashlib.sha256(serialized.encode("ascii")).hexdigest()
+    return out
+
+
 def check(base: str, head: str):
     assert_commits(base, head)
     old, previous_opaque = findings(base, include_opaque=True)
@@ -328,6 +371,19 @@ def check(base: str, head: str):
         raise AdmissionError(
             f"new or escalating cross-workflow cancellation collisions "
             f"({len(escalations)}): {', '.join(paths[:10])}"
+        )
+    legacy_members = {(item[0], item[1]) for pair in old for item in pair[1:]}
+    new_members = {(item[0], item[1]) for pair in new for item in pair[1:]}
+    retained = legacy_members & new_members
+    before = _activation_fingerprints(base, retained)
+    after = _activation_fingerprints(head, retained)
+    changes = sorted(key for key in retained if before.get(key) != after.get(key))
+    assert_commits(base, head)
+    if changes:
+        paths = sorted({path for path, _ in changes})
+        raise AdmissionError(
+            f"legacy concurrency member event/condition changed without owner review "
+            f"({len(changes)}): {', '.join(paths[:10])}"
         )
     return len(old), len(new)
 
