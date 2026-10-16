@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -618,6 +619,92 @@ jobs:
             )
             self.assertNotIn("traceback", result.stderr.lower())
             self.assertEqual(before, path.read_bytes())
+
+    def test_repository_scan_rejects_symlink_swapped_after_lstat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            path = folder / "proof.yml"
+            path.write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n",
+                encoding="utf-8",
+            )
+            outside = root / "outside.yml"
+            outside.write_text("private-target\n", encoding="utf-8")
+            original_open = audit.os.open
+            swapped = False
+
+            def swap_before_open(name, flags, *args, **kwargs):
+                nonlocal swapped
+                if name == "proof.yml" and not swapped and "dir_fd" in kwargs:
+                    swapped = True
+                    path.unlink()
+                    path.symlink_to(outside)
+                return original_open(name, flags, *args, **kwargs)
+
+            with patch.object(audit.os, "open", side_effect=swap_before_open):
+                with self.assertRaises(OSError):
+                    audit.scan_repository(root, max_days=30)
+            self.assertTrue(swapped)
+            self.assertEqual("private-target\n", outside.read_text(encoding="utf-8"))
+
+    def test_repository_scan_rejects_regular_file_swapped_after_lstat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            path = folder / "proof.yml"
+            original = (
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n"
+            )
+            path.write_text(original, encoding="utf-8")
+            replacement = root / "other.yml"
+            replacement.write_text("x" * len(original), encoding="utf-8")
+            original_open = audit.os.open
+            swapped = False
+
+            def swap_before_open(name, flags, *args, **kwargs):
+                nonlocal swapped
+                if name == "proof.yml" and not swapped and "dir_fd" in kwargs:
+                    swapped = True
+                    replacement.replace(path)
+                return original_open(name, flags, *args, **kwargs)
+
+            with patch.object(audit.os, "open", side_effect=swap_before_open):
+                with self.assertRaisesRegex(
+                    RuntimeError, "workflow changed during audit"
+                ):
+                    audit.scan_repository(root, max_days=30)
+            self.assertTrue(swapped)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFO required")
+    def test_repository_scan_rejects_fifo_swap_without_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            path = folder / "proof.yml"
+            path.write_text("jobs: {}\n", encoding="utf-8")
+            original_open = audit.os.open
+            swapped = False
+
+            def swap_before_open(name, flags, *args, **kwargs):
+                nonlocal swapped
+                if name == "proof.yml" and not swapped and "dir_fd" in kwargs:
+                    swapped = True
+                    path.unlink()
+                    os.mkfifo(path)
+                return original_open(name, flags, *args, **kwargs)
+
+            with patch.object(audit.os, "open", side_effect=swap_before_open):
+                with self.assertRaisesRegex(
+                    RuntimeError, "workflow changed during audit"
+                ):
+                    audit.scan_repository(root, max_days=30)
+            self.assertTrue(swapped)
 
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
