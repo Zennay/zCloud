@@ -463,6 +463,50 @@ jobs:
             self.assertNotIn("PRIVATE_SCAN_TOKEN", result.stdout + result.stderr)
             self.assertEqual(original, path.read_bytes())
 
+    def test_scanner_bounds_workflow_inventory_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            for number in range(audit.MAX_WORKFLOW_ENTRIES + 1):
+                (folder / f"slot-{number:04d}.yml").write_text(
+                    "name: empty\n", encoding="utf-8"
+                )
+            with self.assertRaisesRegex(RuntimeError, "workflow inventory too large"):
+                audit.scan_repository(root, max_days=30)
+
+    def test_scanner_bounds_total_workflow_bytes_before_parsing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            # Sparse files: the total source size crosses the 32 MiB budget
+            # without allocating 33 MiB of physical disk blocks.
+            for number in range(
+                audit.MAX_TOTAL_WORKFLOW_BYTES // audit.MAX_WORKFLOW_BYTES + 1
+            ):
+                with (folder / f"entry-{number:04d}.yml").open("wb") as handle:
+                    handle.truncate(audit.MAX_WORKFLOW_BYTES)
+            with self.assertRaisesRegex(
+                RuntimeError, "workflow inventory bytes exceeded"
+            ):
+                audit.scan_repository(root, max_days=30)
+
+    def test_scanner_accepts_small_source_inventories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / ".github" / "workflows"
+            folder.mkdir(parents=True)
+            (folder / "file.yaml").write_text(
+                "jobs:\n  proof:\n    steps:\n"
+                "      - uses: actions/upload-artifact@v4\n"
+                "        with:\n          retention-days: 14\n",
+                encoding="utf-8",
+            )
+            rows = audit.scan_repository(root, max_days=30)
+            self.assertEqual(1, len(rows))
+            self.assertEqual("bounded", rows[0].status)
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
