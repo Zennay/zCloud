@@ -159,6 +159,9 @@ jobs:
               "project_runtime.py",
               "lane_generator.py",
               "project-contracts.json",
+              "worker-modes.json",
+              "projects.json",
+              "project-layout.json",
               "autonomy-policy.json",
               "vps-execution-policy.json",
               "portfolio_queue.seed.json",
@@ -666,6 +669,7 @@ jobs:
             --path server.py \
             --path project_runtime.py \
             --path project-contracts.json \
+            --path worker-modes.json \
             --path lane_generator.py \
             --path vps-execution-policy.json \
             --preserve-prechange-drift public/zcloud-worker.user.js \
