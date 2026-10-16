@@ -24,7 +24,7 @@ class Denied(Exception):
     """Stable, redacted reason."""
 
 
-def push_scope_hints(lines: list[str]) -> dict:
+def push_scope_hints(lines: list[str], workflow_path: str | None = None) -> dict:
     """Report presence of exact-indent push filter *keys*; not their effect.
 
     GitHub YAML parsing, path match semantics and real trigger activity are
@@ -32,36 +32,51 @@ def push_scope_hints(lines: list[str]) -> dict:
     """
     in_root_on = False
     in_push = False
+    in_paths = False
     paths = False
     branches = False
+    own_path_literal = False
     for line in lines:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if not line[0].isspace():
             in_root_on = bool(re.fullmatch(r"on:\s*(?:#.*)?", line))
             in_push = False
+            in_paths = False
             continue
         if not in_root_on:
             continue
         if re.fullmatch(r"  push:\s*(?:#.*)?", line):
             in_push = True
+            in_paths = False
             continue
         if re.match(r"^  [a-zA-Z_][a-zA-Z_0-9-]*\s*:", line):
             in_push = False
+            in_paths = False
             continue
         if in_push:
             if re.match(r"^    paths\s*:", line):
                 paths = True
+                in_paths = True
+            elif re.match(r"^    [A-Za-z_][A-Za-z_0-9-]*\s*:", line):
+                in_paths = False
             if re.match(r"^    branches\s*:", line):
                 branches = True
+            if in_paths and workflow_path and re.match(r"^      -\s+", line):
+                literal = line.split("-", 1)[1].split(" #", 1)[0].strip()
+                if literal.startswith(("'", '"')) and literal.endswith(literal[:1]):
+                    literal = literal[1:-1]
+                if literal == workflow_path:
+                    own_path_literal = True
     return {
         "push_paths_filter_key_hint": paths,
         "push_branches_filter_key_hint": branches,
+        "push_paths_mentions_own_yaml_literal_hint": own_path_literal,
         "push_filter_effectiveness_verified": False,
     }
 
 
-def observe(raw: str) -> dict:
+def observe(raw: str, workflow_path: str | None = None) -> dict:
     lines = raw.splitlines()
     if len(lines) > 20000:
         raise Denied("workflow_line_limit")
@@ -122,7 +137,7 @@ def observe(raw: str) -> dict:
         "unrecognized_event_hints": sorted(events - AUTO - MANUAL),
         "unknown_trigger_syntax": unknown,
         "runner_hints": sorted(runners),
-        **push_scope_hints(lines),
+        **push_scope_hints(lines, workflow_path),
         "manual_only_verified": False,
         "actual_activity_verified": False,
     }
@@ -164,7 +179,7 @@ def audit(repo: Path, sha: str) -> dict:
     inventory = core.inventory(repo, sha)
     records = []
     for row in inventory["candidates"]:
-        hints = observe(read_blob(repo, sha, row))
+        hints = observe(read_blob(repo, sha, row), workflow_path=row["path"])
         records.append({
             "path": row["path"], "source_sha256": row["source_sha256"],
             "priority": "P1" if row["classification"] == "direct_writer_candidate" else "P2",
@@ -181,6 +196,8 @@ def audit(repo: Path, sha: str) -> dict:
         "unknown_trigger_count": sum(r["unknown_trigger_syntax"] for r in records),
         "push_paths_key_hint_count": sum(r["push_paths_filter_key_hint"] for r in records),
         "push_branches_key_hint_count": sum(r["push_branches_filter_key_hint"] for r in records),
+        "push_own_yaml_literal_hint_count": sum(
+            r["push_paths_mentions_own_yaml_literal_hint"] for r in records),
         "candidates": records, "manual_only_verified": False,
         "actual_activity_verified": False, "safe_to_enable_branch_protection": False,
         "production_mutation_authorized": False,
@@ -206,7 +223,9 @@ def main(argv=None):
                          "automatic_event_hints", "manual_event_hints",
                          "unrecognized_event_hints", "unknown_trigger_syntax",
                          "runner_hints", "push_paths_filter_key_hint",
-                         "push_branches_filter_key_hint", "push_filter_effectiveness_verified",
+                         "push_branches_filter_key_hint",
+                         "push_paths_mentions_own_yaml_literal_hint",
+                         "push_filter_effectiveness_verified",
                          "manual_only_verified", "branch_protection_authorized"))
         for row in data["candidates"]:
             writer.writerow((data["main_sha"], row["path"], row["source_sha256"],
@@ -217,13 +236,14 @@ def main(argv=None):
                              "|".join(row["runner_hints"]),
                              str(row["push_paths_filter_key_hint"]).lower(),
                              str(row["push_branches_filter_key_hint"]).lower(),
+                             str(row["push_paths_mentions_own_yaml_literal_hint"]).lower(),
                              "false", "false", "false"))
     elif a.format == "markdown":
         print("## zCloud writer-starttriggers — statische hints, GEEN VRIJGAVE")
         for key in ("main_sha", "candidate_count", "automatic_event_hint_count",
                     "manual_event_hint_count", "self_hosted_hint_count",
                     "unknown_trigger_count", "push_paths_key_hint_count",
-                    "push_branches_key_hint_count"):
+                    "push_branches_key_hint_count", "push_own_yaml_literal_hint_count"):
             print(key + ": " + str(data[key]))
         for row in data["candidates"]:
             print("- " + row["path"] + ": auto=" +
