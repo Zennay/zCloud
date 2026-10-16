@@ -124,6 +124,40 @@ class RealGit(unittest.TestCase):
         ))
         self.check(self.commit(), "reject")
 
+    def test_dynamic_workflow_identifier_cannot_hide_api_dispatch(self):
+        self.put("dynamic.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "gh api -X POST repos/$GITHUB_REPOSITORY/actions/workflows/$TARGET/dispatches"
+        ))
+        self.check(self.commit(), "reject")
+
+    def test_repo_dispatch_rest_endpoint_rejected(self):
+        self.put("event.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "gh api -X POST repos/Zennay/zCloud/dispatches"
+        ))
+        self.check(self.commit(), "reject")
+
+    def test_repo_dispatch_octokit_endpoint_rejected(self):
+        self.put("octokit.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "github.rest.repos.createDispatchEvent({event_type: 'deploy'})"
+        ))
+        self.check(self.commit(), "reject")
+
+    def test_repo_dispatch_generic_sdk_call_rejected(self):
+        self.put("sdk.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "client.createRepositoryDispatch({})"
+        ))
+        self.check(self.commit(), "reject")
+
+    def test_non_scheduled_repo_dispatch_remains_unrestricted(self):
+        self.put("manual.yml", PLAIN.replace(
+            "echo ok", "gh api -X POST repos/Zennay/zCloud/dispatches"
+        ))
+        self.check(self.commit(), "pass")
+
     def test_same_dispatch_in_non_scheduled_workflow_is_allowed(self):
         self.put("manual.yml", PLAIN.replace("echo ok", "gh workflow run foo.yml"))
         self.check(self.commit(), "pass")
