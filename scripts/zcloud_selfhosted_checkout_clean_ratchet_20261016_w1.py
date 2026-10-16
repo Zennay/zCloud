@@ -118,6 +118,7 @@ def analyze(source, path):
     current = None
     in_jobs = False
     jobs_headers = 0
+    noncanonical_jobs_reported = False
     for line in lines:
         # Only actual top-level `jobs` children are job IDs. A flow/alias
         # jobs map is not safely inspectable by this bounded source parser.
@@ -137,6 +138,20 @@ def analyze(source, path):
         if match:
             current = (match.group("id"), [])
             jobs.append(current)
+        elif in_jobs and line.startswith("  ") and not line.startswith("   ") and (
+                line.strip() and not line.lstrip().startswith("#")):
+            # A flow-style job, tagged key or inline mapping can conceal its
+            # runner and checkout. Never report an incomplete scan as clean.
+            risks.append((path, "workflow", "jobs", "opaque-job-entry"))
+            current = None
+        elif in_jobs and not jobs and line.startswith("    ") and line.strip() and (
+                not line.lstrip().startswith("#")):
+            # YAML permits indents other than two spaces for jobs. This
+            # textual subset only recognizes the canonical form; reject
+            # noncanonical candidates instead of ignoring their contents.
+            if not noncanonical_jobs_reported:
+                risks.append((path, "workflow", "jobs", "noncanonical-job-indent"))
+                noncanonical_jobs_reported = True
         elif current and (line.startswith("    ") or not line.strip()):
             current[1].append(line)
         elif current and line and not line.startswith("#"):
