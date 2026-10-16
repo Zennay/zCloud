@@ -15,6 +15,7 @@ import selectors
 import subprocess
 import time
 from collections import Counter
+from itertools import chain
 from pathlib import Path
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -54,6 +55,23 @@ LOCAL_ACTION = re.compile(
 )
 # YAML alias/tag and expression-valued action references can conceal an
 # indirect workflow dispatch. Count new opaque scheduled edges for review.
+# Flow-style YAML maps can contain valid "uses" edges on the same line.
+# Parse local/remote literal references, but never evaluate YAML or shell code.
+INLINE_REUSABLE = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""((?:\./\.github/workflows/|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/)"""
+    r"""[A-Za-z0-9_.-]+\.ya?ml(?:@[^\s'"#,}\]]+)?)['"]?(?=\s*[,}\]])"""
+)
+INLINE_LOCAL_ACTION = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""(\./\.github/actions/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)['"]?(?=\s*[,}\]])"""
+)
+INLINE_RUNS = re.compile(r"""(?m)^[ \t]*runs:[ \t]*\{([^}\n]*)\}""")
+INLINE_ACTION_ENTRY = re.compile(
+    r"""(?:^|,)\s*(?:main|pre|post|['"](?:main|pre|post)['"])\s*:\s*"""
+    r"""['"]?([^,'"\\s}]+)"""
+)
+
 OPAQUE_USES = re.compile(
     r"""(?m)^[ \t]+(?:-[ \t]*)?(?:uses|['"]uses['"])[ \t]*:[ \t]*"""
     r"""(?:['"])?([*&!][^\s#'"]*|\$\{\{[^\n]*)"""
@@ -226,7 +244,7 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     ("site:" + path + ":" + signature).encode()
                 ).hexdigest()
                 sites[fingerprint] += count
-            for match in REUSABLE.finditer(text):
+            for match in chain(REUSABLE.finditer(text), INLINE_REUSABLE.finditer(text)):
                 target = match.group(1)
                 # Every newly introduced/replaced delegation is risky even if
                 # its target currently has no explicit dispatch command.
@@ -236,7 +254,7 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                 sites[edge] += 1
                 if target.startswith("./.github/workflows/"):
                     visiting.append(target[2:])
-            for match in LOCAL_ACTION.finditer(text):
+            for match in chain(LOCAL_ACTION.finditer(text), INLINE_LOCAL_ACTION.finditer(text)):
                 action_root = match.group(1)[2:]
                 edge = hashlib.sha256(
                     ("action:" + path + ":" + action_root).encode()
@@ -259,8 +277,11 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                 ).hexdigest()
                 sites[edge] += 1
             if ACTION.fullmatch(path):
-                for match in ACTION_ENTRY.finditer(text):
-                    raw_entry = match.group(1)
+                entries = [match.group(1) for match in ACTION_ENTRY.finditer(text)]
+                for flow in INLINE_RUNS.finditer(text):
+                    entries.extend(match.group(1) for match in
+                                   INLINE_ACTION_ENTRY.finditer(flow.group(1)))
+                for raw_entry in entries:
                     entry = raw_entry[2:] if raw_entry.startswith("./") else raw_entry
                     parts = entry.split("/")
                     if (any(part in {"", ".", ".."} for part in parts)
