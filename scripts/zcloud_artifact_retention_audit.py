@@ -143,7 +143,7 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
 
         upload_lines = [
             number for number, action in uses
-            if re.fullmatch(r"actions/upload-artifact@[^\s]+", action)
+            if re.fullmatch(r"actions/upload-artifact@[^\s]+", action, re.IGNORECASE)
         ]
         if not upload_lines:
             continue
