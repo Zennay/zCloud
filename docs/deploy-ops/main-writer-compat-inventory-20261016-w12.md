@@ -23,3 +23,9 @@ The scanner reads every tracked YAML workflow blob under .github/workflows at th
 ## Next owner-side acceptance
 
 Run against a freshly verified canonical main SHA, retain the redacted JSON receipt, map every candidate to its existing PR owner and concrete disposition, then separately audit REST/GraphQL clients and composite actions. Re-run exact-head compatibility before proposing branch protection; use #1033's independent GitHub governance audit and the serialized release owner for any eventual live change. Never treat this scanner as an authorization gate.
+
+## GitHub-hosted current-main evidence job
+
+The new same-branch `.github/workflows/zcloud-main-writer-compat-inventory-20261016-w12.yml` runs only on pull requests to main, with explicit `contents: read`, a pinned checkout action, no checkout credentials persisted, and `ubuntu-latest` (never the VPS). It admits only same-repository heads; independently checks current origin/main against the PR base SHA and the live remote PR head against the event head SHA before and after tests. It runs the 19 real-Git tests, then inventories a local detached worktree at the exact pinned main SHA, outputting a human-readable candidate list and permanent denial flags. This job is diagnostic and cannot grant protection or production authority. A queued/self-hosted VPS diagnostic is not a substitute for this job's completed evidence.
+
+No remote Git ref, branch protection, workflow owner, production service or worker state is changed; the ephemeral hosted worktree and its local main ref are discarded with the job.
