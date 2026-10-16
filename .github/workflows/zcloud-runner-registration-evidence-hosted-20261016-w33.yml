@@ -1,0 +1,36 @@
+name: zCloud runner registration evidence - hosted branch validation
+
+# Branch-only CI: no PR-triggered VPS jobs, workflow_run privilege, or live dispatch.
+on:
+  push:
+    branches:
+      - deployops/runner-registration-evidence-20261016-w33
+    paths:
+      - scripts/zcloud_runner_registration_evidence_20261016_w33.py
+      - tests/test_zcloud_runner_registration_evidence_20261016_w33.py
+      - docs/deployops-runner-registration-evidence-20261016-w33.md
+      - .github/workflows/zcloud-runner-registration-evidence-hosted-20261016-w33.yml
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/deployops/runner-registration-evidence-20261016-w33' &&
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read immutable current commit with no persisted token
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run strictly offline admission tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_runner_registration_evidence_20261016_w33.py
+          python3 -m unittest discover -s tests -p 'test_zcloud_runner_registration_evidence_20261016_w33.py' -v
