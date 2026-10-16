@@ -149,10 +149,44 @@ def _safe_checkout_step(lines: list[str]) -> bool:
     return True
 
 
+def _safe_identity_step_fields(lines: list[str]) -> bool:
+    """Require literal, unique keys for the first executable guard step.
+
+    YAML quoted/tagged keys may shadow run/shell/if after source scanning.
+    Identity step must have no custom env or defaults before admitting a VPS.
+    """
+    seen: set[str] = set()
+    for i, line in enumerate(lines):
+        if i == 0:
+            first = re.fullmatch(r"- (name|id|run):\s*[^\n]*", line)
+            if not first:
+                return False
+            seen.add(first.group(1))
+            continue
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if line.startswith("        ") and not line.startswith("         "):
+            field = re.fullmatch(r"        (name|id|run|shell):\s*[^\n]*", line)
+            if not field or field.group(1) in seen:
+                return False
+            seen.add(field.group(1))
+        elif line.startswith("        "):
+            # Script body has deeper indentation. It is still checked for
+            # the literal first executable command by _early_guard.
+            continue
+        else:
+            return False
+    return "run" in seen
+
+
 def _early_guard(job: list[str]) -> bool:
     # If a later step uses a status-check override, it can run even after the
     # identity guard fails. No source-only admission can trust that sequence.
     if SHELL_HIJACK.search("\n".join(job)) or INLINE_HIJACK.search("\n".join(job)):
+        return False
+    # Aliased/flow-style job env cannot prove the interpreter's startup
+    # environment is harmless. Explicit unrelated scalar env remains valid.
+    if re.search(r"(?m)^    env:\s*[^\s#]", "\n".join(job)):
         return False
     if re.search(r"(?i)\b(?:always|failure|cancelled)\s*\(", "\n".join(job)):
         return False
@@ -200,6 +234,8 @@ def _early_guard(job: list[str]) -> bool:
             checkout_seen = True
             continue
         if runs:
+            if not _safe_identity_step_fields(lines):
+                return False
             # A different step cwd could load a stale/attacker-supplied guard
             # instead of the guard checked out at the trusted repository root.
             if re.search(r"(?m)^\s*working-directory:", text):
