@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.zcloud_github_script_eval_ratchet_20261016 import EvidenceError, evaluate, risks
+from scripts.zcloud_github_script_eval_ratchet_20261016 import EvidenceError, GIT_ENV, git, evaluate, risks
 
 SAFE = """name: sample
 on: [pull_request]
@@ -297,6 +297,40 @@ runs:
             'const literal = <TICK>\n            uses: actions/github-script@v7\n            <TICK>;\n            core.info(literal);'.replace("<TICK>", chr(96)),
         ))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_git_streaming_stops_at_exact_budget(self):
+        fake_dir = self.root / "fakegit"
+        fake_dir.mkdir()
+        fake = fake_dir / "git"
+        fake.write_text("#!/bin/sh\nhead -c 1048576 /dev/zero\n")
+        fake.chmod(0o755)
+        original = GIT_ENV.get("PATH", "")
+        GIT_ENV["PATH"] = str(fake_dir) + os.pathsep + original
+        try:
+            with self.assertRaisesRegex(EvidenceError, "bounded budget"):
+                git("fake-command", cap=512)
+        finally:
+            GIT_ENV["PATH"] = original
+
+    def test_git_command_error_denies_evidence(self):
+        fake_dir = self.root / "badgit"
+        fake_dir.mkdir()
+        fake = fake_dir / "git"
+        fake.write_text("#!/bin/sh\nexit 42\n")
+        fake.chmod(0o755)
+        original = GIT_ENV.get("PATH", "")
+        GIT_ENV["PATH"] = str(fake_dir) + os.pathsep + original
+        try:
+            with self.assertRaisesRegex(EvidenceError, "refused evidence"):
+                git("fake-command", cap=64)
+        finally:
+            GIT_ENV["PATH"] = original
+
+    def test_git_invalid_budget_fails_before_execution(self):
+        with self.assertRaisesRegex(EvidenceError, "invalid Git evidence budget"):
+            git("status", cap=-1)
+        with self.assertRaisesRegex(EvidenceError, "invalid Git evidence budget"):
+            git("status", cap=33 * 1024 * 1024)
 
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
