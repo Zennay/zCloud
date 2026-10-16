@@ -46,7 +46,7 @@ class DashboardStartForceRegressionTests(unittest.TestCase):
 
     def test_dashboard_asset_revision_changes(self):
         index = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("/app.js?v=r8", index)
+        self.assertIn("/app.js?v=20261016-auto", index)
 
 
 if __name__ == "__main__":
