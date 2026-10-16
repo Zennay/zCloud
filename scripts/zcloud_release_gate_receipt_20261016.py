@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import stat
 import sys
+import unicodedata
 from typing import Any
 
 MAX_BYTES = 65536
@@ -94,6 +95,29 @@ def _check_json_nesting(raw: bytes) -> None:
                 raise ValueError("invalid_json")
 
 
+def _reject_unsafe_unicode(value: Any) -> None:
+    """Reject control, format and surrogate code points in *all* JSON text.
+
+    Python accepts escaped isolated surrogates such as \\ud800 even though
+    they cannot be encoded as valid UTF-8. Format characters can also hide
+    or reorder values in downstream audit displays. Scan parsed keys and
+    values iteratively, without echoing or recursing through untrusted data.
+    """
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if type(item) is str:
+            if any(unicodedata.category(char) in {"Cc", "Cf", "Cs"}
+                   for char in item):
+                raise ValueError("invalid_json")
+        elif type(item) is list:
+            stack.extend(item)
+        elif type(item) is dict:
+            for key, child in item.items():
+                stack.append(key)
+                stack.append(child)
+
+
 def decode_receipt(raw: bytes) -> dict[str, Any]:
     if len(raw) > MAX_BYTES:
         raise ValueError("receipt_too_large")
@@ -112,6 +136,7 @@ def decode_receipt(raw: bytes) -> dict[str, Any]:
         raise ValueError("invalid_json") from error
     if type(result) is not dict:
         raise ValueError("invalid_schema")
+    _reject_unsafe_unicode(result)
     return result
 
 
