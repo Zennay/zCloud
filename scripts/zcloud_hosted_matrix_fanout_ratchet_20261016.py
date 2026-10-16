@@ -143,6 +143,8 @@ def changed_paths(base, head):
 def workflow_path(path):
     if not path.startswith(".github/workflows/") or path.count("/") != 2:
         return False
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in path):
+        raise InvalidSource("workflow_path_control_character")
     if path.endswith((".yml", ".yaml")):
         return True
     if path.lower().endswith((".yml", ".yaml")):
@@ -249,6 +251,8 @@ def violations(source):
     for job_id, job in document["jobs"].items():
         if not isinstance(job_id, str) or not isinstance(job, dict):
             raise InvalidSource("invalid_job_definition")
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in job_id):
+            raise InvalidSource("job_identifier_control_character")
         if "uses" in job or not hosted_runner(job.get("runs-on")):
             continue  # reusable and self-hosted job policy has another owner
         strategy = job.get("strategy")
