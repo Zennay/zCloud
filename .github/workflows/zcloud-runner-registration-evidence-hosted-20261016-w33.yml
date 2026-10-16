@@ -34,3 +34,51 @@ jobs:
           set -euo pipefail
           python3 -m py_compile scripts/zcloud_runner_registration_evidence_20261016_w33.py
           python3 -m unittest discover -s tests -p 'test_zcloud_runner_registration_evidence_20261016_w33.py' -v
+  hosted-regression:
+    # Independent source-only full-suite evidence: no self-hosted, secrets, or write token.
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/deployops/runner-registration-evidence-20261016-w33' &&
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact branch push SHA without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Assert immutable checkout identity before executing repository tests
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Set up Node for existing zCloud browser contracts
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Run complete repository Python regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -v
+      - name: Run independent shell and browser contract regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/test_birds_eye_review.sh
+          bash tests/test_improvement_stopgate_js.sh
+          bash tests/test_autonomy_runner_js.sh
+          node tests/test_reload_extension.mjs
+          node tests/test_firefox_recovery.js
+          node tests/test_firefox_recovery_contract.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_violentmonkey_send_tab_preservation.js
+          node --check public/zcloud-worker.user.js
+
