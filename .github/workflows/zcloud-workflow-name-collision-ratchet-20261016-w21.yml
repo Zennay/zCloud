@@ -58,5 +58,7 @@ jobs:
           python3 scripts/zcloud_workflow_name_collision_ratchet_20261016_w21.py \
             --base "$EXPECTED_BASE" --head "$EXPECTED_HEAD" --root .
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          final_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$final_main" = "$EXPECTED_BASE"
           echo WORKFLOW_NAME_NO_NEW_COLLISION=PASS
           echo 'Source-only proof: no merge, release or VPS deployment is authorized.' >> "$GITHUB_STEP_SUMMARY"
