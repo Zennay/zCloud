@@ -154,6 +154,11 @@ def _yaml_flow_items(value):
     pieces.append("".join(buf).strip())
     if len(pieces) > 64 or any(not piece for piece in pieces):
         raise InvalidInventory("unsupported_workflow_run_reference")
+    # Flow delimiters inside an unquoted YAML sequence scalar must never be
+    # treated as ordinary literal characters (e.g. [Build]] garbage).
+    if any(piece[0] not in {"'", '"'} and
+           any(char in piece for char in "[]{}") for piece in pieces):
+        raise InvalidInventory("unsupported_workflow_run_reference")
     return tuple(_scalar(piece) for piece in pieces)
 
 
