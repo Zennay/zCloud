@@ -372,8 +372,12 @@ def evaluate(root: Path, base: str, head: str) -> dict:
         current.update({(path, detector, digest): count
                         for (detector, digest), count in dispatch_sites(source).items()})
     new_findings = sorted(path for (path, _detector, _digest) in (current - previous).elements())
+    # Inventory-only: print bounded, validated YAML paths, never workflow body
+    # bytes, command lines or secrets. Legacy is NOT release authorization.
+    legacy_by_path = Counter(path for path, _detector, _digest in previous.elements())
     return {
         "base": base, "head": head,
+        "legacy_workflows": sorted(legacy_by_path.items()),
         "scanned_base": len(old), "scanned_head": len(new),
         "previous_findings": sum(previous.values()),
         "current_findings": sum(current.values()),
@@ -403,6 +407,8 @@ def main(argv=None) -> int:
     print("SCANNED_BASE=" + str(result["scanned_base"]) +
           " SCANNED_HEAD=" + str(result["scanned_head"]) +
           " LEGACY=" + str(result["previous_findings"]))
+    for path, count in result["legacy_workflows"][:30]:
+        print("LEGACY_RECURSIVE_DISPATCH_WORKFLOW=" + path + " SITES=" + str(count))
     for path in result["new_findings"][:30]:
         print("NEW_RECURSIVE_DISPATCH=" + path)
     print("PRODUCTION_MUTATION_AUTHORIZED=false MERGE_AUTHORIZED=false")

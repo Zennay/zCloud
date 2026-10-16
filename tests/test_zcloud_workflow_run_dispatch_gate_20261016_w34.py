@@ -55,6 +55,34 @@ class GateTests(unittest.TestCase):
         self.assertFalse(report["merge_authorized"])
         self.assertEqual(main(["--root", str(self.repo), "--base", base, "--head", head]), 1)
 
+    def test_legacy_inventory_exposes_only_bounded_workflow_paths(self):
+        import contextlib
+        import io
+        base = self.commit(DANGEROUS)
+        head = self.commit(DANGEROUS + "\n# safe-only comment\n")
+        report = evaluate(self.repo, base, head)
+        self.assertEqual(report["legacy_workflows"], [(WORKFLOW, 1)])
+        evidence = io.StringIO()
+        with contextlib.redirect_stdout(evidence):
+            self.assertEqual(main(["--root", str(self.repo), "--base", base, "--head", head]), 0)
+        message = evidence.getvalue()
+        self.assertIn(
+            "LEGACY_RECURSIVE_DISPATCH_WORKFLOW=" + WORKFLOW + " SITES=1", message
+        )
+        self.assertIn("PRODUCTION_MUTATION_AUTHORIZED=false", message)
+        self.assertNotIn("gh workflow run unsafe.yml", message)
+
+    def test_repeated_legacy_sites_report_aggregate_count_without_commands(self):
+        duplicate = DANGEROUS.replace(
+            "gh workflow run unsafe.yml",
+            "gh workflow run unsafe.yml\n          gh workflow run unsafe.yml",
+        )
+        base = self.commit(duplicate)
+        head = self.commit(duplicate + "\n# untouched risk\n")
+        report = evaluate(self.repo, base, head)
+        self.assertEqual(report["legacy_workflows"], [(WORKFLOW, 2)])
+        self.assertEqual(report["new_findings"], [])
+
     def test_unchanged_legacy_is_inventory_only(self):
         base = self.commit(DANGEROUS)
         head = self.commit(DANGEROUS + "\n# only comment\n")
