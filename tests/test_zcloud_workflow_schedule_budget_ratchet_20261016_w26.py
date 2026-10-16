@@ -241,6 +241,38 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertTrue(any(item.get("reason") == "cross_schedule_burst"
                             for item in receipt["new_high_frequency"]))
 
+    def test_existing_duplicate_pair_does_not_approve_third_duplicate(self):
+        path = self.directory / "safe.yml"
+        double = workflow("0 9 * * *").replace(
+            "jobs:", "    - cron: '0 9 * * *'\njobs:")
+        path.write_text(double, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "legacy duplicate pair")
+        baseline = self.git("rev-parse", "HEAD")
+        original = audit(self.root, baseline)
+        self.assertTrue(original["accepted"])
+        path.write_text(double.replace(
+            "jobs:", "    - cron: '0 9 * * *'\njobs:"), encoding="utf-8")
+        receipt = audit(self.root, baseline)
+        self.assertFalse(receipt["accepted"])
+        collisions = [row for row in receipt["new_high_frequency"]
+                      if row.get("reason") == "cross_schedule_burst"]
+        self.assertEqual(len(collisions), 1)
+        self.assertEqual(collisions[0]["baseline_instances"], 1)
+        self.assertEqual(collisions[0]["candidate_instances"], 3)
+
+    def test_reordered_existing_duplicate_schedule_is_safe(self):
+        path = self.directory / "safe.yml"
+        path.write_text(workflow("0 9 * * *").replace(
+            "jobs:", "    - cron: '0 9 * * *'\njobs:"), encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "existing duplicate")
+        baseline = self.git("rev-parse", "HEAD")
+        self.assertTrue(audit(self.root, baseline)["accepted"])
+        path.write_text(path.read_text() + "\n# unrelated source comment\n",
+                        encoding="utf-8")
+        self.assertTrue(audit(self.root, baseline)["accepted"])
+
     def test_legacy_pair_grandfathered_exactly(self):
         legacy = self.directory / "legacy.yml"
         legacy.write_text(workflow("0 * * * *").replace(
