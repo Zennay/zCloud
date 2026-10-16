@@ -10,6 +10,7 @@ import argparse
 import json
 import hashlib
 import os
+import posixpath
 import re
 import selectors
 import subprocess
@@ -76,6 +77,15 @@ OPAQUE_USES = re.compile(
     r"""(?m)^[ \t]+(?:-[ \t]*)?(?:uses|['"]uses['"])[ \t]*:[ \t]*"""
     r"""(?:['"])?([*&!][^\s#'"]*|\$\{\{[^\n]*)"""
 )
+
+
+# Trace literal relative Node imports reached from scheduled local actions.
+# Ignore built-in/package imports; never evaluate imported JavaScript.
+NODE_LOCAL_IMPORT = re.compile(
+    r"""(?m)(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bimport\s+|\bfrom\s+)"""
+    r"""['"](\.{1,2}/[^'"\r\n]+)['"]"""
+)
+NODE_SUFFIXES = (".js", ".mjs", ".cjs")
 
 MAX_MANIFESTS = 2048
 MAX_BLOB = 1024 * 1024
@@ -295,6 +305,40 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     ).hexdigest()
                     sites[edge] += 1
                     visiting.append(target)
+            if ACTION_CODE.fullmatch(path) and path.endswith(NODE_SUFFIXES):
+                for match in NODE_LOCAL_IMPORT.finditer(text):
+                    reference = match.group(1)
+                    # Preserve original source identity even when imports use
+                    # different aliases for the same relative file.
+                    edge = hashlib.sha256(
+                        ("node-import:" + path + ":" + reference).encode()
+                    ).hexdigest()
+                    sites[edge] += 1
+                    resolved = posixpath.normpath(
+                        posixpath.join(posixpath.dirname(path), reference)
+                    )
+                    if not resolved.startswith(".github/actions/"):
+                        # Relative imports leaving the bounded action source
+                        # tree cannot be treated as verified evidence.
+                        sites[hashlib.sha256(
+                            ("opaque-node-import:" + path + ":" + reference).encode()
+                        ).hexdigest()] += 1
+                        continue
+                    if resolved.endswith(NODE_SUFFIXES):
+                        targets = (resolved,)
+                    else:
+                        targets = tuple(
+                            resolved + suffix for suffix in NODE_SUFFIXES
+                        ) + tuple(
+                            resolved + "/index" + suffix for suffix in NODE_SUFFIXES
+                        )
+                    matched = [target for target in targets if target in workflows]
+                    if not matched:
+                        sites[hashlib.sha256(
+                            ("missing-node-import:" + path + ":" + reference).encode()
+                        ).hexdigest()] += 1
+                    else:
+                        visiting.extend(matched)
         if sites:
             report[root] = sites
     return report
