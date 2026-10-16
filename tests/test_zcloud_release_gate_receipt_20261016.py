@@ -240,5 +240,130 @@ class ReleaseReceiptTests(unittest.TestCase):
             self.assertIn("unsafe_or_missing_receipt", call.stdout)
 
 
+    def test_cli_invalid_json_always_reports_unverified_live_sources(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "invalid.json"
+            for bad in (b"{", b'{"a":NaN}', b"[]" * 20000):
+                with self.subTest(length=len(bad)):
+                    path.write_bytes(bad)
+                    call = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--input", str(path)],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertEqual(2, call.returncode, call.stderr)
+                    result = json.loads(call.stdout)
+                    self.assertIs(result["live_sources_verified"], False)
+                    self.assertIs(result["offline_claims_complete"], False)
+                    self.assertIs(result["production_mutation_authorized"], False)
+
+    def test_unicode_timestamp_digits_are_denied(self):
+        data = receipt()
+        data["observed_at"] = "٢٠٢٦-10-16T00:19:30Z"
+        self.assertIn("stale_or_invalid_observation",
+                      self.verdict(data)["reason_codes"])
+
+    def test_markdown_uses_plain_dutch_and_never_grants_release(self):
+        report = gate.render_markdown(self.verdict(receipt()))
+        self.assertIn("GEEN PRODUCTIEVRIJGAVE", report)
+        self.assertIn("Aangeleverd als compleet, niet geverifieerd", report)
+        self.assertIn("production_mutation_authorized=false", report)
+        self.assertIn("Bescherming hoofdbranch", report)
+        self.assertIn("Werkende VPS-runner", report)
+        self.assertEqual(8, report.count("Aangeleverd als compleet, niet geverifieerd"))
+
+    def test_markdown_shows_distinct_unresolved_gate_causes(self):
+        data = receipt()
+        data["protection"]["enforced"] = False
+        data["runner"]["runner_id"] = 0
+        data["locks"]["all_serialized"] = False
+        data["release"]["owner_approved"] = False
+        report = gate.render_markdown(self.verdict(data))
+        self.assertEqual(4, report.count("Claim ontbreekt of is ongeldig"))
+        self.assertIn("#922", report)
+        self.assertIn("#1326", report)
+        self.assertIn("#1447", report)
+        self.assertIn("#580", report)
+        self.assertNotIn(SHA, report)
+
+    def test_markdown_invalid_schema_does_not_claim_any_gate_complete(self):
+        report = gate.render_markdown(self.verdict({"secret": "injected"}))
+        self.assertEqual(8, report.count("Niet beoordeelbaar"))
+        self.assertNotIn("injected", report)
+
+    def test_markdown_renderer_fails_closed_for_unknown_reason_and_flags(self):
+        for data in (
+            {"reason_codes": ["not_known"], "live_sources_verified": False,
+             "production_mutation_authorized": False},
+            {"reason_codes": [], "live_sources_verified": True,
+             "production_mutation_authorized": False},
+            {"reason_codes": [], "live_sources_verified": False,
+             "production_mutation_authorized": True},
+        ):
+            with self.subTest(data=data):
+                report = gate.render_markdown(data)
+                self.assertEqual(8, report.count("Niet beoordeelbaar"))
+                self.assertNotIn("Aangeleverd als compleet", report)
+
+    def test_cli_markdown_failure_is_redacted_and_stays_read_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "evidence.json"
+            data = receipt()
+            data["review"]["approved"] = False
+            data["runner"]["labels"] = ["my-token-secret"]
+            raw = json.dumps(data).encode()
+            path.write_bytes(raw)
+            call = subprocess.run(
+                [sys.executable, str(SCRIPT), "--input", str(path),
+                 "--format", "markdown"],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(2, call.returncode, call.stderr)
+            self.assertIn("Onafhankelijke review", call.stdout)
+            self.assertIn("Werkende VPS-runner", call.stdout)
+            self.assertIn("GEEN PRODUCTIEVRIJGAVE", call.stdout)
+            self.assertNotIn("my-token-secret", call.stdout + call.stderr)
+            self.assertEqual(raw, path.read_bytes())
+
+    def test_cli_markdown_positive_claim_still_denies_production(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "evidence.json"
+            data = receipt()
+            data["observed_at"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            path.write_text(json.dumps(data), encoding="utf-8")
+            call = subprocess.run(
+                [sys.executable, str(SCRIPT), "--input", str(path),
+                 "--format", "markdown"], capture_output=True,
+                text=True, timeout=5,
+            )
+            self.assertEqual(0, call.returncode, call.stderr)
+            self.assertIn("GEEN PRODUCTIEVRIJGAVE", call.stdout)
+            self.assertEqual(8, call.stdout.count(
+                "Aangeleverd als compleet, niet geverifieerd"
+            ))
+
+    def test_cli_symlinked_parent_directory_is_denied(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            real = root / "real"
+            real.mkdir()
+            path = real / "proof.json"
+            path.write_text(json.dumps(receipt()), encoding="utf-8")
+            alias = root / "alias"
+            alias.symlink_to(real, target_is_directory=True)
+            call = subprocess.run(
+                [sys.executable, str(SCRIPT), "--input",
+                 str(alias / "proof.json")],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(2, call.returncode, call.stderr)
+            result = json.loads(call.stdout)
+            self.assertEqual(["unsafe_or_missing_receipt"], result["reason_codes"])
+            self.assertFalse(result["production_mutation_authorized"])
+            self.assertFalse(result["live_sources_verified"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
