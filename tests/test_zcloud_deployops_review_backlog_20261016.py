@@ -3,6 +3,7 @@ import io
 import json
 from contextlib import redirect_stderr
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest import TestCase, mock
 
 from scripts import zcloud_deployops_review_backlog_20261016 as brief
@@ -445,6 +446,40 @@ class BacklogBriefTests(TestCase):
             with mock.patch("builtins.print"):
                 self.assertEqual(0, brief.main(["--include-issues", "--expected-main-sha", SHA]))
         collector.assert_called_once_with(include_issues=True)
+
+    def test_hosted_summary_workflow_is_manual_main_only_and_read_only(self):
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github/workflows/zcloud-deployops-public-pr-backlog-brief.yml"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("on:\n  workflow_dispatch:", workflow)
+        self.assertIn("permissions:\n  contents: read", workflow)
+        self.assertIn("runs-on: ubuntu-latest", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("cancel-in-progress: false", workflow)
+        self.assertNotIn("runs-on: self-hosted", workflow)
+        for event in ("pull_request:", "pull_request_target:", "workflow_run:",
+                      "\n  push:", "contents: write", "secrets: inherit"):
+            with self.subTest(event=event):
+                self.assertNotIn(event, workflow)
+
+    def test_hosted_summary_workflow_requires_identity_and_bounded_cli(self):
+        workflow = (Path(__file__).resolve().parents[1]
+                    / ".github/workflows/zcloud-deployops-public-pr-backlog-brief.yml"
+                    ).read_text(encoding="utf-8")
+        for boundary in ('test "$GITHUB_REPOSITORY" = "Zennay/zCloud"',
+                         'test "$GITHUB_EVENT_NAME" = "workflow_dispatch"',
+                         'test "$GITHUB_REF" = "refs/heads/main"',
+                         'test "$GITHUB_ACTOR" = "Zennay"',
+                         'test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"',
+                         'test "$GITHUB_RUN_ATTEMPT" = "1"',
+                         'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
+                         '--expected-main-sha "$GITHUB_SHA"',
+                         "--include-issues",
+                         '--output "$GITHUB_STEP_SUMMARY"'):
+            with self.subTest(boundary=boundary):
+                self.assertIn(boundary, workflow)
+        self.assertIn("python3 -m unittest -v tests.test_zcloud_deployops_review_backlog_20261016",
+                      workflow)
 
     def test_reader_never_accepts_other_method_or_url(self):
         with self.assertRaisesRegex(brief.Denied, "unsupported_endpoint"):
