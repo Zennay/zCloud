@@ -1,0 +1,39 @@
+name: Retire superseded Fuckball capacity deploy
+on:
+  push:
+    branches: [release/fuckball-room-capacity-20261016]
+    paths: ['.github/workflows/fuckball-retire-stale-release-20261016.yml']
+permissions:
+  actions: write
+  contents: read
+jobs:
+  cancel-exact-unassigned-duplicate:
+    if: github.repository == 'Zennay/zCloud' && github.actor == 'Zennay' && github.ref == 'refs/heads/release/fuckball-room-capacity-20261016' && github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Cancel only an exact queued never-assigned superseded overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=38960186879
+          status="$(gh api "repos/Zennay/zCloud/actions/runs/$run_id" --jq .status)"
+          original="$(gh api "repos/Zennay/zCloud/actions/runs/$run_id" --jq .head_sha)"
+          path="$(gh api "repos/Zennay/zCloud/actions/runs/$run_id" --jq .path)"
+          test "$original" = be23bec35ee6652c2e25367d31f0dc53ae9f328c
+          test "$path" = '.github/workflows/fuckball-room-capacity-release-20261016.yml'
+          if [[ "$status" != queued ]]; then
+            echo "OLD_FUCKBALL_OVERLAY_NOT_QUEUED=$status; no cancellation attempted"
+            exit 0
+          fi
+          job_state="$(gh api "repos/Zennay/zCloud/actions/runs/$run_id/jobs" --jq '.jobs[0].status')"
+          runner="$(gh api "repos/Zennay/zCloud/actions/runs/$run_id/jobs" --jq '.jobs[0].runner_id')"
+          if [[ "$job_state" != queued || "$runner" != null ]]; then
+            echo "OLD_FUCKBALL_OVERLAY_ALREADY_ASSIGNED_OR_RUNNING; no cancellation attempted"
+            exit 0
+          fi
+          gh api --method POST "repos/Zennay/zCloud/actions/runs/$run_id/cancel" >/dev/null
+          echo "SUPERSEDED_FUCKBALL_OVERLAY_CANCELLATION_REQUESTED=$run_id"
+          echo "Live immutable source retained: 5095b5dad189cb4caa984076ac7ae3058de4ab88"
