@@ -825,5 +825,54 @@ jobs:
 
 
 
+    def test_new_scheduled_yaml_action_alias_is_denied(self):
+        self.put("scheduled-alias.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: anchor
+        env:
+          PATH_HINT: &target ./.github/actions/opaque
+      - 'uses': *target
+""")
+        result = self.check(self.commit(), "reject")
+        self.assertIn(".github/workflows/scheduled-alias.yml",
+                      result["changed_workflows_with_new_sites"])
+
+    def test_new_scheduled_dynamic_action_reference_denied(self):
+        self.put("scheduled-expression.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ${{ inputs.action }}
+""")
+        self.check(self.commit(), "reject")
+
+    def test_unchanged_opaque_scheduled_reference_is_grandfathered(self):
+        self.put("scheduled-alias.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: *existing
+""")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_manual_opaque_action_reference_does_not_add_scheduled_debt(self):
+        self.put("manual-alias.yml", """on: workflow_dispatch
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: *existing
+""")
+        self.check(self.commit(), "pass")
+
+
 if __name__ == "__main__":
     unittest.main()
