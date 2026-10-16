@@ -1104,5 +1104,76 @@ jobs:
         self.check(self.commit(), "reject")
 
 
+    def test_new_nonliteral_require_in_scheduled_action_is_denied(self):
+        self.put("scheduled-nonliteral.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/dynamic
+""")
+        self.put_action("dynamic", """runs:
+  using: node20
+  main: index.js
+""")
+        root = self.repo / ".github/actions/dynamic"
+        (root / "index.js").write_text(
+            "const target = process.env.HANDLER; require(target);\\n",
+            encoding="utf-8")
+        self.check(self.commit(), "reject")
+
+    def test_new_nonliteral_import_in_scheduled_action_is_denied(self):
+        self.put("scheduled-variable.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/variable
+""")
+        self.put_action("variable", """runs:
+  using: node20
+  main: index.mjs
+""")
+        root = self.repo / ".github/actions/variable"
+        (root / "index.mjs").write_text(
+            "await import(process.env.MODULE);\\n", encoding="utf-8")
+        self.check(self.commit(), "reject")
+
+    def test_stable_nonliteral_import_is_grandfathered(self):
+        self.put("scheduled-old-variable.yml", """on: schedule
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/old-dynamic
+""")
+        self.put_action("old-dynamic", """runs:
+  using: node20
+  main: index.js
+""")
+        (self.repo / ".github/actions/old-dynamic/index.js").write_text(
+            "require(process.env.DEPENDENCY);\\n", encoding="utf-8")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_unrelated_manual_nonliteral_import_is_not_scanned(self):
+        self.put("manual-variable.yml", """on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/manual-dynamic
+""")
+        self.put_action("manual-dynamic", """runs:
+  using: node20
+  main: index.js
+""")
+        (self.repo / ".github/actions/manual-dynamic/index.js").write_text(
+            "require(process.env.DEPENDENCY);\\n", encoding="utf-8")
+        self.check(self.commit(), "pass")
+
+
 if __name__ == "__main__":
     unittest.main()
