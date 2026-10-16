@@ -170,6 +170,32 @@ class IdentityPolicyTests(unittest.TestCase):
         doc = wf().replace("jobs:", "env:\n  SAFE: one\nenv:\n  SAFE: two\njobs:")
         self.assertIn("audit", g.unsafe_jobs(doc))
 
+    def test_pre_guard_node_git_and_loader_environment_denied(self):
+        hook_names = (
+            "NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+            "GIT_SSH_COMMAND", "GIT_SSH", "GIT_ASKPASS", "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+            "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+        )
+        for key in hook_names:
+            with self.subTest(key=key):
+                for scope in ("workflow", "job", "step"):
+                    value = wf()
+                    if scope == "workflow":
+                        value = value.replace("jobs:", "env:\n  " + key + ": /tmp/injected\njobs:")
+                    elif scope == "job":
+                        value = value.replace("    steps:", "    env:\n      " + key + ": /tmp/injected\n    steps:")
+                    else:
+                        value = value.replace("        run: |",
+                                              "        env:\n          " + key + ": /tmp/injected\n        run: |")
+                    self.assertIn("audit", g.unsafe_jobs(value), (scope, key))
+
+    def test_unrelated_flat_workflow_and_job_env_remain_allowed(self):
+        value = wf().replace("jobs:", "env:\n  STAGE: test\njobs:").replace(
+            "    steps:", "    env:\n      BUILD_LABEL: offline\n    steps:"
+        )
+        self.assertEqual(g.unsafe_jobs(value), {})
+
     def test_folded_guard_script_is_not_trustworthy(self):
         for scalar in (">", ">-"):
             with self.subTest(scalar=scalar):
