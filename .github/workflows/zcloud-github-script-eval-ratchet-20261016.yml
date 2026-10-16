@@ -1,0 +1,94 @@
+name: zCloud GitHub-script eval expression ratchet (hosted only)
+
+on:
+  push:
+    branches:
+      - deployops/github-script-eval-ratchet-20261016-w27
+    paths:
+      - scripts/zcloud_github_script_eval_ratchet_20261016.py
+      - tests/test_zcloud_github_script_eval_ratchet_20261016.py
+      - docs/zcloud-github-script-eval-ratchet-20261016.md
+      - .github/workflows/zcloud-github-script-eval-ratchet-20261016.yml
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/**'
+      - scripts/zcloud_github_script_eval_ratchet_20261016.py
+      - tests/test_zcloud_github_script_eval_ratchet_20261016.py
+      - .github/workflows/zcloud-github-script-eval-ratchet-20261016.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-script-eval-ratchet-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-only:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout immutable candidate with no saved token
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify exact source refs and capture immutable main
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git check-ref-format --branch "$EXPECTED_BRANCH"
+          test "$(git ls-remote --exit-code origin "refs/heads/$EXPECTED_BRANCH" | cut -f1)" = "$EXPECTED_HEAD"
+          git fetch --no-tags origin main
+          base_sha="$(git rev-parse origin/main)"
+          test "$base_sha" = "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          git merge-base --is-ancestor "$base_sha" "$EXPECTED_HEAD"
+          echo "BASE_SHA=$base_sha" >> "$GITHUB_ENV"
+      - name: Run adversarial real-Git source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_github_script_eval_ratchet_20261016.py
+          python3 -m unittest -v tests.test_zcloud_github_script_eval_ratchet_20261016
+      - name: Check candidate against the immutable main tree
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_github_script_eval_ratchet_20261016.py \
+            --base "$BASE_SHA" --head "$EXPECTED_HEAD" > github-script-eval-receipt.json
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          test "$(git ls-remote --exit-code origin "refs/heads/$EXPECTED_BRANCH" | cut -f1)" = "$EXPECTED_HEAD"
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          evidence = json.loads(Path('github-script-eval-receipt.json').read_text())
+          assert evidence['schema'] == 'zcloud-github-script-eval-ratchet-v1'
+          assert evidence['base_sha'] == os.environ['BASE_SHA']
+          assert evidence['head_sha'] == os.environ['EXPECTED_HEAD']
+          assert evidence['inventory_complete'] is True
+          assert evidence['new_findings'] == 0
+          assert evidence['release_authorized'] is False
+          assert evidence['production_mutation_authorized'] is False
+          if os.environ.get('GITHUB_STEP_SUMMARY'):
+              with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as out:
+                  out.write("### Read-only GitHub-script source admission\n")
+                  out.write(f"Baseline findings: {evidence['baseline_findings']}; candidate: {evidence['candidate_findings']}; new: 0. No production authority.\n")
+          print('ZCLOUD_GITHUB_SCRIPT_EVAL_NO_NEW_DEBT_GREEN=1')
+          PY
