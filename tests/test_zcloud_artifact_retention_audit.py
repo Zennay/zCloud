@@ -523,6 +523,45 @@ jobs:
         self.assertEqual(["bounded", "over_limit"], [row.status for row in rows])
         self.assertEqual([7, 45], [row.retention_days for row in rows])
 
+    def test_yaml_merge_mapping_cannot_hides_upload_action(self):
+        source = """upload: &from_anchor
+  uses: actions/upload-artifact@v4
+jobs:
+  proof:
+    steps:
+      - <<: *from_anchor
+        with:
+          retention-days: 7
+"""
+        with self.assertRaisesRegex(RuntimeError, "unresolved YAML merge mapping"):
+            audit.inspect_workflow("merged.yml", source, max_days=30)
+
+    def test_yaml_anchored_or_aliased_step_item_fails_closed(self):
+        for unusual in (
+            "- &upload_01 uses: actions/upload-artifact@v4",
+            "- *upload_01",
+            "- !!map {uses: actions/upload-artifact@v4}",
+        ):
+            with self.subTest(unusual=unusual):
+                source = "jobs:\n  proof:\n    steps:\n      " + unusual + "\n"
+                with self.assertRaisesRegex(RuntimeError, "unresolved anchored workflow step"):
+                    audit.inspect_workflow("anchored-step.yml", source, max_days=30)
+
+    def test_literal_merge_key_in_shell_scalar_is_not_action(self):
+        source = """jobs:
+  proof:
+    steps:
+      - run: |
+          echo "<<: *not_a_mapping"
+          - &not_an_action uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          retention-days: 14
+"""
+        rows = audit.inspect_workflow("shell-example.yml", source, max_days=30)
+        self.assertEqual(1, len(rows))
+        self.assertEqual("bounded", rows[0].status)
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
