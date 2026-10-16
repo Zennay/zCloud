@@ -41,6 +41,20 @@ class ZSentinelModeTests(unittest.TestCase):
         self.assertNotIn("(!verified?' disabled':'')", source)
         self.assertIn("project or worker role", source)
 
+    def test_guarded_deploy_repairs_registry_before_worker_role_promotion(self):
+        workflow = (ROOT / ".github/workflows/zcloud-vps-deploy.yml").read_text()
+        repair_step = workflow.index("scripts/zcloud_runtime_project_schema_repair.py")
+        promote_step = workflow.index("--path worker-modes.json")
+        self.assertLess(repair_step, promote_step)
+        self.assertIn("--preserve-schema-validated-runtime-config", workflow)
+        promoter = (ROOT / "scripts/zcloud_transactional_promote.py").read_text()
+        self.assertIn('"worker-modes.json",', promoter)
+        self.assertIn('"--worker-modes", str(worker_modes)', promoter)
+        repair = (ROOT / "scripts/zcloud_runtime_project_schema_repair.py").read_text()
+        self.assertIn("worker_role_ids=role_ids", repair)
+        self.assertIn("layout_changed", repair)
+        self.assertIn('"project.layout"', repair)
+
     def test_scheduler_has_live_worker_contract_without_privileged_bypass(self):
         contracts = json.loads((ROOT / "project-contracts.json").read_text())["projects"]
         sentinel = contracts["zsentinel"]
