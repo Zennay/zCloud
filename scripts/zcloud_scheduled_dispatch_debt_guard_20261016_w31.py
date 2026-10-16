@@ -22,7 +22,7 @@ WORKFLOW = re.compile(r"\.github/workflows/[^/\0]+\.(?:yml|yaml)\Z")
 ACTION = re.compile(r"\.github/actions/(?:[^/\0]+/)+action\.ya?ml\Z")
 ACTION_CODE = re.compile(r"\.github/actions/(?:[^/\0]+/)+[^/\0]+\.(?:js|mjs|cjs|py|sh)\Z")
 ACTION_ENTRY = re.compile(
-    r"""(?m)^[ \t]{2,}(?:main|pre|post):[ \t]*['"]?([^'"\s#]+)['"]?[ \t]*(?:#.*)?$"""
+    r"""(?m)^[ \t]{2,}(?:main|pre|post|['\"](?:main|pre|post)['\"])\s*:[ \t]*['\"]?([^'\"\s#]+)['\"]?[ \t]*(?:#.*)?$"""
 )
 ON = re.compile(r"^(?:on|'on'|\"on\")\s*:(.*)$")
 SCHEDULE = re.compile(r"(?i)(?:^|[\s,{\[])['\"]?schedule['\"]?\s*(?:[:,}\]]|$)")
@@ -43,12 +43,12 @@ DISPATCH = re.compile(
 # References are review-requiring in scheduled ancestry even if the helper is
 # currently inert: a later helper edit could activate another dispatch path.
 REUSABLE = re.compile(
-    r"""(?m)^\s+(?:-\s*)?uses:\s*['"]?"""
+    r"""(?m)^\s+(?:-\s*)?(?:uses|['\"]uses['\"])\s*:\s*['\"]?"""
     r"""((?:\./\.github/workflows/|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/)"""
     r"""[A-Za-z0-9_.-]+\.ya?ml(?:@[^\s'"#]+)?)['"]?\s*(?:#.*)?$"""
 )
 LOCAL_ACTION = re.compile(
-    r"""(?m)^\s+(?:-\s*)?uses:\s*['"]?"""
+    r"""(?m)^\s+(?:-\s*)?(?:uses|['\"]uses['\"])\s*:\s*['\"]?"""
     r"""(\./\.github/actions/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)"""
     r"""['"]?\s*(?:#.*)?$"""
 )
