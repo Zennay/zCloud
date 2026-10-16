@@ -10,7 +10,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: zcloud-collision-admission-${{ github.event.pull_request.number || github.ref }}
+  group: zcloud-collision-admission-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 jobs:
   provenance:
