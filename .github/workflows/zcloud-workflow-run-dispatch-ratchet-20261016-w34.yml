@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Dedicated hosted-only branch proof: serialize costly full regression without
+# ever cancelling a running audit or competing with production worker groups.
+concurrency:
+  group: zcloud-deployops-recursion-source-proof-w34
+  cancel-in-progress: false
+
 jobs:
   hosted-source-only:
     if: >-

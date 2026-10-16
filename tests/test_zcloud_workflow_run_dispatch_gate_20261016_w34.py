@@ -748,6 +748,14 @@ class GateTests(unittest.TestCase):
             "echo harmless", "curl\n          -X GET\n          https://api.github.com/repos/Zennay/zCloud/dispatches")
         self.assertFalse(classify(source))
 
+    def test_hosted_validation_has_unique_non_cancelling_concurrency(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/zcloud-workflow-run-dispatch-ratchet-20261016-w34.yml")
+        source = workflow.read_text("utf-8")
+        self.assertIn("concurrency:\n  group: zcloud-deployops-recursion-source-proof-w34", source)
+        self.assertIn("cancel-in-progress: false", source)
+        self.assertNotIn("cancel-in-progress: true", source)
+
     def test_hosted_validation_requires_trusted_first_push(self):
         workflow = (Path(__file__).resolve().parents[1] /
                     ".github/workflows/zcloud-workflow-run-dispatch-ratchet-20261016-w34.yml")
