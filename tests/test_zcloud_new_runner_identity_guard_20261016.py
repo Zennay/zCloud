@@ -177,6 +177,18 @@ class IdentityPolicyTests(unittest.TestCase):
                 val = wf().replace("    steps:", service + "\n    steps:")
                 self.assertIn("audit", g.unsafe_jobs(val))
 
+    def test_quoted_pre_guard_services_and_job_defaults_denied(self):
+        for key in ('"services"', "'services'", '"container"', "'defaults'"):
+            with self.subTest(key=key):
+                text = wf().replace("    steps:", "    " + key + ": {db: {image: postgres:16}}\n    steps:")
+                self.assertIn("audit", g.unsafe_jobs(text))
+
+    def test_job_yaml_merge_cannot_synthesize_services_before_identity(self):
+        for suffix in ("    <<: *preset", "    ? services: {db: {image: postgres:16}}"):
+            with self.subTest(suffix=suffix):
+                text = wf().replace("    steps:", suffix + "\n    steps:")
+                self.assertIn("audit", g.unsafe_jobs(text))
+
     def test_checkout_remote_or_alternate_source_denied(self):
         for setting in ("repository: attacker/fork", "ref: evil-branch",
                         "path: subfolder", "ssh-key: ${{ secrets.KEY }}",
