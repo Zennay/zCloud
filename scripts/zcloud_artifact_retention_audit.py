@@ -150,8 +150,19 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
                     r"^ {" + str(field_indent) + r"}uses:\s*(.+?)\s*$", line
                 )
             if candidate:
-                raw_action = candidate.group(1).split("#", 1)[0].strip()
-                action = raw_action.strip(chr(39) + chr(34))
+                raw_action = candidate.group(1).strip()
+                if raw_action.startswith((chr(39), chr(34))):
+                    # A YAML comment starts only outside the matched quotes.
+                    # An unmatched quote may continue onto a later line.
+                    quoted = re.fullmatch(
+                        r"""(?P<q>[\x27"])(?P<action>.*)(?P=q)(?:\s+#.*)?""",
+                        raw_action,
+                    )
+                    if quoted is None:
+                        raise RuntimeError("unresolved quoted action identity")
+                    action = quoted.group("action")
+                else:
+                    action = re.split(r"\s+#", raw_action, maxsplit=1)[0].strip()
                 # A text-only audit cannot resolve YAML aliases, anchors, tags
                 # or folded action references. Never certify a partial list.
                 if action.startswith(("*", "&", "!", "|", ">", "${{")):
