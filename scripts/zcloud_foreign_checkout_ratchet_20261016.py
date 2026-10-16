@@ -76,6 +76,8 @@ def scan(text: str) -> Counter[str]:
                 break
         values: list[str] = []
         submodule_values: list[str] = []
+        with_indent: int | None = None
+        with_maps = 0
         # YAML mapping key order is flexible: checkout `with.repository` may
         # precede `uses` within the SAME step. Inspect its entire step only.
         for snippet in lines[start:end]:
@@ -87,14 +89,31 @@ def scan(text: str) -> Counter[str]:
             if match:
                 val = match.group(1).split(' #', 1)[0]
                 values.append(_stripped(val))
-            submodules = SUBMODULES.search(snippet)
-            if submodules:
-                submodule_values.append(submodules.group(1).strip())
+            # Only with.submodules controls checkout's fetch behavior.
+            # A step title, env var or an unrelated scalar containing the
+            # literal "submodules:" must not be mistaken for a checkout input.
+            match_with = re.match(r"^\s*(?:-\s*)?with\s*:", snippet)
+            snippet_indent = len(snippet) - len(snippet.lstrip())
+            if match_with:
+                with_maps += 1
+                with_indent = snippet_indent
+                inline = SUBMODULES.search(snippet[match_with.end():])
+                if inline:
+                    submodule_values.append(inline.group(1).strip())
+            elif with_indent is not None:
+                if snippet.strip() and snippet_indent <= with_indent:
+                    with_indent = None
+                elif re.match(r"^\s*['\"]?submodules['\"]?\s*:", snippet, re.I):
+                    submodules = SUBMODULES.search(snippet)
+                    if submodules:
+                        submodule_values.append(submodules.group(1).strip())
         for v in values:
             if v.lower() not in SAFE:
                 findings["foreign-checkout-repository:" + v[:160]] += 1
         if len(values) > 1:
             findings["multiple-checkout-repositories"] += 1
+        if with_maps > 1:
+            findings["multiple-checkout-input-maps"] += 1
         # checkout normally ignores submodules. A new true/recursive or
         # expression-controlled setting can fetch code from unrelated Git
         # repositories even when checkout.repository is canonical.
