@@ -31,7 +31,25 @@ class InvalidSource(ValueError):
 
 
 class UniqueLoader(yaml.SafeLoader):
-    pass
+    """Bound parser nesting and node count before constructing YAML objects."""
+
+    MAX_DEPTH = 64
+    MAX_NODES = 30_000
+
+    def __init__(self, stream):
+        super().__init__(stream)
+        self._depth = 0
+        self._nodes = 0
+
+    def compose_node(self, parent, index):
+        self._depth += 1
+        self._nodes += 1
+        try:
+            if self._depth > self.MAX_DEPTH or self._nodes > self.MAX_NODES:
+                raise InvalidSource("yaml_complexity_limit")
+            return super().compose_node(parent, index)
+        finally:
+            self._depth -= 1
 
 
 def _mapping(loader, node):
