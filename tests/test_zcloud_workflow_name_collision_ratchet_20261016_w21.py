@@ -1,5 +1,7 @@
 """Offline regressions for new GitHub Actions workflow-name collisions."""
 import importlib.util
+import json
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -342,6 +344,62 @@ class NameCollisionRatchetTests(unittest.TestCase):
         names = {"a.yml": "Café", "b.yml": "Cafe\u0301"}
         self.assertEqual(guard.judge(names, names)["status"], "pass")
         self.assertEqual(guard.judge(names, {"a.yml": "Café"})["status"], "pass")
+
+
+    def test_full_cli_denies_new_cycle_and_returns_nonzero_without_authority(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "a.yml").write_text("name: A\non: push\n")
+            (folder / "b.yml").write_text(
+                "name: B\non:\n  workflow_run:\n    workflows: [A]\n")
+            git("add", ".")
+            git("commit", "-qm", "valid original")
+            original = git("rev-parse", "HEAD")
+            (folder / "a.yml").write_text(
+                "name: A\non:\n  workflow_run:\n    workflows: [B]\n")
+            git("add", ".")
+            git("commit", "-qm", "introduce cycle")
+            candidate = git("rev-parse", "HEAD")
+            command = [sys.executable, str(SCRIPT), "--root", root,
+                       "--base", original, "--head", candidate]
+            failed = subprocess.run(command, capture_output=True, text=True, timeout=15)
+            self.assertEqual(failed.returncode, 1, failed.stdout)
+            result = json.loads(failed.stdout)
+            self.assertEqual(result["status"], "deny")
+            self.assertEqual(result["added_cycle_edge_count"], 2)
+            self.assertIs(result["production_mutation_authorized"], False)
+            self.assertIs(result["merge_authorized"], False)
+            self.assertEqual(git("rev-parse", "HEAD"), candidate)
+            # A repaired exact HEAD must return zero, but never release authority.
+            (folder / "a.yml").write_text("name: A\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "repair cycle")
+            fixed = git("rev-parse", "HEAD")
+            passed = subprocess.run(command[:-1] + [fixed], capture_output=True,
+                                    text=True, timeout=15)
+            self.assertEqual(passed.returncode, 0, passed.stdout)
+            green = json.loads(passed.stdout)
+            self.assertEqual(green["status"], "pass")
+            self.assertIs(green["production_mutation_authorized"], False)
+            self.assertIs(green["merge_authorized"], False)
+
+    def test_full_cli_invalid_revision_fails_without_traceback(self):
+        with tempfile.TemporaryDirectory() as root:
+            subprocess.check_call(["git", "init", "-q"], cwd=root)
+            command = [sys.executable, str(SCRIPT), "--root", root,
+                       "--base", "main", "--head", "a" * 40]
+            denied = subprocess.run(command, capture_output=True, text=True, timeout=15)
+            self.assertEqual(denied.returncode, 1)
+            result = json.loads(denied.stdout)
+            self.assertEqual(result["error_code"], "invalid_sha")
+            self.assertIs(result["production_mutation_authorized"], False)
+            self.assertNotIn("Traceback", denied.stderr)
 
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
