@@ -565,5 +565,63 @@ class ReleaseReceiptTests(unittest.TestCase):
 
 
 
+    def test_markdown_rejects_forged_complete_status_or_provenance(self):
+        valid = self.verdict(receipt())
+        forged = (
+            {"offline_claims_complete": False},
+            {"contract": "untrusted-contract"},
+            {"evidence_source": "live_verified"},
+            {"live_sources_verified": True},
+            {"production_mutation_authorized": True},
+            {"unexpected": "invisible"},  # extra, unsupported field
+        )
+        for mutation in forged:
+            with self.subTest(mutation=mutation):
+                result = deepcopy(valid)
+                result.update(mutation)
+                report = gate.render_markdown(result)
+                self.assertEqual(8, report.count("Niet beoordeelbaar"))
+                self.assertNotIn("Aangeleverd als compleet", report)
+                self.assertIn("GEEN PRODUCTIEVRIJGAVE", report)
+
+    def test_markdown_rejects_missing_fields_duplicate_codes_and_inconsistent_denials(self):
+        base = self.verdict(receipt())
+        samples = []
+        for key in ("evidence_source", "contract", "offline_claims_complete",
+                    "live_sources_verified"):
+            data = deepcopy(base)
+            data.pop(key)
+            samples.append(data)
+        duplicated = deepcopy(base)
+        duplicated["reason_codes"] = ["invalid_json", "invalid_json"]
+        duplicated["offline_claims_complete"] = False
+        samples.append(duplicated)
+        dishonest = deepcopy(base)
+        dishonest["reason_codes"] = ["main_protection_missing"]
+        samples.append(dishonest)
+        for result in samples:
+            with self.subTest(result=result):
+                report = gate.render_markdown(result)
+                self.assertEqual(8, report.count("Niet beoordeelbaar"))
+                self.assertNotIn("Aangeleverd als compleet", report)
+
+    def test_markdown_preserves_honest_missing_gate_and_complete_claim_status(self):
+        full_report = gate.render_markdown(self.verdict(receipt()))
+        self.assertEqual(8, full_report.count(
+            "Aangeleverd als compleet, niet geverifieerd"
+        ))
+        data = receipt()
+        data["runner"]["runner_id"] = 0
+        result = self.verdict(data)
+        self.assertFalse(result["offline_claims_complete"])
+        report = gate.render_markdown(result)
+        self.assertEqual(1, report.count("Claim ontbreekt of is ongeldig"))
+        self.assertEqual(7, report.count(
+            "Aangeleverd als compleet, niet geverifieerd"
+        ))
+        self.assertIn("GEEN PRODUCTIEVRIJGAVE", report)
+
+
+
 if __name__ == "__main__":
     unittest.main()
