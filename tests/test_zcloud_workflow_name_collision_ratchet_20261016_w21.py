@@ -572,6 +572,81 @@ class NameCollisionRatchetTests(unittest.TestCase):
         source = b'"on":\n  "workflow_run":\n    "workflows": ["Build"]\n'
         self.assertEqual(guard.workflow_run_targets(source), ("Build",))
 
+
+    def test_unchanged_unparsed_trigger_blob_is_grandfathered(self):
+        names = {"a.yml": "A"}
+        refs = {"a.yml": None}
+        unchanged = {"a.yml": "1" * 40}
+        actual = guard.judge(names, names, refs, refs,
+                             base_blobs=unchanged, candidate_blobs=unchanged)
+        self.assertEqual(actual["status"], "pass")
+        self.assertEqual(actual["added_reference_risk_count"], 0)
+        self.assertFalse(actual["production_mutation_authorized"])
+
+    def test_rewritten_legacy_unparsed_trigger_blob_is_new_debt(self):
+        names = {"a.yml": "A"}
+        refs = {"a.yml": None}
+        actual = guard.judge(names, names, refs, refs,
+                             base_blobs={"a.yml": "1" * 40},
+                             candidate_blobs={"a.yml": "2" * 40})
+        self.assertEqual(actual["status"], "deny")
+        self.assertEqual(actual["added_reference_risk_count"], 1)
+        self.assertEqual(actual["added_reference_risks"][0]["reason"],
+                         "unknown_source_changed")
+        self.assertFalse(actual["merge_authorized"])
+
+    def test_parseable_repair_of_unknown_is_allowed(self):
+        names = {"a.yml": "A", "b.yml": "B"}
+        old_refs = {"a.yml": None}
+        repaired_refs = {"a.yml": ("B",)}
+        actual = guard.judge(
+            names, names, old_refs, repaired_refs,
+            base_blobs={"a.yml": "1" * 40},
+            candidate_blobs={"a.yml": "2" * 40})
+        self.assertEqual(actual["status"], "pass")
+        self.assertEqual(actual["added_reference_risk_count"], 0)
+
+    def test_new_workflow_does_not_disturb_unchanged_legacy_unknown_source(self):
+        base = {"a.yml": "A"}
+        next_names = {"a.yml": "A", "b.yml": "B"}
+        actual = guard.judge(
+            base, next_names, {"a.yml": None},
+            {"a.yml": None, "b.yml": ()},
+            base_blobs={"a.yml": "1" * 40},
+            candidate_blobs={"a.yml": "1" * 40, "b.yml": "2" * 40})
+        self.assertEqual(actual["status"], "pass")
+
+    def test_real_git_cli_denies_changed_legacy_unknown_source(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "a.yml").write_text("name: A\non: *events_one\n")
+            git("add", ".")
+            git("commit", "-qm", "legacy unparsed baseline")
+            baseline = git("rev-parse", "HEAD")
+            (folder / "a.yml").write_text("name: A\non: *events_two\n")
+            git("add", ".")
+            git("commit", "-qm", "mutated unparsed trigger")
+            modified = git("rev-parse", "HEAD")
+            bn, br, bb = guard.read_inventory(baseline, cwd=root, include_blob_ids=True)
+            hn, hr, hb = guard.read_inventory(modified, cwd=root, include_blob_ids=True)
+            result = guard.judge(bn, hn, br, hr, base_blobs=bb, candidate_blobs=hb)
+            self.assertEqual(result["status"], "deny")
+            self.assertEqual(result["added_reference_risk_count"], 1)
+            cli = subprocess.run(
+                [sys.executable, str(SCRIPT), "--root", root,
+                 "--base", baseline, "--head", modified],
+                capture_output=True, text=True, timeout=15)
+            self.assertEqual(cli.returncode, 1, cli.stdout)
+            self.assertEqual(
+                json.loads(cli.stdout)["added_reference_risks"][0]["reason"],
+                "unknown_source_changed")
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
