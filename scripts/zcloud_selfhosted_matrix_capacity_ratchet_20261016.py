@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import selectors
 import subprocess
 import sys
+import time
 
 import yaml
 
@@ -50,14 +53,53 @@ UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _ma
 
 
 def _git(*args, max_output=5_000_000):
+    """Read Git objects under a live byte/time cap (not after buffering)."""
     try:
-        run = subprocess.run(["git", *args], check=True, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, timeout=20)
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        process = subprocess.Popen(["git", *args], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+    except OSError as exc:
         raise InvalidSource("git_source_unavailable") from exc
-    if len(run.stdout) > max_output:
-        raise InvalidSource("git_output_too_large")
-    return run.stdout
+    chunks = []
+    stdout_bytes = 0
+    stderr_bytes = 0
+    deadline = time.monotonic() + 20
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+            selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise InvalidSource("git_source_timeout")
+                ready = selector.select(timeout=remaining)
+                if not ready:
+                    raise InvalidSource("git_source_timeout")
+                for key, _ in ready:
+                    part = os.read(key.fileobj.fileno(), 65_536)
+                    if not part:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if key.data == "stdout":
+                        stdout_bytes += len(part)
+                        if stdout_bytes > max_output:
+                            raise InvalidSource("git_output_too_large")
+                        chunks.append(part)
+                    else:
+                        stderr_bytes += len(part)
+                        if stderr_bytes > 8192:
+                            raise InvalidSource("git_stderr_too_large")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise InvalidSource("git_source_timeout")
+        if process.wait(timeout=remaining):
+            raise InvalidSource("git_source_unavailable")
+        return b"".join(chunks)
+    except subprocess.TimeoutExpired as exc:
+        raise InvalidSource("git_source_timeout") from exc
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
 
 
 def _commit(sha):
