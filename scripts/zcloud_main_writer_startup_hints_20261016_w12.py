@@ -24,6 +24,43 @@ class Denied(Exception):
     """Stable, redacted reason."""
 
 
+def push_scope_hints(lines: list[str]) -> dict:
+    """Report presence of exact-indent push filter *keys*; not their effect.
+
+    GitHub YAML parsing, path match semantics and real trigger activity are
+    outside this scanner. Key presence alone can never certify a filter.
+    """
+    in_root_on = False
+    in_push = False
+    paths = False
+    branches = False
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line[0].isspace():
+            in_root_on = bool(re.fullmatch(r"on:\s*(?:#.*)?", line))
+            in_push = False
+            continue
+        if not in_root_on:
+            continue
+        if re.fullmatch(r"  push:\s*(?:#.*)?", line):
+            in_push = True
+            continue
+        if re.match(r"^  [a-zA-Z_][a-zA-Z_0-9-]*\s*:", line):
+            in_push = False
+            continue
+        if in_push:
+            if re.match(r"^    paths\s*:", line):
+                paths = True
+            if re.match(r"^    branches\s*:", line):
+                branches = True
+    return {
+        "push_paths_filter_key_hint": paths,
+        "push_branches_filter_key_hint": branches,
+        "push_filter_effectiveness_verified": False,
+    }
+
+
 def observe(raw: str) -> dict:
     lines = raw.splitlines()
     if len(lines) > 20000:
@@ -85,6 +122,7 @@ def observe(raw: str) -> dict:
         "unrecognized_event_hints": sorted(events - AUTO - MANUAL),
         "unknown_trigger_syntax": unknown,
         "runner_hints": sorted(runners),
+        **push_scope_hints(lines),
         "manual_only_verified": False,
         "actual_activity_verified": False,
     }
@@ -141,6 +179,8 @@ def audit(repo: Path, sha: str) -> dict:
         "manual_event_hint_count": sum(bool(r["manual_event_hints"]) for r in records),
         "self_hosted_hint_count": sum("self_hosted_hint" in r["runner_hints"] for r in records),
         "unknown_trigger_count": sum(r["unknown_trigger_syntax"] for r in records),
+        "push_paths_key_hint_count": sum(r["push_paths_filter_key_hint"] for r in records),
+        "push_branches_key_hint_count": sum(r["push_branches_filter_key_hint"] for r in records),
         "candidates": records, "manual_only_verified": False,
         "actual_activity_verified": False, "safe_to_enable_branch_protection": False,
         "production_mutation_authorized": False,
@@ -165,26 +205,32 @@ def main(argv=None):
         writer.writerow(("main_sha", "workflow_path", "source_sha256", "priority",
                          "automatic_event_hints", "manual_event_hints",
                          "unrecognized_event_hints", "unknown_trigger_syntax",
-                         "runner_hints", "manual_only_verified",
-                         "branch_protection_authorized"))
+                         "runner_hints", "push_paths_filter_key_hint",
+                         "push_branches_filter_key_hint", "push_filter_effectiveness_verified",
+                         "manual_only_verified", "branch_protection_authorized"))
         for row in data["candidates"]:
             writer.writerow((data["main_sha"], row["path"], row["source_sha256"],
                              row["priority"], "|".join(row["automatic_event_hints"]),
                              "|".join(row["manual_event_hints"]),
                              "|".join(row["unrecognized_event_hints"]),
                              str(row["unknown_trigger_syntax"]).lower(),
-                             "|".join(row["runner_hints"]), "false", "false"))
+                             "|".join(row["runner_hints"]),
+                             str(row["push_paths_filter_key_hint"]).lower(),
+                             str(row["push_branches_filter_key_hint"]).lower(),
+                             "false", "false", "false"))
     elif a.format == "markdown":
         print("## zCloud writer-starttriggers — statische hints, GEEN VRIJGAVE")
         for key in ("main_sha", "candidate_count", "automatic_event_hint_count",
                     "manual_event_hint_count", "self_hosted_hint_count",
-                    "unknown_trigger_count"):
+                    "unknown_trigger_count", "push_paths_key_hint_count",
+                    "push_branches_key_hint_count"):
             print(key + ": " + str(data[key]))
         for row in data["candidates"]:
             print("- " + row["path"] + ": auto=" +
                   ",".join(row["automatic_event_hints"]) + "; handmatig=" +
                   ",".join(row["manual_event_hints"]) + "; runner=" +
-                  ",".join(row["runner_hints"]))
+                  ",".join(row["runner_hints"]) + "; push-paths-key=" +
+                  str(row["push_paths_filter_key_hint"]).lower())
         print("Niet bewezen: exclusief handmatige start, echte runtime of branch-beveiliging.")
     else:
         print(json.dumps(data, sort_keys=True, separators=(",", ":")))
