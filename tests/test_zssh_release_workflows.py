@@ -197,7 +197,7 @@ class ZsshReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("ZSSH_DOCKER_CADDY_TOPOLOGY_GREEN", text)
         self.assertIn("docker inspect --format", text)
         self.assertIn("ZSSH_PUBLIC_CADDY_DOCKER_INSTALL_GREEN", text)
-        self.assertIn("systemctl is-active --quiet caddy", text)
+        self.assertIn("install-public-caddy-docker.sh", text)
         self.assertIn('--resolve "$ZSSH_PRODUCTION_HOST:443:127.0.0.1"', text)
         self.assertIn("ZSSH_PUBLIC_INGRESS_BOOTSTRAP_GREEN", text)
         self.assertIn("deploy/install-target-agent.sh", text)
