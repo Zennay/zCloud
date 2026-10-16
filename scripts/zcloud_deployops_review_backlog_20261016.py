@@ -110,6 +110,8 @@ def _inventory(reader, now):
                 raise Denied("bad_title")
             if type(draft) is not bool:
                 raise Denied("bad_draft")
+            if item.get("state") != "open":
+                raise Denied("unexpected_pr_state")
             head, base = item.get("head"), item.get("base")
             if not isinstance(head, dict) or not isinstance(base, dict):
                 raise Denied("bad_refs")
@@ -141,6 +143,8 @@ def _issue_inventory(reader, now):
             numbers.add(n)
             if not isinstance(title, str) or not 1 <= len(title) <= 256:
                 raise Denied("bad_issue_title")
+            if item.get("state") != "open":
+                raise Denied("unexpected_issue_state")
             marker = item.get("pull_request")
             is_pr = isinstance(marker, dict)
             if marker is not None and not is_pr:
@@ -311,6 +315,26 @@ def render(data):
             f"| {_safe(title)} | {updated} |")
     if not reviewer_queue:
         lines.append("| — | Geen niet-concept-main-PR's gevonden | — |")
+    # Non-main PRs need their own base-branch provenance review.
+    # Avoid implying they are ready to merge directly to the canonical main.
+    other_targets = sorted(
+        (row for row in prs if row[5] != "main"),
+        key=lambda row: (row[5], row[0]))
+    lines.extend([
+        "", "### PR's gericht op andere branches (aparte basisreview)", "",
+        f"- {len(other_targets)} open PR's met een andere base dan main.",
+        "- **Niet rechtstreeks als main-release of mergegoedkeuring behandelen.**",
+        "", "| PR | Titel | Basisbranch | Concept |",
+        "| --- | --- | --- | --- |",
+    ])
+    for number, title, is_draft, _, _, base_ref, _ in other_targets[:20]:
+        lines.append(
+            f"| [#{number}](https://github.com/{REPO}/pull/{number}) "
+            f"| {_safe(title)} | {_safe(base_ref)} | {'ja' if is_draft else 'nee'} |")
+    if not other_targets:
+        lines.append("| — | Geen PR's met afwijkende base | — | — |")
+    if len(other_targets) > 20:
+        lines.append(f"- Nog {len(other_targets) - 20} afwijkende bases niet individueel getoond.")
     lines.extend(["", "Eerst onafhankelijke review: eigenaars, gewijzigde bestanden,",
                   "PR-loze branches, exacte HEAD-CI en releasegates apart controleren.",
                   "VPS, runner, Firefox, SQLite en workerstatus niet geverifieerd."])
