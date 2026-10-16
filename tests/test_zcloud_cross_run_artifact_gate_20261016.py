@@ -220,6 +220,20 @@ class Tests(unittest.TestCase):
         self.assertNotIn('runs-on: [self-hosted',workflow)
         self.assertNotIn('workflow_dispatch:',workflow)
 
+    def test_case_variant_artifact_action_has_same_critical_risk(self):
+        candidate=CROSS.replace('actions/download-artifact@','Actions/Download-Artifact@')
+        self.assertEqual(sum(module._risks(candidate,'nested/action.yml').values()),1)
+
+    def test_case_variant_artifact_addition_fails_with_real_git(self):
+        base=self.commit(SAFE)
+        head=self.commit(CROSS.replace('actions/download-artifact@','ACTIONS/DOWNLOAD-ARTIFACT@'))
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_case_variant_ambiguous_alias_denied(self):
+        value='    uses: "*Actions/Download-Artifact@'+ 'd3f86a106a0bac45b974a628896c90dbdf5c8093"'
+        with self.assertRaises(module.Refusal):
+            module._risks(value,'w.yml')
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
