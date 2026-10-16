@@ -4,6 +4,35 @@ This add-only, owner-disjoint lane supports issue #1326 / PWQ-343. It does not m
 PR #1317 listener recovery, PR #1497 approval-vs-listener classification,
 PR #1503 CPU queue provenance, or any production workflow.
 
+## Operator-side fixed GET — without raw JSON files
+
+On a trusted operator host with the **GitHub CLI** installed and authenticated
+using an account/token with read-only repository *Administration* access:
+
+```bash
+python3 scripts/zcloud_runner_registration_collect_20261016_w33.py
+```
+
+The command makes exactly one fixed authenticated `gh api --hostname github.com
+--method GET` request for the canonical runner name `zcloud-vps-1`. It accepts
+no user-supplied URL, process name, label, shell command, token or arbitrary
+arguments. It neither writes the API response to disk nor echoes it to stdout
+or stderr. A 12-second timeout bounds the read; malformed, oversized, absent
+CLI, nonzero CLI exit and stale/ambiguous claims become a fixed redacted
+`EVIDENCE_UNAVAILABLE` classification.
+
+**Exit status 2 is deliberate for every result, including
+`RUNNER_LISTED_ONLINE_IDLE`**: nothing here may be used as a successful
+release gate. This process is not run in GitHub Actions or by an autonomous
+worker; it is a separate, operator-controlled administration read. The
+`http_status=200` wrapper reflects successful JSON retrieval by the
+trusted `gh` command, but does **not** independently authenticate GitHub,
+verify runner-group entitlement or establish VPS service/Worker idleness.
+
+Only copy the sanitized JSON classification to an incident note. Preserve
+any active Runner.Worker and never restart the listener, cancel queued jobs,
+start a deploy or change repository settings based on this tool alone.
+
 ## Safe capture and local use
 
 An **authorized operator** retrieves the repository-scoped GitHub REST
