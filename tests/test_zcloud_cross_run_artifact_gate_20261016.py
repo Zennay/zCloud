@@ -410,6 +410,64 @@ class Tests(unittest.TestCase):
     def test_rest_api_full_line_comment_does_not_create_debt(self):
         self.assertEqual(sum(module._risks('    # gh api repos/example/repo/actions/artifacts/123/zip','w.yml').values()),0)
 
+    def test_external_artifact_defaults_no_explicit_selector_is_risk(self):
+        for action in ('dawidd6/action-download-artifact','step-security/action-download-artifact'):
+            with self.subTest(action=action):
+                source=SAFE.replace('actions/download-artifact@',action+'@')
+                self.assertEqual(sum(module._risks(source,'w.yml').values()),1)
+
+    def test_external_artifact_defaults_no_with_mapping_is_risk(self):
+        for action in ('dawidd6/action-download-artifact','step-security/action-download-artifact'):
+            with self.subTest(action=action):
+                source=SAFE.replace('actions/download-artifact@',action+'@')
+                source=source.replace('        with:\n          name: evidence\n','')
+                self.assertEqual(sum(module._risks(source,'w.yml').values()),1)
+
+    def test_external_artifact_default_is_denied_from_real_git(self):
+        base=self.commit(SAFE)
+        head=self.commit(SAFE.replace('actions/download-artifact@','step-security/action-download-artifact@'))
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_external_artifact_default_in_nested_manifest_is_denied(self):
+        base=self.commit(SAFE)
+        action=self.repo/'actions/download/action.yml'
+        action.parent.mkdir(parents=True)
+        action.write_text(SAFE.replace('actions/download-artifact@','step-security/action-download-artifact@'))
+        self.git('add','.'); self.git('commit','-qm','add implicit cross-run source')
+        self.assertEqual(module.evaluate(self.repo,base,self.git('rev-parse','HEAD'))['new_findings'],1)
+
+    def test_external_artifact_default_old_same_source_is_inventory_only(self):
+        old=SAFE.replace('actions/download-artifact@','step-security/action-download-artifact@')
+        base=self.commit(old)
+        head=self.commit(old+'\n# harmless note after step\n')
+        output=module.evaluate(self.repo,base,head)
+        self.assertTrue(output['ok'])
+        self.assertEqual(output['legacy_findings'],1)
+        self.assertEqual(output['candidate_findings'],1)
+
+    def test_external_artifact_default_copied_into_second_step_is_denied(self):
+        old=SAFE.replace('actions/download-artifact@','step-security/action-download-artifact@')
+        base=self.commit(old)
+        head=self.commit(old+old[old.index('      - name:'):])
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_external_artifact_default_action_can_be_removed(self):
+        old=SAFE.replace('actions/download-artifact@','step-security/action-download-artifact@')
+        base=self.commit(old)
+        head=self.commit(SAFE)
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],0)
+
+    def test_external_artifact_default_case_variants_are_risky(self):
+        candidate=SAFE.replace('actions/download-artifact@','STEP-SECURITY/ACTION-DOWNLOAD-ARTIFACT@')
+        self.assertEqual(sum(module._risks(candidate,'w.yml').values()),1)
+
+    def test_step_security_action_with_unknown_uses_syntax_is_refused(self):
+        with self.assertRaises(module.Refusal):
+            module._risks('    uses: "*step-security/action-download-artifact@abc"', 'w.yml')
+
+    def test_official_current_run_default_remains_safe(self):
+        self.assertEqual(sum(module._risks(SAFE,'w.yml').values()),0)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
