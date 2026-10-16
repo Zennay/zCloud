@@ -623,5 +623,62 @@ class ReleaseReceiptTests(unittest.TestCase):
 
 
 
+    def test_dutch_audit_maps_every_offline_input_error_to_safe_next_step(self):
+        for code, (message, action) in gate.INPUT_PROBLEMS.items():
+            with self.subTest(code=code):
+                data = self.verdict(receipt())
+                data["reason_codes"] = [code]
+                data["offline_claims_complete"] = False
+                report = gate.render_markdown(data)
+                self.assertIn("Invoerprobleem", report)
+                self.assertIn(message, report)
+                self.assertIn(action, report)
+                self.assertIn("GEEN PRODUCTIEVRIJGAVE", report)
+                self.assertEqual(8, report.count("Niet beoordeelbaar"))
+                self.assertNotIn(SHA, report)
+
+    def test_dutch_audit_forged_inconsistent_status_explains_invalid_schema(self):
+        data = self.verdict(receipt())
+        data["production_mutation_authorized"] = True
+        report = gate.render_markdown(data)
+        self.assertIn(gate.INPUT_PROBLEMS["invalid_schema"][0], report)
+        self.assertNotIn("Aangeleverd als compleet", report)
+        self.assertEqual(8, report.count("Niet beoordeelbaar"))
+
+    def test_cli_dutch_invalid_json_explains_safe_local_repair(self):
+        with tempfile.TemporaryDirectory() as temp:
+            proof = Path(temp) / "receipt.json"
+            proof.write_bytes(b'{"secret":"do-not-echo",')
+            call = subprocess.run(
+                [sys.executable, str(SCRIPT), "--input", str(proof),
+                 "--format", "markdown"],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(2, call.returncode, call.stderr)
+            self.assertIn(gate.INPUT_PROBLEMS["invalid_json"][0], call.stdout)
+            self.assertIn(gate.INPUT_PROBLEMS["invalid_json"][1], call.stdout)
+            self.assertNotIn("do-not-echo", call.stdout + call.stderr)
+            self.assertNotIn("Traceback", call.stdout + call.stderr)
+            self.assertIn("GEEN PRODUCTIEVRIJGAVE", call.stdout)
+
+    def test_cli_dutch_symlink_error_explains_local_fix_without_echo(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "original.json"
+            target.write_text(json.dumps(receipt()), encoding="utf-8")
+            alias = Path(temp) / "hidden-credential-name.json"
+            alias.symlink_to(target)
+            call = subprocess.run(
+                [sys.executable, str(SCRIPT), "--input", str(alias),
+                 "--format", "markdown"],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(2, call.returncode, call.stderr)
+            self.assertIn(gate.INPUT_PROBLEMS["unsafe_or_missing_receipt"][0],
+                          call.stdout)
+            self.assertNotIn("hidden-credential-name", call.stdout + call.stderr)
+            self.assertNotIn(str(alias), call.stdout + call.stderr)
+
+
+
 if __name__ == "__main__":
     unittest.main()
