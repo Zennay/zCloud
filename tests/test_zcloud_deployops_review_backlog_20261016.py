@@ -71,6 +71,8 @@ class BacklogBriefTests(TestCase):
                           ("pulls", 1), ("pulls", 2), ("main", 0)], reader.calls)
         output = brief.render(found)
         self.assertIn("101 open PR", output)
+        self.assertIn("Uitleesstart (UTC): 2026-10-16T11:00:00Z", output)
+        self.assertIn("geen atomair momentoverzicht", output)
         self.assertIn("[#1]", output)
         self.assertIn("Geen merge-, release-", output)
         self.assertNotIn("Production deploy green", output)
@@ -105,6 +107,14 @@ class BacklogBriefTests(TestCase):
         self.assertIn("[#20]", shortlist)
         self.assertNotIn("[#1]", shortlist)
         self.assertIn("zonder CI-/eigenaarsoordeel", shortlist)
+
+    def test_missing_or_naive_snapshot_clock_cannot_pass_as_fresh(self):
+        report = brief.collect(Reader({1: [pr(1)]}), NOW)
+        for clock in (None, "2026-10-16T11:00:00Z", NOW.replace(tzinfo=None)):
+            with self.subTest(clock=clock):
+                report["checked_at"] = clock
+                with self.assertRaisesRegex(brief.Denied, "bad_snapshot_clock"):
+                    brief.render(report)
 
     def test_no_prs_is_complete_if_both_passes_empty(self):
         reader = Reader({1: []})
