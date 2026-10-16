@@ -192,7 +192,7 @@ def _early_guard(job: list[str]) -> bool:
         return False
     # Aliased/flow-style job env cannot prove the interpreter's startup
     # environment is harmless. Explicit unrelated scalar env remains valid.
-    if re.search(r"(?m)^    env:\s*[^\s#]", "\n".join(job)):
+    if re.search(r"(?m)^    env:[ \t]*[^ \t\r\n#]", "\n".join(job)):
         return False
     if re.search(r"(?i)\b(?:always|failure|cancelled)\s*\(", "\n".join(job)):
         return False
