@@ -189,6 +189,38 @@ class CronPolicyTests(unittest.TestCase):
         self.assertEqual(schedules(expr, timezone_metadata=zones), ("0 9 * * *",))
         self.assertEqual(zones, ["timezone: America/New_York"])
 
+    def test_timezone_quoted_values_and_inline_comments_canonicalize(self):
+        from scripts.zcloud_workflow_schedule_budget_ratchet_20261016_w26 import (
+            canonical_timezone,
+        )
+        self.assertEqual(canonical_timezone("America/New_York # note"), "America/New_York")
+        self.assertEqual(canonical_timezone("'America/New_York' # note"),
+                         "America/New_York")
+        self.assertEqual(canonical_timezone('"America/New_York"'),
+                         "America/New_York")
+        self.assertEqual(canonical_timezone("'Etc/GMT+3'"), "Etc/GMT+3")
+
+    def test_timezone_deny_alias_and_ambiguous_escapes(self):
+        from scripts.zcloud_workflow_schedule_budget_ratchet_20261016_w26 import (
+            canonical_timezone,
+        )
+        for candidate in ("*alias", "&zone", "!include value", "{zone: UTC}",
+                          "Europe\\u002fAmsterdam", '"Europe\\u002fAmsterdam"',
+                          '"America/New_York # not a real timezone"',
+                          "'Europe/Amsterdam", ""):
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(AdmissionError):
+                    canonical_timezone(candidate)
+
+    def test_timezone_comment_metadata_normalized(self):
+        zones = []
+        bindings = []
+        source = ("on:\n  schedule:\n    - cron: '0 9 * * *'\n"
+                  "      timezone: 'Europe/Amsterdam' # note\n")
+        schedules(source, timezone_metadata=zones, timezone_bindings=bindings)
+        self.assertEqual(zones, ["timezone: Europe/Amsterdam"])
+        self.assertEqual(bindings, [("0 9 * * *", "Europe/Amsterdam")])
+
     def test_timezone_associations_retain_unzoned_slots(self):
         bindings = []
         source = ("on:\n  schedule:\n"
@@ -479,6 +511,20 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertTrue(audit(self.root, base)["accepted"])
         path.write_text(path.read_text() + "\n# Source-only comment\n")
         self.assertTrue(audit(self.root, base)["accepted"])
+
+    def test_quoted_timezone_does_not_require_spurious_review(self):
+        path = self.directory / "safe.yml"
+        plain = workflow("0 8 * * *").replace(
+            "jobs:", "      timezone: Europe/Amsterdam\njobs:")
+        path.write_text(plain, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "legacy plain timezone")
+        baseline = self.git("rev-parse", "HEAD")
+        quoted = plain.replace(
+            "timezone: Europe/Amsterdam",
+            'timezone: "Europe/Amsterdam" # still same IANA zone')
+        path.write_text(quoted, encoding="utf-8")
+        self.assertTrue(audit(self.root, baseline)["accepted"])
 
     def test_move_timezone_to_different_cron_denied(self):
         path = self.directory / "safe.yml"
