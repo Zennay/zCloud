@@ -266,7 +266,8 @@ def workflow_run_targets(source):
             continue
         # A YAML merge/complex key under on can synthesize a workflow_run
         # event unseen by this literal-only parser.
-        if level > root and stripped.startswith(("<<:", "? ", "?[", "?{")):
+        if level > root and (stripped.startswith(("<<:", "? ", "?[", "?{")) or
+                             _ambiguous_escaped_root_key(line, level)):
             return None
         match = child.match(stripped)
         if not match or level <= root:
@@ -288,6 +289,8 @@ def workflow_run_targets(source):
         for j in range(index + 1, run_end):
             row = lines[j]
             depth = len(row) - len(row.lstrip(" "))
+            if depth > level and _ambiguous_escaped_root_key(row, depth):
+                return None
             m = target.match(row[depth:])
             if not m or depth <= level:
                 continue
