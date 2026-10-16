@@ -17,9 +17,17 @@ The command makes exactly one fixed authenticated `gh api --hostname github.com
 --method GET` request for the canonical runner name `zcloud-vps-1`. It accepts
 no user-supplied URL, process name, label, shell command, token or arbitrary
 arguments. It neither writes the API response to disk nor echoes it to stdout
-or stderr. A 12-second timeout bounds the read; malformed, oversized, absent
-CLI, nonzero CLI exit and stale/ambiguous claims become a fixed redacted
-`EVIDENCE_UNAVAILABLE` classification.
+or stderr. A 12-second timeout bounds the read. A blocked request remains
+`EVIDENCE_UNAVAILABLE` but now includes a fixed, secret-safe `reason_code`:
+`github_cli_not_installed` means install/sign in to the trusted `gh` binary;
+`github_runner_admin_read_denied` means check repository Administration **read**
+permission or authentication in GitHub settings; `github_runner_read_timeout`
+means check the operator's GitHub network reachability; and
+`untrusted_runner_response` means the retrieved snapshot could not be accepted.
+Raw error messages, stderr, tokens, runner IDs and HTTP bodies are **never**
+printed. The fixed error category alone does not prove the cause or authorize
+repair. The timeout, oversized response, absent CLI, nonzero CLI exit and
+stale/ambiguous payload all remain safe-denial cases.
 
 **Exit status 2 is deliberate for every result, including
 `RUNNER_LISTED_ONLINE_IDLE`**: nothing here may be used as a successful
