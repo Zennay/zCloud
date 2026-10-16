@@ -25,6 +25,11 @@ _INPUT = re.compile(r"^(?P<indent> *)(?P<key>[\w-]+):\s*(?P<value>.*?)\s*$")
 _TARGETS = frozenset({"run-id", "repository", "github-token"})
 _VENDOR_TARGETS = frozenset({"run_id", "github_token", "repo", "workflow", "branch"})
 _DOWNLOAD_ACTIONS = ("actions/download-artifact@", "dawidd6/action-download-artifact@")
+# Direct GitHub Actions artifact API routes bypass download-artifact and gh run.
+# Deliberately review ANY new endpoint reference in runnable workflow sources:
+# dynamically assembled IDs may hide the final /zip URL at authoring time.
+_API_ARTIFACT_PATH = re.compile(r"/actions/artifacts/", re.IGNORECASE)
+
 # GitHub CLI downloads bypass actions/download-artifact but have the same
 # cross-run artifact trust boundary. A syntactic match requires review, not
 # permission to retrieve or execute any artifact.
@@ -217,6 +222,9 @@ def _risks(text: str, path: str) -> Counter[str]:
         if _GH_RUN_DOWNLOAD.search(logical):
             token = sha256(logical.encode("utf-8")).hexdigest()
             risky[f"{path}:{number+1}:gh-run-download:{token}"] += 1
+        if _API_ARTIFACT_PATH.search(logical):
+            token = sha256(logical.encode("utf-8")).hexdigest()
+            risky[f"{path}:{number+1}:github-api-artifact-path:{token}"] += 1
     return risky
 
 
