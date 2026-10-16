@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import csv
 import io
 import json
 import os
@@ -213,6 +214,34 @@ class MainWriterInventoryTests(unittest.TestCase):
                            self.sha, ".github/workflows", max_output=4096)
         self.assertIn(b"\x00", output)
         self.assertIn(b".github/workflows/safe.yml", output)
+
+    def test_csv_source_provenance_and_review_fields_remain_empty(self):
+        self.write("writer.yml", "run: git push origin HEAD:main\n")
+        self.commit()
+        status, stdout = self.capture("--repo", str(self.repo),
+                                      "--expected-main-sha", self.rev(),
+                                      "--format", "csv")
+        self.assertEqual(status, 0)
+        rows = list(csv.DictReader(io.StringIO(stdout)))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["main_sha"], self.rev())
+        self.assertEqual(rows[0]["workflow_path"],
+                         ".github/workflows/writer.yml")
+        self.assertEqual(len(rows[0]["source_sha256"]), 64)
+        self.assertEqual(rows[0]["reviewed_by"], "")
+        self.assertEqual(rows[0]["decision"], "")
+        self.assertEqual(rows[0]["review_verified"], "false")
+        self.assertEqual(rows[0]["branch_protection_authorized"], "false")
+        self.assertIn("direct_main_ref", rows[0]["signal_lines_and_kinds"])
+
+    def test_csv_no_writer_does_not_claim_review_or_approval(self):
+        status, stdout = self.capture("--repo", str(self.repo),
+                                      "--expected-main-sha", self.sha,
+                                      "--format", "csv")
+        self.assertEqual(status, 0)
+        rows = list(csv.reader(io.StringIO(stdout)))
+        self.assertEqual(len(rows), 1)
+        self.assertIn("source_sha256", rows[0])
 
     def test_no_git_config_or_working_tree_trust(self):
         # Inspect committed blob only; working-tree change without commit is irrelevant.
