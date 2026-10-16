@@ -195,6 +195,45 @@ class CronPolicyTests(unittest.TestCase):
         self.assertEqual(schedules(expr, timezone_metadata=zones), ())
         self.assertEqual(zones, [])
 
+    def test_duplicate_quoted_cron_cannot_override_safe_cron(self):
+        source = 'on:\n  schedule:\n    - cron: "0 9 * * *"\n      "cron": "*/5 * * * *"\n'
+        with self.assertRaises(AdmissionError):
+            schedules(source)
+
+    def test_duplicate_quoted_timezone_cannot_override_safe_zone(self):
+        source = 'on:\n  schedule:\n    - cron: "0 9 * * *"\n      timezone: UTC\n      "timezone": America/New_York\n'
+        with self.assertRaises(AdmissionError):
+            schedules(source)
+
+    def test_timezone_without_entry_rejected(self):
+        source = 'on:\n  schedule:\n      timezone: America/New_York\n    - cron: "0 9 * * *"\n'
+        with self.assertRaises(AdmissionError):
+            schedules(source)
+
+    def test_unknown_schedule_item_field_rejected(self):
+        source = 'on:\n  schedule:\n    - cron: "0 9 * * *"\n      "hidden": *unsafe_cron\n'
+        with self.assertRaises(AdmissionError):
+            schedules(source)
+
+    def test_cron_must_share_indent_between_entries(self):
+        source = 'on:\n  schedule:\n    - cron: "0 9 * * *"\n      - cron: "*/5 * * * *"\n'
+        with self.assertRaises(AdmissionError):
+            schedules(source)
+
+    def test_multiple_zoned_schedule_entries_supported(self):
+        zones = []
+        source = ('on:\n  schedule:\n'
+                  '    - cron: "0 9 * * *"\n      timezone: UTC\n'
+                  '    - "cron": "0 10 * * *"\n      "timezone": Europe/Amsterdam\n')
+        self.assertEqual(schedules(source, timezone_metadata=zones),
+                         ("0 9 * * *", "0 10 * * *"))
+        self.assertEqual(zones, ["timezone: UTC", "timezone: Europe/Amsterdam"])
+
+    def test_comment_and_blank_between_cron_entries_supported(self):
+        source = ('on:\n  schedule:\n    - cron: "0 9 * * *"\n\n'
+                  '    # another time\n    - cron: "0 10 * * *"\n')
+        self.assertEqual(schedules(source), ("0 9 * * *", "0 10 * * *"))
+
     def test_double_quoted_schedule_event_and_cron_key(self):
         source = 'on:\n  "schedule":\n    - "cron": "*/5 * * * *"\n'
         self.assertEqual(schedules(source), ("*/5 * * * *",))
@@ -294,6 +333,15 @@ class RealGitNoNewDebtTests(unittest.TestCase):
         self.assertFalse(receipt["accepted"])
         self.assertTrue(any(item.get("reason") == "cross_schedule_burst"
                             for item in receipt["new_high_frequency"]))
+
+    def test_quoted_override_is_denied_in_real_git_audit(self):
+        path = self.directory / "safe.yml"
+        path.write_text('on:\n  schedule:\n    - cron: "0 9 * * *"\n'
+                        '      "cron": "*/5 * * * *"\n'
+                        'jobs:\n  check:\n    runs-on: ubuntu-latest\n',
+                        encoding="utf-8")
+        with self.assertRaises(AdmissionError):
+            audit(self.root, self.baseline)
 
     def test_quoted_cron_schedule_is_denied_in_a_real_repo(self):
         path = self.directory / "safe.yml"
