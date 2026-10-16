@@ -575,6 +575,37 @@ class Tests(unittest.TestCase):
         script='#!/bin/sh\necho actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n'
         self.assertEqual(sum(module._risks(script,'scripts/example.sh').values()),0)
 
+    def test_regular_executable_shell_helper_accepted_and_inspected(self):
+        base=self.commit(SAFE)
+        helper=self.repo/'scripts/executable.sh'
+        helper.parent.mkdir(exist_ok=True)
+        helper.write_text('#!/usr/bin/env bash\ngh run download 1234\n')
+        helper.chmod(0o755)
+        self.git('add','.'); self.git('commit','-qm','executable script')
+        head=self.git('rev-parse','HEAD')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_finding_paths'],['scripts/executable.sh'])
+
+    def test_safe_executable_shell_helper_accepted(self):
+        base=self.commit(SAFE)
+        helper=self.repo/'scripts/executable.bash'
+        helper.parent.mkdir(exist_ok=True)
+        helper.write_text('#!/bin/bash\necho "ordinary helper"\n')
+        helper.chmod(0o755)
+        self.git('add','.'); self.git('commit','-qm','safe executable')
+        head=self.git('rev-parse','HEAD')
+        self.assertTrue(module.evaluate(self.repo,base,head)['ok'])
+
+    def test_shell_helper_git_symlink_denied(self):
+        base=self.commit(SAFE)
+        helper=self.repo/'scripts/trampoline.sh'
+        helper.parent.mkdir(exist_ok=True)
+        helper.symlink_to('/etc/passwd')
+        self.git('add','.'); self.git('commit','-qm','symlink')
+        head=self.git('rev-parse','HEAD')
+        with self.assertRaises(module.Refusal):
+            module.evaluate(self.repo,base,head)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
