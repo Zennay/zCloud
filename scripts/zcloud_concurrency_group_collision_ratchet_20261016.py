@@ -25,6 +25,7 @@ MAX_GROUP_LENGTH = 256
 MAX_FINDINGS = 20000
 MAX_JOBS_PER_WORKFLOW = 256
 MAX_GROUP_ENTRIES = 4096
+MAX_ACTIVATION_JSON_CHARS = 65536  # bounded encoder, including YAML alias expansions
 # Only these stable GitHub contexts have a constrained source-level identity.
 # Event payload, inputs, matrix, needs and custom contexts can alias another
 # group at runtime even if their selector source text differs. Treat newly
@@ -399,11 +400,22 @@ def _activation_fingerprints(commit: str, members: set) -> dict:
                       "job_strategy": strategy, "job_needs": prerequisites,
                       "workflow_job_topology": topology}
             try:
-                serialized = json.dumps(source, sort_keys=True, separators=(",", ":"),
-                                        ensure_ascii=True, default=str)
-            except (TypeError, ValueError, RecursionError) as e:
+                # YAML anchors can expand a tiny source into a huge JSON tree.
+                # Do not allocate the complete expanded object before applying
+                # limits: consume incremental canonical encoder chunks and
+                # reject cycles, excessive depth or oversized expansion.
+                encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"),
+                                           ensure_ascii=True, default=str)
+                digest = hashlib.sha256()
+                total_chars = 0
+                for chunk in encoder.iterencode(source):
+                    total_chars += len(chunk)
+                    if total_chars > MAX_ACTIVATION_JSON_CHARS:
+                        raise AdmissionError("legacy activation JSON expansion budget exceeded")
+                    digest.update(chunk.encode("ascii"))
+            except (TypeError, ValueError, RecursionError, OverflowError) as e:
                 raise AdmissionError("unreadable trigger evidence") from e
-            out[(path, scope)] = hashlib.sha256(serialized.encode("ascii")).hexdigest()
+            out[(path, scope)] = digest.hexdigest()
     return out
 
 
