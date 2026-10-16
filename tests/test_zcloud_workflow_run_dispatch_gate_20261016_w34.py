@@ -342,6 +342,46 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+    def test_node_fetch_with_literal_post_dispatch(self):
+        commands = (
+            'node -e \'fetch("https://api.github.com/repos/Zennay/zCloud/dispatches", {method: "POST"})\'',
+            'node -e \'fetch("https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun", {"method": "POST"})\'',
+            "node -e 'fetch(\"https://api.github.com/repos/Zennay/zCloud/actions/runs/42/rerun\", {method: \"POST\"})'",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_node_fetch_without_mutating_method_is_read_only(self):
+        commands = (
+            'node -e \'fetch("https://api.github.com/repos/Zennay/zCloud/dispatches")\'',
+            'node -e \'fetch("https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun", {method: "GET"})\'',
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertFalse(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_axios_post_to_dispatch_endpoint_is_risky(self):
+        commands = (
+            "node -e 'axios.post(\"https://api.github.com/repos/Zennay/zCloud/dispatches\", {})'",
+            "node -e 'axios.post(\"https://api.github.com/repos/Zennay/zCloud/actions/jobs/42/rerun\", {})'",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+        self.assertFalse(classify(TEMPLATE.replace(
+            "echo harmless",
+            "node -e 'axios.get(\"https://api.github.com/repos/Zennay/zCloud/dispatches\")'",
+        )))
+
+    def test_js_http_recursion_adds_new_git_finding(self):
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            "node -e 'axios.post(\"https://api.github.com/repos/Zennay/zCloud/dispatches\", {})'",
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_python_http_clients_dispatch_post_is_recursion_risk(self):
         commands = (
             'python -c \'requests.post("https://api.github.com/repos/Zennay/zCloud/dispatches")\'',

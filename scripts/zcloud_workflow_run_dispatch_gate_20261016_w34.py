@@ -34,6 +34,8 @@ RISK = (
     re.compile(r"\bwget\b[^\n]*", re.I),
     re.compile(r"\b(?:Invoke-RestMethod|Invoke-WebRequest|irm|iwr)\b[^\n]*", re.I),
     re.compile(r"\b(?:requests|httpx)\.(?:post|request)\s*\([^\n]*", re.I),
+    re.compile(r"\bfetch\s*\([^\n]*", re.I),
+    re.compile(r"\baxios\.post\s*\([^\n]*", re.I),
 )
 STEP_USES = re.compile(r"""(?m)^( +)(?:-\s+)?(?:uses|'uses'|"uses"):[ \t]*(.*)$""")
 # Explicit workflow-dispatch action families. Other custom actions still need review;
@@ -265,7 +267,7 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
                                   if part.strip())
         for detector, pattern in enumerate(RISK):
             for match in pattern.finditer(normalized):
-                if detector in (2, 3, 5, 6, 7):
+                if detector in (2, 3, 5, 6, 7, 8, 9):
                     fragment = match.group(0)
                     if "/dispatches" not in fragment and not REST_RERUN.search(fragment):
                         continue
@@ -273,6 +275,11 @@ def dispatch_sites(source: str) -> Counter[tuple[int, str]]:
                     if detector == 7:
                         if not re.search(r"\.(?:post\s*\(|request\s*\(\s*['\"]POST['\"])", fragment, re.I):
                             continue
+                    elif detector == 8:
+                        if not re.search(r"['\"]?method['\"]?\s*:\s*['\"]POST['\"]", fragment, re.I):
+                            continue
+                    elif detector == 9:
+                        pass  # axios.post always sends a POST
                     elif not methods[detector].search(fragment):
                         continue
                 start = normalized.rfind("\n", 0, match.start()) + 1
