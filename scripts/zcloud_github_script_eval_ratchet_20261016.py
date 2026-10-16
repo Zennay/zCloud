@@ -174,11 +174,13 @@ def steps_for_use(lines: list[str], idx: int) -> tuple[int, int]:
 
 def inspect_step(lines: list[str], path: str, start: int, end: int, full_source: str) -> tuple[str, str] | None:
     body = "".join(lines[start:end])
+    yaml_lines = structural_lines(lines[start:end])
+    yaml_body = "".join(yaml_lines)
     why: set[str] = set()
     script_found = False
     with_indent = -1
     for i in range(start, end):
-        line = lines[i]
+        line = yaml_lines[i - start]
         wm = WITH_KEY.match(line)
         if wm:
             with_indent = len(wm.group(1))
@@ -211,15 +213,15 @@ def inspect_step(lines: list[str], path: str, start: int, end: int, full_source:
             why.add("ambiguous_yaml")
     # github-script evaluates JavaScript from with.script; flow-style maps, aliases
     # and escapes cannot be safely interpreted by this intentionally strict scanner.
-    if re.search(r'(?m)^\s*with\s*:\s*[*!]\S+', body):
+    if re.search(r'(?m)^\s*with\s*:\s*[*!]\S+', yaml_body):
         why.add("ambiguous_yaml")
-    if any(line.lstrip().startswith(("? with", '? "with"', "? 'with'")) for line in body.splitlines()):
+    if any(line.lstrip().startswith(("? with", '? "with"', "? 'with'")) for line in yaml_body.splitlines()):
         why.add("ambiguous_yaml")
-    if any(line.lstrip().startswith(("? script", "? \"script\"", "? 'script'")) for line in body.splitlines()):
+    if any(line.lstrip().startswith(("? script", "? \"script\"", "? 'script'")) for line in yaml_body.splitlines()):
         why.add("ambiguous_yaml")
-    if with_indent >= 0 and any(line.lstrip().startswith("<<: *") for line in body.splitlines()):
+    if with_indent >= 0 and any(line.lstrip().startswith("<<: *") for line in yaml_body.splitlines()):
         why.add("ambiguous_yaml")
-    if not script_found and (FLOW.search(body) or re.search(r"\bscript\s*:\s*[*!]", body)):
+    if not script_found and (FLOW.search(yaml_body) or re.search(r"\bscript\s*:\s*[*!]", yaml_body)):
         why.add("ambiguous_yaml")
     if not why:
         return None
