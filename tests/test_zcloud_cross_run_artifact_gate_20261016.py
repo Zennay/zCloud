@@ -116,6 +116,29 @@ class Tests(unittest.TestCase):
         head=self.commit(CROSS + CROSS[CROSS.index('      - name:'):])
         self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
 
+    def test_preceding_with_mapping_denied(self):
+        text = SAFE.replace(
+            '        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n        with:\n          name: evidence',
+            '        with:\n          run-id: 4321\n        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+        )
+        with self.assertRaises(module.Refusal):
+            module._risks(text,'w.yml')
+
+    def test_preceding_dash_with_mapping_denied(self):
+        text = SAFE.replace(
+            '- name: Save evidence\n        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093\n        with:\n          name: evidence',
+            '- with:\n          github-token: token\n        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+        )
+        with self.assertRaises(module.Refusal):
+            module._risks(text,'w.yml')
+
+    def test_dash_uses_with_mapping_detected(self):
+        text = SAFE.replace(
+            '- name: Save evidence\n        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+            '- uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093',
+        ).replace('          name: evidence','          run-id: 1234')
+        self.assertEqual(sum(module._risks(text,'w.yml').values()),1)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
