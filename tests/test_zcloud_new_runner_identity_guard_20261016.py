@@ -304,6 +304,21 @@ class IdentityPolicyTests(unittest.TestCase):
         val = wf().replace("        with:", "        env:\n          GIT_CONFIG_GLOBAL: /tmp/malicious\n        with:")
         self.assertIn("audit", g.unsafe_jobs(val))
 
+    def test_unknown_pinned_checkout_commit_denied_before_identity(self):
+        for sha in ("a" * 40, "0" * 40, "c" * 40):
+            with self.subTest(sha=sha):
+                doc = wf().replace(PIN, sha)
+                self.assertEqual(g.unsafe_jobs(doc),
+                                 {"audit": "missing_early_runner_guard"})
+
+    def test_approved_checkout_revision_is_exact_not_similar(self):
+        for value in ("actions/checkout@" + PIN + "-preview",
+                      "actions/checkout@" + PIN.upper(),
+                      "attacker/checkout@" + PIN):
+            with self.subTest(action=value):
+                doc = wf().replace("actions/checkout@" + PIN, value)
+                self.assertIn("audit", g.unsafe_jobs(doc))
+
     def test_unpinned_checkout_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf().replace(PIN, "main")))
 
