@@ -1733,5 +1733,133 @@ jobs:
 
 
 
+    def test_docker_action_shell_helper_edit_rejected(self):
+        self.put("scheduled-docker-script.yml", """on: schedule
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/worker-image
+""")
+        self.put_action("worker-image", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/worker-image"
+        (root / "Dockerfile").write_text(
+            "FROM alpine:3.20\nCOPY entrypoint.sh /entrypoint.sh\n"
+            "ENTRYPOINT [\"/entrypoint.sh\"]\n", encoding="utf-8")
+        script = root / "entrypoint.sh"
+        script.write_text("echo safe\n", encoding="utf-8")
+        base = self.commit()
+        script.write_text("gh workflow run emergency.yml\n", encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertEqual(result["new_sites"], 1)
+
+    def test_docker_action_nested_python_helper_edit_rejected(self):
+        self.put("scheduled-docker-nested.yml", """on: schedule
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/pyimage
+""")
+        self.put_action("pyimage", """runs: {using: docker, image: Dockerfile}
+""")
+        root = self.repo / ".github/actions/pyimage"
+        (root / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
+        script = root / "src/entry.py"
+        script.parent.mkdir()
+        script.write_text("print('safe')\n", encoding="utf-8")
+        base = self.commit()
+        script.write_text("github.rest.actions.createWorkflowDispatch({})\n",
+                          encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_helper_removal_is_reviewed(self):
+        self.put("scheduled-docker-helper-removal.yml", """on: schedule
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/remove-shell
+""")
+        self.put_action("remove-shell", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/remove-shell"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        helper = root / "entry.sh"
+        helper.write_text("echo safe\n", encoding="utf-8")
+        base = self.commit()
+        helper.unlink()
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_docker_action_helper_addition_is_reviewed(self):
+        self.put("scheduled-docker-helper-add.yml", """on: schedule
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/new-shell
+""")
+        self.put_action("new-shell", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/new-shell"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        base = self.commit()
+        (root / "entrypoint.sh").write_text(
+            "gh workflow run release.yml\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+    def test_manual_docker_action_script_edit_is_outside_gate(self):
+        self.put("manual-docker-helper.yml", """on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/manual-shell
+""")
+        self.put_action("manual-shell", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/manual-shell"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        helper = root / "entry.sh"
+        helper.write_text("echo safe\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("gh workflow run deploy.yml\n", encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_scheduled_docker_action_unchanged_helper_is_legacy(self):
+        self.put("scheduled-docker-unchanged.yml", """on: schedule
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/unchanged-shell
+""")
+        self.put_action("unchanged-shell", """runs:
+  using: docker
+  image: Dockerfile
+""")
+        root = self.repo / ".github/actions/unchanged-shell"
+        (root / "Dockerfile").write_text("FROM alpine:3.20\n", encoding="utf-8")
+        (root / "entrypoint.sh").write_text(
+            "gh workflow run deploy.yml\n", encoding="utf-8")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+
+
 if __name__ == "__main__":
     unittest.main()
