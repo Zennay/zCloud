@@ -85,6 +85,9 @@ NODE_LOCAL_IMPORT = re.compile(
     r"""(?m)(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bimport\s+|\bfrom\s+)"""
     r"""['"](\.{1,2}/[^'"\r\n]+)['"]"""
 )
+NODE_DYNAMIC_IMPORT = re.compile(
+    r"""(?m)\b(?:require|import)\s*\(\s*(?!['"])([^)\n]{1,256})\)"""
+)
 NODE_SUFFIXES = (".js", ".mjs", ".cjs")
 
 MAX_MANIFESTS = 2048
@@ -306,6 +309,12 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                     sites[edge] += 1
                     visiting.append(target)
             if ACTION_CODE.fullmatch(path) and path.endswith(NODE_SUFFIXES):
+                # Nonliteral require/import calls cannot prove which local
+                # code executes. Conservatively fingerprint new unknown edges.
+                for match in NODE_DYNAMIC_IMPORT.finditer(text):
+                    sites[hashlib.sha256(
+                        ("dynamic-node-import:" + path + ":" + match.group(1)).encode()
+                    ).hexdigest()] += 1
                 for match in NODE_LOCAL_IMPORT.finditer(text):
                     reference = match.group(1)
                     # Preserve original source identity even when imports use
