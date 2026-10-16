@@ -52,6 +52,23 @@ jobs:
             --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format markdown
           python3 scripts/zcloud_main_writer_compat_inventory_20261016_w12.py \
             --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format json > "$RUNNER_TEMP/main-writer-receipt.json"
+          python3 scripts/zcloud_main_writer_compat_inventory_20261016_w12.py \
+            --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format csv > "$RUNNER_TEMP/main-writer-review-queue.csv"
+          python3 - "$RUNNER_TEMP/main-writer-review-queue.csv" <<'PY'
+          import csv
+          import re
+          import sys
+          with open(sys.argv[1], encoding="utf-8", newline="") as handle:
+              rows = list(csv.DictReader(handle))
+          assert rows and len(rows) <= 512
+          for row in rows:
+              assert re.fullmatch(r"[a-f0-9]{64}", row["source_sha256"])
+              assert row["owner"] == row["decision"] == row["reviewed_by"] == ""
+              assert row["review_verified"] == row["branch_protection_authorized"] == "false"
+          print("CSV_SOURCE_ROWS=" + str(len(rows)))
+          PY
+          # Bounded static Git metadata only: paths, line codes, blob digests; no secrets or workflow bodies.
+          cat "$RUNNER_TEMP/main-writer-review-queue.csv"
           python3 - "$RUNNER_TEMP/main-writer-receipt.json" "$SOURCE_MAIN" <<'PY'
           import json
           import sys
