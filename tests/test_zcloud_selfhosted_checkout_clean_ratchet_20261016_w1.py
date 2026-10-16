@@ -484,6 +484,76 @@ class ImmutableGitTreeTests(unittest.TestCase):
 
 
 
+    def test_real_git_rejects_huge_blob_before_loading_contents(self):
+        from unittest.mock import patch
+        name = "oversized.yml"
+        self.workflow(name, sample() + "#" + "x" * (guard.MAX_BYTES + 1))
+        self.commit("add oversized workflow blob")
+        object_sha = self.git("rev-parse", "HEAD:.github/workflows/" + name)
+        original_git = guard.git
+        seen = []
+
+        def logged_git(*args):
+            seen.append(args)
+            return original_git(*args)
+
+        with patch.object(guard, "git", side_effect=logged_git):
+            with self.assertRaisesRegex(guard.Denied, "workflow_size_cap"):
+                self.scan()
+        self.assertIn(("cat-file", "-s", object_sha), seen)
+        self.assertNotIn(("cat-file", "blob", object_sha), seen)
+
+    def test_real_git_rejects_aggregate_workflow_size_before_exhaustion(self):
+        from unittest.mock import patch
+        self.workflow("second.yml", sample())
+        self.commit("add second workflow for aggregate cap")
+        budget = len(sample().encode("utf-8")) + 20
+        with patch.object(guard, "MAX_TOTAL_BYTES", budget):
+            with self.assertRaisesRegex(guard.Denied, "workflow_aggregate_size_cap"):
+                self.scan()
+
+    def test_real_git_rejects_blob_that_changes_size_between_reads(self):
+        from unittest.mock import patch
+        original_git = guard.git
+        object_sha = self.git("rev-parse", "HEAD:.github/workflows/baseline.yml")
+
+        def truncated(*args):
+            content = original_git(*args)
+            if args == ("cat-file", "blob", object_sha):
+                return content[:-1]
+            return content
+
+        with patch.object(guard, "git", side_effect=truncated):
+            with self.assertRaisesRegex(guard.Denied, "workflow_blob_size_drift"):
+                self.scan()
+
+    def test_real_git_rejects_invalid_size_metadata(self):
+        from unittest.mock import patch
+        original_git = guard.git
+
+        def bad_size(*args):
+            if len(args) == 3 and args[:2] == ("cat-file", "-s"):
+                return b"invalid-git-size"
+            return original_git(*args)
+
+        with patch.object(guard, "git", side_effect=bad_size):
+            with self.assertRaisesRegex(guard.Denied, "invalid_workflow_blob_size"):
+                self.scan()
+
+    def test_real_git_rejects_oversized_tree_response(self):
+        from unittest.mock import patch
+        original_git = guard.git
+
+        def enormous_tree(*args):
+            if args and args[0] == "ls-tree":
+                return b"x" * (guard.MAX_TREE_BYTES + 1)
+            return original_git(*args)
+
+        with patch.object(guard, "git", side_effect=enormous_tree):
+            with self.assertRaisesRegex(guard.Denied, "workflow_tree_size_cap"):
+                self.scan()
+
+
 class HostedPolicyWiringTests(unittest.TestCase):
     """Prevent an otherwise green checker from being skipped by PR routing."""
 
