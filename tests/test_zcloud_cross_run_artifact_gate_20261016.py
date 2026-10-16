@@ -246,6 +246,15 @@ class Tests(unittest.TestCase):
         head=self.commit(CROSS+'\n# other documentation\n')
         self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],0)
 
+    def test_uppercase_cross_run_input_is_not_ignored(self):
+        modified=SAFE.replace('name: evidence','RUN-ID: 1234')
+        self.assertEqual(sum(module._risks(modified,'w.yml').values()),1)
+
+    def test_case_variant_duplicate_cross_run_input_denied(self):
+        modified=CROSS.replace('          github-token:', '          RUN-ID: 999\n          github-token:')
+        with self.assertRaises(module.Refusal):
+            module._risks(modified,'w.yml')
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
