@@ -364,6 +364,27 @@ runs:
         ))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_javascript_escaped_literal_does_not_fake_encoded_yaml_key(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "core.info(title.length.toString());",
+            r'"\u0073cript:"; core.info(title.length.toString());',
+        ))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_javascript_mapping_like_text_not_yaml_alias(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "core.info(title.length.toString());",
+            'const note = <TICK>\n            with: *sample\n            <<: *yaml_merger\n            <TICK>;\n            core.info(note);'.replace("<TICK>", chr(96)),
+        ))
+        self.assertEqual(self.evaluate(a, b)["new_findings"], 0)
+
+    def test_encoded_yaml_script_key_still_denied_after_scalar_filter(self):
+        a = self.commit(SAFE)
+        b = self.commit(BAD.replace("          script: |", r'          "s\u0063ript": |'))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_invalid_sha_denied(self):
         a = self.commit(SAFE)
         b = self.commit(BAD)
