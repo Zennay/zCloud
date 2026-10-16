@@ -286,7 +286,7 @@ INPUT_PROBLEMS = {
     ),
     "unsafe_or_missing_receipt": (
         "Bewijsbestand ontbreekt of gebruikt een onveilig bestandspad.",
-        "Kies een bestaand gewoon bestand zonder symlinks of padminstappen.",
+        "Kies een bestaand gewoon bestand zonder symlinks of onveilige padverwijzingen.",
     ),
     "unreadable_receipt": (
         "Bewijsbestand kon niet veilig worden beoordeeld.",
