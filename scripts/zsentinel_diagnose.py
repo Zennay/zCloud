@@ -133,8 +133,12 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
                     or any(ch not in "0123456789abcdef" for ch in sha))):
             raise ValueError(f"{pid}.github.head_sha: canonical lowercase full SHA required")
         identity = github_job_identity(github, pid)
+        if status in RUNNING | {"queued", "waiting", "pending"} and github.get("conclusion") is not None:
+            raise ValueError(f"{pid}.github.conclusion: nonterminal job cannot have a conclusion")
         if status in {"queued", "waiting", "pending"}:
             queued = required_time(github, "queued_at", now, pid + ".github")
+            if queued > observed + timedelta(minutes=2):
+                raise ValueError(f"{pid}.github.queued_at: timestamp after job observation")
             if github.get("runner_assigned") is False and now - queued >= timedelta(minutes=30):
                 return verdict(pid, "stalled", "github_job_unassigned",
                                "Check exact labels, runner group/repo access and listener from an independent route. Do not restart the missing runner from its own queued job.",
