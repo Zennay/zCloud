@@ -1,5 +1,6 @@
 """Real-Git adversarial regressions for scheduled redispatch debt ratchet."""
 import importlib.util
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -90,6 +91,54 @@ class WorkflowAdmission(unittest.TestCase):
         self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", source)
         self.assertIn("persist-credentials: false", source)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"', source)
+
+
+class TrustedBaselineAdmission(unittest.TestCase):
+    def test_workflow_invokes_base_policy_not_candidate_if_present(self):
+        source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
+        self.assertIn('base_entry="$(git ls-tree "$EXPECTED_BASE" -- "$source_path")"', source)
+        self.assertIn('git show "$EXPECTED_BASE:$source_path" > "$trusted_guard"', source)
+        self.assertIn('python3 "$trusted_guard" --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"', source)
+        self.assertIn('python3 "$source_path" --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"', source)
+        self.assertIn('if [[ -n "$base_entry" ]]; then', source)
+        self.assertIn('::warning::BOOTSTRAP ONLY:', source)
+        self.assertLess(
+            source.index('git show "$EXPECTED_BASE:$source_path" > "$trusted_guard"'),
+            source.index('python3 "$trusted_guard" --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"'),
+        )
+
+    def test_main_policy_survives_candidate_checker_tampering(self):
+        with tempfile.TemporaryDirectory() as name:
+            repo = Path(name)
+            cmd(repo, "init", "-q")
+            cmd(repo, "config", "user.email", "guard@example.invalid")
+            cmd(repo, "config", "user.name", "Guard")
+            path = repo / "scripts" / "checker.py"
+            path.parent.mkdir()
+            path.write_text("raise SystemExit(7)\n", encoding="utf-8")
+            cmd(repo, "add", "scripts/checker.py")
+            cmd(repo, "commit", "-qm", "trusted policy")
+            base = cmd(repo, "rev-parse", "HEAD")
+            path.write_text("print('always pass')\n", encoding="utf-8")
+            cmd(repo, "add", "scripts/checker.py")
+            cmd(repo, "commit", "-qm", "candidate tampering")
+            candidate = cmd(repo, "rev-parse", "HEAD")
+            trusted = subprocess.check_output([
+                "git", "-C", str(repo), "show", base + ":scripts/checker.py",
+            ])
+            self.assertNotEqual(
+                trusted, subprocess.check_output([
+                    "git", "-C", str(repo), "show", candidate + ":scripts/checker.py",
+                ])
+            )
+            trusted_path = repo / "trusted.py"
+            trusted_path.write_bytes(trusted)
+            self.assertEqual(subprocess.run(
+                [sys.executable, str(trusted_path)], check=False,
+            ).returncode, 7)
+            self.assertEqual(subprocess.run(
+                [sys.executable, str(path)], check=False, stdout=subprocess.DEVNULL,
+            ).returncode, 0)
 
 
 class RealGit(unittest.TestCase):
