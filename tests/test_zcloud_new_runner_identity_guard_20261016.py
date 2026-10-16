@@ -43,6 +43,22 @@ class IdentityPolicyTests(unittest.TestCase):
     def test_hosted_allowed(self):
         self.assertEqual(g.unsafe_jobs(wf("ubuntu-latest", False)), {})
 
+    def test_custom_hosted_prefix_is_not_trusted(self):
+        for runner in ("ubuntu-vps", "windows-zcloud", "macos-self-hosted",
+                       "ubuntu-worker-custom", "ubuntu-24.04-vps",
+                       "windows-2025-private", "macos-15-custom"):
+            with self.subTest(runner=runner):
+                self.assertEqual(g._runner(runner), "needs_guard")
+                self.assertIn("audit", g.unsafe_jobs(wf(runner, False)))
+
+    def test_allowlisted_github_hosted_labels(self):
+        for runner in ("ubuntu-latest", "ubuntu-24.04", "ubuntu-24.04-arm",
+                       "ubuntu-22.04", "windows-latest", "windows-2025",
+                       "macos-latest", "macos-15", "macos-15-intel"):
+            with self.subTest(runner=runner):
+                self.assertEqual(g._runner(runner), "hosted")
+                self.assertEqual(g.unsafe_jobs(wf(runner, False)), {})
+
     def test_ftmo_dedicated_runner_outside_scope(self):
         self.assertEqual(g.unsafe_jobs(wf("[self-hosted, ftmo-research]", False)), {})
 
