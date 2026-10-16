@@ -1344,5 +1344,109 @@ jobs:
         self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
 
 
+    def test_new_nonstandard_local_action_rejected(self):
+        self.put("scheduled-other-action.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./tools/my-custom-action
+""")
+        result = self.check(self.commit(), "reject")
+        self.assertEqual(result["new_sites"], 1)
+        self.assertIn(".github/workflows/scheduled-other-action.yml",
+                      result["changed_workflows_with_new_sites"])
+
+    def test_changed_existing_other_action_path_is_review_requiring(self):
+        self.put("scheduled-other-action.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./tools/first
+""")
+        base = self.commit()
+        self.put("scheduled-other-action.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./tools/second
+""")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertEqual(result["new_sites"], 1)
+
+    def test_quoted_nonstandard_local_action_rejected(self):
+        self.put("scheduled-quoted-other.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - 'uses': './custom/actions/publish'
+""")
+        self.check(self.commit(), "reject")
+
+    def test_flow_style_local_action_outside_standard_dir_rejected(self):
+        self.put("scheduled-flow-other.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps: [{ "uses": './external/action' }]
+""")
+        self.check(self.commit(), "reject")
+
+    def test_traversal_shaped_local_uses_is_opaque_and_rejected(self):
+        self.put("scheduled-traversal-local.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./../another-project/action
+""")
+        self.check(self.commit(), "reject")
+
+    def test_existing_nonstandard_local_action_is_grandfathered(self):
+        self.put("scheduled-existing-other.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./tools/legacy
+""")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+    def test_manual_nonstandard_local_action_is_not_scheduled_debt(self):
+        self.put("manual-other.yml", """on: workflow_dispatch
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./tools/manual
+""")
+        self.check(self.commit(), "pass")
+
+    def test_standard_local_action_is_not_double_counted(self):
+        self.put("scheduled-standard-action.yml", """on: schedule
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/proof
+""")
+        self.put_action("proof", """runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo safe
+""")
+        result = self.check(self.commit(), "reject")
+        self.assertEqual(result["new_sites"], 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()
