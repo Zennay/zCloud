@@ -30,7 +30,7 @@ jobs:
           fi
           job_state="$(gh api "repos/Zennay/zCloud/actions/runs/$run_id/jobs" --jq '.jobs[0].status')"
           runner="$(gh api "repos/Zennay/zCloud/actions/runs/$run_id/jobs" --jq '.jobs[0].runner_id')"
-          if [[ "$job_state" != queued || "$runner" != null ]]; then
+          if [[ "$job_state" != queued || ( "$runner" != null && "$runner" != 0 ) ]]; then
             echo "OLD_FUCKBALL_OVERLAY_ALREADY_ASSIGNED_OR_RUNNING; no cancellation attempted"
             exit 0
           fi
