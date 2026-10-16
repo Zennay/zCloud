@@ -507,6 +507,22 @@ jobs:
             self.assertEqual(1, len(rows))
             self.assertEqual("bounded", rows[0].status)
 
+    def test_upload_action_repository_identity_is_case_insensitive(self):
+        source = """jobs:
+  proof:
+    steps:
+      - uses: Actions/Upload-Artifact@v4
+        with:
+          retention-days: 7
+      - uses: ACTIONS/UPLOAD-ARTIFACT@abcdef
+        with:
+          retention-days: 45
+      - uses: actions/checkout@v4
+"""
+        rows = audit.inspect_workflow("mixed-case.yml", source, max_days=30)
+        self.assertEqual(["bounded", "over_limit"], [row.status for row in rows])
+        self.assertEqual([7, 45], [row.retention_days for row in rows])
+
     def test_validation_workflow_is_exact_head_read_only_and_guarded(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("permissions:\n  contents: read", text)
