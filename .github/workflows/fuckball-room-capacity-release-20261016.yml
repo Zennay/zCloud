@@ -1,0 +1,160 @@
+name: Fuckball one-time room capacity overlay
+
+# Single-purpose opt-in release branch. Unlike the old full deploy, this
+# applies only the six room/UI files and refuses unknown live edits.
+on:
+  push:
+    branches: [release/fuckball-room-capacity-20261016]
+    paths: ['.github/workflows/fuckball-room-capacity-release-20261016.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuckball-vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  guarded-room-capacity-release:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply reviewed room-only release, preserve all physics and dirty Work sources
+        shell: bash
+        env:
+          RELEASE_SHA: '5095b5dad189cb4caa984076ac7ae3058de4ab88'
+          BASE_SHA: 'f7376119abd5657b26c5a8c419d0a0cedeb5ca42'
+          APP_HOME: /opt/fuckball
+          APP_PORT: '3417'
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          files=(headless/server.cjs dist/room-core.js dist/app.js dist/server-client.js dist/room.css dist/index.html)
+          stage="$(mktemp -d)"
+          backup="$(mktemp -d)"
+          deployed=false
+          rollback() {
+            trap - ERR
+            if [[ "$deployed" == true ]]; then
+              echo "::error::Room overlay smoke check failed; rolling back ONLY the six files (physics untouched)"
+              for p in "${files[@]}"; do
+                if [[ -f "$backup/$p" ]]; then
+                  install -D -m 0644 "$backup/$p" "$APP_HOME/$p"
+                fi
+              done
+              sudo systemctl restart fuckball.service || true
+            fi
+            exit 1
+          }
+          trap rollback ERR
+          trap 'rm -rf "$stage" "$backup"' EXIT
+
+          echo "SAFE_ROOM_RELEASE source=$RELEASE_SHA runner=$(hostname)"
+          test -d "$APP_HOME/.git"
+          sudo systemctl is-active --quiet fuckball.service
+          curl -fsS --max-time 6 "http://127.0.0.1:$APP_PORT/health" -o "$stage/health-before.json"
+          node - "$stage/health-before.json" <<'NODE'
+          const fs=require('node:fs');
+          const h=JSON.parse(fs.readFileSync(process.argv[2]));
+          if(h.engine!=='node-haxball-2.3.1'||h.physicsHz!==60)throw Error('Incompatible live engine: no writes');
+          if(h.rooms!==0)throw Error('Active multiplayer rooms: refusing to interrupt games');
+          console.log('LIVE_PRECHECK engine='+h.engine+' rooms='+h.rooms);
+          NODE
+          curl -fsS --max-time 6 "http://127.0.0.1:$APP_PORT/" | grep -q 'src="room-core.js"'
+
+          # Stage BOTH exact reviewed and original git objects outside /opt/fuckball.
+          git clone --quiet --no-checkout https://github.com/Zennay/fuckball.git "$stage/source"
+          git -C "$stage/source" fetch --quiet --no-tags origin "$RELEASE_SHA" "$BASE_SHA"
+          git -C "$stage/source" checkout --quiet --detach "$RELEASE_SHA"
+          test "$(git -C "$stage/source" rev-parse HEAD)" = "$RELEASE_SHA"
+          (cd "$stage/source" && npm test && node --check server.js && node --check headless/server.cjs && node --check dist/room-core.js)
+          grep -Fq 'overflow-y:auto' "$stage/source/dist/room.css"
+          grep -Fq 'No fixed room player limit' "$stage/source/dist/index.html"
+          grep -Fq 'botIds:new Set()' "$stage/source/dist/room-core.js"
+
+          # Refuse to overwrite any newer Work-session edits to touched files.
+          # Other dirty files (especially game physics) are never inspected,
+          # cleaned, staged or reset by this patch.
+          changed=0
+          for p in "${files[@]}"; do
+            test -f "$APP_HOME/$p"
+            if cmp -s "$APP_HOME/$p" "$stage/source/$p"; then
+              echo "ALREADY_CURRENT $p"
+              continue
+            fi
+            git -C "$stage/source" show "$BASE_SHA:$p" > "$stage/base-$(basename "$p")"
+            if ! cmp -s "$APP_HOME/$p" "$stage/base-$(basename "$p")"; then
+              echo "::error::WORK_VERSION_CONFLICT $p (not original; will not overwrite)"
+              exit 1
+            fi
+            changed=$((changed+1))
+          done
+          if [[ "$changed" -eq 0 ]]; then
+            echo "ROOM_OVERLAY=already_deployed release=$RELEASE_SHA"
+            exit 0
+          fi
+          # Repeat liveness gate immediately before changing files.
+          curl -fsS --max-time 6 "http://127.0.0.1:$APP_PORT/health" -o "$stage/health-prewrite.json"
+          node - "$stage/health-prewrite.json" <<'NODE'
+          const fs=require('node:fs');
+          const h=JSON.parse(fs.readFileSync(process.argv[2]));
+          if(h.engine!=='node-haxball-2.3.1'||h.rooms!==0)throw Error('Active rooms/incompatible engine: no writes');
+          NODE
+          for p in "${files[@]}"; do
+            install -D -m 0644 "$APP_HOME/$p" "$backup/$p"
+          done
+          deployed=true
+          for p in "${files[@]}"; do
+            install -D -m 0644 "$stage/source/$p" "$APP_HOME/$p"
+            cmp -s "$APP_HOME/$p" "$stage/source/$p"
+            echo "PATCHED $p"
+          done
+          sudo systemctl restart fuckball.service
+          for attempt in $(seq 1 24); do
+            if curl -fsS --max-time 3 "http://127.0.0.1:$APP_PORT/health" > "$stage/health-after.json"; then
+              break
+            fi
+            sleep 1
+          done
+          node - "$stage/health-after.json" <<'NODE'
+          const fs=require('node:fs');
+          const h=JSON.parse(fs.readFileSync(process.argv[2]));
+          if(h.engine!=='node-haxball-2.3.1'||h.physicsHz!==60)throw Error('Bad post-deploy health');
+          console.log('LIVE_HEALTH_OK='+JSON.stringify(h));
+          NODE
+          curl -fsS --max-time 6 "http://127.0.0.1:$APP_PORT/room.css" | grep -Fq 'overflow-y:auto'
+          curl -fsS --max-time 6 "http://127.0.0.1:$APP_PORT/" | grep -Fq 'No fixed room player limit'
+          # WebSocket smoke: the actual deployed server must accept >8 humans.
+          node <<'NODE'
+          const wsUrl='ws://127.0.0.1:3417/ws',clients=[];
+          async function join(room,create,i){
+            const socket=new WebSocket(wsUrl);clients.push(socket);
+            return await new Promise((resolve,reject)=>{
+              const timeout=setTimeout(()=>reject(Error('Room capacity smoke timed out')),12000);
+              socket.onopen=()=>socket.send(JSON.stringify({type:'join',room,create,name:'Release smoke '+i}));
+              socket.onerror=()=>{clearTimeout(timeout);reject(Error('WS connection failed'));};
+              socket.onmessage=e=>{
+                if(typeof e.data!=='string')return;
+                const d=JSON.parse(e.data);
+                if(d.type==='welcome'){clearTimeout(timeout);resolve(d);}
+                if(d.type==='error'){clearTimeout(timeout);reject(Error(d.message));}
+              };
+            });
+          }
+          (async()=>{
+            try{
+              const host=await join(undefined,true,0);
+              for(let i=1;i<=10;i++)await join(host.room,false,i);
+              console.log('LIVE_ROOM_CAPACITY_OK players='+clients.length+' room='+host.room);
+            }finally{clients.forEach(c=>c.close());}
+          })().catch(e=>{console.error(e);process.exitCode=1;});
+          NODE
+          deployed=false
+          echo "RELEASE_SUCCESS=room-only overlay $RELEASE_SHA; physics unchanged"
+          echo "## Fuckball guarded room capacity release" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Source SHA: `$RELEASE_SHA`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Overlay: 6 files only; unchanged physics and other Work files" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Live: http://198.244.191.182:3417/" >> "$GITHUB_STEP_SUMMARY"
