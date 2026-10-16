@@ -182,6 +182,18 @@ def risks(sha: str) -> tuple[Counter, int]:
         parsed_actions = sum(bool(USE.match(line)) for line in lines)
         if declared_actions > parsed_actions:
             found[(path, digest(path + "\n" + source), "ambiguous_yaml")] += 1
+        # YAML decoding can reveal an executable action name hidden by
+        # backslash-escaped quoted scalars or mapping keys. Treat any newly
+        # escaped action identity or mapping key as untrusted source structure.
+        escaped_yaml_key_or_uses = any(
+            (re.match(r'^\\s*(?:-\\s*)?uses\\s*:', line) or
+             line.lstrip().startswith((chr(34), chr(39))))
+            and any(chr(92) + kind in line for kind in ("x", "u", "U"))
+            and ":" in line
+            for line in lines
+        )
+        if escaped_yaml_key_or_uses:
+            found[(path, digest(path + "\\n" + source), "ambiguous_yaml")] += 1
         # An alias can hide the action identity itself. If github-script appears
         # anywhere in a workflow, refuse a new unresolved uses alias even when
         # the step action is not spelled out on the uses line.
