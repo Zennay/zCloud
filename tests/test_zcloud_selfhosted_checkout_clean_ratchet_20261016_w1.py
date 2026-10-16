@@ -513,12 +513,32 @@ class HostedPolicyWiringTests(unittest.TestCase):
         self.assertIn("submodules: false", self.source)
 
     def test_same_repository_actor_and_first_attempt_are_required(self):
-        for literal in ("github.repository == 'Zennay/zCloud'",
-                        "github.event.pull_request.head.repo.full_name == github.repository",
-                        "github.event.pull_request.base.repo.full_name == github.repository",
-                        "github.actor == 'Zennay'",
-                        "github.run_attempt == 1"):
+        for literal in ('SOURCE_REPO: ',
+                        'HEAD_REPO: ',
+                        'BASE_REPO: ',
+                        'BASE_REF: ',
+                        'SOURCE_ACTOR: ',
+                        'ATTEMPT: ',
+                        'test "$SOURCE_REPO" = Zennay/zCloud',
+                        'test "$HEAD_REPO" = "$SOURCE_REPO"',
+                        'test "$BASE_REPO" = "$SOURCE_REPO"',
+                        'test "$BASE_REF" = main',
+                        'test "$SOURCE_ACTOR" = Zennay',
+                        'test "$ATTEMPT" = 1'):
             self.assertIn(literal, self.source)
+
+    def test_untrusted_events_explicitly_fail_before_pr_checkout(self):
+        admission = self.source.split("  trusted-event:", 1)[1].split(
+            "\n  validate:", 1)[0]
+        self.assertIn("runs-on: ubuntu-latest", admission)
+        self.assertIn("set -euo pipefail", admission)
+        self.assertNotIn("actions/checkout@", admission)
+        self.assertIn("  validate:\n    needs: trusted-event", self.source)
+
+    def test_pr_checkout_is_not_job_level_skipped_on_unsafe_events(self):
+        source = self.source.split("  validate:", 1)[1]
+        self.assertNotIn("    if:", source)
+        self.assertIn("needs: trusted-event", source)
 
     def test_exact_fresh_main_required_before_untrusted_pr_script(self):
         self.assertIn("git ls-remote --exit-code origin refs/heads/main", self.source)
