@@ -204,6 +204,84 @@ class NameCollisionRatchetTests(unittest.TestCase):
             with self.assertRaises(guard.InvalidInventory):
                 guard.read_inventory(tree, cwd=root)
 
+
+    def test_new_self_trigger_cycle_denied(self):
+        names = {"a.yml": "Build"}
+        report = guard.judge(names, names, {"a.yml": ()},
+                             {"a.yml": ("Build",)})
+        self.assertEqual(report["status"], "deny")
+        self.assertEqual(report["added_cycle_edge_count"], 1)
+        self.assertEqual(report["added_cycle_edges"],
+                         [{"source": "a.yml", "target": "a.yml"}])
+        self.assertFalse(report["merge_authorized"])
+
+    def test_new_two_workflow_cycle_denied(self):
+        names = {"a.yml": "Build", "b.yml": "Report"}
+        base_refs = {"a.yml": ("Report",), "b.yml": ()}
+        head_refs = {"a.yml": ("Report",), "b.yml": ("Build",)}
+        report = guard.judge(names, names, base_refs, head_refs)
+        self.assertEqual(report["added_cycle_edge_count"], 2)
+        self.assertEqual(report["added_reference_risk_count"], 0)
+        self.assertEqual(report["status"], "deny")
+
+    def test_no_cycle_in_linear_chain(self):
+        names = {"a.yml": "Build", "b.yml": "Report", "c.yml": "Verify"}
+        refs = {"a.yml": ("Report",), "b.yml": ("Verify",), "c.yml": ()}
+        self.assertEqual(guard.cyclic_reference_edges(names, refs), set())
+        self.assertEqual(guard.judge(names, names, {}, refs)["status"], "pass")
+
+    def test_three_step_cycle_and_existing_cycle_debt(self):
+        names = {"a.yml": "A", "b.yml": "B", "c.yml": "C"}
+        refs = {"a.yml": ("B",), "b.yml": ("C",), "c.yml": ("A",)}
+        edges = guard.cyclic_reference_edges(names, refs)
+        self.assertEqual(len(edges), 3)
+        self.assertEqual(guard.judge(names, names, refs, refs)["status"], "pass")
+        self.assertEqual(guard.judge(names, names, {}, refs)["added_cycle_edge_count"], 3)
+
+    def test_existing_cycle_extension_is_new_debt(self):
+        names = {"a.yml": "A", "b.yml": "B", "c.yml": "C"}
+        baseline = {"a.yml": ("B",), "b.yml": ("A",), "c.yml": ()}
+        expanded = {"a.yml": ("B", "C"), "b.yml": ("A",), "c.yml": ("B",)}
+        report = guard.judge(names, names, baseline, expanded)
+        self.assertEqual(report["added_cycle_edge_count"], 2)
+        self.assertEqual(report["status"], "deny")
+
+    def test_ambiguous_names_not_accidentally_resolved_as_cycle(self):
+        names = {"a.yml": "Build", "b.yml": "Build", "c.yml": "Listener"}
+        refs = {"a.yml": ("Listener",), "c.yml": ("Build",)}
+        self.assertEqual(guard.cyclic_reference_edges(names, refs), set())
+        report = guard.judge(names, names, {}, refs)
+        self.assertEqual(report["added_reference_risk_count"], 1)
+        self.assertEqual(report["added_cycle_edge_count"], 0)
+
+    def test_real_git_commit_triggers_new_cycle_denial(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "one.yml").write_text(
+                'name: One\non:\n  workflow_run:\n    workflows: [Two]\n')
+            (folder / "two.yml").write_text("name: Two\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "baseline with linear edge")
+            base = git("rev-parse", "HEAD")
+            (folder / "two.yml").write_text(
+                'name: Two\non:\n  workflow_run:\n    workflows: [One]\n')
+            git("add", ".")
+            git("commit", "-qm", "new cycle")
+            head = git("rev-parse", "HEAD")
+            bn, br = guard.read_inventory(base, cwd=root)
+            hn, hr = guard.read_inventory(head, cwd=root)
+            report = guard.judge(bn, hn, br, hr)
+            self.assertEqual(report["added_collision_count"], 0)
+            self.assertEqual(report["added_reference_risk_count"], 0)
+            self.assertEqual(report["added_cycle_edge_count"], 2)
+            self.assertEqual(report["status"], "deny")
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
