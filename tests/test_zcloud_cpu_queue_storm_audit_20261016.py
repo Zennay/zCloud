@@ -306,6 +306,30 @@ class QueueStormContract(unittest.TestCase):
                 audit.strict_json(raw)
         self.assertEqual(audit.strict_json('{"ok":"✅"}'.encode("utf-8"))["ok"], "✅")
 
+    def test_network_collection_has_one_global_monotonic_budget(self):
+        empty = {"total_count": 0, "workflow_runs": []}
+        with patch.object(audit, "monotonic", side_effect=[0.0, 48.0, 59.0]), \
+                patch.object(audit, "get_json", return_value=empty) as remote:
+            result = audit.collect("offline-token", now=NOW)
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["status"], "STABLE_READONLY_SAMPLE")
+        self.assertEqual(remote.call_count, 2)
+        self.assertEqual([c.kwargs["timeout"] for c in remote.call_args_list], [12, 1])
+
+    def test_expired_network_budget_denies_before_any_http_request(self):
+        with patch.object(audit, "monotonic", side_effect=[0.0, 60.01]), \
+                patch.object(audit, "get_json") as remote:
+            with self.assertRaisesRegex(audit.Unavailable, "network_budget_exhausted"):
+                audit.collect("offline-token", now=NOW)
+        remote.assert_not_called()
+
+    def test_invalid_http_timeout_rejected_before_network_use(self):
+        allowed = f"{audit.BASE}/actions/workflows/{audit.WORKFLOW}/runs?status=queued&per_page=20&page=1"
+        for invalid in (0, -1, True, None, float("nan"), float("inf"), 12.1):
+            with self.subTest(value=invalid), self.assertRaisesRegex(
+                    audit.Unavailable, "network_budget_exhausted"):
+                audit.get_json(allowed, "offline-token", None, timeout=invalid)
+
     def test_duplicate_json_fields_rejected(self):
         with self.assertRaisesRegex(audit.Unavailable, "duplicate_json_key"):
             audit.strict_json(b'{"a": 1, "a": 2}')

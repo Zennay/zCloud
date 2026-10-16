@@ -14,6 +14,7 @@ from math import isfinite
 import os
 import re
 from urllib.error import HTTPError, URLError
+from time import monotonic
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 REPO = "Zennay/zCloud"
@@ -25,6 +26,8 @@ REQUIRED = frozenset(("self-hosted", "zcloud", "vps"))
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 MAX_SAMPLE = 30
 MAX_BYTES = 2 * 1024 * 1024
+MAX_AUDIT_SECONDS = 60
+MAX_REQUEST_SECONDS = 12
 MIN_STALE_SECONDS = 15 * 60
 
 
@@ -294,7 +297,11 @@ def receipt(snapshot: dict, *, stable: bool) -> dict:
             "recommendation": "review_with_existing_runner_owner_only"}
 
 
-def get_json(url: str, token: str, opener) -> dict:
+def get_json(url: str, token: str, opener, *, timeout: float = MAX_REQUEST_SECONDS) -> dict:
+    if (type(timeout) not in (int, float)
+            or not isfinite(timeout)
+            or not 0 < timeout <= MAX_REQUEST_SECONDS):
+        raise Unavailable("network_budget_exhausted")
     if not url.startswith(BASE + "/actions/"):
         raise Unavailable("url_not_allowlisted")
     req = Request(url, headers={"Authorization": f"Bearer {token}",
@@ -302,7 +309,7 @@ def get_json(url: str, token: str, opener) -> dict:
                   "X-GitHub-Api-Version": "2022-11-28",
                   "User-Agent": "zcloud-cpu-queue-storm-readonly"})
     try:
-        with opener.open(req, timeout=12) as response:
+        with opener.open(req, timeout=timeout) as response:
             if response.geturl() != url:
                 raise Unavailable("untrusted_redirect")
             if response.headers.get_content_type() != "application/json":
@@ -318,8 +325,17 @@ def collect(token: str, cap: int = 20, *, getter=None, now=None) -> dict:
     if type(cap) is not int or not 1 <= cap <= MAX_SAMPLE:
         raise Unavailable("invalid_cap")
     if getter is None:
+        # An unresponsive GitHub API must not monopolize a hosted operator
+        # audit for 2 * (1 + MAX_SAMPLE) independent 12-second timeouts.
         opener = build_opener(NoRedirect())
-        getter = lambda url: get_json(url, token, opener)
+        deadline = monotonic() + MAX_AUDIT_SECONDS
+
+        def getter(url):
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise Unavailable("network_budget_exhausted")
+            return get_json(url, token, opener,
+                            timeout=min(MAX_REQUEST_SECONDS, remaining))
     if now is None:
         now = datetime.now(timezone.utc)
     if type(now) is not datetime or now.tzinfo is None:
