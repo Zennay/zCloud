@@ -874,5 +874,74 @@ jobs:
         self.check(self.commit(), "pass")
 
 
+    def test_flow_style_local_reusable_workflow_dispatch_rejected(self):
+        self.put("flow-call.yml", """on: schedule
+jobs: { call: { uses: ./.github/workflows/helper.yml } }
+""")
+        self.put("helper.yml", """on: workflow_call
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run production.yml
+""")
+        result = self.check(self.commit(), "reject")
+        self.assertIn(".github/workflows/flow-call.yml",
+                      result["changed_workflows_with_new_sites"])
+
+    def test_flow_style_local_composite_action_dispatch_rejected(self):
+        self.put("flow-action.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps: [{ 'uses': ./.github/actions/notice }]
+""")
+        self.put_action("notice", """runs:
+  using: composite
+  steps:
+    - run: gh workflow run production.yml
+      shell: bash
+""")
+        self.check(self.commit(), "reject")
+
+    def test_flow_style_action_main_entrypoint_mutation_rejected(self):
+        self.put("flow-main.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/notice
+""")
+        self.put_action("notice", """runs: { using: node20, 'main': dist/start.js, pre: dist/pre.js, "post": dist/post.js }
+""")
+        directory = self.repo / ".github/actions/notice/dist"
+        directory.mkdir(parents=True)
+        for name in ("start.js", "pre.js", "post.js"):
+            (directory / name).write_text("console.log('safe');\\n", encoding="utf-8")
+        base = self.commit()
+        (directory / "post.js").write_text("github.rest.actions.createWorkflowDispatch({});\\n",
+                                            encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertIn(".github/workflows/flow-main.yml",
+                      result["changed_workflows_with_new_sites"])
+
+    def test_unchanged_flow_reusable_graph_is_grandfathered(self):
+        self.put("flow-call.yml", """on: schedule
+jobs: { call: { uses: ./.github/workflows/helper.yml } }
+""")
+        self.put("helper.yml", """on: workflow_call
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run old.yml
+""")
+        base = self.commit()
+        result = guard.evaluate(self.repo, base, base)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["new_sites"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
