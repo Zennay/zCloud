@@ -86,6 +86,54 @@ class CheckoutRepoGuardTest(unittest.TestCase):
         text = workflow('foreign/repo', '- name: Fetch\n        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803')
         self.assertTrue(guard.scan(text))
 
+    def test_aliased_checkout_action_denied_without_literal_checkout(self):
+        text = workflow().replace(
+            '- uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
+            '- uses: *trusted_checkout',
+        )
+        self.assertIn('indirect-action-identity', guard.scan(text))
+
+    def test_indirect_action_can_hide_foreign_checkout(self):
+        text = 'defaults: &checkout_action actions/checkout@v4\n' + workflow('foreign/repo', '- uses: *checkout_action')
+        findings = guard.scan(text)
+        self.assertIn('indirect-action-identity', findings)
+
+    def test_aliased_step_denied_without_uses_text(self):
+        text = 'steps:\n    - *checkout_step\n'
+        self.assertIn('indirect-action-identity', guard.scan(text))
+
+    def test_inline_merged_step_denied(self):
+        self.assertIn('indirect-action-identity', guard.scan('steps:\n    - <<: *checkout_step\n'))
+
+    def test_dynamic_uses_expression_denied(self):
+        self.assertIn(
+            'indirect-action-identity',
+            guard.scan('steps:\n    - uses: ${{ inputs.action_ref }}\n'),
+        )
+
+    def test_quoted_uses_alias_denied(self):
+        self.assertIn(
+            'indirect-action-identity',
+            guard.scan('steps:\n    - uses: "*checkout_action"\n'),
+        )
+
+    def test_indirect_action_no_new_debt(self):
+        old = 'steps:\n    - uses: *already_present\n'
+        self.assertEqual(guard.compare({P: old}, {P: old}), [])
+        new = old + '    - uses: *another_action\n'
+        self.assertEqual(
+            guard.compare({P: old}, {P: new})[0]['new_count'], 1,
+        )
+
+    def test_indirect_action_in_new_composite_rejected(self):
+        self.assertTrue(guard.compare({}, {Q: 'runs:\n  using: composite\n  steps:\n    - *foreign_checkout\n'}))
+
+    def test_indirection_in_comment_is_not_action(self):
+        self.assertFalse(guard.scan('# - *checkout_step\n# - uses: *checkout_action\n'))
+
+    def test_ordinary_action_and_shell_text_remain_safe(self):
+        self.assertFalse(guard.scan('steps:\n    - uses: actions/setup-node@v4\n    - run: echo "*checkout"\n'))
+
     def test_bad_refs_deny(self):
         self.assertEqual(guard.main(['--base', 'main', '--head', 'HEAD']), 2)
 
