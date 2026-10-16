@@ -133,9 +133,32 @@ def _yaml_flow_items(value):
     """Parse simple literal YAML sequence; refuse dynamic or ambiguous items."""
     if not value.startswith("["):
         raise InvalidInventory("unsupported_workflow_run_reference")
-    closing = value.rfind("]")
-    if closing < 1 or (value[closing + 1:].strip() and
-                       not value[closing + 1:].strip().startswith("#")):
+    # Find the first unquoted closing bracket. A bracket inside a quoted item
+    # or a trailing YAML comment is not the end of the sequence.
+    quote, escaped, closing = "", False, None
+    index = 1
+    while index < len(value):
+        char = value[index]
+        if quote:
+            if quote == '"' and escaped:
+                escaped = False
+            elif quote == '"' and char == "\\":
+                escaped = True
+            elif char == quote:
+                if quote == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                    index += 1
+                else:
+                    quote = ""
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "]":
+            closing = index
+            break
+        elif char in "[{":
+            raise InvalidInventory("unsupported_workflow_run_reference")
+        index += 1
+    if closing is None or (value[closing + 1:].strip() and
+                           not value[closing + 1:].strip().startswith("#")):
         raise InvalidInventory("unsupported_workflow_run_reference")
     text = value[1:closing].strip()
     if not text:
@@ -198,12 +221,7 @@ def _literal_inline_non_run_events(value):
     """Accept only an explicit, unaliased list/scalar of non-workflow_run events."""
     try:
         if value.startswith("["):
-            # A YAML inline event list may have an ordinary trailing comment.
-            end = value.rfind("]")
-            if end < 0 or (value[end + 1:].strip() and
-                           not value[end + 1:].strip().startswith("#")):
-                return False
-            items = _yaml_flow_items(value[:end + 1])
+            items = _yaml_flow_items(value)
         else:
             items = (_scalar(value),)
     except InvalidInventory:
