@@ -34,6 +34,31 @@ class Reader:
         return self.pages.get(page, [])
 
 
+def issue(n, *, is_pr=False, labels=None, **changes):
+    row = {
+        "number": n, "title": f"Issue {n}",
+        "html_url": f"https://github.com/Zennay/zCloud/{'pull' if is_pr else 'issues'}/{n}",
+        "updated_at": "2026-10-01T08:00:00Z",
+        "labels": [{"name": name} for name in (labels or [])],
+    }
+    if is_pr:
+        row["pull_request"] = {"url": f"https://api.github.com/repos/Zennay/zCloud/pulls/{n}"}
+    row.update(changes)
+    return row
+
+
+class CombinedReader(Reader):
+    def __init__(self, prs, issues, mains=None):
+        super().__init__(prs, mains=mains)
+        self.issues = issues
+
+    def __call__(self, kind, page):
+        if kind == "issues":
+            self.calls.append((kind, page))
+            return self.issues.get(page, [])
+        return super().__call__(kind, page)
+
+
 class BacklogBriefTests(TestCase):
     def test_full_two_pass_pagination_and_operator_brief(self):
         rows = [pr(n) for n in range(1, 102)]
@@ -193,6 +218,99 @@ class BacklogBriefTests(TestCase):
             opener.return_value.open.return_value = Response()
             with self.assertRaises(brief.Denied):
                 brief.fetch("main")
+
+    def test_issue_first_digest_counts_only_issues_not_pr_wrappers(self):
+        reader = CombinedReader({1: [pr(10), pr(20)]}, {1: [
+            issue(20, is_pr=True), issue(2, labels=["P1"], title="P1: fix"),
+            issue(10, is_pr=True), issue(1, title="P0: runner failure"),
+            issue(3, title="low-priority tidy"),
+        ]})
+        report = brief.collect(reader, NOW, include_issues=True)
+        self.assertEqual(3, len(report["issues"]))
+        self.assertEqual(2, len(report["prs"]))
+        self.assertEqual([("main", 0), ("pulls", 1), ("pulls", 1),
+                          ("issues", 1), ("issues", 1), ("main", 0)], reader.calls)
+        summary = brief.render(report)
+        self.assertIn("3 open issues", summary)
+        self.assertIn("P0: 1, P1: 1", summary)
+        self.assertLess(summary.index("[#1]"), summary.index("[#2]"))
+        self.assertLess(summary.index("[#2]"), summary.index("[#3]"))
+        self.assertIn("2 open PR", summary)
+        self.assertFalse(report["merge_authorized"])
+
+    def test_issue_pull_overlap_requires_exact_pr_cohort(self):
+        for items in ([issue(10, is_pr=True), issue(99, is_pr=True)],
+                      [issue(12, is_pr=True)]):
+            with self.subTest(items=items):
+                with self.assertRaisesRegex(brief.Denied, "pr_issue_cohort_mismatch"):
+                    brief.collect(CombinedReader({1: [pr(10)]},
+                                                  {1: items}), NOW, include_issues=True)
+
+    def test_issue_inventory_drift_denied(self):
+        calls = 0
+        def reader(kind, page):
+            nonlocal calls
+            if kind == "main":
+                return {"commit": {"sha": SHA}}
+            if kind == "pulls":
+                return []
+            calls += 1
+            return [issue(1, title="P0: old" if calls == 1 else "P0: changed")]
+        with self.assertRaisesRegex(brief.Denied, "issue_drift"):
+            brief.collect(reader, NOW, include_issues=True)
+
+    def test_duplicate_issue_across_pages_denied(self):
+        full_page = [issue(n) for n in range(1, 101)]
+        reader = CombinedReader({1: []}, {1: full_page, 2: [issue(1)]})
+        with self.assertRaisesRegex(brief.Denied, "bad_or_duplicate_issue"):
+            brief.collect(reader, NOW, include_issues=True)
+
+    def test_invalid_issue_metadata_is_denied(self):
+        invalid = [
+            {"number": True}, {"number": 0}, {"title": ""},
+            {"labels": [{"name": ""}]}, {"labels": [{}]},
+            {"labels": [{"name": "P0"}, {"name": "P0"}]},
+            {"labels": "P0"}, {"pull_request": True},
+            {"html_url": "https://evil.test/issues/1"},
+            {"updated_at": "2027-01-01T00:00:00Z"},
+        ]
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                with self.assertRaises(brief.Denied):
+                    brief.collect(CombinedReader({1: []}, {1: [issue(1, **changes)]}),
+                                  NOW, include_issues=True)
+
+    def test_issue_page_hard_cap_denies_partial_result(self):
+        def reader(kind, page):
+            if kind == "main":
+                return {"commit": {"sha": SHA}}
+            if kind == "pulls":
+                return []
+            return [issue(page * 100 + i) for i in range(100)]
+        with self.assertRaisesRegex(brief.Denied, "issue_pagination_cap"):
+            brief.collect(reader, NOW, include_issues=True)
+
+    def test_issue_priority_is_source_hint_not_guaranteed_severity(self):
+        self.assertEqual(0, brief._priority("P0: crash", []))
+        self.assertEqual(0, brief._priority("minor", ["P0"]))
+        self.assertEqual(1, brief._priority("P1: issue", []))
+        self.assertEqual(2, brief._priority("important P0 discussion", []))
+        self.assertEqual(2, brief._priority("not marked", ["feature"]))
+
+    def test_issue_render_does_not_interpret_untrusted_authority(self):
+        reader = CombinedReader({1: []}, {1: [issue(1)]})
+        report = brief.collect(reader, NOW, include_issues=True)
+        report["deploy_authorized"] = True
+        with self.assertRaisesRegex(brief.Denied, "untrusted_inventory"):
+            brief.render(report)
+
+    def test_cli_include_issues_is_explicit_and_non_authorizing(self):
+        reader = CombinedReader({1: [pr(3)]}, {1: [issue(3, is_pr=True), issue(1)]})
+        snapshot = brief.collect(reader, NOW, include_issues=True)
+        with mock.patch.object(brief, "collect", return_value=snapshot) as collector:
+            with mock.patch("builtins.print"):
+                self.assertEqual(0, brief.main(["--include-issues", "--expected-main-sha", SHA]))
+        collector.assert_called_once_with(include_issues=True)
 
     def test_reader_never_accepts_other_method_or_url(self):
         with self.assertRaisesRegex(brief.Denied, "unsupported_endpoint"):
