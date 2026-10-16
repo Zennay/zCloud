@@ -15,6 +15,7 @@ OTHER = "b" * 40
 
 def pr(n, **changes):
     item = {"number": n, "title": f"Review feature {n}", "draft": True,
+            "state": "open",
             "html_url": f"https://github.com/Zennay/zCloud/pull/{n}",
             "head": {"sha": SHA}, "base": {"ref": "main", "sha": SHA},
             "updated_at": "2026-10-01T08:00:00Z"}
@@ -37,7 +38,7 @@ class Reader:
 
 def issue(n, *, is_pr=False, labels=None, **changes):
     row = {
-        "number": n, "title": f"Issue {n}",
+        "number": n, "title": f"Issue {n}", "state": "open",
         "html_url": f"https://github.com/Zennay/zCloud/{'pull' if is_pr else 'issues'}/{n}",
         "updated_at": "2026-10-01T08:00:00Z",
         "labels": ([{"name": name} for name in labels] if isinstance(labels, (list, tuple))
@@ -79,6 +80,45 @@ class BacklogBriefTests(TestCase):
         self.assertNotIn("Production deploy green", output)
         self.assertFalse(found["merge_authorized"])
         self.assertFalse(found["deploy_authorized"])
+
+    def test_non_main_prs_get_a_separate_review_with_escaped_bases(self):
+        rows = [
+            pr(10, draft=False, base={"ref": "staging", "sha": SHA},
+               title="Needs staging review"),
+            pr(11, draft=True, base={"ref": "release/*[old]", "sha": SHA},
+               title="Draft dependent feature"),
+            pr(12, draft=False, title="Canonical main candidate"),
+        ]
+        out = brief.render(brief.collect(Reader({1: rows}), NOW))
+        section = out.split("### PR's gericht op andere branches", 1)[1]
+        self.assertIn("2 open PR's met een andere base", section)
+        self.assertIn("[#10]", section)
+        self.assertIn("[#11]", section)
+        self.assertNotIn("[#12]", section)
+        self.assertIn(brief._safe("release/*[old]"), section)
+        self.assertIn("Niet rechtstreeks als main-release", section)
+        self.assertIn("staging", section)
+
+    def test_non_main_shortlist_is_bounded_and_not_release_authorization(self):
+        rows = [pr(n, draft=False, base={"ref": "feature", "sha": SHA})
+                for n in range(1, 25)]
+        report = brief.collect(Reader({1: rows}), NOW)
+        section = brief.render(report).split(
+            "### PR's gericht op andere branches", 1)[1]
+        self.assertEqual(20, section.count("https://github.com/Zennay/zCloud/pull/"))
+        self.assertIn("Nog 4 afwijkende bases", section)
+        self.assertFalse(report["merge_authorized"])
+        self.assertFalse(report["deploy_authorized"])
+
+    def test_real_open_only_contract_does_not_trust_endpoint_query_alone(self):
+        for change in ({"state": "closed"}, {"state": None}, {"state": True}):
+            with self.subTest(pr=change):
+                with self.assertRaisesRegex(brief.Denied, "unexpected_pr_state"):
+                    brief.collect(Reader({1: [pr(4, **change)]}), NOW)
+            with self.subTest(issue=change):
+                with self.assertRaisesRegex(brief.Denied, "unexpected_issue_state"):
+                    brief.collect(CombinedReader({1: []}, {1: [issue(4, **change)]}),
+                                  NOW, include_issues=True)
 
     def test_review_attention_shortlist_only_non_draft_main_prs(self):
         rows = [
@@ -154,7 +194,8 @@ class BacklogBriefTests(TestCase):
     def test_invalid_and_forged_pr_metadata_denied(self):
         bad = [
             {"number": True}, {"number": 0}, {"title": ""}, {"title": "x" * 257},
-            {"draft": "false"}, {"html_url": "https://evil.test/pull/1"},
+            {"draft": "false"}, {"state": "closed"}, {"state": "merged"},
+            {"html_url": "https://evil.test/pull/1"},
             {"head": {"sha": "short"}}, {"base": {"ref": 1, "sha": SHA}},
             {"updated_at": "2026-99-99T00:00:00Z"},
             {"updated_at": "2027-01-01T00:00:00Z"},
@@ -400,6 +441,7 @@ class BacklogBriefTests(TestCase):
     def test_invalid_issue_metadata_is_denied(self):
         invalid = [
             {"number": True}, {"number": 0}, {"title": ""},
+            {"state": "closed"}, {"state": None},
             {"labels": [{"name": ""}]}, {"labels": [{}]},
             {"labels": [{"name": "P0"}, {"name": "P0"}]},
             {"labels": "P0"}, {"pull_request": True},
