@@ -62,7 +62,18 @@ def workflow_name(path, source):
         source = source.decode("utf-8", "strict").removeprefix("\ufeff")
     except UnicodeDecodeError as exc:
         raise InvalidInventory("non_utf8_workflow") from exc
-    matches = re.findall(r"""(?m)^(?:name|'name'|\"name\")[ \t]*:(.*)$""", source)
+    # YAML root mappings may be uniformly indented; do not mistake nested step
+    # names for the workflow display name or silently use the filename fallback.
+    significant = [line for line in source.splitlines()
+                   if line.strip() and not line.lstrip().startswith("#")
+                   and line.strip() not in {"---", "..."}]
+    if not significant:
+        raise InvalidInventory("empty_workflow_source")
+    indent = min(len(line) - len(line.lstrip(" ")) for line in significant)
+    if indent > 8 or significant[0].lstrip().startswith(("{", "[")):
+        raise InvalidInventory("unsupported_workflow_root")
+    pattern = r"""(?m)^""" + " " * indent + r"""(?:name|'name'|"name")[ \t]*:(.*)$"""
+    matches = re.findall(pattern, source)
     if len(matches) > 1:
         raise InvalidInventory("duplicate_name_field")
     return _scalar(matches[0]) if matches else PurePosixPath(path).name
