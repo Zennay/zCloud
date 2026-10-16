@@ -167,8 +167,11 @@ jobs:
           assert all(r["branch_protection_authorized"] == "false" for r in rows)
           assert all(r["push_filter_effectiveness_verified"] == "false" for r in rows)
           assert all(x["push_filter_effectiveness_verified"] is False for x in ctx["candidates"])
+          assert all(r["push_paths_mentions_own_yaml_literal_hint"] in ("true", "false") for r in rows)
+          assert all(x["manual_only_verified"] is False for x in ctx["candidates"])
           assert 0 <= ctx["push_paths_key_hint_count"] <= ctx["candidate_count"]
           assert 0 <= ctx["push_branches_key_hint_count"] <= ctx["candidate_count"]
+          assert 0 <= ctx["push_own_yaml_literal_hint_count"] <= ctx["push_paths_key_hint_count"]
           print("STARTUP_HINT_CANDIDATES=" + str(ctx["candidate_count"]))
           print("STARTUP_HINT_AUTOMATIC=" + str(ctx["automatic_event_hint_count"]))
           print("STARTUP_HINT_MANUAL=" + str(ctx["manual_event_hint_count"]))
@@ -176,6 +179,7 @@ jobs:
           print("STARTUP_HINT_UNKNOWN=" + str(ctx["unknown_trigger_count"]))
           print("STARTUP_HINT_PUSH_PATH_KEY=" + str(ctx["push_paths_key_hint_count"]))
           print("STARTUP_HINT_PUSH_BRANCH_KEY=" + str(ctx["push_branches_key_hint_count"]))
+          print("STARTUP_HINT_PUSH_OWN_YAML_LITERAL=" + str(ctx["push_own_yaml_literal_hint_count"]))
           print("STARTUP_HINT_FILTER_VERIFIED=false")
           print("STARTUP_HINT_RELEASE_AUTHORIZED=false")
           PY
