@@ -1,0 +1,67 @@
+name: zCloud VPS runner identity no-new-debt (source only)
+
+# Independent GitHub-hosted gate. Never dispatches VPS or mutates production.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_new_runner_identity_guard_20261016.py'
+      - 'tests/test_zcloud_new_runner_identity_guard_20261016.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-vps-identity-source-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-admission:
+    name: Reject untrusted PR before any checkout
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Fail closed on forks, wrong base and reruns
+        env:
+          SOURCE_REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$SOURCE_REPO" = Zennay/zCloud
+          test "$HEAD_REPO" = "$SOURCE_REPO"
+          test "$BASE_REPO" = "$SOURCE_REPO"
+          test "$GITHUB_BASE_REF" = main
+          test "$ATTEMPT" = 1
+  policy:
+    name: Prevent new unguarded zCloud VPS jobs
+    needs: source-admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact unprivileged PR source and base history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+      - name: Verify immutable source, run tests and deny new identity debt
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(git cat-file -t "$BASE_SHA")" = commit
+          python3 -m py_compile scripts/zcloud_new_runner_identity_guard_20261016.py
+          python3 -m unittest -v tests.test_zcloud_new_runner_identity_guard_20261016
+          python3 scripts/zcloud_new_runner_identity_guard_20261016.py --base "$BASE_SHA" --head "$HEAD_SHA" | tee "$RUNNER_TEMP/zcloud-runner-identity.json"
