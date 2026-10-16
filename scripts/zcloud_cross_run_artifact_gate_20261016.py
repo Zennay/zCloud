@@ -27,9 +27,9 @@ _TARGETS = frozenset({"run-id", "repository", "github-token"})
 # cross-run artifact trust boundary. A syntactic match requires review, not
 # permission to retrieve or execute any artifact.
 _GH_RUN_DOWNLOAD = re.compile(
-    r"(?<![\\w/-])(?:gh|/(?:usr/)?(?:local/)?bin/gh)\\s+"
-    r"(?:(?:(?:-R|--repo)(?:=\\S+|\\s+\\S+))\\s+)*"
-    r"run\\s+download(?=\\s|$|[;&|])", re.IGNORECASE,
+    r"(?<![\w/-])(?:gh|/(?:usr/)?(?:local/)?bin/gh)\s+"
+    r"(?:(?:(?:-R|--repo)(?:=\S+|\s+\S+))\s+)*"
+    r"run\s+download(?=\s|$|[;&|])", re.IGNORECASE,
 )
 _MAX_FILE = 256_000
 _MAX_WORKFLOWS = 500
@@ -208,7 +208,7 @@ def _risks(text: str, path: str) -> Counter[str]:
             continue
         logical = source
         following = number + 1
-        while logical.rstrip().endswith("\\\\") and following < len(lines) and following <= number + 8:
+        while logical.rstrip().endswith("\\") and following < len(lines) and following <= number + 8:
             logical = logical.rstrip()[:-1] + " " + lines[following].strip()
             following += 1
         if _GH_RUN_DOWNLOAD.search(logical):
