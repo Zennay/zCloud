@@ -15,15 +15,24 @@ concurrency:
 
 jobs:
   deny-new-cross-run-downloads:
-    if: >-
-      github.event_name == 'pull_request' &&
-      github.repository == 'Zennay/zCloud' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor == 'Zennay' &&
-      github.triggering_actor == 'Zennay'
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
+      - name: Reject untrusted PR provenance before any repository checkout
+        shell: bash
+        env:
+          PR_EVENT: ${{ github.event_name }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+          test "$PR_EVENT" = pull_request
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$PR_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$PR_BASE_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+
       - name: Check out immutable PR head without persisted credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
