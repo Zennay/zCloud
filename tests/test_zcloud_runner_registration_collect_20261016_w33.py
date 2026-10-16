@@ -62,11 +62,11 @@ class CollectorTests(unittest.TestCase):
             'gh', 'api', '--hostname', 'github.com', '--method', 'GET',
             'repos/Zennay/zCloud/actions/runners?name=zcloud-vps-1&per_page=100'))
 
-    def test_read_denied_does_not_leak_token_or_stderr(self):
+    def test_failed_get_does_not_leak_token_or_stderr(self):
         result = collector.collect(executor=fake_get(code=1, output=b'Authorization: bearer SECRET_VALUE'), clock=NOW)
         self.assertEqual(self.check_safe(result)['classification'], 'EVIDENCE_UNAVAILABLE')
         self.assertNotIn('SECRET_VALUE', str(result))
-        self.assertEqual(result['reason_code'], 'github_runner_admin_read_denied')
+        self.assertEqual(result['reason_code'], 'github_runner_read_failed')
 
     def test_auth_command_timeout_does_not_leak_arguments(self):
         err = subprocess.TimeoutExpired('gh api --hostname github.com bearer SECRET', 12, output=b'SECRET')
@@ -88,7 +88,7 @@ class CollectorTests(unittest.TestCase):
     def test_nonzero_cli_exit_cannot_be_claimed_as_runner_offline(self):
         result = collector.collect(executor=fake_get(code=4, output=json.dumps(fixture()).encode()), clock=NOW)
         self.assertEqual(self.check_safe(result)['classification'], 'EVIDENCE_UNAVAILABLE')
-        self.assertEqual(result['reason_code'], 'github_runner_admin_read_denied')
+        self.assertEqual(result['reason_code'], 'github_runner_read_failed')
 
     def test_malformed_json_denied(self):
         result=collector.collect(executor=fake_get(output=b'{invalid secret}'), clock=NOW)

@@ -62,7 +62,7 @@ def collect(*, executor=subprocess.run, clock=None):
         elif isinstance(error, subprocess.TimeoutExpired):
             reason = 'github_runner_read_timeout'
         elif type(error) is InvalidEvidence and str(error) == 'runner_admin_read_unavailable':
-            reason = 'github_runner_admin_read_denied'
+            reason = 'github_runner_read_failed'
         else:
             reason = 'untrusted_runner_response'
         return {

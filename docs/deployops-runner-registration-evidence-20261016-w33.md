@@ -20,8 +20,9 @@ arguments. It neither writes the API response to disk nor echoes it to stdout
 or stderr. A 12-second timeout bounds the read. A blocked request remains
 `EVIDENCE_UNAVAILABLE` but now includes a fixed, secret-safe `reason_code`:
 `github_cli_not_installed` means install/sign in to the trusted `gh` binary;
-`github_runner_admin_read_denied` means check repository Administration **read**
-permission or authentication in GitHub settings; `github_runner_read_timeout`
+`github_runner_read_failed` means the GitHub CLI request failed for an
+**unknown** reason (auth/Administration **read** permissions, API availability,
+or network); the diagnostic does not claim it was an access denial; `github_runner_read_timeout`
 means check the operator's GitHub network reachability; and
 `untrusted_runner_response` means the retrieved snapshot could not be accepted.
 Raw error messages, stderr, tokens, runner IDs and HTTP bodies are **never**
