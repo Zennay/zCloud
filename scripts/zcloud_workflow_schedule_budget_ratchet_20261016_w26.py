@@ -163,7 +163,10 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
                 raise AdmissionError("ambiguous_event_key")
             event_name = next(part for part in match.groups()[:3] if part is not None)
             if event_name == "schedule":
-                if found_schedule or match.group(4):
+                # A trailing YAML comment does not add an inline schedule
+                # expression and must not force valid workflows to fail.
+                value = match.group(4).strip()
+                if found_schedule or (value and not value.startswith("#")):
                     raise AdmissionError("ambiguous_schedule_block")
                 found_schedule = True
                 in_schedule = True
@@ -196,14 +199,14 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
             if indent != entry_indent:
                 raise AdmissionError("ambiguous_cron_entry_indentation")
             entry_has_timezone = False
-            scalar = match.group(1).strip()
+            # Inline YAML comments are permitted after quoted or unquoted
+            # cron values. Any '#' *inside* a cron field is invalid anyway.
+            scalar = match.group(1).split(" #", 1)[0].strip()
             if scalar[0:1] in ("'", '"'):
                 quote = scalar[0]
                 if len(scalar) < 2 or scalar[-1] != quote:
                     raise AdmissionError("ambiguous_cron_scalar")
                 scalar = scalar[1:-1]
-            else:
-                scalar = scalar.split(" #", 1)[0].strip()
             if not scalar or "${{" in scalar:
                 raise AdmissionError("dynamic_cron_forbidden")
             entries.append(scalar)
