@@ -95,3 +95,45 @@ De oorspronkelijke CSV-kolommen voor main-SHA, workflowpad, workflow-SHA-256, si
 De source scanner ondersteunt ook shellregelvervolg (backslash), Git-opties als \`-C\`, \`-c\` en \`--git-dir\` voor een \`git push\`, en weigert control-karakters voordat regels worden opgesplitst. Git-omgevingvariabelen zoals \`GIT_DIR\` en \`GIT_CONFIG_COUNT\` uit de aanroepomgeving krijgen geen invloed op de vaste Git-bron. Onzichtbare schrijfpaden via variabelen of externe reusable Actions blijven een menselijke audittaak; nul gevonden signalen is nooit een vrijgave.
 
 De hosted workflow controleert dat de **echte, ongewijzigde main-inventaris** via JSON én CSV precies dezelfde openstaande beoordelingen en \`safe_to_enable_branch_protection=false\` geeft. Een lokaal ingevuld bestand wordt niet zonder expliciete onafhankelijke verificatie gebruikt voor een production release.
+
+
+## Triaging likely automatic starts and self-hosted runner usage
+
+The original 45-workflow main writer review queue shows static write signals but
+not **when a candidate might run**. The new read-only sidecar
+\`scripts/zcloud_main_writer_startup_hints_20261016_w12.py\` reads the
+**same immutable main Git blobs**, checks every SHA-256 against the scanner's
+exact source, and reports *positive source hints* for top-level
+\`on:\` events and \`runs-on:\` labels. It does not use the working-tree YAML,
+run jobs, call the GitHub API, or mutate the repository. A reviewer may use it
+to prioritize **automatic event hints** (such as push/schedule/workflow_run)
+over manually dispatched recovery jobs, but labels are not execution evidence.
+
+\`\`\`bash
+python3 scripts/zcloud_main_writer_startup_hints_20261016_w12.py \
+  --repo PATH_TO_PINNED_MAIN_WORKTREE \
+  --expected-main-sha EXACT_40_CHAR_MAIN_SHA --format markdown
+
+python3 scripts/zcloud_main_writer_startup_hints_20261016_w12.py \
+  --repo PATH_TO_PINNED_MAIN_WORKTREE \
+  --expected-main-sha EXACT_40_CHAR_MAIN_SHA --format csv \
+  > workflow-startup-hints.csv
+\`\`\`
+
+This report is **not an approval list**. Top-level YAML inline arrays, single
+event scalars and indented event keys are handled conservatively; YAML anchors,
+quotes, aliases, complex expressions and syntax outside this bounded scanner
+can be unknown. An observed \`workflow_dispatch\` is only a **manual event
+hint**, never proof that no automatic triggers exist. Similarly an absent
+\`self-hosted\` string cannot establish hosted-only execution. Every result
+carries \`manual_only_verified=false\`, \`actual_activity_verified=false\`,
+\`safe_to_enable_branch_protection=false\` and
+\`production_mutation_authorized=false\`. Unexpected blob type, binary/control
+content, SHA mismatch or moving main denies the whole report.
+
+Hosted PR validation now checks all three pieces together on the **same main
+SHA and SHA-256 per candidate**: immutable writer inventory, editable
+owner-review queue, and trigger/runner hints. The new CSV provides the same
+45 candidate paths and original digests; only actual workflow owners can
+determine live usage, compatibility or retirement. No #922 or #1326
+governance/production gate is opened by the triage report.
