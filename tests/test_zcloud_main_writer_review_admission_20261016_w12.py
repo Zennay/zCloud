@@ -267,6 +267,21 @@ class OfflineWriterReviewTests(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertEqual(json.loads(stdout)["error"], "unreadable_file")
 
+    def test_symlinked_parent_directory_denied(self):
+        real = self.directory / "actual"
+        real.mkdir()
+        (real / "review.json").write_text(self.review_file.read_text(), encoding="utf-8")
+        (self.directory / "linked-parent").symlink_to(real, target_is_directory=True)
+        status, stdout = self.capture_special(self.directory / "linked-parent" / "review.json")
+        self.assertEqual(status, 2)
+        self.assertEqual(json.loads(stdout)["error"], "unreadable_file")
+
+    def test_parent_traversal_denied(self):
+        status, stdout = self.capture_special(self.directory / ".." /
+                                              self.directory.name / "reviews.json")
+        self.assertEqual(status, 2)
+        self.assertEqual(json.loads(stdout)["error"], "unsafe_path")
+
     def test_oversized_input_denied(self):
         self.review_file.write_bytes(b" " * (admission.MAX_REVIEWS_BYTES + 1))
         status, stdout = self.capture()
