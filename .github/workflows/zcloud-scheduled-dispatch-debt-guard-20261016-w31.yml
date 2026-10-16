@@ -5,6 +5,9 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, edited, ready_for_review]
+  # Main pushes are audited AFTER the write. This is not branch protection.
+  push:
+    branches: [main]
 
 permissions:
   contents: read
@@ -16,7 +19,7 @@ concurrency:
 jobs:
   source-only:
     if: >-
-      github.event_name == 'pull_request' &&
+      (github.event_name == 'pull_request' || github.event_name == 'push') &&
       github.repository == 'Zennay/zCloud'
     runs-on: ubuntu-latest
     timeout-minutes: 8
@@ -24,6 +27,7 @@ jobs:
       # A skipped job may be treated as a successful required check.
       # Untrusted forks MUST explicitly fail before any source checkout.
       - name: Reject fork or unknown source before checkout
+        if: github.event_name == 'pull_request'
         shell: bash
         env:
           BASE_REPO: ${{ github.repository }}
@@ -35,15 +39,16 @@ jobs:
       - name: Checkout exact candidate without persisted credentials
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
           clean: true
       - name: Test fail-closed policy and immutable source delta
         shell: bash
         env:
-          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EXPECTED_MAIN: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
@@ -51,7 +56,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git cat-file -t "$EXPECTED_BASE")" = commit
           # Main must not drift while we compare immutable Git source.
-          expected_main="$EXPECTED_BASE"$'\t'"refs/heads/main"
+          expected_main="$EXPECTED_MAIN"$'\t'"refs/heads/main"
           current_main="$(timeout 20 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main)"
           test "$current_main" = "$expected_main"
           python3 -m py_compile scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
