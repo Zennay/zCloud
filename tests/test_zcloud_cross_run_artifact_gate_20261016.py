@@ -374,6 +374,42 @@ class Tests(unittest.TestCase):
         with self.assertRaises(module.Refusal):
             module._risks(candidate,'w.yml')
 
+    def test_direct_rest_artifact_zip_url_is_review_debt(self):
+        source='      run: curl -fsSL https://api.github.com/repos/example/repo/actions/artifacts/123/zip'
+        self.assertEqual(sum(module._risks(source,'w.yml').values()),1)
+
+    def test_dynamic_rest_artifact_route_requires_review(self):
+        source='      run: gh api "repos/example/repo/actions/artifacts/' + chr(36) + '{{ steps.old.outputs.id }}/zip"'
+        self.assertEqual(sum(module._risks(source,'w.yml').values()),1)
+
+    def test_unrelated_github_api_url_is_not_artifact_debt(self):
+        self.assertEqual(sum(module._risks('      run: gh api repos/example/repo/actions/runs/123','w.yml').values()),0)
+
+    def test_rest_api_new_in_real_git_workflow_is_denied(self):
+        base=self.commit(SAFE)
+        head=self.commit(SAFE + '\n      - run: curl https://api.github.com/repos/example/repo/actions/artifacts/123/zip\n')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_rest_api_unchanged_legacy_is_not_new_debt(self):
+        legacy=SAFE + '\n      - run: gh api repos/example/repo/actions/artifacts/123/zip\n'
+        base=self.commit(legacy)
+        head=self.commit(legacy+'# added documentation\n')
+        result=module.evaluate(self.repo,base,head)
+        self.assertTrue(result['ok'])
+        self.assertEqual(result['legacy_findings'],1)
+
+    def test_rest_api_nested_composite_action_is_denied(self):
+        base=self.commit(SAFE)
+        manifest=self.repo/'thirdparty/cli/action.yaml'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('runs:\n  using: composite\n  steps:\n    - run: gh api repos/example/repo/actions/artifacts/123/zip\n      shell: bash\n')
+        self.git('add','.'); self.git('commit','-qm','new composite REST source')
+        head=self.git('rev-parse','HEAD')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_rest_api_full_line_comment_does_not_create_debt(self):
+        self.assertEqual(sum(module._risks('    # gh api repos/example/repo/actions/artifacts/123/zip','w.yml').values()),0)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
