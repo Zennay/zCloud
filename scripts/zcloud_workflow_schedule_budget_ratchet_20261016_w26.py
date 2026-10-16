@@ -129,6 +129,10 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
         if indent < event_indent:
             raise AdmissionError("ambiguous_event_indentation")
         if indent == event_indent:
+            # YAML merge keys can inject a scheduled trigger from an alias
+            # without spelling out schedule here; refuse this trust bypass.
+            if line.lstrip().startswith("<<:") or line.lstrip().startswith("&"):
+                raise AdmissionError("yaml_event_merge_forbidden")
             match = re.fullmatch(r"\s*schedule\s*:\s*(.*?)\s*", line)
             if match:
                 if found_schedule or match.group(1):
@@ -168,6 +172,8 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
 
 def workflow_paths(root: Path) -> list[str]:
     directory = root / WORKFLOW_DIR
+    if (root / ".github").is_symlink() or directory.is_symlink():
+        raise AdmissionError("symlinked_workflow_directory")
     if not directory.is_dir():
         raise AdmissionError("workflow_directory_missing")
     paths = []
