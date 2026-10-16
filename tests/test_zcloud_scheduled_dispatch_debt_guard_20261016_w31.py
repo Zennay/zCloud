@@ -49,6 +49,15 @@ class WorkflowAdmission(unittest.TestCase):
         self.assertIn("ready_for_review", trigger)
         self.assertIn("edited", trigger)
 
+    def test_all_main_pushes_audited_with_before_and_after_identity(self):
+        source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
+        self.assertIn("  push:\n    branches: [main]", source)
+        self.assertIn("github.event_name == 'push'", source)
+        self.assertIn("EXPECTED_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}", source)
+        self.assertIn("EXPECTED_MAIN: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.base.sha }}", source)
+        self.assertIn('expected_main="$EXPECTED_MAIN"', source)
+        self.assertIn("if: github.event_name == 'pull_request'", source)
+
     def test_fork_source_fails_not_skips_required_check(self):
         source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
         admission = source.split("  source-only:", 1)[1].split("    runs-on:", 1)[0]
@@ -78,7 +87,7 @@ class WorkflowAdmission(unittest.TestCase):
         self.assertNotIn("runs-on: [self-hosted", source)
         self.assertNotIn("actions: write", source)
         self.assertIn("permissions:\n  contents: read", source)
-        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", source)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha || github.sha }}", source)
         self.assertIn("persist-credentials: false", source)
         self.assertIn('test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"', source)
 
