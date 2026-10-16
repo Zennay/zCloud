@@ -7,7 +7,9 @@ import hashlib
 import json
 import os
 import re
+import selectors
 import subprocess
+import time
 import sys
 from collections import Counter
 
@@ -74,18 +76,39 @@ class EvidenceError(Exception):
 
 
 def git(*args: str, cap: int = MAX_TOTAL) -> bytes:
+    """Bound bytes *during* subprocess output, not after unbounded communicate()."""
+    if cap < 0 or cap > MAX_TOTAL:
+        raise EvidenceError("invalid Git evidence budget")
     try:
-        p = subprocess.run(
+        with subprocess.Popen(
             ["git", "--no-pager", *args], env=GIT_ENV, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=12, check=False,
-        )
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        ) as process:
+            assert process.stdout is not None
+            deadline = time.monotonic() + 12
+            output = bytearray()
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise EvidenceError("Git evidence exceeded time budget")
+                    if not selector.select(remaining):
+                        raise EvidenceError("Git evidence exceeded time budget")
+                    chunk = os.read(process.stdout.fileno(), min(65536, cap + 1 - len(output)))
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    if len(output) > cap:
+                        raise EvidenceError("Git evidence exceeds bounded budget")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise EvidenceError("Git evidence exceeded time budget")
+            if process.wait(timeout=remaining):
+                raise EvidenceError("immutable Git command refused evidence")
+            return bytes(output)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise EvidenceError("immutable Git evidence unavailable") from exc
-    if p.returncode:
-        raise EvidenceError("immutable Git command refused evidence")
-    if len(p.stdout) > cap:
-        raise EvidenceError("Git evidence exceeds bounded budget")
-    return p.stdout
 
 
 def digest(value: str) -> str:
