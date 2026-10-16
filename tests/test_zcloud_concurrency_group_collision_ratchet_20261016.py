@@ -628,13 +628,48 @@ class RatchetTests(unittest.TestCase):
             "    runs-on: ubuntu-latest\n"))
         self.assertEqual(gate.check(base, self.save()), (0, 0))
 
-    def test_legacy_workflow_level_group_unrelated_job_matrix_change_is_allowed(self):
+    def test_legacy_workflow_level_group_matrix_change_requires_owner_review(self):
         first = document("shared", False, job=False)
         base = self.base(first, document("shared", False))
         self.write("first.yml", first.replace(
             "    runs-on: ubuntu-latest\n",
             "    strategy:\n      matrix:\n        platform: [linux, macos]\n"
             "    runs-on: ubuntu-latest\n"))
+        self.denied(base, self.save())
+
+    def test_legacy_workflow_lock_rejects_new_sibling_job(self):
+        first = document("shared", False, job=False)
+        base = self.base(first, document("shared", False))
+        sibling = (
+            "  observer:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: echo ok\n"
+        )
+        self.write("first.yml", first + sibling)
+        self.denied(base, self.save())
+
+    def test_legacy_workflow_lock_rejects_change_to_sibling_job_if(self):
+        first = document("shared", False, job=False)
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first.replace(
+            "  check:\n", "  check:\n    if: always()\n"))
+        self.denied(base, self.save())
+
+    def test_legacy_workflow_lock_rejects_new_job_prerequisite(self):
+        first = document("shared", False, job=False)
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first.replace(
+            "    runs-on: ubuntu-latest\n",
+            "    needs: [preflight]\n    runs-on: ubuntu-latest\n"))
+        self.denied(base, self.save())
+
+    def test_legacy_workflow_lock_allows_unrelated_step_only_change(self):
+        first = document("shared", False, job=False)
+        base = self.base(first, document("shared", False))
+        self.write("first.yml", first.replace(
+            "      - run: echo ok\n",
+            "      - run: echo changed\n"))
         self.assertEqual(gate.check(base, self.save()), (1, 1))
 
     def test_noncolliding_workflow_can_change_event_trigger(self):
