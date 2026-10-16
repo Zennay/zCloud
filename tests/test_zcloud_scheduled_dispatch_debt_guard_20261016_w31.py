@@ -743,5 +743,87 @@ jobs:
             guard.evaluate(self.repo, self.base, self.commit())
 
 
+    def test_quoted_reusable_uses_key_is_traversed(self):
+        self.put("schedule-delegate.yml", """on: schedule
+jobs:
+  delegate:
+    'uses' : ./.github/workflows/inner.yml
+""")
+        self.put("inner.yml", """on: workflow_call
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run dangerous.yml
+""")
+        result = self.check(self.commit(), "reject")
+        self.assertIn(".github/workflows/schedule-delegate.yml",
+                      result["changed_workflows_with_new_sites"])
+
+    def test_quoted_composite_uses_key_is_traversed(self):
+        self.put("schedule-action.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - "uses" : ./.github/actions/notify
+""")
+        self.put_action("notify", """runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: gh workflow run release.yml
+""")
+        self.check(self.commit(), "reject")
+
+    def test_quoted_node_action_main_key_is_traversed(self):
+        self.put("schedule-node.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/quoted
+""")
+        self.put_action("quoted", """runs:
+  using: node20
+  "main" : dist/index.js
+""")
+        entry = self.repo / ".github/actions/quoted/dist/index.js"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("console.log('safe');\\n", encoding="utf-8")
+        base = self.commit()
+        entry.write_text("github.rest.actions.createWorkflowDispatch({});\\n",
+                         encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+        self.assertIn(".github/workflows/schedule-node.yml",
+                      result["changed_workflows_with_new_sites"])
+
+    def test_quoted_node_action_pre_post_keys_are_traversed(self):
+        self.put("schedule-lifecycle.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/lifecycle
+""")
+        self.put_action("lifecycle", """runs:
+  using: node20
+  main: dist/index.js
+  'pre': dist/pre.js
+  "post": dist/post.js
+""")
+        root = self.repo / ".github/actions/lifecycle/dist"
+        root.mkdir(parents=True)
+        for filename in ("index.js", "pre.js", "post.js"):
+            (root / filename).write_text("console.log('safe');\\n", encoding="utf-8")
+        base = self.commit()
+        (root / "post.js").write_text("github.rest.repos.createDispatchEvent({});\\n",
+                                     encoding="utf-8")
+        result = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(result["status"], "reject")
+
+
+
 if __name__ == "__main__":
     unittest.main()
