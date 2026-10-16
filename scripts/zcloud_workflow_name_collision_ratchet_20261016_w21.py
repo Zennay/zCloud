@@ -445,10 +445,22 @@ def pairs(items):
             for a, b in itertools.combinations(sorted(paths), 2)}
 
 
-def judge(base, candidate, base_refs=None, candidate_refs=None):
+def judge(base, candidate, base_refs=None, candidate_refs=None,
+          *, base_blobs=None, candidate_blobs=None):
     new = sorted(pairs(candidate) - pairs(base))
     reference_new = sorted(reference_risks(candidate, candidate_refs or {}) -
                            reference_risks(base, base_refs or {}))
+    if base_blobs is not None and candidate_blobs is not None:
+        # A previously unparseable workflow is grandfathered only while its
+        # exact Git blob stays unchanged. Otherwise unverified new trigger
+        # semantics could hide behind the same generic unknown_source marker.
+        for path, targets in (candidate_refs or {}).items():
+            if targets is None and (base_refs or {}).get(path) is None:
+                if (path in base_blobs and path in candidate_blobs and
+                        base_blobs[path] != candidate_blobs[path]):
+                    reference_new.append(
+                        (path, "unknown_source_changed", "<git-blob-changed>"))
+        reference_new.sort()
     cycle_new = sorted(cyclic_reference_edges(candidate, candidate_refs or {}) -
                        cyclic_reference_edges(base, base_refs or {}))
     return {
@@ -469,7 +481,7 @@ def judge(base, candidate, base_refs=None, candidate_refs=None):
     }
 
 
-def read_inventory(sha, *, cwd):
+def read_inventory(sha, *, cwd, include_blob_ids=False):
     if not SHA.fullmatch(sha):
         raise InvalidInventory("invalid_sha")
     resolved = _git(["rev-parse", "--verify", sha + "^{commit}"], cwd, 48)
@@ -477,7 +489,7 @@ def read_inventory(sha, *, cwd):
         raise InvalidInventory("revision_not_commit")
     raw = _git(["ls-tree", "-rz", "--full-tree", sha, "--",
                 ".github/workflows"], cwd, MAX_FILES * 200)
-    names, references, total = {}, {}, 0
+    names, references, blob_ids, total = {}, {}, {}, 0
     for entry in raw.split(b"\0"):
         if not entry:
             continue
@@ -503,9 +515,10 @@ def read_inventory(sha, *, cwd):
             raise InvalidInventory("workflow_sources_too_large")
         names[path] = workflow_name(path, blob)
         references[path] = workflow_run_targets(blob)
+        blob_ids[path] = blobsha
     if not names:
         raise InvalidInventory("empty_workflow_inventory")
-    return names, references
+    return (names, references, blob_ids) if include_blob_ids else (names, references)
 
 
 def read_names(sha, *, cwd):
@@ -519,9 +532,12 @@ def main():
     parser.add_argument("--root", default=".")
     opts = parser.parse_args()
     try:
-        base, base_refs = read_inventory(opts.base, cwd=opts.root)
-        head, head_refs = read_inventory(opts.head, cwd=opts.root)
-        result = judge(base, head, base_refs, head_refs)
+        base, base_refs, base_blobs = read_inventory(
+            opts.base, cwd=opts.root, include_blob_ids=True)
+        head, head_refs, head_blobs = read_inventory(
+            opts.head, cwd=opts.root, include_blob_ids=True)
+        result = judge(base, head, base_refs, head_refs,
+                       base_blobs=base_blobs, candidate_blobs=head_blobs)
         result["workflow_count_base"] = len(base)
         result["workflow_count_head"] = len(head)
     except InvalidInventory as exc:
