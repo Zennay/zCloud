@@ -6,6 +6,8 @@ import json
 import re
 import subprocess
 from pathlib import PurePosixPath
+from collections import Counter
+import unicodedata
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
@@ -51,7 +53,8 @@ def _scalar(value):
         if "#" in name or ": " in name or name.startswith(("-", "?")):
             raise InvalidInventory("unsupported_workflow_name")
     if (not name or len(name) > 200 or
-            any(ord(c) < 32 or ord(c) == 127 for c in name) or
+            any(ord(c) < 32 or ord(c) == 127 or
+                unicodedata.category(c) in {"Cf", "Cs"} for c in name) or
             chr(36) + "{{" in name):
         raise InvalidInventory("unsupported_workflow_name")
     return name
@@ -79,6 +82,155 @@ def workflow_name(path, source):
     return _scalar(matches[0]) if matches else PurePosixPath(path).name
 
 
+
+def _yaml_flow_items(value):
+    """Parse simple literal YAML sequence; refuse dynamic or ambiguous items."""
+    if not value.startswith("[") or not value.endswith("]"):
+        raise InvalidInventory("unsupported_workflow_run_reference")
+    text = value[1:-1].strip()
+    if not text:
+        raise InvalidInventory("empty_workflow_run_references")
+    pieces, buf, quote = [], [], ""
+    escaped = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if quote == '"' and escaped:
+                escaped = False
+            elif quote == '"' and ch == "\\":
+                escaped = True
+            elif ch == quote:
+                if quote == "'" and i + 1 < len(text) and text[i + 1] == "'":
+                    i += 1
+                    buf.append("'")
+                else:
+                    quote = ""
+        elif ch in {"'", '"'}:
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            pieces.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    if quote:
+        raise InvalidInventory("unsupported_workflow_run_reference")
+    pieces.append("".join(buf).strip())
+    if len(pieces) > 64 or any(not piece for piece in pieces):
+        raise InvalidInventory("unsupported_workflow_run_reference")
+    return tuple(_scalar(piece) for piece in pieces)
+
+
+def workflow_run_targets(source):
+    """Read literal workflow_run references, fail closed only on NEW unsupported syntax.
+
+    None indicates an unverified trigger; baseline-only debt remains visible.
+    This bounded lexer accepts ordinary block YAML and simple inline lists.
+    """
+    text = source.decode("utf-8", "strict").removeprefix("\ufeff")
+    significant = [line for line in text.splitlines()
+                   if line.strip() and not line.lstrip().startswith("#")
+                   and line.strip() not in {"---", "..."}]
+    if not significant:
+        return None
+    root = min(len(line) - len(line.lstrip(" ")) for line in significant)
+    top = re.compile(r"""^(?:on|'on'|"on")[ \t]*:(.*)$""")
+    child = re.compile(r"""^(?:workflow_run|'workflow_run'|"workflow_run")[ \t]*:(.*)$""")
+    target = re.compile(r"""^(?:workflows|'workflows'|"workflows")[ \t]*:(.*)$""")
+    lines = text.splitlines()
+    results = []
+    event_blocks = []
+    for index, line in enumerate(lines):
+        if len(line) - len(line.lstrip(" ")) != root:
+            continue
+        match = top.match(line[root:])
+        if match:
+            event_blocks.append((index, match.group(1).strip()))
+    if len(event_blocks) > 1:
+        return None
+    if not event_blocks:
+        return ()
+    start, remainder = event_blocks[0]
+    if remainder and remainder[0] not in "#":
+        return None if "workflow_run" in remainder else ()
+    event_end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if (line.strip() and not line.lstrip().startswith("#")
+                and len(line) - len(line.lstrip(" ")) <= root):
+            event_end = index
+            break
+    for index in range(start + 1, event_end):
+        line = lines[index]
+        level = len(line) - len(line.lstrip(" "))
+        match = child.match(line[level:])
+        if not match or level <= root:
+            continue
+        if match.group(1).strip() not in {"", "#"}:
+            return None
+        run_end = event_end
+        for k in range(index + 1, event_end):
+            nxt = lines[k]
+            if (nxt.strip() and not nxt.lstrip().startswith("#")
+                    and len(nxt) - len(nxt.lstrip(" ")) <= level):
+                run_end = k
+                break
+        found = False
+        for j in range(index + 1, run_end):
+            row = lines[j]
+            depth = len(row) - len(row.lstrip(" "))
+            m = target.match(row[depth:])
+            if not m or depth <= level:
+                continue
+            if found:
+                return None
+            found = True
+            value = m.group(1).strip()
+            try:
+                if value.startswith("["):
+                    results.extend(_yaml_flow_items(value))
+                elif value and not value.startswith("#"):
+                    results.append(_scalar(value))
+                else:
+                    values = []
+                    for k in range(j + 1, run_end):
+                        nxt = lines[k]
+                        d = len(nxt) - len(nxt.lstrip(" "))
+                        if nxt.strip() and d <= depth:
+                            break
+                        stripped = nxt.strip()
+                        if not stripped or stripped.startswith("#"):
+                            continue
+                        if not stripped.startswith("- "):
+                            return None
+                        values.append(_scalar(stripped[2:].strip()))
+                    if not values or len(values) > 64:
+                        return None
+                    results.extend(values)
+            except InvalidInventory:
+                return None
+        if not found:
+            return None
+    return tuple(sorted(set(results)))
+
+
+def reference_risks(names, references):
+    counts = Counter(names.values())
+    findings = set()
+    for path, targets in references.items():
+        if targets is None:
+            findings.add((path, "unknown_source", "<unparsed>"))
+            continue
+        for value in targets:
+            if counts[value] == 0:
+                findings.add((path, "missing_target", value))
+            elif counts[value] > 1:
+                findings.add((path, "ambiguous_target", value))
+    return findings
+
 def pairs(items):
     by_name = {}
     for path, name in items.items():
@@ -87,13 +239,18 @@ def pairs(items):
             for a, b in itertools.combinations(sorted(paths), 2)}
 
 
-def judge(base, candidate):
+def judge(base, candidate, base_refs=None, candidate_refs=None):
     new = sorted(pairs(candidate) - pairs(base))
+    reference_new = sorted(reference_risks(candidate, candidate_refs or {}) -
+                           reference_risks(base, base_refs or {}))
     return {
         "policy": "workflow-name-no-new-collision-v1",
-        "status": "deny" if new else "pass",
+        "status": "deny" if new or reference_new else "pass",
         "added_collisions": [{"name": n, "paths": [a, b]} for n, a, b in new[:20]],
         "added_collision_count": len(new),
+        "added_reference_risk_count": len(reference_new),
+        "added_reference_risks": [dict(workflow=path, reason=reason, target=name)
+                                  for path, reason, name in reference_new[:20]],
         "baseline_collision_count": len(pairs(base)),
         "candidate_collision_count": len(pairs(candidate)),
         "merge_authorized": False,
@@ -101,12 +258,12 @@ def judge(base, candidate):
     }
 
 
-def read_names(sha, *, cwd):
+def read_inventory(sha, *, cwd):
     if not SHA.fullmatch(sha):
         raise InvalidInventory("invalid_sha")
     raw = _git(["ls-tree", "-rz", "--full-tree", sha, "--",
                 ".github/workflows"], cwd, MAX_FILES * 200)
-    names, total = {}, 0
+    names, references, total = {}, {}, 0
     for entry in raw.split(b"\0"):
         if not entry:
             continue
@@ -131,9 +288,14 @@ def read_names(sha, *, cwd):
         if total > MAX_TOTAL:
             raise InvalidInventory("workflow_sources_too_large")
         names[path] = workflow_name(path, blob)
+        references[path] = workflow_run_targets(blob)
     if not names:
         raise InvalidInventory("empty_workflow_inventory")
-    return names
+    return names, references
+
+
+def read_names(sha, *, cwd):
+    return read_inventory(sha, cwd=cwd)[0]
 
 
 def main():
@@ -143,9 +305,9 @@ def main():
     parser.add_argument("--root", default=".")
     opts = parser.parse_args()
     try:
-        base = read_names(opts.base, cwd=opts.root)
-        head = read_names(opts.head, cwd=opts.root)
-        result = judge(base, head)
+        base, base_refs = read_inventory(opts.base, cwd=opts.root)
+        head, head_refs = read_inventory(opts.head, cwd=opts.root)
+        result = judge(base, head, base_refs, head_refs)
         result["workflow_count_base"] = len(base)
         result["workflow_count_head"] = len(head)
     except InvalidInventory as exc:
