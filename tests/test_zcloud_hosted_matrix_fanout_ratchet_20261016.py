@@ -14,11 +14,11 @@ WORKFLOW = ".github/workflows/hosted-matrix-probe.yml"
 
 
 def fixture(runner="ubuntu-latest", matrix="        shard: [a, b]",
-            parallel="    max-parallel: 2\n", step="echo safe", job="test"):
+            parallel="      max-parallel: 2\n", step="echo safe", job="test"):
     return (
         "name: Hosted matrix proof\non: [pull_request]\njobs:\n"
         f"  {job}:\n    runs-on: {runner}\n    strategy:\n"
-        + parallel + "    matrix:\n" + matrix + "\n"
+        + parallel + "      matrix:\n" + matrix + "\n"
         + "    steps:\n      - run: " + step + "\n"
     )
 
@@ -59,12 +59,12 @@ class HostedMatrixPolicyTests(unittest.TestCase):
 
     def test_matrix_16_boundary_with_max_parallel_4(self):
         src = fixture(matrix="        shard: [" + ", ".join(map(str, range(16))) + "]",
-                      parallel="    max-parallel: 4\n")
+                      parallel="      max-parallel: 4\n")
         self.assertEqual(reasons(src), set())
 
     def test_five_parallel_denied(self):
         self.assertIn("max_parallel_outside_1_to_4",
-                      reasons(fixture(parallel="    max-parallel: 5\n")))
+                      reasons(fixture(parallel="      max-parallel: 5\n")))
 
     def test_missing_parallel_denied(self):
         self.assertIn("max_parallel_not_static_integer",
@@ -73,19 +73,19 @@ class HostedMatrixPolicyTests(unittest.TestCase):
     def test_dynamic_parallel_denied(self):
         expr = "$" + "{{ fromJSON(inputs.parallel) }}"
         self.assertIn("max_parallel_not_static_integer",
-                      reasons(fixture(parallel=f"    max-parallel: '{expr}'\n")))
+                      reasons(fixture(parallel=f"      max-parallel: '{expr}'\n")))
 
     def test_boolean_parallel_denied(self):
         self.assertIn("max_parallel_not_static_integer",
-                      reasons(fixture(parallel="    max-parallel: true\n")))
+                      reasons(fixture(parallel="      max-parallel: true\n")))
 
     def test_zero_parallel_denied(self):
         self.assertIn("max_parallel_outside_1_to_4",
-                      reasons(fixture(parallel="    max-parallel: 0\n")))
+                      reasons(fixture(parallel="      max-parallel: 0\n")))
 
     def test_negative_parallel_denied(self):
         self.assertIn("max_parallel_outside_1_to_4",
-                      reasons(fixture(parallel="    max-parallel: -1\n")))
+                      reasons(fixture(parallel="      max-parallel: -1\n")))
 
     def test_more_than_16_matrix_entries_denied(self):
         self.assertIn("matrix_fanout_over_16", reasons(fixture(
@@ -198,7 +198,7 @@ class HostedMatrixPolicyTests(unittest.TestCase):
 
     def test_bounded_remediation_accepted(self):
         bad = self.commit(fixture(parallel=""))
-        fixed = self.commit(fixture(parallel="    max-parallel: 2\n"))
+        fixed = self.commit(fixture(parallel="      max-parallel: 2\n"))
         self.assertEqual(policy.audit(bad, fixed)[-1], [])
 
     def test_new_bad_workflow_detected(self):
@@ -215,8 +215,8 @@ class HostedMatrixPolicyTests(unittest.TestCase):
             policy.audit(self.base, self.git("rev-parse", "HEAD"))
 
     def test_duplicate_keys_denied(self):
-        after = self.commit(fixture().replace("    max-parallel: 2\n",
-                   "    max-parallel: 2\n    max-parallel: 4\n"))
+        after = self.commit(fixture().replace("      max-parallel: 2\n",
+                   "      max-parallel: 2\n      max-parallel: 4\n"))
         with self.assertRaises(policy.InvalidSource):
             policy.audit(self.base, after)
 
