@@ -152,6 +152,25 @@ def _normalize_group(group: str, workflow_name: str) -> str:
         return match.group(0)
     return re.sub(r"\$\{\{([^{}]{0,256})\}\}", replace, group)
 
+def _is_opaque_expression(group: str) -> bool:
+    """Unmodelled GitHub expressions cannot be certified from a static token.
+
+    Leave existing expressions for owner review, but never let changed/new
+    opaque expressions silently bypass collision detection by text inequality.
+    """
+    expression = re.compile(r"\$\{\{([^{}]{0,256})\}\}")
+    residual = expression.sub("", group)
+    if "${{" in residual or "}}" in residual:
+        return True
+    for match in expression.finditer(group):
+        expr = match.group(1).strip()
+        if not re.fullmatch(
+            r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_0-9-]+)+", expr
+        ):
+            return True
+    return False
+
+
 def _group_entry(path: str, scope: str, value: object, workflow_name: str):
     if value is None:
         return None
@@ -180,7 +199,7 @@ def _group_entry(path: str, scope: str, value: object, workflow_name: str):
     # expression whitespace; collisions can arise with duplicate names.
     resolved_group = _normalize_group(group, workflow_name)
     token = hashlib.sha256(resolved_group.casefold().encode("utf-8")).hexdigest()
-    return (token, path, scope, mode, queue)
+    return (token, path, scope, mode, queue, _is_opaque_expression(group))
 
 def _entries_for_file(path: str, contents: bytes):
     try:
@@ -211,8 +230,9 @@ def _entries_for_file(path: str, contents: bytes):
             entries.append(item)
     return entries
 
-def findings(commit: str):
+def findings(commit: str, *, include_opaque: bool = False):
     grouped = defaultdict(list)
+    opaque = set()
     total = 0
     total_entries = 0
     for path, sha in _workflow_entries(commit):
@@ -224,8 +244,10 @@ def findings(commit: str):
         total_entries += len(entries)
         if total_entries > MAX_GROUP_ENTRIES:
             raise AdmissionError("repository concurrency entry budget exceeded")
-        for token, p, scope, mode, queue in entries:
+        for token, p, scope, mode, queue, is_opaque in entries:
             grouped[token].append((p, scope, mode, queue))
+            if is_opaque:
+                opaque.add((p, scope, token))
     out = set()
     for token, members in grouped.items():
         # Identical workflow paths cannot create cross-workflow collisions;
@@ -248,7 +270,7 @@ def findings(commit: str):
                 out.add((token, *sorted((first, second))))
                 if len(out) > MAX_FINDINGS:
                     raise AdmissionError("concurrency finding budget exceeded")
-    return out
+    return (out, opaque) if include_opaque else out
 
 def _pair_identity(pair):
     """Stable source identity separate from monotonic risk attributes."""
@@ -285,8 +307,16 @@ def _non_escalating_pair(previous, candidate) -> bool:
 
 def check(base: str, head: str):
     assert_commits(base, head)
-    old, new = findings(base), findings(head)
+    old, previous_opaque = findings(base, include_opaque=True)
+    new, candidate_opaque = findings(head, include_opaque=True)
     assert_commits(base, head)
+    new_opaque = candidate_opaque - previous_opaque
+    if new_opaque:
+        paths = sorted({item[0] for item in new_opaque})
+        raise AdmissionError(
+            f"new or rewritten opaque GitHub concurrency expressions "
+            f"({len(new_opaque)}): {', '.join(paths[:10])}"
+        )
     existing = {_pair_identity(pair): pair for pair in old}
     escalations = []
     for pair in new:
@@ -304,7 +334,8 @@ def check(base: str, head: str):
 def inventory(base: str, head: str) -> dict:
     """Human-review queue with immutable evidence, never production authority."""
     check(base, head)
-    legacy = findings(base)
+    legacy, baseline_opaque = findings(base, include_opaque=True)
+    _, candidate_opaque = findings(head, include_opaque=True)
     if len(legacy) > 128:
         raise AdmissionError("human review inventory budget exceeded")
     assert_commits(base, head)
@@ -348,6 +379,16 @@ def inventory(base: str, head: str) -> dict:
         "base_commit_sha": base,
         "head_commit_sha": head,
         "legacy_collision_count": len(records),
+        "legacy_opaque_expression_count": len(baseline_opaque),
+        "candidate_opaque_expression_count": len(candidate_opaque),
+        "static_expression_coverage_complete": not candidate_opaque,
+        "no_new_opaque_expressions": True,
+        "unresolved_expression_reviews": [
+            {"workflow_path": path, "scope": scope, "group_sha256": token,
+             "owner": "UNASSIGNED", "reviewer": "UNASSIGNED",
+             "disposition": "UNREVIEWED"}
+            for path, scope, token in sorted(baseline_opaque)
+        ],
         "legacy_group_count": len(summaries),
         "unique_affected_workflows": len({
             path for cluster in clusters.values() for path in cluster["paths"]
