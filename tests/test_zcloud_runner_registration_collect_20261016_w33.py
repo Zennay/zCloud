@@ -66,21 +66,34 @@ class CollectorTests(unittest.TestCase):
         result = collector.collect(executor=fake_get(code=1, output=b'Authorization: bearer SECRET_VALUE'), clock=NOW)
         self.assertEqual(self.check_safe(result)['classification'], 'EVIDENCE_UNAVAILABLE')
         self.assertNotIn('SECRET_VALUE', str(result))
+        self.assertEqual(result['reason_code'], 'github_runner_admin_read_denied')
 
     def test_auth_command_timeout_does_not_leak_arguments(self):
         err = subprocess.TimeoutExpired('gh api --hostname github.com bearer SECRET', 12, output=b'SECRET')
         result = collector.collect(executor=fake_get(failure=err), clock=NOW)
-        self.assertEqual(self.check_safe(result)['reason_code'], 'trusted_runner_read_unavailable')
+        self.assertEqual(self.check_safe(result)['reason_code'], 'github_runner_read_timeout')
         self.assertNotIn('SECRET', str(result))
 
     def test_missing_cli_binary_fails_closed(self):
         result = collector.collect(executor=fake_get(failure=FileNotFoundError('SECRET_PATH')), clock=NOW)
         self.assertEqual(self.check_safe(result)['classification'], 'EVIDENCE_UNAVAILABLE')
         self.assertNotIn('SECRET_PATH', str(result))
+        self.assertEqual(result['reason_code'], 'github_cli_not_installed')
+
+    def test_unexpected_operating_system_error_redacted(self):
+        result = collector.collect(executor=fake_get(failure=OSError('PRIVATE_SECRET_PATH')), clock=NOW)
+        self.assertEqual(self.check_safe(result)['reason_code'], 'untrusted_runner_response')
+        self.assertNotIn('PRIVATE_SECRET_PATH', str(result))
+
+    def test_nonzero_cli_exit_cannot_be_claimed_as_runner_offline(self):
+        result = collector.collect(executor=fake_get(code=4, output=json.dumps(fixture()).encode()), clock=NOW)
+        self.assertEqual(self.check_safe(result)['classification'], 'EVIDENCE_UNAVAILABLE')
+        self.assertEqual(result['reason_code'], 'github_runner_admin_read_denied')
 
     def test_malformed_json_denied(self):
         result=collector.collect(executor=fake_get(output=b'{invalid secret}'), clock=NOW)
         self.assertEqual(self.check_safe(result)['classification'], 'EVIDENCE_UNAVAILABLE')
+        self.assertEqual(result['reason_code'], 'untrusted_runner_response')
 
     def test_duplicate_json_keys_denied(self):
         raw=b'{"total_count":0,"total_count":1,"runners":[]}'
