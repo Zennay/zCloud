@@ -1,0 +1,170 @@
+"""Real-Git adversarial tests for the read-only concurrency collision ratchet."""
+import os
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts import zcloud_concurrency_group_collision_ratchet_20261016 as gate
+
+def document(group="unique", cancel=False, *, job=False, extra=""):
+    if isinstance(cancel, bool):
+        setting = str(cancel).lower()
+    else:
+        setting = "'${{ github.event_name == ''push'' }}'"
+    if group.startswith("${{"):
+        group = f"'{group}'"
+    entry = f"group: {group}\ncancel-in-progress: {setting}"
+    if job:
+        section = "jobs:\n  check:\n    runs-on: ubuntu-latest\n    concurrency:\n      " + entry.replace("\n", "\n      ") + "\n    steps:\n      - run: echo ok\n"
+    else:
+        section = "concurrency:\n  " + entry.replace("\n", "\n  ") + "\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+    return "name: Test\non: push\n" + section + extra
+
+class RatchetTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.prev = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, self.prev)
+        for args in (("init", "-q"), ("config", "user.name", "ci"),
+                     ("config", "user.email", "ci@example.invalid")):
+            self.git(*args)
+
+    def git(self, *args):
+        return subprocess.check_output(("git", *args), stderr=subprocess.DEVNULL).decode().strip()
+
+    def write(self, name, source):
+        p = self.root / ".github" / "workflows" / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(source)
+
+    def save(self):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "fixture")
+        return self.git("rev-parse", "HEAD")
+
+    def base(self, a=None, b=None):
+        self.write("first.yml", a or document("shared", True))
+        self.write("second.yaml", b or document("separate", False))
+        return self.save()
+
+    def denied(self, base, head):
+        with self.assertRaises(gate.AdmissionError):
+            gate.check(base, head)
+
+    def test_unique_groups_remain_allowed(self):
+        base = self.base()
+        self.write("second.yaml", document("separate", True))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_new_collision_denied_even_when_other_group_non_cancelling(self):
+        base = self.base()
+        self.write("second.yaml", document("shared", False))
+        self.denied(base, self.save())
+
+    def test_two_false_groups_do_not_cancel(self):
+        base = self.base(document("shared", False))
+        self.write("second.yaml", document("shared", False))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_new_cancellation_on_existing_shared_group_denied(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("first.yml", document("shared", True))
+        self.denied(base, self.save())
+
+    def test_unchanged_legacy_risk_is_grandfathered(self):
+        base = self.base(document("shared", True), document("shared", False))
+        self.write("first.yml", document("shared", True, extra="# unrelated step-only change\n"))
+        self.assertEqual(gate.check(base, self.save()), (1, 1))
+
+    def test_legacy_cancel_escalation_denied(self):
+        base = self.base(document("shared", True), document("shared", False))
+        self.write("second.yaml", document("shared", True))
+        self.denied(base, self.save())
+
+    def test_legacy_third_member_growth_denied(self):
+        base = self.base(document("shared", True), document("shared", False))
+        self.write("third.yml", document("shared", False))
+        self.denied(base, self.save())
+
+    def test_job_and_workflow_groups_share_namespace(self):
+        base = self.base()
+        self.write("second.yaml", document("shared", False, job=True))
+        self.denied(base, self.save())
+
+    def test_group_names_case_insensitive(self):
+        base = self.base()
+        self.write("second.yaml", document("SHARED", False))
+        self.denied(base, self.save())
+
+    def test_dynamic_cancellation_conservatively_denied(self):
+        base = self.base(document("shared", False), document("shared", False))
+        self.write("second.yaml", document("shared", "dynamic"))
+        self.denied(base, self.save())
+
+    def test_workflow_namespaced_group_is_not_cross_workflow(self):
+        base = self.base()
+        group = "${{ github.workflow }}-${{ github.ref }}"
+        self.write("first.yml", document(group, True))
+        self.write("second.yaml", document(group, True))
+        self.assertEqual(gate.check(base, self.save()), (0, 0))
+
+    def test_unsafe_symlink_workflow_denied(self):
+        base = self.base()
+        (self.root / ".github/workflows/third.yml").symlink_to("first.yml")
+        self.denied(base, self.save())
+
+    def test_duplicate_yaml_keys_denied(self):
+        base = self.base()
+        self.write("second.yaml", document() + "\nconcurrency: {}\n")
+        self.denied(base, self.save())
+
+    def test_malformed_group_denied(self):
+        base = self.base()
+        self.write("second.yaml", document("shared", False).replace("group: shared", "group: [shared]"))
+        self.denied(base, self.save())
+
+    def test_oversized_workflow_denied_before_parser(self):
+        base = self.base()
+        self.write("second.yaml", document() + "#" + "X" * (gate.MAX_BLOB_BYTES + 1))
+        self.denied(base, self.save())
+
+    def test_mismatched_head_denied(self):
+        base = self.base()
+        self.write("second.yaml", document("shared", False))
+        head = self.save()
+        self.denied(head, base)
+
+    def test_non_descendant_denied(self):
+        base = self.base()
+        self.git("checkout", "-q", "--orphan", "unrelated")
+        self.git("rm", "-q", "-rf", ".")
+        self.write("third.yml", document())
+        self.denied(base, self.save())
+
+    def test_yaml_on_is_not_python_bool(self):
+        parsed = gate.yaml.load(document().encode(), Loader=gate.StrictLoader)
+        self.assertIn("on", parsed)
+        self.assertNotIn(True, parsed)
+
+    def test_deny_message_contains_paths_but_not_group(self):
+        base = self.base()
+        self.write("second.yaml", document("shared", False))
+        try:
+            gate.check(base, self.save())
+        except gate.AdmissionError as e:
+            self.assertIn("second.yaml", str(e))
+            self.assertNotIn("shared", str(e))
+        else:
+            self.fail("collision was admitted")
+
+    def test_invalid_shas_denied(self):
+        base = self.base()
+        for invalid in ("main", "f" * 39, "z" * 40):
+            self.denied(base, invalid)
+
+if __name__ == "__main__":
+    unittest.main()
