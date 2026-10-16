@@ -402,12 +402,12 @@ def audit(repo: Path, baseline_sha: str) -> dict:
             timezone_metadata=new_timezones,
             timezone_bindings=new_bindings,
         )
-        # An unchanged legacy timezone is observationally grandfathered.
-        # Altered cron/timezone combinations require a separate DST-aware
-        # review: nominal wall-clock matches do not prove UTC spacing.
-        if (old_timezones or new_timezones) and (
-            old_bindings != new_bindings
-        ):
+        # Only new/changed timezone-associated schedule identities add
+        # debt. Pure deletion or reorder is safe and should not be blocked.
+        # Compare multiset counts: moving a zone or adding a duplicate
+        # creates new (cron, timezone) identity even if raw crons match.
+        zoned_delta = Counter(new_bindings) - Counter(old_bindings)
+        if (old_timezones or new_timezones) and zoned_delta:
             count += 1
             added.append({"workflow": path, "cron": "<timezone schedule change>",
                           "reason": "timezone_requires_independent_review"})
