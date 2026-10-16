@@ -675,6 +675,92 @@ class NameCollisionRatchetTests(unittest.TestCase):
         source = b'on:\n  workflow_run:\n    workflows: ["Build \\"Done\\"", CI]\n'
         self.assertEqual(guard.workflow_run_targets(source), ('Build "Done"', "CI"))
 
+
+    def test_new_workflow_matching_legacy_glob_is_not_silent(self):
+        baseline = {"build.yml": "Build", "watch.yml": "Watcher"}
+        refs = {"watch.yml": ("Build*",)}
+        candidate = dict(baseline, **{"build_extra.yml": "Build extra"})
+        result = guard.judge(baseline, candidate, refs, refs)
+        self.assertEqual(result["status"], "deny")
+        self.assertEqual(result["added_reference_risk_count"], 1)
+        self.assertEqual(result["added_reference_risks"][0]["reason"],
+                         "legacy_pattern_new_target")
+        self.assertEqual(result["added_reference_risks"][0]["target"],
+                         "build_extra.yml")
+        self.assertFalse(result["merge_authorized"])
+
+    def test_nonmatching_simple_legacy_glob_is_allowed(self):
+        baseline = {"build.yml": "Build", "watch.yml": "Watcher"}
+        refs = {"watch.yml": ("Build*",)}
+        candidate = dict(baseline, **{"docs.yml": "Documentation"})
+        result = guard.judge(baseline, candidate, refs, refs)
+        self.assertEqual(result["added_reference_risk_count"], 0)
+        self.assertEqual(result["status"], "pass")
+
+    def test_extended_legacy_glob_requires_review_of_name_addition(self):
+        baseline = {"build.yml": "Build", "watch.yml": "Watcher"}
+        refs = {"watch.yml": ("!(Tests)",)}
+        candidate = dict(baseline, **{"docs.yml": "Documentation"})
+        result = guard.judge(baseline, candidate, refs, refs)
+        self.assertEqual(result["status"], "deny")
+        self.assertEqual(result["added_reference_risks"][0]["reason"],
+                         "legacy_pattern_new_target")
+
+    def test_missing_target_becoming_real_is_a_new_trigger(self):
+        baseline = {"watch.yml": "Watcher"}
+        refs = {"watch.yml": ("Ghost",)}
+        candidate = {"watch.yml": "Watcher", "new.yml": "Ghost"}
+        result = guard.judge(baseline, candidate, refs, refs)
+        self.assertEqual(result["status"], "deny")
+        self.assertEqual(result["added_reference_risk_count"], 1)
+        self.assertEqual(result["added_reference_risks"][0]["reason"],
+                         "missing_target_activated")
+
+    def test_old_broken_target_can_be_repaired_by_changing_its_reference(self):
+        baseline = {"watch.yml": "Watcher", "build.yml": "Build"}
+        candidate = dict(baseline, **{"new.yml": "Ghost"})
+        before = {"watch.yml": ("Ghost",)}
+        after = {"watch.yml": ("Build",)}
+        result = guard.judge(baseline, candidate, before, after)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["added_reference_risk_count"], 0)
+
+    def test_unchanged_legacy_pattern_debt_is_still_grandfathered(self):
+        names = {"watch.yml": "Watcher", "build.yml": "Build"}
+        refs = {"watch.yml": ("Build*",)}
+        result = guard.judge(names, names, refs, refs)
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["added_reference_risk_count"], 0)
+        self.assertFalse(result["production_mutation_authorized"])
+
+    def test_real_git_cli_detects_activated_missing_workflow_run_target(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "watch.yml").write_text(
+                'name: Watcher\non:\n  workflow_run:\n    workflows: ["Ghost"]\n')
+            git("add", ".")
+            git("commit", "-qm", "missing target in baseline")
+            baseline = git("rev-parse", "HEAD")
+            (folder / "new.yml").write_text("name: Ghost\non: push\n")
+            git("add", ".")
+            git("commit", "-qm", "suddenly live trigger")
+            head = git("rev-parse", "HEAD")
+            command = [sys.executable, str(SCRIPT), "--base", baseline,
+                       "--head", head, "--root", root]
+            denied = subprocess.run(command, capture_output=True, text=True, timeout=15)
+            self.assertEqual(denied.returncode, 1, denied.stdout)
+            verdict = json.loads(denied.stdout)
+            self.assertEqual(verdict["status"], "deny")
+            self.assertEqual(verdict["added_reference_risks"][0]["reason"],
+                             "missing_target_activated")
+            self.assertIs(verdict["production_mutation_authorized"], False)
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
