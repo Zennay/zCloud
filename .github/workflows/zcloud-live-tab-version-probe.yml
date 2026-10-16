@@ -70,7 +70,7 @@ jobs:
       github.run_attempt == 1 &&
       inputs.approve_readonly_probe == true &&
       inputs.confirm_sha == github.sha
-    runs-on: [self-hosted, ftmo-research]
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     steps:
       - name: Read exact trusted main revision without persisted credentials
@@ -103,6 +103,10 @@ jobs:
           test "${RUNNER_OS:-}" = "Linux"
           test "$(id -un)" = "ubuntu"
           test "$(hostname)" = "vps-bb300bba"
+          # Verify canonical zCloud runner ownership before any read-only RDP
+          # access. The repository-scoped FTMO research runner cannot be
+          # assumed to be selectable from zCloud (#1326).
+          python3 scripts/zcloud_vps_runner_guard.py --json
           # Step-level defense in depth if a job-level condition is refactored.
           case "${GITHUB_EVENT_NAME:-}:${GITHUB_ACTOR:-}:${GITHUB_TRIGGERING_ACTOR:-}:${GITHUB_RUN_ATTEMPT:-}" in
             workflow_dispatch:Zennay:Zennay:1) ;;
