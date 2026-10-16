@@ -21,6 +21,7 @@ SCHEDULE_RE = re.compile(r"""^\s*(?:schedule|'schedule'|"schedule")\s*:\s*(.*?)\
 TOP_LEVEL_RE = re.compile(r"^[^\s#][^:]*\s*:")
 EVENT_KEY_RE = re.compile(r"""^\s*(?:([A-Za-z_][A-Za-z_0-9-]*)|'([A-Za-z_][A-Za-z_0-9-]*)'|"([A-Za-z_][A-Za-z_0-9-]*)")\s*:\s*(.*?)\s*$""")
 TIMEZONE_RE = re.compile(r"""^\s*(?:timezone|'timezone'|"timezone")\s*:\s*(.*?)\s*$""")
+IANA_ZONE_RE = re.compile(r"^[A-Za-z0-9_+./-]{1,128}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 MIN_GAP = 15
 MONTHS = dict(zip("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(), range(1, 13)))
@@ -93,6 +94,22 @@ def is_high_frequency(cron: str) -> bool:
         times[0] + 1440 - times[-1] < MIN_GAP
         and _calendar_overlap(spec, spec, next_day=True)
     )
+
+
+def canonical_timezone(raw: str) -> str:
+    """Unquote safe IANA timezone scalars and discard only real YAML comments."""
+    value = raw.strip()
+    if value.startswith(("'", '"')):
+        quote = value[0]
+        match = re.fullmatch(r"(['\"])([^'\"\\]*)\\1(?:[ \t]+#.*)?", value)
+        if not match or match.group(1) != quote:
+            raise AdmissionError("ambiguous_timezone_selector")
+        value = match.group(2)
+    else:
+        value = value.split(" #", 1)[0].strip()
+    if not IANA_ZONE_RE.fullmatch(value):
+        raise AdmissionError("ambiguous_timezone_selector")
+    return value
 
 
 def schedules(
@@ -189,9 +206,7 @@ def schedules(
             if entry_indent is None or indent <= entry_indent or entry_has_timezone:
                 raise AdmissionError("misplaced_or_duplicate_timezone")
             entry_has_timezone = True
-            zone = timezone_match.group(1).strip()
-            if not zone or zone.startswith(("*", "&", "!", "[", "{")):
-                raise AdmissionError("ambiguous_timezone_selector")
+            zone = canonical_timezone(timezone_match.group(1))
             if timezone_metadata is not None:
                 timezone_metadata.append("timezone: " + zone)
             # Keep the IANA zone attached to its own cron entry. A flat
