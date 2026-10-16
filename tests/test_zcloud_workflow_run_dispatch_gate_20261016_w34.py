@@ -184,6 +184,32 @@ class GateTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
 
+    def test_multiple_gh_global_flags_deny_recursive_dispatch(self):
+        commands = (
+            "gh --hostname github.com --repo Zennay/zCloud workflow run backfill.yml",
+            "gh -R Zennay/zCloud --hostname github.com run rerun 123",
+            "gh --repo=Zennay/zCloud --hostname github.com api -X POST /repos/Zennay/zCloud/dispatches",
+            "gh --hostname github.com -R Zennay/zCloud api /repos/Zennay/zCloud/actions/runs/123/rerun -X POST",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertTrue(classify(TEMPLATE.replace("echo harmless", command)))
+
+    def test_multiple_gh_global_flags_get_not_mutation(self):
+        source = TEMPLATE.replace(
+            "echo harmless",
+            "gh --hostname github.com -R Zennay/zCloud api /repos/Zennay/zCloud/actions/runs/123/rerun -X GET",
+        )
+        self.assertFalse(classify(source))
+
+    def test_global_flags_added_to_legacy_trigger_are_new_debt(self):
+        base = self.commit(TEMPLATE)
+        head = self.commit(TEMPLATE.replace(
+            "echo harmless",
+            "gh --hostname github.com --repo Zennay/zCloud api /repos/Zennay/zCloud/dispatches -X POST",
+        ))
+        self.assertEqual(evaluate(self.repo, base, head)["new_findings"], [WORKFLOW])
+
     def test_rest_workflow_rerun_get_is_not_a_post(self):
         for command in (
             "gh api /repos/Zennay/zCloud/actions/runs/123/rerun",

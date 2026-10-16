@@ -21,10 +21,14 @@ SHA = re.compile(r"[0-9a-f]{40}\Z")
 WORKFLOW = re.compile(r"\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml\Z")
 ON = re.compile(r"(?m)^(?:on|'on'|\"on\"):[ \t]*(.*)$")
 RUN = re.compile(r"(?m)^( +)(?:-[ \t]+)?run:[ \t]*(.*)$")
+# gh permits multiple global repository/hostname options before the verb.
+# The previous single-option recognizer allowed multi-flag dispatch calls to
+# evade the read-only no-new-recursion scan.
+GH_GLOBAL_ARGS = r"(?:\s+(?:(?:-R|--repo|--hostname)(?:=|\s+)\S+)){0,4}"
 RISK = (
-    re.compile(r"\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+workflow\s+run\b", re.I),
-    re.compile(r"\bgh(?:\s+(?:-R|--repo)(?:=|\s+)\S+)?\s+run\s+rerun\b", re.I),
-    re.compile(r"\bgh\s+api\b[^\n]{0,400}", re.I),
+    re.compile(r"\bgh" + GH_GLOBAL_ARGS + r"\s+workflow\s+run\b", re.I),
+    re.compile(r"\bgh" + GH_GLOBAL_ARGS + r"\s+run\s+rerun\b", re.I),
+    re.compile(r"\bgh" + GH_GLOBAL_ARGS + r"\s+api\b[^\n]{0,400}", re.I),
     re.compile(r"\bcurl\b[^\n]{0,400}", re.I),
     re.compile(r"\b(?:create_workflow_dispatch|createWorkflowDispatch|create_repository_dispatch|createRepositoryDispatch|reRunWorkflow|reRunWorkflowFailedJobs|reRunJob|rerunWorkflow)\b"),
 )
