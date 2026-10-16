@@ -1215,5 +1215,132 @@ jobs:
         self.check(self.commit(), "pass")
 
 
+    def test_scheduled_python_helper_change_to_dispatch_denied(self):
+        self.put("scheduled-py.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python3 scripts/runner.py
+""")
+        directory = self.repo / "scripts"
+        directory.mkdir()
+        helper = directory / "runner.py"
+        helper.write_text("print('safe')\\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("github.rest.actions.createWorkflowDispatch({})\\n",
+                          encoding="utf-8")
+        verdict = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(verdict["status"], "reject")
+        self.assertIn(".github/workflows/scheduled-py.yml",
+                      verdict["changed_workflows_with_new_sites"])
+
+    def test_scheduled_bash_helper_change_to_dispatch_denied(self):
+        self.put("scheduled-sh.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash .github/scripts/rearm.sh
+""")
+        helper = self.repo / ".github/scripts/rearm.sh"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("echo safe\\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("gh workflow run release.yml\\n", encoding="utf-8")
+        verdict = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(verdict["status"], "reject")
+
+    def test_scheduled_nested_python_helpers_are_traced(self):
+        self.put("scheduled-chain.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python3 scripts/outer.py
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "outer.py").write_text("python3 scripts/inner.py\\n", encoding="utf-8")
+        helper = root / "inner.py"
+        helper.write_text("print('safe')\\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("gh workflow run deploy.yml\\n", encoding="utf-8")
+        verdict = guard.evaluate(self.repo, base, self.commit())
+        self.assertEqual(verdict["status"], "reject")
+
+    def test_scheduled_script_execution_cycle_is_bounded(self):
+        self.put("scheduled-script-cycle.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash scripts/a.sh
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "a.sh").write_text("bash scripts/b.sh\\n", encoding="utf-8")
+        (root / "b.sh").write_text("bash scripts/a.sh\\n", encoding="utf-8")
+        base = self.commit()
+        verdict = guard.evaluate(self.repo, base, base)
+        self.assertEqual(verdict["status"], "pass")
+        self.assertEqual(verdict["new_sites"], 0)
+
+    def test_missing_scheduled_script_is_rejected(self):
+        self.put("scheduled-absent.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python3 scripts/not-here.py
+""")
+        self.check(self.commit(), "reject")
+
+    def test_non_scheduled_script_dispatch_is_outside_guard(self):
+        self.put("manual-helper.yml", """on: workflow_dispatch
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash scripts/dispatch.sh
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "dispatch.sh").write_text("gh workflow run release.yml\\n", encoding="utf-8")
+        self.check(self.commit(), "pass")
+
+    def test_unchanged_legacy_scheduled_script_dispatch_is_grandfathered(self):
+        self.put("scheduled-legacy-helper.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash scripts/dispatch.sh
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        (root / "dispatch.sh").write_text("gh workflow run release.yml\\n", encoding="utf-8")
+        base = self.commit()
+        verdict = guard.evaluate(self.repo, base, base)
+        self.assertEqual(verdict["status"], "pass")
+        self.assertEqual(verdict["new_sites"], 0)
+
+    def test_direct_scheduled_shell_helper_is_traced(self):
+        self.put("scheduled-direct.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./scripts/release.sh
+""")
+        root = self.repo / "scripts"
+        root.mkdir()
+        helper = root / "release.sh"
+        helper.write_text("echo safe\\n", encoding="utf-8")
+        base = self.commit()
+        helper.write_text("gh workflow run release.yml\\n", encoding="utf-8")
+        self.assertEqual(guard.evaluate(self.repo, base, self.commit())["status"], "reject")
+
+
 if __name__ == "__main__":
     unittest.main()
