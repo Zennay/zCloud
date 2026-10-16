@@ -255,6 +255,51 @@ class Tests(unittest.TestCase):
         with self.assertRaises(module.Refusal):
             module._risks(modified,'w.yml')
 
+    def test_gh_run_download_direct_step_is_review_debt(self):
+        source=SAFE+'\n      - name: Download old run\n        run: gh run download 12345\n'
+        self.assertEqual(sum(module._risks(source,'w.yml').values()),1)
+
+    def test_gh_run_download_repository_flag_is_review_debt(self):
+        self.assertEqual(
+            sum(module._risks('      run: gh -R Zennay/other run download 12345','w.yml').values()),1
+        )
+        self.assertEqual(
+            sum(module._risks('      run: /usr/local/bin/gh --repo=Zennay/other run download 12345','w.yml').values()),1
+        )
+
+    def test_gh_run_download_split_shell_line_is_review_debt(self):
+        code='      run: |\n        gh run '+chr(92)+'\n          download 12345\n'
+        self.assertEqual(sum(module._risks(code,'w.yml').values()),1)
+
+    def test_gh_run_download_case_variation_is_review_debt(self):
+        self.assertEqual(sum(module._risks('      run: GH RUN DOWNLOAD 1234','w.yml').values()),1)
+
+    def test_gh_comment_and_unrelated_cli_do_not_create_debt(self):
+        source='# gh run download 1234\n      run: gh run view 1234\n'
+        self.assertEqual(sum(module._risks(source,'w.yml').values()),0)
+
+    def test_gh_run_download_new_real_git_workflow_denied(self):
+        base=self.commit(SAFE)
+        head=self.commit(SAFE+'\n      - name: Old run\n        run: gh run download 12345\n')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
+    def test_gh_run_download_unchanged_legacy_is_inventory_only(self):
+        base=self.commit(SAFE+'\n      - name: Old run\n        run: gh run download 12345\n')
+        head=self.commit(SAFE+'\n      - name: Old run\n        run: gh run download 12345\n# innocent footer\n')
+        r=module.evaluate(self.repo,base,head)
+        self.assertTrue(r['ok'])
+        self.assertEqual(r['legacy_findings'],1)
+        self.assertEqual(r['new_findings'],0)
+
+    def test_gh_run_download_nested_composite_action_denied(self):
+        base=self.commit(SAFE)
+        manifest=self.repo/'tools/inner/action.yml'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('name: inner\nruns:\n  using: composite\n  steps:\n    - run: gh run download 12345\n      shell: bash\n')
+        self.git('add','.'); self.git('commit','-qm','new composite download')
+        head=self.git('rev-parse','HEAD')
+        self.assertEqual(module.evaluate(self.repo,base,head)['new_findings'],1)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
