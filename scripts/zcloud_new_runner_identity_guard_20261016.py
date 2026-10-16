@@ -228,6 +228,44 @@ def _early_guard(job: list[str]) -> bool:
     return False
 
 
+def _unsafe_root_env(lines: list[str]) -> bool:
+    """Fail closed when inherited workflow environment is not provably safe.
+
+    Root-level YAML keys may be quoted, aliased or merged into 'env'. An
+    inherited pre-shell hook can execute before the VPS identity check.
+    Only a literal flat 'env:' with unrelated scalar names is admitted.
+    """
+    roots = []
+    for i, line in enumerate(lines):
+        if re.match(r"""^\s*(?:["']?env["']?|[?!]\s*env)\s*:""", line) and not line.startswith((" ", "\t")):
+            roots.append(i)
+        elif re.match(r"^(?:<<|[?!]\s+[^:]+)\s*:", line):
+            return True
+    if len(roots) > 1:
+        return True
+    if not roots:
+        return False
+    idx = roots[0]
+    if not re.fullmatch(r"env:\s*(?:#.*)?", lines[idx]):
+        return True
+    end = next((i for i in range(idx + 1, len(lines))
+                if lines[i] and not lines[i][0].isspace()), len(lines))
+    seen: set[str] = set()
+    for line in lines[idx + 1:end]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        item = re.fullmatch(r"  ([A-Za-z_][A-Za-z0-9_]*):\s*([^\n]*)", line)
+        if item is None:
+            return True
+        key, value = item.group(1), item.group(2)
+        if key in seen or key in {"BASH_ENV", "PYTHONPATH", "PYTHONHOME", "PATH"}:
+            return True
+        if value.lstrip().startswith(("*", "&", "!", "|", ">", "{", "[")):
+            return True
+        seen.add(key)
+    return False
+
+
 def unsafe_jobs(doc: str | None) -> dict[str, str]:
     if doc is None:
         return {}
@@ -237,9 +275,8 @@ def unsafe_jobs(doc: str | None) -> dict[str, str]:
     lines = doc.splitlines()
     # Root defaults.run.shell can override the trusted first-run interpreter.
     workflow_defaults = bool(re.search(r"""(?m)^(?:defaults|["\']defaults["\']|[?!]\s*defaults)\s*:""", doc))
-    # Repository-level env is inherited by each guarded job.
-    root_env = bool(re.search(r"""(?m)^env:\s*(?:#.*)?\n(?:  [^\n]*\n)*?  ["']?(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)["']?\s*:""", doc))
-    root_env = root_env or bool(re.search(r"""(?m)^env:\s*\{[^\n}]*(?:BASH_ENV|PYTHONPATH|PYTHONHOME|PATH)\s*:""", doc))
+    # Workflow-inherited env must be literal, flat and free of pre-shell hooks.
+    root_env = _unsafe_root_env(lines)
     roots = [i for i, l in enumerate(lines) if re.fullmatch(r"jobs:\s*(?:#.*)?", l)]
     if len(roots) != 1:
         raise ValueError("ambiguous_jobs_root")
