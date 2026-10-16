@@ -14,7 +14,11 @@ class ControlPlaneRecoveryRunbookTests(unittest.TestCase):
             "python3 scripts/zcloud_recovery.py status",
             "python3 scripts/zcloud_recovery.py rollback",
             ".github/workflows/zcloud-vps-deploy.yml",
+            ".github/workflows/zcloud-safe-idle-retry.yml",
+            ".github/workflows/zcloud-production-status-recovery.yml",
             "zcloud/vps-production",
+            "zcloud/vps-safe-idle-retry",
+            "finalize-production-status",
             "last-known-good.json",
             "POSTDEPLOY_GREEN",
             "history.db",
@@ -29,6 +33,10 @@ class ControlPlaneRecoveryRunbookTests(unittest.TestCase):
         self.assertIn("Never use `git reset --hard`", text)
         self.assertIn("serialized zCloud production lane authoritative", text)
         self.assertIn("do not start a competing one", text)
+        self.assertIn("must never force-stop a worker", text)
+        self.assertIn("shorten the 480-second production safe-idle gate", text)
+        self.assertIn("Neither is a second production writer", text)
+        self.assertIn("dispatch `zcloud-regression-smoke.yml`", text)
 
 
 if __name__ == "__main__":
