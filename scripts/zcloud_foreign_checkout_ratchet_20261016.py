@@ -23,7 +23,7 @@ INDIRECT_USE = re.compile(r"""^\s*-?\s*uses\s*:\s*['"]?(?:\*|\$\{\{)""", re.I)
 INDIRECT_STEP = re.compile(r"""^\s*-\s*(?:(?:['"])?\*[A-Za-z_][\w-]*['"]?(?:\s+#.*)?|<<\s*:\s*\*[A-Za-z_][\w-]*)\s*$""")
 REPO = re.compile(r"(?:^|[,\s{])['\"]?repository['\"]?\s*:\s*(.*)$", re.I)
 SAFE = {"${{ github.repository }}", "zennay/zcloud"}
-PATH = re.compile(r"\A(?:\.github/workflows/[^/]+\.ya?ml|(?:[^/\\x00]+/)*action\.ya?ml)\Z")
+PATH = re.compile(r"\A(?:\.github/workflows/[^/]+\.ya?ml|(?:[^/]+/)*action\.ya?ml)\Z")
 
 
 def _stripped(value: str) -> str:
