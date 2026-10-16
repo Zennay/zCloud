@@ -1212,6 +1212,7 @@ def promote(
     prechange_allow_changes: list[str] | tuple[str, ...] = (),
     allow_recent_ancestor_prechange_drift: bool = False,
     preserve_schema_validated_runtime_config: bool = False,
+    promote_reviewed_project_catalog: bool = False,
     known_live_hashes: dict[str, str] | None = None,
     require_worker_read_model: bool = False,
     require_incidents: bool = False,
@@ -1222,14 +1223,28 @@ def promote(
     root = root.resolve()
     state = state.resolve()
     normalized = [validate_relpath(rel) for rel in paths]
+    if promote_reviewed_project_catalog:
+        if not preserve_schema_validated_runtime_config or "projects.json" not in normalized:
+            raise PromotionError(
+                "reviewed catalog promotion requires both projects.json and "
+                "schema-validated runtime config preservation"
+            )
+        if "project-contracts.json" not in normalized:
+            raise PromotionError("reviewed catalog requires the matching project-contracts.json")
     if preserve_schema_validated_runtime_config:
         selected_runtime_config = sorted(
             set(normalized) & SCHEMA_VALIDATED_RUNTIME_CONFIG_DRIFT
         )
-        if selected_runtime_config:
+        # The operator-requested catalog is audited and schema-validated. The
+        # user's separate live drag-to-reorder project layout remains untouched.
+        unsupported = [
+            path for path in selected_runtime_config
+            if path != "projects.json" or not promote_reviewed_project_catalog
+        ]
+        if unsupported:
             raise PromotionError(
                 "schema-validated runtime config preservation cannot select files "
-                "for promotion: " + ",".join(selected_runtime_config)
+                "for promotion: " + ",".join(unsupported)
             )
     explicit_prechange_drift = list(dict.fromkeys(
         validate_relpath(str(rel)) for rel in prechange_allow_changes
@@ -1290,11 +1305,10 @@ def promote(
     )
     runtime_config_prechange_drift: list[str] = []
     if preserve_schema_validated_runtime_config:
-        # run_config_validation above validated the live values because these
-        # paths are deliberately unselected. Only now may pre-change treat
-        # their managed drift as preserved runtime state.
+        # Only unselected, independently schema-validated runtime values may
+        # drift. Never exempt a selected catalog from pre-change integrity.
         runtime_config_prechange_drift = sorted(
-            SCHEMA_VALIDATED_RUNTIME_CONFIG_DRIFT
+            SCHEMA_VALIDATED_RUNTIME_CONFIG_DRIFT - set(normalized)
         )
     # Use the canary from the exact green candidate revision when available.
     # This lets a canary reliability fix validate its own deployment while
@@ -1579,10 +1593,17 @@ def main(argv: list[str] | None = None) -> int:
         "--preserve-schema-validated-runtime-config",
         action="store_true",
         help=(
-            "For code-only promotions, preserve live projects.json and "
-            "project-layout.json after the candidate config validator accepts "
-            "their exact live values. These runtime-owned files are never "
-            "written by this allowance."
+            "Preserve unselected, schema-validated live project catalog/layout; "
+            "only the explicitly reviewed catalog may be promoted with "
+            "--promote-reviewed-project-catalog."
+        ),
+    )
+    parser.add_argument(
+        "--promote-reviewed-project-catalog",
+        action="store_true",
+        help=(
+            "Authorize only the audited projects.json + project-contracts.json "
+            "candidate transaction while preserving the live project layout."
         ),
     )
     parser.add_argument(
@@ -1622,6 +1643,7 @@ def main(argv: list[str] | None = None) -> int:
             prechange_allow_changes=args.prechange_allow_changes or (),
             allow_recent_ancestor_prechange_drift=args.allow_recent_ancestor_prechange_drift,
             preserve_schema_validated_runtime_config=args.preserve_schema_validated_runtime_config,
+            promote_reviewed_project_catalog=args.promote_reviewed_project_catalog,
             known_live_hashes=known_live_hashes,
             require_worker_read_model=args.require_worker_read_model,
             require_incidents=args.require_incidents,
