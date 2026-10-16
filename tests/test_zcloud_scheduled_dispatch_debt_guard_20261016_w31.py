@@ -219,6 +219,45 @@ jobs:
         self.put("existing.yml", LEGACY.replace("gh workflow run zcloud-regression-smoke.yml", "echo safe"))
         self.check(self.commit(), "pass")
 
+    def test_dispatch_target_substitution_denied_without_count_growth(self):
+        self.put("existing.yml", LEGACY.replace(
+            "zcloud-regression-smoke.yml", "zcloud-vps-deploy.yml"
+        ))
+        result = self.check(self.commit(), "reject")
+        self.assertEqual(result["baseline_sites"], result["candidate_sites"])
+        self.assertEqual(result["new_sites"], 1)
+
+    def test_dispatch_method_substitution_denied_without_count_growth(self):
+        self.put("existing.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "github.rest.actions.createWorkflowDispatch({workflow_id: 1})"
+        ))
+        result = self.check(self.commit(), "reject")
+        self.assertEqual(result["new_sites"], 1)
+
+    def test_dispatch_duplicate_denied_even_if_same_line(self):
+        self.put("existing.yml", LEGACY.replace(
+            "gh workflow run zcloud-regression-smoke.yml",
+            "gh workflow run zcloud-regression-smoke.yml && gh workflow run zcloud-regression-smoke.yml"
+        ))
+        result = self.check(self.commit(), "reject")
+        self.assertEqual(result["new_sites"], 2)
+
+    def test_reorder_same_dispatch_line_keeps_site_identity(self):
+        self.put("existing.yml", LEGACY.replace(
+            "      - run: gh workflow run zcloud-regression-smoke.yml",
+            "      - name: Recovery\n        run: gh workflow run zcloud-regression-smoke.yml"
+        ))
+        # Whitespace and format changes count as conservative new debt.
+        self.check(self.commit(), "reject")
+
+    def test_unrelated_job_step_does_not_change_fingerprint(self):
+        self.put("existing.yml", LEGACY.replace(
+            "      - run: gh workflow run zcloud-regression-smoke.yml",
+            "      - run: echo other\n      - run: gh workflow run zcloud-regression-smoke.yml"
+        ))
+        self.check(self.commit(), "pass")
+
     def test_bad_sha_fails_closed(self):
         with self.assertRaises(ValueError):
             guard.evaluate(self.repo, "main", self.base)
