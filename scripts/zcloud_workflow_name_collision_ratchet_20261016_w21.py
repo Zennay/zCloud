@@ -62,7 +62,7 @@ def workflow_name(path, source):
         source = source.decode("utf-8", "strict").removeprefix("\ufeff")
     except UnicodeDecodeError as exc:
         raise InvalidInventory("non_utf8_workflow") from exc
-    matches = re.findall(r"(?m)^name:[ \t]*(.*)$", source)
+    matches = re.findall(r"""(?m)^(?:name|'name'|\"name\")[ \t]*:(.*)$""", source)
     if len(matches) > 1:
         raise InvalidInventory("duplicate_name_field")
     return _scalar(matches[0]) if matches else PurePosixPath(path).name
@@ -112,6 +112,9 @@ def read_names(sha, *, cwd):
             raise InvalidInventory("nonregular_workflow")
         if not WORKFLOW.fullmatch(path) or path in names:
             raise InvalidInventory("unexpected_workflow_path")
+        blob_size = _git(["cat-file", "-s", blobsha], cwd, 24)
+        if not blob_size.strip().isdigit() or int(blob_size) > MAX_BLOB:
+            raise InvalidInventory("workflow_blob_too_large")
         blob = _git(["cat-file", "blob", blobsha], cwd, MAX_BLOB)
         total += len(blob)
         if total > MAX_TOTAL:
