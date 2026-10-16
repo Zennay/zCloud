@@ -100,14 +100,23 @@ def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tup
     in_on = False
     in_schedule = False
     found_schedule = False
+    seen_on = False
     event_indent: int | None = None
     for line in source.splitlines():
+        # YAML explicit mapping keys can synthesize a trigger without a
+        # recognizable top-level on: line. Refuse ambiguous source outright.
+        if line.startswith("? ") or line.startswith("?-") or line == "?":
+            raise AdmissionError("ambiguous_explicit_mapping_key")
         if TOP_LEVEL_RE.match(line):
             key = line.partition(":")[0].strip().strip("'\"")
             # Root YAML merge keys can synthesize an on.schedule trigger
             # that a line-scanner would otherwise never inspect.
             if key == "<<":
                 raise AdmissionError("yaml_root_merge_forbidden")
+            if key == "on":
+                if seen_on:
+                    raise AdmissionError("duplicate_event_mapping")
+                seen_on = True
             in_on = key == "on"
             in_schedule = False
             event_indent = None
