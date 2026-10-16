@@ -107,7 +107,9 @@ def _safe_checkout_step(lines: list[str]) -> bool:
             parsed = re.fullmatch(r"          ([a-z][a-z0-9-]*):\s*([^#\n]*)(?:#.*)?", line)
             if not parsed:
                 return False
-            key, value = parsed.group(1), parsed.group(2).strip().strip("'\\"")
+            key, value = parsed.group(1), parsed.group(2).strip()
+            if value[:1] in ("'", '"') and value[-1:] == value[:1]:
+                value = value[1:-1]
             if key in inputs or key not in allowed or "${{" in value:
                 return False
             inputs[key] = value
