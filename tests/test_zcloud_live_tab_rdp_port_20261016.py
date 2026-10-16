@@ -174,7 +174,8 @@ class LiveTabPortIdentityTests(unittest.TestCase):
             "from scripts.zcloud_live_tab_rdp_port_20261016 import (",
             "trusted_firefox_executable",
             "verify_executable=trusted_firefox_executable",
-            "status,port=detect_debugger_port(proc.stdout.splitlines())",
+            "status,port=detect_debugger_port(",
+            "verify_executable=trusted_firefox_executable,",
             "python3 -m unittest -v tests.test_zcloud_live_tab_rdp_port_20261016",
         ):
             with self.subTest(marker=marker):
