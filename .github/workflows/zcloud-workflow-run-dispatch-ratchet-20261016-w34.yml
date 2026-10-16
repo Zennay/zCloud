@@ -37,3 +37,17 @@ jobs:
           python3 -m py_compile scripts/zcloud_workflow_run_dispatch_gate_20261016_w34.py tests/test_zcloud_workflow_run_dispatch_gate_20261016_w34.py
           python3 -m unittest -v tests.test_zcloud_workflow_run_dispatch_gate_20261016_w34
           python3 scripts/zcloud_workflow_run_dispatch_gate_20261016_w34.py --base "$EXACT_BASE" --head "$EXACT_HEAD"
+
+      - name: Validate full Python regression on same immutable hosted head
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -q
+      - name: Recheck scheduler and Firefox source isolation without VPS access
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/test_birds_eye_review.sh
+          node --check firefox-extension/background.js
+          node --check firefox-extension/recovery.js
+          node --check public/app.js
