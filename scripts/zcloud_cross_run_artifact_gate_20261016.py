@@ -99,7 +99,7 @@ def _git(root: Path, *args: str, max_bytes: int = 2_000_000) -> bytes:
             proc.stdout.close()
 
 
-def _inventory(root: Path, sha: str) -> dict[str, str]:
+def _inventory(root: Path, sha: str) -> dict[str, tuple[str, str]]:
     """Enumerate workflows AND composite action manifests at arbitrary paths.
 
     Checking only .github/workflows misses composite action.yml files and
@@ -107,7 +107,7 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
     Git trees are the immutable source of truth; no working-tree traversal.
     """
     data = _git(root, "ls-tree", "-rz", sha, max_bytes=2_000_000)
-    result: dict[str, str] = {}
+    result: dict[str, tuple[str, str]] = {}
     workflows = 0
     for item in data.split(b"\x00"):
         if not item:
@@ -123,7 +123,11 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
         is_shell = path.endswith((".sh", ".bash"))
         # Extensionless executable scripts are frequently invoked by a job's
         # run step. Ignore non-executable extensionless documentation.
-        is_extensionless_executable = mode == "100755" and not Path(path).suffix
+        is_extensionless_executable = mode in {"100644", "100664", "100755"} and not Path(path).suffix
+        # Also inspect extensionless regular script blobs: a job can execute
+        # a non-executable script with an explicit "bash ./path" invocation.
+        # Ordinary README/marker files without a shebang or known script
+        # location are skipped only after bounded content inspection.
         # An extensionless symlink can run an otherwise unclassified helper
         # via a shell. Treat it like executable source, then reject its Git
         # symlink mode below instead of silently overlooking the path.
@@ -139,7 +143,7 @@ def _inventory(root: Path, sha: str) -> dict[str, str]:
             raise Refusal("non_regular_workflow_or_action")
         if path in result:
             raise Refusal("duplicate_source_path")
-        result[path] = oid
+        result[path] = (oid, mode)
         workflows += int(is_workflow)
         if len(result) > _MAX_WORKFLOWS:
             raise Refusal("source_inventory_too_large")
@@ -254,10 +258,18 @@ def _risks(text: str, path: str) -> Counter[str]:
 
 def _snapshot(root: Path, sha: str) -> Counter[str]:
     risk: Counter[str] = Counter()
-    for path, oid in _inventory(root, sha).items():
+    for path, (oid, mode) in _inventory(root, sha).items():
         content = _git(root, "cat-file", "blob", oid, max_bytes=_MAX_FILE+1)
         if len(content) > _MAX_FILE:
             raise Refusal("oversized_workflow")
+        if not Path(path).suffix and mode != "100755":
+            script_locations = {"bin", "local-bin", "scripts", "deploy", "ops"}
+            in_script_area = bool(script_locations.intersection(Path(path).parts[:-1]))
+            if not content.startswith(b"#!") and not in_script_area:
+                # Non-executable README and repository marker content do not
+                # constitute shell execution evidence. Files in known script
+                # directories are still reviewed even without a shebang.
+                continue
         try:
             risk.update(_risks(content.decode("utf-8"), path))
         except UnicodeDecodeError as exc:
