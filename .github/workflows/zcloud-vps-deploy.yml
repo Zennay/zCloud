@@ -649,26 +649,6 @@ jobs:
             echo "KNOWN_LIVE_SERVER_RECONCILE=not_applicable live_sha=$live_sha lkg=$current_lkg"
           fi
 
-      - name: Promote audited project catalog with matching runtime contracts
-        if: steps.prewrite.outputs.deploy == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # These two files are one validated config transaction; do not
-          # overwrite project-layout.json or user-managed worker allocations.
-          # The candidate promoter preserves ONLY the unselected live layout
-          # after exact schema validation and pre-change integrity checks.
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path projects.json \
-            --path project-contracts.json \
-            --preserve-schema-validated-runtime-config \
-            --promote-reviewed-project-catalog \
-            --preserve-prechange-drift public/zcloud-worker.user.js \
-            --preserve-prechange-drift firefox-extension/background.js \
-            --actor "github-actions-vps-deploy" \
-            --json
-
       - name: Promote backend runtime core
         if: steps.prewrite.outputs.deploy == 'true'
         shell: bash
@@ -693,23 +673,6 @@ jobs:
             --allow-recent-ancestor-prechange-drift \
             --preserve-schema-validated-runtime-config \
             "${reconcile_args[@]}" \
-            --actor "github-actions-vps-deploy" \
-            --json
-
-      - name: Promote zSentinel worker-mode registry
-        if: steps.prewrite.outputs.deploy == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Worker roles are served from WORKER_MODES at import time. Promoting
-          # this versioned optional metadata restarts only the zCloud service,
-          # through the existing guarded transaction and rollback path.
-          python3 scripts/zcloud_transactional_promote.py \
-            --candidate "$GITHUB_WORKSPACE" \
-            --path worker-modes.json \
-            --preserve-schema-validated-runtime-config \
-            --preserve-prechange-drift public/zcloud-worker.user.js \
-            --preserve-prechange-drift firefox-extension/background.js \
             --actor "github-actions-vps-deploy" \
             --json
 
