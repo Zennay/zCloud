@@ -590,7 +590,7 @@ class RealGitNoNewDebtTests(unittest.TestCase):
             for item in result["new_high_frequency"]
         ))
 
-    def test_move_timezone_between_identical_crons_denied(self):
+    def test_move_timezone_between_identical_crons_has_same_schedule(self):
         path = self.directory / "safe.yml"
         old = ("on:\n  schedule:\n"
                "    - cron: '0 8 * * *'\n"
@@ -604,6 +604,23 @@ class RealGitNoNewDebtTests(unittest.TestCase):
                  "    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n"
                  "    - cron: '0 8 * * *'\n")
         path.write_text(moved, encoding="utf-8")
+        # Moving a timezone among identically scheduled entries leaves the
+        # effective multiset of (cron, timezone) launch identities unchanged.
+        result = audit(self.root, baseline)
+        self.assertTrue(result["accepted"])
+
+    def test_adding_timezone_to_second_identical_cron_denied(self):
+        path = self.directory / "safe.yml"
+        old = ("on:\n  schedule:\n"
+               "    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n"
+               "    - cron: '0 8 * * *'\n")
+        path.write_text(old, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "one zoned cron and one duplicate")
+        baseline = self.git("rev-parse", "HEAD")
+        updated = old.replace("    - cron: '0 8 * * *'\n",
+                              "    - cron: '0 8 * * *'\n      timezone: Europe/Amsterdam\n")
+        path.write_text(updated, encoding="utf-8")
         result = audit(self.root, baseline)
         self.assertFalse(result["accepted"])
         self.assertTrue(any(
