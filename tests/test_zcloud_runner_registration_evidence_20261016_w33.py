@@ -41,6 +41,42 @@ class RunnerEvidenceTests(unittest.TestCase):
     def test_busy_preserves_active_worker(self):
         self.assertEqual(self.classify(fixture(busy=True)), 'RUNNER_LISTED_BUSY')
 
+    def test_offline_busy_requires_preservation_not_restart(self):
+        x=fixture(state='offline', busy=True)
+        report=mod.inspect(x, now=NOW)
+        self.assertEqual(report['classification'], 'RUNNER_LISTED_OFFLINE_BUSY')
+        self.assertIn('preserve', report['next_action'])
+        self.assertIs(report['restart_authorized'], False)
+        self.assertIs(report['routing_labels_match'], True)
+
+    def test_busy_runner_outweighs_missing_labels(self):
+        x=fixture(busy=True, labels=('self-hosted', 'zcloud'))
+        report=mod.inspect(x, now=NOW)
+        self.assertEqual(report['classification'], 'RUNNER_LISTED_BUSY')
+        self.assertIs(report['routing_labels_match'], False)
+        self.assertIn('preserve', report['next_action'])
+
+    def test_offline_busy_runner_outweighs_missing_labels(self):
+        x=fixture(state='offline',busy=True, labels=('self-hosted', 'zcloud'))
+        report=mod.inspect(x, now=NOW)
+        self.assertEqual(report['classification'], 'RUNNER_LISTED_OFFLINE_BUSY')
+        self.assertIs(report['routing_labels_match'], False)
+        self.assertIn('preserve', report['next_action'])
+
+    def test_unlisted_runner_cannot_claim_known_routing_labels(self):
+        x=fixture()
+        x['response']={'total_count':0, 'runners':[]}
+        report=mod.inspect(x, now=NOW)
+        self.assertEqual(report['classification'], 'RUNNER_NOT_LISTED')
+        self.assertIsNone(report['routing_labels_match'])
+
+    def test_online_idle_label_mismatch_stays_explicit(self):
+        x=fixture(labels=('self-hosted','zcloud'))
+        report=mod.inspect(x, now=NOW)
+        self.assertEqual(report['classification'], 'LABEL_MISMATCH')
+        self.assertIs(report['routing_labels_match'],False)
+        self.assertIn('worker_idle', report['next_action'])
+
     def test_offline_requires_independent_inspection(self):
         self.assertEqual(self.classify(fixture(state='offline')), 'RUNNER_LISTED_OFFLINE')
 

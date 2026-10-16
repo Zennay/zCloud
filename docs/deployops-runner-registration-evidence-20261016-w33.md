@@ -75,8 +75,14 @@ accepts only a complete single-page response (<=100 entries), supplied on stdin:
 
 The output is deliberately anonymous: it contains **no runner IDs, endpoint
 credentials, other runner names or raw JSON**. It classifies `RUNNER_NOT_LISTED`,
-`LABEL_MISMATCH`, `RUNNER_LISTED_OFFLINE`, `RUNNER_LISTED_BUSY`,
-`RUNNER_LISTED_ONLINE_IDLE`, or `EVIDENCE_UNAVAILABLE`. **Every invocation exits 2, even when the claim parses cleanly**: a parseable unauthenticated snapshot must never turn a CI/release condition green solely from process exit status.
+`LABEL_MISMATCH`, `RUNNER_LISTED_OFFLINE`, `RUNNER_LISTED_OFFLINE_BUSY`,
+`RUNNER_LISTED_BUSY`, `RUNNER_LISTED_ONLINE_IDLE`, or
+`EVIDENCE_UNAVAILABLE`. When GitHub claims a runner is **busy**,
+preserve any potentially active worker before considering label edits
+or service actions: a simultaneous `offline` + `busy` claim takes precedence
+over ordinary offline or missing-label diagnostics. The sanitized
+`routing_labels_match` field is `true`/`false` when a runner is present
+and `null` when absent. None of these observations authorize a restart. **Every invocation exits 2, even when the claim parses cleanly**: a parseable unauthenticated snapshot must never turn a CI/release condition green solely from process exit status.
 An outdated, partial, foreign, malformed or ambiguous inventory fails closed.
 The operator must also record the exact HTTPS request URL, GET method and HTTP
 200 status alongside the JSON response; a wrong repository path, host, query,

@@ -159,17 +159,23 @@ def inspect(envelope, *, now=None):
             target = (runner['status'], runner['busy'], normalized)
     if target is None:
         category, next_action = 'RUNNER_NOT_LISTED', 'check_repository_runner_registration_and_group_entitlement'
+    elif target[1] and target[0] == 'offline':
+        # GitHub reports the listener offline while a job is still busy.
+        # Do not route an operator to label edits or an idle recovery.
+        category, next_action = 'RUNNER_LISTED_OFFLINE_BUSY', 'preserve_potential_active_worker_and_inspect_process_independently'
+    elif target[1]:
+        # A busy listener always outranks label mismatch in operator triage.
+        category, next_action = 'RUNNER_LISTED_BUSY', 'preserve_active_worker_and_check_concurrency'
     elif not REQUIRED_LABELS.issubset(target[2]):
-        category, next_action = 'LABEL_MISMATCH', 'check_canonical_labels_in_github_runner_settings'
+        category, next_action = 'LABEL_MISMATCH', 'inspect_missing_routing_labels_after_proving_worker_idle'
     elif target[0] == 'offline':
         category, next_action = 'RUNNER_LISTED_OFFLINE', 'inspect_listener_and_active_worker_on_independent_authorized_host'
-    elif target[1]:
-        category, next_action = 'RUNNER_LISTED_BUSY', 'preserve_active_worker_and_check_concurrency'
     else:
         category, next_action = 'RUNNER_LISTED_ONLINE_IDLE', 'correlate_queued_run_approval_labels_and_group_access'
     return {'schema': SCHEMA, 'classification': category, 'next_action': next_action,
             'runner_target': RUNNER, 'required_labels': sorted(REQUIRED_LABELS),
             'sampled_runner_count': total, 'observation_age_seconds': max(0, int(age)),
+            'routing_labels_match': (REQUIRED_LABELS.issubset(target[2]) if target is not None else None),
             'registration_claim_parsed': True, 'independent_registration_verified': False,
             'runner_group_access_verified': False, 'live_runner_health_verified': False,
             'service_idle_verified': False, 'production_deploy_verified': False,
