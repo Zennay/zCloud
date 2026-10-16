@@ -126,6 +126,10 @@ def canonical_job(raw: object, run: dict, now: datetime) -> dict:
             or raw.get("head_sha") != run["sha"]
             or raw.get("head_branch") != run["branch"]):
         raise Unavailable("job_run_binding_invalid")
+    if (raw.get("run_url") != f"{BASE}/actions/runs/{run['id']}"
+            or raw.get("url") != f"{BASE}/actions/jobs/{jid}"
+            or raw.get("html_url") != f"https://github.com/{REPO}/actions/runs/{run['id']}/job/{jid}"):
+        raise Unavailable("job_url_binding_invalid")
     labels = raw.get("labels")
     if (type(labels) is not list or not all(type(label) is str for label in labels)
             or len(labels) != len(set(labels)) or not REQUIRED.issubset(set(labels))):
