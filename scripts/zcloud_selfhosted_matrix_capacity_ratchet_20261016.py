@@ -141,7 +141,11 @@ def findings(source):
         strategy = job.get("strategy", {})
         if not isinstance(strategy, dict):
             raise InvalidSource("unknown_strategy")
-        if "matrix" not in strategy or not _candidate_runner(job.get("runs-on")):
+        # A reusable workflow job has no runs-on here, yet its callee may
+        # fan out onto permanent VPS runners. Treat callers as unknown runner
+        # destinations instead of silently certifying them as hosted-only.
+        potential_vps = _candidate_runner(job.get("runs-on")) or "uses" in job
+        if "matrix" not in strategy or not potential_vps:
             continue
         parallel = strategy.get("max-parallel")
         matrix_size = _matrix_count(strategy["matrix"])
