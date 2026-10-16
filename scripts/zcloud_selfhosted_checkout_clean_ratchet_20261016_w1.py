@@ -18,6 +18,8 @@ USES = re.compile(r"^\s*(?:-\s*)?['\"]?uses['\"]?\s*:\s*['\"]?([^'\"\s#]+)")
 CLEAN = re.compile(r"^\s+['\"]?clean['\"]?\s*:\s*(.*)$")
 WORKFLOW_PREFIX = ".github/workflows/"
 MAX_FILES, MAX_BYTES = 512, 1024 * 1024
+MAX_TOTAL_BYTES = 24 * 1024 * 1024
+MAX_TREE_BYTES = 512 * 1024
 CANONICAL_ORIGINS = frozenset({
     "https://github.com/Zennay/zCloud",
     "https://github.com/Zennay/zCloud.git",
@@ -40,6 +42,8 @@ def workflow_tree(sha):
     if not SHA.fullmatch(sha):
         raise Denied("invalid_commit")
     raw = git("ls-tree", "-rz", "--full-tree", sha, WORKFLOW_PREFIX)
+    if len(raw) > MAX_TREE_BYTES:
+        raise Denied("workflow_tree_size_cap")
     records = {}
     for item in raw.split(b"\0"):
         if not item:
@@ -208,10 +212,25 @@ def analyze(source, path):
 
 def inventory(sha):
     findings = []
+    total = 0
     for path, oid in sorted(workflow_tree(sha).items()):
-        data = git("cat-file", "blob", oid)
-        if len(data) > MAX_BYTES:
+        # An untrusted blob's object size must be checked before its contents
+        # are read. A large workflow must not exhaust hosted CI memory.
+        try:
+            raw_size = git("cat-file", "-s", oid).decode("ascii", "strict").strip()
+        except UnicodeDecodeError:
+            raise Denied("invalid_workflow_blob_size") from None
+        if not re.fullmatch(r"[0-9]{1,10}", raw_size):
+            raise Denied("invalid_workflow_blob_size")
+        size = int(raw_size)
+        if size > MAX_BYTES:
             raise Denied("workflow_size_cap")
+        total += size
+        if total > MAX_TOTAL_BYTES:
+            raise Denied("workflow_aggregate_size_cap")
+        data = git("cat-file", "blob", oid)
+        if len(data) != size:
+            raise Denied("workflow_blob_size_drift")
         try:
             source = data.decode("utf-8", "strict")
         except UnicodeError:
