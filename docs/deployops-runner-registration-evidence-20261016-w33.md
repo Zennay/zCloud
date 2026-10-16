@@ -7,13 +7,17 @@ PR #1503 CPU queue provenance, or any production workflow.
 ## Safe capture and local use
 
 An **authorized operator** retrieves the repository-scoped GitHub REST
-`GET /repos/Zennay/zCloud/actions/runners?per_page=100` response from an
-administratively authorized channel. Do **not** place API keys, headers,
+`GET /repos/Zennay/zCloud/actions/runners?name=zcloud-vps-1&per_page=100` response from an
+administratively authorized channel.
+The `name` filter minimizes exposure of unrelated registered runners; a
+filtered reply containing another runner name is rejected instead of being
+mistaken for a complete absence check. This also avoids a repository-wide
+multi-page listing when only the canonical zCloud listener matters. Do **not** place API keys, headers,
 process arguments or the raw runner inventory in PR logs/artifacts. This tool
 accepts only a complete single-page response (<=100 entries), supplied on stdin:
 
 ```json
-{"repository":"Zennay/zCloud","request_url":"https://api.github.com/repos/Zennay/zCloud/actions/runners?per_page=100","method":"GET","http_status":200,"captured_at":"2026-10-16T17:59:30Z","response":{"total_count":1,"runners":[{"id":21,"name":"zcloud-vps-1","status":"offline","busy":false,"labels":[{"name":"self-hosted"},{"name":"zcloud"},{"name":"vps"}]}]}}
+{"repository":"Zennay/zCloud","request_url":"https://api.github.com/repos/Zennay/zCloud/actions/runners?name=zcloud-vps-1&per_page=100","method":"GET","http_status":200,"captured_at":"2026-10-16T17:59:30Z","response":{"total_count":1,"runners":[{"id":21,"name":"zcloud-vps-1","status":"offline","busy":false,"labels":[{"name":"self-hosted"},{"name":"zcloud"},{"name":"vps"}]}]}}
 ```
 
 `python3 scripts/zcloud_runner_registration_evidence_20261016_w33.py < operator-private.json`
