@@ -71,3 +71,43 @@ jobs:
           print(f"Schedule starts: {report['baseline_crons']} -> {report['candidate_crons']}")
           print(f"Theoretical peak: {report['baseline_peak']} -> {report['candidate_peak']}")
           PY
+      - name: Publish readable review receipt even when policy rejects change
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          report = Path(os.environ['RUNNER_TEMP']) / 'zcloud-schedule-burst.json'
+          lines = [
+              '## Scheduled Actions launch-burst guard',
+              '',
+              '- Mode: **read-only Git-source estimate; not production approval**',
+              '- Budget: at most 4 theoretical launch starts in one minute,',
+              '  grandfathering an existing higher baseline without growth.',
+          ]
+          if report.exists():
+              data = json.loads(report.read_text(encoding='utf-8'))
+              if data.get('error'):
+                  lines.append('- Result: **cannot verify source; fail closed**')
+                  lines.append('- Cause: `' + str(data['error']).replace('`', '')[:180] + '`')
+              else:
+                  lines.extend([
+                      f"- Cron entries: {data['baseline_crons']} → {data['candidate_crons']}",
+                      f"- Highest potential density: {data['baseline_peak']} → {data['candidate_peak']}",
+                      f"- New over-budget minute slots: **{data['new_over_budget_slots']}**",
+                      '- Limitations: hypothetical minute-of-week overlap, not VPS/runner health.',
+                  ])
+                  for slot in data.get('sample', [])[:10]:
+                      lines.append(
+                          f"  - UTC weekday={slot['weekday_sunday_zero']} "
+                          f"{slot['hour_utc']:02d}:{slot['minute_utc']:02d}: "
+                          f"{slot['baseline']} → {slot['candidate']}"
+                      )
+          else:
+              lines.append('- Result: **source proof unavailable**; see failing job.')
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as handle:
+              handle.write('\n'.join(lines) + '\n')
+          PY
