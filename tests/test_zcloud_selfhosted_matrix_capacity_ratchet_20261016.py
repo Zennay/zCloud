@@ -109,7 +109,9 @@ jobs:
     steps:
       - run: echo safe
 """
-        with self.assertRaisesRegex(InvalidSource, "cyclic_runner_selection"):
+        # PyYAML may reject recursion during construction, before the
+        # explicit runner selector cycle guard; either DENY is correct.
+        with self.assertRaisesRegex(InvalidSource, "unparseable_yaml|cyclic_runner_selection"):
             findings(src)
 
     def test_oversized_runner_alias_is_fail_closed(self):
