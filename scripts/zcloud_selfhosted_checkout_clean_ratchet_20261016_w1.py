@@ -110,7 +110,7 @@ def analyze(source, path):
             # YAML flow-style steps bypass conventional `- uses:` scanners.
             # Their nested action/input identity is not proven: require
             # independent review for each newly introduced flow-style step.
-            if re.match(r"^      -\s*\\{", line):
+            if re.match(r"^      -\s*\{", line):
                 risks.append((path, job_name, "steps", "flow-step-unverified"))
         steps = []
         step = None
