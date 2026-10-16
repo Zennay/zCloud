@@ -117,6 +117,10 @@ def _early_guard(job: list[str]) -> bool:
             checkout_seen = True
             continue
         if runs:
+            # A different step cwd could load a stale/attacker-supplied guard
+            # instead of the guard checked out at the trusted repository root.
+            if re.search(r"(?m)^\s*working-directory:", text):
+                return False
             # The identity check may not be skipped or demoted to nonfatal.
             if re.search(r"(?m)^\s*(?:if|continue-on-error):", text):
                 return False
