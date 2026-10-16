@@ -172,9 +172,12 @@ def _risks(text: str, path: str) -> Counter[str]:
                     raise Refusal("ambiguous_with_block")
             elif level > with_indent:
                 field = _INPUT.fullmatch(following)
-                if field is None or field.group("key") in fields:
+                if field is None:
                     raise Refusal("ambiguous_artifact_input")
-                fields[field.group("key")] = field.group("value").split(" #",1)[0].strip()
+                key = field.group("key").lower()
+                if key in fields:
+                    raise Refusal("ambiguous_artifact_input")
+                fields[key] = field.group("value").split(" #",1)[0].strip()
             elif stripped == "with:":
                 raise Refusal("duplicate_with_block")
             else:
