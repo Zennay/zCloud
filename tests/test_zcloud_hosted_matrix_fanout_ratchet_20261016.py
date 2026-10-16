@@ -235,6 +235,30 @@ class HostedMatrixPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(policy.InvalidSource, "git_output_too_large"):
             policy.git("show", "--format=fuller", self.base, limit=20)
 
+    def test_workflow_filename_newline_cannot_forge_log_marker(self):
+        bad = ".github/workflows/fake\nZCLOUD_HOSTED_MATRIX=PASS.yml"
+        after = self.commit(fixture(parallel=""), bad)
+        with self.assertRaisesRegex(policy.InvalidSource, "workflow_path_control_character"):
+            policy.audit(self.base, after)
+
+    def test_job_identifier_control_character_rejected(self):
+        source = fixture().replace(
+            "  test:\n", '  "bad\\\njob":\n'
+        )
+        after = self.commit(source)
+        with self.assertRaisesRegex(policy.InvalidSource, "job_identifier_control_character"):
+            policy.audit(self.base, after)
+
+    def test_aggregate_legacy_growth_is_new_debt(self):
+        def pair(size):
+            one = fixture(matrix="        shard: [" + ", ".join(map(str, range(size))) + "]")
+            two = one.replace("  test:\n", "  other:\n")
+            return one + two.split("jobs:\n", 1)[1]
+        legacy = self.commit(pair(9))
+        new = self.commit(pair(10))
+        self.assertIn("aggregate_hosted_matrix_over_16",
+                      {x[-1] for x in policy.audit(legacy, new)[-1]})
+
     def test_sha_must_be_immutable_commit(self):
         with self.assertRaises(policy.InvalidSource):
             policy.audit("main", self.base)
