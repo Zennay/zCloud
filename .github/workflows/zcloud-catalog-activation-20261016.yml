@@ -1,0 +1,133 @@
+name: zCloud reviewed project catalog activation
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Copy the exact 40-character current main SHA to authorize this catalog-only activation"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Share the canonical release lock; never run alongside a live deploy writer.
+concurrency:
+  group: zcloud-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  activate-catalog:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    env:
+      CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+      SAFE_IDLE_STATE: /home/ubuntu/.local/state/zcloud/catalog-activation-${{ github.run_id }}.json
+    steps:
+      - name: Checkout the owner-authorized exact main revision without secrets
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+
+      - name: Fail closed on wrong owner, revision, runner or production source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$RUNNER_NAME" = "zcloud-vps-1"
+          test "$(hostname -s)" = "vps-bb300bba"
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_sha="$(git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | cut -f1)"
+          test "$current_sha" = "$GITHUB_SHA"
+          python3 scripts/zcloud_vps_runner_guard.py --json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path.cwd()
+          ids = {p["id"] for p in json.loads((root / "projects.json").read_text())}
+          roles = {p["id"] for p in json.loads((root / "worker-modes.json").read_text())}
+          contracts = json.loads((root / "project-contracts.json").read_text())["projects"]
+          assert {"tradengine", "mixlab", "fuckball", "tuddy"} <= ids
+          assert "zsentinel" in roles
+          assert {"tradengine", "mixlab", "fuckball", "tuddy", "zsentinel"} <= set(contracts)
+          PY
+
+      - name: Require safe idle before any catalog publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deploy_safe_idle.py enter \
+            --state "$SAFE_IDLE_STATE" \
+            --timeout-seconds 480 \
+            --json
+
+      - name: Promote the audited project catalog and matching autonomy contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path projects.json \
+            --path project-contracts.json \
+            --promote-reviewed-project-catalog \
+            --preserve-schema-validated-runtime-config \
+            --actor "github-owner-reviewed-catalog-activation" \
+            --json
+
+      - name: Publish the zSentinel worker-role metadata and reload only zCloud
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_transactional_promote.py \
+            --candidate "$GITHUB_WORKSPACE" \
+            --path worker-modes.json \
+            --preserve-schema-validated-runtime-config \
+            --actor "github-owner-reviewed-catalog-activation" \
+            --json
+
+      - name: Verify real runtime project and worker role inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,time,urllib.request
+          expected_projects={"tradengine","mixlab","fuckball","tuddy"}
+          for attempt in range(12):
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:8765/api/status", timeout=15) as response:
+                      status=json.load(response)
+                  projects={p["id"] for p in status.get("projects", [])}
+                  roles={p["id"] for p in status.get("worker_modes", [])}
+                  if expected_projects <= projects and "zsentinel" in roles:
+                      print("ZCLOUD_CATALOG_LIVE_GREEN projects=4 worker_roles=1")
+                      break
+              except Exception:
+                  pass
+              time.sleep(5)
+          else:
+              raise SystemExit("ZCLOUD_CATALOG_LIVE_NOT_VERIFIED")
+          PY
+
+      - name: Always restore browser worker safe-idle state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$SAFE_IDLE_STATE" ]; then
+            python3 scripts/zcloud_deploy_safe_idle.py restore \
+              --state "$SAFE_IDLE_STATE" \
+              --json
+          fi
