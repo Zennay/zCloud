@@ -381,7 +381,7 @@ function globalWorkerRows(){
       delete GLOBAL_WORKER_PROJECT_REQUESTS[slot];delete GLOBAL_WORKER_REQUEST_RESULTS[slot];delete GLOBAL_WORKER_REQUEST_AT[slot];
     }
     const choice=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:assigned;
-    const options=(DATA?.projects||[]).map(p=>'<option value="'+esc(p.id)+'"'+(choice===p.id?' selected':'')+'>'+esc(p.name)+'</option>').join('');
+    const options=[...(DATA?.projects||[]),...(DATA?.worker_modes||[])].map(p=>'<option value="'+esc(p.id)+'"'+(choice===p.id?' selected':'')+'>'+esc(p.name)+'</option>').join('');
     const pending=GLOBAL_WORKER_REQUEST_RESULTS[slot]||'';
     const waiting=(pending.startsWith('Project priority requested')||pending.startsWith('Force voor worker'))&&Date.now()-Number(GLOBAL_WORKER_REQUEST_AT[slot]||0)<WORKER_REQUEST_RETRY_MS;
     const verdict=verified?(w?(VERDICT_LABEL[w.verdict]||w.verdict):'Beschikbaar'):'Status niet geverifieerd';
@@ -456,7 +456,7 @@ async function requestGlobalWorkerProject(slot,button,force=false){
   const target=String(selector.value||'');
   const observed=(WORKER_DEBUG?.workers||[]).find(w=>Number(w.global_slot)===slot);
   if(!target){GLOBAL_WORKER_REQUEST_RESULTS[slot]='Automatic queue selection is already active. No project was reassigned.';render();return}
-  if(!(DATA?.projects||[]).some(p=>p.id===target)){window.alert('Choose a valid project.');return}
+  if(![...(DATA?.projects||[]),...(DATA?.worker_modes||[])].some(p=>p.id===target)){window.alert('Choose a valid project or worker role.');return}
   if(observed&&observed.project!==target&&['generating','prompt-sent'].includes(observed.verdict)){
     window.alert('This worker is busy. Finish or stop its current task before requesting a different project.');return;
   }

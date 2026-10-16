@@ -265,8 +265,8 @@
       "lane_profile": "platform",
       "ai_worker_cap": 1,
       "autonomy": {
-        "mode": "external_gate",
-        "auto_start": false
+        "mode": "ai_worker",
+        "auto_start": true
       },
       "compute": {
         "class": "control-plane-observer",

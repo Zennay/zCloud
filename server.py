@@ -112,7 +112,22 @@ def _load_project_registry():
         project['lane_profile']=str(contract.get('lane_profile') or '')
     return projects
 
-PROJECT_INDEX = {p['id']: p for p in _load_project_registry()}
+# Worker roles are queue-capable but NOT normal product/portfolio cards.
+WORKER_MODES_FILE = ROOT / 'worker-modes.json'
+def _load_worker_modes():
+    modes=json.loads(WORKER_MODES_FILE.read_text(encoding='utf-8'))
+    if not isinstance(modes,list) or not modes:
+        raise ValueError('worker-modes.json must be a nonempty list')
+    ids=[row.get('id') for row in modes if isinstance(row,dict)]
+    if len(ids)!=len(modes) or len(set(ids))!=len(ids) or not all(isinstance(pid,str) and pid for pid in ids):
+        raise ValueError('Duplicate or malformed worker mode identifier')
+    return modes
+
+WORKER_MODES = _load_worker_modes()
+PORTFOLIO_PROJECT_INDEX = {p['id']:p for p in _load_project_registry()}
+if set(PORTFOLIO_PROJECT_INDEX) & {role['id'] for role in WORKER_MODES}:
+    raise ValueError('Worker role cannot also be a portfolio project')
+PROJECT_INDEX = {**PORTFOLIO_PROJECT_INDEX, **{role['id']:role for role in WORKER_MODES}}
 
 VPS_EXECUTION_POLICY_FILE = ROOT / 'vps-execution-policy.json'
 
@@ -159,6 +174,22 @@ def action_request_allowed(handler):
     return same_origin and fetch_site in ('same-origin', 'same-site')
 
 def project_runner_prompt(project_id, name):
+    if project_id=='zsentinel':
+        return (
+            'Werk verder aan zSentinel als vliegende keep over ALLE zCloud-projecten; dit is een workerrol, geen apart portfolio-project. '
+            'Kijk in Notion naar de Project Genesis OS, Project Company OS, Portfolio Control Tower OS en relevante project-HQ/handoffs; controleer GitHub-issues, PRs, actieve branches, actuele main/CI en queue/workerclaims. '
+            'Begin met ALLE open P0/P1-issues. Pak daarna ook onopgeloste P2/P3-issues, onafgemaakte features, regressies, verouderde PRs en niet-uitgevoerde roadmaptaken op; beperk je NIET tot vastgelopen jobs. '
+            'Kies steeds de hoogste impact die vrij en veilig uitvoerbaar is. Neem een issue echt over als er geen actieve eigenaar is: reproduceer waar nodig, schrijf code/configuratie en tests, commit, rond PR en checks af en verifieer resultaat. '
+            'Zit iets vast? Zoek zelfstandig de oorzaak en een alternatieve herstelroute met beschikbare Notion-, GitHub-, self-hosted runner- of workerkanalen; wees oplossingsgericht en geef niet op na een mislukte route. '
+            'Pas wanneer veilig en geautoriseerd queueprioriteit, opvolgtaken en uitvoervolgorde aan op basis van aantoonbare impact. Verlaag/verhoog niet blind prioriteit en maak geen duplicaat van actief werk. '
+            'Houd de andere projecten echt aan het werk: stuur workers bij op basis van concrete claims, open issues en echte test-/runtimebewijzen, maar onderbreek geen lopende generatie of eigenaarstaak. '
+            'Als één onderdeel op CI, runner, review, apparaat of toestemmingsgate wacht, pak direct een andere onafhankelijke veilige bug of feature in een ander project. '
+            'Vraag niet routinematig om menselijke input: debug, herstel, test en implementeer zelfstandig. '
+            'Respecteer verplichte menselijke veiligheids-/productiegoedkeuring, scopeautorisatie, secrets, financiële research-holdouts, device-acceptatie en rechten; omzeil zulke harde gates niet. '
+            'Geen force-push, ongeautoriseerde live deploy of destructieve massale queuecancel. CI-groen is geen bewijs dat productie gezond is. '
+            'Voer meerdere materiële acties achtereenvolgens uit totdat er echt geen veilige uitvoerbare open taak over is; alleen lezen, rapporteren of één retrigger telt niet als voltooiing. '
+            'Sluit issues alleen na bewezen implementatie; vermeld kort code, tests, commits, PR, eventuele live acceptatie en resterende gates.'
+        )
     return (
         f'Werk verder aan {name}. '
         'Kijk in Notion in welke fase het project zit, bepaal wat er nog gedaan moet worden en werk dat concreet uit. '
@@ -275,7 +306,9 @@ def live_receipt_status(data):
 def public_status(data):
     live_data=live_receipt_status(data)
     visible, archived, layout=project_views(live_data)
-    return {**live_data,'projects':visible,'archived_projects':archived,'project_layout':layout,'alerts':enhancements.list_alerts(DB,8,False)}
+    return {**live_data,'projects':visible,'archived_projects':archived,'project_layout':layout,
+            'worker_modes':[{'id':role['id'],'name':role['name'],'description':role.get('goal','')} for role in WORKER_MODES],
+            'alerts':enhancements.list_alerts(DB,8,False)}
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def cmd(args):
@@ -2805,6 +2838,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     priority_by_project={
         'lightup':'P0',
         'zssh':'P1',
+        'zsentinel':'P1',
         'ftmo':'P1',
         'zguard':'P2',
         'cloud':'P2',

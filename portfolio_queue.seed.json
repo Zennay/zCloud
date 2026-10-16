@@ -308,5 +308,15 @@
     "eligible": true,
     "completion_criteria": "Build a small, tested independent equity research foundation in Zennay/tradengine: point-in-time fundamentals with publication timestamps/provenance, explainable value-quality-growth scoring, missing-data safety, bias regression tests, and repeatable fixture-based validation. No real orders, broker credentials, or FTMO integration. Check existing PRs and avoid conflicting work.",
     "source_url": "https://app.notion.com/p/3fa9e19ac955813280b9e2a4395c2137"
+  },
+  {
+    "queue_id": "zsentinel-cross-project-flying-fixer-v1",
+    "project_id": "zsentinel",
+    "title": "Implement highest-impact unowned open issue across the whole portfolio",
+    "priority": "P1",
+    "status": "queued",
+    "eligible": true,
+    "completion_criteria": "Read Notion Portfolio Control Tower, Project Genesis OS, Company OS and each relevant project HQ/handoff. Inventory actual open GitHub P0/P1 issues, stale/unreviewed PRs, missing features, blocked queues and failed CI across ALL projects, not just incidents. Take the highest-impact SAFE unclaimed issue, reproduce and materially fix source/config/tests, commit, verify exact-head CI and close only with evidence. If one task has a real release/research/device permission gate, preserve it and immediately do another independent safe task in another project. Where authorized, correct stale queue priority and split/dequeue obsolete unclaimed work with audit trail. Never steal active claims, bypass required reviews, access secrets, trade live, run unauthorized security scans, or force production deploy. A diagnostic report alone never finishes this job.",
+    "source_url": "https://app.notion.com/p/3e79e19ac955811d8fd4d35d176bdeb8"
   }
 ]
