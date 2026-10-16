@@ -114,9 +114,13 @@ def workflow_name(path, source):
 
 def _yaml_flow_items(value):
     """Parse simple literal YAML sequence; refuse dynamic or ambiguous items."""
-    if not value.startswith("[") or not value.endswith("]"):
+    if not value.startswith("["):
         raise InvalidInventory("unsupported_workflow_run_reference")
-    text = value[1:-1].strip()
+    closing = value.rfind("]")
+    if closing < 1 or (value[closing + 1:].strip() and
+                       not value[closing + 1:].strip().startswith("#")):
+        raise InvalidInventory("unsupported_workflow_run_reference")
+    text = value[1:closing].strip()
     if not text:
         raise InvalidInventory("empty_workflow_run_references")
     pieces, buf, quote = [], [], ""
@@ -229,6 +233,7 @@ def workflow_run_targets(source):
                 and len(line) - len(line.lstrip(" ")) <= root):
             event_end = index
             break
+    seen_workflow_run = False
     for index in range(start + 1, event_end):
         line = lines[index]
         level = len(line) - len(line.lstrip(" "))
@@ -242,6 +247,10 @@ def workflow_run_targets(source):
         match = child.match(stripped)
         if not match or level <= root:
             continue
+        if seen_workflow_run:
+            # YAML mappings with repeated trigger keys have ambiguous semantics.
+            return None
+        seen_workflow_run = True
         if match.group(1).strip() not in {"", "#"}:
             return None
         run_end = event_end
