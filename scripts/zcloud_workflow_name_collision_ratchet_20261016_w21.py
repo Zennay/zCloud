@@ -153,6 +153,30 @@ def _yaml_flow_items(value):
     return tuple(_scalar(piece) for piece in pieces)
 
 
+# The allowlist is deliberately restricted to event names with no need for a
+# nested event configuration. Unknown inline event syntax is evidence debt,
+# not proof that workflow_run is absent.
+SIMPLE_INLINE_EVENTS = frozenset({
+    "branch_protection_rule", "check_run", "check_suite", "create", "delete",
+    "deployment", "deployment_status", "discussion", "discussion_comment",
+    "fork", "gollum", "issue_comment", "issues", "label", "merge_group",
+    "milestone", "page_build", "public", "pull_request",
+    "pull_request_review", "pull_request_review_comment",
+    "pull_request_target", "push", "registry_package", "release",
+    "repository_dispatch", "schedule", "status", "watch",
+    "workflow_call", "workflow_dispatch",
+})
+
+
+def _literal_inline_non_run_events(value):
+    """Accept only an explicit, unaliased list/scalar of non-workflow_run events."""
+    try:
+        items = _yaml_flow_items(value) if value.startswith("[") else (_scalar(value),)
+    except InvalidInventory:
+        return False
+    return bool(items) and all(item in SIMPLE_INLINE_EVENTS for item in items)
+
+
 def workflow_run_targets(source):
     """Read literal workflow_run references, fail closed only on NEW unsupported syntax.
 
@@ -175,6 +199,11 @@ def workflow_run_targets(source):
     for index, line in enumerate(lines):
         if len(line) - len(line.lstrip(" ")) != root:
             continue
+        root_key = line[root:].lstrip()
+        # YAML mapping merges / explicit complex keys can inject an on field.
+        # We cannot establish that workflow_run is absent without expansion.
+        if root_key.startswith(("<<:", "? ", "?[", "?{")):
+            return None
         match = top.match(line[root:])
         if match:
             event_blocks.append((index, match.group(1).strip()))
@@ -183,8 +212,8 @@ def workflow_run_targets(source):
     if not event_blocks:
         return ()
     start, remainder = event_blocks[0]
-    if remainder and remainder[0] not in "#":
-        return None if "workflow_run" in remainder else ()
+    if remainder and not remainder.startswith("#"):
+        return () if _literal_inline_non_run_events(remainder) else None
     event_end = len(lines)
     for index in range(start + 1, len(lines)):
         line = lines[index]
