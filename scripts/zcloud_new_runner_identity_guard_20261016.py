@@ -98,16 +98,16 @@ def _safe_checkout_step(lines: list[str]) -> bool:
             continue
         # First '- uses:' field is stored without original YAML indentation.
         if index == 0:
-            if not re.fullmatch(r"(?:uses|name|id):[^\\n]+", line.strip()):
+            if not re.fullmatch(r"(?:uses|name|id):[^\n]+", line.strip()):
                 return False
             continue
         if line.startswith("          "):
             if not inside_inputs:
                 return False
-            parsed = re.fullmatch(r"          ([a-z][a-z0-9-]*):\\s*([^#\\n]*)(?:#.*)?", line)
+            parsed = re.fullmatch(r"          ([a-z][a-z0-9-]*):\s*([^#\n]*)(?:#.*)?", line)
             if not parsed:
                 return False
-            key, value = parsed.group(1), parsed.group(2).strip().strip("'\\\"")
+            key, value = parsed.group(1), parsed.group(2).strip().strip("'\\"")
             if key in inputs or key not in allowed or "${{" in value:
                 return False
             inputs[key] = value
@@ -115,11 +115,11 @@ def _safe_checkout_step(lines: list[str]) -> bool:
         if not line.startswith("        "):
             return False
         field = line[8:]
-        if re.fullmatch(r"with:\\s*(?:#.*)?", field):
+        if re.fullmatch(r"with:\s*(?:#.*)?", field):
             if saw_inputs:
                 return False
             saw_inputs, inside_inputs = True, True
-        elif re.fullmatch(r"(?:name|id|uses):\\s*[^\\n]+", field):
+        elif re.fullmatch(r"(?:name|id|uses):\s*[^\n]+", field):
             inside_inputs = False
         else:
             # No inline/aliased 'with:', env, defaults or executable hooks.
