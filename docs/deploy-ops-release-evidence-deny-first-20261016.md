@@ -12,6 +12,10 @@ Run only against a locally generated, fresh, bounded JSON receipt:
 
     python3 scripts/zcloud_release_gate_receipt_20261016.py --input /path/to/release-receipt.json
 
+For Dutch operator-facing audit text instead of JSON codes:
+
+    python3 scripts/zcloud_release_gate_receipt_20261016.py --input /path/to/release-receipt.json --format markdown
+
 Exit 0 means **the supplied claims satisfy this offline schema only**. Exit 2 means the receipt is missing, unsafe, malformed, stale or claims one or more missing gates. No network access or state mutation is performed.
 
 The entire top-level object must contain exactly:
@@ -26,7 +30,9 @@ The entire top-level object must contain exactly:
 - locks: main_sha, production_writer_jobs=7, all_serialized=true.
 - release: main_sha, owner_approved=true, exclusive_window=true.
 
-Every nested object must contain exactly its documented keys. No raw tokens, arbitrary metadata, secrets or HTTP payloads should be included. The parser rejects duplicate keys, nonfinite values, unknown fields, oversized inputs and symlinked receipt files. The command prints only stable reason codes (not source values).
+Every nested object must contain exactly its documented keys. No raw tokens, arbitrary metadata, secrets or HTTP payloads should be included. The parser rejects duplicate keys, nonfinite values, unknown fields, oversized inputs and symlinked receipt files or parent directories. Both JSON failure outputs and completed-claim outputs explicitly retain `live_sources_verified=false` and `production_mutation_authorized=false`.
+
+`--format markdown` renders a bounded Dutch table for all eight gates. Every row differentiates *claimed complete but not verified*, *missing/invalid claim*, and *not assessable due to invalid input*, with an owner/action description. It never inserts raw receipt values, tokens, arbitrary URLs or terminal escapes into the audit text. This improves operator triage, not release admission.
 
 ## Operational meaning and integration boundary
 
@@ -35,3 +41,7 @@ A machine-generated receipt **cannot establish branch protection, genuine indepe
 Current open handoffs: [main protection #922](https://github.com/Zennay/zCloud/issues/922), [listener #1326](https://github.com/Zennay/zCloud/issues/1326), [writer locks #1447](https://github.com/Zennay/zCloud/issues/1447), [production admission #580](https://github.com/Zennay/zCloud/issues/580). None are changed or declared closed by this tool. No privileged action or live workflow was added.
 
 The validator is intentionally a **standalone future integration seam**, not another writer inside #580/#1089. Tested in GitHub-hosted regression via the standard project test suite; no self-hosted execution is necessary.
+
+## Human-language audit semantics
+
+The renderer has a permanent decision line: **GEEN PRODUCTIEVRIJGAVE**. A claimed complete gate is **not** independently verified; a source-only proof cannot lift a real runtime blockade. Owner handoffs remain explicit: branch governance #922, VPS listener #1326, all seven shared writer locks #1447, and serialized production owner #580. The offline input can be corrected immediately if stale/malformed, whereas branch protection, runner access, lock repair, and serialized release require separate authorized owner actions. Neither JSON nor Markdown outputs authorize a GitHub workflow, runner recovery, PR merge or deployment.
