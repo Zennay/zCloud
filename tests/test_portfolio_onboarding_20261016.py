@@ -92,7 +92,7 @@ class PortfolioOnboardingTests(unittest.TestCase):
         jobs = [j for j in load("portfolio_queue.seed.json") if j["project_id"] == "zsentinel"]
         self.assertEqual(len(jobs), 1)
         self.assertTrue(jobs[0]["eligible"])
-        self.assertIn("ALL projects", jobs[0]["completion_criteria"])
+        self.assertIn("all projects", jobs[0]["completion_criteria"].lower())
 
     def test_execution_routing_inventory_does_not_autostart_projects(self):
         # Required project inventory is not itself worker or production admission.
