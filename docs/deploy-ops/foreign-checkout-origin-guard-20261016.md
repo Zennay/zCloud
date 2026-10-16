@@ -10,11 +10,11 @@ A GitHub Actions step using actions/checkout can explicitly set with.repository 
 
 - Add a read-only, GitHub-hosted PR job, limited to workflow, composite action and guard changes.
 - Admit only first-party PRs targeting main, verify exact immutable Git HEAD, and read both exact SHA trees.
-- Inventory every .github/workflows/*.yml|yaml and every tracked root or nested action.yml|yaml (including composite actions outside .github/actions) at base and head. Trigger the hosted source gate on additions or edits in any action manifest directory. Refuse partial inventories.
+- Inventory every .github/workflows/*.yml|yaml and every tracked root or nested action.yml|yaml (including composite actions outside .github/actions) at base and head. Trigger the hosted source gate on additions or edits in any action manifest directory. Refuse partial inventories. Check each Git blob size **before** reading it; enforce 1 MiB per manifest, 16 MiB cumulative inventory, 4096 manifest maximum, and an exact content-size match. Oversize or inconsistent source produces a nonzero indeterminate result rather than a partial allow.
 - Detect explicit foreign or dynamic repository overrides on actions/checkout steps, duplicate overrides, aliased/computed checkout input maps, indirect or aliased uses-actions and whole-step imports, and unrecognised checkout syntax.
 - Compare per-path multiset counts. Existing debt is grandfathered, while new copies fail.
 - Exit 0 = no new risk, 1 = introduced risk, 2 = indeterminate. JSON includes exact SHA pair and reasons.
-- Run 35 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
+- Run 39 offline regression tests against safe/risky inputs and a synthetic two-commit repository.
 
 ## Safety and limits
 
