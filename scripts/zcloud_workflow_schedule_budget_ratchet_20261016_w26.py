@@ -77,20 +77,19 @@ def field_values(text: str, low: int, high: int, names: dict[str, int] | None = 
 
 
 def is_high_frequency(cron: str) -> bool:
-    parts = cron.split()
-    if len(parts) != 5:
-        raise AdmissionError("cron_requires_five_fields")
-    minutes = field_values(parts[0], 0, 59)
-    hours = field_values(parts[1], 0, 23)
-    # Validate remaining fields enough to reject nonliteral or macro syntax.
-    field_values(parts[2], 1, 31)
-    field_values(parts[3], 1, 12, MONTHS)
-    field_values(parts[4], 0, 7, WEEKDAYS)
-    times = sorted(60 * hour + minute for hour in hours for minute in minutes)
+    spec = _compiled_cron(cron)
+    times = spec["times"]
     if not times:
         raise AdmissionError("empty_cron_times")
-    circular = times + [times[0] + 1440]
-    return any(b - a < MIN_GAP for a, b in zip(circular, circular[1:]))
+    if any(second - first < MIN_GAP for first, second in zip(times, times[1:])):
+        return True
+    # A circular minute-list incorrectly treats Monday 23:55 and Monday
+    # 00:05 as two events 10 minutes apart. They are six days apart.
+    # Cross-midnight bursts require calendar evidence for adjacent days.
+    return (
+        times[0] + 1440 - times[-1] < MIN_GAP
+        and _calendar_overlap(spec, spec, next_day=True)
+    )
 
 
 def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tuple[str, ...]:
@@ -205,8 +204,8 @@ def _compiled_cron(cron: str) -> dict:
         "dom": field_values(dom, 1, 31),
         "month": field_values(month, 1, 12, MONTHS),
         "dow": weekdays,
-        "dom_wild": dom.startswith("*"),
-        "dow_wild": weekday.startswith("*"),
+        "dom_wild": dom == "*",
+        "dow_wild": weekday == "*",
     }
 
 
@@ -318,7 +317,9 @@ def audit(repo: Path, baseline_sha: str) -> dict:
         # An unchanged legacy timezone is observationally grandfathered.
         # Altered cron/timezone combinations require a separate DST-aware
         # review: nominal wall-clock matches do not prove UTC spacing.
-        if new_timezones and (old_timezones != new_timezones or old_entries != after):
+        if (old_timezones or new_timezones) and (
+            old_timezones != new_timezones or old_entries != after
+        ):
             count += 1
             added.append({"workflow": path, "cron": "<timezone schedule change>",
                           "reason": "timezone_requires_independent_review"})
