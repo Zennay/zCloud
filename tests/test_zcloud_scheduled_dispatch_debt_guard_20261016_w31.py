@@ -47,6 +47,19 @@ class WorkflowAdmission(unittest.TestCase):
         self.assertIn("synchronize", trigger)
         self.assertIn("reopened", trigger)
         self.assertIn("ready_for_review", trigger)
+        self.assertIn("edited", trigger)
+
+    def test_fork_source_fails_not_skips_required_check(self):
+        source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
+        admission = source.split("  source-only:", 1)[1].split("    runs-on:", 1)[0]
+        self.assertNotIn("head.repo.full_name ==", admission)
+        self.assertIn("Reject fork or unknown source before checkout", source)
+        self.assertIn('test "$HEAD_REPO" = "$BASE_REPO"', source)
+        self.assertIn("HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}", source)
+        self.assertLess(
+            source.index("Reject fork or unknown source before checkout"),
+            source.index("Checkout exact candidate without persisted credentials"),
+        )
 
     def test_source_gate_requires_fresh_main_before_and_after_scan(self):
         source = (ROOT / ".github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml").read_text(encoding="utf-8")
