@@ -110,7 +110,7 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
                 candidate = re.match(r"^ {" + str(field_indent) + r"}uses:\s*(.+?)\s*$", line)
             if candidate:
                 uses_line = number
-                action = candidate.group(1).split("#", 1)[0].strip().strip("\'\\"")
+                action = candidate.group(1).split("#", 1)[0].strip().strip(chr(39) + chr(34))
             if re.match(r"^ {" + str(field_indent) + r"}with:\s*(?:#.*)?$", line):
                 with_pos = position
         if not action or not re.match(r"^actions/upload-artifact@[^\s]+$", action):
@@ -130,7 +130,7 @@ def inspect_workflow(path: str, text: str, *, max_days: int) -> list[ArtifactUpl
                 match = re.match(r"^\s*retention-days:\s*(.*?)\s*$", line)
                 if not match:
                     continue
-                raw = match.group(1).split("#", 1)[0].strip().strip("\'\\"")
+                raw = match.group(1).split("#", 1)[0].strip().strip(chr(39) + chr(34))
                 try:
                     retention = int(raw)
                 except ValueError:
