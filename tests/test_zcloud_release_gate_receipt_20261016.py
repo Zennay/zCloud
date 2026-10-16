@@ -213,7 +213,8 @@ class ReleaseReceiptTests(unittest.TestCase):
             data = receipt()
             data["observed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             path.write_text(json.dumps(data), encoding="utf-8")
-            call = subprocess.run([sys.executable, str(SCRIPT), "--input", str(path)],
+            call = subprocess.run([sys.executable, str(SCRIPT), "--input", str(path),
+                                   "--exit-zero-on-offline-claims"],
                                   capture_output=True, text=True, timeout=5)
             self.assertEqual(0, call.returncode, call.stderr)
             result = json.loads(call.stdout)
@@ -336,7 +337,7 @@ class ReleaseReceiptTests(unittest.TestCase):
             path.write_text(json.dumps(data), encoding="utf-8")
             call = subprocess.run(
                 [sys.executable, str(SCRIPT), "--input", str(path),
-                 "--format", "markdown"], capture_output=True,
+                 "--format", "markdown", "--exit-zero-on-offline-claims"], capture_output=True,
                 text=True, timeout=5,
             )
             self.assertEqual(0, call.returncode, call.stderr)
@@ -677,6 +678,73 @@ class ReleaseReceiptTests(unittest.TestCase):
                           call.stdout)
             self.assertNotIn("hidden-credential-name", call.stdout + call.stderr)
             self.assertNotIn(str(alias), call.stdout + call.stderr)
+
+
+
+    def test_positive_forged_receipt_default_cli_exits_nonzero_both_formats(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "forged.json"
+            data = receipt()
+            data["observed_at"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            path.write_text(json.dumps(data), encoding="utf-8")
+            original = path.read_bytes()
+            for option in ("json", "markdown"):
+                with self.subTest(option=option):
+                    call = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--input", str(path),
+                         "--format", option],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertEqual(2, call.returncode, call.stderr)
+                    if option == "json":
+                        verdict = json.loads(call.stdout)
+                        self.assertTrue(verdict["offline_claims_complete"])
+                        self.assertIs(verdict["production_mutation_authorized"], False)
+                        self.assertIs(verdict["live_sources_verified"], False)
+                    else:
+                        self.assertIn("GEEN PRODUCTIEVRIJGAVE", call.stdout)
+                        self.assertIn("niet geverifieerd", call.stdout)
+                    self.assertEqual(original, path.read_bytes())
+
+    def test_opt_in_cannot_override_missing_gate_or_invalid_json(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "denied.json"
+            data = receipt()
+            data["observed_at"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            data["runner"]["runner_id"] = 0
+            for payload in (json.dumps(data).encode(), b'{"secret":NaN}'):
+                with self.subTest(payload=payload[:40]):
+                    path.write_bytes(payload)
+                    call = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--input", str(path),
+                         "--exit-zero-on-offline-claims"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    self.assertEqual(2, call.returncode, call.stderr)
+                    result = json.loads(call.stdout)
+                    self.assertIs(result["production_mutation_authorized"], False)
+                    self.assertIs(result["live_sources_verified"], False)
+
+    def test_default_status_blocks_shell_gating_even_for_claimed_green(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "forged.json"
+            data = receipt()
+            data["observed_at"] = datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+            path.write_text(json.dumps(data), encoding="utf-8")
+            call = subprocess.run(
+                ["bash", "-e", "-c",
+                 '"$1" "$2" --input "$3" >/dev/null; echo SHOULD_NOT_DEPLOY',
+                 "--", sys.executable, str(SCRIPT), str(path)],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(2, call.returncode, call.stderr)
+            self.assertNotIn("SHOULD_NOT_DEPLOY", call.stdout + call.stderr)
 
 
 
