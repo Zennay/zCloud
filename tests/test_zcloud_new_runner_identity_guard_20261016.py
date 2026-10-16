@@ -3,6 +3,8 @@ import importlib.util
 from pathlib import Path
 import unittest
 from unittest import mock
+import subprocess
+import tempfile
 
 file = Path(__file__).resolve().parents[1] / "scripts/zcloud_new_runner_identity_guard_20261016.py"
 spec = importlib.util.spec_from_file_location("guard", file)
@@ -132,6 +134,80 @@ class IdentityPolicyTests(unittest.TestCase):
         self.assertEqual(len(result["new_findings"]), 1)
         self.assertFalse(result["release_authorized"])
         self.assertFalse(result["mutation_performed"])
+
+
+
+class RealGitEvidenceTests(unittest.TestCase):
+    def fixture(self, original=None):
+        """Build a separate local Git repository without network or system state."""
+        from contextlib import contextmanager
+        @contextmanager
+        def repo():
+            with tempfile.TemporaryDirectory() as tmp:
+                subprocess.run(["git", "init", "-q", tmp], check=True)
+                for key, value in (("user.name", "Offline Test"), ("user.email", "test@example.invalid")):
+                    subprocess.run(["git", "-C", tmp, "config", key, value], check=True)
+                folder = Path(tmp) / ".github" / "workflows"
+                folder.mkdir(parents=True)
+                file = folder / "vps.yml"
+                file.write_text(original or wf("ubuntu-latest", False))
+                self.commit(tmp)
+                base = self.rev(tmp)
+                yield tmp, file, base
+        return repo()
+
+    @staticmethod
+    def commit(tmp):
+        subprocess.run(["git", "-C", tmp, "add", "-A"], check=True)
+        subprocess.run(["git", "-C", tmp, "commit", "-qm", "offline fixture"], check=True)
+
+    @staticmethod
+    def rev(tmp):
+        return subprocess.check_output(["git", "-C", tmp, "rev-parse", "HEAD"], text=True).strip()
+
+    def active_git(self, tmp):
+        actual = subprocess.check_output
+        return mock.patch.object(g, "git", side_effect=lambda *args: actual(
+            ["git", *args], cwd=tmp, timeout=20, stderr=subprocess.DEVNULL))
+
+    def active_merge(self, tmp):
+        actual = subprocess.call
+        return mock.patch.object(g.subprocess, "call", side_effect=lambda argv, **kwargs: actual(
+            argv, cwd=tmp, **kwargs))
+
+    def test_real_git_added_unguarded_runner_denied(self):
+        with self.fixture() as (tmp, file, base):
+            file.write_text(wf(guard=False))
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(len(report["new_findings"]), 1)
+            self.assertFalse(report["release_authorized"])
+
+    def test_real_git_new_guarded_runner_allowed(self):
+        with self.fixture() as (tmp, file, base):
+            file.write_text(wf())
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                report = g.evaluate(base, self.rev(tmp))
+            self.assertEqual(report["new_findings"], [])
+            self.assertFalse(report["mutation_performed"])
+
+    def test_real_git_symlink_workflow_rejected(self):
+        with self.fixture() as (tmp, file, base):
+            file.unlink()
+            file.symlink_to("/tmp/unsafe-source.yml")
+            self.commit(tmp)
+            with self.active_git(tmp), self.active_merge(tmp):
+                with self.assertRaises(ValueError):
+                    g.evaluate(base, self.rev(tmp))
+
+    def test_real_git_blob_not_commit_rejected(self):
+        with self.fixture() as (tmp, file, base):
+            blob = subprocess.check_output(["git", "-C", tmp, "hash-object", str(file)], text=True).strip()
+            with self.active_git(tmp), self.active_merge(tmp):
+                with self.assertRaises(ValueError):
+                    g.inventory(blob, base)
 
 
 if __name__ == "__main__":
