@@ -3888,6 +3888,13 @@ def runner_worker_targets(allocation=None, base=None, *, reconcile=True):
                 rendered_prompt=cfg['prompt'] if reviewer_mode else project_worker_prompt(
                     project_id,cfg['name'],cfg['prompt'],slot,count,queue_item
                 )
+                # Applied to EVERY outgoing worker prompt, including zSentinel and reviewer.
+                rendered_prompt += (
+                    ' VPS/SSH: gebruik voortaan standaard de verbonden zSSH MCP-tools '
+                    '(zssh_exec/zssh_run_safe) voor toegestane VPS-toegang en commando’s. '
+                    'Geen handmatige SSH als zSSH beschikbaar is. Respecteer de zSSH-rechten; '
+                    'bij weigering geen omweg, maar pak ander veilig werk.'
+                )
                 out[worker_key]={
                     'project_id':worker_key,'base_project_id':project_id,'worker_slot':slot,'worker_count':count,
                     'global_worker_slot':global_slot,'global_worker_count':GLOBAL_CHATGPT_WORKER_LIMIT,
