@@ -547,5 +547,73 @@ class HostedPolicyWiringTests(unittest.TestCase):
 
 
 
+class HostedAdmissionExecutionTests(unittest.TestCase):
+    """Run the actual guarded Bash preflight with adversarial event identities."""
+
+    @classmethod
+    def setUpClass(cls):
+        text = (PATH.parents[1] / ".github" / "workflows" /
+                "zcloud-selfhosted-checkout-clean-ratchet-20261016-w1.yml"
+                ).read_text(encoding="utf-8")
+        gate = text.split("  trusted-event:", 1)[1].split("\n  validate:", 1)[0]
+        shell_source = gate.split("        run: |\n", 1)[1]
+        lines = []
+        for line in shell_source.splitlines():
+            if not line.startswith("          "):
+                break
+            lines.append(line[10:])
+        cls.script = "\n".join(lines)
+        if "CHECKOUT_CLEAN_EVENT_ADMITTED=1" not in cls.script:
+            raise AssertionError("actual trusted-event admission script missing")
+
+    def run_event(self, **changes):
+        import os
+        import subprocess
+        event = {
+            "EVENT_KIND": "pull_request",
+            "SOURCE_REPO": "Zennay/zCloud",
+            "HEAD_REPO": "Zennay/zCloud",
+            "BASE_REPO": "Zennay/zCloud",
+            "BASE_REF": "main",
+            "SOURCE_ACTOR": "Zennay",
+            "ATTEMPT": "1",
+        }
+        event.update(changes)
+        return subprocess.run(
+            ["bash", "-c", self.script], env={**os.environ, **event},
+            text=True, capture_output=True, timeout=5, check=False,
+        )
+
+    def test_first_party_initial_pr_event_admitted(self):
+        result = self.run_event()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CHECKOUT_CLEAN_EVENT_ADMITTED=1", result.stdout)
+
+    def test_fork_head_event_denied(self):
+        self.assertNotEqual(self.run_event(HEAD_REPO="attacker/zCloud").returncode, 0)
+
+    def test_fork_base_event_denied(self):
+        self.assertNotEqual(self.run_event(BASE_REPO="attacker/zCloud").returncode, 0)
+
+    def test_foreign_source_repo_denied(self):
+        self.assertNotEqual(self.run_event(SOURCE_REPO="attacker/zCloud").returncode, 0)
+
+    def test_alternate_main_base_denied(self):
+        self.assertNotEqual(self.run_event(BASE_REF="staging").returncode, 0)
+
+    def test_foreign_actor_denied(self):
+        self.assertNotEqual(self.run_event(SOURCE_ACTOR="untrusted").returncode, 0)
+
+    def test_rerun_event_denied(self):
+        self.assertNotEqual(self.run_event(ATTEMPT="2").returncode, 0)
+
+    def test_workflow_dispatch_event_denied(self):
+        self.assertNotEqual(self.run_event(EVENT_KIND="workflow_dispatch").returncode, 0)
+
+    def test_missing_actor_denied(self):
+        self.assertNotEqual(self.run_event(SOURCE_ACTOR="").returncode, 0)
+
+
+
 if __name__ == "__main__":
     unittest.main()
