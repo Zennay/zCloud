@@ -28,6 +28,7 @@ SAFE_DENIAL_REASONS = frozenset({
     'incomplete_runner_inventory', 'unbounded_runner_inventory', 'malformed_runner',
     'invalid_runner_identity', 'ambiguous_runner_identity', 'invalid_runner_state',
     'invalid_runner_labels', 'duplicate_runner_label', 'runner_name_filter_mismatch',
+    'unexpected_runner_os', 'unexpected_runner_lifecycle',
 })
 
 class InvalidEvidence(ValueError):
@@ -139,6 +140,12 @@ def inspect(envelope, *, now=None):
                 raise InvalidEvidence('duplicate_runner_label')
             normalized.add(n.casefold())
         if name.casefold() == RUNNER.casefold():
+            # This is the permanent Linux VPS listener, not an ephemeral
+            # runner provisioned with a coincidentally matching name.
+            if runner.get('os') != 'linux':
+                raise InvalidEvidence('unexpected_runner_os')
+            if type(runner.get('ephemeral')) is not bool or runner['ephemeral']:
+                raise InvalidEvidence('unexpected_runner_lifecycle')
             target = (runner['status'], runner['busy'], normalized)
     if target is None:
         category, next_action = 'RUNNER_NOT_LISTED', 'check_repository_runner_registration_and_group_entitlement'
