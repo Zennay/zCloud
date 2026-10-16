@@ -62,6 +62,18 @@ class IdentityPolicyTests(unittest.TestCase):
                             "          echo bad\n          python3 scripts/")
         self.assertIn("audit", g.unsafe_jobs(text))
 
+    def test_skipped_guard_step_denied(self):
+        text = wf().replace("        run: |", "        if: false\n        run: |")
+        self.assertIn("audit", g.unsafe_jobs(text))
+
+    def test_guard_continue_on_error_denied(self):
+        text = wf().replace("        run: |", "        continue-on-error: true\n        run: |")
+        self.assertIn("audit", g.unsafe_jobs(text))
+
+    def test_step_conditional_guard_denied(self):
+        text = wf().replace("        run: |", "        if: github.event_name == 'workflow_dispatch'\n        run: |")
+        self.assertIn("audit", g.unsafe_jobs(text))
+
     def test_failed_open_guard_denied(self):
         self.assertIn("audit", g.unsafe_jobs(wf().replace("--json", "--json || true")))
 
