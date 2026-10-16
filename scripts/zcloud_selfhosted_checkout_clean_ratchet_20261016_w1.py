@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
-JOB = re.compile(r"^  ([A-Za-z0-9_.-]+):(?:\s*#.*)?\s*$")
+JOB = re.compile(r"^  (?P<quote>['\"]?)(?P<id>[A-Za-z0-9_.-]+)(?P=quote)\s*:(?:\s*#.*)?\s*$")
 STEP = re.compile(r"^      -\s+['\"]?(?:name|uses|run|id|if|shell|env|with)['\"]?\s*:")
 USES = re.compile(r"^\s*(?:-\s*)?['\"]?uses['\"]?\s*:\s*['\"]?([^'\"\s#]+)")
 CLEAN = re.compile(r"^\s+['\"]?clean['\"]?\s*:\s*(.*)$")
@@ -75,15 +75,33 @@ def analyze(source, path):
     lines = source.splitlines()
     jobs = []
     current = None
+    in_jobs = False
+    jobs_headers = 0
     for line in lines:
-        match = JOB.match(line)
+        # Only actual top-level `jobs` children are job IDs. A flow/alias
+        # jobs map is not safely inspectable by this bounded source parser.
+        header = re.match(r"^['\\\"]?jobs['\\\"]?\s*:\s*(.*)$", line)
+        if header:
+            jobs_headers += 1
+            in_jobs = True
+            current = None
+            if header.group(1).split("#", 1)[0].strip():
+                risks.append((path, "workflow", "jobs", "opaque-jobs-map"))
+            continue
+        if line and not line.startswith((" ", "#")):
+            in_jobs = False
+            current = None
+            continue
+        match = JOB.match(line) if in_jobs else None
         if match:
-            current = (match.group(1), [])
+            current = (match.group("id"), [])
             jobs.append(current)
         elif current and (line.startswith("    ") or not line.strip()):
             current[1].append(line)
         elif current and line and not line.startswith("#"):
             current = None
+    if jobs_headers != 1:
+        risks.append((path, "workflow", "jobs", "missing-or-duplicated-jobs-map"))
 
     for job_name, body in jobs:
         # Mapping order is irrelevant in YAML: runs-on may appear *after*
