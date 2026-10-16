@@ -328,6 +328,21 @@ class NameCollisionRatchetTests(unittest.TestCase):
         self.assertIsNone(guard.literal_workflow_filter(r"Build\z"))
         self.assertEqual(guard.literal_workflow_filter("Build"), "Build")
 
+
+    def test_unicode_nfc_equivalent_workflow_names_are_new_collision(self):
+        base = {"a.yml": "Café"}
+        candidate = {"a.yml": "Café", "b.yml": "Cafe\u0301"}
+        verdict = guard.judge(base, candidate)
+        self.assertEqual(verdict["status"], "deny")
+        self.assertEqual(verdict["added_collision_count"], 1)
+        self.assertEqual(verdict["added_collisions"][0]["paths"], ["a.yml", "b.yml"])
+        self.assertFalse(verdict["merge_authorized"])
+
+    def test_preexisting_unicode_normalization_debt_is_tolerated(self):
+        names = {"a.yml": "Café", "b.yml": "Cafe\u0301"}
+        self.assertEqual(guard.judge(names, names)["status"], "pass")
+        self.assertEqual(guard.judge(names, {"a.yml": "Café"})["status"], "pass")
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
