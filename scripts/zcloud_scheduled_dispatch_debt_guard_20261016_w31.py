@@ -68,6 +68,19 @@ INLINE_LOCAL_ACTION = re.compile(
     r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
     r"""(\./\.github/actions/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)['"]?(?=\s*[,}\]])"""
 )
+# Local GitHub Actions can live outside .github/actions. An unscanned local
+# action must NEVER be classified as safe merely because it is outside the
+# standard folder. Fingerprint its new reference as review-requiring; do not
+# execute its manifest, inspect the working tree or grant deploy authority.
+OTHER_LOCAL_USES = re.compile(
+    r"""(?m)^[ \t]+(?:-[ \t]*)?(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""(\./[^\s'"#,}\]]+)['"]?\s*(?:#.*)?$"""
+)
+INLINE_OTHER_LOCAL_USES = re.compile(
+    r"""(?m)[{,]\s*(?:uses|['"]uses['"])\s*:\s*['"]?"""
+    r"""(\./[^\s'"#,}\]]+)['"]?(?=\s*[,}\]])"""
+)
+
 INLINE_RUNS = re.compile(r"""(?m)^[ \t]*runs:[ \t]*\{([^}\n]*)\}""")
 INLINE_ACTION_ENTRY = re.compile(
     r"""(?:^|,)\s*(?:main|pre|post|['"](?:main|pre|post)['"])\s*:\s*"""
@@ -315,6 +328,17 @@ def findings(workflows: dict[str, str]) -> dict[str, Counter[str]]:
                         ("missing-action:" + action_root).encode()
                     ).hexdigest()
                     sites[fingerprint] += 1
+            for match in chain(OTHER_LOCAL_USES.finditer(text),
+                               INLINE_OTHER_LOCAL_USES.finditer(text)):
+                target = match.group(1)
+                if (target.startswith("./.github/actions/")
+                        or target.startswith("./.github/workflows/")):
+                    # These are already represented by the normal graph
+                    # traversal; avoid counting them as two risk edges.
+                    continue
+                sites[hashlib.sha256(
+                    ("opaque-local-action:" + path + ":" + target).encode()
+                ).hexdigest()] += 1
             for match in chain(OPAQUE_USES.finditer(text), INLINE_OPAQUE_USES.finditer(text)):
                 edge = hashlib.sha256(
                     ("opaque-action:" + path + ":" + match.group(1)).encode()
