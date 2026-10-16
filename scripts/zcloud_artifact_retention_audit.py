@@ -12,6 +12,9 @@ from typing import Iterable
 
 WORKFLOW_DIR = Path(".github/workflows")
 WORKFLOW_SUFFIXES = {".yml", ".yaml"}
+MAX_WORKFLOW_ENTRIES = 1024
+MAX_WORKFLOW_BYTES = 1024 * 1024
+MAX_TOTAL_WORKFLOW_BYTES = 32 * 1024 * 1024
 
 @dataclass(frozen=True)
 class ArtifactUpload:
@@ -195,16 +198,32 @@ def scan_repository(root: Path, *, max_days: int) -> list[ArtifactUpload]:
     if not workflows.is_dir():
         raise FileNotFoundError(f"workflow directory not found: {workflows}")
 
-    uploads: list[ArtifactUpload] = []
-    for path in sorted(workflows.iterdir()):
+    # A maliciously oversized repository must not monopolise hosted workers.
+    # Bound directory entries before sorting and size-check the whole inventory
+    # before parsing a single blob (so no misleading partial report is emitted).
+    candidates: list[Path] = []
+    for entry in workflows.iterdir():
+        candidates.append(entry)
+        if len(candidates) > MAX_WORKFLOW_ENTRIES:
+            raise RuntimeError("workflow inventory too large")
+    selected: list[Path] = []
+    total_bytes = 0
+    for path in sorted(candidates):
         if path.suffix.lower() not in WORKFLOW_SUFFIXES:
             continue
         if path.is_symlink():
-            raise RuntimeError(f"symlink workflow rejected: {path}")
+            raise RuntimeError("symlink workflow rejected")
         if not path.is_file():
             continue
-        if path.stat().st_size > 1024 * 1024:
-            raise RuntimeError("workflow too large to audit")
+        size = path.stat().st_size
+        if size > MAX_WORKFLOW_BYTES:
+            raise RuntimeError("workflow file too large")
+        total_bytes += size
+        if total_bytes > MAX_TOTAL_WORKFLOW_BYTES:
+            raise RuntimeError("workflow inventory bytes exceeded")
+        selected.append(path)
+    uploads: list[ArtifactUpload] = []
+    for path in selected:
         text = path.read_text(encoding="utf-8")
         uploads.extend(
             inspect_workflow(
