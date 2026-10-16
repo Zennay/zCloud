@@ -90,6 +90,35 @@ class MatrixContract(unittest.TestCase):
             "      matrix:\n        shard: [1, 2]",
             runner="${{ matrix.runner }}")))
 
+    def test_numeric_runner_selector_is_not_hosted_proof(self):
+        risks = findings(workflow(
+            "      matrix:\n        shard: [1, 2]",
+            runner="500"))
+        self.assertIn(("probe", "unsafe_max_parallel:None"), risks)
+
+    def test_recursive_runner_alias_is_fail_closed(self):
+        src = """name: Recursive runner
+on: [workflow_dispatch]
+jobs:
+  probe:
+    runs-on: &labels [*labels]
+    strategy:
+      max-parallel: 1
+      matrix:
+        shard: [1, 2]
+    steps:
+      - run: echo safe
+"""
+        with self.assertRaisesRegex(InvalidSource, "cyclic_runner_selection"):
+            findings(src)
+
+    def test_oversized_runner_alias_is_fail_closed(self):
+        src = workflow(
+            "      matrix:\n        shard: [1, 2]",
+            runner="[" + ", ".join(["ubuntu-latest"] * 65) + "]")
+        with self.assertRaisesRegex(InvalidSource, "oversized_runner_selection"):
+            findings(src)
+
     def test_reusable_workflow_caller_may_fan_out_to_vps(self):
         src = """name: Reusable caller
 on: [workflow_dispatch]
