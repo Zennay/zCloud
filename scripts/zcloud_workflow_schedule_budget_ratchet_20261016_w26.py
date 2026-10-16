@@ -93,7 +93,7 @@ def is_high_frequency(cron: str) -> bool:
     return any(b - a < MIN_GAP for a, b in zip(circular, circular[1:]))
 
 
-def schedules(source: str) -> tuple[str, ...]:
+def schedules(source: str, *, timezone_metadata: list[str] | None = None) -> tuple[str, ...]:
     if len(source.encode("utf-8")) > LIMIT_BYTES:
         raise AdmissionError("workflow_source_oversized")
     entries: list[str] = []
@@ -139,6 +139,12 @@ def schedules(source: str) -> tuple[str, ...]:
                 in_schedule = False
             continue
         if not in_schedule:
+            continue
+        # GitHub supports IANA timezone selectors, including DST. Never infer
+        # UTC proximity from them when a schedule is added or changed.
+        if re.fullmatch(r"\s*timezone\s*:\s*.+", line):
+            if timezone_metadata is not None:
+                timezone_metadata.append(line.strip())
             continue
         match = CRON_RE.match(line)
         if match:
@@ -285,12 +291,27 @@ def audit(repo: Path, baseline_sha: str) -> dict:
     existing: list[dict[str, str]] = []
     count = 0
     for path in paths:
+        old_timezones: list[str] = []
+        new_timezones: list[str] = []
         if path not in old:
             old_entries: tuple[str, ...] = ()
         else:
-            old_entries = schedules(git(repo, "show", f"{baseline_sha}:{path}"))
+            old_entries = schedules(
+                git(repo, "show", f"{baseline_sha}:{path}"),
+                timezone_metadata=old_timezones,
+            )
         before = set(old_entries)
-        after = schedules((repo / path).read_text(encoding="utf-8"))
+        after = schedules(
+            (repo / path).read_text(encoding="utf-8"),
+            timezone_metadata=new_timezones,
+        )
+        # An unchanged legacy timezone is observationally grandfathered.
+        # Altered cron/timezone combinations require a separate DST-aware
+        # review: nominal wall-clock matches do not prove UTC spacing.
+        if new_timezones and (old_timezones != new_timezones or old_entries != after):
+            count += 1
+            added.append({"workflow": path, "cron": "<timezone schedule change>",
+                          "reason": "timezone_requires_independent_review"})
         # A workflow can schedule the same job from multiple cron entries:
         # independently hourly 10:00 and 10:05 still creates a burst.
         prior_pairs = cross_schedule_bursts(old_entries)
