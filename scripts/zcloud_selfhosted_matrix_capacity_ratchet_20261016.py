@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import selectors
@@ -167,6 +168,19 @@ def _candidate_runner(value):
     return False
 
 
+def _static_matrix_value(value):
+    # GitHub expressions can evaluate to arrays or other shapes after YAML
+    # parsing. A literal-looking list containing an expression is not proof
+    # of static cardinality.
+    if isinstance(value, str):
+        return "${{" not in value
+    if isinstance(value, bool) or isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return False
+
+
 def _matrix_count(matrix):
     if not isinstance(matrix, dict):
         return None
@@ -176,12 +190,15 @@ def _matrix_count(matrix):
         if key in ("include", "exclude"):
             if not isinstance(values, list) or any(not isinstance(v, dict) for v in values):
                 return None
+            if any(not isinstance(k, str) or not _static_matrix_value(item)
+                   for row in values for k, item in row.items()):
+                return None
             if len(values) > MAX_MATRIX_JOBS:
                 return MAX_MATRIX_JOBS + 1
             continue
         if not isinstance(key, str) or not isinstance(values, list) or not values:
             return None
-        if any(not isinstance(v, (str, int, float, bool)) for v in values):
+        if any(not _static_matrix_value(v) for v in values):
             return None
         count *= len(values)
         axes += 1
