@@ -201,6 +201,25 @@ class Tests(unittest.TestCase):
         head=self.git('rev-parse','HEAD')
         self.assertTrue(module.evaluate(self.repo,base,head)['ok'])
 
+    def test_untrusted_pr_runs_admission_instead_of_skipping(self):
+        workflow=(SCRIPT.parent.parent/'.github/workflows/zcloud-cross-run-artifact-review-20261016.yml').read_text()
+        self.assertIn('Reject untrusted PR provenance before any repository checkout',workflow)
+        self.assertNotIn('  deny-new-cross-run-downloads:\n    if:', workflow)
+        self.assertLess(
+            workflow.index('Reject untrusted PR provenance before any repository checkout'),
+            workflow.index('uses: actions/checkout@'),
+        )
+        self.assertIn('test "$GITHUB_TRIGGERING_ACTOR" = Zennay',workflow)
+        self.assertIn('test "$PR_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"',workflow)
+
+    def test_untrusted_pr_has_no_live_runner_or_credential_writes(self):
+        workflow=(SCRIPT.parent.parent/'.github/workflows/zcloud-cross-run-artifact-review-20261016.yml').read_text()
+        self.assertIn('runs-on: ubuntu-latest',workflow)
+        self.assertIn('contents: read',workflow)
+        self.assertIn('persist-credentials: false',workflow)
+        self.assertNotIn('runs-on: [self-hosted',workflow)
+        self.assertNotIn('workflow_dispatch:',workflow)
+
     def test_named_step_with_input(self):
         self.assertEqual(sum(module._risks(CROSS,'w.yml').values()),1)
 
