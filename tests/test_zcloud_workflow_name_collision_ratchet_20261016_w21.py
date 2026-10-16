@@ -55,6 +55,28 @@ class NameCollisionRatchetTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(guard.InvalidInventory):
                 guard.workflow_name(".github/workflows/a.yml", source)
 
+    def test_yaml_quoted_name_keys_and_alias_shadow(self):
+        path = ".github/workflows/a.yml"
+        self.assertEqual(guard.workflow_name(path, b"'name': Build\\n"), "Build")
+        self.assertEqual(guard.workflow_name(path, b'"name": Build\\n'), "Build")
+        with self.assertRaises(guard.InvalidInventory):
+            guard.workflow_name(path, b"'name': One\\nname: Two\\n")
+
+    def test_giant_git_blob_rejected_before_read(self):
+        with tempfile.TemporaryDirectory() as root:
+            def git(*args):
+                return subprocess.check_output(["git", *args], cwd=root).decode().strip()
+            git("init", "-q")
+            git("config", "user.name", "CI Test")
+            git("config", "user.email", "test@example.com")
+            folder = Path(root) / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "oversized.yml").write_bytes(b"name: Too big\\n" + b"x" * 132000)
+            git("add", ".")
+            git("commit", "-qm", "oversized")
+            with self.assertRaisesRegex(guard.InvalidInventory, "workflow_blob_too_large"):
+                guard.read_names(git("rev-parse", "HEAD"), cwd=root)
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
