@@ -89,10 +89,18 @@ def analyze(source, path):
             if line.startswith("    steps:"):
                 break
             before_steps.append(line)
-        run_lines = [l for l in before_steps
-                     if re.match(r"^    runs-on\s*:", l)
-                     or re.match(r"^      - self-hosted\s*(?:#.*)?$", l)]
-        selfhosted = any("self-hosted" in l.lower() for l in run_lines)
+        runner_fields = [l for l in before_steps
+                         if re.match(r"^    runs-on\s*:", l)]
+        runner_list_items = [l for l in before_steps
+                             if re.match(r"^      -\s*['\\\"]?self-hosted['\\\"]?(?:\s*#.*)?$", l)]
+        selfhosted = (any("self-hosted" in l.lower() for l in runner_fields)
+                      or bool(runner_list_items))
+        # A dynamic runner may select the permanent VPS even if its source
+        # text does not contain the literal word self-hosted.
+        dynamic_runner = any(chr(36) + "{" in line or "*" in line.split(":", 1)[1]
+                             for line in runner_fields)
+        if dynamic_runner and any("checkout@" in line.lower() for line in body):
+            risks.append((path, job_name, "runner", "dynamic-runner-checkout"))
         if not selfhosted:
             continue
         # A self-hosted job using an aliased, expression-valued or flow-style
