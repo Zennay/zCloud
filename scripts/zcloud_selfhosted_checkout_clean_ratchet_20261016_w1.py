@@ -16,7 +16,7 @@ import time
 
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 JOB = re.compile(r"^  (?P<quote>['\"]?)(?P<id>[A-Za-z0-9_.-]+)(?P=quote)\s*:(?:\s*#.*)?\s*$")
-STEP = re.compile(r"^      -\s+['\"]?(?:name|uses|run|id|if|shell|env|with)['\"]?\s*:")
+STEP = re.compile(r"^      -(?:\s|$)")
 USES = re.compile(r"^\s*(?:-\s*)?['\"]?uses['\"]?\s*:\s*['\"]?([^'\"\s#]+)")
 CLEAN = re.compile(r"^\s+['\"]?clean['\"]?\s*:\s*(.*)$")
 WORKFLOW_PREFIX = ".github/workflows/"
@@ -190,15 +190,33 @@ def analyze(source, path):
             # independent review for each newly introduced flow-style step.
             if re.match(r"^      -\s*\{", line):
                 risks.append((path, job_name, "steps", "flow-step-unverified"))
+        # YAML steps can begin with any valid property (e.g. timeout-minutes
+        # or continue-on-error), or a bare dash and multiline mapping.
+        # Scope entries to the real steps list, not the runs-on labels.
         steps = []
         step = None
+        in_steps = False
         for line in body:
+            if re.match(r"^    ['\"]?steps['\"]?\s*:", line):
+                in_steps = True
+                step = None
+                continue
+            if re.match(r"^    ['\"]?[A-Za-z_-]+['\"]?\s*:", line):
+                in_steps = False
+                step = None
+                continue
+            if not in_steps:
+                continue
             if STEP.match(line):
                 step = [line]
                 steps.append(step)
             elif step is not None:
                 step.append(line)
         for index, step_lines in enumerate(steps):
+            initial = step_lines[0].split("-", 1)[1].strip()
+            if (initial.startswith(("*", "&", "!", "[", "{"))
+                or (initial and not re.match(r"^['\"]?[A-Za-z_-]+['\"]?\s*:", initial))):
+                risks.append((path, job_name, str(index), "opaque-step-entry"))
             action_refs = []
             for line in step_lines:
                 hit = USES.match(line)
