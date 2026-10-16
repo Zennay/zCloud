@@ -1,0 +1,106 @@
+name: zCloud seven-writer source-lock inventory (hosted)
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/zcloud-seven-writer-lock-audit-hosted-20261015-w3.yml"
+      - "scripts/zcloud_deployops_writer_lock_source_20261015_w3.py"
+      - "tests/test_zcloud_deployops_writer_lock_source_20261015_w3.py"
+      - "docs/deploy-ops/seven-writer-lock-source-inventory-20261015-w3.md"
+      - ".github/workflows/zcloud-vps-deploy.yml"
+      - ".github/workflows/zcloud-postsend-tab-preservation-live.yml"
+      - ".github/workflows/zcloud-safe-memory-reclaim-20261013.yml"
+      - ".github/workflows/zcloud-v2-activate-addon-in-place.yml"
+      - ".github/workflows/zcloud-worker-tab-guard.yml"
+      - ".github/workflows/zcloud-no-browser-churn-hotfix.yml"
+      - ".github/workflows/zcloud-emergency-addon-hot-reload.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Adversarial inventory tests (hosted, no VPS)
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_deployops_writer_lock_source_20261015_w3.py' -v
+      - name: Print non-authorizing source inventory
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deployops_writer_lock_source_20261015_w3.py --root . > "$RUNNER_TEMP/zcloud-writer-lock-source.json"
+          python3 - "$RUNNER_TEMP/zcloud-writer-lock-source.json" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert report["schema"] == "zcloud-writer-lock-source-v1"
+          assert report["total_writers"] == 7
+          assert not report["runtime_lock_verified"]
+          assert not report["dispatch_authorized"]
+          assert not report["release_authorized"]
+          assert not report["mutation_performed"]
+          # Snapshot checks are equality evidence only, not trusted release
+          # provenance or canonical-main verification.
+          # Detect source drift between two independent bounded read passes.
+          # This remains read-only equality evidence, not atomicity proof.
+          assert report["source_snapshot_complete"] is True
+          assert re.fullmatch(r"[0-9a-f]{64}", report["source_snapshot_sha256"])
+          assert all(re.fullmatch(r"[0-9a-f]{64}", row["source_sha256"])
+                     for row in report["writers"].values())
+          # Names and labels below are fixed trusted display strings; never
+          # render arbitrary workflow source or API response text as Markdown.
+          labels = {
+              "zcloud-vps-deploy.yml": "Hoofddeployment",
+              "zcloud-postsend-tab-preservation-live.yml": "Tabbehoud",
+              "zcloud-safe-memory-reclaim-20261013.yml": "Veilig geheugenherstel",
+              "zcloud-v2-activate-addon-in-place.yml": "Addon-activatie",
+              "zcloud-worker-tab-guard.yml": "Worker-tab beveiliging",
+              "zcloud-no-browser-churn-hotfix.yml": "Browserbehoud-hotfix",
+              "zcloud-emergency-addon-hot-reload.yml": "Nood-herladen addon",
+          }
+          assert set(report["writers"]) == set(labels)
+          assert report["source_serialized"] + len(report["source_unverified"]) == 7
+          expected_results = {
+              "serialized_source", "missing_concurrency", "ambiguous_concurrency",
+              "wrong_group", "unsafe_cancel_policy", "unsafe_parent_cancel_policy",
+              "ambiguous_parent_concurrency", "ambiguous_parent_group",
+              "parent_shares_production_group", "unexpected_nested_concurrency",
+              "unexpected_mutation_runner_target", "unexpected_companion_runner_target",
+              "missing_or_duplicate_runner_target", "missing_or_duplicate_mutation_job",
+              "ambiguous_jobs", "source_changed_during_read", "unreadable_source",
+              "symlink_source", "not_bounded_regular_source", "invalid_source_bytes",
+              "invalid_utf8", "tab_indentation_or_scalar", "unsupported_yaml_mapping_form",
+              "invalid_source_root", "duplicate_lock_field",
+              "unsupported_job_mapping", "unstable_source_snapshot",
+          }
+          rows = []
+          for filename, label in labels.items():
+              item = report["writers"][filename]
+              reason = item["source_result"]
+              assert reason in expected_results
+              status = "Broncode vergrendeld" if reason == "serialized_source" else "Nog niet bewezen"
+              rows.append(f"| {label} | {status} | `{reason}` |")
+          msg = (
+              "### VPS-schrijftaken: broncodecontrole (niet productie)\n"
+              f"- Vergrendeld volgens broncode: **{report['source_serialized']} van 7**\n"
+              f"- Nog te beoordelen: **{len(report['source_unverified'])} van 7**\n"
+              "- Alle zeven bronbestanden: **tweemaal identiek gelezen** "
+              "(geen atomair filesystemmoment)\n"
+              f"- Broncodevingerafdruk (niet gevalideerde herkomst): `{report['source_snapshot_sha256']}`\n"
+              "\n| Taak | Broncode | Reden |\n| --- | --- | --- |\n"
+              + "\n".join(rows)
+              + "\n\n**Let op:** GitHub kan een wachtende run in dezelfde concurrency-groep vervangen. "
+              + "`cancel-in-progress: false` beschermt lopende runs; dit is geen garantie "
+              + "dat wachtende runs behouden blijven.\n"
+              + "**Dit verleent geen toestemming voor deploy, runnerherstel of mutaties.**\n"
+          )
+          print(msg)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write(msg)
+          PY
