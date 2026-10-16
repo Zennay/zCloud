@@ -1175,5 +1175,45 @@ jobs:
         self.check(self.commit(), "pass")
 
 
+    def test_flow_style_opaque_alias_in_scheduled_step_is_denied(self):
+        self.put("flow-alias.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps: [{ uses: *hidden }]
+""")
+        self.check(self.commit(), "reject")
+
+    def test_flow_style_opaque_expression_in_scheduled_step_is_denied(self):
+        self.put("flow-expression.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps: [{ 'uses': ${{ inputs.hiddenAction }} }]
+""")
+        self.check(self.commit(), "reject")
+
+    def test_unchanged_flow_style_opaque_alias_is_grandfathered(self):
+        self.put("flow-existing.yml", """on: schedule
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps: [{uses: *known}]
+""")
+        base = self.commit()
+        report = guard.evaluate(self.repo, base, base)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["new_sites"], 0)
+
+    def test_manual_flow_opaque_action_is_not_scheduled_debt(self):
+        self.put("manual-flow.yml", """on: workflow_dispatch
+jobs:
+  job:
+    runs-on: ubuntu-latest
+    steps: [{uses: *known}]
+""")
+        self.check(self.commit(), "pass")
+
+
 if __name__ == "__main__":
     unittest.main()
