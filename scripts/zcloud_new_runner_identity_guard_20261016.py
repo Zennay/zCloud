@@ -199,7 +199,7 @@ def _unsafe_job_env(job: list[str]) -> bool:
     duplicate or tagged mappings that can synthesize them at runtime.
     """
     headings = [i for i, line in enumerate(job)
-                if re.fullmatch(r"    env:\\s*(?:#.*)?", line)]
+                if re.fullmatch(r"    env:\s*(?:#.*)?", line)]
     if len(headings) > 1:
         return True
     if not headings:
@@ -213,7 +213,7 @@ def _unsafe_job_env(job: list[str]) -> bool:
     for line in job[start:stop]:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
-        item = re.fullmatch(r"      ([A-Za-z_][A-Za-z0-9_]*):[ \\t]*([^\\n]*)", line)
+        item = re.fullmatch(r"      ([A-Za-z_][A-Za-z0-9_]*):[ \t]*([^\n]*)", line)
         if item is None:
             return True
         key, value = item.group(1), item.group(2).lstrip()
