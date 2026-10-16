@@ -26,6 +26,7 @@ USES = re.compile(r"^\s*-?\s*uses\s*:\s*['\"]?actions/checkout@", re.I)
 INDIRECT_USE = re.compile(r"""^\s*-?\s*uses\s*:\s*['"]?(?:\*|\$\{\{)""", re.I)
 INDIRECT_STEP = re.compile(r"""^\s*-\s*(?:(?:['"])?\*[A-Za-z_][\w-]*['"]?(?:\s+#.*)?|<<\s*:\s*\*[A-Za-z_][\w-]*)\s*$""")
 REPO = re.compile(r"(?:^|[,\s{])['\"]?repository['\"]?\s*:\s*(.*)$", re.I)
+SUBMODULES = re.compile(r"(?:^|[,\s{])['\"]?submodules['\"]?\s*:\s*(.*)$", re.I)
 SAFE = {"${{ github.repository }}", "zennay/zcloud"}
 PATH = re.compile(r"\A(?:\.github/workflows/[^/]+\.ya?ml|(?:[^/]+/)*action\.ya?ml)\Z")
 
@@ -74,6 +75,7 @@ def scan(text: str) -> Counter[str]:
                 end = j
                 break
         values: list[str] = []
+        submodule_values: list[str] = []
         # YAML mapping key order is flexible: checkout `with.repository` may
         # precede `uses` within the SAME step. Inspect its entire step only.
         for snippet in lines[start:end]:
@@ -85,11 +87,22 @@ def scan(text: str) -> Counter[str]:
             if match:
                 val = match.group(1).split(' #', 1)[0]
                 values.append(_stripped(val))
+            submodules = SUBMODULES.search(snippet)
+            if submodules:
+                submodule_values.append(submodules.group(1).strip())
         for v in values:
             if v.lower() not in SAFE:
                 findings["foreign-checkout-repository:" + v[:160]] += 1
         if len(values) > 1:
             findings["multiple-checkout-repositories"] += 1
+        # checkout normally ignores submodules. A new true/recursive or
+        # expression-controlled setting can fetch code from unrelated Git
+        # repositories even when checkout.repository is canonical.
+        for val in submodule_values:
+            # Only a literal false (including YAML quoted forms) is safe.
+            # Inline flow mappings may follow it with another comma key.
+            if not re.match(r"""\A(?:false|"false"|'false')\s*(?:[,}]|\#|\Z)""", val, re.I):
+                findings["checkout-submodules-enabled-or-dynamic"] += 1
     return findings
 
 
