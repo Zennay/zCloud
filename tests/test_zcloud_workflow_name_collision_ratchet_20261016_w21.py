@@ -77,6 +77,22 @@ class NameCollisionRatchetTests(unittest.TestCase):
             with self.assertRaisesRegex(guard.InvalidInventory, "workflow_blob_too_large"):
                 guard.read_names(git("rev-parse", "HEAD"), cwd=root)
 
+    def test_uniformly_indented_yaml_root_is_not_filename_fallback(self):
+        path = ".github/workflows/runner.yml"
+        actual = guard.workflow_name(path, b"  name: CI nested root\n  on: push\n")
+        self.assertEqual(actual, "CI nested root")
+        self.assertNotEqual(actual, "runner.yml")
+
+    def test_nested_job_and_step_names_do_not_override_root(self):
+        path = ".github/workflows/runner.yml"
+        source = b"on: push\njobs:\n  test:\n    name: Job title\n    steps:\n      - name: Step title\n"
+        self.assertEqual(guard.workflow_name(path, source), "runner.yml")
+
+    def test_empty_or_flow_mapping_workflow_refused(self):
+        for source in (b"", b"   # comment only\n", b'{"name": "Aliased CI"}\n'):
+            with self.subTest(source=source), self.assertRaises(guard.InvalidInventory):
+                guard.workflow_name(".github/workflows/a.yml", source)
+
     def test_bad_revision_denied(self):
         with self.assertRaises(guard.InvalidInventory):
             guard.read_names("main", cwd=".")
