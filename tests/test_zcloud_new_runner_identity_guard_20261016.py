@@ -376,6 +376,32 @@ class IdentityPolicyTests(unittest.TestCase):
             report = g.evaluate("a" * 40, "b" * 40)
         self.assertEqual(report["new_findings"], [])
 
+    def test_legacy_manual_vps_job_cannot_be_silently_auto_triggered(self):
+        old = wf(guard=False)
+        new = old.replace("  workflow_dispatch:", "  push:")
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[old, new]):
+            report = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(report["new_findings"][0]["reason"],
+                         "modified_legacy_unsafe_workflow_envelope")
+
+    def test_legacy_vps_job_cannot_inherit_new_workflow_privileges(self):
+        old = wf(guard=False)
+        new = old.replace("jobs:", "permissions: write-all\njobs:")
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[old, new]):
+            report = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(report["new_findings"][0]["reason"],
+                         "modified_legacy_unsafe_workflow_envelope")
+
+    def test_legacy_root_comment_change_is_not_privilege_debt(self):
+        old = wf(guard=False)
+        new = old.replace("jobs:", "# reviewed\njobs:")
+        with mock.patch.object(g, "inventory", return_value=[".github/workflows/legacy.yml"]), \
+             mock.patch.object(g, "source", side_effect=[old, new]):
+            report = g.evaluate("a" * 40, "b" * 40)
+        self.assertEqual(report["new_findings"], [])
+
     def test_changed_only_regression(self):
         with mock.patch.object(g, "inventory", return_value=[".github/workflows/new.yml"]), \
              mock.patch.object(g, "source", side_effect=[None, wf(guard=False)]):
