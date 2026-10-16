@@ -7,6 +7,8 @@ No git, network, repository write, protected-branch or release operations.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import os
 import re
@@ -29,6 +31,11 @@ KINDS = {"direct_main_ref", "other_git_push", "git_refs_api", "pull_request_merg
          "contents_write", "write_all", "github_script"}
 STRONG = {"direct_main_ref", "git_refs_api", "pull_request_merge"}
 DECISIONS = {"migrate", "retire", "false_positive"}
+CSV_HEADERS = (
+    "main_sha", "workflow_path", "source_sha256", "signal_lines_and_kinds",
+    "priority", "owner", "reviewed_by", "decision", "evidence_url",
+    "review_verified", "branch_protection_authorized",
+)
 
 
 class ReviewError(Exception):
@@ -48,7 +55,7 @@ def reject_numeric(_: str):
     raise ReviewError("unsupported_number")
 
 
-def read_json(path: Path, limit: int) -> dict:
+def read_bytes(path: Path, limit: int) -> bytes:
     """Bounded, fd-anchored read: no symlink in any parent or the final file."""
     if not path.name or any(part == ".." for part in path.parts):
         raise ReviewError("unsafe_path")
@@ -75,6 +82,11 @@ def read_json(path: Path, limit: int) -> dict:
     finally:
         if directory_fd is not None:
             os.close(directory_fd)
+    return blob
+
+
+def read_json(path: Path, limit: int) -> dict:
+    blob = read_bytes(path, limit)
     try:
         parsed = json.loads(blob.decode("utf-8"),
                             object_pairs_hook=no_duplicates,
@@ -172,6 +184,73 @@ def checked_inventory(data: dict, expected_sha: str) -> dict[str, str]:
     return seen
 
 
+def csv_to_reviews(inventory: dict, raw: bytes, expected_sha: str) -> dict:
+    """Convert the *exact* inventory CSV back into untrusted review claims.
+
+    Every original candidate must be present exactly once, with immutable
+    provenance, signal codes, priority and deny flags unchanged. Only owner,
+    reviewer, decision and evidence_url may be filled in. No approvals follow.
+    """
+    paths = checked_inventory(inventory, expected_sha)
+    try:
+        content = raw.decode("utf-8", "strict")
+    except UnicodeError as exc:
+        raise ReviewError("invalid_csv_encoding") from exc
+    if any((ord(c) < 32 and c not in "\r\n\t") or
+           0x7f <= ord(c) <= 0x9f or
+           c in "\u200b\u200c\u200d\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+           for c in content):
+        raise ReviewError("unsafe_csv_controls")
+    try:
+        reader = csv.reader(io.StringIO(content, newline=""), strict=True)
+        rows = list(reader)
+    except (csv.Error, ValueError) as exc:
+        raise ReviewError("invalid_csv") from exc
+    if (not rows or tuple(rows[0]) != CSV_HEADERS or
+        len(rows) - 1 > MAX_CANDIDATES):
+        raise ReviewError("invalid_csv_header_or_size")
+    indexed = {row["path"]: row for row in inventory["candidates"]}
+    seen = set()
+    claims = []
+    for values in rows[1:]:
+        if len(values) != len(CSV_HEADERS):
+            raise ReviewError("invalid_csv_columns")
+        item = dict(zip(CSV_HEADERS, values))
+        path = item["workflow_path"]
+        if not valid_path(path) or path not in paths or path in seen:
+            raise ReviewError("duplicate_or_unknown_csv_candidate")
+        seen.add(path)
+        source = indexed[path]
+        signals = "|".join(
+            str(signal["line"]) + ":" + signal["kind"]
+            for signal in source["signals"]
+        )
+        priority = ("P1" if source["classification"] == "direct_writer_candidate"
+                    else "P2")
+        if (item["main_sha"] != expected_sha or
+            item["source_sha256"] != paths[path] or
+            item["signal_lines_and_kinds"] != signals or
+            item["priority"] != priority):
+            raise ReviewError("tampered_csv_provenance")
+        if (item["review_verified"] != "false" or
+            item["branch_protection_authorized"] != "false"):
+            raise ReviewError("forged_csv_authorization")
+        mutable = ("owner", "reviewed_by", "decision", "evidence_url")
+        filled = [bool(item[field]) for field in mutable]
+        if any(filled) and not all(filled):
+            raise ReviewError("incomplete_csv_review")
+        if all(filled):
+            claims.append({
+                "path": path, "source_sha256": paths[path],
+                "owner": item["owner"], "reviewed_by": item["reviewed_by"],
+                "decision": item["decision"], "evidence_url": item["evidence_url"],
+            })
+    if seen != set(paths):
+        raise ReviewError("missing_csv_candidates")
+    return {"schema": "zcloud-main-writer-review-v1",
+            "main_sha": expected_sha, "decisions": claims}
+
+
 def review(inventory: dict, reviews: dict, expected_sha: str) -> dict:
     if not isinstance(expected_sha, str) or not HEX40.fullmatch(expected_sha):
         raise ReviewError("invalid_expected_sha")
@@ -224,16 +303,22 @@ def review(inventory: dict, reviews: dict, expected_sha: str) -> dict:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Offline historical writer review (deny-first)")
     parser.add_argument("--inventory", required=True)
-    parser.add_argument("--reviews", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--reviews", help="Strict offline JSON review claims")
+    source.add_argument("--reviews-csv", help="Edited exact-inventory CSV review queue")
     parser.add_argument("--expected-main-sha", required=True)
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     args = parser.parse_args(argv)
     try:
         if not HEX40.fullmatch(args.expected_main_sha):
             raise ReviewError("invalid_expected_sha")
-        result = review(read_json(Path(args.inventory), MAX_INVENTORY_BYTES),
-                        read_json(Path(args.reviews), MAX_REVIEWS_BYTES),
-                        args.expected_main_sha)
+        inventory = read_json(Path(args.inventory), MAX_INVENTORY_BYTES)
+        reviews = (read_json(Path(args.reviews), MAX_REVIEWS_BYTES)
+                   if args.reviews is not None else
+                   csv_to_reviews(inventory,
+                                  read_bytes(Path(args.reviews_csv), MAX_REVIEWS_BYTES),
+                                  args.expected_main_sha))
+        result = review(inventory, reviews, args.expected_main_sha)
     except (ReviewError, OSError) as exc:
         code = str(exc) if isinstance(exc, ReviewError) else "unreadable_file"
         if args.format == "markdown":
