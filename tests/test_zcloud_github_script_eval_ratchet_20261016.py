@@ -153,6 +153,27 @@ class GithubScriptRatchetTest(unittest.TestCase):
         ))
         self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
 
+    def test_flow_mapping_github_script_uses_denied(self):
+        a = self.commit(SAFE)
+        replacement = "      - {uses: actions/github-script@0123456789012345678901234567890123456789, with: {script: 'core.info(1);'}}"
+        start = SAFE.index("      - name: Evaluate")
+        stop = SAFE.index("        env:", start)
+        b = self.commit(SAFE[:start] + replacement + "\n" + SAFE[stop:])
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_encoded_uses_key_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace(
+            "uses: actions/github-script@",
+            r'"u\u0073es": actions/github-script@',
+        ))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
+    def test_encoded_script_key_denied(self):
+        a = self.commit(SAFE)
+        b = self.commit(SAFE.replace("script: |", r'"scr\u0069pt": |'))
+        self.assertGreaterEqual(self.evaluate(a, b)["new_findings"], 1)
+
     def test_script_in_unrelated_action_is_not_guarded(self):
         a = self.commit(OTHER)
         b = self.commit(OTHER + "\n# GitHub-script not invoked\n")
