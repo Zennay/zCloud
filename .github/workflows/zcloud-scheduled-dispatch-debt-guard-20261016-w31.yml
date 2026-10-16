@@ -1,0 +1,46 @@
+name: zCloud scheduled dispatch no-new-debt (hosted-only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-scheduled-dispatch-debt-guard-20261016-w31.yml
+      - scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
+      - tests/test_zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-scheduled-dispatch-guard-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source-only:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact candidate without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          clean: true
+      - name: Test fail-closed policy and immutable source delta
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          python3 -m py_compile scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py
+          python3 -m unittest -v tests.test_zcloud_scheduled_dispatch_debt_guard_20261016_w31
+          python3 scripts/zcloud_scheduled_dispatch_debt_guard_20261016_w31.py             --base "$EXPECTED_BASE" --candidate "$EXPECTED_HEAD"
