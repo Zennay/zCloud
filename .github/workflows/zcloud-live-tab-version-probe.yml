@@ -7,12 +7,16 @@ on:
       - .github/workflows/zcloud-live-tab-version-probe.yml
       - tests/test_zcloud_live_tab_probe_trust.py
       - tests/test_zcloud_live_tab_manual_privacy_20261014.py
+      - scripts/zcloud_live_tab_rdp_port_20261016.py
+      - tests/test_zcloud_live_tab_rdp_port_20261016.py
   push:
     branches: [main]
     paths:
       - .github/workflows/zcloud-live-tab-version-probe.yml
       - tests/test_zcloud_live_tab_probe_trust.py
       - tests/test_zcloud_live_tab_manual_privacy_20261014.py
+      - scripts/zcloud_live_tab_rdp_port_20261016.py
+      - tests/test_zcloud_live_tab_rdp_port_20261016.py
   workflow_dispatch:
     inputs:
       confirm_sha:
@@ -51,6 +55,8 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           python3 -m unittest -v tests.test_zcloud_live_tab_probe_trust tests.test_zcloud_live_tab_manual_privacy_20261014
+          python3 -m unittest -v tests.test_zcloud_live_tab_rdp_port_20261016
+          python3 -m py_compile scripts/zcloud_live_tab_rdp_port_20261016.py
 
   inspect:
     # A PR may only execute the hosted source checks above. Never grant an
@@ -119,20 +125,19 @@ jobs:
           print("RDP_EXPECTED_SCRIPT_VERSION="+expected_version)
           # Only read Firefox RDP actor data. Never navigate, close, reload
           # tabs or print private conversation titles, URLs or prompts.
-          proc=subprocess.run(["ps","-eo","pid=,args="],text=True,capture_output=True,timeout=5)
-          matches=[]
-          for line in proc.stdout.splitlines():
-              if "-start-debugger-server" not in line or "/firefox" not in line:continue
-              found=re.search(r"-start-debugger-server\s+(\d+)",line)
-              if found:matches.append((line.strip().split()[0],int(found.group(1))))
-          print("FIREFOX_DEBUGGER_UNIQUE="+str(len(matches)==1).lower())
-          if not matches:
+          from scripts.zcloud_live_tab_rdp_port_20261016 import detect_debugger_port
+          proc=subprocess.run(["ps","-eo","pid=,ppid=,args="],text=True,capture_output=True,timeout=5)
+          if proc.returncode != 0:
+              print("RDP_SAFE_PROBE_UNAVAILABLE=ps_error")
+              raise SystemExit(0)
+          status,port=detect_debugger_port(proc.stdout.splitlines())
+          print("FIREFOX_DEBUGGER_UNIQUE="+str(status=="unique").lower())
+          if status=="absent":
               print("RDP_AVAILABLE=false")
               raise SystemExit(0)
-          if len(matches)!=1 or len({entry[1] for entry in matches})!=1:
+          if status!="unique" or port is None:
               print("RDP_SAFE_PROBE_UNAVAILABLE=ambiguous_debugger")
               raise SystemExit(0)
-          pid,port=matches[0]
           # No host process identifiers in public Actions logs.
           def msg(sock,timeout=8):
               sock.settimeout(timeout)
