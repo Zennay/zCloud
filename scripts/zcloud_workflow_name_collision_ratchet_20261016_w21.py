@@ -260,6 +260,68 @@ def reference_risks(names, references):
                 findings.add((path, "ambiguous_target", value))
     return findings
 
+
+def cyclic_reference_edges(names, references):
+    """Find only resolvable workflow_run edges inside cyclic components.
+
+    Report path identities, not display names; legacy cycles remain baseline
+    debt but new cyclic edges fail closed. Ambiguous/missing names are separately
+    handled by reference_risks and never trusted as graph vertices.
+    """
+    counts = Counter(names.values())
+    unique_names = {display: path for path, display in names.items()
+                    if counts[display] == 1}
+    graph = {path: set() for path in names}
+    for source, targets in references.items():
+        if source not in graph or targets is None:
+            continue
+        for target_name in targets:
+            dest = unique_names.get(target_name)
+            if dest is not None:
+                graph[source].add(dest)
+
+    # Tarjan SCC: O(vertices+edges); <= MAX_FILES vertices by Git admission.
+    index = 0
+    indices, lowlink, stack, on_stack, components = {}, {}, [], set(), []
+
+    def visit(node):
+        nonlocal index
+        indices[node] = lowlink[node] = index
+        index += 1
+        stack.append(node)
+        on_stack.add(node)
+        for next_node in sorted(graph[node]):
+            if next_node not in indices:
+                visit(next_node)
+                lowlink[node] = min(lowlink[node], lowlink[next_node])
+            elif next_node in on_stack:
+                lowlink[node] = min(lowlink[node], indices[next_node])
+        if lowlink[node] == indices[node]:
+            component = set()
+            while True:
+                member = stack.pop()
+                on_stack.remove(member)
+                component.add(member)
+                if member == node:
+                    break
+            components.append(component)
+
+    for node in sorted(graph):
+        if node not in indices:
+            visit(node)
+    result = set()
+    for component in components:
+        if len(component) > 1:
+            for source in component:
+                result.update((source, dest) for dest in graph[source]
+                              if dest in component)
+        else:
+            node = next(iter(component))
+            if node in graph[node]:
+                result.add((node, node))
+    return result
+
+
 def pairs(items):
     by_name = {}
     for path, name in items.items():
@@ -272,12 +334,17 @@ def judge(base, candidate, base_refs=None, candidate_refs=None):
     new = sorted(pairs(candidate) - pairs(base))
     reference_new = sorted(reference_risks(candidate, candidate_refs or {}) -
                            reference_risks(base, base_refs or {}))
+    cycle_new = sorted(cyclic_reference_edges(candidate, candidate_refs or {}) -
+                       cyclic_reference_edges(base, base_refs or {}))
     return {
         "policy": "workflow-name-no-new-collision-v1",
-        "status": "deny" if new or reference_new else "pass",
+        "status": "deny" if new or reference_new or cycle_new else "pass",
         "added_collisions": [{"name": n, "paths": [a, b]} for n, a, b in new[:20]],
         "added_collision_count": len(new),
         "added_reference_risk_count": len(reference_new),
+        "added_cycle_edge_count": len(cycle_new),
+        "added_cycle_edges": [dict(source=source, target=target)
+                              for source, target in cycle_new[:20]],
         "added_reference_risks": [dict(workflow=path, reason=reason, target=name)
                                   for path, reason, name in reference_new[:20]],
         "baseline_collision_count": len(pairs(base)),
