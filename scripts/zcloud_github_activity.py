@@ -244,7 +244,7 @@ def collect(registry, projects, *, reader, now=None):
     for pid in projects:
         repo = registry[pid]
         coverage = {"repository": repo, "status": "partial", "last_successful_sync": None,
-                    "sources": {}, "github_pr_branch_ci": "partial"}
+                    "last_successful_source_fetch": None, "sources": {}, "github_pr_branch_ci": "partial"}
         result["coverage"][pid] = coverage
         staged = []
         endpoints = (("pulls", parse_pulls), ("commits", parse_commits),
@@ -274,8 +274,9 @@ def collect(registry, projects, *, reader, now=None):
         if all(value == "recent_window" for value in coverage["sources"].values()) and len(coverage["sources"]) == 4:
             coverage["status"] = "recent_window"
             coverage["github_pr_branch_ci"] = "recent_window"
-        if staged:
             coverage["last_successful_sync"] = observed
+        if any(value in ("recent_window", "truncated_after_two_pages") for value in coverage["sources"].values()):
+            coverage["last_successful_source_fetch"] = observed
         result["events"].extend(staged)
     # Deduplicate stable source identities before any cache or UI adapter uses them.
     deduped = {}
