@@ -50,6 +50,21 @@ class LaneGeneratorTests(unittest.TestCase):
         self.assertEqual(["ftmo-a"], list(lane_map))
         self.assertEqual("critical-path", lane_map["ftmo-a"]["lane_id"])
 
+    def test_same_priority_lane_selects_complete_feature_before_older_micro_qa(self):
+        micro = self.item("ftmo-micro", "Test candidate implementation probe", "P1")
+        macro = self.item("ftmo-feature", "Implement generation candidate end-to-end", "P1")
+        macro["created_at"] = "2026-10-02T00:00:00+00:00"
+        lane_map = eligible_queue_lane_map(self.project(), [micro, macro])
+        self.assertIn("ftmo-feature", lane_map)
+        self.assertNotIn("ftmo-micro", lane_map)
+
+    def test_higher_priority_qa_incident_still_outweighs_lower_priority_feature(self):
+        micro = self.item("ftmo-p0-qa", "Test candidate implementation probe", "P0")
+        macro = self.item("ftmo-p1-feature", "Implement generation candidate end-to-end", "P1")
+        lane_map = eligible_queue_lane_map(self.project(), [micro, macro])
+        self.assertIn("ftmo-p0-qa", lane_map)
+        self.assertNotIn("ftmo-p1-feature", lane_map)
+
     def test_active_queue_item_occupies_lane_before_queued_duplicate(self):
         running = self.item(
             "ftmo-running",
