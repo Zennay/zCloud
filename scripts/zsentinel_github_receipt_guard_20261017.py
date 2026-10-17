@@ -76,6 +76,8 @@ def inspect_receipt(data, now=None):
         raise ValueError("repository: canonical owner/repository required")
     run = _mapping(data.get("workflow_run"), "workflow_run")
     job = _mapping(data.get("job"), "job")
+    if full_name != expected_repository:
+        raise ValueError("repository: trusted project binding mismatch")
     run_id = _integer(run.get("id"), "workflow_run.id")
     job_id = _integer(job.get("id"), "job.id")
     if _integer(job.get("run_id"), "job.run_id") != run_id:
@@ -168,7 +170,7 @@ def inspect_receipt(data, now=None):
 
 
 
-def inspect_github_api_receipt(data, now=None):
+def inspect_github_api_receipt(data, now=None, *, expected_project_id, expected_repository):
     """Classify an independently fetched GitHub REST run + latest-attempt job.
 
     The run and job must agree on canonical API URLs, immutable SHA, run
@@ -179,6 +181,13 @@ def inspect_github_api_receipt(data, now=None):
     data = _mapping(data, "api_snapshot")
     run = _mapping(data.get("workflow_run"), "workflow_run")
     job = _mapping(data.get("job"), "job")
+    # An in-band project slug is not proof that the workflow belongs to that
+    # project. Require the caller's independently resolved Notion/registry
+    # owner→repository binding instead of accepting a payload claim.
+    if not isinstance(expected_project_id, str) or not isinstance(expected_repository, str):
+        raise ValueError("expected owner binding must be supplied out of band")
+    if data.get("project_id") != expected_project_id:
+        raise ValueError("project_id: trusted project binding mismatch")
     repository = _mapping(run.get("repository"), "workflow_run.repository")
     full_name = repository.get("full_name")
     if not isinstance(full_name, str) or not re.fullmatch(
@@ -226,6 +235,8 @@ def main():
     parser.add_argument("receipt", type=Path)
     parser.add_argument("--api-envelope", action="store_true",
                         help="validate raw GitHub REST run + job objects instead of normalized receipt")
+    parser.add_argument("--expect-project", help="registry-verified project identifier")
+    parser.add_argument("--expect-repository", help="registry-verified owner/repository")
     args = parser.parse_args()
     try:
         if args.receipt.is_symlink():
@@ -240,8 +251,17 @@ def main():
         if len(raw) > MAX_FILE_BYTES:
             raise ValueError("receipt exceeds size limit")
         receipt = json.loads(raw.decode("utf-8"), object_pairs_hook=_object)
-        diagnose = inspect_github_api_receipt if args.api_envelope else inspect_receipt
-        print(json.dumps(diagnose(receipt), sort_keys=True))
+        if args.api_envelope:
+            if not args.expect_project or not args.expect_repository:
+                raise ValueError("API envelope requires independent project/repository binding")
+            result = inspect_github_api_receipt(
+                receipt, expected_project_id=args.expect_project,
+                expected_repository=args.expect_repository)
+        else:
+            if args.expect_project or args.expect_repository:
+                raise ValueError("owner binding options require --api-envelope")
+            result = inspect_receipt(receipt)
+        print(json.dumps(result, sort_keys=True))
     except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
         parser.exit(2, f"GitHub triage evidence rejected: {exc.__class__.__name__}\n")
     return 0
