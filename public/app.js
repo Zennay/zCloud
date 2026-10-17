@@ -17,7 +17,8 @@ function activityCoverageText(){
   const prefix='Local VPS events only · GitHub PRs, branches and CI are not synchronized.';
   if(c.pending)return prefix+' Reading project histories…';
   if(!c.lastSuccess)return prefix+' Project coverage has not been checked.';
-  const status=c.failed?'Partial coverage — some project histories are unavailable.':'Project history read completed.';
+  const partial=c.failed||c.projectsRead<c.projectsTotal;
+  const status=partial?'Partial coverage — some project histories are unavailable or not included.':'Project history read completed.';
   const limit=c.limited?' Some projects have reached the last-80-events API limit.':'';
   return prefix+' '+status+' '+c.projectsRead+'/'+c.projectsTotal+' project sources checked · last read '+date(c.lastSuccess,true)+'.'+limit;
 }
@@ -31,14 +32,22 @@ function activityCoverageText(){
 async function refreshProjectActivity(version,force=false){
   if(!DATA||route!=='activity')return;
   const visible=(DATA.projects||[]).filter(p=>p&&typeof p.id==='string'
-      &&/^[a-z][a-z0-9_-]{0,55}$/.test(p.id)).slice(0,ACTIVITY_MAX_PROJECTS);
-  const ids=filter?visible.filter(p=>p.id===filter).map(p=>p.id):visible.map(p=>p.id);
+      &&/^[a-z][a-z0-9_-]{0,55}$/.test(p.id));
+  const scoped=filter?visible.filter(p=>p.id===filter):visible;
+  const ids=scoped.slice(0,ACTIVITY_MAX_PROJECTS).map(p=>p.id);
+  const omitted=Math.max(0,scoped.length-ids.length);
   const scope=ids.join('|');
   if(!ids.length){
-    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:0,projectsRead:0,failed:0,limited:false,pending:false,scope,lastError:'no-visible-projects'};
+    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:scoped.length,projectsRead:0,failed:0,limited:false,pending:false,scope,lastError:'no-visible-projects'};
     render();return;
   }
-  if(ACTIVITY_PROJECT_FETCH)return ACTIVITY_PROJECT_FETCH;
+  if(ACTIVITY_PROJECT_FETCH){
+    await ACTIVITY_PROJECT_FETCH;
+    if(version!==routeVersion||route!=='activity')return;
+    // New filter/scope while a previous request was pending: start the new
+    // scope rather than leaving an indefinite "Reading…" indication.
+    return refreshProjectActivity(version,force);
+  }
   if(!force&&ACTIVITY_COVERAGE.scope===scope
     &&Date.now()-ACTIVITY_PROJECT_FETCH_TIME<ACTIVITY_CACHE_INTERVAL_MS)return;
   ACTIVITY_COVERAGE={...ACTIVITY_COVERAGE,pending:true,scope,lastError:''};
@@ -90,7 +99,7 @@ async function refreshProjectActivity(version,force=false){
     if(streams.size)ACTIVITY=merged;
     ACTIVITY_PROJECT_FETCH_TIME=Date.now();
     ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:streams.size?ACTIVITY_PROJECT_FETCH_TIME:ACTIVITY_COVERAGE.lastSuccess,
-      projectsTotal:ids.length,projectsRead:streams.size,failed:errors.length,
+      projectsTotal:scoped.length,projectsRead:streams.size,failed:errors.length+omitted,
       limited:[...streams.values()].some(rows=>rows.length===80),
       pending:false,scope,lastError:errors.length?'partial-local-reads':''};
     render();
