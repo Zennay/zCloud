@@ -78,13 +78,18 @@ def _validate_item(item, projects):
         raise ValueError("unknown project")
     if type(item["item_id"]) is not str or not ITEM_ID.fullmatch(item["item_id"]):
         raise ValueError("invalid item identity")
-    if item["kind"] not in KINDS or item["priority"] not in PRIORITIES:
+    if (type(item["kind"]) is not str or item["kind"] not in KINDS or
+            type(item["priority"]) is not str or item["priority"] not in PRIORITIES):
         raise ValueError("invalid kind/priority")
     for field in ("impact", "effort"):
         value = item[field]
         if type(value) is not int or not 1 <= value <= 5:
             raise ValueError("invalid effort/impact")
-    if item["owner"] not in CLAIMS or item["claim"] not in CLAIMS or item["hold"] not in HOLDS:
+    if any(type(item[field]) is not str for field in ("owner", "claim", "hold")) or any(
+        item[field] not in allowed for field, allowed in (
+            ("owner", CLAIMS), ("claim", CLAIMS), ("hold", HOLDS)
+        )
+    ):
         raise ValueError("invalid owner or gate")
     if type(item["source_allowed"]) is not bool:
         raise ValueError("invalid source permission")
