@@ -1,0 +1,103 @@
+name: HaxLab updater helper bootstrap 2026-10-12
+
+on:
+  push:
+    branches:
+      - main
+      - ops/haxlab-updater-bootstrap-20261012
+    paths:
+      - .github/workflows/haxlab-updater-helper-bootstrap-20261012.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: haxlab-updater-helper-bootstrap-20261012
+  cancel-in-progress: false
+
+jobs:
+  safe-bootstrap:
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 10
+    env:
+      PINNED_HAXLAB_SHA: 3478539730f62ca0812e93af50aa9692fd14f7e1
+      BOOTSTRAP_TARGET: /opt/haxlab/deploy/update-service-recovery.sh
+    steps:
+      - name: Checkout immutable zCloud source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          clean: true
+          persist-credentials: false
+      - name: Prove host, privilege, and immutable HaxLab source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(hostname)" = vps-bb300bba
+          sudo -n true
+          test -f "$BOOTSTRAP_TARGET"
+          test ! -L "$BOOTSTRAP_TARGET"
+          test -d /opt/haxlab/.git
+          case "$(git -C /opt/haxlab remote get-url origin)" in
+            https://github.com/Zennay/Haxlab|https://github.com/Zennay/Haxlab.git) ;;
+            *) echo 'HAXLAB_UNEXPECTED_ORIGIN' >&2; exit 1 ;;
+          esac
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          git -C "$work" init -q
+          git -C "$work" remote add origin https://github.com/Zennay/Haxlab.git
+          git -C "$work" fetch -q --no-tags --depth 1 origin "$PINNED_HAXLAB_SHA"
+          git -C "$work" checkout -q --detach "$PINNED_HAXLAB_SHA"
+          test "$(git -C "$work" rev-parse HEAD)" = "$PINNED_HAXLAB_SHA"
+          source="$work/deploy/update-service-recovery.sh"
+          test -f "$source"
+          bash -n "$source"
+          grep -Fq 'transient timeout' "$source"
+          grep -Fq 'sleep 2' "$source"
+          echo "HAXLAB_UPDATER_SOURCE_SHA=$PINNED_HAXLAB_SHA"
+          echo "HAXLAB_UPDATER_SOURCE_HASH=$(sha256sum "$source" | cut -d' ' -f1)"
+          echo "HAXLAB_INSTALLED_HELPER_HASH=$(sha256sum "$BOOTSTRAP_TARGET" | cut -d' ' -f1)"
+          if cmp -s "$source" "$BOOTSTRAP_TARGET"; then
+            echo 'HAXLAB_HELPER_ALREADY_CURRENT'
+          else
+            echo 'HAXLAB_HELPER_LEGACY_BOOTSTRAP_REQUIRED'
+          fi
+      - name: Atomically install only the reviewed updater helper
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname)" = vps-bb300bba
+          test -f "$BOOTSTRAP_TARGET"
+          test ! -L "$BOOTSTRAP_TARGET"
+          case "$(git -C /opt/haxlab remote get-url origin)" in
+            https://github.com/Zennay/Haxlab|https://github.com/Zennay/Haxlab.git) ;;
+            *) echo 'HAXLAB_UNEXPECTED_ORIGIN' >&2; exit 1 ;;
+          esac
+          work="$(mktemp -d)"
+          stage="$BOOTSTRAP_TARGET.bootstrap-${{ github.run_id }}"
+          trap 'rm -rf "$work"; sudo -n rm -f "$stage" 2>/dev/null || true' EXIT
+          git -C "$work" init -q
+          git -C "$work" remote add origin https://github.com/Zennay/Haxlab.git
+          git -C "$work" fetch -q --no-tags --depth 1 origin "$PINNED_HAXLAB_SHA"
+          git -C "$work" checkout -q --detach "$PINNED_HAXLAB_SHA"
+          test "$(git -C "$work" rev-parse HEAD)" = "$PINNED_HAXLAB_SHA"
+          source="$work/deploy/update-service-recovery.sh"
+          bash -n "$source"
+          grep -Fq 'transient timeout' "$source"
+          if cmp -s "$source" "$BOOTSTRAP_TARGET"; then
+            echo 'HAXLAB_UPDATER_HELPER_ALREADY_INSTALLED'
+            exit 0
+          fi
+          # Do not replace a shell helper while a live updater process may be sourcing it.
+          if pgrep -af '[/]opt/haxlab/deploy/update-vps.sh' || pgrep -af '[/]opt/haxlab/deploy/update-service-recovery.sh'; then
+            echo 'HAXLAB_UPDATER_BUSY_REFUSING_BOOTSTRAP' >&2
+            exit 1
+          fi
+          # This atomic source-only replacement stops/restarts NO services.
+          sudo -n install -o root -g root -m 0644 "$source" "$stage"
+          test "$(sudo -n sha256sum "$stage" | cut -d' ' -f1)" = "$(sha256sum "$source" | cut -d' ' -f1)"
+          sudo -n mv -T "$stage" "$BOOTSTRAP_TARGET"
+          test "$(sha256sum "$BOOTSTRAP_TARGET" | cut -d' ' -f1)" = "$(sha256sum "$source" | cut -d' ' -f1)"
+          echo 'HAXLAB_UPDATER_HELPER_BOOTSTRAP_GREEN_NO_SERVICE_RESTART'
