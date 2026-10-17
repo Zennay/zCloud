@@ -1,0 +1,28 @@
+name: Control-plane HTTP readiness offline contract
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/zcloud_http_readiness_evidence_offline_20261009.py'
+      - 'tests/test_zcloud_http_readiness_evidence_offline_20261009.py'
+      - '.github/workflows/control-plane-http-readiness-offline-20261009.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-readiness-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run offline readiness contract
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_http_readiness_evidence_offline_20261009.py' -v
