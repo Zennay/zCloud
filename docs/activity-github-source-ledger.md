@@ -43,4 +43,15 @@ python3 -m scripts.zcloud_activity_source_page --ledger ./private/github-activit
 
 The returned event data is always described as `source_status=partial_or_retained`, with its real source timestamps and previous sync coverage; it never marks a cached read as live GitHub synchronization. Both command modules are optional source tools, outside production routing.
 
+The optional **standalone operator report** is now a usable offline HTML dashboard (no JavaScript, remote assets, HTTP server or live data calls). It shows per-project PR merges **to main**, head-SHA commits and CI outcomes as separate measures, with expandable source coverage, last partial-fetch time and last full recent-window sync. The visible 500-event maximum is distributed fairly rather than letting one noisy project dominate.
+
+```sh
+python3 -m scripts.zcloud_activity_operator_report \
+  --ledger ./private/github-activity-ledger.json \
+  --output ./private/github-activity-report.html
+# Open the generated file locally as an operator. It has restrictive 0600 mode.
+```
+
+The ledger, JSON export and HTML report explicitly reject destinations inside the checkout's served `public/` tree (including a symlinked parent path) to avoid accidental disclosure of private repository metadata. Treat other hosting/static locations as sensitive too; operator-specified output must remain private.
+
 The ledger is optional and no persistent file is opened during the default read-only CLI mode. No runtime ingestion, dashboard switch, live VPS roll-out, worker recovery or release is claimed. Mandatory exact-head CI, ownership review and serialized production #580/PWQ-41/#1089 remain required before wiring/deploy. This implementation contains no new QA or regression suite per the 17 October user decision.
