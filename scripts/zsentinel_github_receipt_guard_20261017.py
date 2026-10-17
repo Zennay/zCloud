@@ -100,6 +100,19 @@ def inspect_receipt(data, now=None):
     created = _timestamp(job.get("created_at"), "job.created_at")
     if created > observed + CLOCK_SKEW:
         raise ValueError("job.created_at: later than observation")
+    # A job can be queued while the parent workflow is deliberately waiting
+    # on protected-environment approval / concurrency. Use both observed
+    # lifecycle objects; a per-job runner_id=0 alone cannot prove an outage.
+    run_status = run.get("status")
+    run_conclusion = run.get("conclusion")
+    if run_status is not None:
+        if not isinstance(run_status, str) or run_status not in STATUS:
+            raise ValueError("workflow_run.status: unrecognized lifecycle")
+        if run_status == "completed":
+            if not isinstance(run_conclusion, str) or run_conclusion not in CONCLUSIONS:
+                raise ValueError("workflow_run.conclusion: recognized terminal outcome required")
+        elif run_conclusion is not None:
+            raise ValueError("workflow_run.conclusion: nonterminal run cannot have final conclusion")
     status = job.get("status")
     if not isinstance(status, str) or status not in STATUS:
         raise ValueError("job.status: unrecognized lifecycle")
@@ -119,8 +132,12 @@ def inspect_receipt(data, now=None):
     assigned = runner_id not in (None, 0)
     if assigned != bool(runner_name):
         raise ValueError("job.runner_id/name: contradictory assignment")
-    if status in WAIT:
-        state, reason = "intentional_or_scheduler_wait", "nonqueued_gitHub_wait"
+    if run_status == "completed" and status != "completed":
+        # The two separately collected API objects contradict each other;
+        # never infer an unassigned runner from a stale job snapshot.
+        state, reason = "unknown", "inconsistent_run_job_snapshot"
+    elif status in WAIT or (status == "queued" and run_status in WAIT):
+        state, reason = "intentional_or_scheduler_wait", "approval_or_concurrency_wait"
     elif status == "queued" and not assigned and observed - created >= timedelta(minutes=30):
         state, reason = "needs_independent_triage", "aged_unassigned_queue"
     elif status == "queued":
