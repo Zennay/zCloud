@@ -1,0 +1,112 @@
+"""Isolated reference tests: no production integration."""
+import importlib.util
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "offline_redaction",
+    ROOT / "scripts/control_plane_evidence_redaction_offline_20261009.py",
+)
+module = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(module)
+
+
+class EvidenceRedactionTests(unittest.TestCase):
+    def test_sensitive_fields_recursive(self):
+        result = module.classify_handoff({
+            "worker": "worker-1",
+            "nested": {"access_token": "example-secret", "cookie": "session"},
+            "records": [{"API-KEY": "hidden", "state": "running"}],
+        })
+        self.assertEqual(result["evidence"]["nested"]["access_token"], "[REDACTED]")
+        self.assertEqual(result["evidence"]["nested"]["cookie"], "[REDACTED]")
+        self.assertEqual(result["evidence"]["records"][0]["API-KEY"], "[REDACTED]")
+        self.assertEqual(result["evidence"]["worker"], "worker-1")
+
+    def test_inline_credentials_are_masked(self):
+        value = "Authorization: Bearer abc.def.ghi / ghp_abcdefghijklmnopqrstuvwxyz"
+        sanitized = module.sanitize(value)
+        self.assertNotIn("abc.def.ghi", sanitized)
+        self.assertNotIn("ghp_abcdefghijklmnopqrstuvwxyz", sanitized)
+
+    def test_inline_credential_assignments_are_masked(self):
+        sample = "password=plain-secret api_key: another-secret cookie='session-value'"
+        cleaned = module.sanitize(sample)
+        for secret in ("plain-secret", "another-secret", "session-value"):
+            self.assertNotIn(secret, cleaned)
+        self.assertIn("[REDACTED]", cleaned)
+
+    def test_nonsecret_assignments_are_preserved(self):
+        self.assertEqual(module.sanitize("state=running priority=2"), "state=running priority=2")
+
+    def test_unknown_types_fail_closed(self):
+        class Hostile:
+            def __str__(self):
+                raise AssertionError("must not stringify")
+        self.assertEqual(module.sanitize(Hostile()), "[REDACTED]")
+
+    def test_depth_and_size_limits(self):
+        nested = {"item": "x"}
+        for _ in range(20):
+            nested = {"next": nested}
+        self.assertIn("[TRUNCATED]", str(module.sanitize(nested)))
+        self.assertEqual(len(module.sanitize(list(range(300)))), 201)
+        self.assertTrue(module.sanitize("x" * 5000).endswith("[TRUNCATED]"))
+
+    def test_terminal_escape_sequences_stripped(self):
+        raw = "\x1b[31mstatus=running\x1b[0m\x1b]0;hidden-title\x07"
+        cleaned = module.sanitize(raw)
+        self.assertEqual(cleaned, "status=running")
+        self.assertNotIn("\x1b", cleaned)
+
+    def test_low_control_characters_removed(self):
+        cleaned = module.sanitize("ok\x00bad\x7fvalue\nnext")
+        self.assertEqual(cleaned, "ok?bad?value\nnext")
+
+    def test_literal_escape_notation_is_not_terminal_control(self):
+        text = r"\\x1b[31m literal"
+        self.assertEqual(module.sanitize(text), text)
+
+    def test_url_query_credentials_masked_without_dropping_safe_parameters(self):
+        uri = "https://example.invalid/status?project=zcloud&access_token=topsecret&limit=5#details"
+        cleaned = module.sanitize(uri)
+        self.assertNotIn("topsecret", cleaned)
+        self.assertIn("project=zcloud", cleaned)
+        self.assertIn("limit=5", cleaned)
+        self.assertIn("access_token=[REDACTED]", cleaned)
+        self.assertIn("#details", cleaned)
+
+    def test_url_query_terminal_and_encoded_secret_values(self):
+        for uri in ("https://host.invalid/?refresh_token=abc%2Fdef",
+                    "https://host.invalid/?api_key=secret",
+                    "https://host.invalid/?client_secret="):
+            cleaned = module.sanitize(uri)
+            self.assertIn("[REDACTED]", cleaned)
+            self.assertNotIn("abc%2Fdef", cleaned)
+
+    def test_nonfinite_numbers_never_cross_handoff_boundary(self):
+        import math
+        sample = {"nan": math.nan, "pos_inf": math.inf, "neg_inf": -math.inf,
+                  "finite": 1.5, "count": 3}
+        cleaned = module.classify_handoff(sample)
+        for key in ("nan", "pos_inf", "neg_inf"):
+            self.assertEqual(cleaned["evidence"][key], "[REDACTED]")
+        self.assertEqual(cleaned["evidence"]["finite"], 1.5)
+        self.assertEqual(cleaned["evidence"]["count"], 3)
+        for flag in ("authenticated_origin", "authorizes_restart",
+                     "authorizes_queue_write", "authorizes_deploy",
+                     "mutation_performed"):
+            self.assertIs(cleaned[flag], False)
+
+    def test_never_authorizes_mutation(self):
+        for evidence in ({"status": "success"}, None, {"token": "abc"}):
+            result = module.classify_handoff(evidence)
+            for flag in ("authenticated_origin", "authorizes_restart",
+                         "authorizes_queue_write", "authorizes_deploy",
+                         "mutation_performed"):
+                self.assertIs(result[flag], False)
+
+
+if __name__ == "__main__":
+    unittest.main()
