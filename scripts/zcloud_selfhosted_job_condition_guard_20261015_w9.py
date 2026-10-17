@@ -8,6 +8,10 @@ preserves identical legacy job conditions; it never mutates VPS or artifacts.
 from __future__ import annotations
 
 import argparse
+import os
+import selectors
+import signal
+import time
 from collections import Counter
 import json
 from pathlib import Path
@@ -29,19 +33,59 @@ class AdmissionDenied(Exception):
     pass
 
 
+GIT_TIMEOUT = 15.0
+
+
 def git(root: Path, *args: str) -> bytes:
+    """Stream Git stdout with a hard size/time bound; reap child pipe holders."""
     try:
-        p = subprocess.run(
-            ["git", *args], cwd=root, check=False, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, timeout=15,
+        proc = subprocess.Popen(
+            ["git", *args], cwd=root, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
         )
+    except OSError as exc:
+        raise AdmissionDenied("git_unavailable") from exc
+    done = False
+    data = bytearray()
+    deadline = time.monotonic() + GIT_TIMEOUT
+    try:
+        assert proc.stdout is not None
+        with selectors.DefaultSelector() as poller:
+            poller.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not poller.select(remaining):
+                    raise AdmissionDenied("git_unavailable")
+                chunk = os.read(proc.stdout.fileno(), min(65536, _MAX + 1 - len(data)))
+                if not chunk:
+                    break
+                data.extend(chunk)
+                if len(data) > _MAX:
+                    raise AdmissionDenied("git_response_too_large")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AdmissionDenied("git_unavailable")
+        if proc.wait(timeout=remaining):
+            raise AdmissionDenied("git_failed")
+        done = True
+        return bytes(data)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise AdmissionDenied("git_unavailable") from exc
-    if p.returncode != 0:
-        raise AdmissionDenied("git_failed")
-    if len(p.stdout) > _MAX:
-        raise AdmissionDenied("git_response_too_large")
-    return p.stdout
+    finally:
+        if not done:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if proc.stdout is not None:
+            proc.stdout.close()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
 
 def commit(root: Path, value: str) -> None:
