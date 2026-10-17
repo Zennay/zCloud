@@ -1,0 +1,19 @@
+name: Control-plane duplicate JSON denial offline
+on:
+  pull_request:
+    paths:
+      - 'tests/test_control_plane_duplicate_json_key_denial_20261009_w1.py'
+      - '.github/workflows/control-plane-duplicate-json-key-denial-20261009.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  duplicate-json-denial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test duplicate JSON evidence denial
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_duplicate_json_key_denial_20261009_w1.py' -v
