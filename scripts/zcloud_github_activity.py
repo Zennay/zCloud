@@ -17,6 +17,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
+from scripts.zcloud_activity_errors import ActivitySourceError
+
 MAX_RESPONSE = 2 * 1024 * 1024
 MAX_PROJECTS = 12
 MAX_REQUESTS = 24
@@ -25,10 +27,6 @@ SLUG = re.compile(r"^https://github\.com/(Zennay)/([A-Za-z0-9_.-]+?)/?$")
 SHA = re.compile(r"^[a-fA-F0-9]{40}$")
 ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
 ISO = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
-
-
-class ActivitySourceError(Exception):
-    """A source failed. Never include an HTTP response body or secret."""
 
 
 class NoRedirect(HTTPRedirectHandler):
