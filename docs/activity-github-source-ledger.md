@@ -2,6 +2,24 @@
 
 This is a **real, opt-in read-only source adapter**, not a claim that the live Activity page is synchronized with GitHub. The existing dashboard endpoint reads only local VPS events. A connected `/api/status` is not evidence that remote PRs, branches or CI are covered.
 
+## One-command private operator experience
+
+An operator can now create an end-to-end private Activity dashboard with **one explicitly initiated command** (fetch GitHub → fair bounded local history → readable responsive HTML). This still does not start a service, schedule background work or change the production dashboard:
+
+```sh
+python3 -m scripts.zcloud_activity_refresh_report \
+  --projects cloud,supa \
+  --ledger ./private/github-activity-ledger.json \
+  --html ./private/github-activity-report.html
+
+# When GitHub is unavailable, render only previously retained 0600 data:
+python3 -m scripts.zcloud_activity_refresh_report \
+  --offline --ledger ./private/github-activity-ledger.json \
+  --html ./private/github-activity-report.html
+```
+
+The offline command never calls GitHub. A partial/offline fetch never erases retained historical events. Both outputs must be distinct private paths outside `public/`; a symlink resolving into the public web root is refused. Only the operator's explicitly selected projects appear in the report, even if their private ledger contains other projects. Source lag and partial coverage are visible; the output explicitly says it **did not update the live zCloud Activity page**.
+
 ## Source contract
 
 `scripts/zcloud_github_activity.py` reads canonical `projects.json` entries with `https://github.com/Zennay/<repo>` and calls only GitHub's REST **GET** endpoints. It has no access to production SQLite, queue leases, worker dispatch, automation control or deploy APIs.
