@@ -266,6 +266,57 @@ class RunJobEvidenceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     guard.inspect_github_api_receipt(doc, NOW)
 
+    def test_api_envelope_cli_real_disk_round_trip_and_fail_closed(self):
+        now = datetime.now(timezone.utc)
+        raw_run_url = "https://api.github.com/repos/Zennay/zCloud/actions/runs/123"
+        snapshot = {
+            "schema_version": 1, "project_id": "cloud",
+            "observed_at": now.isoformat(),
+            "workflow_run": {
+                "id": 123, "run_attempt": 1, "repository": {"full_name": "Zennay/zCloud"},
+                "head_sha": "a" * 40, "status": "waiting", "conclusion": None,
+                "url": raw_run_url},
+            "job": {
+                "id": 456, "run_id": 123, "run_attempt": 1, "status": "queued",
+                "conclusion": None, "head_sha": "a" * 40,
+                "created_at": (now - timedelta(minutes=45)).isoformat(),
+                "runner_id": 0, "runner_name": "", "run_url": raw_run_url,
+                "url": "https://api.github.com/repos/Zennay/zCloud/actions/jobs/456"},
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            file = Path(folder) / "raw-api.json"
+            file.write_text(json.dumps(snapshot), encoding="utf-8")
+            def run():
+                return subprocess.run(
+                    [sys.executable, str(SCRIPT), "--api-envelope", str(file)],
+                    capture_output=True, text=True, timeout=6, check=False)
+            result = run()
+            self.assertEqual(0, result.returncode, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual("intentional_or_scheduler_wait", payload["state"])
+            self.assertFalse(payload["repair_authorized"])
+            self.assertNotIn("123", result.stdout)
+            self.assertNotIn("456", result.stdout)
+            # A fresh, genuinely queued unassigned job needs independent
+            # investigation but never authorizes mutation.
+            snapshot["workflow_run"]["status"] = "queued"
+            file.write_text(json.dumps(snapshot), encoding="utf-8")
+            result = run()
+            self.assertEqual(0, result.returncode, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual("needs_independent_triage", payload["state"])
+            self.assertFalse(payload["deploy_authorized"])
+            # Forged cross-repository run provenance rejects with exit 2 and
+            # does not reflect arbitrary client-controlled sensitive text.
+            snapshot["job"]["url"] = (
+                "https://api.github.com/repos/secret/user/actions/jobs/456")
+            file.write_text(json.dumps(snapshot), encoding="utf-8")
+            result = run()
+            self.assertEqual(2, result.returncode)
+            self.assertEqual("", result.stdout)
+            self.assertNotIn("secret", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_exact_boundary_30min_and_clock_skew(self):
         doc = receipt(created_at=stamp(-31))
         self.assertEqual("needs_independent_triage", check(doc)["state"])
