@@ -1,0 +1,64 @@
+name: Deploy-ops artifact upload exposure ratchet
+
+# Run on every PR. GitHub's changed-path trigger filters can omit relevant
+# manifests in large diffs; the SHA-bound scanner skips unrelated source.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  source-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Deny foreign PR origin before checkout
+        shell: bash
+        env:
+          ORIGIN: ${{ github.event.pull_request.head.repo.full_name }}
+          DESTINATION: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          test "$ORIGIN" = "Zennay/zCloud"
+          test "$DESTINATION" = "Zennay/zCloud"
+          test "$BASE_REF" = "main"
+      - name: Checkout exact untrusted PR head without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check canonical remote revision and source identity
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          test "$(git ls-remote origin "refs/heads/$HEAD_REF" | cut -f1)" = "$HEAD_SHA"
+      - name: Run real Git and hostile-source regressions
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_artifact_upload_exposure_ratchet_20261015_w1.py' -v
+      - name: Check changed workflow uploads on exact head
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_artifact_upload_exposure_ratchet_20261015_w1.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Reject moved source or canonical main after tests
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          test "$(git ls-remote origin "refs/heads/$HEAD_REF" | cut -f1)" = "$HEAD_SHA"
