@@ -1,0 +1,87 @@
+name: zCloud deny-first offline release receipt proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_release_gate_receipt_20261016.py
+      - tests/test_zcloud_release_gate_receipt_20261016.py
+      - docs/deploy-ops-release-evidence-deny-first-20261016.md
+      - .github/workflows/zcloud-release-receipt-hosted-proof-20261016.yml
+
+permissions:
+  contents: read
+
+jobs:
+  source-admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Deny unrelated, fork and cross-base PR without checkout
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          ACTOR: ${{ github.actor }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$REPO" = Zennay/zCloud
+          test "$BASE_REPO" = "$REPO"
+          test "$HEAD_REPO" = "$REPO"
+          test "$BASE_REF" = main
+          test "$ACTOR" = Zennay
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+  offline-receipt-tests:
+    needs: source-admission
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository &&
+      github.base_ref == 'main' &&
+      github.actor == 'Zennay'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+      - name: Verify immutable current-main and PR-head provenance
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$BASE_SHA"
+          current_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$current_head" = "$HEAD_SHA"
+      - name: Run strict source-only adversarial receipt contract tests
+        run: python3 -m unittest -v tests.test_zcloud_release_gate_receipt_20261016
+      - name: Verify immutable provenance still matches remote after tests
+        shell: bash
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          current_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$current_main" = "$BASE_SHA"
+          current_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$current_head" = "$HEAD_SHA"
+          echo "ZCLOUD_RELEASE_RECEIPT_OFFLINE_PROOF=PASS"
+          echo "PRODUCTION_MUTATION_AUTHORIZED=false"
