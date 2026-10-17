@@ -9,6 +9,8 @@ on:
     paths:
       - .github/workflows/zcloud-firefox-worker-recovery-probe-20261013.yml
       - scripts/zcloud_firefox_readonly_snapshot_20261014.py
+      - scripts/zcloud_firefox_rdp_ports_20261016.py
+      - tests/test_zcloud_firefox_rdp_ports_20261016.py
       - tests/test_zcloud_firefox_readonly_snapshot_20261014.py
       - tests/test_zcloud_firefox_probe_manual_trust_20261014.py
   workflow_dispatch:
@@ -52,6 +54,7 @@ jobs:
           python3 -m unittest -v tests.test_zcloud_firefox_readonly_snapshot_20261014
           python3 -m py_compile scripts/zcloud_firefox_readonly_snapshot_20261014.py
           python3 -m unittest -v tests.test_zcloud_firefox_probe_manual_trust_20261014
+          python3 -m unittest -v tests.test_zcloud_firefox_rdp_ports_20261016
 
   inspect:
     if: >-
@@ -111,6 +114,7 @@ jobs:
           test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$CONFIRMED_SHA"
           python3 - <<'PY'
           import json,pathlib,subprocess,re,socket
+          from scripts.zcloud_firefox_rdp_ports_20261016 import extract_ports
           out=subprocess.check_output(["ps","-eo","pid=,ppid=,args="],text=True)
           rows=out.splitlines()
           main=[x for x in rows if "firefox" in x.lower() and "-start-debugger-server" in x and "contentproc" not in x]
@@ -129,7 +133,7 @@ jobs:
           # and mutate SQLite (issue #1341). This live probe deliberately reports
           # no worker identities, prompts or browser navigation.
           print("RUNNER_TARGETS_HTTP_SKIPPED=backend_get_may_write")
-          ports=[int(k) for row in main for k in re.findall(r"-start-debugger-server\\s+(\\d+)",row)]
+          ports=extract_ports(main)
           if len(ports)!=1:
             print("RDP_SKIPPED=port-not-unique")
           else:
