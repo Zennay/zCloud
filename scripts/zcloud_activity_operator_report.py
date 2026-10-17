@@ -15,7 +15,7 @@ import stat
 import sys
 import tempfile
 
-from scripts.zcloud_activity_ledger import _fair, _read
+from scripts.zcloud_activity_ledger import _fair, _read, assert_private_destination
 from scripts.zcloud_github_activity import ActivitySourceError
 
 MAX_RENDER = 500
@@ -177,6 +177,7 @@ def render_html(ledger, project=None):
 
 
 def save_private(path, content):
+    assert_private_destination(path)
     path = Path(path)
     if path.is_symlink():
         raise ActivitySourceError("activity_report_output_symlink_refused")
