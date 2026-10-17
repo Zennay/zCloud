@@ -1,0 +1,76 @@
+name: zCloud self-hosted matrix fail-fast source guard
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_selfhosted_matrix_failfast_ratchet_20261015_w8.py"
+      - "tests/test_selfhosted_matrix_failfast_ratchet_20261015_w8.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-selfhosted-matrix-failfast-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Reject untrusted source before any checkout
+        shell: bash
+        env:
+          PR_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$PR_REPO" = Zennay/zCloud
+          [[ "$PR_HEAD" =~ ^[a-f0-9]{40}$ ]]
+      - name: Checkout exact PR revision without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 0
+      - name: Verify exact checkout, ancestry and canonical current main
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$BASE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+      - name: Run real-Git source safety regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_selfhosted_matrix_failfast_ratchet_20261015_w8
+          python3 -m py_compile scripts/zcloud_selfhosted_matrix_failfast_ratchet_20261015_w8.py
+      - name: Reject new potential self-hosted matrix cancellation debt
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_selfhosted_matrix_failfast_ratchet_20261015_w8.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Recheck PR checkout and canonical main after tests
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$BASE_SHA"
