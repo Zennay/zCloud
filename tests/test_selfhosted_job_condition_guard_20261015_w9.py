@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
+from unittest.mock import patch
+from scripts import zcloud_selfhosted_job_condition_guard_20261015_w9 as guard
 from pathlib import Path
 import subprocess
 import sys
@@ -236,6 +239,30 @@ class JobConditionGuardTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 1)
         self.assertEqual(json.loads(proc.stdout)["reason"], "invalid_sha")
+
+
+class GitReaderBoundedTests(unittest.TestCase):
+    """Source-check Git calls must bound output and descendants before buffering."""
+
+    def run_fake_git(self, script: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "git"
+            fake.write_text("#!/usr/bin/env python3\n" + script, encoding="utf-8")
+            fake.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": tmp + os.pathsep + os.environ["PATH"]}):
+                with patch.object(guard, "GIT_TIMEOUT", 0.35):
+                    guard.git(Path(tmp), "synthetic")
+
+    def test_source_output_cap_enforced_while_streaming(self):
+        with self.assertRaisesRegex(guard.AdmissionDenied, "git_response_too_large"):
+            self.run_fake_git("import os\nos.write(1, b'A' * 300000)\n")
+
+    def test_forked_stdout_holder_timeout_kills_group(self):
+        with self.assertRaisesRegex(guard.AdmissionDenied, "git_unavailable"):
+            self.run_fake_git(
+                "import subprocess, sys\n"
+                "subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(10)'])\n"
+            )
 
 
 if __name__ == "__main__":
