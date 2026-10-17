@@ -6,6 +6,7 @@ writer and without deployment, worker dispatch or GitHub mutation privileges.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import json
 import os
@@ -13,17 +14,17 @@ from pathlib import Path
 import re
 import sys
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 MAX_RESPONSE = 2 * 1024 * 1024
 MAX_PROJECTS = 12
 MAX_REQUESTS = 24
 MAX_EVENTS = 480
-SLUG = re.compile(r"^https://github\\.com/(Zennay)/([A-Za-z0-9_.-]+?)/?$")
+SLUG = re.compile(r"^https://github\.com/(Zennay)/([A-Za-z0-9_.-]+?)/?$")
 SHA = re.compile(r"^[a-fA-F0-9]{40}$")
 ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
-ISO = re.compile(r"^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$")
+ISO = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
 
 class ActivitySourceError(Exception):
@@ -166,7 +167,7 @@ def parse_pulls(repo, project, data):
         # A closed PR is never a merge unless GitHub provides merged_at.
         if merged:
             result.append(event(repo, project, "pr_merged", number, merged, **common,
-                                merged_main=item.get("base", {}).get("ref") == "main"))
+                                merged_main=isinstance(item.get("base"), dict) and item["base"].get("ref") == "main"))
         else:
             result.append(event(repo, project, "pr_updated", str(number) + ":" + updated,
                                 updated, **common, merged_main=False,
@@ -225,8 +226,9 @@ def parse_branches(repo, project, data, observed):
             raise ActivitySourceError("github_branches_invalid")
         # Branch API has no push timestamp: do not invent one or count a
         # newly seen branch tip as freshly created source activity.
-        result.append(event(repo, project, "branch_tip_observed", sha + ":" + name, None,
-                            sha=sha, branch=name, first_observed_at=observed, merged_main=False))
+        result.append(event(repo, project, "branch_tip_observed", hashlib.sha256(name.encode("utf-8")).hexdigest()[:20] + ":" + sha, None,
+                            sha=sha, branch_id=hashlib.sha256(name.encode("utf-8")).hexdigest()[:20],
+                            first_observed_at=observed, merged_main=False))
     return result
 
 
@@ -280,8 +282,18 @@ def collect(registry, projects, *, reader, now=None):
     for item in result["events"]:
         deduped[item["id"]] = item
     events = list(deduped.values())
-    events.sort(key=lambda item: (item["source_timestamp"] or "", item["id"]), reverse=True)
-    result["events"] = events[:MAX_EVENTS]
+    # Fair interleaving: a noisy repository never starves a quiet project.
+    groups = {pid: [] for pid in projects}
+    for item in events:
+        groups[item["project"]].append(item)
+    for bucket in groups.values():
+        bucket.sort(key=lambda item: (item["source_timestamp"] or "", item["id"]), reverse=True)
+    fair = []
+    while len(fair) < MAX_EVENTS and any(groups.values()):
+        for pid in projects:
+            if groups[pid] and len(fair) < MAX_EVENTS:
+                fair.append(groups[pid].pop(0))
+    result["events"] = fair
     result["events_truncated"] = len(events) > MAX_EVENTS
     result["remaining_request_budget"] = reader.remaining
     return result
@@ -297,7 +309,7 @@ def main(argv=None):
     project_ids = args.projects.split(",")
     reader = GithubReader(token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_READ_TOKEN"))
     payload = collect(registry, project_ids, reader=reader)
-    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\\n"
+    encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
     if args.output:
         import tempfile
         target = Path(args.output).resolve()
@@ -322,5 +334,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except ActivitySourceError as exc:
-        sys.stderr.write("GitHub activity source unavailable: " + str(exc) + "\\n")
+        sys.stderr.write("GitHub activity source unavailable: " + str(exc) + "\n")
         raise SystemExit(2)
