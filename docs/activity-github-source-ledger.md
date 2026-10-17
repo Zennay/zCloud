@@ -18,7 +18,7 @@ python3 -m scripts.zcloud_activity_refresh_report \
   --html ./private/github-activity-report.html
 ```
 
-The offline command never calls GitHub. A partial/offline fetch never erases retained historical events. Both outputs must be distinct private paths outside `public/`; a symlink resolving into the public web root is refused. Only the operator's explicitly selected projects appear in the report, even if their private ledger contains other projects. Source lag and partial coverage are visible; the output explicitly says it **did not update the live zCloud Activity page**.
+The offline command never calls GitHub. A partial/offline fetch never erases retained historical events. Both outputs must be distinct private paths outside `public/`; a symlink resolving into the public web root is refused. The repository now includes a dedicated `private/.gitignore` so local operator-owned ledger and HTML files placed in `./private/` cannot accidentally enter normal Git staging. Only the operator's explicitly selected projects appear in the report, even if their private ledger contains other projects. Source lag and partial coverage are visible; the output explicitly says it **did not update the live zCloud Activity page**.
 
 ## Source contract
 
