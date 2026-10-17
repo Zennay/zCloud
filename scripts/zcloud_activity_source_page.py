@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+from binascii import Error as Base64Error
 import hashlib
 import json
 from pathlib import Path
 import sys
 
 from scripts.zcloud_activity_ledger import _fair, _read
-from scripts.zcloud_github_activity import ActivitySourceError
+from scripts.zcloud_github_activity import ActivitySourceError, strict_json
 
 MAX_PAGE = 80
 MAX_CURSOR_BYTES = 256
@@ -24,11 +25,11 @@ def _cursor_decode(token):
         raise ActivitySourceError("activity_cursor_invalid")
     try:
         encoded = token.encode("ascii")
-        raw = base64.urlsafe_b64decode(encoded + b"=" * ((-len(encoded)) % 4))
+        raw = base64.b64decode(encoded + b"=" * ((-len(encoded)) % 4), altchars=b"-_", validate=True)
         if len(raw) > 192:
             raise ValueError("overlong")
-        value = json.loads(raw)
-    except (UnicodeError, ValueError):
+        value = strict_json(raw.decode('ascii'))
+    except (UnicodeError, ValueError, Base64Error):
         raise ActivitySourceError("activity_cursor_invalid") from None
     if not isinstance(value, dict) or set(value) != {"v", "snapshot", "offset"}:
         raise ActivitySourceError("activity_cursor_invalid")
