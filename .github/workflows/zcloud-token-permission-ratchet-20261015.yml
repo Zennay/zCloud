@@ -1,0 +1,103 @@
+name: zCloud token permission source ratchet
+
+# GitHub-hosted advisory check, no VPS or write token.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-token-permissions-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  source-ratchet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout immutable PR commit without persisted token
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate same-repository PR and current main source identity
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPO" = "$GITHUB_REPOSITORY"
+          test "$BASE_REPO" = "$GITHUB_REPOSITORY"
+          test "$BASE_REF" = "main"
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          base="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$base" = "$(git rev-parse refs/remotes/origin/main)"
+          test -n "$base"
+          echo "BASE_SHA=$base" >> "$GITHUB_ENV"
+          current_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$current_head" = "$EXPECTED_HEAD"
+
+      - name: Run offline source regressions on hosted runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_token_permission_ratchet_20261015.py
+          python3 -m unittest -v tests.test_zcloud_token_permission_ratchet_20261015
+
+      - name: Deny new write permissions on exact PR head
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          current_base="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          current_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$current_base" = "$BASE_SHA"
+          test "$current_head" = "$EXPECTED_HEAD"
+          report_file="$(mktemp)"
+          trap 'rm -f "$report_file"' EXIT
+          # A denied scan or stale ref must never leave a misleading green
+          # summary; print only static, redacted, non-authorizing Dutch text.
+          trap 'printf "%s\n" "### zCloud tokenrechten (broncontrole)" "**Afgewezen: broncontrole of bronidentiteit is mislukt.**" "**Geen productievrijgave: release, deployment en mutatie verboden.**" >> "$GITHUB_STEP_SUMMARY"' ERR
+          # Persist only the tiny machine-readable report locally. A green
+          # human summary must not be emitted while immutable refs might
+          # have moved; first finish both post-scan source identity checks.
+          python3 scripts/zcloud_token_permission_ratchet_20261015.py \
+            --root . --base "$BASE_SHA" --head "$EXPECTED_HEAD" > "$report_file"
+          # GitHub refs may advance while a multi-second full-tree proof runs.
+          # Never report green unless the very same immutable source pair
+          # remains at canonical main and at the PR owner's branch tip.
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          final_base="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          final_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$final_base" = "$BASE_SHA"
+          test "$final_head" = "$EXPECTED_HEAD"
+          # Render bounded, schema-checked, fixed-wording Dutch evidence
+          # only after both remote immutable SHA identities still agree.
+          python3 - "$report_file" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+          from scripts.zcloud_token_permission_ratchet_20261015 import format_ci_summary
+          raw = Path(sys.argv[1]).read_bytes()
+          if len(raw) > 4096:
+              raise SystemExit("source_report_too_large")
+          report = json.loads(raw)
+          summary = format_ci_summary(report)
+          with Path(sys.argv[2]).open("a", encoding="utf-8") as dest:
+              dest.write(summary)
+          PY
+          echo "Advisory source proof only; no release/deploy/runner writes."
