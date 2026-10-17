@@ -13,10 +13,26 @@ class HostedStaleDeployCleanupWorkflowTests(unittest.TestCase):
 
         self.assertIn('workflows: ["zCloud regression smoke"]', text)
         self.assertIn("types: [completed]", text)
+        self.assertIn("github.repository == 'Zennay/zCloud'", text)
+        self.assertIn(
+            "(github.event_name == 'push' && github.ref == 'refs/heads/main')",
+            text,
+        )
+        self.assertIn(
+            "(github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')",
+            text,
+        )
         self.assertIn("github.event.workflow_run.conclusion == 'success'", text)
+        self.assertIn("github.event.workflow_run.event == 'push'", text)
         self.assertIn("github.event.workflow_run.head_branch == 'main'", text)
+        self.assertIn(
+            "github.event.workflow_run.head_repository.full_name == github.repository",
+            text,
+        )
         self.assertIn("runs-on: ubuntu-latest", text)
         self.assertIn("actions: write", text)
+        self.assertNotIn("\n  pull_request:", text)
+        self.assertNotIn("github.event_name != 'workflow_run'", text)
 
     def test_cleanup_preserves_current_main_and_rechecks_before_cancel(self):
         text = (
@@ -38,6 +54,28 @@ class HostedStaleDeployCleanupWorkflowTests(unittest.TestCase):
         self.assertIn('trigger_sha="$(jq -r', text)
         self.assertIn('trigger_branch="$(jq -r', text)
         self.assertIn('trigger_conclusion="$(jq -r', text)
+        self.assertIn('trigger_event="$(jq -r', text)
+        self.assertIn('trigger_repository="$(jq -r', text)
+        self.assertIn(
+            'if [[ "$GITHUB_EVENT_NAME" == "push" || "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then',
+            text,
+        )
+        self.assertIn('"$GITHUB_SHA" != "$current_main"', text)
+        self.assertIn("ZCLOUD_STALE_DEPLOY_REJECT_MAIN_EVENT", text)
+        self.assertIn("ZCLOUD_STALE_DEPLOY_ACCEPT_MAIN_EVENT", text)
+        self.assertLess(
+            text.index("ZCLOUD_STALE_DEPLOY_ACCEPT_MAIN_EVENT"),
+            text.index("mapfile -t deploy_runs"),
+        )
+        self.assertIn('"$trigger_sha" != "$current_main"', text)
+        self.assertIn('"$trigger_event" != "push"', text)
+        self.assertIn('"$trigger_repository" != "$GITHUB_REPOSITORY"', text)
+        self.assertIn("ZCLOUD_STALE_DEPLOY_REJECT_TRIGGER", text)
+        self.assertIn("ZCLOUD_STALE_DEPLOY_ACCEPT_TRIGGER", text)
+        self.assertLess(
+            text.index("ZCLOUD_STALE_DEPLOY_ACCEPT_TRIGGER"),
+            text.index("mapfile -t deploy_runs"),
+        )
         self.assertIn("ZCLOUD_STALE_DEPLOY_MAIN_MOVED_ABORT", text)
         self.assertIn("ZCLOUD_STALE_DEPLOY_CURRENT_GUARD_GONE_ABORT", text)
         self.assertIn("current_guard_ids=()", text)
@@ -53,6 +91,10 @@ class HostedStaleDeployCleanupWorkflowTests(unittest.TestCase):
         self.assertNotIn("queued|in_progress|pending|waiting|requested)\n                ;;\n              *)\n                echo", text)
         self.assertIn("ZCLOUD_STALE_DEPLOY_CANCEL_REQUESTED", text)
         self.assertIn('actions/runs/$run_id/cancel', text)
+        self.assertLess(
+            text.index("ZCLOUD_STALE_DEPLOY_ACCEPT_TRIGGER"),
+            text.index('actions/runs/$run_id/cancel'),
+        )
 
     def test_cleanup_has_no_hardcoded_guarded_deploy_run_ids(self):
         text = (
