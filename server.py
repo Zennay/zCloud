@@ -2424,6 +2424,35 @@ def _worker_desired_states():
 def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
+def _portfolio_work_package_rank(row):
+    """Favor deliverable features over isolated QA churn within the SAME priority.
+
+    Priority, manual-start intent, project diversity, ownership and hard caps
+    remain authoritative. This is only a tie-breaker before creation time.
+    """
+    title = str(row['title'] or '').strip().lower()
+    criteria = str(row['completion_criteria'] or '').lower()
+    micro_prefixes = (
+        'test ', 'qa ', 'audit ', 'inspect ', 'review ', 'verify ',
+        'check ', 'monitor ', 'report ', 'document ', 'validate ',
+    )
+    if title.startswith(micro_prefixes):
+        return 2
+    delivery_words = (
+        'implement', 'build', 'ship', 'deliver', 'complete', 'finish',
+        'integrate', 'migrate', 'fix', 'repair', 'recover', 'restore',
+        'launch', 'enable', 'harden', 'connect', 'refactor',
+    )
+    if any(re.search(r'\\b' + word + r'\\b', title) for word in delivery_words):
+        return 0
+    if any(marker in criteria for marker in (
+        'end-to-end implementation', 'end-to-end feature', 'complete user flow',
+        'multi-step work package', 'substantial roadmap work package',
+    )):
+        return 0
+    return 1
+
+
 def _manual_start_priority_key(project_id):
     return 'manual_start_priority:' + str(project_id or '').strip().lower()
 
@@ -2631,7 +2660,7 @@ def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
         """SELECT * FROM portfolio_queue
            WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
            ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                    created_at,queue_id LIMIT 80"""
+                    created_at,queue_id LIMIT 240"""
     ).fetchall()
     preempted={str(value) for value in (preempted or set())}
     rows=[row for row in rows if str(row['queue_id']) not in preempted]
@@ -3275,7 +3304,9 @@ def portfolio_queue_allocate():
                         key=lambda pair: (
                             _portfolio_priority_rank(pair[0]['priority']),
                             0 if _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt) else 1,
-                            str(pair[0]['created_at'] or ''),
+                            _portfolio_work_package_rank(pair[0]),
+                            _portfolio_work_package_rank(pair[0]),
+                    str(pair[0]['created_at'] or ''),
                             str(pair[0]['queue_id'] or ''),
                         ),
                     )[0] if (manual_candidates or lane_candidates) else None
