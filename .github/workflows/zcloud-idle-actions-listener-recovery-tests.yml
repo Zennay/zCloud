@@ -1,0 +1,30 @@
+name: zCloud idle Actions listener recovery (offline tests)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/zcloud_idle_actions_listener_recovery.py
+      - tests/test_zcloud_idle_actions_listener_recovery.py
+      - scripts/zcloud_retire_legacy_worker_services.sh
+      - .github/workflows/zcloud-idle-actions-listener-recovery-tests.yml
+permissions:
+  contents: read
+jobs:
+  test:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out exact trusted PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Validate offline runner recovery safety
+        run: |
+          bash -n scripts/zcloud_retire_legacy_worker_services.sh
+          python3 -m py_compile scripts/zcloud_idle_actions_listener_recovery.py
+          python3 -m unittest discover -s tests -p 'test_zcloud_idle_actions_listener_recovery.py' -v
