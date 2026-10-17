@@ -1,0 +1,76 @@
+name: zCloud continue-on-error no-new-debt ratchet
+
+# Hosted-only PR source test; no self-hosted runner, release or VPS writes.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "scripts/zcloud_continue_on_error_ratchet_20261015_w4.py"
+      - "tests/test_zcloud_continue_on_error_ratchet_20261015_w4.py"
+
+permissions:
+  contents: read
+
+jobs:
+  source-only:
+    # Do not skip an untrusted PR: a skipped required check appears successful.
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Reject untrusted pull request before checkout
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_KIND: ${{ github.event_name }}
+          EVENT_BASE: ${{ github.base_ref }}
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_KIND" = pull_request
+          test "$SOURCE_REPOSITORY" = Zennay/zCloud
+          test "$HEAD_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$BASE_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$EVENT_BASE" = main
+          [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test -n "$HEAD_BRANCH"
+          # Read only from canonical GitHub, not a PR-controlled remote URL.
+          remote_main="$(timeout 12 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          remote_head="$(timeout 12 git ls-remote --exit-code https://github.com/Zennay/zCloud.git "refs/heads/$HEAD_BRANCH" | awk '{print $1}')"
+          test "$remote_main" = "$EXACT_BASE"
+          test "$remote_head" = "$EXACT_HEAD"
+      - name: Checkout exact PR SHA without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify origin and scan changed workflow source
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+          SOURCE_REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$SOURCE_REPO" = Zennay/zCloud
+          test "$GITHUB_BASE_REF" = main
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          test "$(git rev-parse origin/main)" = "$EXACT_BASE"
+          python3 -m py_compile scripts/zcloud_continue_on_error_ratchet_20261015_w4.py
+          python3 -m unittest -v tests.test_zcloud_continue_on_error_ratchet_20261015_w4
+          python3 scripts/zcloud_continue_on_error_ratchet_20261015_w4.py \
+            --base "$EXACT_BASE" --head "$EXACT_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          test "$(git rev-parse origin/main)" = "$EXACT_BASE"
+          # A test result is stale if either upstream ref advanced mid-check.
+          remote_main="$(timeout 12 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          remote_head="$(timeout 12 git ls-remote --exit-code origin "refs/heads/$HEAD_BRANCH" | awk '{print $1}')"
+          test "$remote_main" = "$EXACT_BASE"
+          test "$remote_head" = "$EXACT_HEAD"
