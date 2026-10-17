@@ -1,0 +1,84 @@
+name: zCloud hosted read-only queue watchdog evidence
+
+# Explicit operator-only observation. Never auto-trigger on PR, push,
+# workflow_run, schedule or failed production status.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  observe:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    concurrency:
+      group: zcloud-hosted-queue-observation
+      cancel-in-progress: false
+    steps:
+      - name: Check out immutable manually selected main revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Observe bounded queue without writes
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # Read-only canonical SHA, not a potentially synthetic workflow ref.
+          main_before="$(timeout 12s gh api --method GET repos/Zennay/zCloud/branches/main --jq '.commit.sha')"
+          test "$main_before" = "$GITHUB_SHA"
+
+          report="$RUNNER_TEMP/zcloud-queue-readonly.json"
+          # A REVIEW_ONLY or DENY exit is expected: collect without aborting
+          # before the post-observation main SHA check and safe summary.
+          set +e
+          timeout --signal=TERM --kill-after=5s 125s \
+            python3 scripts/zcloud_watchdog_queue_collector_20261014_w1.py > "$report"
+          read_rc=$?
+          set -e
+
+          # Independent tolerant route triage: distinguish queued workflows
+          # with zero job records from genuine unassigned FTMO/zCloud routes.
+          # Both collectors are GET-only and separately fail closed.
+          triage="$RUNNER_TEMP/zcloud-queue-route-triage.json"
+          set +e
+          timeout --signal=TERM --kill-after=5s 105s \
+            python3 scripts/zcloud_queue_route_triage_20261014_w1.py > "$triage"
+          triage_rc=$?
+          set -e
+
+          main_after="$(timeout 12s gh api --method GET repos/Zennay/zCloud/branches/main --jq '.commit.sha')"
+          if [[ "$main_after" != "$GITHUB_SHA" ]]; then
+            echo "Queue observer denied: canonical main moved during scan." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          # Both diagnostics get a safe summary even when the other fails.
+          # A partial observation can never produce a green final job.
+          set +e
+          python3 scripts/zcloud_watchdog_operator_summary_20261014_w1.py \
+            --report "$report" --collector-exit "$read_rc" \
+            --summary-path "$GITHUB_STEP_SUMMARY"
+          observer_summary_rc=$?
+          python3 scripts/zcloud_queue_route_summary_20261014_w1.py \
+            --report "$triage" --collector-exit "$triage_rc" \
+            --summary-path "$GITHUB_STEP_SUMMARY"
+          triage_summary_rc=$?
+          set -e
+          if (( observer_summary_rc != 0 || triage_summary_rc != 0 )); then
+            exit 1
+          fi
