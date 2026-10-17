@@ -226,13 +226,13 @@ class RunJobEvidenceTests(unittest.TestCase):
                 "url": "https://api.github.com/repos/Zennay/zCloud/actions/jobs/456",
             }
         }
-        result = guard.inspect_github_api_receipt(doc, NOW)
+        result = guard.inspect_github_api_receipt(doc, NOW, expected_project_id='cloud', expected_repository='Zennay/zCloud')
         self.assertEqual("aged_unassigned_queue", result["reason"])
         self.assertFalse(result["repair_authorized"])
         self.assertFalse(result["recovery_verified"])
         doc["workflow_run"]["status"] = "waiting"
         self.assertEqual("intentional_or_scheduler_wait",
-                         guard.inspect_github_api_receipt(doc, NOW)["state"])
+                         guard.inspect_github_api_receipt(doc, NOW, expected_project_id='cloud', expected_repository='Zennay/zCloud')["state"])
         return doc
 
     def test_rest_api_origin_retry_sha_and_job_id_conflicts_rejected(self):
@@ -264,7 +264,7 @@ class RunJobEvidenceTests(unittest.TestCase):
             doc[section][key] = bad
             with self.subTest(section=section, key=key):
                 with self.assertRaises(ValueError):
-                    guard.inspect_github_api_receipt(doc, NOW)
+                    guard.inspect_github_api_receipt(doc, NOW, expected_project_id='cloud', expected_repository='Zennay/zCloud')
 
     def test_api_envelope_cli_real_disk_round_trip_and_fail_closed(self):
         now = datetime.now(timezone.utc)
@@ -288,7 +288,7 @@ class RunJobEvidenceTests(unittest.TestCase):
             file.write_text(json.dumps(snapshot), encoding="utf-8")
             def run():
                 return subprocess.run(
-                    [sys.executable, str(SCRIPT), "--api-envelope", str(file)],
+                    [sys.executable, str(SCRIPT), "--api-envelope", "--expect-project", "cloud", "--expect-repository", "Zennay/zCloud", str(file)],
                     capture_output=True, text=True, timeout=6, check=False)
             result = run()
             self.assertEqual(0, result.returncode, result.stderr)
@@ -316,6 +316,35 @@ class RunJobEvidenceTests(unittest.TestCase):
             self.assertEqual("", result.stdout)
             self.assertNotIn("secret", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
+
+    def test_api_receipts_cannot_reassign_other_projects_or_repositories(self):
+        run_url = "https://api.github.com/repos/Zennay/zCloud/actions/runs/123"
+        doc = {
+            "schema_version": 1, "project_id": "cloud", "observed_at": stamp(-1),
+            "workflow_run": {
+                "id": 123, "run_attempt": 1, "repository": {"full_name": "Zennay/zCloud"},
+                "head_sha": "a"*40, "url": run_url, "status": "queued", "conclusion": None},
+            "job": {
+                "id": 456, "run_id": 123, "run_attempt": 1, "head_sha": "a"*40,
+                "status": "queued", "conclusion": None, "created_at": stamp(-46),
+                "runner_id": 0, "runner_name": "", "run_url": run_url,
+                "url": "https://api.github.com/repos/Zennay/zCloud/actions/jobs/456"}
+        }
+        for expected_pid, expected_repo in (
+            ("ftmo", "Zennay/zCloud"),
+            ("cloud", "Zennay/Ftmo"),
+            ("ftmo", "Zennay/Ftmo"),
+        ):
+            with self.subTest(owner=expected_pid, repo=expected_repo):
+                with self.assertRaisesRegex(ValueError, "binding mismatch"):
+                    guard.inspect_github_api_receipt(
+                        doc, NOW, expected_project_id=expected_pid,
+                        expected_repository=expected_repo)
+        output = guard.inspect_github_api_receipt(
+            doc, NOW, expected_project_id="cloud",
+            expected_repository="Zennay/zCloud")
+        self.assertEqual("needs_independent_triage", output["state"])
+        self.assertFalse(output["repair_authorized"])
 
     def test_exact_boundary_30min_and_clock_skew(self):
         doc = receipt(created_at=stamp(-31))
