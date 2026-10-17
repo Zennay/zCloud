@@ -1,0 +1,40 @@
+name: Dashboard external probe offline acceptance (2026-10-13 w1)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/zcloud_dashboard_external_probe_20261013_w1.py'
+      - 'tests/test_zcloud_dashboard_external_probe_20261013_w1.py'
+      - 'scripts/zcloud_dashboard_summary_guard_20261014_w1.py'
+      - 'tests/test_zcloud_dashboard_summary_guard_20261014_w1.py'
+      - '.github/workflows/zcloud-dashboard-external-probe-hosted-20261013-w1.yml'
+      - '.github/workflows/zcloud-dashboard-external-triage-manual-20261013-w1.yml'
+      - 'docs/zcloud-dashboard-external-triage-20261013-w1.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classify-offline:
+    if: github.repository == 'Zennay/zCloud' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'Zennay/zCloud')
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout immutable tested commit without credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2, immutable
+        with:
+          # Verify the immutable PR head, not the synthetic pull/merge ref.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Compile safe probe and fixture tests
+        run: |
+          python3 -m py_compile scripts/zcloud_dashboard_external_probe_20261013_w1.py tests/test_zcloud_dashboard_external_probe_20261013_w1.py scripts/zcloud_dashboard_summary_guard_20261014_w1.py tests/test_zcloud_dashboard_summary_guard_20261014_w1.py
+      - name: Run failure taxonomy, privacy and retry tests (no network)
+        run: |
+          python3 -m unittest discover -s tests -p 'test_zcloud_dashboard_external_probe_20261013_w1.py' -v
+          python3 -m unittest discover -s tests -p 'test_zcloud_dashboard_summary_guard_20261014_w1.py' -v
+      - name: Run full Python regression (hosted only)
+        run: |
+          python3 -m unittest discover -s tests -p 'test_*.py' -q
