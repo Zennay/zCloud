@@ -206,6 +206,66 @@ class RunJobEvidenceTests(unittest.TestCase):
                     self.assertEqual("", p.stdout)
                     self.assertNotIn("Traceback", p.stderr)
 
+    def test_actual_github_rest_shapes_bind_origin_run_retry_and_sha(self):
+        # A normalized fixture matching the fields observed from real
+        # GET /repos/{owner}/{repo}/actions/runs/{id} and /runs/{id}/jobs.
+        run_url = "https://api.github.com/repos/Zennay/zCloud/actions/runs/123"
+        doc = {
+            "schema_version": 1, "project_id": "cloud", "observed_at": stamp(-1),
+            "workflow_run": {
+                "id": 123, "run_attempt": 1, "repository": {"full_name": "Zennay/zCloud"},
+                "head_sha": "a" * 40, "status": "queued", "conclusion": None,
+                "url": run_url,
+            },
+            "job": {
+                "id": 456, "run_id": 123, "run_attempt": 1,
+                "head_sha": "a" * 40, "status": "queued", "conclusion": None,
+                "created_at": stamp(-46),
+                "runner_id": 0, "runner_name": "",
+                "run_url": run_url,
+                "url": "https://api.github.com/repos/Zennay/zCloud/actions/jobs/456",
+            }
+        }
+        result = guard.inspect_github_api_receipt(doc, NOW)
+        self.assertEqual("aged_unassigned_queue", result["reason"])
+        self.assertFalse(result["repair_authorized"])
+        self.assertFalse(result["recovery_verified"])
+        doc["workflow_run"]["status"] = "waiting"
+        self.assertEqual("intentional_or_scheduler_wait",
+                         guard.inspect_github_api_receipt(doc, NOW)["state"])
+        return doc
+
+    def test_rest_api_origin_retry_sha_and_job_id_conflicts_rejected(self):
+        for section, key, bad in (
+            ("workflow_run", "url", "https://api.github.com/repos/Other/Repo/actions/runs/123"),
+            ("workflow_run", "url", "https://github.com/Zennay/zCloud/actions/runs/123"),
+            ("workflow_run", "id", 124),
+            ("workflow_run", "run_attempt", 2),
+            ("workflow_run", "head_sha", "b" * 40),
+            ("job", "run_url", "https://api.github.com/repos/Zennay/zCloud/actions/runs/999"),
+            ("job", "url", "https://api.github.com/repos/Zennay/zCloud/actions/jobs/999"),
+            ("job", "run_id", 234),
+            ("job", "run_attempt", 2),
+            ("job", "head_sha", "b" * 40),
+        ):
+            run_url = "https://api.github.com/repos/Zennay/zCloud/actions/runs/123"
+            doc = {
+                "schema_version": 1, "project_id": "cloud", "observed_at": stamp(-1),
+                "workflow_run": {
+                    "id": 123, "run_attempt": 1, "repository": {"full_name": "Zennay/zCloud"},
+                    "head_sha": "a" * 40, "status": "queued", "conclusion": None, "url": run_url},
+                "job": {
+                    "id": 456, "run_id": 123, "run_attempt": 1,
+                    "head_sha": "a" * 40, "status": "queued", "conclusion": None,
+                    "created_at": stamp(-46), "runner_id": 0, "runner_name": "",
+                    "run_url": run_url,
+                    "url": "https://api.github.com/repos/Zennay/zCloud/actions/jobs/456"}
+            }
+            doc[section][key] = bad
+            with self.subTest(section=section, key=key):
+                with self.assertRaises(ValueError):
+                    guard.inspect_github_api_receipt(doc, NOW)
+
     def test_exact_boundary_30min_and_clock_skew(self):
         doc = receipt(created_at=stamp(-31))
         self.assertEqual("needs_independent_triage", check(doc)["state"])
