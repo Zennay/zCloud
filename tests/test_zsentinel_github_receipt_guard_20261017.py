@@ -52,6 +52,57 @@ class RunJobEvidenceTests(unittest.TestCase):
                     self.assertEqual("intentional_or_scheduler_wait", output["state"])
                     self.assertFalse(output["repair_authorized"])
 
+    def test_parent_workflow_wait_preempts_queued_job_false_positive(self):
+        # Genuine GitHub job API can show runner_id=0, status=queued when
+        # the parent workflow is awaiting environment approval.
+        for run_status in ("waiting", "pending", "requested"):
+            with self.subTest(parent_status=run_status):
+                doc = receipt("queued", created_at=stamp(-180))
+                doc["workflow_run"]["status"] = run_status
+                doc["workflow_run"]["conclusion"] = None
+                result = check(doc)
+                self.assertEqual("intentional_or_scheduler_wait", result["state"])
+                self.assertEqual("approval_or_concurrency_wait", result["reason"])
+                self.assertFalse(result["repair_authorized"])
+
+    def test_parent_workflow_queued_preserves_real_unassigned_triage(self):
+        doc = receipt("queued")
+        doc["workflow_run"].update(status="queued", conclusion=None)
+        self.assertEqual("aged_unassigned_queue", check(doc)["reason"])
+        doc["job"]["runner_id"] = 51
+        doc["job"]["runner_name"] = "zcloud-vps-1"
+        self.assertEqual("in_progress", check(doc)["state"])
+
+    def test_terminal_parent_stale_job_never_proves_runner_outage(self):
+        for conclusion in ("success", "failure", "cancelled", "skipped"):
+            doc = receipt("queued")
+            doc["workflow_run"].update(status="completed", conclusion=conclusion)
+            with self.subTest(parent_conclusion=conclusion):
+                result = check(doc)
+                self.assertEqual("unknown", result["state"])
+                self.assertEqual("inconsistent_run_job_snapshot", result["reason"])
+                self.assertFalse(result["repair_authorized"])
+
+    def test_invalid_parent_workflow_status_and_conclusion_fail_closed(self):
+        for status, conclusion in (
+            ("waiting", "success"), ("queued", "failure"),
+            ("completed", None), ("completed", "not-a-conclusion"),
+            (True, None), ([], None), ("unknown", None),
+        ):
+            doc = receipt("queued")
+            doc["workflow_run"].update(status=status, conclusion=conclusion)
+            with self.subTest(parent_status=repr(status), conclusion=conclusion):
+                with self.assertRaises(ValueError):
+                    check(doc)
+
+    def test_terminal_parent_and_terminal_job_remain_non_authorizing(self):
+        doc = receipt("completed", conclusion="success")
+        doc["workflow_run"].update(status="completed", conclusion="success")
+        self.assertEqual("ci_green_runtime_unverified", check(doc)["reason"])
+        doc["job"]["conclusion"] = "failure"
+        doc["workflow_run"]["conclusion"] = "failure"
+        self.assertEqual("terminal_job_failure", check(doc)["reason"])
+
     def test_only_unassigned_queued_runs_need_independent_triage(self):
         self.assertEqual("needs_independent_triage", check(receipt())["state"])
         self.assertEqual("in_progress", check(receipt(created_at=stamp(-20)))["state"])
