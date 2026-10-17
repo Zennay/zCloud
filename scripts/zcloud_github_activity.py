@@ -304,11 +304,15 @@ def main(argv=None):
     parser.add_argument("--registry", default=str(Path(__file__).resolve().parents[1] / "projects.json"))
     parser.add_argument("--projects", required=True, help="Comma-separated canonical project IDs (up to 12)")
     parser.add_argument("--output", help="Write restricted 0600 JSON, otherwise print")
+    parser.add_argument("--ledger", help="Opt-in private retained activity file (0600, outside public/)")
     args = parser.parse_args(argv)
     registry = portfolio_registry(args.registry)
     project_ids = args.projects.split(",")
     reader = GithubReader(token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_READ_TOKEN"))
     payload = collect(registry, project_ids, reader=reader)
+    if args.ledger:
+        from scripts.zcloud_activity_ledger import merge_and_store
+        payload = merge_and_store(args.ledger, payload)
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
     if args.output:
         import tempfile
