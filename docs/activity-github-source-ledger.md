@@ -34,4 +34,13 @@ Coverage records per-family `recent_window`, `truncated_after_two_pages`, a gene
 
 The existing [fair local event selector PR #1519](https://github.com/Zennay/zCloud/pull/1519) owns event paging; [Activity UI PR #1528](https://github.com/Zennay/zCloud/pull/1528) owns `public/app.js`; central eventstream and `server.py` are serialized integration surfaces. They are left unchanged here. An authorized owner can consume this adapter's typed, bounded receipt in a separate queue-safe ingest job, persist source timestamps and first-observed timestamps and expose actual source coverage alongside the local feed. **Do not merge remote and local events solely by display text**. Preserve project identity, stable id, source kind and explicit main-merged semantics.
 
+A second product interface, `scripts/zcloud_activity_source_page.py`, exposes read-only **per-project, 1–80-item pages** from the explicitly private ledger (no network call or service mutation). The cursor binds to the exact ordered source snapshot, so after a refresh the reader gets an explicit `activity_cursor_stale_restart` rather than duplicate/skipped activity or a fabricated consistent continuation:
+
+```sh
+python3 -m scripts.zcloud_activity_source_page --ledger ./private/github-activity-ledger.json --project cloud --limit 40
+# Pass the returned next_cursor in a later --cursor argument only if ledger has not changed.
+```
+
+The returned event data is always described as `source_status=partial_or_retained`, with its real source timestamps and previous sync coverage; it never marks a cached read as live GitHub synchronization. Both command modules are optional source tools, outside production routing.
+
 The ledger is optional and no persistent file is opened during the default read-only CLI mode. No runtime ingestion, dashboard switch, live VPS roll-out, worker recovery or release is claimed. Mandatory exact-head CI, ownership review and serialized production #580/PWQ-41/#1089 remain required before wiring/deploy. This implementation contains no new QA or regression suite per the 17 October user decision.
