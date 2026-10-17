@@ -224,6 +224,8 @@ def inspect_github_api_receipt(data, now=None):
 def main():
     parser = argparse.ArgumentParser(description="Offline, non-authorizing GitHub triage")
     parser.add_argument("receipt", type=Path)
+    parser.add_argument("--api-envelope", action="store_true",
+                        help="validate raw GitHub REST run + job objects instead of normalized receipt")
     args = parser.parse_args()
     try:
         if args.receipt.is_symlink():
@@ -238,7 +240,8 @@ def main():
         if len(raw) > MAX_FILE_BYTES:
             raise ValueError("receipt exceeds size limit")
         receipt = json.loads(raw.decode("utf-8"), object_pairs_hook=_object)
-        print(json.dumps(inspect_receipt(receipt), sort_keys=True))
+        diagnose = inspect_github_api_receipt if args.api_envelope else inspect_receipt
+        print(json.dumps(diagnose(receipt), sort_keys=True))
     except (OSError, ValueError, TypeError, KeyError, UnicodeError) as exc:
         parser.exit(2, f"GitHub triage evidence rejected: {exc.__class__.__name__}\n")
     return 0
