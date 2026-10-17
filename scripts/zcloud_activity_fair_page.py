@@ -1,6 +1,7 @@
 """Bounded, fair local-event selector for zCloud issue #1518.
 
-A *source-only* component: does not alter server.py, the live SQLite database,
+A metadata-only, *source-only* component: deliberately never reads private
+legacy event title/detail text. It does not alter server.py, the live SQLite database,
 the Activity Feed API, or its serialized integration owner. A page rotates
 through allowlisted projects instead of letting 80 events from one noisy
 project hide quiet projects. GitHub/PR/CI evidence remains NOT synchronized.
@@ -86,17 +87,17 @@ def fair_page(
         # The legacy events table has its own stable event ID. The extra row
         # only detects whether pagination is required and is NEVER returned.
         rows = connection.execute(
-            "SELECT id, ts, project, kind, title, detail FROM events WHERE "
+            "SELECT id, ts, project, kind FROM events WHERE "
             + where + " ORDER BY ts DESC, id DESC LIMIT ?", params
         ).fetchall()
         clean: list[dict[str, Any]] = []
         for row in rows:
-            eid, ts, pid, kind, title, detail = row
+            eid, ts, pid, kind = row
             _key(ts, eid)  # fail closed; malformed source is NOT zero activity
             if pid != project:
                 raise ValueError("cross-project event row")
             clean.append({"id": eid, "ts": ts, "project": pid,
-                          "kind": kind, "title": title, "detail": detail})
+                          "kind": kind})
         streams[project] = clean
 
     # Stable order across repeat reads, independent of caller registry order.
