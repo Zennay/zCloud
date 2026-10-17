@@ -6,6 +6,7 @@ on:
     paths:
       - "scripts/zcloud_self_hosted_timeout_audit.py"
       - "tests/test_zcloud_self_hosted_timeout_audit.py"
+      - "tests/test_zcloud_self_hosted_timeout_manual_gate_20261013_w1.py"
       - ".github/workflows/zcloud-self-hosted-timeout-audit.yml"
   workflow_dispatch:
 
@@ -35,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit
+          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit tests.test_zcloud_self_hosted_timeout_manual_gate_20261013_w1
           python3 -m py_compile scripts/zcloud_self_hosted_timeout_audit.py
 
       - name: Audit repository timeout bounds hosted
@@ -71,10 +72,12 @@ jobs:
 
   prove:
     needs: validate
+    # No PR code, fork source, push, or branch dispatch may access the live VPS.
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.actor == 'Zennay' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.actor == 'Zennay' &&
+      github.ref == 'refs/heads/main'
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
@@ -97,10 +100,25 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           python3 scripts/zcloud_vps_runner_guard.py --json
 
+      - name: Revalidate exact live canonical main before VPS inspection
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_ACTOR" = 'Zennay'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          current_main="$(timeout 15 git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '$2 == "refs/heads/main" {print $1}')"
+          test -n "$current_main"
+          test "$current_main" = "$EXPECTED_SHA"
+          echo "ZCLOUD_TIMEOUT_AUDIT_EXACT_MAIN_GREEN"
+
       - name: Re-run focused regressions on permanent VPS
         run: |
           set -euo pipefail
-          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit
+          python3 -m unittest -v tests.test_zcloud_self_hosted_timeout_audit tests.test_zcloud_self_hosted_timeout_manual_gate_20261013_w1
           python3 -m py_compile scripts/zcloud_self_hosted_timeout_audit.py
 
       - name: Audit self-hosted job timeout bounds read only
