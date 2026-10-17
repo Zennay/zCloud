@@ -26,7 +26,7 @@ class WorkerPromptStyleTests(unittest.TestCase):
         self.assertIn("stop niet na één actie, commit, retrigger of statuscheck", prompt)
         self.assertIn("pak direct ander veilig uitvoerbaar werk", prompt)
         self.assertIn("tot de runlimiet", prompt)
-        self.assertLess(len(prompt), 1800)
+        self.assertLess(len(prompt), 2700)
 
     def test_parallel_worker_gets_compact_non_conflicting_lane_focus(self):
         prompt = server.project_worker_prompt("ftmo", "FTMO", "", 1, 2, ITEM)
@@ -45,7 +45,7 @@ class WorkerPromptStyleTests(unittest.TestCase):
             self.assertIn("Bouw of repareer echte functionaliteit", prompt)
             self.assertIn("test gericht en respecteer alle verplichte gates", prompt)
             self.assertNotIn("Focus: " + lane, prompt)
-            self.assertLess(len(prompt), 1800)
+            self.assertLess(len(prompt), 2700)
 
     def test_implementation_lanes_deliver_code_and_keep_required_gates(self):
         for project_id, name, lane in (
@@ -60,7 +60,7 @@ class WorkerPromptStyleTests(unittest.TestCase):
             self.assertIn("Bouw of repareer echte functionaliteit", prompt)
             self.assertIn("test gericht en respecteer alle verplichte gates", prompt)
             self.assertIn("geen eindeloze QA-rondes", prompt)
-            self.assertLess(len(prompt), 1800)
+            self.assertLess(len(prompt), 2700)
 
     def test_parallel_lanes_produce_different_prompts_for_same_project(self):
         other = {
@@ -101,6 +101,54 @@ class WorkerPromptStyleTests(unittest.TestCase):
     def test_single_worker_uses_canonical_sustained_prompt(self):
         prompt = server.project_worker_prompt("supa", "Supa", "", 1, 1, None)
         self.assertEqual(server.project_runner_prompt("supa", "Supa"), prompt)
+
+
+    def test_claimed_feature_is_a_concrete_delivery_mission_not_generic_lane(self):
+        assigned = {
+            **ITEM,
+            "project_id": "supa",
+            "title": "Ship the recipe import and shopping list flow",
+            "completion_criteria": (
+                "Import a user recipe URL, normalize metric ingredient amounts, "
+                "persist the recipe and add its ingredients to the basket with E2E tests."
+            ),
+            "execution_lane": {"lane_id": "product-core"},
+        }
+        prompt = server.project_worker_prompt("supa", "Supa", "", 1, 2, assigned)
+        self.assertIn("HOOFDOPDRACHT VAN DEZE CLAIM: Ship the recipe import", prompt)
+        self.assertIn("persist the recipe", prompt)
+        self.assertIn("end-to-end", prompt)
+        self.assertIn("Een deelstap is CONTINUE, niet DONE", prompt)
+        self.assertIn("groene exact-head CI", prompt)
+        self.assertLess(len(prompt), 2700)
+
+    def test_claimed_mission_is_bound_to_matching_project(self):
+        other_project = {**ITEM, "project_id": "lightup", "title": "FOREIGN SCOPE"}
+        prompt = server.project_worker_prompt("supa", "Supa", "", 1, 2, other_project)
+        self.assertNotIn("FOREIGN SCOPE", prompt)
+        self.assertNotIn("HOOFDOPDRACHT VAN DEZE CLAIM", prompt)
+
+    def test_claimed_mission_is_bounded_and_control_characters_are_flattened(self):
+        assigned = {
+            **ITEM,
+            "title": "Build a complete route\nwith integration\x00 and tests" + "X" * 5000,
+            "completion_criteria": "Make it real\n" + "Y" * 6000,
+        }
+        prompt = server.project_worker_prompt("ftmo", "FTMO", "", 1, 2, assigned)
+        mission = prompt.split("HOOFDOPDRACHT VAN DEZE CLAIM:", 1)[1]
+        self.assertNotIn("\x00", mission)
+        self.assertNotIn("\n", mission)
+        self.assertIn("Build a complete route with integration", mission)
+        self.assertNotIn("X" * 100, mission)
+        self.assertNotIn("Y" * 100, mission)
+        self.assertLess(len(prompt), 2700)
+
+    def test_worker_without_title_never_receives_fake_claim(self):
+        prompt = server.project_worker_prompt(
+            "supa", "Supa", "", 1, 2, {"queue_id": "supa-123", "project_id": "supa"}
+        )
+        self.assertNotIn("HOOFDOPDRACHT VAN DEZE CLAIM", prompt)
+        self.assertIn("productmijlpaal", prompt)
 
     def test_base_prompt_matches_owner_requested_shape(self):
         prompt = server.project_runner_prompt("zssh", "zSSH")

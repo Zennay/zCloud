@@ -307,11 +307,40 @@ def classify_backlog_item(project, item):
     }
 
 
+def work_package_rank(item):
+    """Rank delivery-oriented work ahead of isolated QA within equal priority.
+
+    Higher-priority P0/P1 work, already active claims, manual-start intent and
+    conflict scopes always retain their separate authority.
+    """
+    title = str(item.get("title") or "").strip().lower()
+    criteria = str(item.get("completion_criteria") or "").lower()
+    if title.startswith((
+        "test ", "qa ", "audit ", "inspect ", "review ", "verify ",
+        "check ", "monitor ", "report ", "document ", "validate ",
+    )):
+        return 2
+    words = (
+        "implement", "build", "ship", "deliver", "complete", "finish",
+        "integrate", "migrate", "fix", "repair", "recover", "restore",
+        "launch", "enable", "harden", "connect", "refactor",
+    )
+    if any(re.search(r'\b' + word + r'\b', title) for word in words):
+        return 0
+    if any(value in criteria for value in (
+        "end-to-end implementation", "end-to-end feature", "complete user flow",
+        "multi-step work package", "substantial roadmap work package",
+    )):
+        return 0
+    return 1
+
+
 def _queue_order(item):
     status = str(item.get("status") or "queued").lower()
     return (
         0 if status in ACTIVE_STATUSES else 1,
         PRIORITY_RANK.get(str(item.get("priority") or "P3").upper(), 3),
+        work_package_rank(item),
         str(item.get("created_at") or ""),
         str(item.get("queue_id") or ""),
     )
