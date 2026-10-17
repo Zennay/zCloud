@@ -9,6 +9,7 @@ from collections import deque
 from datetime import datetime, timezone
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import tempfile
@@ -22,6 +23,23 @@ KINDS = {
     "pr_created", "pr_updated", "pr_merged", "main_commit",
     "ci_run", "branch_tip_observed",
 }
+EVENT_FIELDS = {"id", "project", "repository", "source", "kind",
+                "source_timestamp", "first_observed_at", "number", "head_sha",
+                "draft", "merged_main", "state", "sha", "conclusion", "branch_id"}
+COVERAGE_FIELDS = {"repository", "status", "last_successful_sync", "sources",
+                   "github_pr_branch_ci", "retained_history"}
+SOURCE_FIELDS = {"pulls", "commits", "actions/runs", "branches"}
+SOURCE_RESULTS = {"recent_window", "truncated_after_two_pages",
+                  "request_budget_exhausted", "github_unavailable_or_rate_limited",
+                  "github_repository_not_accessible", "github_http_error",
+                  "github_transport_or_payload_failure", "github_pulls_invalid",
+                  "github_commits_invalid", "github_ci_invalid",
+                  "github_branches_invalid", "github_response_too_large",
+                  "github_redirect_refused", "github_http_non_success",
+                  "github_untrusted_response_origin"}
+REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
+PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
+HASH = re.compile(r"^[a-fA-F0-9]{40}$")
 
 
 def _safe_record(item):
@@ -30,7 +48,20 @@ def _safe_record(item):
     pid, repo, eid, kind = (item.get(key) for key in ("project", "repository", "id", "kind"))
     if not all(isinstance(v, str) for v in (pid, repo, eid, kind)):
         return False
-    if not (0 < len(pid) < 42 and repo.startswith("Zennay/") and 0 < len(repo) <= 110):
+    if not PROJECT.fullmatch(pid) or not REPO.fullmatch(repo):
+        return False
+    if set(item) - EVENT_FIELDS:
+        return False
+    for key in ("sha", "head_sha"):
+        if key in item and (not isinstance(item[key], str) or not HASH.fullmatch(item[key])):
+            return False
+    if "number" in item and (type(item["number"]) is not int or item["number"] < 1):
+        return False
+    if "draft" in item and type(item["draft"]) is not bool:
+        return False
+    if "merged_main" in item and type(item["merged_main"]) is not bool:
+        return False
+    if "branch_id" in item and (not isinstance(item["branch_id"], str) or not re.fullmatch(r"[a-f0-9]{20}", item["branch_id"])):
         return False
     if kind not in KINDS or len(eid) > 260 or not eid.startswith("github:" + repo + ":" + kind + ":"):
         return False
@@ -40,6 +71,34 @@ def _safe_record(item):
     first = item.get("first_observed_at")
     if first is not None and stamp(first) is None:
         return False
+    return True
+
+
+def _safe_coverage(coverage):
+    if not isinstance(coverage, dict) or len(coverage) > 100:
+        return False
+    for pid, state in coverage.items():
+        if not isinstance(pid, str) or not PROJECT.fullmatch(pid):
+            return False
+        if not isinstance(state, dict) or set(state) - COVERAGE_FIELDS:
+            return False
+        repo = state.get("repository")
+        if not isinstance(repo, str) or not REPO.fullmatch(repo):
+            return False
+        if state.get("status") not in ("partial", "recent_window"):
+            return False
+        sync = state.get("last_successful_sync")
+        if sync is not None and stamp(sync) is None:
+            return False
+        if "retained_history" in state and type(state["retained_history"]) is not bool:
+            return False
+        if state.get("github_pr_branch_ci") not in ("partial", "recent_window"):
+            return False
+        sources = state.get("sources")
+        if not isinstance(sources, dict) or set(sources) - SOURCE_FIELDS:
+            return False
+        if any(value not in SOURCE_RESULTS for value in sources.values()):
+            return False
     return True
 
 
@@ -83,11 +142,17 @@ def _read(path):
     except (OSError, ValueError, UnicodeError):
         raise ActivitySourceError("ledger_cannot_be_read") from None
     if (not isinstance(data, dict) or data.get("schema_version") != 1 or
-            not isinstance(data.get("coverage"), dict) or
+            not _safe_coverage(data.get("coverage")) or
             not isinstance(data.get("events"), list) or len(data["events"]) > MAX_LEDGER_EVENTS):
         raise ActivitySourceError("ledger_schema_invalid")
     if any(not _safe_record(item) for item in data["events"]):
         raise ActivitySourceError("ledger_record_invalid")
+    if len({item["id"] for item in data["events"]}) != len(data["events"]):
+        raise ActivitySourceError("ledger_duplicate_identity")
+    if any(item["project"] not in data["coverage"] or
+           item["repository"] != data["coverage"][item["project"]]["repository"]
+           for item in data["events"]):
+        raise ActivitySourceError("ledger_repository_mismatch")
     return data
 
 
