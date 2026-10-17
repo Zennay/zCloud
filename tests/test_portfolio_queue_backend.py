@@ -67,6 +67,36 @@ class VpsPortfolioQueueTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(2, worker_count)
 
+    def test_allocator_prefers_complete_feature_over_older_same_priority_micro_task(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        micro = server.portfolio_queue_enqueue(
+            "supa", "Test planner flow navigation", "P2",
+            "Verify only a small planner navigation detail.",
+        )
+        feature = server.portfolio_queue_enqueue(
+            "supa", "Build complete planner user flow", "P2",
+            "Implement and integrate full planner UI, persistence and end-to-end tests.",
+        )
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual([feature["queue_id"]], [row["queue_id"] for row in selected])
+        self.assertEqual("queued", next(
+            row["status"] for row in server.portfolio_queue_items(True)
+            if row["queue_id"] == micro["queue_id"]
+        ))
+
+    def test_allocator_preserves_urgent_priority_over_large_lower_priority_feature(self):
+        server.GLOBAL_CHATGPT_WORKER_LIMIT = 1
+        urgent = server.portfolio_queue_enqueue(
+            "supa", "Test urgent planner flow navigation", "P0",
+            "Fix an urgent regression in planner navigation and verify the fix.",
+        )
+        server.portfolio_queue_enqueue(
+            "supa", "Build complete planner user flow", "P1",
+            "Implement and integrate full planner UI and persistence.",
+        )
+        selected = server.portfolio_queue_allocate()
+        self.assertEqual([urgent["queue_id"]], [row["queue_id"] for row in selected])
+
     def test_claims_priority_and_two_global_slots(self):
         server.portfolio_queue_enqueue("haxlab", "normal", "P2", "prove normal")
         server.portfolio_queue_enqueue("raiseai", "high", "P1", "prove high")
