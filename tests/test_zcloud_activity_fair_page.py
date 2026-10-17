@@ -123,6 +123,39 @@ class FairActivityPageTests(unittest.TestCase):
         self.assertIsNone(p["next_cursor"])
         self.assertFalse(p["coverage"]["feed_complete"])
 
+    def test_raw_private_event_title_and_detail_are_never_read_or_returned(self):
+        secret = "private-token:do-not-display"
+        self.db.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?)",
+            ("safe-id", BASE, "a", "commit", secret, secret),
+        )
+        query_trace = []
+        self.db.set_trace_callback(query_trace.append)
+        try:
+            result = mod.fair_page(self.db, ["a"])
+        finally:
+            self.db.set_trace_callback(None)
+        self.assertEqual({"id", "ts", "project", "kind"},
+                         set(result["events"][0]))
+        self.assertNotIn(secret, repr(result))
+        self.assertFalse(any("title" in statement or "detail" in statement
+                             for statement in query_trace))
+
+    def test_equal_timestamp_events_have_stable_complete_cursor_paging(self):
+        for i in range(101):
+            add(self.db, "a", f"id-{i:03d}", 7)
+        seen = []
+        cursor = None
+        for _ in range(20):
+            page = mod.fair_page(self.db, ["a"], page_size=9, cursor=cursor)
+            seen.extend(e["id"] for e in page["events"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        self.assertIsNone(cursor)
+        self.assertEqual(101, len(seen))
+        self.assertEqual(sorted(seen, reverse=True), seen)
+
     def test_file_backed_read_only_select_does_not_mutate_db(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "history.db"
