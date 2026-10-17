@@ -1,0 +1,58 @@
+name: Deploy-ops direct-main writer source ratchet (hosted only)
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source-only:
+    # A PR-controlled workflow is not a trusted authorization policy.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.repository == 'Zennay/zCloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove immutable main and head before tests
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          actual_base="$(git rev-parse refs/remotes/origin/main)"
+          actual_head="$(git rev-parse HEAD)"
+          test "$actual_base" = "$EVENT_BASE"
+          test "$actual_head" = "$EVENT_HEAD"
+          # Force-pushing the remote branch cannot leave an old local HEAD green.
+          remote_head="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c credential.helper= ls-remote --exit-code https://github.com/Zennay/zCloud.git "refs/heads/$HEAD_REF")"
+          test "$remote_head" = "$EVENT_HEAD"$'\t'"refs/heads/$HEAD_REF"
+          echo "BASE=$actual_base" >> "$GITHUB_ENV"
+          echo "HEAD=$actual_head" >> "$GITHUB_ENV"
+      - name: Run adversarial real-Git regression matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_zcloud_direct_main_write_ratchet_20261015_w3.py' -v
+          python3 scripts/zcloud_direct_main_write_ratchet_20261015_w3.py --base "$BASE" --head "$HEAD"
+      - name: Reprove immutable source identity after tests
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$EVENT_BASE"
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          remote_head="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c credential.helper= ls-remote --exit-code https://github.com/Zennay/zCloud.git "refs/heads/$HEAD_REF")"
+          test "$remote_head" = "$EVENT_HEAD"$'\t'"refs/heads/$HEAD_REF"
+          echo "Source-only: no merge, deploy, runner or production authority"
