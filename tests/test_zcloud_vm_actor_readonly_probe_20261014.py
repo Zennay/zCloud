@@ -145,7 +145,13 @@ class VmActorReadOnlyProbeTests(unittest.TestCase):
         source = WORKFLOW.read_text()
         self.assertIn("  pull_request:", source)
         self.assertIn("  push:", source)
-        self.assertIn("    if: github.event_name == 'pull_request' || github.event_name == 'push'", source)
+        # The hosted branch is now explicitly gated for trusted same-repo PR
+        # source before checkout; trusted main pushes remain hosted.
+        hosted = source.split("  hosted-proof:\n", 1)[1].split("  inspect:\n", 1)[0]
+        self.assertIn("    if: >-", hosted)
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", hosted)
+        self.assertIn("github.triggering_actor == 'Zennay'", hosted)
+        self.assertIn("github.ref == 'refs/heads/main'", hosted)
         self.assertIn("runs-on: ubuntu-latest", source)
         gate = source.split("  inspect:\n", 1)[1].split("    runs-on:", 1)[0]
         self.assertIn("github.event_name == 'workflow_dispatch'", gate)
