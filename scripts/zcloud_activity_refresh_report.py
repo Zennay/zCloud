@@ -7,6 +7,7 @@ branch names and private application data are never logged.
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import sys
 
@@ -36,7 +37,9 @@ def refresh_activity_report(*, registry, project_ids, ledger_path, report_path,
             raise ActivitySourceError("activity_project_selection_out_of_bounds")
         if len(set(project_ids)) != len(project_ids) or any(pid not in registry_map for pid in project_ids):
             raise ActivitySourceError("activity_project_not_allowlisted")
-        source = collect(registry_map, project_ids, reader=reader or GithubReader())
+        source = collect(registry_map, project_ids, reader=reader or GithubReader(
+            token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_READ_TOKEN")
+        ))
         merge_and_store(ledger, source)
     if not ledger.exists():
         raise ActivitySourceError("activity_private_history_missing")
