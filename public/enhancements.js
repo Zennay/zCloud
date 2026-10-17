@@ -202,7 +202,15 @@
       var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:projectId,priority:el.value}),signal:AbortSignal.timeout(10000)});
       var data=await response.json().catch(function(){return {}});
       if(!response.ok){throw new Error('save_rejected')}
-      var saved=(data.resource&&data.resource.priority)||el.value;
+      // HTTP 2xx alone is not a saved-priority receipt. Preserve the prior
+      // selection if the response is incomplete or contradicts the API contract.
+      if(data.ok!==true||!data.resource
+          ||typeof data.resource.priority!=='string'
+          ||!['background','normal','high','turbo'].includes(data.resource.priority)
+          ||(data.resource.applied!==undefined&&typeof data.resource.applied!=='boolean')){
+        throw new Error('unconfirmed_priority_receipt');
+      }
+      var saved=data.resource.priority;
       el.value=saved;
       el.dataset.previousValue=saved;
       if(project){
