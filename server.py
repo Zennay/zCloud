@@ -194,6 +194,7 @@ def project_runner_prompt(project_id, name):
             'PRIORITEIT 2: werk open bugs, issues, onafgemaakte PRs en features in andere projecten af. '
             'Als een onderdeel wacht op CI, review of VPS, kies meteen ander vrij uitvoerbaar herstelwerk in een ander project. '
             'Voer meerdere concrete fixes na elkaar uit en stop niet bij een statuscheck, nieuwe taak, enkele commit of een groene heartbeat. '
+        'Herstel bij voorkeur één volledige cross-project kritieke route in plaats van een reeks symptoomfixes; bewijs daarna herstelde taakuitvoering. '
             'Rapporteer steeds het echte doelproject, de fix, tests, PR/commit, runtimebewijs en resterende blockers. '
         )
     return (
@@ -202,6 +203,8 @@ def project_runner_prompt(project_id, name):
         'Check actuele main, open issues/PRs, branch-eigenaars en CI; kies urgent open werk in de ACTUELE fase. '
         'Rond open PRs af vóór nieuwe branches in de ontwikkelfase; integreer op actuele main en merge zelfstandig na groene exact-head CI en branchchecks. Geen extra review tenzij GitHub die verplicht; maak drafts eerst reviewklaar. Na uitrol gelden release-gates; merge is geen live deploy of toestemming voor security-, broker- of researchacties. '
         'Bouw echte functionaliteit en fix bugs; geen eindeloze QA-rondes of toekomstfase-drafts zonder productblokkade. '
+        'Kies één samenhangende productmijlpaal en lever deze end-to-end: bouw alle benodigde onderdelen, sluit bestaande PRs, integreer en bewijs werking. '
+        'Losse QA, documenten, configuratietweaks, één mini-fix of alleen een nieuwe PR zijn geen afgeronde mijlpaal. '
         'Test wijzigingen gericht; de uurlijkse audit doet de brede kwaliteits- en voortgangsreview. '
         'Werk zelfstandig zo lang mogelijk hard door: voer meerdere materiële stappen achter elkaar uit en stop niet na één actie, commit, retrigger of statuscheck. '
         'HOLD alleen bij falende CI, scopeconflict of bewezen risico voor veiligheid, rechten, research of productie; beperk het tot de getroffen actie en herstel waar mogelijk. '
@@ -211,11 +214,45 @@ def project_runner_prompt(project_id, name):
     )
 
 
+def _worker_work_package_brief(project_id, queue_item):
+    """Bind the actual claimed queue deliverable to the browser prompt.
+
+    Queue rows may contain long Notion acceptance criteria. Keep a compact
+    preview; the worker must fetch the full source before implementing. The
+    canonical safety/release prompt is never replaced by queue data.
+    """
+    if not isinstance(queue_item, dict):
+        return ''
+    assigned_project = str(queue_item.get('project_id') or project_id).strip().lower()
+    if assigned_project != str(project_id).strip().lower():
+        return ''
+    def compact(value, limit):
+        value = re.sub(r'[\\x00-\\x1f\\x7f]+', ' ', str(value or ''))
+        value = re.sub(r'\\s+', ' ', value).strip()
+        if len(value) <= limit:
+            return value
+        return value[:limit].rsplit(' ', 1)[0].rstrip('.,;: ') + '…'
+
+    title = compact(queue_item.get('title'), 140)
+    if not title:
+        return ''
+    criteria = compact(queue_item.get('completion_criteria'), 360)
+    return (
+        f' HOOFDOPDRACHT VAN DEZE CLAIM: {title}. '
+        + (f'Acceptatie-samenvatting: {criteria} ' if criteria else '')
+        + 'Lees de volledige queue-/Notioncriteria en houd dit werkpakket vast tot een werkende end-to-end '
+        'mijlpaal: implementatie, integratie, tests en main-merge indien toegestaan. '
+        'Maak geen afzonderlijke micro-PRs of nieuwe QA-only taken als ditzelfde werk nog openstaat. '
+        'Een deelstap is CONTINUE, niet DONE; bij een externe gate blijft uitsluitend de getroffen stap open.'
+    )
+
+
 def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item=None):
     # zSentinel is a cross-portfolio recovery ROLE. Never attach a project-specific QA lane.
     if project_id=='zsentinel':
         return project_runner_prompt(project_id, name)
     prompt = project_runner_prompt(project_id, name)
+    work_package = _worker_work_package_brief(project_id, queue_item)
     worker_total = max(1, int(total or 1))
     lane = queue_item.get('execution_lane') if isinstance(queue_item, dict) else None
     lane_id = str(lane.get('lane_id') or '').strip() if isinstance(lane, dict) else ''
@@ -238,18 +275,19 @@ def project_worker_prompt(project_id, name, base_prompt, slot, total, queue_item
                 prompt
                 + f' Parallel focus {int(slot or 1)}/{worker_total}: {lane_id}. '
                 'Blijf binnen dit niet-conflicterende werkgebied, controleer open branches/PRs en neem geen werk over '
-                'dat al actief door een andere worker wordt uitgevoerd.' + implementation_focus
+                'dat al actief door een andere worker wordt uitgevoerd.' + implementation_focus + work_package
             )
         return (
             prompt
-            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.' + implementation_focus
+            + f' Focus: {lane_id}. Blijf in dit werkgebied zolang er veilig uitvoerbaar werk bestaat.' + implementation_focus + work_package
         )
     if worker_total <= 1:
-        return prompt
+        return prompt + work_package
     return (
         prompt
         + f' Er werken {worker_total} workers parallel aan dit project. Kies zelfstandig een ander vrij, '
         'niet-conflicterend werkgebied, controleer open branches/PRs en vermijd dubbel werk.'
+        + work_package
     )
 
 
