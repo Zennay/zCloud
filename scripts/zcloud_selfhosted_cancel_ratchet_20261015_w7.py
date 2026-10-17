@@ -8,6 +8,10 @@ denied. Unchanged legacy configurations remain grandfathered.
 from __future__ import annotations
 
 import argparse
+import os
+import selectors
+import signal
+import time
 from collections import Counter
 import json
 from pathlib import Path
@@ -24,19 +28,62 @@ class Denied(Exception):
     pass
 
 
+GIT_TIMEOUT = 15.0
+
+
 def git(root: Path, *args: str) -> bytes:
+    """Bound Git output *while reading* and kill hung pipe-holding descendants."""
     try:
-        command = subprocess.run(
-            ["git", *args], cwd=root, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, timeout=15, check=False,
+        proc = subprocess.Popen(
+            ["git", *args], cwd=root, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
         )
+    except OSError as exc:
+        raise Denied("git_unavailable_or_timeout") from exc
+    complete = False
+    data = bytearray()
+    deadline = time.monotonic() + GIT_TIMEOUT
+    try:
+        assert proc.stdout is not None
+        with selectors.DefaultSelector() as poller:
+            poller.register(proc.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not poller.select(remaining):
+                    raise Denied("git_unavailable_or_timeout")
+                piece = os.read(
+                    proc.stdout.fileno(),
+                    min(65536, MAX_SOURCE + 1 - len(data)),
+                )
+                if not piece:
+                    break
+                data.extend(piece)
+                if len(data) > MAX_SOURCE:
+                    raise Denied("git_output_too_large")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise Denied("git_unavailable_or_timeout")
+        if proc.wait(timeout=remaining):
+            raise Denied("git_command_failed")
+        complete = True
+        return bytes(data)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Denied("git_unavailable_or_timeout") from exc
-    if command.returncode:
-        raise Denied("git_command_failed")
-    if len(command.stdout) > MAX_SOURCE:
-        raise Denied("git_output_too_large")
-    return command.stdout
+    finally:
+        if not complete:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if proc.stdout is not None:
+            proc.stdout.close()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
 
 def source(root: Path, sha: str, path: str) -> str | None:
