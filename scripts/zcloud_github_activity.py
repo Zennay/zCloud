@@ -233,7 +233,7 @@ def parse_branches(repo, project, data, observed):
 
 
 def collect(registry, projects, *, reader, now=None):
-    observed = now or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    observed = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if not isinstance(projects, list) or len(projects) < 1 or len(projects) > MAX_PROJECTS:
         raise ActivitySourceError("project_selection_out_of_bounds")
     if len(set(projects)) != len(projects) or any(pid not in registry for pid in projects):
