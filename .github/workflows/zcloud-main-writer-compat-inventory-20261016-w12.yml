@@ -1,0 +1,201 @@
+name: Deploy-ops main writer compatibility inventory (hosted read only)
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  source-only:
+    # Read-only source tests are not policy approval or release authority.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.repository == 'Zennay/zCloud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact same-repo PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Admit exact current main and unchanged source before tests
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$EVENT_BASE"
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          remote_head="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c credential.helper= ls-remote --exit-code https://github.com/Zennay/zCloud.git "refs/heads/$HEAD_REF")"
+          test "$remote_head" = "$EVENT_HEAD"$'\t'"refs/heads/$HEAD_REF"
+          echo "SOURCE_MAIN=$EVENT_BASE" >> "$GITHUB_ENV"
+          echo "SOURCE_HEAD=$EVENT_HEAD" >> "$GITHUB_ENV"
+      - name: Run independent real-Git adversarial tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_zcloud_main_writer_compat_inventory_20261016_w12.py' -v
+          python3 -m unittest discover -s tests -p 'test_zcloud_main_writer_review_admission_20261016_w12.py' -v
+          python3 -m unittest discover -s tests -p 'test_zcloud_main_writer_startup_hints_20261016_w12.py' -v
+      - name: Inventory real immutable main in an isolated hosted worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          main_tree="$RUNNER_TEMP/zcloud-main-writer-readonly"
+          git worktree add --detach "$main_tree" "$SOURCE_MAIN"
+          git branch -f main "$SOURCE_MAIN"
+          # Reads immutable committed YAML blobs, not the PR working tree.
+          python3 scripts/zcloud_main_writer_compat_inventory_20261016_w12.py \
+            --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format markdown
+          python3 scripts/zcloud_main_writer_compat_inventory_20261016_w12.py \
+            --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format json > "$RUNNER_TEMP/main-writer-receipt.json"
+          python3 scripts/zcloud_main_writer_compat_inventory_20261016_w12.py \
+            --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format csv > "$RUNNER_TEMP/main-writer-review-queue.csv"
+          python3 - "$RUNNER_TEMP/main-writer-review-queue.csv" <<'PY'
+          import csv
+          import re
+          import sys
+          with open(sys.argv[1], encoding="utf-8", newline="") as handle:
+              rows = list(csv.DictReader(handle))
+          assert rows and len(rows) <= 512
+          for row in rows:
+              assert re.fullmatch(r"[a-f0-9]{64}", row["source_sha256"])
+              assert row["owner"] == row["decision"] == row["reviewed_by"] == ""
+              assert row["review_verified"] == row["branch_protection_authorized"] == "false"
+          print("CSV_SOURCE_ROWS=" + str(len(rows)))
+          PY
+          # Bounded static Git metadata only: paths, line codes, blob digests; no secrets or workflow bodies.
+          cat "$RUNNER_TEMP/main-writer-review-queue.csv"
+          python3 - "$RUNNER_TEMP/main-writer-receipt.json" "$SOURCE_MAIN" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              data = json.load(handle)
+          assert data["main_sha"] == sys.argv[2]
+          assert data["static_scan_complete"] is True
+          assert data["safe_to_enable_branch_protection"] is False
+          assert data["production_mutation_authorized"] is False
+          print("STATIC_CANDIDATES=" + str(data["candidate_count"]))
+          print("STATIC_DIRECT_MAIN_CANDIDATES=" + str(data["direct_writer_candidate_count"]))
+          print("PRODUCTION_MUTATION_AUTHORIZED=false")
+          PY
+          # Initial review queue is intentionally EMPTY; never manufacture owner approval.
+          python3 - "$RUNNER_TEMP/empty-writer-reviews.json" "$SOURCE_MAIN" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], "w", encoding="utf-8") as handle:
+              json.dump({"schema": "zcloud-main-writer-review-v1",
+                         "main_sha": sys.argv[2], "decisions": []}, handle)
+          PY
+          python3 scripts/zcloud_main_writer_review_admission_20261016_w12.py \
+            --inventory "$RUNNER_TEMP/main-writer-receipt.json" \
+            --reviews "$RUNNER_TEMP/empty-writer-reviews.json" \
+            --expected-main-sha "$SOURCE_MAIN" --format markdown
+          python3 scripts/zcloud_main_writer_review_admission_20261016_w12.py \
+            --inventory "$RUNNER_TEMP/main-writer-receipt.json" \
+            --reviews "$RUNNER_TEMP/empty-writer-reviews.json" \
+            --expected-main-sha "$SOURCE_MAIN" --format json > "$RUNNER_TEMP/writer-review-summary.json"
+          python3 - "$RUNNER_TEMP/writer-review-summary.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              status = json.load(handle)
+          assert status["review_claim_count"] == 0
+          assert status["pending_owner_review_count"] == status["candidate_count"]
+          assert status["review_claims_independently_verified"] is False
+          assert status["safe_to_enable_branch_protection"] is False
+          assert status["production_mutation_authorized"] is False
+          print("OWNER_REVIEW_PENDING=" + str(status["pending_owner_review_count"]))
+          print("SAFE_TO_ENABLE_BRANCH_PROTECTION=false")
+          PY
+          # Verify owner edits can be read directly from the real exact-blob CSV,
+          # without manufacturing approvals or manually rewriting JSON.
+          python3 scripts/zcloud_main_writer_review_admission_20261016_w12.py \
+            --inventory "$RUNNER_TEMP/main-writer-receipt.json" \
+            --reviews-csv "$RUNNER_TEMP/main-writer-review-queue.csv" \
+            --expected-main-sha "$SOURCE_MAIN" --format json > "$RUNNER_TEMP/csv-review-summary.json"
+          python3 - "$RUNNER_TEMP/csv-review-summary.json" "$RUNNER_TEMP/writer-review-summary.json" <<'PY'
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              csv_review = json.load(handle)
+          with open(sys.argv[2], encoding="utf-8") as handle:
+              json_review = json.load(handle)
+          assert csv_review == json_review
+          assert csv_review["review_claim_count"] == 0
+          assert csv_review["pending_owner_review_count"] == csv_review["candidate_count"]
+          assert csv_review["review_claims_independently_verified"] is False
+          assert csv_review["safe_to_enable_branch_protection"] is False
+          assert csv_review["production_mutation_authorized"] is False
+          print("CSV_REVIEW_ADMISSION_PENDING=" + str(csv_review["pending_owner_review_count"]))
+          print("CSV_REVIEW_PRODUCTION_AUTHORIZED=false")
+          PY
+          # Read only pinned, immutable main objects. These are source hints,
+          # never an assertion that a workflow ran or is manual-only.
+          python3 scripts/zcloud_main_writer_startup_hints_20261016_w12.py \
+            --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format markdown
+          python3 scripts/zcloud_main_writer_startup_hints_20261016_w12.py \
+            --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format json > "$RUNNER_TEMP/main-writer-startup-context.json"
+          python3 scripts/zcloud_main_writer_startup_hints_20261016_w12.py \
+            --repo "$main_tree" --expected-main-sha "$SOURCE_MAIN" --format csv > "$RUNNER_TEMP/main-writer-startup-context.csv"
+          python3 - "$RUNNER_TEMP/main-writer-startup-context.json" "$RUNNER_TEMP/main-writer-receipt.json" "$RUNNER_TEMP/main-writer-startup-context.csv" <<'PY'
+          import csv
+          import json
+          import sys
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              ctx = json.load(handle)
+          with open(sys.argv[2], encoding="utf-8") as handle:
+              inv = json.load(handle)
+          with open(sys.argv[3], encoding="utf-8", newline="") as handle:
+              rows = list(csv.DictReader(handle))
+          expected = {(x["path"], x["source_sha256"]) for x in inv["candidates"]}
+          actual = {(x["path"], x["source_sha256"]) for x in ctx["candidates"]}
+          csv_actual = {(r["workflow_path"], r["source_sha256"]) for r in rows}
+          assert len(expected) == len(actual) == len(csv_actual) == len(rows)
+          assert expected == actual == csv_actual
+          assert ctx["main_sha"] == inv["main_sha"]
+          assert ctx["candidate_count"] == inv["candidate_count"]
+          assert ctx["manual_only_verified"] is False
+          assert ctx["actual_activity_verified"] is False
+          assert ctx["safe_to_enable_branch_protection"] is False
+          assert ctx["production_mutation_authorized"] is False
+          assert all(x["manual_only_verified"] is False for x in ctx["candidates"])
+          assert all(r["branch_protection_authorized"] == "false" for r in rows)
+          assert all(r["push_filter_effectiveness_verified"] == "false" for r in rows)
+          assert all(x["push_filter_effectiveness_verified"] is False for x in ctx["candidates"])
+          assert all(r["push_paths_mentions_own_yaml_literal_hint"] in ("true", "false") for r in rows)
+          assert all(x["manual_only_verified"] is False for x in ctx["candidates"])
+          assert 0 <= ctx["push_paths_key_hint_count"] <= ctx["candidate_count"]
+          assert 0 <= ctx["push_branches_key_hint_count"] <= ctx["candidate_count"]
+          assert 0 <= ctx["push_own_yaml_literal_hint_count"] <= ctx["push_paths_key_hint_count"]
+          print("STARTUP_HINT_CANDIDATES=" + str(ctx["candidate_count"]))
+          print("STARTUP_HINT_AUTOMATIC=" + str(ctx["automatic_event_hint_count"]))
+          print("STARTUP_HINT_MANUAL=" + str(ctx["manual_event_hint_count"]))
+          print("STARTUP_HINT_SELF_HOSTED=" + str(ctx["self_hosted_hint_count"]))
+          print("STARTUP_HINT_UNKNOWN=" + str(ctx["unknown_trigger_count"]))
+          print("STARTUP_HINT_PUSH_PATH_KEY=" + str(ctx["push_paths_key_hint_count"]))
+          print("STARTUP_HINT_PUSH_BRANCH_KEY=" + str(ctx["push_branches_key_hint_count"]))
+          print("STARTUP_HINT_PUSH_OWN_YAML_LITERAL=" + str(ctx["push_own_yaml_literal_hint_count"]))
+          print("STARTUP_HINT_FILTER_VERIFIED=false")
+          print("STARTUP_HINT_RELEASE_AUTHORIZED=false")
+          PY
+          # Positive source hints only: event names, worker type, digest and path.
+          cat "$RUNNER_TEMP/main-writer-startup-context.csv"
+      - name: Reconfirm current main and PR head unchanged after inventory
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$EVENT_BASE"
+          test "$(git rev-parse HEAD)" = "$EVENT_HEAD"
+          remote_head="$(GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git -c credential.helper= ls-remote --exit-code https://github.com/Zennay/zCloud.git "refs/heads/$HEAD_REF")"
+          test "$remote_head" = "$EVENT_HEAD"$'\t'"refs/heads/$HEAD_REF"
+          echo "No merge, branch protection apply, production, runner or worker writes."
