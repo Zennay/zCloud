@@ -318,6 +318,8 @@ def main(argv=None):
         payload = merge_and_store(args.ledger, payload)
     encoded = json.dumps(payload, ensure_ascii=True, separators=(",", ":")) + "\n"
     if args.output:
+        from scripts.zcloud_activity_ledger import assert_private_destination
+        assert_private_destination(args.output)
         import tempfile
         target = Path(args.output).resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
