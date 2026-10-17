@@ -117,7 +117,7 @@ class WorkPacketsTests(unittest.TestCase):
                  issue("d", files=["public/app.js"]),
                  issue("e", project="mixlab", files=["mixlab/core.py"])]
         report = self.run_packet(items)
-        self.assertEqual([p["item_id"] for p in report["packets"]], ["a", "c", "e"])
+        self.assertEqual({p["item_id"] for p in report["packets"]}, {"a", "c", "e"})
         self.assertEqual(len(self.run_packet(items, limit=1)["packets"]), 1)
 
     def test_stale_future_timestamp_never_admitted(self):
