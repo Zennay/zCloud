@@ -8,7 +8,7 @@ from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
 from scripts import worker_scaling_report
-from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap
+from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -2424,35 +2424,6 @@ def _worker_desired_states():
 def _portfolio_priority_rank(priority):
     return {'P0':0,'P1':1,'P2':2,'P3':3}.get(str(priority or 'P3').upper(),3)
 
-def _portfolio_work_package_rank(row):
-    """Favor deliverable features over isolated QA churn within the SAME priority.
-
-    Priority, manual-start intent, project diversity, ownership and hard caps
-    remain authoritative. This is only a tie-breaker before creation time.
-    """
-    title = str(row['title'] or '').strip().lower()
-    criteria = str(row['completion_criteria'] or '').lower()
-    micro_prefixes = (
-        'test ', 'qa ', 'audit ', 'inspect ', 'review ', 'verify ',
-        'check ', 'monitor ', 'report ', 'document ', 'validate ',
-    )
-    if title.startswith(micro_prefixes):
-        return 2
-    delivery_words = (
-        'implement', 'build', 'ship', 'deliver', 'complete', 'finish',
-        'integrate', 'migrate', 'fix', 'repair', 'recover', 'restore',
-        'launch', 'enable', 'harden', 'connect', 'refactor',
-    )
-    if any(re.search(r'\b' + word + r'\b', title) for word in delivery_words):
-        return 0
-    if any(marker in criteria for marker in (
-        'end-to-end implementation', 'end-to-end feature', 'complete user flow',
-        'multi-step work package', 'substantial roadmap work package',
-    )):
-        return 0
-    return 1
-
-
 def _manual_start_priority_key(project_id):
     return 'manual_start_priority:' + str(project_id or '').strip().lower()
 
@@ -3304,8 +3275,8 @@ def portfolio_queue_allocate():
                         key=lambda pair: (
                             _portfolio_priority_rank(pair[0]['priority']),
                             0 if _manual_start_priority_active_locked(c,pair[0]['project_id'],ts_dt) else 1,
-                            _portfolio_work_package_rank(pair[0]),
-                            _portfolio_work_package_rank(pair[0]),
+                            work_package_rank(dict(pair[0])),
+                            work_package_rank(dict(pair[0])),
                     str(pair[0]['created_at'] or ''),
                             str(pair[0]['queue_id'] or ''),
                         ),
