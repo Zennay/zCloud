@@ -63,7 +63,17 @@ def _safe_record(item):
         return False
     if "branch_id" in item and (not isinstance(item["branch_id"], str) or not re.fullmatch(r"[a-f0-9]{20}", item["branch_id"])):
         return False
-    if kind not in KINDS or len(eid) > 260 or not eid.startswith("github:" + repo + ":" + kind + ":"):
+    if (kind not in KINDS or len(eid) > 260 or
+            not re.fullmatch(r"[A-Za-z0-9:./_-]+", eid) or
+            not eid.startswith("github:" + repo + ":" + kind + ":")):
+        return False
+    if "state" in item and item["state"] not in (
+            "open", "closed", "unknown", "queued", "in_progress",
+            "completed", "waiting", "requested", "pending"):
+        return False
+    if "conclusion" in item and item["conclusion"] not in (
+            None, "success", "failure", "cancelled", "skipped",
+            "timed_out", "neutral", "action_required"):
         return False
     when = item.get("source_timestamp")
     if when is not None and stamp(when) is None:
