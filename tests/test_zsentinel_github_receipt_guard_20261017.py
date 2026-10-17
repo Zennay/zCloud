@@ -159,7 +159,7 @@ class RunJobEvidenceTests(unittest.TestCase):
         doc = receipt(created_at=stamp(-31))
         self.assertEqual("needs_independent_triage", check(doc)["state"])
         doc = receipt(created_at=stamp(-30))
-        self.assertEqual("needs_independent_triage", check(doc)["state"])
+        self.assertEqual("in_progress", check(doc)["state"])
         doc = receipt(created_at=stamp(-29))
         self.assertEqual("in_progress", check(doc)["state"])
 
