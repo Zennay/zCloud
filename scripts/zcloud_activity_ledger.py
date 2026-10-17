@@ -167,7 +167,20 @@ def _read(path):
     return data
 
 
+
+def assert_private_destination(path):
+    """Never accidentally publish private GitHub metadata through public/."""
+    destination = Path(path)
+    if destination.is_symlink():
+        raise ActivitySourceError("private_output_symlink_refused")
+    public = (Path(__file__).resolve().parents[1] / "public").resolve()
+    resolved = destination.resolve()
+    if resolved == public or public in resolved.parents:
+        raise ActivitySourceError("private_output_inside_public_refused")
+
+
 def _write(path, payload):
+    assert_private_destination(path)
     # This path is explicitly supplied by a local operator; output never
     # lives in the served public directory unless they intentionally choose so.
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
