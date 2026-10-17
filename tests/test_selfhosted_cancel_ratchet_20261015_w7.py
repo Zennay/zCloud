@@ -209,7 +209,7 @@ class GitReaderBoundedTests(unittest.TestCase):
     def run_fake_git(self, program: str):
         with tempfile.TemporaryDirectory() as tmp:
             fake = Path(tmp) / "git"
-            fake.write_text("#!/usr/bin/env python3\\n" + program, encoding="utf-8")
+            fake.write_text("#!/usr/bin/env python3\n" + program, encoding="utf-8")
             fake.chmod(0o755)
             with patch.dict(os.environ, {"PATH": tmp + os.pathsep + os.environ["PATH"]}):
                 with patch.object(guard, "GIT_TIMEOUT", 0.35):
@@ -218,14 +218,14 @@ class GitReaderBoundedTests(unittest.TestCase):
     def test_oversized_git_output_denied_as_it_streams(self):
         with self.assertRaisesRegex(guard.Denied, "git_output_too_large"):
             self.run_fake_git(
-                "import os\\nos.write(1, b'X' * 300000)\\n"
+                "import os\nos.write(1, b'X' * 300000)\n"
             )
 
     def test_inherited_stdout_holder_does_not_hang(self):
         with self.assertRaisesRegex(guard.Denied, "git_unavailable_or_timeout"):
             self.run_fake_git(
-                "import subprocess, sys\\n"
-                "subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(10)'])\\n"
+                "import subprocess, sys\n"
+                "subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(10)'])\n"
             )
 
 
