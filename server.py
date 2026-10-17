@@ -2443,7 +2443,7 @@ def _portfolio_work_package_rank(row):
         'integrate', 'migrate', 'fix', 'repair', 'recover', 'restore',
         'launch', 'enable', 'harden', 'connect', 'refactor',
     )
-    if any(re.search(r'\\b' + word + r'\\b', title) for word in delivery_words):
+    if any(re.search(r'\b' + word + r'\b', title) for word in delivery_words):
         return 0
     if any(marker in criteria for marker in (
         'end-to-end implementation', 'end-to-end feature', 'complete user flow',
