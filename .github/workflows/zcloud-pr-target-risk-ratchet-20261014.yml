@@ -1,0 +1,50 @@
+name: zCloud PR-target privilege delta guard
+
+# Pull-request checks execute only on GitHub-hosted runners without write tokens.
+# A separate pull_request_target workflow runs trusted immutable base code.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/zcloud_pr_target_delta_guard_20261014.py'
+      - 'tests/test_zcloud_pr_target_delta_guard_20261014.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-pr-target-ratchet-source-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-only:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+      - name: Bind exact PR head and base then test source-only ratchet
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          git cat-file -e "$EXACT_BASE^{commit}"
+          python3 -m unittest -v tests.test_zcloud_pr_target_delta_guard_20261014
+          python3 scripts/zcloud_pr_target_delta_guard_20261014.py --base "$EXACT_BASE" --head "$EXACT_HEAD"
+
