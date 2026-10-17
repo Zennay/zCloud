@@ -1,0 +1,20 @@
+name: Control-plane tri-state permission reference
+on:
+  pull_request:
+    paths:
+      - scripts/control_plane_tristate_permission_reference_20261009_w1.py
+      - tests/test_control_plane_tristate_permission_20261009_w1.py
+      - .github/workflows/control-plane-tristate-permission-reference-w1.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-denial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run isolated deny-only regression
+        run: python3 -m unittest discover -s tests -p 'test_control_plane_tristate_permission_20261009_w1.py' -v
