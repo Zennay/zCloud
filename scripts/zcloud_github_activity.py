@@ -105,7 +105,7 @@ class GithubReader:
         params = {
             "pulls": "state=all&sort=updated&direction=desc",
             "commits": "sha=main",
-            "actions/runs": "branch=main",
+            "actions/runs": "",
             "branches": "",
         }[endpoint]
         query = ("?" + params + "&" if params else "?") + "per_page=30&page=" + str(page)
@@ -206,6 +206,8 @@ def parse_runs(repo, project, data):
             raise ActivitySourceError("github_ci_invalid")
         status = item.get("status")
         conclusion = item.get("conclusion")
+        # Fetch repository-wide runs, not only main: PR/feature branches carry
+        # real work. Head SHA joins to a PR without leaking branch names.
         result.append(event(repo, project, "ci_run", str(rid) + ":" + str(attempt), updated,
                             sha=sha, state=status if status in ("queued", "in_progress", "completed", "waiting", "requested", "pending") else "unknown",
                             conclusion=conclusion if conclusion in ("success", "failure", "cancelled", "skipped", "timed_out", "neutral", "action_required") else None,
