@@ -1,0 +1,29 @@
+name: zCloud LKG snapshot integrity probe (read only)
+
+on:
+  pull_request:
+    paths:
+      - scripts/zcloud_lkg_snapshot_integrity_probe_20261015_w2.py
+      - tests/test_zcloud_lkg_snapshot_integrity_probe_20261015_w2.py
+      - docs/deployops-lkg-snapshot-integrity-20261015-w2.md
+      - .github/workflows/zcloud-lkg-integrity-probe-20261015-w2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  offline-integrity-contract:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.actor == 'Zennay'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Offline synthetic LKG adversarial tests, no VPS access
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_lkg_snapshot_integrity_probe_20261015_w2.py' -v
