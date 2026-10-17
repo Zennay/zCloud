@@ -76,8 +76,6 @@ def inspect_receipt(data, now=None):
         raise ValueError("repository: canonical owner/repository required")
     run = _mapping(data.get("workflow_run"), "workflow_run")
     job = _mapping(data.get("job"), "job")
-    if full_name != expected_repository:
-        raise ValueError("repository: trusted project binding mismatch")
     run_id = _integer(run.get("id"), "workflow_run.id")
     job_id = _integer(job.get("id"), "job.id")
     if _integer(job.get("run_id"), "job.run_id") != run_id:
@@ -194,6 +192,8 @@ def inspect_github_api_receipt(data, now=None, *, expected_project_id, expected_
         r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", full_name
     ) or ".." in full_name:
         raise ValueError("workflow_run.repository.full_name: canonical repository required")
+    if full_name != expected_repository:
+        raise ValueError("repository: trusted project binding mismatch")
     run_id = _integer(run.get("id"), "workflow_run.id")
     job_id = _integer(job.get("id"), "job.id")
     prefix = "https://api.github.com/repos/" + full_name + "/actions/"
