@@ -1,0 +1,35 @@
+name: zCloud one-shot V2 manual admission hosted (2026-10-13 W1)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/zcloud-v2-one-shot-activation.yml
+      - .github/workflows/zcloud-one-shot-v2-manual-gate-hosted-20261013-w1.yml
+      - tests/test_zcloud_one_shot_v2_manual_gate_20261013_w1.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-one-shot-v2-hosted-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout exact untrusted PR merge revision hosted only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Verify immutable revision and offline manual admission contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_one_shot_v2_manual_gate_20261013_w1
+          python3 -m py_compile tests/test_zcloud_one_shot_v2_manual_gate_20261013_w1.py
+          echo "ONE_SHOT_V2_MANUAL_GATE_HOSTED_GREEN=1"

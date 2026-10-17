@@ -1,23 +1,133 @@
 name: zCloud P0 one-shot worker v2 activation
+# A code merge can never trigger live Firefox/timer mutation.
 on:
-  push:
+  pull_request:
     branches: [main]
     paths:
       - .github/workflows/zcloud-v2-one-shot-activation.yml
+      - tests/test_zcloud_one_shot_v2_manual_gate_20261013_w1.py
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Exact approved 40-hex current main SHA"
+        type: string
+        required: true
+      confirm_maintenance_window:
+        description: "Type I_APPROVE_SHARED_VPS_ONE_SHOT only after serialized owner approval"
+        type: string
+        required: true
 permissions:
   contents: read
 concurrency:
   group: zcloud-p0-one-shot-worker-v2-activation-alternate
   cancel-in-progress: false
 jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout PR merge revision without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify immutable hosted PR contract only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_one_shot_v2_manual_gate_20261013_w1
+
   activate:
-    runs-on: [self-hosted, ftmo-research]
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      inputs.confirm_maintenance_window == 'I_APPROVE_SHARED_VPS_ONE_SHOT'
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout immutable approved current main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
+          clean: true
+      - name: Fail closed on stale SHA, wrong runner, or missing owner confirmation
+        shell: bash
+        env:
+          CONFIRMED_SHA: ${{ inputs.confirm_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRMED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = Zennay
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$CONFIRMED_SHA" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$GITHUB_SHA"
+          test "$(hostname)" = vps-bb300bba
+          test "$(id -un)" = ubuntu
+          python3 scripts/zcloud_vps_runner_guard.py --json
+      - name: Read-only stable worker idle proof before any live file or timer mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          def unique(pairs):
+              result = {}
+              for key,value in pairs:
+                  if key in result:
+                      raise ValueError("duplicate JSON evidence")
+                  result[key] = value
+              return result
+
+          def snapshot():
+              with urllib.request.urlopen("http://127.0.0.1:8765/api/runner-live", timeout=5) as response:
+                  if response.status != 200 or response.headers.get_content_type() != "application/json":
+                      raise ValueError("untrusted status response")
+                  content = response.read(65537)
+                  if len(content) > 65536:
+                      raise ValueError("oversized status")
+                  data = json.loads(content, object_pairs_hook=unique)
+              if not isinstance(data, dict):
+                  raise ValueError("missing status")
+              runners = data.get("chatgpt_runners")
+              if not isinstance(runners,dict) or not runners:
+                  raise ValueError("unverified runners")
+              observed = set()
+              for r in runners.values():
+                  if not isinstance(r,dict) or not isinstance(r.get("workers"),list):
+                      raise ValueError("missing worker evidence")
+                  for w in r["workers"]:
+                      if not isinstance(w,dict) or type(w.get("active")) is not bool:
+                          raise ValueError("unknown worker")
+                      if not w["active"]:
+                          continue
+                      identity = w.get("worker_id")
+                      if not isinstance(identity,str) or not identity or identity in observed:
+                          raise ValueError("ambiguous active identity")
+                      observed.add(identity)
+                      if (type(w.get("sending")) is not bool or w["sending"] or
+                          type(w.get("generating")) is not bool or w["generating"] or
+                          w.get("desired_state") not in ("running","active","idle")):
+                          raise ValueError("active generation or unknown state")
+              if not observed:
+                  raise ValueError("no active-worker identity proof")
+              return tuple(sorted(observed))
+
+          first = snapshot()
+          time.sleep(3)
+          if snapshot() != first:
+              raise ValueError("worker identity drift")
+          print("READ_ONLY_STABLE_IDLE_WORKERS="+str(len(first)))
+          PY
       - name: Verify one-tab engine from current main and activate without browser restart
         shell: bash
         env:
@@ -28,7 +138,7 @@ jobs:
           test "$(hostname)" = vps-bb300bba
           test "$(id -un)" = ubuntu
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           node --check firefox-extension/worker-controller-v2.js
           node --check public/zcloud-worker.user.js
           node tests/test_single_tab_v2_crash_recovery.js
