@@ -1,0 +1,79 @@
+name: zCloud deploy-ops TLS verification source ratchet
+
+on:
+  pull_request:
+    branches: [main]
+
+# This is source-only CI. It NEVER authorizes deployment, runner dispatch,
+# service restart, branch-protection bypass, or queue mutation.
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-tls-ratchet-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  trusted-source:
+    name: Reject untrusted source identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Prove same-repository main-target PR without executing source
+        shell: bash
+        env:
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          test "$REPOSITORY" = "Zennay/zCloud"
+          test "$HEAD_REPOSITORY" = "$REPOSITORY"
+          test "$BASE_REPOSITORY" = "$REPOSITORY"
+          test "$BASE_BRANCH" = "main"
+
+  tls-verification-source:
+    name: No new TLS certificate verification bypass
+    needs: trusted-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout immutable pull-request head without stored token
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+          clean: true
+      - name: Prove immutable source before execution
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git cat-file -e "$EXPECTED_BASE^{commit}"
+          git cat-file -e "$EXPECTED_HEAD^{commit}"
+          remote_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$EXPECTED_BASE"
+      - name: Run adversarial real-Git tests
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/zcloud_tls_verification_ratchet_20261015_w1.py tests/test_zcloud_tls_verification_ratchet_20261015_w1.py
+          python3 -m unittest -v tests.test_zcloud_tls_verification_ratchet_20261015_w1
+      - name: Enforce no-new-debt source ratchet
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD"
+          python3 scripts/zcloud_tls_verification_ratchet_20261015_w1.py --base "$BASE" --head "$HEAD"
+          remote_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$BASE"
+          echo "Production mutation authorized: false"
