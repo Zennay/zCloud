@@ -1,0 +1,63 @@
+name: zCloud legacy Actions command no-new-debt gate
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/actions/**'
+      - 'scripts/zcloud_legacy_commands_ratchet_20261015_w6.py'
+      - 'tests/test_zcloud_legacy_commands_ratchet_20261015_w6.py'
+permissions:
+  contents: read
+jobs:
+  legacy-command-source-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check PR identity and immutable remote tips
+        shell: bash
+        env:
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$REPO" = Zennay/zCloud
+          test "$HEAD_REPO" = "$REPO"
+          test "$BASE_REPO" = "$REPO"
+          test "$BASE_REF" = main
+          [[ "$EXACT_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXACT_BASE" =~ ^[0-9a-f]{40}$ ]]
+          test -n "$HEAD_REF"
+          remote_main="$(timeout 15 git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          remote_head="$(timeout 15 git ls-remote --exit-code https://github.com/Zennay/zCloud.git "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$remote_main" = "$EXACT_BASE"
+          test "$remote_head" = "$EXACT_HEAD"
+      - name: Checkout exact PR commit without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run real-Git tests and source-only gate
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXACT_BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          test "$(git rev-parse origin/main)" = "$EXACT_BASE"
+          python3 -m unittest -v tests.test_zcloud_legacy_commands_ratchet_20261015_w6
+          python3 scripts/zcloud_legacy_commands_ratchet_20261015_w6.py --base "$EXACT_BASE" --head "$EXACT_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+          test "$(git rev-parse origin/main)" = "$EXACT_BASE"
+          remote_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          remote_head="$(timeout 15 git ls-remote --exit-code origin "refs/heads/$HEAD_REF" | awk '{print $1}')"
+          test "$remote_main" = "$EXACT_BASE"
+          test "$remote_head" = "$EXACT_HEAD"
