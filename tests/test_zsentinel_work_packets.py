@@ -82,7 +82,7 @@ class WorkPacketsTests(unittest.TestCase):
 
     def test_owner_and_claims_fail_closed_but_other_project_proceeds(self):
         data = receipt([
-            issue("active-owner", owner="active"),
+            issue("active-owner", priority="P0", owner="active"),
             issue("unknown-claim", claim="unknown"),
             issue("unverified-lease", project="mixlab", files=["tests/a.py"]),
             issue("free", project="cloud", files=["public/ui.js"]),
@@ -153,6 +153,28 @@ class WorkPacketsTests(unittest.TestCase):
         for override in [{"draft": 0}, {"ci_passed": "true"}, {"head_sha": "g" * 40}]:
             with self.subTest(override=override), self.assertRaises(ValueError):
                 self.run_packet([pr(**override)])
+
+
+    def test_unhashable_control_fields_are_rejected_not_interpreted(self):
+        for override in [{"kind": []}, {"priority": []}, {"owner": []},
+                         {"claim": {}}, {"hold": ["none"]}]:
+            with self.subTest(override=override), self.assertRaises(ValueError):
+                self.run_packet([issue(**override)])
+
+    def test_valid_cli_input_emits_machine_readable_denied_authority(self):
+        with tempfile.TemporaryDirectory() as root:
+            p = Path(root) / "verified-receipt.json"
+            data = receipt([issue("safe-source")])
+            data["observed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            p.write_text(json.dumps(data), encoding="utf-8")
+            script = Path(__file__).resolve().parents[1] / "scripts" / "zsentinel_work_packets.py"
+            result = subprocess.run([sys.executable, str(script), str(p), "--limit", "1"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["packets"][0]["item_id"], "safe-source")
+            self.assertFalse(report["merge_or_deploy_authorized"])
+            self.assertFalse(report["mutation_performed"])
 
     def test_missing_or_extra_pr_flags_fail_closed(self):
         broken = pr()
