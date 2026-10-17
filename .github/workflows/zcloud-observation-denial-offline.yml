@@ -1,0 +1,23 @@
+name: zCloud offline observation denial tests
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/zcloud_control_plane_observation_denial_20261009.py'
+      - 'tests/test_zcloud_control_plane_observation_denial_20261009.py'
+      - '.github/workflows/zcloud-observation-denial-offline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observation-denial:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run deny-only regression tests
+        run: python3 -m unittest discover -s tests -p 'test_zcloud_control_plane_observation_denial_20261009.py' -v
