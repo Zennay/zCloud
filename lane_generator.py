@@ -182,15 +182,21 @@ PROJECT_SCOPE_ALIASES = {
 }
 
 
+def _scope_entries(value):
+    return (value,) if isinstance(value, str) else (value or ())
+
+
 def _normal_scope(scope):
     scope = scope if isinstance(scope, dict) else {}
     capabilities = []
-    for value in scope.get("capabilities") or []:
+    # A single path/capability is one scope entry, not an iterable of chars.
+    # List-shaped queue/claim metadata remains fully backwards compatible.
+    for value in _scope_entries(scope.get("capabilities")):
         item = re.sub(r"[^a-z0-9._:/-]+", "-", str(value or "").strip().lower()).strip("-")
         if item and item not in capabilities:
             capabilities.append(item)
     files = []
-    for value in scope.get("files") or []:
+    for value in _scope_entries(scope.get("files")):
         item = str(value or "").strip().replace("\\", "/")
         while item.startswith("./"):
             item = item[2:]
@@ -370,13 +376,16 @@ def generate_execution_lanes(project, backlog, claims=()):
             if str(item.get("status") or "").lower() in ACTIVE_STATUSES
         ]
         if active:
-            chosen = active[0]
-            chosen_by_lane[lane_id] = chosen
-            occupied_scopes.append({
-                "queue_id": str(chosen.get("queue_id") or ""),
-                "lane_id": lane_id,
-                "scope": chosen["scope"],
-            })
+            # One lane has one displayed representative, but *every* active
+            # task owns its declared write scope. Never hide a second active
+            # writer from cross-lane conflict detection.
+            chosen_by_lane[lane_id] = active[0]
+            for existing in active:
+                occupied_scopes.append({
+                    "queue_id": str(existing.get("queue_id") or ""),
+                    "lane_id": lane_id,
+                    "scope": existing["scope"],
+                })
 
     queued = sorted(
         [
