@@ -1,0 +1,47 @@
+name: zCloud deploy-ops issue-first and PR backlog brief
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-readonly-pr-backlog-brief
+  cancel-in-progress: false
+
+jobs:
+  hosted-brief:
+    name: Read-only complete issues and PR backlog brief
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - name: Deny unauthorized or stale manual events before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_ACTOR" = "Zennay"
+          test "$GITHUB_TRIGGERING_ACTOR" = "Zennay"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+      - name: Checkout pinned source revision without GitHub credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          clean: true
+      - name: Exact checkout identity and offline regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -m unittest -v tests.test_zcloud_deployops_review_backlog_20261016
+      - name: Collect complete public PR backlog in GitHub Step Summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_deployops_review_backlog_20261016.py \
+            --expected-main-sha "$GITHUB_SHA" \
+            --include-issues \
+            --output "$GITHUB_STEP_SUMMARY"
