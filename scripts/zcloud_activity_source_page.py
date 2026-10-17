@@ -70,10 +70,12 @@ def page_activity(ledger, *, project=None, limit=80, cursor=None):
     else:
         projects = known
     ordered = _fair(events, projects, len(events))
-    # Bind the cursor to both the selection and exact ordered event identity,
-    # not only a mutable offset. No private event text enters the digest.
-    material = json.dumps([projects, [item["id"] for item in ordered]],
-                          separators=(",", ":"), ensure_ascii=True)
+    # Bind to the whole normalized event view AND coverage. GitHub can update
+    # the conclusion of the SAME run ID/attempt or close a PR without changing
+    # event identity. A cursor pinned only to IDs would conceal that mutation.
+    # These records contain only privacy-filtered allowlisted metadata.
+    material = json.dumps([projects, ordered, {pid: coverage[pid] for pid in projects}],
+                          separators=(",", ":"), ensure_ascii=True, sort_keys=True)
     snapshot = hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
     offset = 0
     if cursor is not None:
