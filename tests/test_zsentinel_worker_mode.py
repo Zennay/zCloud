@@ -19,19 +19,21 @@ class ZSentinelModeTests(unittest.TestCase):
         self.assertNotIn("zsentinel", layout["order"])
         self.assertNotIn("zsentinel", layout["archived"])
 
-    def test_actual_worker_prompt_starts_with_notional_contract(self):
+    def test_actual_worker_prompt_is_cross_project_recovery_role(self):
         server = (ROOT / "server.py").read_text()
-        self.assertIn("if project_id=='zsentinel':", server)
-        self.assertIn("Werk verder aan zSentinel", server)
-        self.assertIn("Kijk in Notion", server)
-        self.assertIn("PRIORITEIT 1: VERWIJDER BLOKKADES", server)
-        self.assertIn("PRIORITEIT 2: OPEN ISSUES EN FEATURES", server)
-        self.assertLess(server.index("PRIORITEIT 1: VERWIJDER"),server.index("PRIORITEIT 2: OPEN"))
-        self.assertIn("stuur vrije workers", server)
-        self.assertIn("alternatieve route", server)
-        self.assertIn("roadmapfeatures", server)
-        self.assertIn("ander veilig werk", server)
         self.assertIn("WORKER_MODES = _load_worker_modes()", server)
+        self.assertIn("Werk verder aan het herstel van ANDERE zCloud-projecten", server)
+        self.assertIn("Maak geen zSentinel-project", server)
+        self.assertIn("Kijk in Notion in welke fase het project zit", server)
+        self.assertIn("PRIORITEIT 1: verwijder echte P0/P1-blokkades", server)
+        self.assertIn("PRIORITEIT 2: werk open bugs", server)
+        self.assertLess(
+            server.index("PRIORITEIT 1: verwijder"),
+            server.index("PRIORITEIT 2: werk open"),
+        )
+        self.assertIn("if project_id=='zsentinel':\n        return project_runner_prompt(project_id, name)", server)
+        self.assertIn("Fix blockers, broken workers and open issues across OTHER portfolio projects", server)
+        self.assertNotIn("Werk verder aan zSentinel als vliegende keep", server)
 
     def test_frontend_offers_role_in_dropdown_and_validates_it(self):
         source = (ROOT / "public/app.js").read_text()

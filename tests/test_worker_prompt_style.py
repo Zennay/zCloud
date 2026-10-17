@@ -37,34 +37,59 @@ class WorkerPromptStyleTests(unittest.TestCase):
         self.assertNotIn("VPS_QUEUE_ASSIGNMENT", prompt)
         self.assertNotIn("ZCLOUD_QUEUE_", prompt)
 
-    def test_qa_lanes_close_real_issues_instead_of_infinite_quality_rounds(self):
+    def test_legacy_qa_assignment_becomes_bugfix_or_implementation_work(self):
         for lane in ("quality-validation", "qa-validation", "evaluation-validation"):
             item = {**ITEM, "execution_lane": {"lane_id": lane}}
             prompt = server.project_worker_prompt("supa", "Supa", "", 1, 2, item)
-            self.assertIn("Rond bestaande QA-PRs af", prompt)
-            self.assertIn("zonder bug geen nieuwe QA-ronde", prompt)
+            self.assertIn("Parallel focus 1/2: bugfix-delivery.", prompt)
+            self.assertIn("Bouw of repareer echte functionaliteit", prompt)
+            self.assertIn("test gericht en respecteer alle verplichte gates", prompt)
+            self.assertNotIn("Focus: " + lane, prompt)
+            self.assertLess(len(prompt), 1800)
+
+    def test_implementation_lanes_deliver_code_and_keep_required_gates(self):
+        for project_id, name, lane in (
+            ("ftmo", "FTMO", "strategy-implementation"),
+            ("haxlab", "HaxLab", "model-improvement"),
+            ("supa", "Supa", "bugfix-delivery"),
+            ("raiseai", "Raise AI", "bugfix-delivery"),
+        ):
+            item = {**ITEM, "execution_lane": {"lane_id": lane}}
+            prompt = server.project_worker_prompt(project_id, name, "", 1, 2, item)
+            self.assertIn(f"Parallel focus 1/2: {lane}.", prompt)
+            self.assertIn("Bouw of repareer echte functionaliteit", prompt)
+            self.assertIn("test gericht en respecteer alle verplichte gates", prompt)
             self.assertIn("geen eindeloze QA-rondes", prompt)
             self.assertLess(len(prompt), 1800)
-        product = server.project_worker_prompt(
-            "supa", "Supa", "", 1, 2,
-            {**ITEM, "execution_lane": {"lane_id": "product-core"}},
-        )
-        self.assertNotIn("zonder bug geen nieuwe QA-ronde", product)
 
     def test_parallel_lanes_produce_different_prompts_for_same_project(self):
         other = {
             **ITEM,
-            "queue_id": "ftmo-qa",
+            "queue_id": "ftmo-strategy",
             "execution_lane": {
-                "lane_id": "qa-validation",
-                "scope": {"capabilities": ["ftmo-qa"], "files": []},
+                "lane_id": "strategy-implementation",
+                "scope": {"capabilities": ["ftmo-validation"], "files": []},
             },
         }
         first = server.project_worker_prompt("ftmo", "FTMO", "", 1, 2, ITEM)
         second = server.project_worker_prompt("ftmo", "FTMO", "", 2, 2, other)
         self.assertNotEqual(first, second)
         self.assertIn("data-provenance", first)
-        self.assertIn("qa-validation", second)
+        self.assertIn("strategy-implementation", second)
+
+    def test_sentinel_role_ignores_project_specific_qa_lanes(self):
+        worker = server.PROJECT_INDEX["zsentinel"]
+        for lane_id in ("quality-validation", "qa-validation", "bugfix-delivery"):
+            assigned = {**ITEM, "execution_lane": {"lane_id": lane_id}}
+            prompt = server.project_worker_prompt(
+                "zsentinel", worker["name"], "", 1, 2, assigned,
+            )
+            self.assertEqual(
+                server.project_runner_prompt("zsentinel", worker["name"]), prompt,
+            )
+            self.assertIn("ANDERE zCloud-projecten", prompt)
+            self.assertIn("Maak geen zSentinel-project", prompt)
+            self.assertNotIn("Parallel focus", prompt)
 
     def test_parallel_without_lane_still_avoids_duplicate_work(self):
         item = {"queue_id": "supa-q", "project_id": "supa"}

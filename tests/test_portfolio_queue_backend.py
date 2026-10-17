@@ -1154,7 +1154,7 @@ class VpsPortfolioQueueTests(unittest.TestCase):
         self.assertEqual(2, len(selected))
         self.assertEqual({"ftmo"}, {item["project_id"] for item in selected})
         lanes = {item["execution_lane"]["lane_id"] for item in selected}
-        self.assertEqual({"critical-path", "qa-validation"}, lanes)
+        self.assertEqual({"critical-path", "strategy-implementation"}, lanes)
         for item in selected:
             self.assertTrue(item["execution_lane"]["scope"]["capabilities"])
 
