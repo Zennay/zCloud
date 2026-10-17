@@ -1,0 +1,64 @@
+name: Office desktop game build
+# Builds the Windows installer for the Penthouse game. Runs on GitHub-hosted runners only
+# (never the VPS runner) and has no access to secrets: the installer contains no token.
+on:
+  push:
+    branches:
+      - feat/office-desktop-game-20261013
+    paths:
+      - "virtual-office/**"
+      - ".github/workflows/office-desktop-build.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    name: Python + Node tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Python tests
+        run: python3 -m unittest discover -s virtual-office/tests -v
+      - name: Game, slides and scene tests
+        run: node --test virtual-office/tests/*.mjs
+      - name: Desktop library tests (no Electron needed)
+        run: node --test virtual-office/desktop/tests/*.mjs
+      - name: Syntax checks
+        run: |
+          for f in main preload voice-worker; do node --check "virtual-office/desktop/$f.js"; done
+          for f in virtual-office/desktop/lib/*.js; do node --check "$f"; done
+
+  windows-installer:
+    name: Windows installer (NSIS)
+    needs: [tests]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: virtual-office/desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Build installer
+        run: npx electron-builder --win nsis --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: penthouse-windows-installer
+          path: virtual-office/desktop/dist/*.exe
+          if-no-files-found: error
+          retention-days: 14

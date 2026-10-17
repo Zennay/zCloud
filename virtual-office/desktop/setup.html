@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><title>The Penthouse: verbinden</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+:root{color-scheme:dark;font-family:Inter,"Segoe UI",system-ui,sans-serif;background:#152026;color:#f3f0e9}
+body{margin:0;display:grid;place-items:center;min-height:100vh}
+main{width:min(520px,92vw);padding:34px;border:1px solid #ffffff22;border-radius:16px;background:#182329}
+h1{font:34px Georgia;margin:0 0 6px;color:#d8c09a}p{font-size:13px;line-height:1.6;color:#b9c4c5;margin:6px 0 18px}
+label{display:block;font-size:11px;color:#c6ceca;margin:14px 0 6px}
+input{width:100%;box-sizing:border-box;background:#0e171bd9;border:1px solid #ffffff25;border-radius:8px;padding:11px 12px;color:inherit;font:inherit;font-size:13px}
+.row{display:flex;gap:8px}.row>*{min-width:0}.grow{flex:1}
+button{font:inherit;font-size:13px;border:1px solid #ffffff25;background:#ffffff0c;color:inherit;border-radius:9px;padding:11px 16px;cursor:pointer}
+button.primary{background:#d4b789;color:#1b2830;font-weight:600;border:0;width:100%;margin-top:22px;padding:13px}
+button:disabled{opacity:.5;cursor:wait}
+.err{margin-top:14px;padding:11px 13px;border:1px solid #c9605f88;border-radius:9px;color:#f1c4c3;font-size:12px;display:none;line-height:1.5}
+.small{font-size:11px;color:#98a6a8;line-height:1.6}.check{display:flex;gap:8px;align-items:center;margin-top:14px;font-size:12px;color:#c6ceca}.check input{width:auto}
+</style></head>
+<body><main>
+<h1>The Penthouse</h1>
+<p>Verbind veilig met je VPS. Alles gaat door een SSH-tunnel; je toegangscode gaat nooit onversleuteld over het internet.</p>
+<form id="f">
+<label for="host">VPS-adres</label><input id="host" autocomplete="off" placeholder="bijvoorbeeld 198.244.191.182" required>
+<div class="row"><div class="grow"><label for="username">SSH-gebruikersnaam</label><input id="username" autocomplete="off" placeholder="ubuntu" required></div>
+<div style="width:90px"><label for="port">SSH-poort</label><input id="port" value="22" inputmode="numeric"></div></div>
+<label for="keyPath">SSH-sleutel (privésleutel)</label>
+<div class="row"><input id="keyPath" class="grow" readonly placeholder="Kies je sleutelbestand"><button type="button" id="pick">Kies…</button></div>
+<label for="passphrase">Wachtwoordzin van de sleutel (alleen als die er een heeft; wordt niet opgeslagen)</label><input id="passphrase" type="password" autocomplete="off">
+<label for="token">Office-toegangscode (de waarde van OFFICE_ACCESS_TOKEN op de VPS)</label><input id="token" type="password" autocomplete="off" placeholder="leeg laten om de opgeslagen code te houden">
+<div class="small" id="tokenNote"></div>
+<div class="row"><div class="grow"><label for="rdpUsername">VPS-bureaublad: gebruikersnaam (optioneel)</label><input id="rdpUsername" autocomplete="off" placeholder="leeg = Windows vraagt erom"></div>
+<div style="width:110px"><label for="rdpRemotePort">RDP-poort op VPS</label><input id="rdpRemotePort" value="3389" inputmode="numeric"></div></div>
+<div class="small">Het wachtwoord van het bureaublad typ je in het Windows-venster zelf; het wordt nergens opgeslagen.</div>
+<label class="check"><input type="checkbox" id="clearFp"> Vingerafdruk van de VPS wissen (alleen na een nieuwe VPS-installatie)</label>
+<div class="err" id="err" role="alert"></div>
+<button class="primary" id="go">Verbinden</button>
+</form></main>
+<script>
+const $=id=>document.getElementById(id);
+const q=new URLSearchParams(location.search);
+function showError(t){$('err').textContent=t;$('err').style.display=t?'block':'none'}
+(async()=>{
+  showError(q.get('error')||'');
+  const s=await window.setupApi.get();
+  $('host').value=s.host||'';$('username').value=s.username||'';$('port').value=s.port||22;$('keyPath').value=s.keyPath||'';$('rdpUsername').value=s.rdpUsername||'';$('rdpRemotePort').value=s.rdpRemotePort||3389;
+  $('tokenNote').textContent=s.hasToken?'Er is al een code opgeslagen (versleuteld door Windows).':(s.encryptionAvailable?'De code wordt versleuteld door Windows opgeslagen.':'Versleutelde opslag is niet beschikbaar: de code geldt alleen tot je de app sluit.');
+})();
+$('pick').onclick=async()=>{const p=await window.setupApi.pickKey();if(p)$('keyPath').value=p};
+$('f').onsubmit=async e=>{
+  e.preventDefault();showError('');$('go').disabled=true;$('go').textContent='Verbinden…';
+  try{await window.setupApi.save({host:$('host').value,username:$('username').value,port:$('port').value,keyPath:$('keyPath').value,passphrase:$('passphrase').value,token:$('token').value,rdpUsername:$('rdpUsername').value,rdpRemotePort:$('rdpRemotePort').value,clearFingerprint:$('clearFp').checked})}
+  catch(err){showError(String(err.message||err).replace(/^Error invoking remote method '[^']+': (Error: )?/,''));$('go').disabled=false;$('go').textContent='Verbinden'}
+};
+</script></body></html>

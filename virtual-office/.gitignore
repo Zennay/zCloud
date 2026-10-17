@@ -1,0 +1,7 @@
+office.db
+*.db-shm
+*.db-wal
+workspace/
+__pycache__/
+*.pyc
+*.log

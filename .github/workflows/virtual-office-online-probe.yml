@@ -1,0 +1,64 @@
+name: Virtual Office external + zCloud bridge diagnostics
+on:
+  push:
+    branches: [feature/virtual-ai-office-mvp-20261012]
+    paths: [.github/workflows/virtual-office-online-probe.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  public-web:
+    name: Public URL from GitHub-hosted network
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check HTTPS restrictions and live HTTP demo
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -vS --connect-timeout 6 --max-time 15 "http://198.244.191.182:3422/api/health" -o /tmp/office-health.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("/tmp/office-health.json"))
+          print({k:d.get(k) for k in ("online","auth_required","mode","zcloud_online","firefox")})
+          assert d.get("online") is True
+          assert d.get("auth_required") is True
+          PY
+          curl -fsS --connect-timeout 6 --max-time 15 http://198.244.191.182:3422/ > /tmp/office-index.html
+          grep -q 'VIRTUAL OFFICE' /tmp/office-index.html
+          code="$(curl -sS --connect-timeout 6 --max-time 10 -o /tmp/office-blocked.json -w '%{http_code}' -X POST 'http://198.244.191.182:3422/api/jobs' -H 'Content-Type: application/json' -d '{"employee":"noah","kind":"task","instruction":"Bouw een test"}')"
+          test "$code" = "401"
+          echo "Browser demo externally accessible, unauthenticated project writes forbidden."
+  local-bridge:
+    name: Read-only zCloud bridge diagnosis on VPS
+    if: ${{ github.event_name == 'push' && github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/feature/virtual-ai-office-mvp-20261012' && github.actor == 'Zennay' }}
+    runs-on: [self-hosted,zcloud,vps]
+    timeout-minutes: 4
+    steps:
+      - name: Diagnose only, no restart or queue mutation
+        shell: bash
+        run: |
+          set -u
+          test "$(hostname)" = "vps-bb300bba" || exit 2
+          echo "## Active services"
+          systemctl is-active zennay-cloud.service || true
+          systemctl is-active virtual-office.service || true
+          echo "## Known loopback ports"
+          for port in 8765 3422; do
+            echo "port:$port"
+            curl --max-time 6 --silent --show-error -o /tmp/office-probe-health-$port.json -w 'http_code=%{http_code} duration=%{time_total}\n' http://127.0.0.1:$port/api/status || true
+            if [ "$port" = 8765 ]; then
+              curl --max-time 8 --silent --show-error -o /tmp/office-probe-queue.json -w 'queue_http_code=%{http_code} duration=%{time_total}\n' 'http://127.0.0.1:8765/api/portfolio-queue' || true
+              curl --max-time 8 --silent --show-error -o /tmp/office-probe-runner.json -w 'runner_http_code=%{http_code} duration=%{time_total}\n' 'http://127.0.0.1:8765/api/runner-live' || true
+            fi
+          done
+          echo "## Listener ports"
+          ss -ltn | grep -E ':(3422|8765|443|80) ' || true
+          echo "## Available TLS proxy tools"
+          for prog in cloudflared caddy nginx; do command -v "$prog" || true; done
+          echo "## Port 443 process (name only)"
+          sudo ss -ltnp '( sport = :443 )' 2>/dev/null | head -8 || true
+          echo "## TLS service labels"
+          systemctl list-units --type=service --all --no-pager | grep -Ei '(nginx|caddy|traefik|apache|cloudflare|tunnel|haproxy)' | head -15 || true
+          echo "## TLS response of current proxy"
+          curl --insecure --max-time 5 --silent -o /dev/null -w 'https localhost code=%{http_code}\n' https://127.0.0.1/ || true

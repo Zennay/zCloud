@@ -1,0 +1,31 @@
+{
+  "name": "penthouse-desktop",
+  "version": "0.1.0",
+  "description": "The Penthouse: downloadable desktop client for the zCloud Virtual Office",
+  "private": true,
+  "main": "main.js",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.mjs",
+    "dist": "electron-builder --win nsis --publish never",
+    "dist:dir": "electron-builder --dir --publish never"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.0",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "nl.zennay.penthouse",
+    "productName": "The Penthouse",
+    "directories": {"output": "dist"},
+    "files": ["main.js", "preload.js", "voice-worker.js", "setup.html", "lib/**", "package.json"],
+    "asarUnpack": ["voice-worker.js", "**/node_modules/onnxruntime-node/**", "**/node_modules/onnxruntime-common/**", "**/node_modules/sharp/**", "**/node_modules/@img/**"],
+    "win": {"target": [{"target": "nsis", "arch": ["x64"]}]},
+    "nsis": {"oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false}
+  }
+}
