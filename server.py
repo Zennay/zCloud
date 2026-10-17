@@ -227,8 +227,8 @@ def _worker_work_package_brief(project_id, queue_item):
     if assigned_project != str(project_id).strip().lower():
         return ''
     def compact(value, limit):
-        value = re.sub(r'[\\x00-\\x1f\\x7f]+', ' ', str(value or ''))
-        value = re.sub(r'\\s+', ' ', value).strip()
+        value = re.sub(r'[\x00-\x1f\x7f]+', ' ', str(value or ''))
+        value = re.sub(r'\s+', ' ', value).strip()
         if len(value) <= limit:
             return value
         return value[:limit].rsplit(' ', 1)[0].rstrip('.,;: ') + '…'
