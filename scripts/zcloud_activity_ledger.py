@@ -26,7 +26,7 @@ KINDS = {
 EVENT_FIELDS = {"id", "project", "repository", "source", "kind",
                 "source_timestamp", "first_observed_at", "number", "head_sha",
                 "draft", "merged_main", "state", "sha", "conclusion", "branch_id"}
-COVERAGE_FIELDS = {"repository", "status", "last_successful_sync", "sources",
+COVERAGE_FIELDS = {"repository", "status", "last_successful_sync", "last_successful_source_fetch", "sources",
                    "github_pr_branch_ci", "retained_history"}
 SOURCE_FIELDS = {"pulls", "commits", "actions/runs", "branches"}
 SOURCE_RESULTS = {"recent_window", "truncated_after_two_pages",
@@ -97,9 +97,10 @@ def _safe_coverage(coverage):
             return False
         if state.get("status") not in ("partial", "recent_window"):
             return False
-        sync = state.get("last_successful_sync")
-        if sync is not None and stamp(sync) is None:
-            return False
+        for field in ("last_successful_sync", "last_successful_source_fetch"):
+            value = state.get(field)
+            if value is not None and stamp(value) is None:
+                return False
         if "retained_history" in state and type(state["retained_history"]) is not bool:
             return False
         if state.get("github_pr_branch_ci") not in ("partial", "recent_window"):
@@ -214,9 +215,10 @@ def merge_and_store(path, current):
     for pid in selected:
         current_cov = dict(current["coverage"][pid])
         previous = coverage.get(pid, {})
-        last_good = previous.get("last_successful_sync") if isinstance(previous, dict) else None
-        if current_cov.get("last_successful_sync") is None and stamp(last_good):
-            current_cov["last_successful_sync"] = last_good
+        for field in ("last_successful_sync", "last_successful_source_fetch"):
+            last_good = previous.get(field) if isinstance(previous, dict) else None
+            if current_cov.get(field) is None and stamp(last_good):
+                current_cov[field] = last_good
         current_cov["retained_history"] = bool(any(x["project"] == pid for x in all_events))
         coverage[pid] = current_cov
     saved = {"schema_version": 1, "last_observed_at": observed,
