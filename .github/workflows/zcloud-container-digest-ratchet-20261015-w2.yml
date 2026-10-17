@@ -1,0 +1,105 @@
+name: zCloud container image digest no-new-debt (hosted source only)
+
+on:
+  # Every PR source diff must be checked: arbitrary symlink/gitlink names can
+  # alias a local Action outside the conventional YAML/action.yml paths.
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-container-digest-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    name: Read-only digest debt ratchet (GitHub-hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # An untrusted PR must FAIL admission rather than SKIP a required job.
+    steps:
+      - name: Reject untrusted PR provenance before checkout
+        shell: bash
+        env:
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          SOURCE_ACTOR: ${{ github.actor }}
+          RESTART_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$SOURCE_REPOSITORY" = Zennay/zCloud
+          test "$HEAD_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$BASE_REPOSITORY" = "$SOURCE_REPOSITORY"
+          test "$SOURCE_ACTOR" = Zennay
+          test "$RESTART_ACTOR" = Zennay
+
+      - name: Checkout immutable PR revision without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify immutable HEAD and actual canonical main
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$GITHUB_BASE_REF" = "main"
+          [[ "$GITHUB_HEAD_REF" =~ ^[A-Za-z0-9._/-]{1,200}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_BASE" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags --depth=1 origin refs/heads/main
+          BASE_SHA="$(git rev-parse FETCH_HEAD)"
+          test "$BASE_SHA" = "$EXPECTED_BASE"
+          remote_head="$(git ls-remote --exit-code origin "refs/heads/$GITHUB_HEAD_REF" | awk '{print $1}')"
+          test "$remote_head" = "$EXPECTED_HEAD"
+          echo "BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+          echo "HEAD_SHA=$EXPECTED_HEAD" >> "$GITHUB_ENV"
+
+      - name: Run isolated real-Git and adversarial regression suite
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v tests.test_zcloud_container_digest_ratchet_20261015_w2
+          python3 -m py_compile scripts/zcloud_container_digest_ratchet_20261015_w2.py
+
+      - name: No newly unpinned container images between exact Git trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Preserve denial status so even incomplete Git evidence produces a
+          # readable red summary; never turn missing source into a green job.
+          set +e
+          python3 scripts/zcloud_container_digest_ratchet_20261015_w2.py \
+            --base-sha "$BASE_SHA" --head-sha "$HEAD_SHA" > "$RUNNER_TEMP/container-digest.json"
+          scanner_status=$?
+          set -e
+          REPORT="$RUNNER_TEMP/container-digest.json" SCAN_EXIT="$scanner_status" python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          from scripts import zcloud_container_digest_ratchet_20261015_w2 as guard
+
+          result = json.loads(Path(os.environ["REPORT"]).read_text(encoding="utf-8"))
+          status = int(os.environ["SCAN_EXIT"])
+          summary = guard.dutch_operator_summary(result, status)
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write(summary)
+          if status != 0:
+              print("CONTAINER_SOURCE_EVIDENCE_DENIED=1")
+              sys.exit(status)
+          print("NO_NEW_CONTAINER_IMAGE_TAG_DEBT=1")
+          print("LEGACY_UNPINNED_IMAGE_RECORDS=" + str(result["baseline_findings"]))
+          PY
+          test "$(git ls-remote --exit-code origin refs/heads/main | cut -f1)" = "$BASE_SHA"
+          final_head="$(git ls-remote --exit-code origin "refs/heads/$GITHUB_HEAD_REF" | awk '{print $1}')"
+          test "$final_head" = "$HEAD_SHA"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
