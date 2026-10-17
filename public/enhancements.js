@@ -188,32 +188,56 @@
     if(!el)return;
     e.stopImmediatePropagation();
     var previous=el.dataset.previousValue||'normal';
+    var projectId=el.dataset.resourcePriority;
+    var project=(DATA.projects||[]).find(function(p){return p.id===projectId});
+    var projectName=project&&project.name||'this project';
+    var notice=$('notice');
     el.disabled=true;
+    el.setAttribute('aria-busy','true');
+    if(notice){
+      notice.hidden=false;
+      notice.textContent='Saving priority for '+projectName+'…';
+    }
     try{
-      var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:el.dataset.resourcePriority,priority:el.value}),signal:AbortSignal.timeout(10000)});
+      var response=await fetch('/api/resource-priority',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:projectId,priority:el.value}),signal:AbortSignal.timeout(10000)});
       var data=await response.json().catch(function(){return {}});
-      if(!response.ok){throw new Error(data.error||'Save failed')}
-      var saved=(data.resource&&data.resource.priority)||el.value;
+      if(!response.ok){throw new Error('save_rejected')}
+      // HTTP 2xx alone is not a saved-priority receipt. Preserve the prior
+      // selection if the response is incomplete or contradicts the API contract.
+      if(data.ok!==true||!data.resource
+          ||typeof data.resource.priority!=='string'
+          ||!['background','normal','high','turbo'].includes(data.resource.priority)
+          ||(data.resource.applied!==undefined&&typeof data.resource.applied!=='boolean')){
+        throw new Error('unconfirmed_priority_receipt');
+      }
+      var saved=data.resource.priority;
       el.value=saved;
       el.dataset.previousValue=saved;
-      var project=(DATA.projects||[]).find(function(p){return p.id===el.dataset.resourcePriority});
       if(project){
         project.resource=project.resource||{};
         project.resource.priority=saved;
         if(data.resource&&data.resource.weight!=null)project.resource.weight=data.resource.weight;
         if(data.resource&&data.resource.applied!=null)project.resource.applied=!!data.resource.applied;
       }
-      if(data.resource&&data.resource.applied===false){
-        $('notice').hidden=false;
-        $('notice').textContent='Priority saved. The live VPS weight could not be applied yet; zCloud is keeping the current priority.';
-      }
       await refresh(true);
+      // refresh() can repaint or clear the global notice. Show the result
+      // *after* that repaint, based only on the backend-confirmed response.
+      if(notice){
+        notice.hidden=false;
+        notice.textContent=data.resource&&data.resource.applied===false
+          ?'Priority saved for '+projectName+', but the live VPS weight was not applied. The saved priority remains in place.'
+          :'Priority saved for '+projectName+'.';
+      }
     }catch(err){
       el.value=previous;
-      $('notice').hidden=false;
-      $('notice').textContent='Project priority could not be saved: '+(err.message||err);
+      if(notice){
+        notice.hidden=false;
+        // Never display raw server/transport error text in operator UI.
+        notice.textContent='Priority change for '+projectName+' could not be confirmed. The previous selection is restored; check the current setting before retrying.';
+      }
     }finally{
       el.disabled=false;
+      el.removeAttribute('aria-busy');
     }
   },true);
 })();
