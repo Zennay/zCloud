@@ -1,0 +1,92 @@
+name: zCloud cross-run artifact source review gate
+
+# Offline admission only. Green means no NEW source-risk indicators,
+# never trusted artifact content, merge approval or production authority.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zcloud-cross-run-artifact-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deny-new-cross-run-downloads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Reject untrusted PR provenance before any repository checkout
+        shell: bash
+        env:
+          PR_EVENT: ${{ github.event_name }}
+          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+        run: |
+          set -euo pipefail
+          test "$PR_EVENT" = pull_request
+          test "$GITHUB_REPOSITORY" = Zennay/zCloud
+          test "$PR_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$PR_BASE_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+
+      - name: Check out immutable PR head without persisted credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 0
+
+      - name: Verify live main and immutable head against PR metadata
+        shell: bash
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Zennay/zCloud'
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          [[ "$PR_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PR_BASE" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$PR_BASE"
+          test "$(git merge-base "$PR_BASE" "$PR_HEAD")" = "$PR_BASE"
+
+      - name: Run real-Git adversarial source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p test_zcloud_cross_run_artifact_gate_20261016.py -v
+          python3 -m py_compile scripts/zcloud_cross_run_artifact_gate_20261016.py
+
+      - name: Refuse any newly introduced cross-run artifact downloads
+        shell: bash
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          test "$(git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')" = "$PR_BASE"
+          scanner=scripts/zcloud_cross_run_artifact_gate_20261016.py
+          # Once integrated, the unmodified, immutable MAIN policy must veto
+          # a candidate that edits or disables its own scanner. This initial
+          # add-only PR bootstraps only from its exact original main commit.
+          if git cat-file -e "$PR_BASE:$scanner" 2>/dev/null; then
+            policy="$RUNNER_TEMP/zcloud-cross-run-trusted-base-policy.py"
+            git show "$PR_BASE:$scanner" > "$policy"
+            test -s "$policy"
+            python3 "$policy" --repo-root . --base "$PR_BASE" --head "$PR_HEAD"
+            echo 'ZCLOUD_CROSS_RUN_BASE_OWNED_POLICY_GREEN=1'
+          else
+            test "$PR_BASE" = 'd813cbe70ae5291246bc8f4977cba18bc066519a'
+            echo 'ZCLOUD_CROSS_RUN_FIRST_INTEGRATION_BOOTSTRAP=1'
+          fi
+          # Candidate may be stricter but can never override base policy.
+          python3 "$scanner" --repo-root . --base "$PR_BASE" --head "$PR_HEAD"
+          echo 'ZCLOUD_CROSS_RUN_DOWNLOAD_NO_NEW_DEBT_VALID=1'
+          echo 'PRODUCTION_MUTATION_AUTHORIZED=false'
