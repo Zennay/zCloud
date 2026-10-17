@@ -13,7 +13,25 @@ function saveCachedStatus(data){try{localStorage.setItem(STATUS_CACHE_KEY,JSON.s
 function hydrate(){document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);el.removeAttribute('data-icon')})}
 async function api(path,timeoutMs=10000){const r=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(timeoutMs)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}
 async function post(path,body){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}
-async function saveProjectLayout(order,archived){await post('/api/project-layout',{order,archived});await refresh(true)}
+async function saveProjectLayout(order,archived){
+  if(projectLayoutActionPending)return false;
+  projectLayoutActionPending=true;
+  let saved=false;
+  try{
+    await post('/api/project-layout',{order,archived});
+    saved=true;
+    if(!await refresh(true))throw new Error('Saved project order, status refresh failed');
+    projectLayoutNotice('Project order saved.');
+    return true;
+  }catch(_error){
+    projectLayoutNotice(saved
+      ?'Project order saved, but dashboard refresh failed. Reload to see the current order.'
+      :'Project order could not be confirmed. Check the project list before trying again.');
+    return false;
+  }finally{
+    projectLayoutActionPending=false;
+  }
+}
 let projectLayoutActionPending=false;
 function projectLayoutNotice(message){
   const notice=$('notice');
