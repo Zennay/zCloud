@@ -2832,7 +2832,7 @@ def _attention_action_for_blocker(project_id,title,evidence):
         return f'{name}: complete the external review/submission step'
     return f'{name}: your input is needed to unblock this step'
 
-def portfolio_queue_items(include_done=False):
+def portfolio_queue_items(include_done=False, *, with_delivery_policy=False):
     with connect() as c:
         if include_done:
             rows=c.execute("""SELECT * FROM portfolio_queue
@@ -2843,7 +2843,14 @@ def portfolio_queue_items(include_done=False):
                               WHERE status NOT IN ('done','dropped')
                               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                                        created_at, queue_id""").fetchall()
-    return [_portfolio_queue_row(row) for row in rows]
+    # Preserve the exact *raw* SQLite rows only for the private advisory
+    # classifier. Public rows still redact metadata_json; policy may reject
+    # corrupted JSON that the legacy display normalizer represents as {}.
+    public_items=[_portfolio_queue_row(row) for row in rows]
+    if with_delivery_policy:
+        policy=product_queue_snapshot([dict(row) for row in rows])
+        return public_items,policy
+    return public_items
 
 def portfolio_queue_current_for_slot(global_slot):
     try: slot=int(global_slot)
@@ -4975,8 +4982,8 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
-            items=portfolio_queue_items(include_done)
-            return self.reply({'backend':'sqlite','items':items,'delivery_policy':product_queue_snapshot(items),
+            items,policy=portfolio_queue_items(include_done,with_delivery_policy=True)
+            return self.reply({'backend':'sqlite','items':items,'delivery_policy':policy,
                                'allocation':global_worker_allocation(),'time':now()})
         if u.path=='/api/portfolio-attention':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
