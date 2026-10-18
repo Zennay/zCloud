@@ -36,6 +36,16 @@ The admission read-model differentiates **QA-only queued work held from fresh cl
 
 The locally downloaded handoff contains no raw queue identifiers for these rows; it includes only their project, priority, constant reason (`invalid_metadata`, `invalid_title`, `oversized_criteria`) and total count. A real owner must correct source queue metadata through the existing authenticated control-plane path, after independent claim/lease/source review. This UI cannot grant itself permission to perform that correction. QA-only work remains excluded from *new* admission under the 17 October policy.
 
+## PR-less branch overlap — manual project work handoff
+
+The Activity screen now has an optional **Unmerged branches / Import branch .json** panel. This pairs with [PR #1554](https://github.com/Zennay/zCloud/pull/1554), the standalone read-only GitHub branch inventory for repository `Zennay/zCloud`. The reporter can scan a 12-branch namespace slice and print a bounded JSON receipt; import the JSON file manually on Activity. The UI does not fetch or execute repository content, call GitHub, persist tokens or modify a project queue.
+
+The browser requires the exact `zsentinel-recent-prless-ownership-v1` schema, `repository=Zennay/zCloud`, a verified-shape main SHA, source timestamps, explicit no-authorization flags, bounded branch/path arrays, matching conflict evidence and limited JSON size. Imported details stay **in tab memory only** and render as a source timestamp (with >6-hour stale warning), partial/complete-at-observation coverage, branch ref, ahead count, changed-path count and up to 12 conflicting paths per branch. Other projects never inherit zCloud's owner evidence. Use **Clear** to discard.
+
+The existing **Export handoff .md** can include only the bounded, sanitized branch ref/time/classification/overlap count from a manual import, not raw provider payloads, branch commit messages, GitHub credentials or privately scoped queue IDs. The handoff explicitly does not establish an active claim or authorize source edits, merges, worker actions or deployment. An absent imported report means **unknown**, not no conflicts. A prefix-selected scan remains globally partial even when all matching branches were scanned.
+
+Both PR #1554 (report producer) and the Activity UI [PR #1550](https://github.com/Zennay/zCloud/pull/1550) must be independently accepted and deployed through existing exact-head CI, review and serialized release. This UI is **source code only** until those gates clear.
+
 ## Older local history
 
 Choose **Read history** to request the first 40 items from `GET /api/activity-page`. Use **Load older** to follow the source-provided per-project keyset cursor; the list is capped at 400 distinct events in the browser. Switching Activity's project filter begins a separate scoped history. Results are not silently loaded, written to storage, or used to dispatch work.
