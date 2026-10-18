@@ -4839,7 +4839,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/resource-governor':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             with connect() as c:
-                return self.reply(project_runtime.resource_status(c))
+                return self.reply(project_runtime.resource_status(c,prune_expired=False))
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
