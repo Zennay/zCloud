@@ -11,6 +11,16 @@ Fixes [#1271](https://github.com/Zennay/zCloud/issues/1271), [#1272](https://git
 - Internal impossible post-write missing lease reads raise a deterministic runtime exception rather than returning a misleading `acquired: true, lease: null`.
 - New acquire requests from SQLite autocommit connections are refused *before* expired-lease cleanup, capacity counting or insertion, returning `acquired: false`, `reason: transactional_resource_connection_required`. This includes legacy `isolation_level=None` and Python 3.12+ `autocommit=True`. Python 3.12+ `autocommit=False` is a valid transactional connection. The existing cleanup `DELETE` on a transactional connection obtains a write reservation before checking pool slots, preventing two holders from separately admitting into one slot. Previously acquired leases remain releasable even if called on an autocommit connection; releasing cannot overallocate capacity.
 
+## Existing runtime admission code integrated from older PR #1270
+
+The same source branch now brings the **already implemented production hunks** of [#1270](https://github.com/Zennay/zCloud/pull/1270) forward into current-main integration, rather than leaving them indefinitely on an aging draft:
+
+- Pool slot configuration accepts only genuine nonnegative integers; Python `true` and `false` are denied rather than interpreted as 1 and 0 slots.
+- Receipt freshness reference and observation timestamps must have explicit timezone offsets; naive timestamps are rejected rather than interpreted in the host's timezone.
+- Any observation strictly in the future is **invalid**, not artificially clamped to age zero. Positive age is rounded up to a whole second so a subsecond-over-boundary receipt does not appear fresh.
+
+Only the existing product-source adjustments were ported from #1270; **no old or new QA files were copied, written or manually run**. Original owner/review and source conflict reconciliation remain necessary. This is an independent main-targeted integration candidate, not a claim that #1270 has merged.
+
 ## Integration and limits
 
 This patch changes only the resource-lease admission portion of `project_runtime.py`; it does not modify the API, server, worker claims, resource capacity, resource pool allocation algorithm, queue, migrations, CI, or live SQLite. The existing draft [#1270](https://github.com/Zennay/zCloud/pull/1270) owns separate receipt freshness/pool-slot validation hunks, and open [#1545](https://github.com/Zennay/zCloud/pull/1545) owns separate receipt-provenance hunks. These need routine independent integration review against current main. The autocommit admission boundary of [#1274](https://github.com/Zennay/zCloud/issues/1274) is addressed conservatively by rejecting unsupported connections. It does not add cross-process scheduling, change the number of slots, nor authorize production resource activation.
