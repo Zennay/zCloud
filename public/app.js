@@ -797,8 +797,15 @@ async function refreshPublicGitHubEvidence(){
     }
     const good=outcomes.filter((o,i)=>o.status==='fulfilled'&&
       (i===1?Array.isArray(o.value?.workflow_runs):Array.isArray(o.value))).length;
-    IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),events:events.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,90),
-      coverage:[{project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable'}]};
+    // Keep bounded, manually read evidence from other projects. This is an
+    // in-memory sample, not background synchronization or a durable event log.
+    const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
+    const githubCoverage=[...previousGitHub.coverage.filter(row=>row.project!==projectId),
+      {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable'}].slice(-8);
+    const coveredIds=new Set(githubCoverage.map(row=>row.project));
+    const githubEvents=[...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
+      ...events].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,200);
+    IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),events:githubEvents,coverage:githubCoverage};
     IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); ':'Public GitHub source sample ready; ')+
       'branch-only work and private repositories are not covered. Not a live deployment receipt.';
   }catch(_error){
@@ -818,7 +825,7 @@ function githubActivityImportPanel(){
   return '<div class="panel"><div class="panel-header"><div><h2>GitHub evidence · optional local import</h2>'+
     '<p class="panel-subtitle">PRs, CI and main commits from an operator-generated bounded read-only snapshot. Not automatically synchronized.</p></div></div>'+
     '<button type="button" class="runner-action" data-github-public-refresh '+(PUBLIC_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read public GitHub for selected project</button> '+
-    '<span class="detail-note">Opt-in browser GET only · three bounded GitHub requests · no credentials or background sync.</span><br>'+ 
+    '<span class="detail-note">Opt-in browser GET only · three bounded requests per selected project. Up to eight project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
     '<label for="githubReceiptFile">Or import a JSON receipt created by the zCloud GitHub activity observer</label> '+
     '<input type="file" id="githubReceiptFile" accept=".json,application/json" aria-label="Import read-only GitHub activity JSON receipt">'+
     (snapshot?'<button type="button" class="runner-action" data-github-receipt-clear>Clear snapshot</button>':'')+
@@ -941,12 +948,20 @@ async function refreshPublicProductIssues(){
     }
     const ranked={P0:0,P1:1,P2:2,Unspecified:3};
     const readable=outcomes.filter(o=>o.status==='fulfilled'&&Array.isArray(o.value)).length;
+    // One project fetch must not erase manually observed P0/P1 work from
+    // another project. A refreshed project replaces its own older observations.
+    const previousIssues=IMPORTED_PRODUCT_ISSUES||{issues:[],coverage:[]};
+    const currentCoverage={project:projectId,status:readable===3?'partial':readable?'degraded':'unavailable',
+      oldest:outcomes[0].status==='fulfilled'?'bounded 30':'unavailable',
+      recent:outcomes[1].status==='fulfilled'?'bounded 30':'unavailable',
+      prs:outcomes[2].status==='fulfilled'?'bounded 12':'unavailable'};
+    const issueCoverage=[...previousIssues.coverage.filter(row=>row.project!==projectId),
+      currentCoverage].slice(-8);
+    const coveredProjects=new Set(issueCoverage.map(row=>row.project));
+    const issueRows=[...previousIssues.issues.filter(row=>row.project!==projectId&&coveredProjects.has(row.project)),
+      ...issues.values()].sort((a,b)=>ranked[a.priority]-ranked[b.priority]||b.observed-a.observed).slice(0,150);
     IMPORTED_PRODUCT_ISSUES={observedAt:new Date().toISOString(),partial:true,
-      issues:[...issues.values()].sort((a,b)=>ranked[a.priority]-ranked[b.priority]||b.observed-a.observed).slice(0,60),
-      coverage:[{project:projectId,status:readable===3?'partial':readable?'degraded':'unavailable',
-        oldest:outcomes[0].status==='fulfilled'?'bounded 30':'unavailable',
-        recent:outcomes[1].status==='fulfilled'?'bounded 30':'unavailable',
-        prs:outcomes[2].status==='fulfilled'?'bounded 12':'unavailable'}]};
+      issues:issueRows,coverage:issueCoverage};
     IMPORTED_ISSUE_SHOW_ALL=false;
     IMPORTED_PRODUCT_ERROR=(readable===3?'Public issue sample loaded. ':'Partial public issue source ('+readable+'/3 readable). ')+
       'These references do not verify fixes, worker ownership or queue claims.';
