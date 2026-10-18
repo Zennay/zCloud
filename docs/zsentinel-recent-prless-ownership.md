@@ -41,6 +41,29 @@ exit code **4** when this slice cannot cover all PR-less branches. A successful
 slice still reports `release_authorized:false` and
 `ownership_granted:false`; it is **not** permission to claim or deploy.
 
+For a specific project's branch namespace, a **product-first triage** can now
+show only relevant branch refs without inspecting the entire historical list:
+
+```sh
+python3 scripts/zcloud_recent_prless_ownership.py <CURRENT_MAIN_SHA> \\
+  --branch-prefix feat/zsentinel- \\
+  --owned-path scripts/zcloud_recent_prless_ownership.py \\
+  --format markdown
+```
+
+The result is a readable, bounded Markdown handoff for the next operator,
+including source timestamp, historical vs recent/unmerged status, and actual
+conflicting file paths. The output is printed locally; it is **not** posted,
+emailed, stored in SQLite or forwarded to any worker automatically. GitHub
+paths are escaped to avoid accidental Markdown links or content injection.
+
+**Important:** `--branch-prefix` filters the *display*, not the authoritative
+GitHub inventory. Even if all matching branches fit in one slice,
+`coverage_complete` stays `false` because other branch namespaces were not
+reviewed. A strict `--deny-overlap` requires at least one `--owned-path`,
+returns 3 on observed overlap and 4 for a partial prefix or batch; it cannot
+authorize work from an empty path set or an empty namespace.
+
 Subsequent slices use `--offset 12`, `--offset 24`, etc. A full decision
 requires review of every slice against one unchanged source head; multiple
 separate calls do **not** jointly create an automatic lease or proof of stable
