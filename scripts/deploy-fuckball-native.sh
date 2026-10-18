@@ -78,7 +78,7 @@ before="$(get_health)" || die "Service health changed during preparation"
 switched=0
 rollback() {
   local result=$?
-  trap - ERR
+  trap - EXIT
   if [[ "$switched" == 1 ]]; then
     echo "::warning::Promoted release failed. Restoring previous systemd unit and immutable source."
     sudo install -m 0644 "$work/previous.service" "$unit" || true
@@ -88,7 +88,7 @@ rollback() {
   fi
   exit "$result"
 }
-trap rollback ERR
+trap rollback EXIT
 
 switched=1
 sudo install -m 0644 "$work/fuckball.service" "$unit"
@@ -115,6 +115,7 @@ curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$port/dist/room
 # The release directory is immutable evidence; the previous release and
 # persistent state are preserved so a manual rollback remains possible.
 switched=0
+trap - EXIT
 echo "Deployed Fuckball native main $TARGET_SHA (from $live_sha)."
 echo "Persistent accounts/club/match state preserved in systemd StateDirectory=fuckball."
 {
