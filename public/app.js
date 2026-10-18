@@ -732,8 +732,10 @@ function validateGitHubActivityReceipt(value){
 }
 function githubActivityImportPanel(){
   const snapshot=IMPORTED_GITHUB_ACTIVITY;
-  const rows=(snapshot?.events||[]).filter(a=>!filter||a.project===filter);
-  const counts=snapshot?.coverage.map(c=>c.project+': '+c.status).join(' · ')||'No GitHub receipt loaded';
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
+  const counts=snapshot?.coverage.filter(c=>visible.has(c.project)&&(!filter||c.project===filter))
+    .map(c=>c.project+': '+c.status).join(' · ')||'No GitHub receipt loaded';
   const content=rows.slice(0,80).map(a=>'<div class="service-row"><div><small>'+esc(a.project)+' · '+esc(a.kind)+
     (a.firstSeen?' · absent in preceding bounded snapshot':'')+'</small><br><a target="_blank" rel="noopener noreferrer" href="'+
     esc(a.url)+'">'+esc(a.description)+'</a></div><small>'+esc(date(a.ts,true))+'</small></div>').join('');
@@ -805,11 +807,12 @@ function validateProductIssueInbox(value){
 }
 function productIssueInboxPanel(){
   const snapshot=IMPORTED_PRODUCT_ISSUES;
-  const rows=(snapshot?.issues||[]).filter(item=>(!filter||item.project===filter)&&
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const rows=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)&&
     (IMPORTED_ISSUE_SHOW_ALL||item.priority==='P0'||item.priority==='P1'));
-  const hiddenLowerPriority=(snapshot?.issues||[]).filter(item=>(!filter||item.project===filter)
+  const hiddenLowerPriority=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)
     &&item.priority!=='P0'&&item.priority!=='P1').length;
-  const coverageText=(snapshot?.coverage||[]).filter(item=>!filter||item.project===filter)
+  const coverageText=(snapshot?.coverage||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)
     .map(item=>item.project+' · '+item.status+' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
   const html=rows.slice(0,50).map(item=>'<div class="service-row"><div><strong>'+esc(item.priority)+
     ' · '+esc(item.project)+'</strong> <a target="_blank" rel="noopener noreferrer" href="'+esc(item.url)+'">'+
