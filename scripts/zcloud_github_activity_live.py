@@ -1,8 +1,7 @@
-"""Explicitly requested, bounded, non-mutating GitHub Activity on zCloud.
+"""On-demand, canonical, bounded GitHub Activity and P0/P1 issue snapshots.
 
-Public canonical repositories only by default. Network work is separated from
-HTTP server request threads; requests return a partial/refreshing envelope and
-must never create or modify a worker claim or persist a credential.
+Two fixed read-only providers, two concurrent provider observations maximum,
+cache-only receipt storage, and no tokens, queue edits or owner admission.
 """
 from __future__ import annotations
 
@@ -11,97 +10,107 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
 import time
-
 from scripts import zcloud_github_activity_source as source
+from scripts import zsentinel_product_issue_inbox as inbox
 
 CACHE_SECONDS = 300
 MAX_ENTRIES = 16
 MAX_CONCURRENT = 2
-_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_CONCURRENT, thread_name_prefix="zcloud-gh-activity")
+_EXECUTOR = ThreadPoolExecutor(max_workers=MAX_CONCURRENT, thread_name_prefix="zcloud-gh-observe")
 _LOCK = threading.Lock()
-_ENTRIES: OrderedDict[str, dict] = OrderedDict()
+_ENTRIES: OrderedDict[tuple[str, str], dict] = OrderedDict()
 
 
-def _unavailable(project: str, state: str) -> dict:
+def _envelope(project: str, kind: str, state: str) -> dict:
     return {
-        "schema": "zcloud-github-activity-live-v1",
-        "state": state,
-        "project": project,
-        "feed_complete": False,
-        "authorizes_repair": False,
-        "authorizes_merge": False,
-        "authorizes_deploy": False,
+        "schema": ("zcloud-github-activity-live-v1" if kind == "activity"
+                   else "zsentinel-product-issues-live-v1"),
+        "state": state, "project": project, "receipt": None,
         "source": "canonical_github_readonly",
-        "receipt": None,
-        "retry_after_s": 3 if state == "refreshing" else 0,
-        "notes": "Public, bounded GitHub PR/CI/main observations. Branch/deploy/worker state unverified.",
+        "feed_complete": False,
+        "authorizes_repair": False, "authorizes_merge": False,
+        "authorizes_deploy": False, "retry_after_s": 3 if state == "refreshing" else 0,
+        "notes": "Partial canonical PR/CI/main or issue observations. Claim and release not verified.",
     }
 
 
-def _collect(registry: Path, project: str) -> dict:
-    # No credential or GitHub write capability. Explicitly scoped to one
-    # registered project and a bounded window. Private repositories fail closed.
-    return source.collect(registry, [project], 48, 100, token=None, previous=None)
+def _collect(registry: Path, project: str, kind: str) -> dict:
+    # Explicit, public-only requests. Never read server GitHub credentials,
+    # accept a provider URL, persist a secret or request GitHub write scopes.
+    if kind == "activity":
+        return source.collect(registry, [project], 48, 100,
+                              token=None, previous=None)
+    return inbox.collect(inbox.canonical_projects(registry), [project],
+                         token=None, max_items=90)
 
 
-def read_live(registry: Path, project: str) -> dict:
+def _valid_receipt(receipt: object, kind: str) -> bool:
+    if not isinstance(receipt, dict):
+        return False
+    if kind == "activity":
+        return (receipt.get("schema") == "zcloud-github-activity-readonly-v1"
+                and receipt.get("feed_complete") is False
+                and receipt.get("authorizes_repair") is False
+                and receipt.get("authorizes_merge") is False
+                and receipt.get("authorizes_deploy") is False
+                and isinstance(receipt.get("coverage"), list)
+                and isinstance(receipt.get("events"), list))
+    return (receipt.get("schema") == "zsentinel-product-issue-inbox-v1"
+            and receipt.get("actions_authorized") is False
+            and receipt.get("queue_ownership_known") is False
+            and receipt.get("active_claims_verified") is False
+            and receipt.get("fully_synchronized") is False
+            and isinstance(receipt.get("coverage"), list)
+            and isinstance(receipt.get("items"), list))
+
+
+def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
+    if kind not in ("activity", "issues"):
+        raise ValueError("invalid_kind")
     if not isinstance(project, str) or not source.PROJECT_RE.fullmatch(project):
         raise ValueError("invalid_project")
-    # The only source of names and repositories is the canonical server registry,
-    # not caller-provided URL/owner/path or request-supplied Authorization headers.
     if project not in source.read_registry(registry):
         raise ValueError("unknown_project")
     now = time.monotonic()
+    key = (kind, project)
     with _LOCK:
-        entry = _ENTRIES.get(project)
+        entry = _ENTRIES.get(key)
         if entry is not None:
-            _ENTRIES.move_to_end(project)
+            _ENTRIES.move_to_end(key)
             future = entry.get("future")
             if future is not None:
                 if not future.done():
-                    return _unavailable(project, "refreshing")
+                    return _envelope(project, kind, "refreshing")
                 entry["future"] = None
                 try:
-                    result = future.result()
+                    data = future.result()
                 except Exception:
-                    # No raw exception text, headers, token, private GitHub
-                    # body or local path can escape the read-only endpoint.
-                    entry["expires"] = now + 30
-                    entry["receipt"] = None
-                    return _unavailable(project, "unavailable")
-                if (not isinstance(result, dict)
-                    or result.get("feed_complete") is not False
-                    or result.get("authorizes_merge") is not False
-                    or result.get("authorizes_deploy") is not False
-                    or result.get("authorizes_repair") is not False):
-                    entry["expires"] = now + 30
-                    entry["receipt"] = None
-                    return _unavailable(project, "unavailable")
-                entry["receipt"] = result
-                entry["expires"] = now + CACHE_SECONDS
+                    # Never return arbitrary provider/URL/exception data.
+                    entry.update(receipt=None, expires=now+30)
+                    return _envelope(project, kind, "unavailable")
+                if not _valid_receipt(data, kind):
+                    entry.update(receipt=None, expires=now+30)
+                    return _envelope(project, kind, "unavailable")
+                entry.update(receipt=data, expires=now+CACHE_SECONDS)
             if now < entry.get("expires", 0):
                 if entry.get("receipt") is not None:
-                    response = _unavailable(project, "partial")
-                    response["receipt"] = entry["receipt"]
-                    response["retry_after_s"] = max(0, int(entry["expires"] - now))
-                    return response
-                return _unavailable(project, "unavailable")
-        pending = sum(1 for row in _ENTRIES.values()
-                      if row.get("future") is not None and not row["future"].done())
+                    result = _envelope(project, kind, "partial")
+                    result["receipt"] = entry["receipt"]
+                    result["retry_after_s"] = max(0, int(entry["expires"]-now))
+                    return result
+                return _envelope(project, kind, "unavailable")
+        pending = sum(bool(item.get("future") is not None and
+                           not item["future"].done()) for item in _ENTRIES.values())
         if pending >= MAX_CONCURRENT:
-            return _unavailable(project, "capacity_wait")
-        # Drop oldest finished item if a different project arrives; never create
-        # unbounded futures or clear a live in-flight observation.
-        if project not in _ENTRIES and len(_ENTRIES) >= MAX_ENTRIES:
-            old = next((key for key, value in _ENTRIES.items()
-                        if value.get("future") is None or value["future"].done()), None)
-            if old is None:
-                return _unavailable(project, "capacity_wait")
-            _ENTRIES.pop(old, None)
-        _ENTRIES[project] = {
-            "future": _EXECUTOR.submit(_collect, registry, project),
-            "receipt": None,
-            "expires": 0,
-        }
-        _ENTRIES.move_to_end(project)
-    return _unavailable(project, "refreshing")
+            return _envelope(project, kind, "capacity_wait")
+        if key not in _ENTRIES and len(_ENTRIES) >= MAX_ENTRIES:
+            oldest_finished = next((name for name, value in _ENTRIES.items()
+                                    if value.get("future") is None
+                                    or value["future"].done()), None)
+            if oldest_finished is None:
+                return _envelope(project, kind, "capacity_wait")
+            _ENTRIES.pop(oldest_finished, None)
+        _ENTRIES[key] = {"future": _EXECUTOR.submit(_collect, registry, project, kind),
+                         "receipt": None, "expires": 0}
+        _ENTRIES.move_to_end(key)
+    return _envelope(project, kind, "refreshing")
