@@ -1,11 +1,13 @@
-name: Deploy Fuckball on VPS
+name: Deploy Fuckball native release
 
-# Physics recovery hold (2026-10-13): do NOT silently re-sync an older
-# GitHub main onto a Work-session game build. Resume automatic deploy only
-# once the approved HaxBall-copy physics have been committed, compared
-# side-by-side, and intentionally promoted. Explicit dispatch remains possible.
+# Explicit, immutable, manually confirmed release. Never reset the old /opt/fuckball checkout.
 on:
   workflow_dispatch:
+    inputs:
+      confirm_sha:
+        description: "Full 40-character SHA currently at Zennay/fuckball main"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,143 +17,74 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  verify-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.approved.outputs.sha }}
+    steps:
+      - name: Verify exact main SHA and existing merged-PR gates
+        id: approved
+        uses: actions/github-script@v7
+        env:
+          REQUESTED_SHA: ${{ inputs.confirm_sha }}
+        with:
+          script: |
+            const owner = 'Zennay', repo = 'fuckball';
+            const sha = process.env.REQUESTED_SHA.trim().toLowerCase();
+            if (!/^[0-9a-f]{40}$/.test(sha)) throw Error('A full immutable commit SHA is required.');
+            const {data: branch} = await github.rest.repos.getBranch({owner,repo,branch:'main'});
+            if (branch.commit.sha !== sha) throw Error('SHA is not the current Fuckball main; never release an unapproved historical commit.');
+            const {data: prs} = await github.rest.repos.listPullRequestsAssociatedWithCommit({owner,repo,commit_sha:sha});
+            const pr = prs.find(p=>p.merged_at && p.merge_commit_sha===sha && p.base.ref==='main' && p.head.repo?.full_name==='Zennay/fuckball');
+            if (!pr) throw Error('The exact main commit does not originate from a merged first-party PR.');
+            const {data: runs} = await github.rest.checks.listForRef({owner,repo,ref:pr.head.sha,per_page:100});
+            if (runs.total_count>100) throw Error('Cannot exhaustively verify the PR head checks.');
+            const required = ['test','app-contracts','peer-hosting-chromium','account-room','protocol','room-lifecycle','input-integrity'];
+            const names = new Set(runs.check_runs.map(x=>x.name));
+            if(required.some(name=>!names.has(name))) throw Error('Required existing CI check missing from merged PR.');
+            const incomplete = runs.check_runs.filter(x=>x.status!=='completed'||x.conclusion!=='success');
+            if(incomplete.length) throw Error('Some existing checks are not green: '+incomplete.map(x=>x.name).join(', '));
+            const {data: statuses} = await github.rest.repos.getCombinedStatusForRef({owner,repo,ref:pr.head.sha});
+            if(statuses.total_count && statuses.state!=='success') throw Error('Required commit statuses are not successful.');
+            core.info('Approved merged PR #'+pr.number+'; immutable main '+sha+'; original CI gates green.');
+            core.setOutput('sha',sha);
+
+  release:
+    needs: verify-source
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     steps:
-      - name: Install Node.js 22
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # pinned v6
+        with:
+          persist-credentials: false
+      - name: Enforce permanent VPS identity before executing any release tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py
+      - name: Reject non-main zCloud workflow source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$GITHUB_SHA" = "$source_sha"
+          test "${GITHUB_REPOSITORY}" = 'Zennay/zCloud'
+      - name: Configure Node 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Sync, test and deploy Fuckball
+      - name: Promote approved native release without touching physics worktrees
         shell: bash
         env:
-          APP_HOME: /opt/fuckball
-          APP_PORT: '3417'
-        run: |
-          set -euo pipefail
-          echo "Runner: $(hostname); user: $(id -un); node: $(node -v)"
-          sudo mkdir -p "$APP_HOME"
-          sudo chown "$(id -un):$(id -gn)" "$APP_HOME"
-          if [ ! -d "$APP_HOME/.git" ]; then
-            git clone --depth 1 https://github.com/Zennay/fuckball.git "$APP_HOME"
-          fi
-          cd "$APP_HOME"
-          git remote set-url origin https://github.com/Zennay/fuckball.git
-          git fetch --depth 1 origin main
-          wanted_sha="$(git rev-parse FETCH_HEAD)"
-          echo "Deploying source commit: $wanted_sha"
-          if [ "$(git rev-parse HEAD)" = "$wanted_sha" ] && sudo systemctl is-active --quiet fuckball.service && curl -fsS --max-time 3 "http://127.0.0.1:${APP_PORT}/health" >/dev/null; then
-            echo "Same source is running and healthy; skipping restart to preserve multiplayer rooms."
-            exit 0
-          fi
-          # Work sessions can refine BFF physics directly on the VPS. Never
-          # erase those edits on the next 10-minute source synchronization.
-          # The standalone dist/ bundle is generated by the build and is
-          # intentionally excluded from the untracked-source check.
-          worktree_changes="$(git status --porcelain=v1 --untracked-files=normal | awk 'substr($0, 4) !~ /^dist\// { print }')"
-          if [ -n "$worktree_changes" ]; then
-            echo "::error::Fuckball has uncommitted Work-session files; refusing git reset --hard and keeping current live physics intact."
-            echo "Dirty tracked/new source paths (generated dist/ excluded):"
-            git status --short --untracked-files=normal | awk 'substr($0, 4) !~ /^dist\// { print }'
-            echo "Commit or explicitly reconcile the VPS worktree before retrying deployment."
-            exit 1
-          fi
-          git reset --hard "$wanted_sha"
-          npm run build:solo
-          npm test
-          # Require the new natural-contact solver, explicit kicks and 0 ms visual default.
-          grep -q 'function collidePlayerBall(g,p,ball)' shared/physics.js
-          # The ball travels 1.2x its stored velocity: impulses must use world-speed units.
-          grep -Fq 'return collide(p,ball,g.rebound,1,BALL_SPEED_MULTIPLIER);' shared/physics.js
-          grep -Fq 'const rel=(b.vx*scaleB-a.vx*scaleA)*nx' shared/physics.js
-          grep -Fq 'const relative=(ball.vx*BALL_SPEED_MULTIPLIER-p.vx)*nx' shared/physics.js
-          grep -Fq 'ball.vx+=nx*impulse*invB/BALL_SPEED_MULTIPLIER;' shared/physics.js
-          grep -Fq 'if(dx===0&&dy===0)return;' shared/physics.js
-          grep -q "p.lastKick='full';" shared/physics.js
-          grep -q 'const chaserId=humanPossession' shared/bot.js
-          # Require the post-merge contact-timing fixes, not just the older baseline.
-          grep -Fq 'const remaining=BALL_SPEED_MULTIPLIER*(1-t)' shared/physics.js
-          grep -Fq 'const enteringReach=contact>reach&&closing>0&&nextContact<=reach' shared/bot.js
-          grep -Fq 'const WALL_REBOUND_AT_DEFAULT=DEFAULT_REBOUND;' shared/physics.js
-          grep -q 'const wallRebound=g=>' shared/physics.js
-          grep -q 'const cautious=frames>2' shared/prediction.js
-          # Physics/input fixes: reject stale images that fake movement between snapshots.
-          grep -Fq 'inputX:p.input?.x??0,inputY:p.input?.y??0' shared/physics.js
-          grep -Fq 'else P.setInput(next,{x:p.inputX??0,y:p.inputY??0,kick:false});' shared/prediction.js
-          grep -Fq 'function flushInput(force=false)' public/index.html
-          grep -Fq "const {advanceFixed}=require('./shared/prediction');" server.js
-          grep -Fq 'const frame=advanceFixed(physicsAccumulator,now-lastPhysicsTime' server.js
-          grep -q 'const passOptions=' shared/bot.js
-          grep -q 'collidePlayerBall(g,p,ball);' shared/physics.js
-          # Fail closed unless this validated contact/modes release is complete.
-          grep -Fq 'const wallRebound=g=>g.rebound;' shared/physics.js
-          grep -q 'BALL_SPEED_MULTIPLIER=1.2' shared/physics.js
-          grep -q 'function reconcileVisual' shared/prediction.js
-          grep -q 'id="soloTeams"' public/index.html
-          # New game UX and bot must ship together with the original stadium.
-          grep -Fq 'Original BFF · 41% wall bounce' public/index.html
-          grep -q 'let extrapMs=0,renderScale=1;' public/index.html
-          grep -q 'id="optionsScreen"' public/index.html
-          grep -q 'id="chatDock"' public/index.html
-          grep -q 'function cameraTransform(state,dt)' public/index.html
-          grep -q 'function reply(message,g,bot)' shared/bot.js
-          node --check server.js
-          node_binary="$(command -v node)"
-          run_user="$(id -un)"
-          run_group="$(id -gn)"
-          printf '[Unit]\nDescription=Fuckball multiplayer football game\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=%s\nGroup=%s\nWorkingDirectory=/opt/fuckball\nEnvironment=NODE_ENV=production\nEnvironment=PORT=%s\nExecStart=%s /opt/fuckball/server.js\nRestart=always\nRestartSec=3\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\n\n[Install]\nWantedBy=multi-user.target\n' "$run_user" "$run_group" "$APP_PORT" "$node_binary" | sudo tee /etc/systemd/system/fuckball.service >/dev/null
-          sudo systemctl daemon-reload
-          sudo systemctl enable fuckball.service
-          sudo systemctl restart fuckball.service
-          for attempt in $(seq 1 30); do
-            if curl -fsS --max-time 3 "http://127.0.0.1:${APP_PORT}/health"; then
-              echo " Health check passed"
-              break
-            fi
-            if [ "$attempt" -eq 30 ]; then
-              sudo journalctl -u fuckball.service --no-pager -n 70
-              exit 1
-            fi
-            sleep 2
-          done
-          # Verify the newly deployed UI is served to browsers, not only a healthy process.
-          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/" -o /tmp/fuckball-deployed.html
-          grep -q 'id="fullscreenBtn"' /tmp/fuckball-deployed.html
-          grep -q 'id="renderQuality"' /tmp/fuckball-deployed.html
-          grep -q 'id="roomSidebar"' /tmp/fuckball-deployed.html
-          grep -q 'id="optionsScreen"' /tmp/fuckball-deployed.html
-          grep -q 'id="chatDock"' /tmp/fuckball-deployed.html
-          grep -q 'id="soloTeams"' /tmp/fuckball-deployed.html
-          grep -Fq 'Original BFF · 41% wall bounce' /tmp/fuckball-deployed.html
-          grep -q 'let extrapMs=0,renderScale=1;' /tmp/fuckball-deployed.html
-          grep -q "pulseball.extrapolation.v3" /tmp/fuckball-deployed.html
-          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/bot.js" -o /tmp/fuckball-bot-deployed.js
-          grep -q 'function reply(message,g,bot)' /tmp/fuckball-bot-deployed.js
-          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/physics.js" -o /tmp/fuckball-physics-deployed.js
-          grep -Fq 'const wallRebound=g=>g.rebound;' /tmp/fuckball-physics-deployed.js
-          grep -q 'BALL_SPEED_MULTIPLIER=1.2' /tmp/fuckball-physics-deployed.js
-          grep -Fq 'return collide(p,ball,g.rebound,1,BALL_SPEED_MULTIPLIER);' /tmp/fuckball-physics-deployed.js
-          grep -Fq 'const rel=(b.vx*scaleB-a.vx*scaleA)*nx' /tmp/fuckball-physics-deployed.js
-          grep -Fq 'if(dx===0&&dy===0)return;' /tmp/fuckball-physics-deployed.js
-          grep -Fq 'const WALL_REBOUND_AT_DEFAULT=DEFAULT_REBOUND;' /tmp/fuckball-physics-deployed.js
-          curl -fsS --max-time 8 "http://127.0.0.1:${APP_PORT}/shared/prediction.js" -o /tmp/fuckball-prediction-deployed.js
-          grep -q 'const cautious=frames>2' /tmp/fuckball-prediction-deployed.js
-          grep -Fq 'else P.setInput(next,{x:p.inputX??0,y:p.inputY??0,kick:false});' /tmp/fuckball-prediction-deployed.js
-          grep -Fq 'inputX:p.input?.x??0,inputY:p.input?.y??0' /tmp/fuckball-physics-deployed.js
-          grep -Fq 'function flushInput(force=false)' /tmp/fuckball-deployed.html
-          echo "Fullscreen/high-refresh 4v4 and responsive 60 Hz multiplayer verified on VPS"
-          if command -v ufw >/dev/null 2>&1; then
-            sudo ufw allow "${APP_PORT}/tcp" comment "Fuckball multiplayer" || true
-          fi
-          public_ip="$(curl -fsS --max-time 8 https://api.ipify.org || true)"
-          echo "Public IPv4: ${public_ip:-unknown}"
-          echo "Local health: http://127.0.0.1:${APP_PORT}/health"
-          if [ -n "$public_ip" ]; then
-            echo "Candidate public URL: http://${public_ip}:${APP_PORT}/"
-            echo "## Fuckball" >> "$GITHUB_STEP_SUMMARY"
-            echo "Deployed commit: \`$wanted_sha\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "Candidate game URL: http://${public_ip}:${APP_PORT}/" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          sudo systemctl is-active --quiet fuckball.service
-          sudo systemctl status fuckball.service --no-pager | head -16
+          TARGET_SHA: ${{ needs.verify-source.outputs.sha }}
+          RELEASE_RUN: ${{ github.run_id }}
+          RELEASE_ATTEMPT: ${{ github.run_attempt }}
+        run: bash scripts/deploy-fuckball-native.sh
