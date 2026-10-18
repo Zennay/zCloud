@@ -16,3 +16,9 @@ Admission scans at most four ordered 240-row queue pages (960 queued rows in tot
 The existing authorized `GET /api/portfolio-queue` now also exposes `delivery_policy` with queued QA-only held count, a bounded count and up to eight P0-first advisory product candidate IDs, explicitly flagged `not_claimed_or_authorized=true` and `admission_scope_lease_and_capacity_not_verified=true`. This is read-only, additive and does not modify the existing queue `items`, lease, route authorization or allocation response contracts.
 
 Unparseable, duplicate-key, non-object or overlong workstream metadata now fails closed for **new** admissions, preventing an ambiguous serialized `qa-only` classification from being silently converted to product work. Existing active claims and historical queue records are never rewritten.
+
+## Browser composer recovery operator evidence (zSentinel #698)
+
+The same read-only worker-progress API now admits exactly three additional browser event **kinds** (`send-blocked`, `composer-restored`, `conversation-reset-requested`) and a **fixed allowlist** of composer-recovery reason codes. Raw browser-supplied `reason`, `error`, conversation text, tokens and URLs are never returned by this projection. Old SQLite installations without a `reason` column continue to be read through `NULL AS reason`, without schema writes or migrations.
+
+The Activity UI in [#1550](https://github.com/Zennay/zCloud/pull/1550) renders an operator instruction only for these exact allowlisted codes; the actual v2 one-shot composer repair is a separate source feature [#1552](https://github.com/Zennay/zCloud/pull/1552). None of the three sources proves a new active owner, production deployment or that generation resumed. All require protected-main review and serialized release before they work together.
