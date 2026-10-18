@@ -41,6 +41,8 @@ def safe_receipt(raw: bytes) -> dict:
         raise ValueError("invalid_collections")
     if len(payload["coverage"]) > 8 or len(payload["events"]) > 200:
         raise ValueError("oversized_collections")
+    if not isinstance(payload.get("previous_snapshot_compared"), bool):
+        raise ValueError("previous_snapshot_flag_invalid")
     return payload
 
 
@@ -97,6 +99,15 @@ def digest(payload: dict) -> str:
             expected_prefix = "github:" + repo + ":" + kind + ":"
             if not event_id.startswith(expected_prefix):
                 raise ValueError("cross_repository_event")
+            current_seen = event.get("first_observed_at")
+            if not isinstance(current_seen, str) or len(current_seen) > 40:
+                raise ValueError("first_seen_invalid")
+            if event.get("new_since_previous") not in (None, True, False):
+                raise ValueError("new_since_previous_invalid")
+            if payload["previous_snapshot_compared"] and not isinstance(event.get("new_since_previous"), bool):
+                raise ValueError("new_since_previous_missing")
+            if not payload["previous_snapshot_compared"] and event.get("new_since_previous") is not None:
+                raise ValueError("unexpected_previous_comparison")
             if kind in {"pr_created", "pr_updated", "pr_merged"}:
                 target = event.get("reported_target")
                 if target is not None and (not isinstance(target, str) or
@@ -133,12 +144,16 @@ def digest(payload: dict) -> str:
         ci_success = sum(e["kind"] == "ci_run" and e.get("conclusion") == "success"
                          for e in validated)
         main_commits = sum(e["kind"] == "main_commit" for e in validated)
+        first_seen_in_view = sum(e.get("new_since_previous") is True for e in validated)
         lines.append("Observed event counts (bounded window, may be truncated): "
                      + str(created) + " PR-created; " + str(merged)
                      + " PR-merged-to-some-base (of which " +
                      str(merged_to_main_reported) + " reported target=main); " + str(ci_success)
                      + " workflow-success; " + str(main_commits)
                      + " canonical-main commits. **None proves a main deployment.**")
+        if payload["previous_snapshot_compared"]:
+            lines.append(str(first_seen_in_view) +
+                         " events absent from previous bounded snapshot (not proof of new GitHub work).")
         for event in validated[:10]:
             kind = event["kind"]
             if kind == "ci_run":
