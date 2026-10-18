@@ -313,6 +313,34 @@ def _lease_payload(row) -> dict | None:
     return item
 
 
+def _valid_resource_owner(owner_id: object) -> bool:
+    """Do not truncate lease identities: lookup, renewal and release must agree."""
+    if (not isinstance(owner_id, str) or not 1 <= len(owner_id) <= 200
+            or not owner_id.strip() or "\x00" in owner_id):
+        return False
+    try:
+        owner_id.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _resource_metadata_json(metadata: dict | None) -> str | None:
+    """Serialize a complete JSON object or deny admission before SQLite writes."""
+    if metadata is not None and not isinstance(metadata, dict):
+        return None
+    try:
+        encoded = json.dumps(
+            {} if metadata is None else metadata,
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
+        if len(encoded.encode("utf-8")) > 4000:
+            return None
+    except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError):
+        return None
+    return encoded
+
+
 def _cleanup_expired(connection: sqlite3.Connection, now_value: str | None = None) -> None:
     connection.execute("DELETE FROM resource_leases WHERE lease_until<=?", (now_value or _now(),))
 
@@ -325,6 +353,11 @@ def acquire_resource(
     lease_seconds: int = 1800,
     metadata: dict | None = None,
 ) -> dict:
+    if not _valid_resource_owner(owner_id):
+        return {"acquired": False, "reason": "invalid_owner_id", "project_id": project_id}
+    metadata_json = _resource_metadata_json(metadata)
+    if metadata_json is None:
+        return {"acquired": False, "reason": "invalid_resource_metadata", "project_id": project_id}
     contracts = load_contracts()
     contract = project_contract(project_id, contracts)
     compute = dict(contract.get("compute") or {})
@@ -347,7 +380,7 @@ def acquire_resource(
             "UPDATE resource_leases SET lease_until=?,metadata_json=? WHERE project_id=? AND owner_id=?",
             (
                 until,
-                json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:4000],
+                metadata_json,
                 project_id,
                 owner_id,
             ),
@@ -356,6 +389,8 @@ def acquire_resource(
             "SELECT * FROM resource_leases WHERE project_id=? AND owner_id=?",
             (project_id, owner_id),
         ).fetchone()
+        if row is None:
+            raise RuntimeError("resource_lease_renewal_missing")
         return {"acquired": True, "renewed": True, "lease": _lease_payload(row)}
     used = int(
         connection.execute(
@@ -386,24 +421,28 @@ def acquire_resource(
         ) VALUES(?,?,?,?,?,?,?,?,?)""",
         (
             project_id,
-            str(owner_id)[:200],
+            owner_id,
             pool_name,
             str(compute.get("class") or "unknown"),
             float(compute.get("cpu_soft_cores") or 0),
             int(compute.get("memory_soft_mb") or 0),
             ts,
             until,
-            json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"))[:4000],
+            metadata_json,
         ),
     )
     row = connection.execute(
         "SELECT * FROM resource_leases WHERE project_id=? AND owner_id=?",
         (project_id, owner_id),
     ).fetchone()
+    if row is None:
+        raise RuntimeError("resource_lease_insert_missing")
     return {"acquired": True, "renewed": False, "lease": _lease_payload(row)}
 
 
 def release_resource(connection: sqlite3.Connection, project_id: str, owner_id: str) -> dict:
+    if not _valid_resource_owner(owner_id):
+        return {"released": False, "reason": "invalid_owner_id"}
     cursor = connection.execute(
         "DELETE FROM resource_leases WHERE project_id=? AND owner_id=?",
         (project_id, owner_id),
