@@ -2,11 +2,7 @@
 name: zCloud self-hosted queue watchdog
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
-  workflow_run:
-    workflows: ["zCloud regression smoke"]
-    types: [completed]
+  # Disabled 5-minute polling while the dedicated runner is offline.
   push:
     branches: [main]
     paths:
@@ -36,7 +32,9 @@ jobs:
           github.event.workflow_run.head_sha == github.sha
         )
       )
-    runs-on: ubuntu-latest
+    # No GitHub-hosted compute: observe can run only on the dedicated VPS runner.
+    # This watchdog cannot bootstrap a stopped listener; recovery is owner-controlled.
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     concurrency:
       group: zcloud-self-hosted-queue-watchdog-observe
@@ -129,7 +127,9 @@ jobs:
 
   recover:
     needs: observe
-    if: needs.observe.outputs.recover == 'true'
+    # Explicitly disable legacy unattended service restart / queue cancellation.
+    # Restore only through the owner-controlled, memory/lease-gated procedure.
+    if: ${{ false }}
     runs-on: self-hosted
     timeout-minutes: 5
     concurrency:
