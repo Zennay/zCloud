@@ -226,7 +226,7 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                         continue
                     referenced = set(
                         int(m.group(1)) for m in re.finditer(
-                            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\\b", body
+                            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", body
                         )
                     )
                     for issue_num in referenced:
