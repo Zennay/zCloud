@@ -229,6 +229,12 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                             r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", body
                         )
                     )
+                    closing_references = {
+                        int(m.group(1)) for m in re.finditer(
+                            r"(?i)\\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\\s+#([1-9][0-9]{0,7})\\b",
+                            body
+                        )
+                    }
                     for issue_num in referenced:
                         record = records.get(repo + "#" + str(issue_num))
                         if record is not None and len(record["related_open_prs"]) < 3:
@@ -236,7 +242,8 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                                 "number": number,
                                 "draft": pr.get("draft") is True,
                                 "url": "https://github.com/" + repo + "/pull/" + str(number),
-                                "relationship": "text_reference_only",
+                                "relationship": ("closing_keyword_only" if issue_num in closing_references
+                                                 else "text_reference_only"),
                                 "active_claim": "not_verified",
                             })
                 pr_coverage = "bounded_truncated" if len(open_prs) == 8 else "bounded_window"
@@ -326,10 +333,13 @@ def html_view(data):
                 refs = []
                 for candidate in candidates:
                     ref = escape(candidate["url"], quote=True)
-                    label = ("Draft PR #" if candidate["draft"] else "Open PR #") + str(candidate["number"])
+                    relationship = ("mentions" if candidate["relationship"] == "text_reference_only"
+                                    else "closing keyword")
+                    label = (("Draft PR #" if candidate["draft"] else "Open PR #") +
+                             str(candidate["number"]) + " · " + relationship)
                     refs.append("<a href='" + ref + "' target='_blank' rel='noopener noreferrer'>" +
                                 escape(label) + "</a>")
-                lines.append("<div class='muted'><small>Possible PR references (not an active owner claim): " +
+                lines.append("<div class='muted'><small>Open PR text references (not verified fixes or owners): " +
                              " · ".join(refs) + "</small></div>")
         sections.append("<section><h2>" + escape(priority_name) + " · " + str(len(rows))
                         + " sampled issues</h2>" +
