@@ -68,6 +68,40 @@ def service_state() -> str:
     return "unavailable"
 
 
+def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Human-readable, non-authorizing recovery ordering; never executes the actions."""
+    codes = {entry["code"] for entry in findings}
+    recommendations: list[dict[str, str]] = []
+
+    def recommend(code: str, owner: str, why: str, action: str) -> None:
+        recommendations.append({
+            "code": code, "owner": owner, "reason": why, "next_action": action,
+            "changes_host": "no", "authorization_required": "yes",
+        })
+
+    if codes & {"LOW_DISK", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE"}:
+        recommend("CAPACITY_FIRST", "VPS resource owner",
+                  "Insufficient resource headroom can cause repeat OOM crashes or incomplete releases.",
+                  "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
+    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE"}:
+        recommend("RUNNER_OWNER", "zCloud Actions runner owner (#1326)",
+                  "The dedicated listener/registered runner may be unavailable independently of other project runners.",
+                  "Inspect the dedicated service and assigned jobs with the authorized runner owner. Restore only under the existing idle and account-identity gates; independently confirm a job was assigned.")
+    if codes & {"TRACKED_CHANGES", "UNTRACKED_FILES", "NOT_MAIN", "CHECKOUT_STATUS_UNAVAILABLE"}:
+        recommend("WORKTREE_RECONCILE", "zCloud production checkout owner",
+                  "Uncommitted work and untracked owner files must not be replaced by a deployment or pull.",
+                  "Identify current active edits and ownership; reconcile via the existing serialized release process. Never reset, clean or force-pull this checkout.")
+    if codes & {"MAIN_SHA_MISMATCH", "REMOTE_MAIN_UNBOUND", "CHECKOUT_UNAVAILABLE"}:
+        recommend("SOURCE_PROVENANCE", "zCloud release owner",
+                  "Exact remote-main provenance has not been established for this host.",
+                  "Obtain a fresh independent protected-main SHA and compare. Require existing exact-head CI, review and release admission before deployment.")
+    if not recommendations:
+        recommend("EXTERNAL_RELEASE_GATES", "zCloud release owner",
+                  "A local read-only preflight cannot authorize a production release.",
+                  "Verify GitHub branch protection, exact-head CI, independent review, serialized writer lock, runner assignment and live acceptance separately.")
+    return recommendations
+
+
 def measure(root: Path, expected_main_sha: str | None = None) -> dict:
     findings: list[dict[str, str]] = []
     def mark(code: str, severity: str, detail: str) -> None:
@@ -75,7 +109,7 @@ def measure(root: Path, expected_main_sha: str | None = None) -> dict:
 
     git_rc, branch = command("git", "rev-parse", "--abbrev-ref", "HEAD", cwd=root)
     sha_rc, sha = command("git", "rev-parse", "HEAD", cwd=root)
-    if git_rc or sha_rc or len(sha) != 40:
+    if git_rc or sha_rc or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
         mark("CHECKOUT_UNAVAILABLE", "block", "Cannot establish local Git checkout identity.")
         branch, sha = "unknown", None
     if expected_main_sha is None:
@@ -132,6 +166,7 @@ def measure(root: Path, expected_main_sha: str | None = None) -> dict:
         mark("DISK_UNOBSERVABLE", "warn", "Cannot read filesystem space.")
 
     blocked = any(f["severity"] == "block" for f in findings)
+    recovery = actionable_recovery(findings)
     return {
         "schema": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
         "mode": "read_only", "release_authorized": False,
@@ -142,6 +177,7 @@ def measure(root: Path, expected_main_sha: str | None = None) -> dict:
         "resources": {"available_ram_pct": available_pct, "swap_used_pct": swap_pct,
                       "disk_free_pct": disk_free_pct},
         "findings": findings,
+        "recovery_priorities": recovery,
         "next_step": "Obtain existing owner/release approval; never use this report as deploy authorization.",
     }
 
@@ -166,6 +202,9 @@ def main() -> int:
         print(f"Runner: {r['unit_state']}; dedicated listener PIDs: {r['listener_pids']}")
         for f in report["findings"]:
             print(f"[{f['severity'].upper()}] {f['code']}: {f['detail']}")
+        print("Owner-gated recovery priorities:")
+        for index, item in enumerate(report["recovery_priorities"], 1):
+            print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
         print(report["next_step"])
     return 2 if report["result"] == "blocked" else (1 if report["result"] == "partial" else 0)
 
