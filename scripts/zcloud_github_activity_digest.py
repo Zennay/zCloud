@@ -111,7 +111,7 @@ def digest(payload: dict) -> str:
             if kind in {"pr_created", "pr_updated", "pr_merged"}:
                 target = event.get("reported_target")
                 if target is not None and (not isinstance(target, str) or
-                                           not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", target)):
+                                           (len(target) > 180 or not re.fullmatch(r"[A-Za-z0-9_./-]+", target) or target.startswith("/") or target.endswith("/") or "//" in target or ".." in target)):
                     raise ValueError("invalid_reported_target")
                 main_report = event.get("reported_main_merge")
                 if not isinstance(main_report, bool) or main_report != (
