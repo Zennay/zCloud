@@ -28,6 +28,15 @@ grep -Fxq 'ProtectSystem=strict' "$unit" || die "Refusing to weaken filesystem s
 get_health() {
   curl --fail --silent --show-error --max-time 4 "http://127.0.0.1:$port/health"
 }
+# Quick Match users may be queued on WebSocket without owning a room.
+# Verify no connected sockets, not only /health.rooms, before any restart.
+no_connected_players() {
+  command -v ss >/dev/null || die "Cannot prove zero connected clients without ss"
+  local count
+  count="$(ss -Htan state established "( sport = :$port )" | wc -l | tr -d '[:space:]')"
+  [[ "$count" =~ ^[0-9]+$ ]] || die "Invalid active client count"
+  [[ "$count" == 0 ]] || die "$count connected clients on native game port; refusing to interrupt players or queues"
+}
 live_health="$(get_health)" || die "Current native service health endpoint unavailable"
 read_rooms() {
   printf '%s' "$1" | node -e "let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const h=JSON.parse(s);if(h.ok!==true||h.engine!=='node-haxball-2.3.1'||!Number.isSafeInteger(h.rooms)||h.rooms<0)process.exit(2);process.stdout.write(String(h.rooms))})"
@@ -42,6 +51,7 @@ if [[ "$live_sha" == "$TARGET_SHA" ]]; then
   exit 0
 fi
 [[ "$live_rooms" == 0 ]] || die "$live_rooms live rooms active; refusing to interrupt players"
+no_connected_players
 
 remote_sha="$(git ls-remote https://github.com/Zennay/fuckball.git refs/heads/main | awk '{print $1}')"
 [[ "$remote_sha" == "$TARGET_SHA" ]] || die "Main advanced after CI authorisation; re-dispatch with new exact SHA"
@@ -74,6 +84,7 @@ systemd-analyze verify "$work/fuckball.service" || die "Native service unit inva
 before="$(get_health)" || die "Service health changed during preparation"
 [[ "$(read_rooms "$before")" == 0 ]] || die "A live room started while staging; refusing to interrupt"
 [[ "$(read_release "$before")" == "$live_sha" ]] || die "Service release changed during staging; refusing concurrent deploy"
+no_connected_players
 
 switched=0
 rollback() {
