@@ -812,7 +812,7 @@ function productIssueInboxPanel(){
     (IMPORTED_ISSUE_SHOW_ALL||item.priority==='P0'||item.priority==='P1'));
   const hiddenLowerPriority=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)
     &&item.priority!=='P0'&&item.priority!=='P1').length;
-  const coverageText=(snapshot?.coverage||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)
+  const coverageText=(snapshot?.coverage||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter))
     .map(item=>item.project+' · '+item.status+' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
   const html=rows.slice(0,50).map(item=>'<div class="service-row"><div><strong>'+esc(item.priority)+
     ' · '+esc(item.project)+'</strong> <a target="_blank" rel="noopener noreferrer" href="'+esc(item.url)+'">'+
