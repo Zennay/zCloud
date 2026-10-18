@@ -24,6 +24,12 @@ Manual readings for up to **eight** canonical projects coexist in the browser ta
 
 A missing source, a known partial window, an older observation, a linked draft or green CI always remains unverified. Source observations never authorize taking over a claimed lane or bypassing CI, review, release, human or zSSH capability gates.
 
+### Export a privacy-minimized handoff
+
+After manually reading relevant sources, choose **Export handoff .md** in the zSentinel board. This creates a local UTF-8 Markdown file with up to 60 high-priority GitHub issue references, up to three existing PR references per issue, at most 30 bounded public GitHub observations, and a high-level product queue summary. The export **does not include** queue item IDs, human claim IDs, event/prompt text, tokens, credentials, cookies or raw API payloads. All source timestamps and the evidence-only status are included.
+
+The export action is local to the browser and requires a deliberate click; it never uploads, opens a new worker, contacts GitHub, or modifies runtime state. It is suitable as a *handoff note*, not an authority receipt. The next worker must still read current Notion ownership, exact PR checks and release gates before editing or merging.
+
 ## Older local history
 
 Choose **Read history** to request the first 40 items from `GET /api/activity-page`. Use **Load older** to follow the source-provided per-project keyset cursor; the list is capped at 400 distinct events in the browser. Switching Activity's project filter begins a separate scoped history. Results are not silently loaded, written to storage, or used to dispatch work.
