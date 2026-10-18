@@ -30,6 +30,12 @@ After manually reading relevant sources, choose **Export handoff .md** in the zS
 
 The export action is local to the browser and requires a deliberate click; it never uploads, opens a new worker, contacts GitHub, or modifies runtime state. It is suitable as a *handoff note*, not an authority receipt. The next worker must still read current Notion ownership, exact PR checks and release gates before editing or merging.
 
+## Product queue: QA-only versus needs-owner-review
+
+The admission read-model differentiates **QA-only queued work held from fresh claims** from **malformed/ambiguous product work requiring an owner to correct the original queue entry**. In Activity, **Read admission** shows separate global counters. The **Product delivery board** puts bounded review-needed project/priority/reason entries above provisional product candidates. These rows are not automatically unlocked, claimed, dropped or classified as a completed fix.
+
+The locally downloaded handoff contains no raw queue identifiers for these rows; it includes only their project, priority, constant reason (`invalid_metadata`, `invalid_title`, `oversized_criteria`) and total count. A real owner must correct source queue metadata through the existing authenticated control-plane path, after independent claim/lease/source review. This UI cannot grant itself permission to perform that correction. QA-only work remains excluded from *new* admission under the 17 October policy.
+
 ## Older local history
 
 Choose **Read history** to request the first 40 items from `GET /api/activity-page`. Use **Load older** to follow the source-provided per-project keyset cursor; the list is capped at 400 distinct events in the browser. Switching Activity's project filter begins a separate scoped history. Results are not silently loaded, written to storage, or used to dispatch work.
