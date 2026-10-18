@@ -44,3 +44,14 @@ The original owner source at `fix/control-plane-lane-rejection-fallback-20261009
 2. When more than one task in a lane was already `claimed`, `running` or `verifying`, only the first was entered into `occupied_scopes`. The read-model now reserves **all** active items' declared write scopes before admitting any other lane. One active item remains the display representative, but hidden active writers cannot be silently ignored.
 
 These are precisely scoped source integrations on the new runtime branch, not edits to the original owner branch and not a modification of an active queue/claim. The older experimental strict-scope/metadata parser, stale source tests and unrelated lane work were **not** copied. The source cannot be pronounced live until protected-main review, mandatory exact-head CI and serialized release have completed.
+
+## Separate QA-only admission from malformed product work
+
+An operator-read `delivery_policy` report previously lumped *all* rejected queued candidates into `queued_qa_only_held`. That misrepresented a genuinely important P0/P1 product task with invalid metadata, missing/oversized title, or oversized criteria as an intentional QA-only skip, making the actual actionable blocker invisible.
+
+The product admission predicate **is unchanged**. Instead, `held_queue_review_reason()` classifies non-admitted, eligible queued entries for the read model only:
+
+- `qa_only`: actually falls into the existing QA-only classification, so it remains in `queued_qa_only_held`.
+- `invalid_metadata`, `invalid_title`, or `oversized_criteria`: counted in a distinct `queued_requires_owner_review`, with up to eight bounded `review_items` identifying project, priority and constant reason. The row is **not claimed, assigned or auto-repaired**.
+
+The operator UI in PR #1550 now displays these separately; the exported Markdown handoff carries only project, priority, reason and aggregate count (not raw queue IDs). Existing claimed/running/verifying records, ACL, lease, scope, quota and mandatory CI/release gates remain intact. This is a source-visible product unblocking aid, not verified production queue remediation.
