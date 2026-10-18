@@ -688,7 +688,7 @@ function validateGitHubActivityReceipt(value){
        ||typeof row.repository!=='string'
        ||!/^Zennay\/[A-Za-z0-9_.-]{1,100}$/.test(row.repository))throw Error('Unexpected project or repository');
     sourceByProject.set(row.project,row.repository);
-    coverage.push({project:row.project,status:['partial_sources','partial_error','unavailable'].includes(row.status)?row.status:'unavailable'});
+    coverage.push({project:row.project,status:['partial_sources','partial_error','unavailable'].includes(row.status)?row.status:'unavailable',observedAt:value.observed_at});
   }
   const seen=new Set(),events=[];
   for(const entry of value.events){
@@ -801,7 +801,8 @@ async function refreshPublicGitHubEvidence(){
     // in-memory sample, not background synchronization or a durable event log.
     const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
     const githubCoverage=[...previousGitHub.coverage.filter(row=>row.project!==projectId),
-      {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable'}].slice(-8);
+      {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable',
+        observedAt:new Date().toISOString()}].slice(-8);
     const coveredIds=new Set(githubCoverage.map(row=>row.project));
     const githubEvents=[...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
       ...events].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,200);
@@ -861,6 +862,7 @@ function validateProductIssueInbox(value){
   const coverage=[...value.coverage].map(item=>({
     project:item.project,
     status:['partial','degraded','unavailable'].includes(item.status)?item.status:'unavailable',
+    observedAt:value.observed_at,
     oldest:typeof item.oldest_window==='string'?item.oldest_window.slice(0,70):'unknown',
     recent:typeof item.recent_window==='string'?item.recent_window.slice(0,70):'unknown',
     prs:typeof item.open_pr_window==='string'?item.open_pr_window.slice(0,70):'unknown'
@@ -952,6 +954,7 @@ async function refreshPublicProductIssues(){
     // another project. A refreshed project replaces its own older observations.
     const previousIssues=IMPORTED_PRODUCT_ISSUES||{issues:[],coverage:[]};
     const currentCoverage={project:projectId,status:readable===3?'partial':readable?'degraded':'unavailable',
+      observedAt:new Date().toISOString(),
       oldest:outcomes[0].status==='fulfilled'?'bounded 30':'unavailable',
       recent:outcomes[1].status==='fulfilled'?'bounded 30':'unavailable',
       prs:outcomes[2].status==='fulfilled'?'bounded 12':'unavailable'};
@@ -1303,11 +1306,17 @@ function zSentinelDeliveryBoard(){
     '<div class="service-row"><div><strong>'+esc(item.priority)+' · '+
     esc(item.project_id)+'</strong><br><small>Queue '+esc(item.queue_id)+
     '</small></div><small>Candidate only · not claimed</small></div>').join('');
-  const issueTime=snapshot?.observedAt&&Number.isFinite(Date.parse(snapshot.observedAt))?
-    date(snapshot.observedAt,true):'Not observed';
+  const scopedTime=(rows,fallback)=>{
+    const observed=rows.map(item=>item.observedAt||fallback)
+      .filter(value=>value&&Number.isFinite(Date.parse(value)));
+    if(!observed.length)return 'Not observed';
+    const oldest=Math.min(...observed.map(value=>Date.parse(value)));
+    return date(new Date(oldest).toISOString(),true)+
+      (Date.now()-oldest>6*3600000?' · stale (>6h)':'');
+  };
+  const issueTime=scopedTime(coveredIssues,snapshot?.observedAt);
   const queueTime=admitted?(DELIVERY_QUEUE_OBSERVED||'Unknown time'):'Not observed';
-  const gitTime=github?.observedAt&&Number.isFinite(Date.parse(github.observedAt))?
-    date(github.observedAt,true):'Not observed';
+  const gitTime=scopedTime(coveredGitHub,github?.observedAt);
   const active=ZSENTINEL_SOURCES_BUSY||PUBLIC_ISSUES_BUSY||PUBLIC_GITHUB_BUSY||DELIVERY_QUEUE_BUSY;
   return '<section class="panel" id="zSentinelDeliveryBoard"><div class="panel-header">'+
     '<div><h2>zSentinel · product delivery board</h2>'+
