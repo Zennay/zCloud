@@ -38,6 +38,12 @@ The API reads canonical SQLite-local event identifiers/timestamps/kinds through 
 
 **Coverage is partial by design.** The local feed does not synchronize GitHub PR, branch, merge or CI activity. The separate public GitHub button is an independent manual source. Never equate a branch update or an open PR with merged production delivery.
 
+## Composer failure: actionable worker progress
+
+When the separate actual v2 browser worker [PR #1552](https://github.com/Zennay/zCloud/pull/1552) reports a persistent missing composer, the backend read-only projection [PR #1549](https://github.com/Zennay/zCloud/pull/1549) retains only fixed, privacy-safe literal reason codes. Open Activity, select the affected project and worker slot, then choose **Read progress**. The panel shows the latest bounded browser-observed composer problem or restoration and explicitly says when **manual intervention in the existing assigned tab** is required. No underlying URL, free-form reason, prompt or token is exposed. A prior `composer-restored` observation is not proof the worker has an active queue claim or is generating.
+
+There is **no reset button** here: only the owned v2 tab itself may request the pre-first-send, blank-chat, one-shot SPA repair. Do not use this UI to force navigation, dismiss a current reply or steal an existing assignment. The three PRs (#1549, #1550 and #1552) remain separate review/release dependencies.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
