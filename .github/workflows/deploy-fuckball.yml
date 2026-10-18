@@ -40,8 +40,9 @@ jobs:
             if (!pr) throw Error('The exact main commit does not originate from a merged first-party PR.');
             const {data: runs} = await github.rest.checks.listForRef({owner,repo,ref:pr.head.sha,per_page:100});
             if (runs.total_count>100) throw Error('Cannot exhaustively verify the PR head checks.');
+            const {data: prDetails} = await github.rest.pulls.get({owner,repo,pull_number:pr.number});
+            if(prDetails.changed_files>100) throw Error('Cannot exhaustively determine affected CI lanes.');
             const {data: files} = await github.rest.pulls.listFiles({owner,repo,pull_number:pr.number,per_page:100});
-            if(pr.changed_files>100) throw Error('Cannot exhaustively determine affected CI lanes.');
             const serverChange=files.some(f=>/^(headless\/|dist\/(room-core|netcode|peer-net|server-client)\.js$|server\.js$)/.test(f.filename));
             // The existing Fuckball workflows scope server-only safety lanes
             // to relevant source changes. Never invent checks for UI-only PRs.
