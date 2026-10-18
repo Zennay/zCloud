@@ -193,24 +193,36 @@ def compare_snapshot(path: Path, current: dict) -> dict:
                 or prior.get("mode") != "read_only"
                 or prior.get("release_authorized") is not False):
             raise ValueError("invalid snapshot")
+        observed_at = prior.get("observed_at")
+        if not isinstance(observed_at, str) or len(observed_at) > 64:
+            raise ValueError("invalid snapshot")
+        previous_time = datetime.fromisoformat(observed_at)
+        current_time = datetime.fromisoformat(current["observed_at"])
+        if previous_time.tzinfo is None or previous_time.utcoffset() is None or previous_time > current_time:
+            raise ValueError("invalid snapshot")
         rows = prior.get("findings")
         if not isinstance(rows, list) or len(rows) > 100:
             raise ValueError("invalid snapshot")
-        old = set()
+        old: dict[str, str] = {}
         for row in rows:
             if (not isinstance(row, dict) or not isinstance(row.get("code"), str)
                     or not re.fullmatch(r"[A-Z0-9_]{3,64}", row["code"])
                     or row["code"] in old
                     or row.get("severity") not in {"block", "warn"}):
                 raise ValueError("invalid snapshot")
-            old.add(row["code"])
+            old[row["code"]] = row["severity"]
     except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         raise ValueError("Previous report is not a supported bounded zCloud read-only snapshot.") from None
-    new = {item["code"] for item in current["findings"]}
+    new = {item["code"]: item["severity"] for item in current["findings"]}
+    changed = sorted(set(old) & set(new))
     return {
-        "new_findings": sorted(new - old),
-        "resolved_findings": sorted(old - new),
-        "still_present": sorted(new & old),
+        "new_findings": sorted(set(new) - set(old)),
+        "resolved_findings": sorted(set(old) - set(new)),
+        "still_present": changed,
+        "severity_changes": [
+            {"code": code, "previous": old[code], "current": new[code]}
+            for code in changed if old[code] != new[code]
+        ],
         "unchanged": old == new,
         "source": "local_operator_supplied_snapshot",
     }
@@ -251,7 +263,8 @@ def render_html(report: dict) -> str:
             '<section aria-labelledby="diff"><h2 id="diff">Changes since previous report</h2>'
             f'<dl>{item("New findings", shown(comparison["new_findings"]))}'
             f'{item("Resolved findings", shown(comparison["resolved_findings"]))}'
-            f'{item("Still present", shown(comparison["still_present"]))}</dl>'
+            f'{item("Still present", shown(comparison["still_present"]))}'
+            f'{item("Severity changed", shown([x["code"] + ": " + x["previous"] + " → " + x["current"] for x in comparison["severity_changes"]]))}</dl>'
             '<p class="muted">Previous report was locally supplied and not independent runtime attestation.</p></section>'
         )
     checkout = report["checkout"]
@@ -340,6 +353,8 @@ def main() -> int:
             print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
             print(f"Resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
             print(f"Still present: {', '.join(change['still_present']) or 'none'}")
+            for entry in change["severity_changes"]:
+                print(f"Severity changed: {entry['code']} {entry['previous']} -> {entry['current']}")
         print("Owner-gated recovery priorities:")
         for index, item in enumerate(report["recovery_priorities"], 1):
             print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
