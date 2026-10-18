@@ -24,6 +24,14 @@ python3 scripts/zcloud_worker_progress_history.py --db history.db --project clou
 
 The default format is compact JSON; optional `--format html` creates a standalone mobile-readable operator cockpit with separate event, prompt, progress and completion cards, timestamp validity and a bounded recent event table. All rendered dynamic values are HTML-escaped; it contains no external scripts, fonts or network requests. Exit status 3 means the database or source is unavailable.
 
+## Atomic queue allocations and swap-safe new worker admission (#588)
+
+The portfolio allocation read model previously assembled worker positions with one independent SQLite connection **per global slot**, followed by separate connections for persisted ordinal mappings and queued candidates. When a scheduler released a worker in slot 1 and claimed another in slot 2 between those reads, an operator could see both at once even though no committed SQLite state contained both assignments. The allocator now opens **one SQLite deferred read transaction** and collects all active worker slots, the persisted ai_global_slots map and queued candidate rows from one coherent database snapshot. It then preserves the existing latest-updated owner-per-slot semantics, project-local ordinal reservation and the same candidate ordering; no claim or SQLite state is mutated while rendering this read model.
+
+A second admission risk was observed on the connected host on 18 October: multiple Firefox content processes consumed >1 GiB each and the configured 4 GiB swap was almost full. The existing memory guard could still report positive new-worker capacity if MemAvailable later rose while that configured swap remained exhausted. It now sets new_worker_capacity=0 when **configured swap** of at least WORKER_SWAP_MIN_TOTAL_MB has less than WORKER_SWAP_MIN_FREE_MB free, and surfaces swap_exhausted=true in existing worker memory status payloads. Hosts that deliberately run without sufficient swap keep their existing extra 512 MiB RAM reserve and are not automatically prevented from admitting workers indefinitely. Already claimed/running/verifying jobs are **not cancelled**, and no service or browser process is killed; the existing critical-RAM, pinned-claim and recovery-hold policies remain authoritative.
+
+This resolves the **torn allocation read** aspect of [issue #588](https://github.com/Zennay/zCloud/issues/588), **not** its independently reported allocator-underfill/reconvergence hypothesis. That latter issue requires a separate release-owner investigation before declaring #588 complete. Current source commits are not proof of production effect: changes require the regular current-main CI, review and serialized release.
+
 ## No-write diagnostic endpoints (zCloud issue #1341)
 
 The same delivery branch repairs existing GET behavior that previously wrote state while an operator merely inspected the control plane:
