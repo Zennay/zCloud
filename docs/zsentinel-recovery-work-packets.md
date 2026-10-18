@@ -30,3 +30,25 @@ The output excludes untrusted titles, credentials and prompts, and always declar
 This CLI is not yet wired into live zCloud worker dispatch. The central control-plane owner must first review the integration against active queue leases, role prompts, repository ownership and existing protected server.py. The VPS checkout has uncommitted local edits: never overwrite it blindly. Exact-head CI and serialized release approval are separate requirements; source green does not mean the VPS runner or workers recovered.
 
 Track source fixed, CI passed, PR merged, deployed, runtime recovered, worker resumed, and external holds separately. See zSentinel PWQ-382 and zCloud issue #1326.
+
+## Product-only zSentinel packets (17 October 2026 user instruction)
+
+The otherwise backward-compatible item schema now accepts an **optional**
+`work_type` field with values `product`, `qa-only`, or `review-only`.
+A separately source-verified QA-only or review-only ticket is **not selected**
+as a new packet; `blocked.qa_or_review_only` explains the skip. Existing
+`owner`, `claim`, `lease_verified`, reviewer, main-SHA and CI gates remain
+unchanged, and the CLI still does not create a real queue claim.
+
+A missing `work_type` on older receipts is displayed as
+`legacy_unclassified`, not falsely inferred as verified product delivery.
+The source collector should populate `work_type=product` only when the
+underlying issue/PR is genuinely a material feature or bugfix. This module
+never guesses classification from an issue ID or title.
+
+Each selected packet's delivery list now requires real implementation,
+**brief build/existing CI inspection rather than writing or running new QA
+suites**, and exact-head authorized review before any integration. Existing
+mandatory GitHub CI, legal/security/FTMO permissions and release gates are
+never bypassed. This is a source-only CLI improvement; it is not connected
+to or permission for live worker dispatch.

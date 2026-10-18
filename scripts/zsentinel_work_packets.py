@@ -27,6 +27,8 @@ PRIORITIES = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 KINDS = {"pr", "issue"}
 CLAIMS = {"free", "active", "unknown"}
 HOLDS = {"none", "external", "release"}
+WORK_TYPES = {"product", "qa-only", "review-only"}
+OPTIONAL_DELIVERY = frozenset({"work_type"})
 REQUIRED_ITEM = frozenset({
     "project", "item_id", "kind", "priority", "impact", "effort",
     "owner", "claim", "hold", "source_allowed", "files",
@@ -71,8 +73,12 @@ def _file_scope(value):
 
 
 def _validate_item(item, projects):
-    if type(item) is not dict or not REQUIRED_ITEM <= item.keys() or item.keys() - (REQUIRED_ITEM | OPTIONAL_ITEM):
+    if type(item) is not dict or not REQUIRED_ITEM <= item.keys() or item.keys() - (REQUIRED_ITEM | OPTIONAL_ITEM | OPTIONAL_DELIVERY):
         raise ValueError("invalid item schema")
+    if "work_type" in item and (
+        type(item["work_type"]) is not str or item["work_type"] not in WORK_TYPES
+    ):
+        raise ValueError("invalid work type")
     project = item["project"]
     if type(project) is not str or project not in projects:
         raise ValueError("unknown project")
@@ -156,13 +162,20 @@ def select_packets(receipt, *, now=None, limit=MAX_PACKET):
     seen = set()
     candidates = []
     blocked = {"ownership_or_lease": 0, "release_or_external_gate": 0,
-               "unverified_pr": 0, "source_not_allowed": 0}
+               "unverified_pr": 0, "source_not_allowed": 0,
+               "qa_or_review_only": 0}
     for item in items:
         files = _validate_item(item, projects)
         key = (item["project"], item["item_id"])
         if key in seen:
             raise ValueError("duplicate candidate identity")
         seen.add(key)
+        # An explicit original-source QA/review classification is not eligible
+        # for a new zSentinel product packet. Legacy untyped evidence remains
+        # structurally readable, but must not be called QA-classified.
+        if item.get("work_type") in {"qa-only", "review-only"}:
+            blocked["qa_or_review_only"] += 1
+            continue
         if (not projects[item["project"]]["lease_verified"] or
                 item["owner"] != "free" or item["claim"] != "free"):
             blocked["ownership_or_lease"] += 1
@@ -190,8 +203,9 @@ def select_packets(receipt, *, now=None, limit=MAX_PACKET):
              -item["impact"], item["effort"], item["project"], item["item_id"]),
             {"project": item["project"], "item_id": item["item_id"],
              "priority": item["priority"], "action": action, "files": files,
-             "delivery": ["build_fix", "run_focused_and_required_tests",
+             "delivery": ["build_fix", "inspect_build_or_existing_required_CI",
                           "exact_head_review_and_integrate_if_authorized"],
+             "work_type": item.get("work_type") or "legacy_unclassified",
              "authorization_granted": False},
         ))
 
