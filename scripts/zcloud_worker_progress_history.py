@@ -69,7 +69,9 @@ def read_worker_progress(db_path: Path, project: str, slot: int,
         "worker_slot": slot, "available": False,
         "coverage": "unavailable", "latest_event": None,
         "latest_prompt": None, "latest_progress": None,
+        "latest_completion": None,
         "recent_events": [], "progress_since_latest_prompt": False,
+        "progress_after_last_completion": False,
         "claim_bound": False, "claim_epoch_verified": False,
         "browser_progress_is_independent_proof": False,
         "worker_resumed_verified": False, "deployment_verified": False,
@@ -96,6 +98,10 @@ def read_worker_progress(db_path: Path, project: str, slot: int,
                 "SELECT id,ts,event,assistant_chars FROM runner_events "
                 "WHERE project_id=? AND worker_slot=? AND event='prompt-sent' "
                 "ORDER BY id DESC LIMIT 1", (project, slot)).fetchone()
+            completion = connection.execute(
+                "SELECT id,ts,event,assistant_chars FROM runner_events "
+                "WHERE project_id=? AND worker_slot=? AND event='generation-finished' "
+                "ORDER BY id DESC LIMIT 1", (project, slot)).fetchone()
         finally:
             connection.close()
     except (sqlite3.Error, OSError, ValueError):
@@ -103,6 +109,7 @@ def read_worker_progress(db_path: Path, project: str, slot: int,
     latest = _item(recent[0], reference) if recent else None
     current_progress = _item(progress, reference)
     current_prompt = _item(prompt, reference)
+    current_completion = _item(completion, reference)
     after_prompt = bool(
         current_progress and current_prompt
         and current_progress["id"] > current_prompt["id"]
@@ -112,6 +119,11 @@ def read_worker_progress(db_path: Path, project: str, slot: int,
         "available": True, "coverage": "bounded_observation",
         "latest_event": latest, "latest_progress": current_progress,
         "latest_prompt": current_prompt,
+        "latest_completion": current_completion,
+        "progress_after_last_completion": bool(
+            after_prompt and (not current_completion or
+                              current_progress["id"] > current_completion["id"])
+        ),
         "recent_events": [_item(row, reference) for row in recent],
         "progress_since_latest_prompt": after_prompt,
         "truncated": len(recent) >= limit,
