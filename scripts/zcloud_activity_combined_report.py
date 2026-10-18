@@ -13,32 +13,22 @@ import os
 from pathlib import Path
 import stat
 import sys
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, ProxyHandler, build_opener
 
 from scripts.zcloud_activity_ledger import _read
 from scripts.zcloud_activity_operator_report import h, render_html, save_private
-from scripts.zcloud_github_activity import ActivitySourceError, strict_json
+from scripts.zcloud_github_activity import ActivitySourceError, NoRedirect, strict_json
 
 MAX_LOCAL_BYTES = 1024 * 1024
 MAX_LOCAL_ROWS = 80
 
 
-def read_local_snapshot(path, projects):
-    """Accept one bounded /api/activity JSON response, never private detail."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    try:
-        fd = os.open(path, flags)
-    except (OSError, ValueError):
-        raise ActivitySourceError("local_snapshot_unavailable") from None
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_LOCAL_BYTES:
-            raise ActivitySourceError("local_snapshot_not_regular_or_too_large")
-        with os.fdopen(os.dup(fd), "rb") as stream:
-            raw = stream.read(MAX_LOCAL_BYTES + 1)
-        if len(raw) > MAX_LOCAL_BYTES:
-            raise ActivitySourceError("local_snapshot_too_large")
-    finally:
-        os.close(fd)
+def _parse_local_rows(raw, projects):
+    """Keep only allowlisted project/timestamp metadata from an API response."""
+    if len(raw) > MAX_LOCAL_BYTES:
+        raise ActivitySourceError("local_snapshot_too_large")
     try:
         data = strict_json(raw.decode("utf-8"))
     except (UnicodeError, ValueError, TypeError):
@@ -66,13 +56,60 @@ def read_local_snapshot(path, projects):
         if key in seen:
             continue
         seen.add(key)
-        # Do not render or persist raw ID/title/detail. A digest is used only
-        # as a deterministic secondary sort key and never leaves this function.
+        # Never emit raw ID/title/detail. Digest exists for deterministic
+        # ordering only, not as an operator-visible identity.
         rows.append((project, utc, hashlib.sha256(identifier.encode("utf-8")).digest()))
     return sorted(rows, key=lambda row: (row[1], row[0], row[2]), reverse=True)
 
 
-def combined_html(ledger, rows, project=None):
+def read_local_snapshot(path, projects):
+    """Accept one bounded /api/activity JSON response, never private detail."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except (OSError, ValueError):
+        raise ActivitySourceError("local_snapshot_unavailable") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_LOCAL_BYTES:
+            raise ActivitySourceError("local_snapshot_not_regular_or_too_large")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(MAX_LOCAL_BYTES + 1)
+    finally:
+        os.close(fd)
+    return _parse_local_rows(raw, projects)
+
+
+def read_local_api(projects):
+    """Optional operator-initiated localhost GET only, per-project bounded.
+
+    Never authenticates, follows redirects, uses environment proxies, or
+    requests a network host other than literal 127.0.0.1:8765.
+    A failed project is explicitly unavailable, not an empty successful feed.
+    """
+    if not projects or len(projects) > 12:
+        raise ActivitySourceError("local_api_project_selection_out_of_bounds")
+    opener = build_opener(ProxyHandler({}), NoRedirect())
+    rows, unavailable = [], []
+    for pid in sorted(projects):
+        url = "http://127.0.0.1:8765/api/activity?project=" + quote(pid, safe="")
+        try:
+            request = Request(url, headers={"Accept": "application/json",
+                                            "User-Agent": "zcloud-private-activity/1"}, method="GET")
+            with opener.open(request, timeout=3) as response:
+                if response.status != 200 or response.geturl() != url:
+                    raise ActivitySourceError("local_api_invalid_response")
+                payload = response.read(MAX_LOCAL_BYTES + 1)
+            observed = _parse_local_rows(payload, {pid})
+            rows.extend(observed)
+        except (HTTPError, URLError, OSError, TimeoutError, UnicodeError,
+                ValueError, ActivitySourceError):
+            unavailable.append(pid)
+    rows.sort(key=lambda row: (row[1], row[0], row[2]), reverse=True)
+    return rows, unavailable
+
+
+def combined_html(ledger, rows, project=None, unavailable=(), from_local_api=False):
     """Keep two sources visibly separate; never count GitHub and local twice."""
     html = render_html(ledger, project=project)
     visible = [row for row in rows if project is None or row[0] == project]
@@ -80,8 +117,10 @@ def combined_html(ledger, rows, project=None):
     for pid, _, _ in visible:
         count[pid] += 1
     cards = "".join(
-        "<div class='card'><strong>" + h(amount) + "</strong><small>" +
-        h(pid) + " lokale events in deze export</small></div>"
+        "<div class='card'><strong>" + ("—" if pid in unavailable else h(amount)) +
+        "</strong><small>" + h(pid) +
+        (" bron onbereikbaar, geen nulmeting</small></div>" if pid in unavailable else
+         " zichtbare lokale rijen (max 80 per bron), geen nulmeting</small></div>")
         for pid, amount in count.items()
     )
     body = "".join(
@@ -93,8 +132,11 @@ def combined_html(ledger, rows, project=None):
         "<section aria-labelledby='local-source-title'><h2 id='local-source-title'>"
         "Lokale VPS-activiteit · eenmalige export</h2>"
         "<p>Afzonderlijke /api/activity-momentopname. Iedere eventbron is maximaal "
-        "80 records diep; ontbrekende activiteit is geen nulmeting. "
-        "Deze export bewijst geen actuele VPS-verbinding.</p>"
+        "80 records diep; ontbrekende activiteit is geen nulmeting. " +
+        ("Op verzoek direct via uitsluitend lokale 127.0.0.1-verbinding ingelezen; "
+         "geen blijvende beschikbaarheid of GitHub-livesynchronisatie aangetoond.</p>"
+         if from_local_api else
+         "Aangeleverde JSON-export; geen actuele VPS-verbinding aangetoond.</p>")
         "<div class='grid'>" + cards + "</div><div class='wrap'><table>"
         "<thead><tr><th scope='col'>Project</th><th scope='col'>Bron-tijd</th>"
         "<th scope='col'>Betekenis</th></tr></thead><tbody>" +
@@ -120,15 +162,24 @@ def combined_html(ledger, rows, project=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Combine private retained GitHub activity and one local VPS event export into offline HTML")
     parser.add_argument("--ledger", required=True, help="Existing private GitHub source ledger (0600)")
-    parser.add_argument("--local-json", required=True, help="Saved raw GET /api/activity response; never printed")
+    local = parser.add_mutually_exclusive_group(required=True)
+    local.add_argument("--local-json", help="Saved raw GET /api/activity response; never printed")
+    local.add_argument("--local-api", action="store_true",
+                       help="Read per-project GET from fixed loopback 127.0.0.1:8765 only")
     parser.add_argument("--output", required=True, help="Private local HTML outside public/ (0600)")
     parser.add_argument("--project", help="Optional project from the private GitHub ledger")
     args = parser.parse_args(argv)
     ledger = _read(Path(args.ledger))
     if args.project is not None and args.project not in ledger["coverage"]:
         raise ActivitySourceError("activity_project_not_allowlisted")
-    rows = read_local_snapshot(args.local_json, set(ledger["coverage"]))
-    save_private(args.output, combined_html(ledger, rows, project=args.project))
+    selected = {args.project} if args.project else set(ledger["coverage"])
+    if args.local_api:
+        rows, unavailable = read_local_api(selected)
+    else:
+        rows, unavailable = read_local_snapshot(args.local_json, selected), ()
+    save_private(args.output, combined_html(
+        ledger, rows, project=args.project,
+        unavailable=set(unavailable), from_local_api=args.local_api))
     print("Private combined Activity report saved; both sources remain historical and not live verified.")
     return 0
 
