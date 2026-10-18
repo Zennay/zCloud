@@ -183,6 +183,39 @@ def measure(root: Path, expected_main_sha: str | None = None) -> dict:
     }
 
 
+def compare_snapshot(path: Path, current: dict) -> dict:
+    """Compare code sets only; never trust free-text content from an older report."""
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 131072:
+            raise ValueError("invalid snapshot")
+        prior = json.loads(path.read_text(encoding="utf-8"))
+        if (not isinstance(prior, dict) or prior.get("schema") != 1
+                or prior.get("mode") != "read_only"
+                or prior.get("release_authorized") is not False):
+            raise ValueError("invalid snapshot")
+        rows = prior.get("findings")
+        if not isinstance(rows, list) or len(rows) > 100:
+            raise ValueError("invalid snapshot")
+        old = set()
+        for row in rows:
+            if (not isinstance(row, dict) or not isinstance(row.get("code"), str)
+                    or not re.fullmatch(r"[A-Z0-9_]{3,64}", row["code"])
+                    or row["code"] in old
+                    or row.get("severity") not in {"block", "warn"}):
+                raise ValueError("invalid snapshot")
+            old.add(row["code"])
+    except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
+        raise ValueError("Previous report is not a supported bounded zCloud read-only snapshot.") from None
+    new = {item["code"] for item in current["findings"]}
+    return {
+        "new_findings": sorted(new - old),
+        "resolved_findings": sorted(old - new),
+        "still_present": sorted(new & old),
+        "unchanged": old == new,
+        "source": "local_operator_supplied_snapshot",
+    }
+
+
 def render_html(report: dict) -> str:
     """Self-contained, escaped, offline operator view; never embeds raw process arguments."""
     esc = lambda value: escape(str(value), quote=True)
@@ -208,6 +241,19 @@ def render_html(report: dict) -> str:
         f'<p>{esc(a["reason"])}</p><p>{esc(a["next_action"])}</p></li>'
         for a in report["recovery_priorities"]
     )
+    comparison = report.get("comparison")
+    if comparison is None:
+        comparison_html = ""
+    else:
+        def shown(values: list[str]) -> str:
+            return ", ".join(esc(x) for x in values) or "None"
+        comparison_html = (
+            '<section aria-labelledby="diff"><h2 id="diff">Changes since previous report</h2>'
+            f'<dl>{item("New findings", shown(comparison["new_findings"]))}'
+            f'{item("Resolved findings", shown(comparison["resolved_findings"]))}'
+            f'{item("Still present", shown(comparison["still_present"]))}</dl>'
+            '<p class="muted">Previous report was locally supplied and not independent runtime attestation.</p></section>'
+        )
     checkout = report["checkout"]
     runner = report["runner"]
     resources = report["resources"]
@@ -248,6 +294,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {item("Swap used", val(resources["swap_used_pct"]) + "%")}
 {item("Filesystem free", val(resources["disk_free_pct"]) + "%")}
 </dl></section>
+{comparison_html}
 <section aria-labelledby="findings"><h2 id="findings">Release blockers and warnings</h2><ul>{findings}</ul></section>
 <section aria-labelledby="recovery"><h2 id="recovery">Owner-gated recovery priorities</h2><ol>{actions}</ol></section>
 <p class="disclaimer"><strong>Not an approval.</strong> This report cannot prove protected-main review,
@@ -260,6 +307,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/home/ubuntu/zennay-cloud"))
     parser.add_argument("--json", action="store_true", help="Print bounded machine-readable evidence")
+    parser.add_argument("--previous-report", type=Path, default=None,
+                        help="Compare with a saved bounded JSON report; never modifies the prior file")
     parser.add_argument("--format", choices=("text", "json", "html"), default="text",
                         help="Output as console text, machine-readable JSON, or self-contained offline HTML")
     parser.add_argument("--expected-main-sha", default=None,
@@ -268,6 +317,12 @@ def main() -> int:
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
     report = measure(args.root.resolve(), args.expected_main_sha)
+    if args.previous_report is not None:
+        try:
+            report["comparison"] = compare_snapshot(args.previous_report, report)
+        except ValueError as exc:
+            print(f"PREVIOUS_REPORT_INVALID: {exc}", file=sys.stderr)
+            return 2
     if args.json or args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     elif args.format == "html":
@@ -280,6 +335,11 @@ def main() -> int:
         print(f"Runner: {r['unit_state']}; dedicated listener PIDs: {r['listener_pids']}")
         for f in report["findings"]:
             print(f"[{f['severity'].upper()}] {f['code']}: {f['detail']}")
+        if "comparison" in report:
+            change = report["comparison"]
+            print(f"New findings: {', '.join(change['new_findings']) or 'none'}")
+            print(f"Resolved findings: {', '.join(change['resolved_findings']) or 'none'}")
+            print(f"Still present: {', '.join(change['still_present']) or 'none'}")
         print("Owner-gated recovery priorities:")
         for index, item in enumerate(report["recovery_priorities"], 1):
             print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
