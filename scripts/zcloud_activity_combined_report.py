@@ -17,9 +17,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, ProxyHandler, build_opener
 
-from scripts.zcloud_activity_ledger import _read
+from scripts.zcloud_activity_ledger import _read, merge_and_store
 from scripts.zcloud_activity_operator_report import h, render_html, save_private
-from scripts.zcloud_github_activity import ActivitySourceError, NoRedirect, strict_json
+from scripts.zcloud_github_activity import (ActivitySourceError, NoRedirect, strict_json,
+                                           GithubReader, portfolio_registry, collect)
 
 MAX_LOCAL_BYTES = 1024 * 1024
 MAX_LOCAL_ROWS = 80
@@ -167,9 +168,44 @@ def main(argv=None):
     local.add_argument("--local-api", action="store_true",
                        help="Read per-project GET from fixed loopback 127.0.0.1:8765 only")
     parser.add_argument("--output", required=True, help="Private local HTML outside public/ (0600)")
-    parser.add_argument("--project", help="Optional project from the private GitHub ledger")
+    parser.add_argument("--project", help="Optional one-project filter")
+    parser.add_argument("--refresh-github", action="store_true",
+                        help="Explicitly GET bounded allowlisted GitHub sources and update private ledger")
+    parser.add_argument("--projects", help="Required with --refresh-github: comma-separated canonical projects (max 12)")
     args = parser.parse_args(argv)
-    ledger = _read(Path(args.ledger))
+    # Fail before any GET or write if an output would replace source evidence.
+    destinations = [Path(args.ledger).resolve(), Path(args.output).resolve()]
+    if args.local_json:
+        destinations.append(Path(args.local_json).resolve())
+    if len(set(destinations)) != len(destinations):
+        raise ActivitySourceError("activity_input_output_paths_must_differ")
+    if args.projects and not args.refresh_github:
+        raise ActivitySourceError("activity_project_refresh_flag_required")
+    if args.refresh_github:
+        if not args.projects:
+            raise ActivitySourceError("activity_refresh_project_selection_required")
+        selected_ids = args.projects.split(",")
+        if (not 1 <= len(selected_ids) <= 12 or
+                len(set(selected_ids)) != len(selected_ids) or
+                any(not pid or pid != pid.strip() for pid in selected_ids)):
+            raise ActivitySourceError("activity_project_selection_invalid")
+        registry = portfolio_registry(Path(__file__).resolve().parents[1] / "projects.json")
+        if any(pid not in registry for pid in selected_ids):
+            raise ActivitySourceError("activity_project_not_allowlisted")
+        if args.project and args.project not in selected_ids:
+            raise ActivitySourceError("activity_requested_project_not_selected")
+        receipt = collect(registry, selected_ids, reader=GithubReader(
+            token=os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_READ_TOKEN")))
+        merge_and_store(Path(args.ledger), receipt)
+        ledger = _read(Path(args.ledger))
+        # A previous ledger may contain other projects. Never disclose them
+        # in a report from this explicitly bounded selection.
+        ledger = dict(ledger)
+        ledger["coverage"] = {pid: ledger["coverage"][pid] for pid in selected_ids}
+        ledger["events"] = [item for item in ledger["events"]
+                            if item["project"] in ledger["coverage"]]
+    else:
+        ledger = _read(Path(args.ledger))
     if args.project is not None and args.project not in ledger["coverage"]:
         raise ActivitySourceError("activity_project_not_allowlisted")
     selected = {args.project} if args.project else set(ledger["coverage"])
@@ -180,7 +216,7 @@ def main(argv=None):
     save_private(args.output, combined_html(
         ledger, rows, project=args.project,
         unavailable=set(unavailable), from_local_api=args.local_api))
-    print("Private combined Activity report saved; both sources remain historical and not live verified.")
+    print("Private combined Activity report saved; GitHub and VPS source windows are bounded, not live synchronized.")
     return 0
 
 
