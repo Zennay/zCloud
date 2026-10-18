@@ -838,12 +838,13 @@ async function readVpsGitHubActivity(){
          envelope.project!==project||envelope.feed_complete!==false||
          envelope.authorizes_repair!==false||envelope.authorizes_merge!==false||
          envelope.authorizes_deploy!==false||
-         !['refreshing','partial','unavailable','capacity_wait'].includes(envelope.state)){
+         !['refreshing','partial','unavailable','capacity_wait','rate_budget_wait'].includes(envelope.state)){
         throw Error('Unrecognized GitHub server source');
       }
       if(envelope.state==='partial'){data=envelope.receipt;break}
       if(envelope.state!=='refreshing'){
-        throw Error(envelope.state==='capacity_wait'?'Source capacity busy':'GitHub unavailable');
+        throw Error(envelope.state==='rate_budget_wait'?'Anonymous GitHub hourly request budget reached; retry later':
+          envelope.state==='capacity_wait'?'Source capacity busy':'GitHub unavailable');
       }
       if(attempt===5)throw Error('Observation still collecting; choose Read VPS GitHub again.');
       await new Promise(resolve=>setTimeout(resolve,2500));
@@ -1056,11 +1057,12 @@ async function readVpsProductIssues(){
           data.project!==project||data.feed_complete!==false||
           data.authorizes_repair!==false||data.authorizes_merge!==false||
           data.authorizes_deploy!==false||
-          !['refreshing','partial','unavailable','capacity_wait'].includes(data.state))
+          !['refreshing','partial','unavailable','capacity_wait','rate_budget_wait'].includes(data.state))
         throw Error('Unexpected issue source envelope');
       if(data.state==='partial'){receipt=data.receipt;break}
       if(data.state!=='refreshing')
-        throw Error(data.state==='capacity_wait'?'Source capacity busy':'Issue source unavailable');
+        throw Error(data.state==='rate_budget_wait'?'Anonymous GitHub hourly request budget reached; retry later':
+          data.state==='capacity_wait'?'Source capacity busy':'Issue source unavailable');
       if(attempt===5)throw Error('Issue observation still collecting; use Read VPS issues again.');
       await new Promise(resolve=>setTimeout(resolve,2500));
       if(routeVersion!==version||filter!==project)return;
