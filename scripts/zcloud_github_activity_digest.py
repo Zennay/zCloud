@@ -13,8 +13,8 @@ import sys
 
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPOSITORY = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
-EVENT_ID = re.compile(r"^github:Zennay/[A-Za-z0-9_.-]{1,100}:(?:pr_created|pr_updated|pr_merged|ci_run):[0-9]{1,15}$")
-KINDS = {"pr_created", "pr_updated", "pr_merged", "ci_run"}
+EVENT_ID = re.compile(r"^github:Zennay/[A-Za-z0-9_.-]{1,100}:(?:(?:pr_created|pr_updated|pr_merged|ci_run):[0-9]{1,15}|main_commit:[a-f0-9]{40})$")
+KINDS = {"pr_created", "pr_updated", "pr_merged", "ci_run", "main_commit"}
 OUTCOMES = {"success", "failure", "cancelled", "skipped", "timed_out",
             "action_required", "neutral", "stale", "startup_failure", None}
 
@@ -48,7 +48,7 @@ def digest(payload: dict) -> str:
     lines = [
         "# zCloud · GitHub activity receipt",
         "",
-        "**Status:** PARTIAL GitHub observation only. No branch inventory, "
+        "**Status:** PARTIAL GitHub observation only. No non-main branch inventory, "
         "production deployment, worker resumption or project-complete claim.",
         "",
     ]
@@ -69,15 +69,16 @@ def digest(payload: dict) -> str:
             raise ValueError("invalid_coverage_state")
         source_pr = item.get("github_pr")
         source_ci = item.get("github_ci")
-        if source_pr not in {"unavailable", "partial", "bounded_window", "bounded_truncated"} or source_ci not in {
-            "unavailable", "partial", "bounded_window"
-        }:
+        source_commit = item.get("github_main_commits")
+        accepted = {"unavailable", "partial", "bounded_window", "bounded_truncated"}
+        if any(value not in accepted for value in (source_pr, source_ci, source_commit)):
             raise ValueError("invalid_source_state")
         lines.append("## " + project)
         lines.append("")
         lines.append("GitHub PR: **" + source_pr + "** · GitHub Actions: **" +
-                     source_ci + "** · branches: **not synchronized**.")
-        if source_pr == "bounded_truncated" or source_ci == "bounded_truncated":
+                     source_ci + "** · main commits: **" + source_commit +
+                     "** · non-main branches: **not synchronized**.")
+        if "bounded_truncated" in (source_pr, source_ci, source_commit):
             lines.append("**Source page budget reached:** older GitHub events were not scanned; counts are lower bounds.")
         if state != "partial_sources":
             lines.append("Source is **incomplete or inaccessible**. Missing events are unknown, not zero.")
@@ -98,15 +99,25 @@ def digest(payload: dict) -> str:
                     raise ValueError("invalid_outcome")
                 if event.get("deploy_verified") is not False or event.get("worker_resumed") is not False:
                     raise ValueError("invalid_deployment_claim")
+            if kind == "main_commit":
+                sha = event.get("sha")
+                if not isinstance(sha, str) or not re.fullmatch("[a-f0-9]{40}", sha):
+                    raise ValueError("invalid_main_commit")
+                if event.get("main_merged") is not True or event.get("deploy_verified") is not False or event.get("worker_resumed") is not False:
+                    raise ValueError("invalid_main_commit_claim")
+                if event_id != "github:" + repo + ":main_commit:" + sha:
+                    raise ValueError("invalid_main_commit_identity")
             validated.append(event)
         created = sum(e["kind"] == "pr_created" for e in validated)
         merged = sum(e["kind"] == "pr_merged" for e in validated)
         ci_success = sum(e["kind"] == "ci_run" and e.get("conclusion") == "success"
                          for e in validated)
+        main_commits = sum(e["kind"] == "main_commit" for e in validated)
         lines.append("Observed event counts (bounded window, may be truncated): "
                      + str(created) + " PR-created; " + str(merged)
                      + " PR-merged-to-some-base; " + str(ci_success)
-                     + " workflow-success. **None proves a main deployment.**")
+                     + " workflow-success; " + str(main_commits)
+                     + " canonical-main commits. **None proves a main deployment.**")
         for event in validated[:10]:
             kind = event["kind"]
             if kind == "ci_run":
@@ -115,6 +126,10 @@ def digest(payload: dict) -> str:
                     raise ValueError("invalid_ci_id")
                 label = "CI #" + str(number) + " · " + str(event.get("status")) + " / " + str(event.get("conclusion"))
                 url = "https://github.com/" + repo + "/actions/runs/" + str(number)
+            elif kind == "main_commit":
+                sha = event["sha"]
+                label = "main commit " + sha[:12]
+                url = "https://github.com/" + repo + "/commit/" + sha
             else:
                 number = event.get("pr")
                 if not isinstance(number, int) or isinstance(number, bool) or number < 1:
