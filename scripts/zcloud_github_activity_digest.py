@@ -69,7 +69,7 @@ def digest(payload: dict) -> str:
             raise ValueError("invalid_coverage_state")
         source_pr = item.get("github_pr")
         source_ci = item.get("github_ci")
-        if source_pr not in {"unavailable", "partial", "bounded_window"} or source_ci not in {
+        if source_pr not in {"unavailable", "partial", "bounded_window", "bounded_truncated"} or source_ci not in {
             "unavailable", "partial", "bounded_window"
         }:
             raise ValueError("invalid_source_state")
@@ -77,6 +77,8 @@ def digest(payload: dict) -> str:
         lines.append("")
         lines.append("GitHub PR: **" + source_pr + "** · GitHub Actions: **" +
                      source_ci + "** · branches: **not synchronized**.")
+        if source_pr == "bounded_truncated" or source_ci == "bounded_truncated":
+            lines.append("**Source page budget reached:** older GitHub events were not scanned; counts are lower bounds.")
         if state != "partial_sources":
             lines.append("Source is **incomplete or inaccessible**. Missing events are unknown, not zero.")
         project_events = [event for event in payload["events"]
