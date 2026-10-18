@@ -751,12 +751,12 @@ async function refreshPublicGitHubEvidence(){
   if(!selected){IMPORTED_GITHUB_ERROR='Select one project before fetching public GitHub evidence.';render();return}
   const m=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
   if(!m){IMPORTED_GITHUB_ERROR='This project has no canonical public GitHub repository.';render();return}
-  const repo=m[1];
-  if(Date.now()-(PUBLIC_GITHUB_LAST_FETCH.get(filter)||0)<120000){
+  const repo=m[1],projectId=selected.id;
+  if(Date.now()-(PUBLIC_GITHUB_LAST_FETCH.get(projectId)||0)<120000){
     IMPORTED_GITHUB_ERROR='Public GitHub may be rate limited. Recheck is limited to once per project every two minutes.';
     render();return;
   }
-  PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_LAST_FETCH.set(filter,Date.now());
+  PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
   IMPORTED_GITHUB_ERROR='Reading public PR, CI and main-commit evidence…';render();
   const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20',
     'actions/runs?per_page=20','commits?sha=main&per_page=15'];
@@ -766,7 +766,7 @@ async function refreshPublicGitHubEvidence(){
     const parsed=Date.parse(ts||'');
     if(!Number.isFinite(parsed)||parsed>Date.now()+120000||parsed<0||seen.has(kind+':'+url))return;
     seen.add(kind+':'+url);
-    events.push({project:filter,kind,ts:new Date(parsed).toISOString(),url,description,firstSeen:false});
+    events.push({project:projectId,kind,ts:new Date(parsed).toISOString(),url,description,firstSeen:false});
   };
   try{
     const prs=outcomes[0].status==='fulfilled'&&Array.isArray(outcomes[0].value)?outcomes[0].value:[];
@@ -797,7 +797,7 @@ async function refreshPublicGitHubEvidence(){
     }
     const good=outcomes.filter(o=>o.status==='fulfilled').length;
     IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),events:events.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,90),
-      coverage:[{project:filter,status:good===3?'partial_sources':good?'partial_error':'unavailable'}]};
+      coverage:[{project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable'}]};
     IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); ':'Public GitHub source sample ready; ')+
       'branch-only work and private repositories are not covered. Not a live deployment receipt.';
   }catch(_error){
