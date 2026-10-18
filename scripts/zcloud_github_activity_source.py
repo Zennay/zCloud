@@ -193,9 +193,17 @@ def bounded_events(
                 merged_at = pr.get("merged_at")
                 if merged_at is not None and instant(merged_at) is None:
                     raise ValueError("github_timestamp_invalid")
+                # GitHub's PR base ref is the reported target, not proof that
+                # its merge commit is reachable from the current canonical main.
+                base = pr.get("base")
+                target = base.get("ref") if isinstance(base, dict) else None
+                if not isinstance(target, str) or not REPO_RE.fullmatch(target):
+                    target = None
                 ref = f"https://github.com/{repo}/pull/{number}"
                 fields = {"pr": number, "url": ref, "draft": draft,
-                          "merged": merged_at is not None, "main_merged": False}
+                          "merged": merged_at is not None, "main_merged": False,
+                          "reported_target": target,
+                          "reported_main_merge": bool(merged_at is not None and target == "main")}
                 add("pr_created", str(number), pr.get("created_at"), **fields)
                 add("pr_updated", str(number), pr.get("updated_at"), **fields)
                 if merged_at is not None:
@@ -289,6 +297,10 @@ def bounded_events(
         errors.append(str(error))
         if coverage["pages"]["commits"]:
             coverage["github_main_commits"] = "partial"
+
+    # Distinguish a GitHub-reported merge target from a main-history commit.
+    # These are different observations and must never count twice as shipped.
+    coverage["github_pr_target_is_reported"] = True
 
     if not errors:
         coverage["status"] = "partial_sources"  # GitHub branch coverage absent.
