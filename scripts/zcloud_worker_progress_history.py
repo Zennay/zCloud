@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+from html import escape
 import json
 from pathlib import Path
 import re
@@ -131,18 +132,120 @@ def read_worker_progress(db_path: Path, project: str, slot: int,
     return result
 
 
+def render_html(data: dict) -> str:
+    """Produce a self-contained, escaped and strictly non-authorizing operator view."""
+    def clock_label(item):
+        if not item:
+            return "No signal recorded"
+        value = item.get("clock") or {}
+        status = value.get("status") or "invalid"
+        stamp = value.get("utc") or "Unknown UTC time"
+        age = value.get("age_s")
+        suffix = f" ({age}s ago)" if type(age) is int else ""
+        return escape(str(stamp) + suffix + " · " + str(status))
+
+    facts = [
+        ("Latest browser event", data.get("latest_event")),
+        ("Latest prompt sent", data.get("latest_prompt")),
+        ("Latest generated-text progress", data.get("latest_progress")),
+        ("Latest response finished", data.get("latest_completion")),
+    ]
+    cards = []
+    for label, record in facts:
+        kind = escape(str((record or {}).get("kind") or "missing"))
+        cards.append(
+            "<article class='card'><h2>" + escape(label) + "</h2><b>" + kind
+            + "</b><p>" + clock_label(record) + "</p></article>"
+        )
+
+    recent = []
+    for item in data.get("recent_events") or []:
+        if not isinstance(item, dict):
+            continue
+        event_id = item.get("id")
+        if type(event_id) is not int:
+            continue
+        kind = escape(str(item.get("kind") or "other_browser_event"))
+        chars = item.get("reported_assistant_chars")
+        count = str(chars) if type(chars) is int else "not provided"
+        recent.append(
+            "<tr><td>" + str(event_id) + "</td><td>" + kind + "</td><td>"
+            + clock_label(item) + "</td><td>" + count + "</td></tr>"
+        )
+    if not recent:
+        recent = ["<tr><td colspan='4'>No bounded browser events available.</td></tr>"]
+
+    project = escape(str(data.get("project") or ""), quote=True)
+    slot = data.get("worker_slot")
+    slot_text = str(slot) if type(slot) is int else "unknown"
+    available = data.get("available") is True
+    claim = "unverified"  # Never imply a browser observation proves a queue claim.
+    progress = (
+        "Recorded progress after the latest reported prompt."
+        if data.get("progress_since_latest_prompt") is True
+        else "No qualifying progress after the last reported prompt in this source."
+    )
+    history = (
+        "Reported progress after last completion."
+        if data.get("progress_after_last_completion") is True
+        else "No reported progress after last completion."
+    )
+    css = (
+        ":root{color-scheme:dark;font-family:system-ui,sans-serif;"
+        "background:#101820;color:#ecf4fa}body{max-width:1100px;margin:auto;"
+        "padding:clamp(15px,3vw,34px);line-height:1.5}"
+        ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}"
+        ".card,.notice{border:1px solid #425a69;border-radius:10px;"
+        "background:#1a2834;padding:16px}.notice{border-left:4px solid #f5cc91}"
+        ".muted{color:#b8c9d8}h1{font-size:clamp(1.55rem,4vw,2.4rem)}"
+        "h2{font-size:1.04rem;margin-top:0}table{border-collapse:collapse;width:100%}"
+        "th,td{text-align:left;border-bottom:1px solid #405564;padding:9px}"
+        ".scroll{overflow-x:auto}strong{overflow-wrap:anywhere}"
+    )
+    return (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<meta name='referrer' content='no-referrer'>"
+        "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none';"
+        "style-src 'unsafe-inline'; form-action 'none'; base-uri 'none';\">"
+        "<title>zSentinel · worker progress</title><style>" + css + "</style></head><body>"
+        "<header><small class='muted'>ZCLOUD / ZSENTINEL · LOCAL OBSERVATION ONLY</small>"
+        "<h1>Worker progress · " + project + " · slot " + slot_text + "</h1>"
+        "<p class='muted'>Read-only browser telemetry · "
+        + ("source available" if available else "source unavailable")
+        + " · claim " + claim + " · bounded to "
+        + str(len(data.get("recent_events") or [])) + " events</p></header>"
+        "<section class='notice'><strong>No queue ownership or worker recovery verified.</strong>"
+        "<p>A heartbeat, prompt or generated-text change is browser-declared;"
+        " no source merge, deploy, current lease or independent generation is proven.</p></section>"
+        "<section class='grid'>" + "".join(cards) + "</section>"
+        "<section class='card'><h2>Recent activity</h2><p>"
+        + escape(progress) + " " + escape(history) + "</p>"
+        "<div class='scroll'><table><thead><tr><th>Event ID</th><th>Kind</th>"
+        "<th>UTC clock status</th><th>Reported chars</th></tr></thead><tbody>"
+        + "".join(recent) + "</tbody></table></div></section>"
+        "<footer class='muted'><p>Partial browser-supplied sample. No credentials,"
+        " conversation titles, text, links, prompts or tab identifiers displayed.</p></footer>"
+        "</body></html>"
+    )
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Read-only browser progress receipts")
     parser.add_argument("--db", type=Path, default=Path(__file__).resolve().parent.parent / "history.db")
     parser.add_argument("--project", required=True)
     parser.add_argument("--slot", required=True, type=int)
     parser.add_argument("--limit", type=int, default=24)
+    parser.add_argument("--format", choices=("json", "html"), default="json")
     args = parser.parse_args(argv)
     try:
         data = read_worker_progress(args.db, args.project, args.slot, args.limit)
     except ValueError:
         parser.error("invalid project, worker slot, or bounded limit")
-    print(json.dumps(data, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
+    if args.format == "html":
+        print(render_html(data))
+    else:
+        print(json.dumps(data, ensure_ascii=True, sort_keys=True, separators=(",", ":")))
     return 0 if data["available"] else 3
 
 
