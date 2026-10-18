@@ -795,7 +795,8 @@ async function refreshPublicGitHubEvidence(){
         'https://github.com/Zennay/'+repo+'/commit/'+commit.sha,
         'Commit on GitHub main history · '+commit.sha.slice(0,10)+' · deploy not verified');
     }
-    const good=outcomes.filter(o=>o.status==='fulfilled').length;
+    const good=outcomes.filter((o,i)=>o.status==='fulfilled'&&
+      (i===1?Array.isArray(o.value?.workflow_runs):Array.isArray(o.value))).length;
     IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),events:events.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,90),
       coverage:[{project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable'}]};
     IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); ':'Public GitHub source sample ready; ')+
@@ -903,7 +904,7 @@ async function refreshPublicProductIssues(){
     'pulls?state=open&sort=updated&direction=desc&per_page=12'];
   const outcomes=await Promise.allSettled(tasks.map(path=>publicGitHubGET(repository,path)));
   try{
-    const issues=new Map(),refs=[];
+    const issues=new Map();
     for(let source=0;source<2;source++){
       const rows=outcomes[source].status==='fulfilled'&&Array.isArray(outcomes[source].value)?outcomes[source].value:[];
       for(const issue of rows.slice(0,30)){
@@ -928,15 +929,18 @@ async function refreshPublicProductIssues(){
     for(const pr of candidates.slice(0,12)){
       if(!pr||!Number.isSafeInteger(pr.number)||pr.number<=0||typeof pr.body!=='string'||pr.body.length>32000)continue;
       const refs=[...pr.body.matchAll(/(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b/g)];
+      const closing=new Set([...pr.body.matchAll(/\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#([1-9][0-9]{0,7})\b/ig)]
+        .map(match=>Number(match[1])));
       for(const ref of refs.slice(0,40)){
         const item=issues.get(Number(ref[1]));
         if(!item||item.prs.length>=3||item.prs.some(p=>p.number===pr.number))continue;
         item.prs.push({number:pr.number,draft:pr.draft===true,
-          relationship:/\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#/i.test(pr.body)?'text_reference_only':'text_reference_only',
+          relationship:closing.has(Number(ref[1]))?'closing_keyword_only':'text_reference_only',
           url:'https://github.com/Zennay/'+repository+'/pull/'+pr.number});
       }
     }
-    const ranked={P0:0,P1:1,P2:2,Unspecified:3},readable=outcomes.filter(o=>o.status==='fulfilled').length;
+    const ranked={P0:0,P1:1,P2:2,Unspecified:3};
+    const readable=outcomes.filter(o=>o.status==='fulfilled'&&Array.isArray(o.value)).length;
     IMPORTED_PRODUCT_ISSUES={observedAt:new Date().toISOString(),partial:true,
       issues:[...issues.values()].sort((a,b)=>ranked[a.priority]-ranked[b.priority]||b.observed-a.observed).slice(0,60),
       coverage:[{project:projectId,status:readable===3?'partial':readable?'degraded':'unavailable',
