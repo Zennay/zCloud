@@ -176,6 +176,7 @@ def inventory(main_sha, *, offset=0, limit=MAX_SLICE, owned_paths=(),
     return {
         "schema": "zsentinel-recent-prless-ownership-v1",
         "source": "github_readonly",
+        "repository": f"{OWNER}/{REPO}",
         "main_sha": main_sha,
         "observed_at": now.isoformat(),
         "lookback_days": RECENT_DAYS,
