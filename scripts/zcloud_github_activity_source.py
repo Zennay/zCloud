@@ -24,9 +24,10 @@ PROJECT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 SHA_RE = re.compile(r"^[a-f0-9]{40}$")
 MAX_REGISTRY_BYTES = 512 * 1024
 MAX_REQUESTS = 24
-MAX_PROJECTS = 8
+MAX_PROJECTS = 3
 MAX_EVENTS = 200
-MAX_PAGES_PER_SOURCE = 2
+MAX_PR_PAGES = 5
+MAX_CI_PAGES = 2
 
 
 def utc_now() -> dt.datetime:
@@ -170,10 +171,10 @@ def bounded_events(
         })
 
     try:
-        for page in range(1, MAX_PAGES_PER_SOURCE + 1):
+        for page in range(1, MAX_PR_PAGES + 1):
             rows = reader.get(repo, "pulls", {
                 "state": "all", "sort": "updated", "direction": "desc",
-                "per_page": 40, "page": page,
+                "per_page": 10, "page": page,
             })["data"]
             if not isinstance(rows, list):
                 raise ValueError("github_pulls_invalid")
@@ -198,7 +199,7 @@ def bounded_events(
                     # GitHub merged != proven merged into canonical main.
                     add("pr_merged", str(number), merged_at, **fields)
             coverage["pages"]["pulls"] = page
-            if len(rows) < 40:
+            if len(rows) < 10:
                 break
         coverage["github_pr"] = "bounded_window"
     except ValueError as error:
@@ -208,7 +209,7 @@ def bounded_events(
             coverage["github_pr"] = "partial"
 
     try:
-        for page in range(1, MAX_PAGES_PER_SOURCE + 1):
+        for page in range(1, MAX_CI_PAGES + 1):
             rows = reader.get(repo, "actions/runs", {
                 "per_page": 40, "page": page, "exclude_pull_requests": "false",
             })["data"]
