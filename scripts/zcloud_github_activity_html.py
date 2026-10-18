@@ -85,6 +85,11 @@ def html_page(data: dict) -> str:
             windows.append(escape(label) + ": " + escape(coverage[key]))
         states = " · ".join(windows)
         status = coverage["status"]
+        compared = data.get("previous_snapshot_compared") is True
+        newly_observed = sum(event.get("new_since_previous") is True for event in rows)
+        if compared:
+            chips += ("<span>Absent from last bounded snapshot: <b>" +
+                      str(newly_observed) + "</b></span>")
         branch_scope = coverage.get("github_branches")
         if branch_scope == "observed_pr_heads_only":
             states += " · PR branch SHAs observed (partial)"
@@ -94,9 +99,10 @@ def html_page(data: dict) -> str:
         table = []
         for item in rows:
             label, url = event_link(item, repo)
+            fresh = " · not in prior sample" if item.get("new_since_previous") is True else ""
             table.append("<div class='row'><time class='time'>" +
                          escape(safe_time(item.get("source_at"))) +
-                         "</time><span class='kind'>" + escape(item["kind"].replace("_", " ")) +
+                         "</time><span class='kind'>" + escape(item["kind"].replace("_", " ") + fresh) +
                          "</span><a href='" + escape(url, quote=True) +
                          "' rel='noopener noreferrer' target='_blank'>" +
                          escape(label) + "</a></div>")
@@ -119,7 +125,9 @@ def html_page(data: dict) -> str:
             "<p class='meta'>Observed " + observed + " · UTC</p>"
             "<p class='warning'>This is a bounded GitHub snapshot, not the live zCloud dashboard. "
             "Branch-only work and runner/deployment status are not synchronized. "
-            "Successful CI is not a deploy; a GitHub PR merge may target a different base.</p>"
+            "Successful CI is not a deploy; a GitHub PR merge may target a different base. "
+            "Snapshot comparison marks only absent events from a bounded previous sample, "
+            "not necessarily newly created GitHub work.</p>"
             "</header><main>" + "".join(groups) +
             "</main><footer>Independent zSentinel source for zCloud #1518. "
             "Owner approval and existing production gates are required for live integration."
