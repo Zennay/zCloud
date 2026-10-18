@@ -280,13 +280,39 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         coverage.append(status)
     deduped = {row["id"]: row for row in results}
     events = sorted(deduped.values(), key=lambda x: (x["source_at"], x["id"]), reverse=True)
+    # Actions can outnumber PRs by orders of magnitude. Fairly interleave the
+    # two actual source types within every selected project before the cap.
+    # A short operator view must never hide all PRs behind recent CI runs.
+    buckets = {(project, kind): [] for project in selected for kind in ("pr", "ci")}
+    for item in events:
+        category = "ci" if item["kind"] == "ci_run" else "pr"
+        buckets[(item["project"], category)].append(item)
+    fair = []
+    positions = {key: 0 for key in buckets}
+    while len(fair) < max_events:
+        advanced = False
+        for project in selected:
+            for category in ("pr", "ci"):
+                key = (project, category)
+                index = positions[key]
+                if index >= len(buckets[key]):
+                    continue
+                fair.append(buckets[key][index])
+                positions[key] += 1
+                advanced = True
+                if len(fair) >= max_events:
+                    break
+            if len(fair) >= max_events:
+                break
+        if not advanced:
+            break
     return {
         "schema": "zcloud-github-activity-readonly-v1",
         "observed_at": stamp(observed),
         "hours": hours,
         "requested_projects": selected,
         "requests_used": MAX_REQUESTS - reader.remaining,
-        "events": events[:max_events],
+        "events": fair,
         "truncated": len(events) > max_events,
         "coverage": coverage,
         "feed_complete": False,  # no branch/backfill/runtime proof
