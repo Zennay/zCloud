@@ -7,7 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
-from scripts import worker_scaling_report
+from scripts import worker_scaling_report, zcloud_worker_progress_history
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
 
 ROOT = Path(__file__).resolve().parent
@@ -4841,6 +4841,16 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
+        if u.path=='/api/worker-progress-history':
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
+            project_id=str(q.get('project',[''])[0] or '').strip().lower()
+            if project_id not in PROJECT_INDEX:return self.reply({'error':'Onbekend project'},400)
+            try:
+                slot=int(q.get('slot',['1'])[0]);limit=int(q.get('limit',['24'])[0])
+                report=zcloud_worker_progress_history.read_worker_progress(DB,project_id,slot,limit)
+            except (ValueError,TypeError):
+                return self.reply({'error':'Ongeldige worker-selectie'},400)
+            return self.reply(report)
         if u.path=='/api/worker-debug':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply(worker_debug_report())
