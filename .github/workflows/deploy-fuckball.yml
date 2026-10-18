@@ -52,13 +52,31 @@ jobs:
 
   release:
     needs: verify-source
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     steps:
-      - name: Checkout trusted zCloud deployment script
-        uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # pinned v6
         with:
           persist-credentials: false
+      - name: Enforce permanent VPS identity before executing any release tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/zcloud_vps_runner_guard.py
+      - name: Reject non-main zCloud workflow source
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git ls-remote https://github.com/Zennay/zCloud.git refs/heads/main | awk '{print $1}')"
+          test "$GITHUB_SHA" = "$source_sha"
+          test "${GITHUB_REPOSITORY}" = 'Zennay/zCloud'
       - name: Configure Node 22
         uses: actions/setup-node@v4
         with:
