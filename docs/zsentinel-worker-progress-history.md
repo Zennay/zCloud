@@ -22,6 +22,17 @@ python3 scripts/zcloud_worker_progress_history.py --db history.db --project clou
 
 This is read-only and emits compact JSON. Exit status 3 means the database or source is unavailable.
 
+## No-write diagnostic endpoints (zCloud issue #1341)
+
+The same delivery branch repairs existing GET behavior that previously wrote state while an operator merely inspected the control plane:
+
+- `GET /api/runner-targets` and `GET /api/worker-debug` now pass `reconcile=False` to the existing `runner_worker_targets` read model. Worker startup/provider synchronization remains available in existing authorized writer paths; diagnostics no longer create `runner_workers` rows or replace provider/conversation values.
+- `GET /api/task-claims` uses `task_claims(prune_expired=False)`: only nonexpired claims are shown, but old rows are not deleted by an HTTP GET.
+- `GET /api/worker-preflight` now computes the same active-claim fingerprint without its previous implicit `DELETE FROM task_claims`, using `prune_expired=False` through the existing reusable read path. Authorized writer preflight/claim cleanup behavior is not removed.
+- `GET /api/resource-governor` now calls `project_runtime.resource_status(...,prune_expired=False)`; expired resource leases remain excluded from the response, while cleanup stays in explicit transaction-aware lease admission/recovery paths.
+
+This change separates **observing** from **reconciling**; GET routes still retain their previous access controls and payload shape. Scope is the specific GET-side state mutations identified, not a blanket claim that every endpoint or unrelated diagnostic is read-only. The underlying `project_runtime.py` single optional flag is disjoint from the receipt and lease admission hunks of the independent runtime consolidation PR #1547; reconcile it with that branch under the usual serialized source/review gate. No production SQLite has been modified as part of this source PR.
+
 ## Trust boundary
 
 These are **browser-declared telemetry observations only**. `claim_bound=false`, `claim_epoch_verified=false`, `browser_progress_is_independent_proof=false`, `worker_resumed_verified=false` and `deployment_verified=false` are always returned. A progress event after the latest prompt **does not establish** that it belongs to the current portfolio queue claim. The actual browser producer does not durably record an authenticated queue claim ID on each event. This implementation intentionally does not fabricate a binding from timestamps or force any run.
