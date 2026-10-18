@@ -35,3 +35,12 @@ The backend now reuses the original **existing read-only** provider clients from
 - No SQLite write, claim/lease mutation, Actions workflow dispatch, browser auto-poll, source completeness or deployment proof is implied by these endpoints.
 
 The Activity UI in [#1550](https://github.com/Zennay/zCloud/pull/1550) exposes **Read VPS GitHub** and **Read VPS issues** as distinct manual buttons, with existing public-browser GET and explicit JSON import left as independent fallbacks. The page validates both provider receipt formats and holds source-specific error/partial/age indicators; API success never means product shipped. Approval and actual VPS runtime deployment are separate existing gates.
+
+## Queue lane correctness with existing active writers (#1268)
+
+The original owner source at `fix/control-plane-lane-rejection-fallback-20261009-w1` demonstrated two actual planner defects that could mislead zSentinel's **product-first** admission:
+
+1. A rejected higher-priority candidate left `blocked_by` entries in a lane **even after** a later non-overlapping queued fallback was safely selected. The selected task incorrectly appeared blocked, encouraging repeated work on an already-resolved dependency. `lane_generator.generate_execution_lanes()` now clears the prior rejected-candidate conflict list only when a safe candidate has been chosen; fully blocked lanes still retain their genuine blockers.
+2. When more than one task in a lane was already `claimed`, `running` or `verifying`, only the first was entered into `occupied_scopes`. The read-model now reserves **all** active items' declared write scopes before admitting any other lane. One active item remains the display representative, but hidden active writers cannot be silently ignored.
+
+These are precisely scoped source integrations on the new runtime branch, not edits to the original owner branch and not a modification of an active queue/claim. The older experimental strict-scope/metadata parser, stale source tests and unrelated lane work were **not** copied. The source cannot be pronounced live until protected-main review, mandatory exact-head CI and serialized release have completed.
