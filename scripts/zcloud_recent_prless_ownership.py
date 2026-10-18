@@ -167,7 +167,7 @@ def inventory(main_sha, *, offset=0, limit=MAX_SLICE, owned_paths=(),
         })
     # A stable branch/PR inventory (not just a stale initial page) is required.
     again = collect(fetch, main_sha)
-    if (again["pr_less"] != candidates or again["branch_count"] != snapshot["branch_count"]
+    if (again["pr_less"] != all_candidates or again["branch_count"] != snapshot["branch_count"]
             or again["open_pr_head_count"] != snapshot["open_pr_head_count"]):
         raise InventoryDenied("post_scan_inventory_drift")
     # Prefix filtering cannot prove absence of overlap outside the namespace.
