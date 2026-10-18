@@ -6,7 +6,7 @@ Run from the repository root:
 
     python3 scripts/zsentinel_product_issue_inbox.py --project cloud --project supa > /tmp/zsentinel-inbox.html
 
-Open the generated HTML locally; it is fully static, responsive, keyboard-accessible, and has no third-party assets, scripts or analytics. To see the entire configured portfolio (up to 18 projects, 36 bounded GitHub calls), use:
+Open the generated HTML locally; it is fully static, responsive, keyboard-accessible, and has no third-party assets, scripts or analytics. To see the entire configured portfolio (up to 18 projects, 54 bounded GitHub calls), use:
 
     python3 scripts/zsentinel_product_issue_inbox.py --all --max-items 100 > /tmp/zsentinel-inbox.html
 
@@ -21,7 +21,7 @@ GitHub source identity comes **only** from the existing canonical projects.json 
 - Classifies a P0/P1 only from its **existing** `P0/P1` label, `priority:p0/p1` label, or explicit prefix in the GitHub issue title. No invented urgency based on subject matter.
 - Filters out QA-only issues or quality-validation/regression-only labels, in accordance with the 17 October 2026 user instruction; shows the excluded count, but does not open or mutate them.
 - Samples the oldest issues and the most recently updated issues per project, deduplicates canonical `repo#number` identities, then fairly interleaves project entries within priority class. This prevents a busy project from monopolizing the first screen.
-- Shows issue age, GitHub assignee presence (as a Boolean only), links and project. **An assignee is not a queue lease, an issue title is not proof of a reproducible defect, and missing issues in a bounded sample are not absence of issues.**
+- Shows issue age, GitHub assignee presence (as a Boolean only), links and project. An additional bounded recent-open-PR lookup surfaces **explicit issue number mentions**, distinguishes closing-keyword references from ordinary mentions, and never represents either as a live owner or proven fix. PR bodies are inspected in memory only, never exported. **An assignee is not a queue lease, an issue title is not proof of a reproducible defect, and missing issues in a bounded sample are not absence of issues.**
 - Exposes every source's oldest/recent window status, partial/unavailable/rate-limit response and truncation. A partial provider query never automatically authorizes repair.
 - Defaults to no GitHub writes, no issue/comment mutations, no SQLite access, no local browser worker or VPS service interaction, no CI/retry/merge/deploy action.
 
