@@ -665,11 +665,335 @@ async function controlWorker(workerId,action,button,force=false,globalSlot=null)
   }catch(error){if(!iconOnly)button.textContent='Failed';window.alert(error.message||String(error))}
   finally{setTimeout(()=>{button.disabled=false;button.innerHTML=previous;button.removeAttribute('aria-busy')},1800)}
 }
+// Explicit local operator evidence: never mix uploaded GitHub observations into
+// the local VPS feed, and never grant merge/deploy/worker authority from a file.
+let IMPORTED_GITHUB_ACTIVITY=null,IMPORTED_GITHUB_ERROR='';
+const GITHUB_RECEIPT_KINDS=new Set(['pr_created','pr_updated','pr_merged','ci_run','main_commit']);
+function validateGitHubActivityReceipt(value){
+  if(!value||typeof value!=='object'||Array.isArray(value)
+      ||value.schema!=='zcloud-github-activity-readonly-v1'
+      ||value.feed_complete!==false||value.authorizes_merge!==false
+      ||value.authorizes_repair!==false||value.authorizes_deploy!==false
+      ||!Array.isArray(value.events)||value.events.length>200
+      ||!Array.isArray(value.coverage)||value.coverage.length>8
+      ||!Array.isArray(value.requested_projects)||value.requested_projects.length>8
+      ||!Number.isFinite(Date.parse(value.observed_at)))throw Error('Unrecognized or unsafe read-only receipt');
+  const observed=Date.parse(value.observed_at);
+  if(observed>Date.now()+120000)throw Error('Snapshot time is in the future');
+  const projects=new Set((DATA?.projects||[]).map(p=>p.id));
+  const sourceByProject=new Map(),coverage=[];
+  for(const row of value.coverage){
+    if(!row||typeof row!=='object'||typeof row.project!=='string'
+       ||!projects.has(row.project)||sourceByProject.has(row.project)
+       ||typeof row.repository!=='string'
+       ||!/^Zennay\/[A-Za-z0-9_.-]{1,100}$/.test(row.repository))throw Error('Unexpected project or repository');
+    sourceByProject.set(row.project,row.repository);
+    coverage.push({project:row.project,status:['partial_sources','partial_error','unavailable'].includes(row.status)?row.status:'unavailable'});
+  }
+  const seen=new Set(),events=[];
+  for(const entry of value.events){
+    if(!entry||typeof entry!=='object'||!GITHUB_RECEIPT_KINDS.has(entry.kind)
+       ||typeof entry.id!=='string'||entry.id.length>256
+       ||!sourceByProject.has(entry.project)
+       ||!entry.id.startsWith('github:'+sourceByProject.get(entry.project)+':'+entry.kind+':')
+       ||!Number.isFinite(Date.parse(entry.source_at))
+       ||Date.parse(entry.source_at)>observed+120000
+       ||seen.has(entry.id))throw Error('Malformed or duplicate activity event');
+    seen.add(entry.id);
+    const repository=sourceByProject.get(entry.project);
+    let url='',description='';
+    if(entry.kind==='main_commit'){
+      if(typeof entry.sha!=='string'||!/^[a-f0-9]{40}$/.test(entry.sha)
+          ||entry.id!=='github:'+repository+':main_commit:'+entry.sha
+          ||entry.main_merged!==true)throw Error('Invalid main commit');
+      url='https://github.com/'+repository+'/commit/'+entry.sha;
+      description='Main commit '+entry.sha.slice(0,12);
+    }else if(entry.kind==='ci_run'){
+      if(!Number.isSafeInteger(entry.run_id)||entry.run_id<=0
+          ||entry.id!=='github:'+repository+':ci_run:'+entry.run_id)throw Error('Invalid CI run');
+      url='https://github.com/'+repository+'/actions/runs/'+entry.run_id;
+      description='Actions #'+entry.run_id+' · '+(['success','failure','cancelled','skipped','timed_out'].includes(entry.conclusion)?entry.conclusion:'not completed');
+    }else{
+      if(!Number.isSafeInteger(entry.pr)||entry.pr<=0
+          ||entry.id!=='github:'+repository+':'+entry.kind+':'+entry.pr
+          ||entry.main_merged!==false)throw Error('Invalid PR event');
+      url='https://github.com/'+repository+'/pull/'+entry.pr;
+      description='PR #'+entry.pr+' · '+entry.kind.replaceAll('_',' ');
+      if(typeof entry.pr_head_sha==='string'&&/^[a-f0-9]{40}$/.test(entry.pr_head_sha))
+        description+=' · '+entry.pr_head_sha.slice(0,12);
+      if(entry.kind==='pr_merged')
+        description+=' · reported target only, main not verified';
+    }
+    events.push({project:entry.project,id:entry.id,kind:entry.kind,url,description,
+      ts:entry.source_at,firstSeen:entry.new_since_previous===true});
+  }
+  if(coverage.length===0)throw Error('Snapshot contains no canonical project coverage');
+  return {observedAt:value.observed_at,coverage,events};
+}
+// Optional browser-only public GitHub refresh. Never uses the zCloud API token,
+// scheduled workers, a write endpoint, or a background polling loop.
+let PUBLIC_GITHUB_BUSY=false;
+const PUBLIC_GITHUB_LAST_FETCH=new Map();
+async function publicGitHubGET(repository,suffix){
+  if(!/^[A-Za-z0-9_.-]{1,100}$/.test(repository))throw Error('Invalid canonical repository');
+  const url='https://api.github.com/repos/Zennay/'+repository+'/'+suffix;
+  const response=await fetch(url,{method:'GET',credentials:'omit',redirect:'error',cache:'no-store',
+    headers:{'Accept':'application/vnd.github+json'},signal:AbortSignal.timeout(8000)});
+  if(!response.ok)throw Error(response.status===403||response.status===429?'Rate limited or inaccessible':'GitHub source unavailable');
+  if(new URL(response.url).origin!=='https://api.github.com')throw Error('Unexpected GitHub origin');
+  const raw=await response.text();
+  if(raw.length>600000)throw Error('GitHub source too large');
+  return JSON.parse(raw);
+}
+async function refreshPublicGitHubEvidence(){
+  if(PUBLIC_GITHUB_BUSY)return;
+  const selected=(DATA?.projects||[]).find(p=>p.id===filter);
+  if(!selected){IMPORTED_GITHUB_ERROR='Select one project before fetching public GitHub evidence.';render();return}
+  const m=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
+  if(!m){IMPORTED_GITHUB_ERROR='This project has no canonical public GitHub repository.';render();return}
+  const repo=m[1],projectId=selected.id;
+  if(Date.now()-(PUBLIC_GITHUB_LAST_FETCH.get(projectId)||0)<120000){
+    IMPORTED_GITHUB_ERROR='Public GitHub may be rate limited. Recheck is limited to once per project every two minutes.';
+    render();return;
+  }
+  PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
+  IMPORTED_GITHUB_ERROR='Reading public PR, CI and main-commit evidence…';render();
+  const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20',
+    'actions/runs?per_page=20','commits?sha=main&per_page=15'];
+  const outcomes=await Promise.allSettled(suffixes.map(suffix=>publicGitHubGET(repo,suffix)));
+  const events=[],seen=new Set();
+  const push=(kind,ts,url,description)=>{
+    const parsed=Date.parse(ts||'');
+    if(!Number.isFinite(parsed)||parsed>Date.now()+120000||parsed<0||seen.has(kind+':'+url))return;
+    seen.add(kind+':'+url);
+    events.push({project:projectId,kind,ts:new Date(parsed).toISOString(),url,description,firstSeen:false});
+  };
+  try{
+    const prs=outcomes[0].status==='fulfilled'&&Array.isArray(outcomes[0].value)?outcomes[0].value:[];
+    for(const pr of prs.slice(0,20)){
+      if(!Number.isSafeInteger(pr.number)||pr.number<=0||!pr.head||typeof pr.head.sha!=='string'||
+        !/^[a-f0-9]{40}$/i.test(pr.head.sha))continue;
+      const link='https://github.com/Zennay/'+repo+'/pull/'+pr.number;
+      const merged=typeof pr.merged_at==='string'&&Number.isFinite(Date.parse(pr.merged_at));
+      const kind=merged?'pr_merged':pr.created_at===pr.updated_at?'pr_created':'pr_updated';
+      const sourceTime=merged?pr.merged_at:(pr.updated_at||pr.created_at);
+      push(kind,sourceTime,link,'PR #'+pr.number+' · '+(merged?'GitHub reports merged':kind==='pr_created'?'Created':'Updated')+
+        ' · head '+pr.head.sha.slice(0,10)+(merged?' · deploy not verified':''));
+    }
+    const runs=outcomes[1].status==='fulfilled'&&Array.isArray(outcomes[1].value?.workflow_runs)?outcomes[1].value.workflow_runs:[];
+    for(const run of runs.slice(0,20)){
+      if(!Number.isSafeInteger(run.id)||run.id<=0)continue;
+      const status=['queued','in_progress','completed','waiting','pending','requested'].includes(run.status)?run.status:'unknown';
+      const conclusion=['success','failure','cancelled','skipped','timed_out','neutral','action_required'].includes(run.conclusion)?run.conclusion:'not_final';
+      push('ci_run',run.updated_at||run.created_at,'https://github.com/Zennay/'+repo+'/actions/runs/'+run.id,
+        'GitHub Actions #'+run.id+' · '+status+' / '+conclusion+' · no deploy claim');
+    }
+    const commits=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
+    for(const commit of commits.slice(0,15)){
+      if(typeof commit.sha!=='string'||!/^[a-f0-9]{40}$/i.test(commit.sha))continue;
+      push('main_commit',commit.commit?.committer?.date||commit.commit?.author?.date,
+        'https://github.com/Zennay/'+repo+'/commit/'+commit.sha,
+        'Commit on GitHub main history · '+commit.sha.slice(0,10)+' · deploy not verified');
+    }
+    const good=outcomes.filter((o,i)=>o.status==='fulfilled'&&
+      (i===1?Array.isArray(o.value?.workflow_runs):Array.isArray(o.value))).length;
+    IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),events:events.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,90),
+      coverage:[{project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable'}]};
+    IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); ':'Public GitHub source sample ready; ')+
+      'branch-only work and private repositories are not covered. Not a live deployment receipt.';
+  }catch(_error){
+    IMPORTED_GITHUB_ERROR='Public GitHub source could not be interpreted. No authorization or deployment inferred.';
+  }finally{PUBLIC_GITHUB_BUSY=false;if(route==='activity')render()}
+}
+
+function githubActivityImportPanel(){
+  const snapshot=IMPORTED_GITHUB_ACTIVITY;
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
+  const counts=snapshot?.coverage.filter(c=>visible.has(c.project)&&(!filter||c.project===filter))
+    .map(c=>c.project+': '+c.status).join(' · ')||'No GitHub receipt loaded';
+  const content=rows.slice(0,80).map(a=>'<div class="service-row"><div><small>'+esc(a.project)+' · '+esc(a.kind)+
+    (a.firstSeen?' · absent in preceding bounded snapshot':'')+'</small><br><a target="_blank" rel="noopener noreferrer" href="'+
+    esc(a.url)+'">'+esc(a.description)+'</a></div><small>'+esc(date(a.ts,true))+'</small></div>').join('');
+  return '<div class="panel"><div class="panel-header"><div><h2>GitHub evidence · optional local import</h2>'+
+    '<p class="panel-subtitle">PRs, CI and main commits from an operator-generated bounded read-only snapshot. Not automatically synchronized.</p></div></div>'+
+    '<button type="button" class="runner-action" data-github-public-refresh '+(PUBLIC_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read public GitHub for selected project</button> '+
+    '<span class="detail-note">Opt-in browser GET only · three bounded GitHub requests · no credentials or background sync.</span><br>'+ 
+    '<label for="githubReceiptFile">Or import a JSON receipt created by the zCloud GitHub activity observer</label> '+
+    '<input type="file" id="githubReceiptFile" accept=".json,application/json" aria-label="Import read-only GitHub activity JSON receipt">'+
+    (snapshot?'<button type="button" class="runner-action" data-github-receipt-clear>Clear snapshot</button>':'')+
+    '<p role="status" aria-live="polite">'+esc(IMPORTED_GITHUB_ERROR||(snapshot?'Imported observation '+date(snapshot.observedAt,true)+' · '+snapshot.events.length+' bounded events.':'No GitHub receipt imported. Local VPS events continue below.'))+'</p>'+
+    (snapshot?'<p class="detail-note">Partial provider coverage: '+esc(counts)+
+      '. A PR reported merged or a green CI run never proves deployment, active ownership or worker recovery.</p>'+
+      (content?'<div class="service-list">'+content+'</div>':'<div class="empty">No GitHub events in this project-filtered snapshot.</div>')+
+      (rows.length>80?'<p class="detail-note">Only 80 of the imported events are displayed.</p>':''):'')+
+    '</div>';
+}
+
+// Existing zSentinel product issue-inbox receipts are independent of Activity
+// events. Never infer a live worker lease, permission to merge or authorization
+// to repair from a GitHub issue or a PR mention.
+let IMPORTED_PRODUCT_ISSUES=null,IMPORTED_PRODUCT_ERROR='',IMPORTED_ISSUE_SHOW_ALL=false;
+function validateProductIssueInbox(value){
+  if(!value||typeof value!=='object'||Array.isArray(value)
+      ||value.schema!=='zsentinel-product-issue-inbox-v1'
+      ||value.actions_authorized!==false||value.active_claims_verified!==false
+      ||value.queue_ownership_known!==false||value.fully_synchronized!==false
+      ||!Array.isArray(value.items)||value.items.length>150
+      ||!Array.isArray(value.coverage)||value.coverage.length>18
+      ||!Number.isFinite(Date.parse(value.observed_at))
+      ||Date.parse(value.observed_at)>Date.now()+120000)throw Error('Unrecognized or unsafe issue-inbox receipt');
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id)),covered=new Map();
+  for(const item of value.coverage){
+    if(!item||typeof item.project!=='string'||!visible.has(item.project)||covered.has(item.project)
+       ||typeof item.repository!=='string'
+       ||!/^Zennay\/[A-Za-z0-9_.-]{1,100}$/.test(item.repository))throw Error('Unknown issue-inbox project');
+    covered.set(item.project,item.repository);
+  }
+  if(!covered.size)throw Error('No canonical issue coverage');
+  const coverage=[...value.coverage].map(item=>({
+    project:item.project,
+    status:['partial','degraded','unavailable'].includes(item.status)?item.status:'unavailable',
+    oldest:typeof item.oldest_window==='string'?item.oldest_window.slice(0,70):'unknown',
+    recent:typeof item.recent_window==='string'?item.recent_window.slice(0,70):'unknown',
+    prs:typeof item.open_pr_window==='string'?item.open_pr_window.slice(0,70):'unknown'
+  }));
+  const seen=new Set(),issues=[];
+  for(const item of value.items){
+    if(!item||!covered.has(item.project)||item.repository!==covered.get(item.project)
+       ||!Number.isSafeInteger(item.number)||item.number<=0
+       ||item.id!==item.repository+'#'+item.number||seen.has(item.id)
+       ||typeof item.title!=='string'||item.title.length>180
+       ||!['P0','P1','P2','Unspecified'].includes(item.priority)
+       ||item.qa_only!==false||item.active_claim!=='not_verified'
+       ||!Array.isArray(item.related_open_prs)||item.related_open_prs.length>3)throw Error('Invalid issue-inbox entry');
+    seen.add(item.id);
+    const prs=[];
+    for(const pr of item.related_open_prs){
+      if(!pr||!Number.isSafeInteger(pr.number)||pr.number<=0
+          ||typeof pr.draft!=='boolean'||pr.active_claim!=='not_verified'
+          ||!['text_reference_only','closing_keyword_only'].includes(pr.relationship))
+        throw Error('Invalid issue-to-PR reference');
+      prs.push({number:pr.number,draft:pr.draft,relationship:pr.relationship,
+        url:'https://github.com/'+item.repository+'/pull/'+pr.number});
+    }
+    issues.push({project:item.project,number:item.number,priority:item.priority,
+      title:item.title,url:'https://github.com/'+item.repository+'/issues/'+item.number,
+      prs});
+  }
+  return {observedAt:value.observed_at,issues,coverage,partial:true};
+}
+// Optional read-only public issue lookup for one explicitly chosen project.
+// The result is a bounded advisory sample, never queue authorization.
+let PUBLIC_ISSUES_BUSY=false;
+const PUBLIC_ISSUES_LAST_FETCH=new Map();
+async function refreshPublicProductIssues(){
+  if(PUBLIC_ISSUES_BUSY)return;
+  const selected=(DATA?.projects||[]).find(p=>p.id===filter);
+  if(!selected){IMPORTED_PRODUCT_ERROR='Select one project before fetching public product issues.';render();return}
+  const match=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
+  if(!match){IMPORTED_PRODUCT_ERROR='The selected project has no canonical public GitHub repository.';render();return}
+  const projectId=selected.id,repository=match[1];
+  if(Date.now()-(PUBLIC_ISSUES_LAST_FETCH.get(projectId)||0)<120000){
+    IMPORTED_PRODUCT_ERROR='Recent public issue lookup is cached; retry after two minutes.';render();return;
+  }
+  PUBLIC_ISSUES_BUSY=true;PUBLIC_ISSUES_LAST_FETCH.set(projectId,Date.now());
+  IMPORTED_PRODUCT_ERROR='Reading bounded public issues and existing PR references…';render();
+  const tasks=['issues?state=open&sort=created&direction=asc&per_page=30',
+    'issues?state=open&sort=updated&direction=desc&per_page=30',
+    'pulls?state=open&sort=updated&direction=desc&per_page=12'];
+  const outcomes=await Promise.allSettled(tasks.map(path=>publicGitHubGET(repository,path)));
+  try{
+    const issues=new Map();
+    for(let source=0;source<2;source++){
+      const rows=outcomes[source].status==='fulfilled'&&Array.isArray(outcomes[source].value)?outcomes[source].value:[];
+      for(const issue of rows.slice(0,30)){
+        if(!issue||issue.pull_request||!Number.isSafeInteger(issue.number)||issue.number<=0||
+          typeof issue.title!=='string'||issue.title.length>1000)continue;
+        const labels=Array.isArray(issue.labels)?issue.labels.map(label=>String(label?.name||'').toLowerCase()):[];
+        const title=issue.title;
+        const prefix=/^\s*(?:\[(P[01])\]|(P[01])(?=\s|:|-)|(?:[A-Za-z][A-Za-z -]{0,38}\s+)(P[01])\s*:)/i.exec(title);
+        const marked=prefix?prefix.slice(1).find(Boolean)?.toUpperCase():null;
+        const priority=labels.includes('p0')||labels.includes('priority:p0')||marked==='P0'?'P0':
+          labels.includes('p1')||labels.includes('priority:p1')||marked==='P1'?'P1':
+          labels.includes('p2')||labels.includes('priority:p2')?'P2':'Unspecified';
+        const qa=/^\s*(?:P[0-3]\s*[:\-]?\s*)?(?:QA|tests?|regression|quality[ -]validation)\b/i.test(title)||
+          labels.some(label=>['qa','quality-validation','qa-validation','regression','tests-only'].includes(label));
+        if(qa||issue.state!=='open')continue;
+        issues.set(issue.number,{project:projectId,number:issue.number,priority,title:title.slice(0,180),
+          url:'https://github.com/Zennay/'+repository+'/issues/'+issue.number,prs:[],
+          observed:Date.parse(issue.updated_at||issue.created_at)||0});
+      }
+    }
+    const candidates=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
+    for(const pr of candidates.slice(0,12)){
+      if(!pr||!Number.isSafeInteger(pr.number)||pr.number<=0||typeof pr.body!=='string'||pr.body.length>32000)continue;
+      const refs=[...pr.body.matchAll(/(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b/g)];
+      const closing=new Set([...pr.body.matchAll(/\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#([1-9][0-9]{0,7})\b/ig)]
+        .map(match=>Number(match[1])));
+      for(const ref of refs.slice(0,40)){
+        const item=issues.get(Number(ref[1]));
+        if(!item||item.prs.length>=3||item.prs.some(p=>p.number===pr.number))continue;
+        item.prs.push({number:pr.number,draft:pr.draft===true,
+          relationship:closing.has(Number(ref[1]))?'closing_keyword_only':'text_reference_only',
+          url:'https://github.com/Zennay/'+repository+'/pull/'+pr.number});
+      }
+    }
+    const ranked={P0:0,P1:1,P2:2,Unspecified:3};
+    const readable=outcomes.filter(o=>o.status==='fulfilled'&&Array.isArray(o.value)).length;
+    IMPORTED_PRODUCT_ISSUES={observedAt:new Date().toISOString(),partial:true,
+      issues:[...issues.values()].sort((a,b)=>ranked[a.priority]-ranked[b.priority]||b.observed-a.observed).slice(0,60),
+      coverage:[{project:projectId,status:readable===3?'partial':readable?'degraded':'unavailable',
+        oldest:outcomes[0].status==='fulfilled'?'bounded 30':'unavailable',
+        recent:outcomes[1].status==='fulfilled'?'bounded 30':'unavailable',
+        prs:outcomes[2].status==='fulfilled'?'bounded 12':'unavailable'}]};
+    IMPORTED_ISSUE_SHOW_ALL=false;
+    IMPORTED_PRODUCT_ERROR=(readable===3?'Public issue sample loaded. ':'Partial public issue source ('+readable+'/3 readable). ')+
+      'These references do not verify fixes, worker ownership or queue claims.';
+  }catch(_error){
+    IMPORTED_PRODUCT_ERROR='Public issue source unavailable or malformed. No queue claim taken.';
+  }finally{PUBLIC_ISSUES_BUSY=false;if(route==='activity')render()}
+}
+
+function productIssueInboxPanel(){
+  const snapshot=IMPORTED_PRODUCT_ISSUES;
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const rows=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)&&
+    (IMPORTED_ISSUE_SHOW_ALL||item.priority==='P0'||item.priority==='P1'));
+  const hiddenLowerPriority=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)
+    &&item.priority!=='P0'&&item.priority!=='P1').length;
+  const coverageText=(snapshot?.coverage||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter))
+    .map(item=>item.project+' · '+item.status+' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
+  const html=rows.slice(0,50).map(item=>'<div class="service-row"><div><strong>'+esc(item.priority)+
+    ' · '+esc(item.project)+'</strong> <a target="_blank" rel="noopener noreferrer" href="'+esc(item.url)+'">'+
+    esc(item.title)+'</a><small> · open issue #'+item.number+'</small>'+
+    (item.prs.length?'<div class="detail-note">Referenced open PRs (not proven fixes or active claims): '+
+      item.prs.map(pr=>'<a href="'+esc(pr.url)+'" target="_blank" rel="noopener noreferrer">#'+pr.number+
+      (pr.draft?' draft':'')+(pr.relationship==='closing_keyword_only'?' closing keyword':' mention')+'</a>').join(' · ')+'</div>':'')+
+    '</div></div>').join('');
+  return '<div class="panel"><div class="panel-header"><div><h2>Product issue inbox · optional local import</h2>'+
+    '<p class="panel-subtitle">Existing GitHub P0/P1 issues from the zSentinel bounded inbox, never an automated claim or task assignment.</p></div></div>'+
+    '<button type="button" class="runner-action" data-public-issues-refresh '+(PUBLIC_ISSUES_BUSY?'disabled aria-busy="true"':'')+'>Read public P0/P1 issues for selected project</button> '+
+    '<span class="detail-note">Opt-in public GitHub GET only · bounded sample · no credentials or queue actions.</span><br>'+ 
+    '<label for="productIssueReceiptFile">Or import a JSON product issue-inbox receipt</label> '+
+    '<input type="file" id="productIssueReceiptFile" accept=".json,application/json" aria-label="Import bounded product issue inbox">'+
+    (snapshot?'<button type="button" class="runner-action" data-product-issues-clear>Clear issues</button> '+
+      (hiddenLowerPriority?'<button type="button" class="runner-action" data-product-issues-toggle>'+(
+        IMPORTED_ISSUE_SHOW_ALL?'Focus P0/P1 only':'Include '+hiddenLowerPriority+' lower-priority sampled issues')+'</button>':''):'')+
+    '<p role="status" aria-live="polite">'+esc(IMPORTED_PRODUCT_ERROR||
+      (snapshot?'Imported bounded issue sample · '+date(snapshot.observedAt,true)+'.':'No product issue receipt imported.'))+'</p>'+
+    (snapshot?'<p class="detail-note">Source coverage: '+esc(coverageText)+' · Bounded sources may be missing, truncated or rate-limited. Existing PR references do not prove active ownership, fixes or deploy approval.</p>'+
+      (html?'<div class="service-list">'+html+'</div>':'<div class="empty">No visible issues in this bounded project filter.</div>')+
+      (rows.length>50?'<p class="detail-note">Only 50 of the sampled issues are displayed.</p>':''):'')+'</div>';
+}
+
 function activityPage(){
   const visible=new Set(DATA.projects.map(p=>p.id));
   const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
   const coverage=activityCoverageText();
   return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Local project activity.','Local VPS commits and milestones, not a complete GitHub activity history.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${esc(p.id)}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`)}
+  ${githubActivityImportPanel()}
+  ${productIssueInboxPanel()}
   <div class="panel"><div class="panel-header"><div><h2>Local event coverage</h2><p class="panel-subtitle" role="status" aria-live="polite">${esc(coverage)}</p></div><button type="button" class="runner-action" data-activity-refresh ${ACTIVITY_COVERAGE.pending?'disabled aria-busy="true"':''}>Refresh project history</button></div>
   <div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local events are available for this selection. GitHub activity may still exist.</div>'}</div>
   <div class="detail-note">Local event timestamps are not proof that a PR was merged or a CI run passed. The API returns at most 80 events per project; projects are interleaved to stop noisy projects hiding quieter work. Archived projects are hidden.</div></div></div>`;
@@ -694,8 +1018,8 @@ document.addEventListener('dragover',e=>{const card=e.target.closest('[data-proj
 document.addEventListener('dragleave',e=>{e.target.closest('[data-project-id]')?.classList.remove('drag-over')});
 document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();if(projectLayoutActionPending){draggedProject=null;projectLayoutNotice('Finish archiving or restoring before reordering projects.');return}const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
-document.addEventListener('click',async e=>{const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+document.addEventListener('click',async e=>{const issueRefresh=e.target.closest('[data-public-issues-refresh]');if(issueRefresh){e.preventDefault();void refreshPublicProductIssues();return}const publicRefresh=e.target.closest('[data-github-public-refresh]');if(publicRefresh){e.preventDefault();void refreshPublicGitHubEvidence();return}const priorityToggle=e.target.closest('[data-product-issues-toggle]');if(priorityToggle){e.preventDefault();IMPORTED_ISSUE_SHOW_ALL=!IMPORTED_ISSUE_SHOW_ALL;render();return}const issueClear=e.target.closest('[data-product-issues-clear]');if(issueClear){e.preventDefault();IMPORTED_PRODUCT_ISSUES=null;IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;render();return}const githubClear=e.target.closest('[data-github-receipt-clear]');if(githubClear){e.preventDefault();IMPORTED_GITHUB_ACTIVITY=null;IMPORTED_GITHUB_ERROR='';render();return}const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
-document.addEventListener('change',async e=>{const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
+document.addEventListener('change',async e=>{if(e.target.id==='productIssueReceiptFile'){const file=e.target.files?.[0];if(!file)return;try{if(file.size>1024*1024||file.size<2)throw Error('JSON receipt exceeds 1 MiB or is empty');IMPORTED_PRODUCT_ISSUES=validateProductIssueInbox(JSON.parse(await file.text()));IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;}catch(error){IMPORTED_PRODUCT_ISSUES=null;IMPORTED_PRODUCT_ERROR='Product issue receipt not imported: '+(error instanceof SyntaxError?'Invalid JSON':String(error.message||'Invalid receipt'));}if(route==='activity')render();return}if(e.target.id==='githubReceiptFile'){const file=e.target.files?.[0];if(!file)return;try{if(file.size>1024*1024||file.size<2)throw Error('JSON receipt exceeds 1 MiB or is empty');const payload=JSON.parse(await file.text());IMPORTED_GITHUB_ACTIVITY=validateGitHubActivityReceipt(payload);IMPORTED_GITHUB_ERROR='';}catch(error){IMPORTED_GITHUB_ACTIVITY=null;IMPORTED_GITHUB_ERROR='GitHub receipt not imported: '+(error instanceof SyntaxError?'Invalid JSON':String(error.message||'Invalid receipt'));}if(route==='activity')render();return}const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
 $('refresh').addEventListener('click',()=>refresh(true));window.addEventListener('hashchange',navigate);hydrate();navigate();const cachedStatus=loadCachedStatus();if(cachedStatus){DATA=cachedStatus;setConnection(false);$('notice').hidden=false;$('notice').textContent='Live connection is temporarily unavailable. Showing the last successful dashboard snapshot while reconnecting automatically.';$('syncTime').textContent='Last successful measurement '+clock(DATA.time)+' · reconnecting…';render()}refresh(true);setInterval(()=>{if(!document.hidden)refresh()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
