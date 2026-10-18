@@ -22,7 +22,9 @@ jobs:
     # regression job (GitHub treats skipped required jobs as successful).
     # This admission step NEVER checks out or executes contributor code.
     name: Reject untrusted regression events before checkout
-    runs-on: ubuntu-latest
+    # Owner review required before private runner can execute PR source.
+    if: ${{ false }}
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Assert trusted event and repository provenance
@@ -55,7 +57,7 @@ jobs:
           esac
   critical-runner-flows:
     needs: trusted-event
-    # Run untrusted PR code only in hosted CI and only for this repository.
+    # Disabled: private runner must not execute PR source without isolated admission.
     # Explicit operator dispatch always targets exact current canonical main.
     if: >-
       github.repository == 'Zennay/zCloud' &&
@@ -69,7 +71,7 @@ jobs:
         github.actor == 'Zennay' &&
         github.triggering_actor == 'Zennay' &&
         github.run_attempt == 1))
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
