@@ -8,6 +8,112 @@ const clock=x=>new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Amsterdam',hour
 const rel=x=>{const m=Math.floor((Date.now()-Date.parse(x))/60000);return m<1?'zojuist':m<60?m+' min geleden':m<1440?Math.floor(m/60)+' u geleden':date(x)};
 const STATUS_TIMEOUT_MS=30000,STATUS_CACHE_KEY='zcloud:last-status:v1',STATUS_CACHE_MAX_AGE_MS=24*60*60*1000;
 let DATA=null,ACTIVITY=[],HOST=[],HISTORY={},WORKER_SCALING=null,WORKER_SCALING_ERROR='',route='',range='7d',filter='',busy=false,routeVersion=0,dynamicWorkerSaveTimer=null,scrollToWorkersOnOverview=false,mobileWorkersActive=false;
+const ACTIVITY_CACHE_INTERVAL_MS=120000,ACTIVITY_MAX_PROJECTS=24,ACTIVITY_MAX_VISIBLE=240;
+let ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:0,projectsRead:0,failed:0,limited:false,pending:false,scope:'',lastError:''};
+let ACTIVITY_PROJECT_FETCH=null;
+let ACTIVITY_PROJECT_FETCH_TIME=0;
+function activityCoverageText(){
+  const c=ACTIVITY_COVERAGE;
+  const prefix='Local VPS events only · GitHub PRs, branches and CI are not synchronized.';
+  if(c.pending)return prefix+' Reading project histories…';
+  if(!c.lastSuccess)return prefix+' Project coverage has not been checked.';
+  const partial=c.failed||c.projectsRead<c.projectsTotal;
+  const status=partial?'Partial coverage — some project histories are unavailable or not included.':'Project history read completed.';
+  const limit=c.limited?' Some projects have reached the last-80-events API limit.':'';
+  return prefix+' '+status+' '+c.projectsRead+'/'+c.projectsTotal+' project sources checked · last read '+date(c.lastSuccess,true)+'.'+limit;
+}
+/**
+ * The existing read-only API accepts ?project=<allowlisted id>, but its global
+ * 80-row cap can hide every quiet project behind one noisy checkout. Read each
+ * visible project at most once per two minutes, using bounded parallelism, and
+ * round-robin their local events without treating a successful /api/status as
+ * evidence that remote GitHub PRs or CI have been synchronized.
+ */
+async function refreshProjectActivity(version,force=false){
+  if(!DATA||route!=='activity')return;
+  const visible=(DATA.projects||[]).filter(p=>p&&typeof p.id==='string'
+      &&/^[a-z][a-z0-9_-]{0,55}$/.test(p.id));
+  const scoped=filter?visible.filter(p=>p.id===filter):visible;
+  const ids=scoped.slice(0,ACTIVITY_MAX_PROJECTS).map(p=>p.id);
+  const omitted=Math.max(0,scoped.length-ids.length);
+  const scope=ids.join('|');
+  if(!ids.length){
+    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:scoped.length,projectsRead:0,failed:0,limited:false,pending:false,scope,lastError:'no-visible-projects'};
+    render();return;
+  }
+  if(ACTIVITY_PROJECT_FETCH){
+    await ACTIVITY_PROJECT_FETCH;
+    if(version!==routeVersion||route!=='activity')return;
+    // New filter/scope while a previous request was pending: start the new
+    // scope rather than leaving an indefinite "Reading…" indication.
+    return refreshProjectActivity(version,force);
+  }
+  if(!force&&ACTIVITY_COVERAGE.scope===scope
+    &&Date.now()-ACTIVITY_PROJECT_FETCH_TIME<ACTIVITY_CACHE_INTERVAL_MS)return;
+  ACTIVITY_COVERAGE={...ACTIVITY_COVERAGE,pending:true,scope,lastError:''};
+  render();
+  const work=(async()=>{
+    const streams=new Map(),errors=[];
+    for(let start=0;start<ids.length;start+=4){
+      const batch=ids.slice(start,start+4);
+      const results=await Promise.allSettled(batch.map(id=>api('/api/activity?project='+encodeURIComponent(id),8000)));
+      if(version!==routeVersion||route!=='activity')return;
+      results.forEach((r,index)=>{
+        const id=batch[index];
+        if(r.status!=='fulfilled'||!Array.isArray(r.value)){errors.push(id);return;}
+        // Fail closed if an endpoint returns cross-project or malformed data.
+        const rows=r.value;
+        if(rows.length>80||rows.some(a=>!a||a.project!==id
+            ||typeof a.id!=='string'||a.id.length>256
+            ||typeof a.ts!=='string'||!Number.isFinite(Date.parse(a.ts)))){
+          errors.push(id);return;
+        }
+        streams.set(id,rows);
+      });
+    }
+    if(version!==routeVersion||route!=='activity'||filter!==((ids.length===1&&scope===filter)?filter:''))return;
+    const merged=[],seen=new Set(),indices=new Map(ids.map(id=>[id,0]));
+    while(merged.length<ACTIVITY_MAX_VISIBLE){
+      let advanced=false;
+      for(const id of ids){
+        const items=streams.get(id)||[];
+        let i=indices.get(id);
+        if(i>=items.length)continue;
+        const item=items[i];indices.set(id,i+1);
+        if(!seen.has(item.id)){merged.push(item);seen.add(item.id);}
+        advanced=true;
+        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
+      }
+      if(!advanced)break;
+    }
+    // A partial API outage must not silently delete the last-known local feed.
+    // Successful reads are merged with the previous global result when needed.
+    if(errors.length){
+      for(const item of ACTIVITY){
+        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
+        if(item&&typeof item.id==='string'&&!seen.has(item.id)){
+          merged.push(item);seen.add(item.id);
+        }
+      }
+    }
+    if(streams.size)ACTIVITY=merged;
+    ACTIVITY_PROJECT_FETCH_TIME=Date.now();
+    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:streams.size?ACTIVITY_PROJECT_FETCH_TIME:ACTIVITY_COVERAGE.lastSuccess,
+      projectsTotal:scoped.length,projectsRead:streams.size,failed:errors.length+omitted,
+      limited:[...streams.values()].some(rows=>rows.length===80),
+      pending:false,scope,lastError:errors.length?'partial-local-reads':''};
+    render();
+  })();
+  ACTIVITY_PROJECT_FETCH=work;
+  try{await work;}finally{
+    if(ACTIVITY_PROJECT_FETCH===work)ACTIVITY_PROJECT_FETCH=null;
+    if(ACTIVITY_COVERAGE.pending&&version===routeVersion){
+      ACTIVITY_COVERAGE={...ACTIVITY_COVERAGE,pending:false,lastError:'interrupted'};
+      render();
+    }
+  }
+}
+
 function loadCachedStatus(){try{const cached=JSON.parse(localStorage.getItem(STATUS_CACHE_KEY)||'null');if(!cached||!cached.data||!cached.saved_at)return null;if(Date.now()-Number(cached.saved_at)>STATUS_CACHE_MAX_AGE_MS)return null;return cached.data}catch{return null}}
 function saveCachedStatus(data){try{localStorage.setItem(STATUS_CACHE_KEY,JSON.stringify({saved_at:Date.now(),data}))}catch{}}
 function hydrate(){document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);el.removeAttribute('data-icon')})}
@@ -511,7 +617,15 @@ async function controlWorker(workerId,action,button,force=false,globalSlot=null)
   }catch(error){if(!iconOnly)button.textContent='Failed';window.alert(error.message||String(error))}
   finally{setTimeout(()=>{button.disabled=false;button.innerHTML=previous;button.removeAttribute('aria-busy')},1800)}
 }
-function activityPage(){const visible=new Set(DATA.projects.map(p=>p.id));const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Every step counts.','Recorded code changes and project steps.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${p.id}" ${filter===p.id?'selected':''}>${p.name}</option>`).join('')}</select>`)}<div class="panel"><div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No activity for this project yet.</div>'}</div><div class="detail-note">Up to 80 recorded events. Archived projects are hidden. Commit dates come from Git; project steps use the date when the monitor first detected them.</div></div></div>`}
+function activityPage(){
+  const visible=new Set(DATA.projects.map(p=>p.id));
+  const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
+  const coverage=activityCoverageText();
+  return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Local project activity.','Local VPS commits and milestones, not a complete GitHub activity history.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${esc(p.id)}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`)}
+  <div class="panel"><div class="panel-header"><div><h2>Local event coverage</h2><p class="panel-subtitle" role="status" aria-live="polite">${esc(coverage)}</p></div><button type="button" class="runner-action" data-activity-refresh ${ACTIVITY_COVERAGE.pending?'disabled aria-busy="true"':''}>Refresh project history</button></div>
+  <div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local events are available for this selection. GitHub activity may still exist.</div>'}</div>
+  <div class="detail-note">Local event timestamps are not proof that a PR was merged or a CI run passed. The API returns at most 80 events per project; projects are interleaved to stop noisy projects hiding quieter work. Archived projects are hidden.</div></div></div>`;
+}
 function infrastructure(){const h=DATA.host,mem=h.memory.used/h.memory.total*100,disk=h.disk.used/h.disk.total*100;return heading('WORKSPACE / INFRASTRUCTURE','My VPS, up close.','Current load and trends, without interrupting my projects.')+`<div class="stat-grid">${stat('CPU usage',h.cpu==null?'—':num(h.cpu)+'<span>%</span>',h.cores+' vCPU · load '+num(h.load),'cpu')}${stat('Memory',num(mem)+'<span>%</span>',gb(h.memory.used)+' of '+gb(h.memory.total),'server')}${stat('Storage',num(disk)+'<span>%</span>',gb(h.disk.free)+' free on '+gb(h.disk.total),'disk')}${stat('Uptime',Math.floor(h.uptime/86400)+'<span>days</span>',Math.floor(h.uptime%86400/3600)+' hours since the last full day','clock')}</div><p class="infra-info">Live measurements every 15 seconds. History every five minutes, up to 24 hours in this chart.</p><div class="infra-grid"><div class="panel full-width"><div class="panel-header"><div><h2>Resource usage</h2><div class="panel-subtitle">Percentage · Amsterdam time</div></div><span class="tiny-tag">24 HOURS</span></div><div class="legend"><span style="--accent:#c2f970"><i class="legend-dot"></i>CPU</span><span style="--accent:#82b8ff"><i class="legend-dot"></i>Memory</span><span style="--accent:#a899ff"><i class="legend-dot"></i>Storage</span></div><div class="chart-wrap" id="hostChart"></div><div class="chart-detail" id="chartDetail">Select a data point for the exact measurement.</div></div>${DATA.projects.filter(p=>p.services.length).map(services).join('')}</div>`}
 function chart(target,series){const el=$(target);if(!el)return;let points=series.flatMap(s=>s.data).filter(p=>p.value!=null&&Number.isFinite(Date.parse(p.date)));if(!points.length){el.innerHTML='<div class="empty">No measurements in this period.<br>New history is recorded every five minutes.</div>';return}const w=660,h=215,left=44,right=15,top=12,bottom=33,plotw=w-left-right,ploth=h-top-bottom;let lo=Math.min(...points.map(p=>Date.parse(p.date))),hi=Math.max(...points.map(p=>Date.parse(p.date)));const single=lo===hi;if(single){lo-=150000;hi+=150000}const x=t=>left+(Date.parse(t)-lo)/(hi-lo)*plotw,y=v=>top+(100-v)/100*ploth;let svg=`<svg class="chart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" role="group" aria-label="Time chart with percentages. Select a data point for the date.">`;
 for(const v of [0,25,50,75,100])svg+=`<line x1="${left}" x2="${w-right}" y1="${y(v)}" y2="${y(v)}" stroke="#2a303b" stroke-dasharray="3 5"/><text x="${left-10}" y="${y(v)+4}" text-anchor="end">${v}%</text>`;
@@ -521,7 +635,8 @@ svg+='</svg>';el.innerHTML=svg;const countTimes=new Set(points.map(p=>p.date)).s
 }
 function paintCharts(){if(route==='overview')chart('progressChart',DATA.projects.map(p=>({name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))})));else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p)chart('progressChart',[{name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))}])}else if(route==='infrastructure')chart('hostChart',[['cpu','CPU','#c2f970'],['memory','Memory','#82b8ff'],['disk','Storage','#a899ff']].map(([key,name,color])=>({name,color,data:HOST.map(r=>({date:r.ts,value:r[key]}))}))) }
 function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);const selectedProject=document.activeElement?.dataset.globalWorkerProject;syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();document.querySelectorAll('[data-global-worker-project]').forEach(el=>{const slot=Number(el.dataset.globalWorkerProject);const w=(WORKER_DEBUG?.workers||[]).find(x=>Number(x.global_slot)===slot);el.value=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:(w?.project||'')});if(selectedProject)document.querySelector('[data-global-worker-project="'+selectedProject+'"]')?.focus({preventScroll:true});if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
-async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled')ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render()}
+async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled'&&Array.isArray(results[0].value)&&
+    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render();if(route==='activity')void refreshProjectActivity(version)}
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
 async function refresh(initial=false){if(busy)return;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling()}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>'}finally{busy=false;$('refresh').disabled=false}}
 function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;if(route!=='overview')mobileWorkersActive=false;if(scrollToWorkersOnOverview)mobileWorkersActive=true;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'});if(route==='overview'&&scrollToWorkersOnOverview){scrollToWorkersOnOverview=false;window.requestAnimationFrame(()=>{const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}})}}
@@ -531,7 +646,7 @@ document.addEventListener('dragover',e=>{const card=e.target.closest('[data-proj
 document.addEventListener('dragleave',e=>{e.target.closest('[data-project-id]')?.classList.remove('drag-over')});
 document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
-document.addEventListener('click',async e=>{const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+document.addEventListener('click',async e=>{const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await saveProjectLayout(DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
 document.addEventListener('change',async e=>{const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
