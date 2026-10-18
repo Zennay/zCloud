@@ -120,7 +120,8 @@ _GITHUB_OPENER = urllib.request.build_opener(_NoGithubRedirects())
 
 def bounded_get(url, token):
     # A redirect is a degraded source result, not permission to forward credentials.
-    if urllib.parse.urlsplit(url).scheme != "https" or urllib.parse.urlsplit(url).hostname != "api.github.com":
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc != "api.github.com" or not parsed.path.startswith("/repos/"):
         raise ValueError("invalid_github_api_origin")
     headers = {
         "Accept": "application/vnd.github+json",
