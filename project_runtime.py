@@ -191,7 +191,7 @@ def validated_receipt_text(**fields: str) -> dict[str, str]:
         text = str(value or "")
         if len(text) > _RECEIPT_TEXT_LIMITS[name]:
             raise ValueError(f"receipt {name} exceeds {_RECEIPT_TEXT_LIMITS[name]} characters")
-        if "\\x00" in text:
+        if "\x00" in text:
             raise ValueError(f"receipt {name} contains a NUL character")
         try:
             text.encode("utf-8")
