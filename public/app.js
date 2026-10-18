@@ -1202,7 +1202,7 @@ async function readZSentinelSources(){
 function exportZSentinelHandoff(){
   const projects=new Set((DATA?.projects||[]).map(item=>item.id));
   const scope=filter||'all-projects';
-  const clean=(value,n=180)=>String(value??'').replace(/[\\r\\n\\t]+/g,' ')
+  const clean=(value,n=180)=>String(value??'').replace(/[\r\n\t]+/g,' ')
     .replace(/[\x00-\x1f\x7f]/g,'').slice(0,n);
   const issues=(IMPORTED_PRODUCT_ISSUES?.issues||[]).filter(item=>
     projects.has(item.project)&&(!filter||item.project===filter)
@@ -1259,7 +1259,7 @@ function exportZSentinelHandoff(){
     'Check actual current Notion claims and exact GitHub PR/CI status before editing. Keep existing human, security, runner and serialized production-release gates intact.',
     'Only implement unclaimed work and never infer deployment from PR or main-commit history.',
     '');
-  const blob=new Blob([lines.join('\\n')],{type:'text/markdown;charset=utf-8'});
+  const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
   const url=URL.createObjectURL(blob);
   const element=document.createElement('a');
   element.href=url;element.download='zsentinel-workboard-'+clean(scope,56)+'.md';
