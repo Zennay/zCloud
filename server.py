@@ -9,6 +9,7 @@ import enhancements
 import project_runtime
 from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
+from scripts.zcloud_product_delivery_policy import is_new_product_delivery, product_queue_snapshot
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -2583,7 +2584,7 @@ def _portfolio_queue_row(row):
     item['execution_lane']=metadata.get('execution_lane') if isinstance(metadata.get('execution_lane'),dict) else None
     return item
 
-def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
+def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None,eligible_queue_ids=None):
     ts=ts or now()
     params=[]
     project_clause=''
@@ -2612,6 +2613,10 @@ def _portfolio_lane_snapshot_locked(connection,project_ids=None,ts=None):
         claims_by_project.setdefault(str(row['project_id']),[]).append(_claim_payload(row))
     backlog_by_project={}
     for row in backlog:
+        # Deny only *new* queued candidates; preserve active owner scopes.
+        if (eligible_queue_ids is not None and str(row['status']) == 'queued'
+                and str(row['queue_id']) not in eligible_queue_ids):
+            continue
         backlog_by_project.setdefault(str(row['project_id']),[]).append(dict(row))
     target_ids=ids or sorted(backlog_by_project)
     lanes=[]
@@ -2635,20 +2640,39 @@ def portfolio_execution_lanes(project_id=None):
         return _portfolio_lane_snapshot_locked(c,ids,now())
 
 def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
-    rows=connection.execute(
-        """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-           ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
-                    created_at,queue_id LIMIT 240"""
-    ).fetchall()
+    # Fetch at most four ordered pages. Old QA-only P0/P1 items can otherwise
+    # consume the original global LIMIT 240 and starve a safe product fix at
+    # position 241. This scan is bounded; no queue rows are edited.
     preempted={str(value) for value in (preempted or set())}
-    rows=[row for row in rows if str(row['queue_id']) not in preempted]
+    rows=[]
+    for offset in (0,240,480,720):
+        page=connection.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                             WHEN 'P2' THEN 2 ELSE 3 END,
+                        created_at,queue_id LIMIT 240 OFFSET ?""",
+            (offset,),
+        ).fetchall()
+        # 17 Oct: skip fresh isolated QA; leave existing claimed/running work
+        # and task leases in place. Preserve original P0/P1 relative ordering.
+        rows.extend(
+            row for row in page
+            if str(row['queue_id']) not in preempted
+            and is_new_product_delivery(dict(row))
+        )
+        if len(rows)>=240 or len(page)<240:
+            break
+    rows=rows[:240]
     if not rows:
         return []
     project_ids={str(row['project_id']) for row in rows}
     lane_map={
         str(lane.get('queue_id')):lane
-        for lane in _portfolio_lane_snapshot_locked(connection,project_ids,ts)
+        for lane in _portfolio_lane_snapshot_locked(
+            connection,project_ids,ts,
+            eligible_queue_ids={str(row['queue_id']) for row in rows},
+        )
         if lane.get('queue_id') and lane.get('status')=='queued'
     }
     return [(row,lane_map[str(row['queue_id'])]) for row in rows if str(row['queue_id']) in lane_map]
@@ -4932,7 +4956,9 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/portfolio-queue':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_done=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
-            return self.reply({'backend':'sqlite','items':portfolio_queue_items(include_done),'allocation':global_worker_allocation(),'time':now()})
+            items=portfolio_queue_items(include_done)
+            return self.reply({'backend':'sqlite','items':items,'delivery_policy':product_queue_snapshot(items),
+                               'allocation':global_worker_allocation(),'time':now()})
         if u.path=='/api/portfolio-attention':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             include_resolved=str(q.get('all',['0'])[0]).lower() in ('1','true','yes')
