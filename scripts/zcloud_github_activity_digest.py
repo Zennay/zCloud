@@ -94,6 +94,18 @@ def digest(payload: dict) -> str:
             expected_prefix = "github:" + repo + ":" + kind + ":"
             if not event_id.startswith(expected_prefix):
                 raise ValueError("cross_repository_event")
+            if kind in {"pr_created", "pr_updated", "pr_merged"}:
+                target = event.get("reported_target")
+                if target is not None and (not isinstance(target, str) or
+                                           not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", target)):
+                    raise ValueError("invalid_reported_target")
+                main_report = event.get("reported_main_merge")
+                if not isinstance(main_report, bool) or main_report != (
+                    event.get("merged") is True and target == "main"
+                ):
+                    raise ValueError("invalid_reported_merge")
+                if event.get("main_merged") is not False:
+                    raise ValueError("main_merge_not_independently_verified")
             if kind == "ci_run":
                 if event.get("conclusion") not in OUTCOMES:
                     raise ValueError("invalid_outcome")
@@ -110,12 +122,15 @@ def digest(payload: dict) -> str:
             validated.append(event)
         created = sum(e["kind"] == "pr_created" for e in validated)
         merged = sum(e["kind"] == "pr_merged" for e in validated)
+        merged_to_main_reported = sum(e["kind"] == "pr_merged" and
+                                      e["reported_main_merge"] for e in validated)
         ci_success = sum(e["kind"] == "ci_run" and e.get("conclusion") == "success"
                          for e in validated)
         main_commits = sum(e["kind"] == "main_commit" for e in validated)
         lines.append("Observed event counts (bounded window, may be truncated): "
                      + str(created) + " PR-created; " + str(merged)
-                     + " PR-merged-to-some-base; " + str(ci_success)
+                     + " PR-merged-to-some-base (of which " +
+                     str(merged_to_main_reported) + " reported target=main); " + str(ci_success)
                      + " workflow-success; " + str(main_commits)
                      + " canonical-main commits. **None proves a main deployment.**")
         for event in validated[:10]:
@@ -138,7 +153,8 @@ def digest(payload: dict) -> str:
                 if event.get("draft") is True:
                     label += " (draft)"
                 if kind == "pr_merged":
-                    label += " (base not independently verified)"
+                    target = event.get("reported_target") or "unknown"
+                    label += " (reported target: " + target + "; reachability unverified)"
                 url = "https://github.com/" + repo + "/pull/" + str(number)
             lines.append("- [" + label + "](" + url + ")")
         lines.append("")
