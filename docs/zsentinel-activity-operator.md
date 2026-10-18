@@ -40,6 +40,19 @@ The locally downloaded handoff contains no raw queue identifiers for these rows;
 
 The Activity screen now has an optional **Unmerged branches / Import branch .json** panel. This pairs with [PR #1554](https://github.com/Zennay/zCloud/pull/1554), the standalone read-only GitHub branch inventory for repository `Zennay/zCloud`. The reporter can scan a 12-branch namespace slice and print a bounded JSON receipt; import the JSON file manually on Activity. The UI does not fetch or execute repository content, call GitHub, persist tokens or modify a project queue.
 
+You may select up to **eight** JSON files at once (or append additional slices later),
+for at most **96** distinct branch records. A combined session requires the
+same repository, source main SHA, matching branch namespace and matching
+inventory counts; independent observation times must be within ten minutes.
+Duplicate/overlapping slice indices or branch refs are rejected, and an invalid
+file never destroys previously accepted browser evidence. Because multiple
+observations are not a single atomic snapshot, their union is **always**
+reported as PARTIAL even when slice counts happen to cover every index.
+The view prioritizes conflicts and displays at most 40 branches; the Markdown
+export likewise bounds included branch references at 40 with an explicit
+omission count. You can export from a branch-only import without first loading
+unrelated GitHub or queue data.
+
 The browser requires the exact `zsentinel-recent-prless-ownership-v1` schema, `repository=Zennay/zCloud`, a verified-shape main SHA, source timestamps, explicit no-authorization flags, bounded branch/path arrays, matching conflict evidence and limited JSON size. Imported details stay **in tab memory only** and render as a source timestamp (with >6-hour stale warning), partial/complete-at-observation coverage, branch ref, ahead count, changed-path count and up to 12 conflicting paths per branch. Other projects never inherit zCloud's owner evidence. Use **Clear** to discard.
 
 The existing **Export handoff .md** can include only the bounded, sanitized branch ref/time/classification/overlap count from a manual import, not raw provider payloads, branch commit messages, GitHub credentials or privately scoped queue IDs. The handoff explicitly does not establish an active claim or authorize source edits, merges, worker actions or deployment. An absent imported report means **unknown**, not no conflicts. A prefix-selected scan remains globally partial even when all matching branches were scanned.
