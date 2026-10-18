@@ -131,7 +131,13 @@ def window_digest_html(ledger, rows, project=None):
             local[pid].append(at.astimezone(timezone.utc))
     output = []
     for pid in projects:
-        coverage = ledger["coverage"][pid].get("status")
+        source_info = ledger["coverage"][pid]
+        # Coverage reports the original fetch state, not a live GitHub check.
+        # Always show the actual last-fetch timestamp so an old 'recent_window'
+        # receipt cannot be mistaken for recent activity.
+        source_label = ("Volledig bronvenster" if source_info.get("status") == "recent_window"
+                        else "Gedeeltelijke bron") + " · opgehaald " + (
+                            source_info.get("last_successful_source_fetch") or "onbekend")
         for hours in labels:
             lower = now - timedelta(hours=hours)
             entries = [item for at, item in github[pid] if lower <= at <= now]
@@ -147,8 +153,7 @@ def window_digest_html(ledger, rows, project=None):
             output.append("<tr><th scope='row'>" + h(pid) + "</th><td>" +
                           h(hours) + " uur</td>" +
                           "".join("<td>" + h(value) + "</td>" for value in measures) +
-                          "<td>" + ("Recent bronvenster" if coverage == "recent_window"
-                                    else "Deels/verouderd") + "</td></tr>")
+                          "<td>" + h(source_label) + "</td></tr>")
     clock = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     return (
         "<section aria-labelledby='activity-windows'><h2 id='activity-windows'>"
