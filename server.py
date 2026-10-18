@@ -7,7 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
-from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page
+from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page, zcloud_github_activity_live
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
 from scripts.zcloud_product_delivery_policy import is_new_product_delivery, product_queue_snapshot
 
@@ -4925,6 +4925,24 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
+        if u.path=='/api/github-activity-live':
+            # On-demand only, never a queue/worker action. Private or remote
+            # API reads require the existing trusted management peer admission.
+            # Reject before a GitHub network request or refresh is scheduled.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project'},400)
+            project_id=names[0]
+            if project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                sample=zcloud_github_activity_live.read_live(ROOT/'projects.json',project_id)
+            except (ValueError,OSError):
+                return self.reply({'error':'GitHub bron niet beschikbaar'},400)
+            # Explicit state=refreshing is NOT a successful synced feed; clients
+            # may poll by user initiation, with the bounded cache guarding calls.
+            return self.reply(sample)
         if u.path=='/api/worker-progress-history':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             project_id=str(q.get('project',[''])[0] or '').strip().lower()
