@@ -49,6 +49,8 @@ These are precisely scoped source integrations on the new runtime branch, not ed
 
 An operator-read `delivery_policy` report previously lumped *all* rejected queued candidates into `queued_qa_only_held`. That misrepresented a genuinely important P0/P1 product task with invalid metadata, missing/oversized title, or oversized criteria as an intentional QA-only skip, making the actual actionable blocker invisible.
 
+The actual API now calculates that advisory report against the same raw SQLite result set **before** the public row normalizer discards `metadata_json`. The caller receives separately sanitized `items` and the source-faithful `delivery_policy` from one read snapshot; no raw metadata is returned and no second potentially torn queue read is introduced. Other callers of `portfolio_queue_items()` keep the exact former list return contract.
+
 The product admission predicate **is unchanged**. Instead, `held_queue_review_reason()` classifies non-admitted, eligible queued entries for the read model only:
 
 - `qa_only`: actually falls into the existing QA-only classification, so it remains in `queued_qa_only_held`.
