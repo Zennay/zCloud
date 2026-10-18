@@ -21,6 +21,14 @@ The same source branch now brings the **already implemented production hunks** o
 
 Only the existing product-source adjustments were ported from #1270; **no old or new QA files were copied, written or manually run**. Original owner/review and source conflict reconciliation remain necessary. This is an independent main-targeted integration candidate, not a claim that #1270 has merged.
 
+## Composed producer integrity from existing open PRs
+
+The current integration branch now carries the previously authored **product-source** changes of [#1545](https://github.com/Zennay/zCloud/pull/1545), without modifying its branch: `record_receipt()` persists complete phase, action, commit SHA, blocker, next gate and source fields or rejects them before INSERT; `scripts/zcloud_runtime.py receipt` validates provenance, evidence schema and size before even opening the SQLite database. The original operator contract has been preserved verbatim in `docs/zsentinel-receipt-write-integrity.md`.
+
+It also composes the **source logic**, not the QA suites, of draft [#1275](https://github.com/Zennay/zCloud/pull/1275): the resource CLI validates owner identity and finite, complete ≤4000-byte UTF-8 metadata before opening/initializing SQLite; it then calls the same core owner/metadata validators. A denied CLI request therefore cannot create an empty production database either.
+
+This consolidates core-writer and CLI integrity while retaining separate upstream PR review and non-overlapping source ownership. The original open PRs remain intact; neither can be considered merged or deployed simply because its production hunk is present in this composed candidate.
+
 ## Integration and limits
 
 This patch changes only the resource-lease admission portion of `project_runtime.py`; it does not modify the API, server, worker claims, resource capacity, resource pool allocation algorithm, queue, migrations, CI, or live SQLite. The existing draft [#1270](https://github.com/Zennay/zCloud/pull/1270) owns separate receipt freshness/pool-slot validation hunks, and open [#1545](https://github.com/Zennay/zCloud/pull/1545) owns separate receipt-provenance hunks. These need routine independent integration review against current main. The autocommit admission boundary of [#1274](https://github.com/Zennay/zCloud/issues/1274) is addressed conservatively by rejecting unsupported connections. It does not add cross-process scheduling, change the number of slots, nor authorize production resource activation.
