@@ -1208,6 +1208,11 @@ async function refreshDeliveryQueue(){
        p.admission_scope_lease_and_capacity_not_verified!==true||
        !Number.isSafeInteger(p.queued_qa_only_held)||p.queued_qa_only_held<0||
        !Number.isSafeInteger(p.queued_product_candidates)||p.queued_product_candidates<0||
+       !Number.isSafeInteger(p.queued_requires_owner_review)||p.queued_requires_owner_review<0||
+       !Array.isArray(p.review_items)||p.review_items.length>8||
+       !p.review_items.every(row=>row&&typeof row.project_id==='string'&&
+         typeof row.queue_id==='string'&&typeof row.priority==='string'&&
+         ['invalid_metadata','invalid_title','oversized_criteria'].includes(row.reason))||
        !Array.isArray(p.candidates)||p.candidates.length>8||
        !p.candidates.every(row=>row&&typeof row.project_id==='string'&&
          typeof row.queue_id==='string'&&typeof row.priority==='string')){
@@ -1223,12 +1228,18 @@ function productQueueAdmissionPanel(){
   const p=DELIVERY_QUEUE_DATA;
   const rows=p?.candidates||[];
   const candidates=filter?rows.filter(row=>row.project_id===filter):rows;
+  const reviewItems=(p?.review_items||[]).filter(row=>!filter||row.project_id===filter);
+  const needsReview=reviewItems.map(row=>'<div class="service-row"><div><strong>'+
+    esc(row.priority)+' · '+esc(row.project_id)+'</strong><br><small>Queue '+esc(row.queue_id)+
+    '</small></div><small>Owner review needed · '+esc(row.reason)+'</small></div>').join('');
   const rendered=candidates.map(row=>'<div class="service-row"><div><strong>'+esc(row.priority)+
     ' · '+esc(row.project_id)+'</strong><small> Queue '+esc(row.queue_id)+
     '</small></div><small>Not claimed</small></div>').join('');
   const info=p?('<p class="detail-note" role="status">Snapshot '+esc(DELIVERY_QUEUE_OBSERVED||'unknown time')+
     ' · '+p.queued_product_candidates+' queued product candidates · '+p.queued_qa_only_held+
-    ' QA-only items held for new admission (global counts; up to eight candidate IDs shown).</p>'+
+    ' QA-only items held · '+p.queued_requires_owner_review+
+    ' unclassified items need owner review (global counts; up to eight IDs per type shown).</p>'+
+    (needsReview?'<h3>Requires owner review (not QA)</h3><div class="service-list">'+needsReview+'</div>':'')+
     (rendered?'<div class="service-list">'+rendered+'</div>':
       '<p class="detail-note">No candidates from this project in the bounded preview. This does not mean the queue is empty.</p>')):
     '<p class="detail-note">Not loaded. Read the authorized queue only when needed.</p>';
@@ -1379,6 +1390,12 @@ function exportZSentinelHandoff(){
   if(queue){
     lines.push('Total product candidates in observed global queue: '+queue.queued_product_candidates);
     lines.push('QA-only queued items held from new admission: '+queue.queued_qa_only_held);
+    lines.push('Queued items requiring owner review (not QA): '+queue.queued_requires_owner_review);
+    for(const item of (queue.review_items||[]).filter(row=>projects.has(row.project_id)&&
+      (!filter||row.project_id===filter)).slice(0,8)){
+      lines.push('- Needs owner review: '+clean(item.priority,4)+' '+clean(item.project_id,56)+
+        ' · '+clean(item.reason,32)+'; queue ID withheld');
+    }
     const rows=(queue.candidates||[]).filter(item=>projects.has(item.project_id)&&(!filter||item.project_id===filter));
     for(const item of rows.slice(0,8))lines.push('- '+clean(item.priority,4)+' '+clean(item.project_id,56)+
       ': candidate, unclaimed; ID withheld from export');
@@ -1471,6 +1488,12 @@ function zSentinelDeliveryBoard(){
     (formatted?'<div class="service-list">'+formatted+'</div>':
      '<p class="detail-note">No P0/P1 issues in the available snapshot. This is NOT proof the repository has no open issues.</p>')+
     (relevant.length>24?'<p class="detail-note">Showing the first 24 prioritised issues.</p>':'')+
+    '<h3>Queued items requiring owner review ('+(admitted?admitted.queued_requires_owner_review:'unknown global count')+')</h3>'+
+    (admitted?.review_items?.length?'<div class="service-list">'+admitted.review_items.filter(item=>
+      ids.has(item.project_id)&&(!focus||item.project_id===focus)).slice(0,8).map(item=>
+      '<div class="service-row"><div><strong>'+esc(item.priority)+' · '+esc(item.project_id)+
+      '</strong><br><small>'+esc(item.reason)+'</small></div><small>Not claimed</small></div>').join('')+
+      '</div>':'<p class="detail-note">No review item in bounded snapshot; source may be partial.</p>')+
     '<h3>Queued product candidates ('+(admitted?admitted.queued_product_candidates:'unknown global count')+')</h3>'+
     (queueRows?'<div class="service-list">'+queueRows+'</div>':
      '<p class="detail-note">No candidate shown. Queue access, project coverage or remaining pages may be missing.</p>')+
