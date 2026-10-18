@@ -771,6 +771,13 @@ function validateProductIssueInbox(value){
     covered.set(item.project,item.repository);
   }
   if(!covered.size)throw Error('No canonical issue coverage');
+  const coverage=[...value.coverage].map(item=>({
+    project:item.project,
+    status:['partial','degraded','unavailable'].includes(item.status)?item.status:'unavailable',
+    oldest:typeof item.oldest_window==='string'?item.oldest_window.slice(0,70):'unknown',
+    recent:typeof item.recent_window==='string'?item.recent_window.slice(0,70):'unknown',
+    prs:typeof item.open_pr_window==='string'?item.open_pr_window.slice(0,70):'unknown'
+  }));
   const seen=new Set(),issues=[];
   for(const item of value.items){
     if(!item||!covered.has(item.project)||item.repository!==covered.get(item.project)
@@ -794,7 +801,7 @@ function validateProductIssueInbox(value){
       title:item.title,url:'https://github.com/'+item.repository+'/issues/'+item.number,
       prs});
   }
-  return {observedAt:value.observed_at,issues,partial:true};
+  return {observedAt:value.observed_at,issues,coverage,partial:true};
 }
 function productIssueInboxPanel(){
   const snapshot=IMPORTED_PRODUCT_ISSUES;
@@ -802,6 +809,8 @@ function productIssueInboxPanel(){
     (IMPORTED_ISSUE_SHOW_ALL||item.priority==='P0'||item.priority==='P1'));
   const hiddenLowerPriority=(snapshot?.issues||[]).filter(item=>(!filter||item.project===filter)
     &&item.priority!=='P0'&&item.priority!=='P1').length;
+  const coverageText=(snapshot?.coverage||[]).filter(item=>!filter||item.project===filter)
+    .map(item=>item.project+' · '+item.status+' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
   const html=rows.slice(0,50).map(item=>'<div class="service-row"><div><strong>'+esc(item.priority)+
     ' · '+esc(item.project)+'</strong> <a target="_blank" rel="noopener noreferrer" href="'+esc(item.url)+'">'+
     esc(item.title)+'</a><small> · open issue #'+item.number+'</small>'+
@@ -818,7 +827,7 @@ function productIssueInboxPanel(){
         IMPORTED_ISSUE_SHOW_ALL?'Focus P0/P1 only':'Include '+hiddenLowerPriority+' lower-priority sampled issues')+'</button>':''):'')+
     '<p role="status" aria-live="polite">'+esc(IMPORTED_PRODUCT_ERROR||
       (snapshot?'Imported bounded issue sample · '+date(snapshot.observedAt,true)+'.':'No product issue receipt imported.'))+'</p>'+
-    (snapshot?'<p class="detail-note">Source samples may be incomplete. Existing PR references do not prove active ownership, fixes or deploy approval.</p>'+
+    (snapshot?'<p class="detail-note">Source coverage: '+esc(coverageText)+' · Bounded sources may be missing, truncated or rate-limited. Existing PR references do not prove active ownership, fixes or deploy approval.</p>'+
       (html?'<div class="service-list">'+html+'</div>':'<div class="empty">No visible issues in this bounded project filter.</div>')+
       (rows.length>50?'<p class="detail-note">Only 50 of the sampled issues are displayed.</p>':''):'')+'</div>';
 }
