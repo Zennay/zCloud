@@ -23,11 +23,12 @@ REPO_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 SHA_RE = re.compile(r"^[a-f0-9]{40}$")
 MAX_REGISTRY_BYTES = 512 * 1024
-MAX_REQUESTS = 24
+MAX_REQUESTS = 30
 MAX_PROJECTS = 3
 MAX_EVENTS = 200
 MAX_PR_PAGES = 5
 MAX_CI_PAGES = 2
+MAX_COMMIT_PAGES = 2
 
 
 def utc_now() -> dt.datetime:
@@ -147,9 +148,10 @@ def bounded_events(
         "github_pr": "unavailable",
         "github_ci": "unavailable",
         "github_branches": "not_synchronized",
+        "github_main_commits": "unavailable",
         "local_vps": "not_observed",
-        "pages": {"pulls": 0, "actions": 0},
-        "page_limit_reached": {"pulls": False, "actions": False},
+        "pages": {"pulls": 0, "actions": 0, "commits": 0},
+        "page_limit_reached": {"pulls": False, "actions": False, "commits": False},
         "errors": errors,
     }
 
@@ -254,10 +256,44 @@ def bounded_events(
         if coverage["pages"]["actions"]:
             coverage["github_ci"] = "partial"
 
+    try:
+        for page in range(1, MAX_COMMIT_PAGES + 1):
+            rows = reader.get(repo, "commits", {
+                "sha": "main", "per_page": 20, "page": page,
+            })["data"]
+            if not isinstance(rows, list):
+                raise ValueError("github_commits_invalid")
+            for commit in rows:
+                if not isinstance(commit, dict):
+                    raise ValueError("github_commits_invalid")
+                sha = commit.get("sha")
+                details = commit.get("commit")
+                if not isinstance(sha, str) or not SHA_RE.fullmatch(sha) or not isinstance(details, dict):
+                    raise ValueError("github_commits_invalid")
+                committer = details.get("committer")
+                if not isinstance(committer, dict):
+                    raise ValueError("github_commits_invalid")
+                add("main_commit", sha, committer.get("date"),
+                    sha=sha, main_merged=True,
+                    url=f"https://github.com/{repo}/commit/{sha}",
+                    deploy_verified=False, worker_resumed=False)
+            coverage["pages"]["commits"] = page
+            if len(rows) < 20:
+                break
+            if page == MAX_COMMIT_PAGES:
+                coverage["page_limit_reached"]["commits"] = True
+        coverage["github_main_commits"] = (
+            "bounded_truncated" if coverage["page_limit_reached"]["commits"]
+            else "bounded_window")
+    except ValueError as error:
+        errors.append(str(error))
+        if coverage["pages"]["commits"]:
+            coverage["github_main_commits"] = "partial"
+
     if not errors:
         coverage["status"] = "partial_sources"  # GitHub branch coverage absent.
         coverage["synced_at"] = stamp(observed)
-    elif coverage["github_pr"] != "unavailable" or coverage["github_ci"] != "unavailable":
+    elif any(coverage[source] != "unavailable" for source in ("github_pr", "github_ci", "github_main_commits")):
         coverage["status"] = "partial_error"
         coverage["synced_at"] = stamp(observed)
     else:
@@ -287,19 +323,20 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         coverage.append(status)
     deduped = {row["id"]: row for row in results}
     events = sorted(deduped.values(), key=lambda x: (x["source_at"], x["id"]), reverse=True)
-    # Actions can outnumber PRs by orders of magnitude. Fairly interleave the
-    # two actual source types within every selected project before the cap.
+    # Actions can outnumber PRs and main commits. Interleave all three
+    # bounded source types within each project before the output cap.
     # A short operator view must never hide all PRs behind recent CI runs.
-    buckets = {(project, kind): [] for project in selected for kind in ("pr", "ci")}
+    buckets = {(project, kind): [] for project in selected for kind in ("pr", "ci", "commit")}
     for item in events:
-        category = "ci" if item["kind"] == "ci_run" else "pr"
+        category = ("ci" if item["kind"] == "ci_run" else
+                    "commit" if item["kind"] == "main_commit" else "pr")
         buckets[(item["project"], category)].append(item)
     fair = []
     positions = {key: 0 for key in buckets}
     while len(fair) < max_events:
         advanced = False
         for project in selected:
-            for category in ("pr", "ci"):
+            for category in ("pr", "ci", "commit"):
                 key = (project, category)
                 index = positions[key]
                 if index >= len(buckets[key]):
