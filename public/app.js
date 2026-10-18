@@ -1035,6 +1035,19 @@ async function refreshWorkerProgress(){
     WORKER_PROGRESS_ERROR='Worker progress API unavailable, unauthorized or not yet deployed. No live worker activity can be inferred.';
   }finally{WORKER_PROGRESS_BUSY=false;if(route==='activity')render()}
 }
+const SAFE_WORKER_COMPOSER_HINTS=Object.freeze({
+  'composer-missing-manual-recovery-required':'Composer missing in an existing conversation; inspect assigned worker tab manually.',
+  'composer-missing-operator-action-required':'Composer remains missing after bounded repair; inspect tab before resend.',
+  'composer-missing-before-first-send':'One same-tab repair was requested before first send; resumed generation unverified.',
+  'new-chat-button-missing':'New chat button unavailable; operator action required.'
+});
+function composerHint(row){
+  if(row?.kind==='composer-restored')return 'Composer visible again; claim and generation still unverified.';
+  if(row?.kind!=='send-blocked'&&row?.kind!=='conversation-reset-requested')return '';
+  const reason=String(row.reason_code||'');
+  return Object.prototype.hasOwnProperty.call(SAFE_WORKER_COMPOSER_HINTS,reason)?
+    SAFE_WORKER_COMPOSER_HINTS[reason]:'';
+}
 function workerProgressPanel(){
   const report=WORKER_PROGRESS_DATA;
   const scoped=report&&report.project===filter&&report.worker_slot===WORKER_PROGRESS_SLOT?report:null;
@@ -1042,6 +1055,10 @@ function workerProgressPanel(){
     ['Last browser event',scoped.latest_event],['Latest prompt',scoped.latest_prompt],
     ['Latest progress',scoped.latest_progress],['Latest completion',scoped.latest_completion]
   ]:[];
+  const composerAlerts=(scoped?.recent_events||[]).filter(row=>
+    composerHint(row)&&row.clock?.status==='observed').slice(0,4).map(row=>
+    '<div class="service-row"><div><strong>Composer · browser observation</strong><br><small>'+
+    esc(row.clock?.utc||'Unknown time')+' · '+esc(composerHint(row))+'</small></div></div>').join('');
   const cards=facts.map(([label,item])=>'<div class="service-row"><div><strong>'+esc(label)+'</strong><br><small>'+
     esc(item?.kind||'No observation')+' · '+esc(item?.clock?.utc||'No UTC timestamp')+' · '+
     esc(item?.clock?.status||'unavailable')+'</small></div></div>').join('');
@@ -1056,7 +1073,7 @@ function workerProgressPanel(){
     '<button type="button" class="runner-action" data-worker-progress-refresh '+(WORKER_PROGRESS_BUSY?'disabled aria-busy="true"':'')+'>Read progress</button>'+
     '<p role="status" aria-live="polite">'+esc(WORKER_PROGRESS_ERROR||(scoped?'Browser observations read.':'Choose a project and press Read progress.'))+'</p>'+
     '<p class="detail-note">Browser-reported events are not independent proof of generated text. Queue claim, claim epoch, worker resumption and deployment remain unverified.</p>'+
-    (scoped?'<div class="service-list">'+cards+(history?'<details data-disclosure="worker-progress-events"><summary>Recent browser event history</summary>'+history+'</details>':'')+'</div>':'')+'</section>';
+    (scoped?'<div class="service-list">'+composerAlerts+cards+(history?'<details data-disclosure="worker-progress-events"><summary>Recent browser event history</summary>'+history+'</details>':'')+'</div>':'')+'</section>';
 }
 
 /* Product-only admission is a read-only, explicitly requested preview.
