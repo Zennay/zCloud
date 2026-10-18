@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from html import escape
 import json
 import os
 import re
@@ -182,18 +183,95 @@ def measure(root: Path, expected_main_sha: str | None = None) -> dict:
     }
 
 
+def render_html(report: dict) -> str:
+    """Self-contained, escaped, offline operator view; never embeds raw process arguments."""
+    esc = lambda value: escape(str(value), quote=True)
+    state = report["result"]
+    label = {"blocked": "Deployment blocked", "partial": "Incomplete evidence",
+             "preflight_clear": "Local preflight clear"}.get(state, "Unverified")
+    counts = {"block": 0, "warn": 0}
+    for finding in report["findings"]:
+        if finding["severity"] in counts:
+            counts[finding["severity"]] += 1
+
+    def item(text: str, value: object) -> str:
+        return f"<dt>{esc(text)}</dt><dd>{esc(value)}</dd>"
+
+    findings = "".join(
+        f'<li class="finding"><strong>{esc(f["code"])}</strong>'
+        f' <span class="{esc(f["severity"])}">{esc(f["severity"].upper())}</span>'
+        f'<p>{esc(f["detail"])}</p></li>'
+        for f in report["findings"]
+    ) or "<li>No local findings recorded. This does not authorize a release.</li>"
+    actions = "".join(
+        f'<li><strong>{esc(a["code"])}</strong><p class="owner">Owner: {esc(a["owner"])}</p>'
+        f'<p>{esc(a["reason"])}</p><p>{esc(a["next_action"])}</p></li>'
+        for a in report["recovery_priorities"]
+    )
+    checkout = report["checkout"]
+    runner = report["runner"]
+    resources = report["resources"]
+    def val(value: object) -> str:
+        return "Not measured" if value is None else str(value)
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light"><title>zCloud VPS release preflight</title>
+<style>
+:root {{font: 16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,sans-serif;color:#1f2937;background:#f6f7f9}}
+*{{box-sizing:border-box}}body{{margin:0}}main{{max-width:960px;margin:auto;padding:clamp(16px,4vw,42px)}}
+header{{border-bottom:1px solid #d6dbe1;padding-bottom:22px}}h1{{font-size:clamp(25px,3vw,38px);line-height:1.15;margin:0 0 10px}}
+h2{{font-size:19px;margin:0 0 14px}}p{{margin:6px 0}}.muted{{color:#52606d}}
+section{{background:white;margin:20px 0;padding:22px;border:1px solid #e0e5ea;border-radius:12px}}
+dl{{display:grid;grid-template-columns:minmax(125px,1fr) minmax(0,2fr);gap:8px 16px;margin:0}}
+dt{{color:#52606d}}dd{{margin:0;overflow-wrap:anywhere;font-weight:600}}
+ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bottom:0}}
+.finding p{{color:#52606d}}.block{{color:#ae2626}}.warn{{color:#8a6100}}.owner{{font-weight:650}}
+.status{{font-size:20px;font-weight:750}}.summary{{display:flex;gap:16px;flex-wrap:wrap}}.summary span{{padding-right:16px}}
+.disclaimer{{border-left:4px solid #45556a;padding:12px 16px;background:#eef1f5;border-radius:4px}}
+@media(max-width:520px){{dl{{grid-template-columns:1fr;gap:0}}dd{{margin-bottom:12px}}section{{padding:16px}}}}
+@media print{{:root{{background:white}}main{{padding:10px}}section{{break-inside:avoid}}}}
+</style></head><body><main>
+<header><h1>zCloud VPS deployment preflight</h1>
+<p class="status">{esc(label)}</p><div class="summary"><span>{counts["block"]} blockers</span>
+<span>{counts["warn"]} warnings</span><span>{esc(report["observed_at"])}</span></div>
+<p class="muted">Offline, read-only observation. Production release authorization: NO.</p></header>
+<section aria-labelledby="overview"><h2 id="overview">Host snapshot</h2><dl>
+{item("Checked-out branch", checkout["branch"])}
+{item("Local commit SHA", val(checkout["sha"]))}
+{item("Expected main SHA", val(checkout["expected_main_sha"]))}
+{item("Changed tracked entries", checkout["tracked_changes"])}
+{item("Untracked entries", checkout["untracked_entries"])}
+{item("Dedicated runner unit", runner["unit"])}
+{item("Unit state", runner["unit_state"])}
+{item("Dedicated listener count", len(runner["listener_pids"]))}
+{item("Available RAM", val(resources["available_ram_pct"]) + "%")}
+{item("Swap used", val(resources["swap_used_pct"]) + "%")}
+{item("Filesystem free", val(resources["disk_free_pct"]) + "%")}
+</dl></section>
+<section aria-labelledby="findings"><h2 id="findings">Release blockers and warnings</h2><ul>{findings}</ul></section>
+<section aria-labelledby="recovery"><h2 id="recovery">Owner-gated recovery priorities</h2><ol>{actions}</ol></section>
+<p class="disclaimer"><strong>Not an approval.</strong> This report cannot prove protected-main review,
+exact-head CI, GitHub runner registration, active leases or production readiness. Follow the
+existing #1326 runner and #580/#1089 serialized release gates. No recovery action was executed.</p>
+</main></body></html>"""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/home/ubuntu/zennay-cloud"))
     parser.add_argument("--json", action="store_true", help="Print bounded machine-readable evidence")
+    parser.add_argument("--format", choices=("text", "json", "html"), default="text",
+                        help="Output as console text, machine-readable JSON, or self-contained offline HTML")
     parser.add_argument("--expected-main-sha", default=None,
                         help="Exact independently fetched 40-character main commit SHA (no network requests)")
     args = parser.parse_args()
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
     report = measure(args.root.resolve(), args.expected_main_sha)
-    if args.json:
+    if args.json or args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
+    elif args.format == "html":
+        print(render_html(report))
     else:
         print(f"zCloud VPS preflight: {report['result'].upper()} (read-only; NOT a release authorization)")
         c = report["checkout"]
