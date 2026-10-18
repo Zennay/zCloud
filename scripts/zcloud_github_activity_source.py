@@ -149,6 +149,7 @@ def bounded_events(
         "github_branches": "not_synchronized",
         "local_vps": "not_observed",
         "pages": {"pulls": 0, "actions": 0},
+        "page_limit_reached": {"pulls": False, "actions": False},
         "errors": errors,
     }
 
@@ -201,7 +202,10 @@ def bounded_events(
             coverage["pages"]["pulls"] = page
             if len(rows) < 10:
                 break
-        coverage["github_pr"] = "bounded_window"
+            if page == MAX_PR_PAGES:
+                coverage["page_limit_reached"]["pulls"] = True
+        coverage["github_pr"] = ("bounded_truncated" if coverage["page_limit_reached"]["pulls"]
+                                 else "bounded_window")
     except ValueError as error:
         errors.append(str(error))
         # Partial pages cannot be treated as complete coverage.
@@ -241,7 +245,10 @@ def bounded_events(
             coverage["pages"]["actions"] = page
             if len(runs) < 40:
                 break
-        coverage["github_ci"] = "bounded_window"
+            if page == MAX_CI_PAGES:
+                coverage["page_limit_reached"]["actions"] = True
+        coverage["github_ci"] = ("bounded_truncated" if coverage["page_limit_reached"]["actions"]
+                                 else "bounded_window")
     except ValueError as error:
         errors.append(str(error))
         if coverage["pages"]["actions"]:
