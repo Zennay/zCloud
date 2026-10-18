@@ -14,6 +14,12 @@ Readable operational output, with links and explicit no-deployment claims:
 
     python3 scripts/zcloud_github_activity_source.py --project cloud --project supa | python3 scripts/zcloud_github_activity_digest.py
 
+Mobile-readable self-contained **offline HTML view** (no JS, remote assets, tracking, server or credential persistence):
+
+    python3 scripts/zcloud_github_activity_source.py --project cloud --hours 24 --max-events 60 | python3 scripts/zcloud_github_activity_html.py > /tmp/zcloud-activity-snapshot.html
+
+Open that local file in a browser. It displays expandable accessible per-project timelines for PRs, workflows and SHA-bound main commits, with explicit incomplete-source and no-deployment warnings. Generated HTML escapes every data field and derives links solely from validated canonical repository names/IDs.
+
 The observer's output is zcloud-github-activity-readonly-v1 JSON containing event stable ID, canonical project/repository, event kind, source timestamp, separately recorded observation timestamp and coverage. It exposes no PR title, body, review content, workflow log, API response body, runner arguments or credentials. All repository identities are drawn from the canonical projects.json GitHub HTTPS allowlist; CLI parameters cannot name arbitrary repositories. The reader makes at most 30 HTTP GETs across up to three selected projects: up to five pages of ten verbose PRs, two pages of forty Actions runs, and two pages of twenty SHA-bound canonical-main commits per project. Source responses and the local registry have byte caps. The output explicitly marks when a source page cap truncates the older history; even a short --max-events result alternates PRs and CI so Actions volume cannot hide every PR.
 
 Kinds: pr_created means created, not merged; pr_updated means changed, not accepted; pr_merged means merged_at exists but is **not** verified on canonical main (main_merged=false); ci_run provides GitHub Actions status, conclusion and SHA, not deployment or worker resumption; main_commit is the SHA of a commit returned from GitHub's canonical main-history endpoint (main_merged=true), not live deployment. No private commit messages, authors or titles are retained.
