@@ -691,8 +691,16 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
     # Swap is a last-resort shock absorber, not worker capacity. With no useful
     # swap configured, preserve an extra 512 MiB of real RAM before admitting tabs.
     swap_healthy=(swap_total >= WORKER_SWAP_MIN_TOTAL_MB and swap_free >= min(WORKER_SWAP_MIN_FREE_MB,swap_total))
+    # A configured swap device with no meaningful free space cannot absorb a
+    # new browser tab's transient memory spike. Reserve enough RAM for recovery,
+    # but do not admit fresh claims solely because MemAvailable briefly rose.
+    # Hosts intentionally configured without swap keep their existing extra
+    # real-RAM reserve rather than being permanently denied new work.
+    swap_exhausted=(swap_total >= WORKER_SWAP_MIN_TOTAL_MB
+                    and swap_free < min(WORKER_SWAP_MIN_FREE_MB,swap_total))
     effective_reserve=reserve + (0 if swap_healthy else 512)
-    capacity=max(0,(available-effective_reserve)//WORKER_MEMORY_PER_NEW_SLOT_MB)
+    capacity=(0 if swap_exhausted else
+              max(0,(available-effective_reserve)//WORKER_MEMORY_PER_NEW_SLOT_MB))
     if available < WORKER_MEMORY_CRITICAL_MB:
         pressure='critical'
     elif available < WORKER_MEMORY_WARN_MB:
@@ -706,6 +714,7 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
         'headroom_mb':reserve,'effective_headroom_mb':effective_reserve,
         'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,'new_worker_capacity':int(capacity),
         'pressure':pressure,'healthy_for_new_worker':bool(capacity > 0),'swap_healthy':bool(swap_healthy),
+        'swap_exhausted':bool(swap_exhausted),
     }
 
 def _worker_recovery_hold_until():
