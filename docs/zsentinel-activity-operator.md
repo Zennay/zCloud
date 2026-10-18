@@ -44,6 +44,14 @@ When the separate actual v2 browser worker [PR #1552](https://github.com/Zennay/
 
 There is **no reset button** here: only the owned v2 tab itself may request the pre-first-send, blank-chat, one-shot SPA repair. Do not use this UI to force navigation, dismiss a current reply or steal an existing assignment. The three PRs (#1549, #1550 and #1552) remain separate review/release dependencies.
 
+## Directly from the VPS: on-demand GitHub and P0/P1 source buttons
+
+In Activity, select exactly one project. **Read VPS GitHub** requests the new trusted `GET /api/github-activity-live?project=<id>` route. It returns an independently bound, read-only canonical repository observation (PRs, CI runs and main commits), with a maximum five-minute in-process cache. **Read VPS issues** requests `GET /api/product-issues-live?project=<id>`, which uses the original bounded, P0/P1-first issue source and existing open PR references. Both buttons show partial coverage and may report the separate `refreshing`, `unavailable` or `capacity_wait` outcomes. Operators can retry manually; no scheduled browser poll or automatic workflow dispatch is added.
+
+The backend accepts only projects from canonical `projects.json`, and requires the existing trusted management network for these read-only API sources. A remote browser without that permission receives 403; this is **not** a cue to relax authentication. **Read public GitHub** and manual JSON imports remain usable separate evidence routes, while private repositories continue to require separately authorized access and are never silently marked empty.
+
+A matching GitHub event ID is not a local SQLite event, a CI success is not a merge, a reported GitHub merge target is not proof a commit reached main, and a main commit does not prove the production VPS has deployed it. All receipts explicitly carry `feed_complete=false` and deny worker recovery/merge/deploy authority. Two concurrent provider collections maximum; source reads are bounded and only started by a button click. Check actual Notion claims and immutable CI/review gates before implementation or release.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
