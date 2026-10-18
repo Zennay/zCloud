@@ -5042,13 +5042,15 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         page=zcloud_activity_fair_page.fair_page(c,project_ids)
                         ids=[item['id'] for item in page['events']]
-                        if not ids:return self.reply([])
-                        marks=','.join('?' for _ in ids)
-                        rows=c.execute(
-                            'SELECT * FROM events WHERE id IN ('+marks+')',ids
-                        ).fetchall()
-                        by_id={row['id']:dict(row) for row in rows}
-                        return self.reply([by_id[eid] for eid in ids if eid in by_id])
+                        if ids:
+                            marks=','.join('?' for _ in ids)
+                            rows=c.execute(
+                                'SELECT * FROM events WHERE id IN ('+marks+')',ids
+                            ).fetchall()
+                            by_id={row['id']:dict(row) for row in rows}
+                            result=[by_id[eid] for eid in ids if eid in by_id]
+                        else:
+                            result=[]
                     except ValueError:
                         # Corrupt legacy event timestamps must not take down
                         # the original dashboard route; preserve the previous
@@ -5059,7 +5061,10 @@ class Handler(BaseHTTPRequestHandler):
                             'SELECT * FROM events WHERE (?="" OR project=?) ORDER BY ts DESC LIMIT 80',
                             (pid,pid),
                         ).fetchall()
-                        return self.reply([dict(row) for row in rows])
+                        result=[dict(row) for row in rows]
+                # Release the SQLite read snapshot BEFORE socket I/O to avoid
+                # slow HTTP readers extending the database read transaction.
+                return self.reply(result)
             if u.path=='/api/host-history':
                 with connect() as c:rows=c.execute('SELECT * FROM host_samples ORDER BY ts DESC LIMIT 288').fetchall()
                 return self.reply([dict(r) for r in reversed(rows)])
