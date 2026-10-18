@@ -210,7 +210,7 @@ def bounded_events(
                 # its merge commit is reachable from the current canonical main.
                 base = pr.get("base")
                 target = base.get("ref") if isinstance(base, dict) else None
-                if not isinstance(target, str) or not REPO_RE.fullmatch(target):
+                if (not isinstance(target, str) or len(target) > 180 or not re.fullmatch(r"[A-Za-z0-9_./-]+", target) or target.startswith("/") or target.endswith("/") or "//" in target or ".." in target):
                     target = None
                 head = pr.get("head")
                 head_sha = head.get("sha") if isinstance(head, dict) else None
