@@ -21,8 +21,10 @@ production writer from cancelling an in-flight deployment.
 2. The live job still requires `workflow_dispatch`, `refs/heads/main`,
    `Zennay` as actor and triggering actor, the first attempt only, and the
    matching explicit `apply` or addon authorization input.
-3. Only the live job acquires the non-cancelling production lock. Its runtime
-   checks verify exact checkout, remote main and permanent VPS identity.
+3. Only the live job acquires the non-cancelling production lock. Its first
+   executable shell step runs the canonical permanent-VPS identity guard,
+   immediately after a credentials-disabled checkout at the workflow event SHA.
+   Later owner gates still verify exact checkout, remote main and VPS identity.
 4. The worker-tab workflow now checks remote main **again** before copying
    the browser background file and before attempting an in-place addon reload.
    Existing idle checks decide whether activation is safe; neither worker
