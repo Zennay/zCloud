@@ -18,9 +18,11 @@ All database reads use a separate `mode=ro` SQLite connection and `PRAGMA query_
 
 ```sh
 python3 scripts/zcloud_worker_progress_history.py --db history.db --project cloud --slot 1 --limit 24
+# Mobile-friendly, self-contained offline HTML report (no external assets)
+python3 scripts/zcloud_worker_progress_history.py --db history.db --project cloud --slot 1 --format html > /tmp/worker-progress.html
 ```
 
-This is read-only and emits compact JSON. Exit status 3 means the database or source is unavailable.
+The default format is compact JSON; optional `--format html` creates a standalone mobile-readable operator cockpit with separate event, prompt, progress and completion cards, timestamp validity and a bounded recent event table. All rendered dynamic values are HTML-escaped; it contains no external scripts, fonts or network requests. Exit status 3 means the database or source is unavailable.
 
 ## No-write diagnostic endpoints (zCloud issue #1341)
 
