@@ -47,8 +47,17 @@ Kinds: pr_created means created, not merged; pr_updated means changed, not accep
 
 Coverage remains partial_sources even on successful GitHub reads because branch-only commits, all pagination, local live runtime and cross-provider deduplication are not fully synchronized. Failed and partial pages become explicit partial_error or unavailable states; never infer there was zero activity. The digest validates a strict receipt and renders a bounded, metadata-only human handoff. No HTTP server is started.
 
+### Product issues: second existing receipt in the same Activity screen
+
+Use the existing zSentinel product-issue inbox source, not a new GitHub action or queue writer:
+
+    python3 scripts/zsentinel_product_issue_inbox.py --project cloud --project supa --format json > /tmp/zcloud-product-issues.json
+
+On the Activity tab select **Product issue inbox → Import a JSON product issue-inbox receipt**. The browser shows P0/P1 issues, existing referenced open PR candidates and links beside the separate GitHub PR/CI timeline and local VPS event list. Both JSON files are read in memory only and may be cleared independently. The same project selector filters imported issue candidates.
+
+The issue reader validates canonical known project + Zennay repo identity, numbered issue and PR identity, QA-only exclusions and all non-authorizing flags. It derives all links from canonical project/repo/IDs and never treats an issue/PR mention as a proven fix, ownership lease or permission to act. It neither writes the receipt to the VPS nor takes any claims. The source is bounded and may be rate-limited or incomplete. Details of the issue receipt itself are in [ZSENTINEL_PRODUCT_ISSUE_INBOX.md](./ZSENTINEL_PRODUCT_ISSUE_INBOX.md) (PR #1539, independently gated).
 ## Integration boundary
 
-The central server and /api/activity are **not** modified here. Central eventstream, runtime/writer ownership, canonical main integration, release gating and worker scheduling stay with existing owners (#580/#1089, #776/#777 and #1519). A source-only PR or successful local syntax/build check is **not** a live feed repair. Before dashboard wiring, the integration owner must reconcile GitHub/local event identity, per-project fair paging/cursors, branch coverage, private-repo access, sync budgets and exact-main provenance. Do not replace the existing local events or mark the UI fully live from these partial source observations.
+The central server and /api/activity are **not** modified here. Central eventstream, runtime/writer ownership, canonical main integration, release gating and worker scheduling stay with existing owners (#580/#1089, #776/#777 and #1519). A source-only PR or successful local syntax/build check is **not** a live feed repair. Before automated live GitHub synchronization, the integration owner must reconcile GitHub/local event identity, per-project fair paging/cursors, branch coverage, private-repo access, sync budgets and exact-main provenance. Do not replace the existing local events or mark the UI fully live from these partial source observations.
 
 No QA/regression suite is introduced or manually executed under the 17 October product-delivery instruction. Existing mandatory GitHub-hosted CI, branch protection and production review remain intact.
