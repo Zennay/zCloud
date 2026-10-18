@@ -55,6 +55,14 @@ jobs:
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 12
     steps:
+      - name: Checkout trusted zCloud deployment script
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: Promote approved native release without touching physics worktrees
         shell: bash
         env:
