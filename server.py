@@ -4925,7 +4925,7 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
-        if u.path=='/api/github-activity-live':
+        if u.path in ('/api/github-activity-live','/api/product-issues-live'):
             # On-demand only, never a queue/worker action. Private or remote
             # API reads require the existing trusted management peer admission.
             # Reject before a GitHub network request or refresh is scheduled.
@@ -4937,7 +4937,8 @@ class Handler(BaseHTTPRequestHandler):
             if project_id not in PORTFOLIO_PROJECT_INDEX:
                 return self.reply({'error':'Onbekend project'},404)
             try:
-                sample=zcloud_github_activity_live.read_live(ROOT/'projects.json',project_id)
+                kind='activity' if u.path=='/api/github-activity-live' else 'issues'
+                sample=zcloud_github_activity_live.read_live(ROOT/'projects.json',project_id,kind=kind)
             except (ValueError,OSError):
                 return self.reply({'error':'GitHub bron niet beschikbaar'},400)
             # Explicit state=refreshing is NOT a successful synced feed; clients
