@@ -1333,9 +1333,10 @@ function validateZSentinelBranchSnapshot(value){
   const isInt=(n,max)=>Number.isSafeInteger(n)&&n>=0&&n<=max;
   const sha=x=>typeof x==='string'&&/^[0-9a-f]{40}$/.test(x);
   const ref=x=>typeof x==='string'&&x.length<=200
-    &&/^[A-Za-z0-9_./-]+$/.test(x)&&!x.includes('..');
+    &&new RegExp('^[A-Za-z0-9_./-]+$').test(x)&&!x.includes('..');
   const path=x=>typeof x==='string'&&x.length>=1&&x.length<=300
-    &&!/[\\\\\\x00-\\x1f\\x7f]/.test(x)&&!x.startsWith('/')
+    &&!x.includes('\\')&&!x.startsWith('/')
+    &&![...x].some(c=>c.charCodeAt(0)<32||c.charCodeAt(0)===127)
     &&!x.split('/').some(p=>!p||p==='.'||p==='..');
   const stamp=x=>typeof x==='string'&&x.length<=40
     &&Number.isFinite(Date.parse(x))&&Date.parse(x)<=Date.now()+300000;
@@ -1387,7 +1388,7 @@ function validateZSentinelBranchSnapshot(value){
     scanned:branches.length,prlessTotal:value.prless_count,branches};
 }
 function zSentinelBranchEvidencePanel(){
-  const project=(DATA?.projects||[]).find(p=>/^https:\\/\\/github\\.com\\/Zennay\\/zCloud\\/?$/.test(p.repo_url||''));
+  const project=(DATA?.projects||[]).find(p=>['https://github.com/Zennay/zCloud','https://github.com/Zennay/zCloud/'].includes(p.repo_url||''));
   const eligible=!filter||(project&&project.id===filter);
   const snapshot=eligible?IMPORTED_PRLESS_BRANCHES:null;
   const old=snapshot&&Date.now()-Date.parse(snapshot.observedAt)>6*3600000;
