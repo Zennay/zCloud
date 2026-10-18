@@ -212,8 +212,15 @@ def bounded_events(
                 target = base.get("ref") if isinstance(base, dict) else None
                 if not isinstance(target, str) or not REPO_RE.fullmatch(target):
                     target = None
+                head = pr.get("head")
+                head_sha = head.get("sha") if isinstance(head, dict) else None
+                if not isinstance(head_sha, str) or not SHA_RE.fullmatch(head_sha):
+                    raise ValueError("github_pr_head_sha_invalid")
+                # Branch refs may contain Unicode, slashes or upstream user text.
+                # Export only the immutable SHA, never untrusted branch text.
                 ref = f"https://github.com/{repo}/pull/{number}"
                 fields = {"pr": number, "url": ref, "draft": draft,
+                          "pr_head_sha": head_sha,
                           "merged": merged_at is not None, "main_merged": False,
                           "reported_target": target,
                           "reported_main_merge": bool(merged_at is not None and target == "main")}
@@ -229,6 +236,7 @@ def bounded_events(
                 coverage["page_limit_reached"]["pulls"] = True
         coverage["github_pr"] = ("bounded_truncated" if coverage["page_limit_reached"]["pulls"]
                                  else "bounded_window")
+        coverage["github_branches"] = "observed_pr_heads_only"
     except ValueError as error:
         errors.append(str(error))
         # Partial pages cannot be treated as complete coverage.
