@@ -22,7 +22,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL_OWNER = "Zennay"
 MAX_REPOS = 18
-MAX_CALLS = 36
+MAX_CALLS = 54
 MAX_ITEMS = 150
 MAX_HTTP_BYTES = 512 * 1024
 MAX_CONFIG_BYTES = 512 * 1024
@@ -189,7 +189,7 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                         "id": key, "project": project, "repository": repo,
                         "number": num, "title": title[:180], "priority": severity,
                         "qa_only": is_qa, "has_assignee": len(assigned) > 0,
-                        "active_claim": "not_verified",
+                        "active_claim": "not_verified", "related_open_prs": [],
                         "created_at": created.isoformat(timespec="seconds"),
                         "updated_at": updated.isoformat(timespec="seconds"),
                         "url": "https://github.com/" + repo + "/issues/" + str(num),
@@ -199,8 +199,51 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
             except ValueError as error:
                 statuses.append(str(error))
         successful = sum(s.startswith("bounded_") for s in statuses)
+        # Candidate reuse first: check a bounded recent window of existing
+        # open PRs for explicit #issue references. This is NOT proof of
+        # active ownership or acceptance: never claim the PR's branch.
+        pr_coverage = "unavailable"
+        if calls < MAX_CALLS:
+            calls += 1
+            params = urllib.parse.urlencode({
+                "state": "open", "sort": "updated", "direction": "desc",
+                "per_page": 8, "page": 1
+            })
+            pr_url = ("https://api.github.com/repos/" +
+                      urllib.parse.quote(repo, safe="/") + "/pulls?" + params)
+            try:
+                open_prs = bounded_get(pr_url, token)
+                if not isinstance(open_prs, list):
+                    raise ValueError("github_pr_shape_invalid")
+                for pr in open_prs:
+                    if not isinstance(pr, dict) or not isinstance(pr.get("number"), int):
+                        continue
+                    number = pr["number"]
+                    if isinstance(number, bool) or number < 1 or number > 100000000:
+                        continue
+                    body = pr.get("body")
+                    if not isinstance(body, str) or len(body) > 32000:
+                        continue
+                    referenced = set(
+                        int(m.group(1)) for m in re.finditer(
+                            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\\b", body
+                        )
+                    )
+                    for issue_num in referenced:
+                        record = records.get(repo + "#" + str(issue_num))
+                        if record is not None and len(record["related_open_prs"]) < 3:
+                            record["related_open_prs"].append({
+                                "number": number,
+                                "draft": pr.get("draft") is True,
+                                "url": "https://github.com/" + repo + "/pull/" + str(number),
+                                "relationship": "text_reference_only",
+                                "active_claim": "not_verified",
+                            })
+                pr_coverage = "bounded_truncated" if len(open_prs) == 8 else "bounded_window"
+            except ValueError as error:
+                pr_coverage = str(error)
         coverage.append({
-            "project": project, "repository": repo, "oldest_window": statuses[0],
+            "project": project, "repository": repo, "oldest_window": statuses[0], "open_pr_window": pr_coverage,
             "recent_window": statuses[1],
             "status": "partial" if successful == 2 else "degraded" if successful else "unavailable",
             "active_claims_verified": False,
@@ -278,6 +321,16 @@ def html_view(data):
                          " · " + ("GitHub assignee present" if row["has_assignee"]
                                    else "No GitHub assignee") +
                          " · active worker ownership unknown</small></div>")
+            candidates = row.get("related_open_prs") or []
+            if candidates:
+                refs = []
+                for candidate in candidates:
+                    ref = escape(candidate["url"], quote=True)
+                    label = ("Draft PR #" if candidate["draft"] else "Open PR #") + str(candidate["number"])
+                    refs.append("<a href='" + ref + "' target='_blank' rel='noopener noreferrer'>" +
+                                escape(label) + "</a>")
+                lines.append("<div class='muted'><small>Possible PR references (not an active owner claim): " +
+                             " · ".join(refs) + "</small></div>")
         sections.append("<section><h2>" + escape(priority_name) + " · " + str(len(rows))
                         + " sampled issues</h2>" +
                         ("".join(lines) or "<p class='muted'>No sampled issues in this class. Coverage is not exhaustive.</p>")
@@ -286,7 +339,7 @@ def html_view(data):
     for item in data["coverage"]:
         coverage.append("<li><b>" + escape(item["project"]) + "</b> — oldest " +
                         escape(item["oldest_window"]) + "; recent " +
-                        escape(item["recent_window"]) + "</li>")
+                        escape(item["recent_window"]) + "; recent open PRs " + escape(item["open_pr_window"]) + "</li>")
     return ("<!doctype html><html lang='en'><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
             "<meta name='referrer' content='no-referrer'>"
