@@ -174,6 +174,106 @@ def window_digest_html(ledger, rows, project=None):
     )
 
 
+def pr_worklist_html(ledger, project=None):
+    """Fair, bounded review worklist from retained source metadata only.
+
+    Advisory classification cannot grant reviewer consent, an owner claim,
+    full CI success, production scope or merge/deploy authority.
+    """
+    projects = [project] if project else sorted(ledger["coverage"])
+    snapshots = {pid: {} for pid in projects}
+    merged = set()
+    jobs = {}
+    for item in ledger["events"]:
+        pid, kind = item["project"], item["kind"]
+        if pid not in snapshots:
+            continue
+        if kind == "ci_run":
+            sha = item.get("sha")
+            if sha:
+                key = (pid, sha)
+                existing = jobs.get(key)
+                when = item.get("source_timestamp") or ""
+                if existing is None or when > (existing.get("source_timestamp") or ""):
+                    jobs[key] = item
+        if kind not in ("pr_updated", "pr_merged"):
+            continue
+        number = item.get("number")
+        if type(number) is not int:
+            continue
+        key = (pid, number)
+        if kind == "pr_merged":
+            merged.add(key)
+            continue
+        # Existing event IDs include update timestamps; keep only the newest
+        # saved update for each PR and never mistake a historical opened
+        # event for proof that an old PR remains open.
+        previous = snapshots[pid].get(number)
+        if previous is None or (item.get("source_timestamp") or "") > (
+                previous.get("source_timestamp") or ""):
+            snapshots[pid][number] = item
+    streams = {}
+    for pid in projects:
+        candidates = [item for number, item in snapshots[pid].items()
+                      if (pid, number) not in merged and
+                      item.get("state") == "open"]
+        candidates.sort(key=lambda e: (e.get("source_timestamp") or "",
+                                       e["number"]), reverse=True)
+        streams[pid] = candidates[:6]
+    # Fair project order: no single high-volume repository can consume
+    # the entire visible review worklist.
+    visible = []
+    for index in range(6):
+        for pid in projects:
+            if len(visible) >= 60:
+                break
+            if index < len(streams[pid]):
+                visible.append((pid, streams[pid][index]))
+    rows = []
+    for pid, item in visible:
+        number = item["number"]
+        head = item.get("head_sha")
+        job = jobs.get((pid, head))
+        if item.get("draft") is True:
+            next_step = "Concept: eigenaar moet scope en review bevestigen"
+        elif job is None:
+            next_step = "Vereiste CI en eigenaarstoestemming controleren"
+        elif job.get("state") != "completed":
+            next_step = "Laatst geziene CI is nog niet afgerond; runnerstatus controleren"
+        elif job.get("conclusion") in ("failure", "timed_out", "action_required"):
+            next_step = "Laatste CI had problemen; herstel bron of platform"
+        else:
+            next_step = "Alle vereiste checks, actuele claim en review apart verifiëren"
+        ci = ("Niet waargenomen" if job is None else
+              (job.get("conclusion") or job.get("state") or "Onbekend"))
+        url = "https://github.com/" + ledger["coverage"][pid]["repository"] + "/pull/" + str(number)
+        fetched = ledger["coverage"][pid].get("last_successful_source_fetch") or "onbekend"
+        rows.append(
+            "<tr><th scope='row'>" + h(pid) + "</th><td><a href='" + h(url) +
+            "' target='_blank' rel='noopener noreferrer'>PR #" + h(number) + "</a></td><td>" +
+            ("Concept" if item.get("draft") else "Open bij laatste bronleesactie") +
+            "</td><td><code>" + h(head[:12] if head else "onbekend") +
+            "</code></td><td>" + h(ci) + "</td><td>" +
+            h(item.get("source_timestamp") or "onbekend") + "</td><td>" +
+            h(fetched) + "</td><td>" + h(next_step) + "</td></tr>"
+        )
+    return (
+        "<section aria-labelledby='pr-worklist-title'><h2 id='pr-worklist-title'>"
+        "PR-werkvoorraad · alleen ter beoordeling</h2>"
+        "<p>Maximaal zes laatst waargenomen open PR's per project, eerlijk verdeeld. "
+        "Een open PR in oude GitHub-gegevens kan inmiddels gewijzigd of gesloten zijn. "
+        "De CI-kolom is uitsluitend de laatst waargenomen run voor de exacte SHA, "
+        "niet de volledige verplichte checksuite. Geen PR krijgt hier merge-, "
+        "deployment- of eigenaarstoestemming.</p>"
+        "<div class='wrap'><table><thead><tr><th>Project</th><th>PR</th>"
+        "<th>Status</th><th>HEAD</th><th>Laatste CI</th><th>PR bijgewerkt</th>"
+        "<th>Bron opgehaald</th><th>Volgende controle</th></tr></thead><tbody>" +
+        ("".join(rows) or "<tr><td colspan='8'>Geen open PR's in de beperkte "
+         "historische bron gevonden; dit is geen bewijs van een lege GitHub-queue.</td></tr>") +
+        "</tbody></table></div></section>"
+    )
+
+
 def combined_html(ledger, rows, project=None, unavailable=(), from_local_api=False):
     """Keep two sources visibly separate; never count GitHub and local twice."""
     html = render_html(ledger, project=project)
@@ -212,7 +312,7 @@ def combined_html(ledger, rows, project=None, unavailable=(), from_local_api=Fal
     pivot = "</nav></header>"
     if html.count(pivot) != 1:
         raise ActivitySourceError("activity_report_markup_unexpected")
-    html = html.replace(pivot, pivot + window_digest_html(ledger, rows, project) + section, 1)
+    html = html.replace(pivot, pivot + window_digest_html(ledger, rows, project) + pr_worklist_html(ledger, project) + section, 1)
     html = html.replace("Dit overzicht omvat geen lokale VPS-events.",
                         "Lokale VPS-events worden hieronder als afzonderlijke export getoond.", 1)
     html = html.replace("<title>zCloud · Privé GitHub-activiteit</title>",
