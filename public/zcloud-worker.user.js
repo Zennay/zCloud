@@ -178,9 +178,11 @@
       return false;
     }
     if(resetRoute!==null)return false;
-    if(!missingComposerSince){missingComposerSince=nowMs;return false}
+    // Hold all prompt sends until the compositor returns or one safe repair
+    // has been requested; do not keep retrying fill() against a missing DOM.
+    if(!missingComposerSince){missingComposerSince=nowMs;return true}
     if(composerRepairAttempted||nowMs-missingComposerSince<COMPOSER_IDLE_REPAIR_MS)
-      return false;
+      return true;
     composerRepairAttempted=true;
     if(promptAt>0||everGenerating||conversation()||location.pathname!=="/"){
       await blocked("composer-missing-manual-recovery-required");
