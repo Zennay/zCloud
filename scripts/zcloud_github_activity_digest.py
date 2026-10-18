@@ -75,9 +75,12 @@ def digest(payload: dict) -> str:
             raise ValueError("invalid_source_state")
         lines.append("## " + project)
         lines.append("")
+        branches = item.get("github_branches")
+        if branches not in {"not_synchronized", "observed_pr_heads_only"}:
+            raise ValueError("invalid_branch_coverage")
         lines.append("GitHub PR: **" + source_pr + "** · GitHub Actions: **" +
                      source_ci + "** · main commits: **" + source_commit +
-                     "** · non-main branches: **not synchronized**.")
+                     "** · branches: **" + branches + "** (not fully synchronized).")
         if "bounded_truncated" in (source_pr, source_ci, source_commit):
             lines.append("**Source page budget reached:** older GitHub events were not scanned; counts are lower bounds.")
         if state != "partial_sources":
@@ -106,6 +109,9 @@ def digest(payload: dict) -> str:
                     raise ValueError("invalid_reported_merge")
                 if event.get("main_merged") is not False:
                     raise ValueError("main_merge_not_independently_verified")
+                head_sha = event.get("pr_head_sha")
+                if not isinstance(head_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", head_sha):
+                    raise ValueError("invalid_pr_head_sha")
             if kind == "ci_run":
                 if event.get("conclusion") not in OUTCOMES:
                     raise ValueError("invalid_outcome")
@@ -149,7 +155,7 @@ def digest(payload: dict) -> str:
                 number = event.get("pr")
                 if not isinstance(number, int) or isinstance(number, bool) or number < 1:
                     raise ValueError("invalid_pr_id")
-                label = kind.replace("_", " ") + " #" + str(number)
+                label = kind.replace("_", " ") + " #" + str(number) + " · head " + event["pr_head_sha"][:12]
                 if event.get("draft") is True:
                     label += " (draft)"
                 if kind == "pr_merged":
