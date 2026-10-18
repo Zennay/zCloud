@@ -5,7 +5,7 @@ cache-only receipt storage, and no tokens, queue edits or owner admission.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import threading
@@ -16,6 +16,11 @@ from scripts import zsentinel_product_issue_inbox as inbox
 CACHE_SECONDS = 300
 MAX_ENTRIES = 16
 MAX_CONCURRENT = 2
+# Anonymous GitHub REST limit is shared by this VPS IP; leave margin for
+# operator/other project traffic. Reserve worst-case provider calls at start.
+MAX_PROVIDER_REQUESTS_PER_HOUR = 45
+RATE_WINDOW_SECONDS = 3600
+_RESERVATIONS = deque()
 _EXECUTOR = ThreadPoolExecutor(max_workers=MAX_CONCURRENT, thread_name_prefix="zcloud-gh-observe")
 _LOCK = threading.Lock()
 _ENTRIES: OrderedDict[tuple[str, str], dict] = OrderedDict()
@@ -103,6 +108,18 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
                            not item["future"].done()) for item in _ENTRIES.values())
         if pending >= MAX_CONCURRENT:
             return _envelope(project, kind, "capacity_wait")
+        # Admission is intentionally conservative: every started background
+        # request reserves the maximum REST calls for its collector. A failed
+        # provider request keeps its reservation to prevent hammering 403/429.
+        while _RESERVATIONS and now-_RESERVATIONS[0][0] >= RATE_WINDOW_SECONDS:
+            _RESERVATIONS.popleft()
+        reserved = sum(cost for _,cost in _RESERVATIONS)
+        cost = 9 if kind == "activity" else 3
+        if reserved+cost > MAX_PROVIDER_REQUESTS_PER_HOUR:
+            answer = _envelope(project, kind, "rate_budget_wait")
+            answer["retry_after_s"] = max(60,int(
+                RATE_WINDOW_SECONDS-(now-_RESERVATIONS[0][0]))) if _RESERVATIONS else 3600
+            return answer
         if key not in _ENTRIES and len(_ENTRIES) >= MAX_ENTRIES:
             oldest_finished = next((name for name, value in _ENTRIES.items()
                                     if value.get("future") is None
@@ -110,6 +127,7 @@ def read_live(registry: Path, project: str, kind: str = "activity") -> dict:
             if oldest_finished is None:
                 return _envelope(project, kind, "capacity_wait")
             _ENTRIES.pop(oldest_finished, None)
+        _RESERVATIONS.append((now,cost))
         _ENTRIES[key] = {"future": _EXECUTOR.submit(_collect, registry, project, kind),
                          "receipt": None, "expires": 0}
         _ENTRIES.move_to_end(key)
