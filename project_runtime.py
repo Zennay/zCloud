@@ -165,6 +165,42 @@ def _receipt_payload(row) -> dict | None:
     return item
 
 
+# Durably stored receipt fields must never be silently shortened. Shared by all
+# producers, including direct server callers and the CLI pre-admission check.
+_RECEIPT_TEXT_LIMITS = {
+    "phase": 240,
+    "action": 1000,
+    "commit_sha": 80,
+    "blocker": 1000,
+    "next_gate": 1000,
+    "source": 300,
+}
+
+
+def validated_receipt_text(**fields: str) -> dict[str, str]:
+    """Preserve exact stored values or fail before a receipt write.
+
+    Errors name only the field and limit; never echo confidential contents.
+    Values retain the prior optional None/empty-string normalization.
+    """
+    unexpected = set(fields) - set(_RECEIPT_TEXT_LIMITS)
+    if unexpected:
+        raise ValueError("unknown receipt text fields")
+    result: dict[str, str] = {}
+    for name, value in fields.items():
+        text = str(value or "")
+        if len(text) > _RECEIPT_TEXT_LIMITS[name]:
+            raise ValueError(f"receipt {name} exceeds {_RECEIPT_TEXT_LIMITS[name]} characters")
+        if "\\x00" in text:
+            raise ValueError(f"receipt {name} contains a NUL character")
+        try:
+            text.encode("utf-8")
+        except UnicodeError as exc:
+            raise ValueError(f"receipt {name} contains invalid Unicode") from exc
+        result[name] = text
+    return result
+
+
 def record_receipt(
     connection: sqlite3.Connection,
     project_id: str,
@@ -185,6 +221,10 @@ def record_receipt(
         raise ValueError("unsupported ci_status")
     observed_at = str(observed_at or _now())
     created_at = _now()
+    text_fields = validated_receipt_text(
+        phase=phase, action=action, commit_sha=commit_sha, blocker=blocker,
+        next_gate=next_gate, source=source,
+    )
     evidence_json = _serialize_receipt_evidence(evidence)
     cursor = connection.execute(
         """INSERT INTO project_state_receipts(
@@ -193,13 +233,13 @@ def record_receipt(
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
         (
             str(project_id),
-            str(phase or "")[:240],
-            str(action or "")[:1000],
-            str(commit_sha or "")[:80],
+            text_fields["phase"],
+            text_fields["action"],
+            text_fields["commit_sha"],
             ci_status,
-            str(blocker or "")[:1000],
-            str(next_gate or "")[:1000],
-            str(source or "")[:300],
+            text_fields["blocker"],
+            text_fields["next_gate"],
+            text_fields["source"],
             observed_at,
             evidence_json,
             created_at,
