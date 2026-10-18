@@ -334,8 +334,67 @@ def bounded_events(
     return events, coverage
 
 
+def load_previous(path: Path, repositories: dict[str, str],
+                  observed: dt.datetime) -> dict[str, dt.datetime]:
+    """Use a prior local receipt for earliest-seen facts, never as authority."""
+    import stat as _stat
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            info = os.fstat(fd)
+            if not _stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+                raise ValueError("previous_receipt_invalid")
+            with os.fdopen(fd, "rb", closefd=False) as stream:
+                blob = stream.read(1024 * 1024 + 1)
+            if len(blob) > 1024 * 1024:
+                raise ValueError("previous_receipt_oversized")
+        finally:
+            os.close(fd)
+    except OSError:
+        raise ValueError("previous_receipt_unavailable") from None
+    def unique(pairs):
+        result = {}
+        for k, v in pairs:
+            if k in result:
+                raise ValueError("previous_receipt_duplicate_keys")
+            result[k] = v
+        return result
+    payload = json.loads(blob, object_pairs_hook=unique)
+    if not isinstance(payload, dict) or payload.get("schema") != "zcloud-github-activity-readonly-v1":
+        raise ValueError("previous_receipt_invalid")
+    if payload.get("feed_complete") is not False or any(
+        payload.get(k) is not False for k in ("authorizes_repair", "authorizes_merge", "authorizes_deploy")
+    ):
+        raise ValueError("previous_receipt_authority_invalid")
+    when = instant(payload.get("observed_at"))
+    if when is None or when > observed or observed - when > dt.timedelta(days=30):
+        raise ValueError("previous_receipt_time_invalid")
+    events = payload.get("events")
+    if not isinstance(events, list) or len(events) > MAX_EVENTS:
+        raise ValueError("previous_receipt_events_invalid")
+    earliest = {}
+    for row in events:
+        if not isinstance(row, dict):
+            raise ValueError("previous_receipt_event_invalid")
+        project = row.get("project")
+        identifier = row.get("id")
+        repo = repositories.get(project) if isinstance(project, str) else None
+        if not repo or not isinstance(identifier, str) or len(identifier) > 256:
+            raise ValueError("previous_receipt_scope_invalid")
+        if not identifier.startswith("github:" + repo + ":"):
+            raise ValueError("previous_receipt_source_invalid")
+        first = instant(row.get("first_observed_at") or row.get("observed_at"))
+        if first is None or first > when or first > observed:
+            raise ValueError("previous_receipt_event_time_invalid")
+        if identifier in earliest:
+            raise ValueError("previous_receipt_duplicate_event")
+        earliest[identifier] = first
+    return earliest
+
+
 def collect(registry: Path, selected: list[str], hours: int, max_events: int,
-            token: str | None, now: dt.datetime | None = None) -> dict:
+            token: str | None, now: dt.datetime | None = None,
+            previous: Path | None = None) -> dict:
     canonical = read_registry(registry)
     if not selected:
         raise ValueError("select at least one --project")
@@ -346,6 +405,7 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
     if not 1 <= hours <= 168 or not 1 <= max_events <= MAX_EVENTS:
         raise ValueError("invalid bounded window")
     observed = now or utc_now()
+    prior = load_previous(previous, canonical, observed) if previous is not None else None
     since = observed - dt.timedelta(hours=hours)
     reader = GitHubReader(token)
     results: list[dict] = []
@@ -355,6 +415,10 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         results.extend(rows)
         coverage.append(status)
     deduped = {row["id"]: row for row in results}
+    for item in deduped.values():
+        first_seen = prior.get(item["id"]) if prior is not None else None
+        item["first_observed_at"] = stamp(first_seen or observed)
+        item["new_since_previous"] = (item["id"] not in prior) if prior is not None else None
     events = sorted(deduped.values(), key=lambda x: (x["source_at"], x["id"]), reverse=True)
     # Actions can outnumber PRs and main commits. Interleave all three
     # bounded source types within each project before the output cap.
@@ -390,6 +454,7 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         "requested_projects": selected,
         "requests_used": MAX_REQUESTS - reader.remaining,
         "events": fair,
+        "previous_snapshot_compared": prior is not None,
         "truncated": len(events) > max_events,
         "coverage": coverage,
         "feed_complete": False,  # no branch/backfill/runtime proof
@@ -406,10 +471,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", action="append", required=True)
     parser.add_argument("--hours", type=int, default=48)
     parser.add_argument("--max-events", type=int, default=120)
+    parser.add_argument("--previous", type=Path, help="Read-only prior JSON activity receipt, up to 30 days old")
     args = parser.parse_args(argv)
     try:
         result = collect(args.registry, args.project, args.hours, args.max_events,
-                         os.environ.get("GITHUB_TOKEN") or None)
+                         os.environ.get("GITHUB_TOKEN") or None, previous=args.previous)
     except (ValueError, OSError, json.JSONDecodeError):
         # File names / exception text must not leak paths or secrets.
         print('{"error":"invalid_registry_or_request","feed_complete":false}', file=sys.stdout)
