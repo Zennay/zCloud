@@ -83,10 +83,12 @@ def branch_paths(fetch, base_sha, branch_sha):
             or type(ahead) is not int or ahead < 0 or ahead > 250
             or not isinstance(history, list) or len(history) != commits):
         raise InventoryDenied("branch_compare_history_incomplete")
-    if len({r.get("sha") for r in history if isinstance(r, dict)}) != commits:
-        raise InventoryDenied("branch_compare_history_invalid")
     if any(not isinstance(r, dict) or not SHA.fullmatch(str(r.get("sha") or ""))
-           for r in history) or (history and history[-1]["sha"] != branch_sha):
+           for r in history):
+        raise InventoryDenied("branch_compare_history_invalid")
+    if len({r["sha"] for r in history}) != commits:
+        raise InventoryDenied("duplicate_compare_commit")
+    if history and history[-1]["sha"] != branch_sha:
         raise InventoryDenied("branch_compare_history_mismatch")
     if payload.get("status") not in ("ahead", "behind", "diverged", "identical"):
         raise InventoryDenied("branch_compare_status_invalid")
@@ -186,12 +188,25 @@ def main():
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=MAX_SLICE)
     parser.add_argument("--owned-path", action="append", default=[])
+    parser.add_argument("--deny-overlap", action="store_true",
+                        help="fail on overlapping paths; incomplete inventory never clears admission")
     args = parser.parse_args()
     try:
         result = inventory(args.main_sha, offset=args.offset, limit=args.limit,
                            owned_paths=args.owned_path,
                            token=os.environ.get("GITHUB_TOKEN", ""))
+        if args.deny_overlap:
+            # A slice is useful warning evidence, not an automatic global clear.
+            result["admission_result"] = (
+                "overlap_detected" if result["overlap_in_slice"] else
+                "partial_inventory" if not result["coverage_complete"] else
+                "no_overlap_observed_not_authorized"
+            )
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        if args.deny_overlap and result["overlap_in_slice"]:
+            return 3
+        if args.deny_overlap and not result["coverage_complete"]:
+            return 4
         return 0
     except InventoryDenied as exc:
         print(json.dumps({"schema": "zsentinel-recent-prless-ownership-v1",
