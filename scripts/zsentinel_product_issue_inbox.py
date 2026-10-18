@@ -108,7 +108,21 @@ def priority(issue):
     }))
     return severity, qa
 
+class _NoGithubRedirects(urllib.request.HTTPRedirectHandler):
+    """Never replay the GitHub token on an HTTP redirect to another origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_GITHUB_OPENER = urllib.request.build_opener(_NoGithubRedirects())
+
+
 def bounded_get(url, token):
+    # A redirect is a degraded source result, not permission to forward credentials.
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc != "api.github.com" or not parsed.path.startswith("/repos/"):
+        raise ValueError("invalid_github_api_origin")
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "zsentinel-readonly-issue-inbox",
@@ -118,7 +132,7 @@ def bounded_get(url, token):
         headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
+        with _GITHUB_OPENER.open(request, timeout=8) as response:
             if response.status != 200:
                 raise ValueError("github_unavailable")
             data = response.read(MAX_HTTP_BYTES + 1)
