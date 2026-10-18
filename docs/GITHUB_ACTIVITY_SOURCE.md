@@ -31,6 +31,12 @@ The Activity screen now has two independent **Read public GitHub** actions, one 
 - Selection is **required**. 'All projects' does not issue dozens of anonymous GitHub calls and pretend that the entire portfolio was covered. These browser samples are never uploaded to zCloud, persisted as a queue, used to claim work or used to authorize a deployment. Refreshing the browser discards them.
 - The original manually generated JSON receipt imports remain available for private repositories, larger samples, cross-project operator workflows and stricter source evidence. The one-click public snapshots are always labelled **partial**, even if the bounded GETs succeed. No user authorization/CI/release gate is changed.
 
+## Read-only worker progress alongside GitHub Activity (dependent feature)
+
+The existing Activity page now includes a **Worker progress** panel for one selected project and worker slot 1–8. The user explicitly clicks **Read progress**; it performs an authenticated same-origin `GET /api/worker-progress-history?project=<id>&slot=<n>&limit=24` and never automatically polls or triggers a worker. Four cards separate last browser event, last prompt, last reported generated-text progress, and last completion; an expandable bounded event list shows sanitized UTC timestamps, event IDs and reported character counts only. Responses failing the strict schema, or unavailable due to authorization/deployment, show a clear error rather than falsely claiming no worker activity.
+
+**Dependency:** this API endpoint is implemented in [zCloud PR #1549](https://github.com/Zennay/zCloud/pull/1549), not in this Activity-UI PR. The panel is inert and clearly indicates unavailable backend state until a separately authorized release includes the endpoint. Browser telemetry is never proof of a current claim, real visible text generation or live deployment; it cannot acquire/modify leases or use diagnostic output for automated merges. This UI dependency requires coordinated reviewer/release sequencing. No QA, tests or backend behavior changed by this Activity branch.
+
 ## Activity tab: manual GitHub evidence without changing the server
 
 This PR also integrates the observer's JSON receipt **directly into the existing zCloud Activity tab**, via `public/app.js`. Create a receipt locally, go to **Activity → GitHub evidence → Import a JSON receipt**, and select the saved JSON file. The browser reads it **in memory only**. There is no file upload, server-side API change, GitHub token in the browser or modification to the local VPS activity stream.
