@@ -29,6 +29,10 @@ It also composes the **source logic**, not the QA suites, of draft [#1275](https
 
 This consolidates core-writer and CLI integrity while retaining separate upstream PR review and non-overlapping source ownership. The original open PRs remain intact; neither can be considered merged or deployed simply because its production hunk is present in this composed candidate.
 
+## Read-only resource display integration
+
+The resource governor now has a backwards-compatible `resource_status(connection, prune_expired=False)` read option. It **filters out** expired resource leases without deleting rows. The default `prune_expired=True` behavior for existing authorized writers remains available. This exact helper contract is also present in [worker/GET integration PR #1549](https://github.com/Zennay/zCloud/pull/1549) so the two branches can be reconciled without silently losing the read-only resource display behavior. Neither branch mutates production SQLite or extends the runtime trust boundary.
+
 ## Integration and limits
 
 This patch changes only the resource-lease admission portion of `project_runtime.py`; it does not modify the API, server, worker claims, resource capacity, resource pool allocation algorithm, queue, migrations, CI, or live SQLite. The existing draft [#1270](https://github.com/Zennay/zCloud/pull/1270) owns separate receipt freshness/pool-slot validation hunks, and open [#1545](https://github.com/Zennay/zCloud/pull/1545) owns separate receipt-provenance hunks. These need routine independent integration review against current main. The autocommit admission boundary of [#1274](https://github.com/Zennay/zCloud/issues/1274) is addressed conservatively by rejecting unsupported connections. It does not add cross-process scheduling, change the number of slots, nor authorize production resource activation.
