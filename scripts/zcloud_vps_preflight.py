@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -17,7 +18,7 @@ def command(*argv: str, cwd: Path | None = None, timeout: int = 8) -> tuple[int,
     try:
         completed = subprocess.run(
             argv, cwd=cwd, capture_output=True, text=True, timeout=timeout,
-            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
+            env={**{key: value for key, value in os.environ.items() if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}}, "GIT_OPTIONAL_LOCKS": "0"},
             check=False,
         )
         return completed.returncode, completed.stdout.strip()
@@ -67,7 +68,7 @@ def service_state() -> str:
     return "unavailable"
 
 
-def measure(root: Path) -> dict:
+def measure(root: Path, expected_main_sha: str | None = None) -> dict:
     findings: list[dict[str, str]] = []
     def mark(code: str, severity: str, detail: str) -> None:
         findings.append({"code": code, "severity": severity, "detail": detail})
@@ -77,6 +78,10 @@ def measure(root: Path) -> dict:
     if git_rc or sha_rc or len(sha) != 40:
         mark("CHECKOUT_UNAVAILABLE", "block", "Cannot establish local Git checkout identity.")
         branch, sha = "unknown", None
+    if expected_main_sha is None:
+        mark("REMOTE_MAIN_UNBOUND", "warn", "No independently verified current-main SHA supplied.")
+    elif sha != expected_main_sha:
+        mark("MAIN_SHA_MISMATCH", "block", "Local checkout HEAD differs from supplied main SHA.")
     status_rc, tracked = command("git", "status", "--porcelain=v1", "--untracked-files=no", cwd=root)
     untracked_rc, untracked = command("git", "ls-files", "--others", "--exclude-standard", cwd=root)
     tracked_count = len(tracked.splitlines()) if status_rc == 0 and tracked else 0
@@ -131,7 +136,7 @@ def measure(root: Path) -> dict:
         "schema": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
         "mode": "read_only", "release_authorized": False,
         "result": "blocked" if blocked else ("partial" if findings else "preflight_clear"),
-        "checkout": {"branch": branch, "sha": sha, "tracked_changes": tracked_count,
+        "checkout": {"branch": branch, "sha": sha, "expected_main_sha": expected_main_sha, "tracked_changes": tracked_count,
                      "untracked_entries": untracked_count},
         "runner": {"unit": RUNNER_UNIT, "unit_state": unit, "listener_pids": pids},
         "resources": {"available_ram_pct": available_pct, "swap_used_pct": swap_pct,
@@ -145,8 +150,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/home/ubuntu/zennay-cloud"))
     parser.add_argument("--json", action="store_true", help="Print bounded machine-readable evidence")
+    parser.add_argument("--expected-main-sha", default=None,
+                        help="Exact independently fetched 40-character main commit SHA (no network requests)")
     args = parser.parse_args()
-    report = measure(args.root.resolve())
+    if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
+        parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
+    report = measure(args.root.resolve(), args.expected_main_sha)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
