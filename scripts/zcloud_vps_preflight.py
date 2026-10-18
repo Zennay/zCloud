@@ -69,6 +69,32 @@ def service_state() -> str:
     return "unavailable"
 
 
+def optional_storage_inventory(root: Path) -> dict:
+    """Budgeted, opt-in du summary of known locations; never searches or deletes files."""
+    home = root.parent
+    targets = (
+        ("project_checkout", root),
+        ("zcloud_runner_install", home / "actions-runner-zcloud"),
+        ("user_cache", home / ".cache"),
+        ("gradle_cache", home / ".gradle"),
+        ("raiseai_build", home / "raiseai-build"),
+    )
+    measured = []
+    incomplete = []
+    for label, path in targets:
+        if not path.exists() or path.is_symlink():
+            continue
+        code, output = command("du", "-sx", "-B1", "--", str(path), timeout=3)
+        first = output.split(maxsplit=1)[0] if output else ""
+        if code != 0 or not first.isdigit():
+            incomplete.append(label)
+            continue
+        measured.append({"category": label, "size_gib": round(int(first) / (1024 ** 3), 2)})
+    return {"mode": "bounded_opt_in", "measured": sorted(measured, key=lambda row: -row["size_gib"]),
+            "incomplete": incomplete, "scope": "five known directories; excludes all other paths",
+            "cleanup_authorized": False}
+
+
 def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     """Human-readable, non-authorizing recovery ordering; never executes the actions."""
     codes = {entry["code"] for entry in findings}
@@ -103,7 +129,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     return recommendations
 
 
-def measure(root: Path, expected_main_sha: str | None = None) -> dict:
+def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False) -> dict:
     findings: list[dict[str, str]] = []
     def mark(code: str, severity: str, detail: str) -> None:
         findings.append({"code": code, "severity": severity, "detail": detail})
@@ -168,6 +194,10 @@ def measure(root: Path, expected_main_sha: str | None = None) -> dict:
 
     blocked = any(f["severity"] == "block" for f in findings)
     recovery = actionable_recovery(findings)
+    inventory = optional_storage_inventory(root) if disk_hotspots else None
+    if inventory is not None and inventory["incomplete"]:
+        mark("STORAGE_TRIAGE_PARTIAL", "warn",
+             "Some bounded disk summaries timed out or were unavailable; do not infer zero usage.")
     return {
         "schema": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
         "mode": "read_only", "release_authorized": False,
@@ -179,6 +209,7 @@ def measure(root: Path, expected_main_sha: str | None = None) -> dict:
                       "disk_free_pct": disk_free_pct},
         "findings": findings,
         "recovery_priorities": recovery,
+        "storage_inventory": inventory,
         "next_step": "Obtain existing owner/release approval; never use this report as deploy authorization.",
     }
 
@@ -267,6 +298,20 @@ def render_html(report: dict) -> str:
             f'{item("Severity changed", shown([x["code"] + ": " + x["previous"] + " → " + x["current"] for x in comparison["severity_changes"]]))}</dl>'
             '<p class="muted">Previous report was locally supplied and not independent runtime attestation.</p></section>'
         )
+    storage = report.get("storage_inventory")
+    if storage is None:
+        storage_html = ""
+    else:
+        entries = "".join(
+            f'<li><strong>{esc(row["category"])}</strong>: {esc(row["size_gib"])} GiB</li>'
+            for row in storage["measured"]
+        ) or "<li>No directory summary completed within the time budget.</li>"
+        missing = ", ".join(esc(label) for label in storage["incomplete"]) or "None"
+        storage_html = (
+            '<section aria-labelledby="storage"><h2 id="storage">Optional disk hotspots</h2>'
+            f'<ul>{entries}</ul><p>Incomplete summaries: {missing}</p>'
+            '<p class="muted">Five fixed categories only. No files were changed or deleted.</p></section>'
+        )
     checkout = report["checkout"]
     runner = report["runner"]
     resources = report["resources"]
@@ -308,6 +353,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {item("Filesystem free", val(resources["disk_free_pct"]) + "%")}
 </dl></section>
 {comparison_html}
+{storage_html}
 <section aria-labelledby="findings"><h2 id="findings">Release blockers and warnings</h2><ul>{findings}</ul></section>
 <section aria-labelledby="recovery"><h2 id="recovery">Owner-gated recovery priorities</h2><ol>{actions}</ol></section>
 <p class="disclaimer"><strong>Not an approval.</strong> This report cannot prove protected-main review,
@@ -320,6 +366,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/home/ubuntu/zennay-cloud"))
     parser.add_argument("--json", action="store_true", help="Print bounded machine-readable evidence")
+    parser.add_argument("--disk-hotspots", action="store_true",
+                        help="Optional bounded read-only du inventory of five known storage categories")
     parser.add_argument("--previous-report", type=Path, default=None,
                         help="Compare with a saved bounded JSON report; never modifies the prior file")
     parser.add_argument("--format", choices=("text", "json", "html"), default="text",
@@ -329,7 +377,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
-    report = measure(args.root.resolve(), args.expected_main_sha)
+    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots)
     if args.previous_report is not None:
         try:
             report["comparison"] = compare_snapshot(args.previous_report, report)
@@ -355,6 +403,13 @@ def main() -> int:
             print(f"Still present: {', '.join(change['still_present']) or 'none'}")
             for entry in change["severity_changes"]:
                 print(f"Severity changed: {entry['code']} {entry['previous']} -> {entry['current']}")
+        inventory = report.get("storage_inventory")
+        if inventory is not None:
+            print("Optional disk inventory (incomplete categories are NOT zero):")
+            for row in inventory["measured"]:
+                print(f"  {row['category']}: {row['size_gib']} GiB")
+            if inventory["incomplete"]:
+                print(f"  Incomplete: {', '.join(inventory['incomplete'])}")
         print("Owner-gated recovery priorities:")
         for index, item in enumerate(report["recovery_priorities"], 1):
             print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
