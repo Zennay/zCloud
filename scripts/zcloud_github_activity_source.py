@@ -86,12 +86,22 @@ def read_registry(path: Path) -> dict[str, str]:
     return repositories
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward a GitHub bearer token to an unexpected redirect.
+        return None
+
+
 class GitHubReader:
     def __init__(self, token: str | None, budget: int = MAX_REQUESTS) -> None:
         self.token = token
         self.remaining = budget
+        self.denied = False
+        self.opener = urllib.request.build_opener(_NoRedirect)
 
     def get(self, repo: str, suffix: str, params: dict[str, object]) -> dict:
+        if self.denied:
+            raise ValueError("not_fetched_after_rate_or_auth_denial")
         if self.remaining < 1:
             raise ValueError("request_budget_exhausted")
         self.remaining -= 1
@@ -106,7 +116,7 @@ class GitHubReader:
             headers["Authorization"] = "Bearer " + self.token
         request = urllib.request.Request(url, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=8) as response:
+            with self.opener.open(request, timeout=8) as response:
                 if response.status != 200:
                     raise ValueError("github_response_unavailable")
                 # Bound memory regardless of HTTP Content-Length claims.
@@ -119,7 +129,10 @@ class GitHubReader:
             if error.code == 404:
                 raise ValueError("repository_inaccessible") from None
             if error.code in (401, 403, 429):
+                self.denied = True
                 raise ValueError("github_permission_or_rate_limit") from None
+            if error.code in (301, 302, 303, 307, 308):
+                raise ValueError("github_redirect_refused") from None
             raise ValueError("github_http_unavailable") from None
         except (urllib.error.URLError, TimeoutError, OSError):
             raise ValueError("github_network_unavailable") from None
