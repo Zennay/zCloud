@@ -104,11 +104,32 @@ def is_new_product_delivery(item):
     return True
 
 
+
+def held_queue_review_reason(item):
+    """Classify non-admitted new work for the operator; never grant a claim.
+
+    The existing is_new_product_delivery() admission decision remains
+    unchanged. A corrupt product task is not silently relabeled QA-only.
+    """
+    try:
+        _metadata(item)
+    except (ValueError, TypeError, UnicodeError):
+        return "invalid_metadata"
+    title = str(item.get("title") or "").strip()
+    if not title or len(title) > 2000:
+        return "invalid_title"
+    criteria = str(item.get("completion_criteria") or "")
+    if len(criteria) > 32768:
+        return "oversized_criteria"
+    return "qa_only"
+
+
 def product_queue_snapshot(items, max_visible=8):
     """An advisory, bounded GET-only summary, never an admission receipt."""
     if type(max_visible) is not int or not 1 <= max_visible <= 20:
         raise ValueError("invalid delivery summary limit")
     skipped_qa = 0
+    needs_review = []
     candidate_rows = []
     for item in items:
         if not isinstance(item, dict):
@@ -118,7 +139,11 @@ def product_queue_snapshot(items, max_visible=8):
                 or item.get("worker_slot") is not None):
             continue
         if not is_new_product_delivery(item):
-            skipped_qa += 1
+            reason = held_queue_review_reason(item)
+            if reason == "qa_only":
+                skipped_qa += 1
+            else:
+                needs_review.append((item, reason))
             continue
         candidate_rows.append(item)
     priorities = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
@@ -130,6 +155,16 @@ def product_queue_snapshot(items, max_visible=8):
     return {
         "policy": "product-delivery-2026-10-17",
         "queued_qa_only_held": skipped_qa,
+        "queued_requires_owner_review": len(needs_review),
+        "review_items": [
+            {
+                "project_id": str(item.get("project_id") or "")[:56],
+                "queue_id": str(item.get("queue_id") or "")[:160],
+                "priority": str(item.get("priority") or "")[:4],
+                "reason": reason,
+            }
+            for item, reason in needs_review[:max_visible]
+        ],
         "queued_product_candidates": len(candidate_rows),
         "candidates": [
             {
