@@ -7,7 +7,7 @@ leave their input file; they are not included in the rendered HTML.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import os
 from pathlib import Path
@@ -110,6 +110,65 @@ def read_local_api(projects):
     return rows, unavailable
 
 
+def window_digest_html(ledger, rows, project=None):
+    """Source-separated visible results; CI is never treated as code delivery."""
+    now = datetime.now(timezone.utc)
+    projects = [project] if project else sorted(ledger["coverage"])
+    labels = (1, 6, 12)
+    github = {pid: [] for pid in projects}
+    local = {pid: [] for pid in projects}
+    for item in ledger["events"]:
+        pid = item["project"]
+        stamp = item.get("source_timestamp")
+        if pid in github and stamp:
+            # First-observed branch tips have no source time and are excluded.
+            at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            if at.tzinfo is not None:
+                github[pid].append((at.astimezone(timezone.utc), item))
+    for pid, stamp, _ in rows:
+        if pid in local:
+            at = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+            local[pid].append(at.astimezone(timezone.utc))
+    output = []
+    for pid in projects:
+        coverage = ledger["coverage"][pid].get("status")
+        for hours in labels:
+            lower = now - timedelta(hours=hours)
+            entries = [item for at, item in github[pid] if lower <= at <= now]
+            measures = (
+                sum(i["kind"] == "pr_merged" and i.get("merged_main") is True for i in entries),
+                sum(i["kind"] == "main_commit" for i in entries),
+                sum(i["kind"] == "pr_created" for i in entries),
+                sum(i["kind"] == "ci_run" and i.get("conclusion") == "success" for i in entries),
+                sum(i["kind"] == "ci_run" and i.get("conclusion") in
+                    ("failure", "timed_out", "action_required") for i in entries),
+                sum(lower <= stamp <= now for stamp in local[pid]),
+            )
+            output.append("<tr><th scope='row'>" + h(pid) + "</th><td>" +
+                          h(hours) + " uur</td>" +
+                          "".join("<td>" + h(value) + "</td>" for value in measures) +
+                          "<td>" + ("Recent bronvenster" if coverage == "recent_window"
+                                    else "Deels/verouderd") + "</td></tr>")
+    clock = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (
+        "<section aria-labelledby='activity-windows'><h2 id='activity-windows'>"
+        "Wat is er gebeurd in 1, 6 en 12 uur?</h2>"
+        "<p>Opgesteld <time datetime='" + h(clock) + "'>" + h(clock) +
+        "</time>. Gebeurtenissen uit GitHub en de VPS blijven apart. "
+        "PR-merges, main-commits en groene CI zijn geen optelbare productfeatures. "
+        "Een zichtbare nul betekent niet dat er geen werk is uitgevoerd. "
+        "Ontbrekende branch-brontijden tellen niet als recente activiteit.</p>"
+        "<div class='wrap'><table><caption class='sr-only'>Per-project activiteitsvensters</caption>"
+        "<thead><tr><th>Project</th><th>Venster</th><th>PR-merges naar main</th>"
+        "<th>Main-commits</th><th>Nieuwe PR's</th><th>CI groen</th>"
+        "<th>CI fout</th><th>Lokale events</th><th>GitHub-bron</th></tr></thead>"
+        "<tbody>" + "".join(output) + "</tbody></table></div>"
+        "<p>Bronvensters zijn beperkt en soms verouderd. "
+        "CI-succes bewijst nooit een merge, release, deploy of hervatte worker.</p>"
+        "</section>"
+    )
+
+
 def combined_html(ledger, rows, project=None, unavailable=(), from_local_api=False):
     """Keep two sources visibly separate; never count GitHub and local twice."""
     html = render_html(ledger, project=project)
@@ -148,7 +207,7 @@ def combined_html(ledger, rows, project=None, unavailable=(), from_local_api=Fal
     pivot = "</nav></header>"
     if html.count(pivot) != 1:
         raise ActivitySourceError("activity_report_markup_unexpected")
-    html = html.replace(pivot, pivot + section, 1)
+    html = html.replace(pivot, pivot + window_digest_html(ledger, rows, project) + section, 1)
     html = html.replace("Dit overzicht omvat geen lokale VPS-events.",
                         "Lokale VPS-events worden hieronder als afzonderlijke export getoond.", 1)
     html = html.replace("<title>zCloud · Privé GitHub-activiteit</title>",
