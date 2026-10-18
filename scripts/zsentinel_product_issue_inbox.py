@@ -147,10 +147,14 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
     records = {}
     coverage = []
     calls = 0
+    rate_or_auth_denied = False
     for project in names:
         repo = projects[project]
         statuses = []
         for direction in ("asc", "desc"):
+            if rate_or_auth_denied:
+                statuses.append("not_fetched_after_rate_or_auth_denial")
+                continue
             if calls >= MAX_CALLS:
                 statuses.append("request_budget_exhausted")
                 continue
@@ -198,12 +202,15 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                 statuses.append("bounded_truncated" if len(issues) == 12 else "bounded_window")
             except ValueError as error:
                 statuses.append(str(error))
+                if str(error) == "github_permission_or_rate_limit":
+                    rate_or_auth_denied = True
         successful = sum(s.startswith("bounded_") for s in statuses)
         # Candidate reuse first: check a bounded recent window of existing
         # open PRs for explicit #issue references. This is NOT proof of
         # active ownership or acceptance: never claim the PR's branch.
-        pr_coverage = "unavailable"
-        if calls < MAX_CALLS:
+        pr_coverage = ("not_fetched_after_rate_or_auth_denial" if rate_or_auth_denied
+                       else "not_fetched_budget")
+        if not rate_or_auth_denied and calls < MAX_CALLS:
             calls += 1
             params = urllib.parse.urlencode({
                 "state": "open", "sort": "updated", "direction": "desc",
@@ -231,7 +238,7 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                     )
                     closing_references = {
                         int(m.group(1)) for m in re.finditer(
-                            r"(?i)\\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\\s+#([1-9][0-9]{0,7})\\b",
+                            r"(?i)\b(?:fix(?:es)?|clos(?:e|es)|resolv(?:e|es))\s+#([1-9][0-9]{0,7})\b",
                             body
                         )
                     }
@@ -249,10 +256,13 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                 pr_coverage = "bounded_truncated" if len(open_prs) == 8 else "bounded_window"
             except ValueError as error:
                 pr_coverage = str(error)
+                if str(error) == "github_permission_or_rate_limit":
+                    rate_or_auth_denied = True
         coverage.append({
             "project": project, "repository": repo, "oldest_window": statuses[0], "open_pr_window": pr_coverage,
             "recent_window": statuses[1],
-            "status": "partial" if successful == 2 else "degraded" if successful else "unavailable",
+            "status": ("partial" if successful == 2 and pr_coverage.startswith("bounded_")
+                       else "degraded" if successful else "unavailable"),
             "active_claims_verified": False,
         })
     priority_rank = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
@@ -290,6 +300,7 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
         "observed_at": observed.isoformat(timespec="seconds"),
         "projects": names, "coverage": coverage, "request_count": calls,
         "items": result, "suppressed_qa_only": excluded_qa,
+        "stopped_after_rate_or_auth_denial": rate_or_auth_denied,
         "truncated": len(result) >= max_items or any("bounded_truncated" in
             (row["oldest_window"], row["recent_window"]) for row in coverage),
         "queue_ownership_known": False,
@@ -360,7 +371,7 @@ def html_view(data):
             "explicit P0/P1 label or title, oldest first within each priority. "
             "QA-only work excluded by the 17 October product policy.</p><p class='notice'>"
             "Partial bounded sample, not a full backlog or active claim/runner inventory. "
-            "A GitHub assignee is not an active worker claim. Do not overwrite owned work, "
+            "A GitHub assignee is not an active worker claim. On a GitHub 403/429, later repos are not queried. Do not overwrite owned work, "
             "perform recovery, merge or deploy from this page.</p><p class='muted'>"
             "Observed " + escape(data["observed_at"]) + " · requests " +
             str(data["request_count"]) + " · QA-only excluded " +
