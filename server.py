@@ -168,16 +168,11 @@ def action_request_allowed(handler):
         allowed = set()
     if addr in allowed:
         return True
-    host = (handler.headers.get('Host') or '').strip()
-    origin = (handler.headers.get('Origin') or '').strip()
-    referer = (handler.headers.get('Referer') or '').strip()
-    fetch_site = (handler.headers.get('Sec-Fetch-Site') or '').strip().lower()
-    same_origin = bool(host) and (
-        origin in ('http://' + host, 'https://' + host) or
-        referer.startswith('http://' + host + '/') or
-        referer.startswith('https://' + host + '/')
-    )
-    return same_origin and fetch_site in ('same-origin', 'same-site')
+    # Host/Origin/Referer/Sec-Fetch-Site are caller-supplied browser metadata,
+    # not authenticated remote identity. Non-browser clients can forge all of
+    # them. Preserve loopback and the existing explicit peer allowlist above;
+    # all other management requests fail closed, regardless of headers.
+    return False
 
 def project_runner_prompt(project_id, name):
     if project_id=='zsentinel':
