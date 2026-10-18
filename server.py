@@ -3521,22 +3521,50 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
 
 def portfolio_queue_allocation():
+    # Issue #588: never assemble slot ownership using one SQLite connection
+    # per slot. A concurrent scheduler transition between reads can fabricate
+    # two simultaneously active owners that never coexisted in the database.
+    # A single deferred READ transaction also binds historical slot ordinals
+    # and advisory queued candidates to that very same committed snapshot.
+    ts=now()
+    with connect() as c:
+        c.execute('BEGIN')
+        active_rows=c.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE worker_slot BETWEEN 1 AND ?
+                 AND status IN ('claimed','running','verifying')
+                 AND (claim_expires IS NULL OR claim_expires>?)
+               ORDER BY worker_slot,updated_at DESC""",
+            (GLOBAL_CHATGPT_WORKER_LIMIT,ts),
+        ).fetchall()
+        previous_rows=c.execute(
+            'SELECT slot,project_id,worker_slot FROM ai_global_slots'
+        ).fetchall()
+        queued_rows=c.execute(
+            """SELECT * FROM portfolio_queue
+               WHERE status NOT IN ('done','dropped')
+               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                        WHEN 'P2' THEN 2 ELSE 3 END,created_at,queue_id"""
+        ).fetchall()
     active=[]
-    for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
-        item=portfolio_queue_current_for_slot(slot)
-        if item:
-            active.append(item)
+    seen_slots=set()
+    for row in active_rows:
+        slot=int(row['worker_slot'])
+        if slot in seen_slots:
+            # Preserve the previous 'latest updated row per slot' contract
+            # without ever presenting two owners for a single global slot.
+            continue
+        seen_slots.add(slot)
+        active.append(_portfolio_queue_row(row))
     # Keep an existing project's worker ordinal bound to its previous
     # physical slot. If an idle lower-numbered slot is later Force-assigned
     # to the same project, renumbering its generating worker would silently
     # orphan the active browser session.
-    with connect() as c:
-        previous={
-            (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
-            for r in c.execute(
-                'SELECT slot,project_id,worker_slot FROM ai_global_slots'
-            ).fetchall()
-        }
+    previous={
+        (str(r['project_id']),int(r['slot'])):int(r['worker_slot'])
+        for r in previous_rows
+    }
+    queued=[_portfolio_queue_row(row) for row in queued_rows]
     # Reserve ALL surviving worker ordinals before filling any newly
     # available global slot. Allocating low-numbered slots first otherwise
     # steals w1 from an already-generating worker on global slot 2.
@@ -3572,7 +3600,6 @@ def portfolio_queue_allocation():
             'desired_state':'running',
             'score':10000-_portfolio_priority_rank(item['priority'])*1000,
         })
-    queued=portfolio_queue_items(False)
     candidates=[{
         'worker_key':None,'project_id':item['project_id'],'worker_slot':None,
         'score':10000-_portfolio_priority_rank(item['priority'])*1000,
