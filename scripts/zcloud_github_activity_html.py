@@ -52,7 +52,9 @@ def event_link(event: dict, repo: str) -> tuple[str, str]:
         state = str(event.get("conclusion") or event.get("status") or "unknown")
         return f"Actions #{n} · {state}", f"https://github.com/{repo}/actions/runs/{n}"
     n = event["pr"]
-    suffix = " · draft" if event.get("draft") is True else ""
+    suffix = " · head " + event["pr_head_sha"][:12]
+    if event.get("draft") is True:
+        suffix += " · draft"
     if kind == "pr_merged":
         target = event.get("reported_target") or "unknown"
         suffix += " · reported target " + target + " (not independently reachable)"
@@ -83,6 +85,11 @@ def html_page(data: dict) -> str:
             windows.append(escape(label) + ": " + escape(coverage[key]))
         states = " · ".join(windows)
         status = coverage["status"]
+        branch_scope = coverage.get("github_branches")
+        if branch_scope == "observed_pr_heads_only":
+            states += " · PR branch SHAs observed (partial)"
+        else:
+            states += " · branches not synchronized"
         warning = "<p class='warning'>Partial source coverage. More events may exist than the displayed bounded window. Missing data is unknown, not zero.</p>"
         table = []
         for item in rows:
