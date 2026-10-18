@@ -358,6 +358,13 @@ def acquire_resource(
     metadata_json = _resource_metadata_json(metadata)
     if metadata_json is None:
         return {"acquired": False, "reason": "invalid_resource_metadata", "project_id": project_id}
+    # The cleanup DELETE reserves a write transaction for the capacity COUNT
+    # only on transactional connections. Autocommit could release its lock
+    # before INSERT, admitting two different owners into a one-slot pool.
+    auto = getattr(connection, "autocommit", None)
+    if auto is True or (auto is not False and connection.isolation_level is None):
+        return {"acquired": False, "reason": "transactional_resource_connection_required",
+                "project_id": project_id}
     contracts = load_contracts()
     contract = project_contract(project_id, contracts)
     compute = dict(contract.get("compute") or {})
