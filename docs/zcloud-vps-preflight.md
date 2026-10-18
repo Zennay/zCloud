@@ -19,3 +19,11 @@ Use this as a short preflight for a human release owner, not an auto-healing age
 The JSON report now exposes ordered `recovery_priorities` with codes, accountable owner, reason and safe next action. Human output prints the same order. Capacity is handled first (especially a full swap or critically low disk), followed by dedicated runner ownership, dirty checkout reconciliation and exact-source provenance. These are **suggestions only**; no programmatic recovery, cleaning, `git pull`, restart, database mutation or runner reassignment takes place. The final item always reminds the operator that successful local inspection does not grant deploy permission.
 
 This workflow is intentionally not wired into existing production GitHub Actions jobs, owned by #580/#1089 and #1447. It does not depend on a GitHub token or make any network request.
+
+## Optional offline HTML operator view
+
+```sh
+python3 scripts/zcloud_vps_preflight.py --expected-main-sha "$VERIFIED_MAIN_SHA" --format html > preflight-report.html
+```
+
+This optional output is a **standalone HTML snapshot**, responsive on a phone or desktop and printable. It embeds no JavaScript, external dependencies, credentials or detailed process arguments. All derived text is HTML-escaped. Display contains release blockers, Git/ref context, resource conditions and human owner-bound recovery steps. By default only stdout is written; redirection is an explicit **operator** decision and should target a private location, never a public web root. The process still returns a nonzero code on blocked or incomplete inspections even if an HTML page was emitted.
