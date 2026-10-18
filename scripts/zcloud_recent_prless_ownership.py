@@ -25,6 +25,8 @@ MAX_DIFF_FILES = 299
 RECENT_DAYS = 7
 MAX_RUNTIME = 75
 MAX_COMMIT_BYTES = 96 * 1024
+MAX_PREFIX = 100
+MAX_RENDERED_PATHS = 20
 
 
 def commit_time(sha, token, deadline):
@@ -111,13 +113,18 @@ def branch_paths(fetch, base_sha, branch_sha):
 
 
 def inventory(main_sha, *, offset=0, limit=MAX_SLICE, owned_paths=(),
-              token="", now=None):
+              branch_prefix=None, token="", now=None):
     """Return one exact-index slice, never falsely report global coverage."""
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= MAX_SLICE:
         raise InventoryDenied("invalid_slice")
     if len(owned_paths) > MAX_PATHS:
         raise InventoryDenied("owned_paths_limit")
     owned = sorted({_path(x) for x in owned_paths})
+    if branch_prefix is not None:
+        if (not isinstance(branch_prefix, str) or not 1 <= len(branch_prefix) <= MAX_PREFIX
+                or not re.fullmatch(r"[A-Za-z0-9_./-]+", branch_prefix)
+                or ".." in branch_prefix):
+            raise InventoryDenied("invalid_branch_prefix")
     _sha(main_sha)
     now = datetime.now(timezone.utc) if now is None else now
     if not isinstance(now, datetime) or now.utcoffset() is None:
@@ -126,7 +133,9 @@ def inventory(main_sha, *, offset=0, limit=MAX_SLICE, owned_paths=(),
     deadline = time.monotonic() + MAX_RUNTIME
     fetch = github_fetcher(token)
     snapshot = collect(fetch, main_sha)
-    candidates = snapshot["pr_less"]
+    all_candidates = snapshot["pr_less"]
+    candidates = ([r for r in all_candidates if r["branch"].startswith(branch_prefix)]
+                  if branch_prefix else all_candidates)
     if offset >= len(candidates) and candidates:
         raise InventoryDenied("slice_outside_inventory")
     selected = candidates[offset:offset + limit]
@@ -161,7 +170,9 @@ def inventory(main_sha, *, offset=0, limit=MAX_SLICE, owned_paths=(),
     if (again["pr_less"] != candidates or again["branch_count"] != snapshot["branch_count"]
             or again["open_pr_head_count"] != snapshot["open_pr_head_count"]):
         raise InventoryDenied("post_scan_inventory_drift")
-    coverage = offset == 0 and len(selected) == len(candidates)
+    # Prefix filtering cannot prove absence of overlap outside the namespace.
+    coverage = (branch_prefix is None and offset == 0
+                and len(selected) == len(all_candidates))
     return {
         "schema": "zsentinel-recent-prless-ownership-v1",
         "source": "github_readonly",
@@ -170,7 +181,9 @@ def inventory(main_sha, *, offset=0, limit=MAX_SLICE, owned_paths=(),
         "lookback_days": RECENT_DAYS,
         "snapshot_complete": True,
         "branch_inventory_count": snapshot["branch_count"],
-        "prless_count": len(candidates),
+        "prless_count": len(all_candidates),
+        "matching_prefix_count": len(candidates),
+        "branch_prefix": branch_prefix,
         "slice_offset": offset,
         "slice_count": len(selected),
         "coverage_complete": coverage,
@@ -182,18 +195,62 @@ def inventory(main_sha, *, offset=0, limit=MAX_SLICE, owned_paths=(),
     }
 
 
+
+def markdown_report(result):
+    """Bounded human-readable evidence, not authorization to claim work."""
+    def safe(value):
+        return (str(value).replace("\\", "\\\\").replace("|", "\\|")
+                .replace("`", "\\`").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("[", "\\[").replace("]", "\\]"))
+
+    lines = [
+        "# zSentinel PR-less branch handoff", "",
+        f"- Main SHA: `{result['main_sha']}`",
+        f"- Observed (UTC): {result['observed_at']}",
+        f"- GitHub PR-less branches: {result['prless_count']}",
+        f"- Matching namespace: {result['matching_prefix_count']}",
+        f"- Namespace: {safe(result.get('branch_prefix') or '(none)')}",
+        f"- Slice: offset {result['slice_offset']}, {result['slice_count']} entries",
+        f"- Global coverage: {'complete' if result['coverage_complete'] else 'PARTIAL'}",
+        "- **No ownership, claim, merge or deployment authorization**", "",
+        "| Branch | Last commit (UTC) | Status | Ahead | Overlaps |",
+        "| --- | --- | --- | ---: | ---: |",
+    ]
+    for row in result["branches"]:
+        conflicts = row.get("overlapping_paths") or []
+        lines.append("| " + " | ".join((
+            safe(row["ref"]), safe(row["last_commit_at"]),
+            safe(row["classification"]), str(row.get("ahead_commits", "-")),
+            str(len(conflicts)),
+        )) + " |")
+        if conflicts:
+            lines.append(f"\nConflicts for `{safe(row['ref'])}`:")
+            lines.extend(f"- `{safe(p)}`" for p in conflicts[:MAX_RENDERED_PATHS])
+            if len(conflicts) > MAX_RENDERED_PATHS:
+                lines.append(f"- … {len(conflicts)-MAX_RENDERED_PATHS} more paths omitted")
+    lines.extend(("", "Advisory evidence only. Recheck Notion active claims, all",
+                  "open PRs and all unscanned branches before editing. Partial",
+                  "results **never** establish exclusive ownership."))
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("main_sha", help="exact current canonical main SHA")
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=MAX_SLICE)
     parser.add_argument("--owned-path", action="append", default=[])
+    parser.add_argument("--branch-prefix", default=None,
+                        help="select namespace; global coverage stays partial")
+    parser.add_argument("--format", choices=("json", "markdown"), default="json")
     parser.add_argument("--deny-overlap", action="store_true",
                         help="fail on overlapping paths; incomplete inventory never clears admission")
     args = parser.parse_args()
     try:
+        if args.deny_overlap and not args.owned_path:
+            raise InventoryDenied("deny_overlap_requires_owned_path")
         result = inventory(args.main_sha, offset=args.offset, limit=args.limit,
-                           owned_paths=args.owned_path,
+                           owned_paths=args.owned_path, branch_prefix=args.branch_prefix,
                            token=os.environ.get("GITHUB_TOKEN", ""))
         if args.deny_overlap:
             # A slice is useful warning evidence, not an automatic global clear.
@@ -202,7 +259,10 @@ def main():
                 "partial_inventory" if not result["coverage_complete"] else
                 "no_overlap_observed_not_authorized"
             )
-        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        if args.format == "markdown":
+            print(markdown_report(result))
+        else:
+            print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         if args.deny_overlap and result["overlap_in_slice"]:
             return 3
         if args.deny_overlap and not result["coverage_complete"]:
