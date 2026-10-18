@@ -29,7 +29,7 @@ MAX_CONFIG_BYTES = 512 * 1024
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPO = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 SEVERITY = re.compile(r"^\s*(?:\[(P[01])\]|(P[01])(?=\s|:|\-))", re.I)
-QA = re.compile(r"^\s*(?:(?:P[0-3]\s*[:\-]\s*)?(?:QA|test|regression|quality[ -]validation))\s*[:\- ]", re.I)
+QA = re.compile(r"^\s*(?:P[0-3](?=\s|:|\-)(?:\s*[:\-]?\s*)?)?(?:QA|test|regression|quality[ -]validation)\b", re.I)
 
 def object_unique(pairs):
     result = {}
