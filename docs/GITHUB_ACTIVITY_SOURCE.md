@@ -22,6 +22,15 @@ Readable operational output, with links and explicit no-deployment claims:
 
 The new receipt records stable per-event `first_observed_at` and `new_since_previous`; the digest and HTML highlight events missing in the **prior bounded sample**, not necessarily newly created GitHub work. Repeated observations preserve the earliest valid first-seen timestamp carried by the supplied prior receipt. The input must be a local, bounded, non-symlink regular JSON file at most 30 days old with consistent canonical project/source identities and no authority flags. If these conditions fail the CLI refuses the comparison. This feature makes no persistent database writes or completeness claims.
 
+## Activity tab: manual GitHub evidence without changing the server
+
+This PR also integrates the observer's JSON receipt **directly into the existing zCloud Activity tab**, via `public/app.js`. Create a receipt locally, go to **Activity → GitHub evidence → Import a JSON receipt**, and select the saved JSON file. The browser reads it **in memory only**. There is no file upload, server-side API change, GitHub token in the browser or modification to the local VPS activity stream.
+
+The Activity page presents GitHub PR/CI/main history in a separate project-filterable panel. It displays exact PR head SHA prefixes, first-observed snapshot flags and canonical links, while keeping partial-source and unverified merge/deploy warnings. **Clear snapshot** removes the in-memory selection. Page navigation preserves it within that browser tab; a browser reload discards it.
+
+The import admits at most a 1 MiB JSON file and 200 events; enforces the zCloud read-only schema with all authorizing flags false; binds each event to a known displayed project and canonical Zennay GitHub repository; derives links from validated positive PR/Actions IDs or exact 40-hex main commit SHA; rejects duplicated/cross-project event IDs, invalid timestamps, future observation dates and unknown source identities. Uploaded arbitrary HTML, file paths, raw issue bodies or upstream links are never injected into the page. No secret keys or worker control actions are exposed.
+
+This **operator-assisted source bridge** is intentionally distinct from an automated GitHub collector. The owners of the central `/api/activity`, eventstream and serialized production release retain live synchronization, credential, CI and deployment authority. An imported receipt is not proof of a live deployed system.
 Mobile-readable self-contained **offline HTML view** (no JS, remote assets, tracking, server or credential persistence):
 
     python3 scripts/zcloud_github_activity_source.py --project cloud --hours 24 --max-events 60 | python3 scripts/zcloud_github_activity_html.py > /tmp/zcloud-activity-snapshot.html
