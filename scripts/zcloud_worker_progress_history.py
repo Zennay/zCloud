@@ -20,6 +20,15 @@ SAFE_EVENTS = frozenset({
     "generation-finished", "runner-started", "runner-paused", "worker-paused",
     "worker-drained", "startup-blocked", "conversation-adopted",
     "target-tab-recovered", "quality-recovery-requested",
+    "send-blocked", "composer-restored", "conversation-reset-requested",
+})
+# Allow only constant browser recovery reason codes in the operator view.
+# Never return raw runner-status reason, URL, prompt, error or user text.
+SAFE_REASON_CODES = frozenset({
+    "composer-missing-manual-recovery-required",
+    "composer-missing-operator-action-required",
+    "composer-missing-before-first-send",
+    "new-chat-button-missing",
 })
 MAX_ROWS = 40
 
@@ -51,8 +60,12 @@ def _item(row: sqlite3.Row | None, reference: datetime) -> dict | None:
     raw_chars = row["assistant_chars"]
     chars = (raw_chars if type(raw_chars) is int and 0 <= raw_chars <= 2000000
              else None)
+    raw_reason = row["reason"] if "reason" in row.keys() else None
+    reason_code = (raw_reason if kind in {"send-blocked", "conversation-reset-requested"}
+                   and isinstance(raw_reason, str)
+                   and raw_reason in SAFE_REASON_CODES else None)
     return {
-        "id": row["id"], "kind": kind,
+        "id": row["id"], "kind": kind, "reason_code": reason_code,
         "clock": _clock(row["ts"], reference), "reported_assistant_chars": chars,
     }
 
@@ -88,19 +101,24 @@ def read_worker_progress(db_path: Path, project: str, slot: int,
         connection.row_factory = sqlite3.Row
         try:
             connection.execute("PRAGMA query_only=ON")
-            query = ("SELECT id,ts,event,assistant_chars FROM runner_events "
+            # Existing old DBs without this field must remain readable. No
+            # database schema migration or mutation is performed by a GET.
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(runner_events)")}
+            reason_column = "reason" if "reason" in columns else "NULL AS reason"
+            fields = "id,ts,event,assistant_chars," + reason_column
+            query = ("SELECT " + fields + " FROM runner_events "
                      "WHERE project_id=? AND worker_slot=? ORDER BY id DESC LIMIT ?")
             recent = connection.execute(query, (project, slot, limit)).fetchall()
             progress = connection.execute(
-                "SELECT id,ts,event,assistant_chars FROM runner_events "
+                "SELECT " + fields + " FROM runner_events "
                 "WHERE project_id=? AND worker_slot=? AND event='generation-progress' "
                 "ORDER BY id DESC LIMIT 1", (project, slot)).fetchone()
             prompt = connection.execute(
-                "SELECT id,ts,event,assistant_chars FROM runner_events "
+                "SELECT " + fields + " FROM runner_events "
                 "WHERE project_id=? AND worker_slot=? AND event='prompt-sent' "
                 "ORDER BY id DESC LIMIT 1", (project, slot)).fetchone()
             completion = connection.execute(
-                "SELECT id,ts,event,assistant_chars FROM runner_events "
+                "SELECT " + fields + " FROM runner_events "
                 "WHERE project_id=? AND worker_slot=? AND event='generation-finished' "
                 "ORDER BY id DESC LIMIT 1", (project, slot)).fetchone()
         finally:
