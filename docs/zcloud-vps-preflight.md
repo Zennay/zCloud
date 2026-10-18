@@ -31,3 +31,5 @@ This optional output is a **standalone HTML snapshot**, responsive on a phone or
 ## Compare progress across owner-controlled recovery windows
 
 Save a JSON snapshot only in a **private operator-controlled** location (standard output is never automatically stored), and use `--previous-report /private/path/to/previous.json` on a later observation with either text, JSON or HTML format. Output then separates **new**, **resolved** and **still-present** finding codes, allowing operators to focus on genuinely changed blockers instead of repeatedly triaging the same issue. The older file is read without mutation; filenames, notes and free-text from older snapshots are not surfaced. Oversized, malformed, symlinked or untrusted snapshot data is refused with a safe fixed error. This comparison is not an independent CI, main provenance or release authorization mechanism.
+
+Severity changes such as a warning becoming a hard blocker are reported separately rather than falsely labelled unchanged. An earlier report timestamp must be well-formed and no later than the current observation; future-dated or naive history is rejected.
