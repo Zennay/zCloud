@@ -17,3 +17,17 @@ Optionally add `--project cloud` to view one known project. Both tables are deli
 **Privacy and bounds:** The private ledger is loaded by the existing strict reader. Local input must be a bounded regular file (<=1 MiB), no symlink, <=80 records, JSON array with unique field keys and known projects. Only the local `project` and `ts` fields appear in the output. Raw local `id`, `title`, `detail` and unknown fields are never echoed. HTML uses the existing 0600 atomic private writer that refuses paths inside `public/` (including symlink ancestry). No QA/test suites or production control-plane files are changed.
 
 **Remaining production task:** Authorized eventstream owner must integrate the GitHub collector into the live event API with separate timestamps, fair paging, error/lag indicators and explicit release approval; the existing local dashboard only uses local project history. zCloud #1326 runner/service and #580/#1089 serial release holds remain intact.
+
+
+## Direct local API (no manual JSON export)
+
+Run from an operator-authorized machine where the zCloud local HTTP listener is genuinely on loopback port 8765:
+
+```sh
+python3 -m scripts.zcloud_activity_combined_report \
+  --ledger ./private/github-activity-ledger.json \
+  --local-api --output ./private/combined-activity.html
+```
+
+This uses only **GET** on literal `http://127.0.0.1:8765/api/activity?project=<allowlisted-id>`, never external addresses, proxies, redirected hosts, credentials or POST. At most 12 known projects, three-second timeout per source and one MiB response cap; each source has its own 80-record API window. Unavailable projects appear as **source unavailable**, not as having zero events. A successful request only attests to that one local read, **not** ongoing service availability, a merged GitHub PR or any live worker recovery. `--local-api` and `--local-json` are mutually exclusive.
+
