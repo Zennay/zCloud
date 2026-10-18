@@ -681,7 +681,7 @@ def worker_memory_status(meminfo_path=Path('/proc/meminfo')):
             'available_mb':None,'total_mb':None,'swap_total_mb':None,'swap_free_mb':None,
             'headroom_mb':WORKER_MEMORY_HEADROOM_MB,'per_new_slot_mb':WORKER_MEMORY_PER_NEW_SLOT_MB,
             'new_worker_capacity':0,'pressure':'unknown','healthy_for_new_worker':False,
-            'swap_healthy':False,'error':str(exc)[:200],
+            'swap_healthy':False,'swap_exhausted':None,'error':str(exc)[:200],
         }
     total=max(0,int(values.get('MemTotal') or 0))
     available=max(0,int(values.get('MemAvailable') or values.get('MemFree') or 0))
@@ -4396,8 +4396,32 @@ def worker_debug_report():
         cmds = [{'status': r['status'], 'result': r['r'], 'count': r['n']} for r in c.execute("SELECT status,COALESCE(substr(result,1,90),'') r,COUNT(*) n FROM runner_commands WHERE created_at>? GROUP BY 1,2 ORDER BY n DESC LIMIT 8", (window,)).fetchall()]
     try: firefox = firefox_runner_status()
     except Exception as exc: firefox = {'active': None, 'error': str(exc)[:120]}
+    memory=worker_memory_status()
+    hold=_worker_recovery_hold_until()
+    if hold:
+        admission_reason='oom_recovery_hold'
+    elif memory.get('swap_exhausted') is True:
+        admission_reason='configured_swap_exhausted'
+    elif memory.get('new_worker_capacity',0)<=0:
+        admission_reason='insufficient_memory_headroom'
+    else:
+        admission_reason=None
+    # The report explains NEW browser admission only. A blocked new slot does
+    # not authorize preempting, terminating or reclaiming an existing worker.
+    admission={
+        'new_worker_capacity':memory.get('new_worker_capacity'),
+        'new_worker_blocked':admission_reason is not None,
+        'reason':admission_reason,
+        'pressure':memory.get('pressure'),
+        'available_mb':memory.get('available_mb'),
+        'swap_total_mb':memory.get('swap_total_mb'),
+        'swap_free_mb':memory.get('swap_free_mb'),
+        'swap_exhausted':memory.get('swap_exhausted'),
+        'recovery_hold_until':hold.isoformat() if hold else None,
+        'existing_workers_preserved':True,
+    }
     return {'time': now(), 'workers': rows, 'summary': summary, 'events_15m': events, 'failed_commands_15m': failed,
-            'commands_15m': cmds, 'firefox': firefox,
+            'commands_15m': cmds, 'firefox': firefox, 'new_worker_admission': admission,
             'contract': {'prompt': 'project-first', 'queue_binding': 'structured-metadata', 'text_boilerplate_required': False}}
 
 def dynamic_force_push():
