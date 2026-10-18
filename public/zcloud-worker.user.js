@@ -40,6 +40,9 @@
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
   let target=null,inflight=false,sending=false,awaiting=false,everGenerating=false;
+  // One bounded composer repair episode per verified queue assignment.
+  const COMPOSER_IDLE_REPAIR_MS=45000;
+  let missingComposerSince=0,composerRepairAttempted=false,composerRepairQueueId="";
   const markBusy=()=>document.documentElement?.setAttribute("data-zcloud-v2-busy",
     sending||awaiting||generating()?"true":"false");
   // An explicit Force owns one command ID and may only be delivered to its
@@ -148,6 +151,48 @@
     await status("conversation-reset-requested",{reason});
     return true;
   }
+  function resetComposerRepair(queueId=""){
+    missingComposerSince=0;
+    composerRepairAttempted=false;
+    composerRepairQueueId=queueId;
+  }
+  async function recoverIdleComposer(nowMs=Date.now()){
+    const queueId=String(target?.queue_item?.queue_id||"");
+    if(!queueId||!ready(target)||target?.project_id!==id){
+      resetComposerRepair();return false;
+    }
+    if(composerRepairQueueId!==queueId)resetComposerRepair(queueId);
+    if(visible(composer())){
+      if(missingComposerSince>0){
+        lastBlock="";
+        await status("composer-restored",{reason:"composer-visible-on-owned-worker"});
+      }
+      resetComposerRepair(queueId);
+      return false;
+    }
+    // Never reset after sending, during a response, while the SPA is
+    // transitioning, or if a new assignment is not verified. This is not
+    // general permission to change an existing conversation.
+    if(sending||awaiting||generating()){
+      missingComposerSince=0;
+      return false;
+    }
+    if(resetRoute!==null)return false;
+    if(!missingComposerSince){missingComposerSince=nowMs;return false}
+    if(composerRepairAttempted||nowMs-missingComposerSince<COMPOSER_IDLE_REPAIR_MS)
+      return false;
+    composerRepairAttempted=true;
+    if(promptAt>0||everGenerating||conversation()||location.pathname!=="/"){
+      await blocked("composer-missing-manual-recovery-required");
+      return true;
+    }
+    // The tab is already on an empty/new-chat route, and this worker has
+    // never dispatched a prompt. A single existing SPA New chat action is
+    // allowed; never navigate/reload an existing chat or repeat the action.
+    const started=await newChat("composer-missing-before-first-send");
+    if(!started)await blocked("composer-missing-operator-action-required");
+    return true;
+  }
   const composer=()=>document.querySelector('#prompt-textarea,[contenteditable="true"][role="textbox"],textarea');
   const sendButton=()=>document.querySelector('button[data-testid="send-button"],button[aria-label="Send message"],button[aria-label="Verzenden"]');
   async function fill(text){
@@ -235,6 +280,7 @@
       const payload=await api("/runner-targets"),actual=payload.projects?.[id]||null;
       target=actual;
       if(!ready(actual)){
+        resetComposerRepair();
         // An open browser tab is not an authorized dispatch. Report the
         // missing queue/slot contract instead of silently looking healthy.
         if(actual && actual.active===true && actual.desired_state!=="paused" &&
@@ -249,6 +295,9 @@
         return;
       }
       await status("heartbeat",{reason:"worker-v2-check-30s"});
+      // Before any initial dispatch, give the web composer a bounded render
+      // grace period. The repair branch is one-shot and fail-closed.
+      if(await recoverIdleComposer())return;
       const cid=conversation();
       if(cid && cid!==reportedConversation) {
         reportedConversation=cid;
