@@ -35,6 +35,12 @@ python3 scripts/zcloud_recent_prless_ownership.py <CURRENT_MAIN_SHA> \
   --owned-path scripts/
 ```
 
+For an operator who wants a strict overlap warning, add `--deny-overlap`.
+It returns exit code **3** when an overlapping recent branch is observed and
+exit code **4** when this slice cannot cover all PR-less branches. A successful
+slice still reports `release_authorized:false` and
+`ownership_granted:false`; it is **not** permission to claim or deploy.
+
 Subsequent slices use `--offset 12`, `--offset 24`, etc. A full decision
 requires review of every slice against one unchanged source head; multiple
 separate calls do **not** jointly create an automatic lease or proof of stable
