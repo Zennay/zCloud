@@ -54,7 +54,8 @@ def event_link(event: dict, repo: str) -> tuple[str, str]:
     n = event["pr"]
     suffix = " · draft" if event.get("draft") is True else ""
     if kind == "pr_merged":
-        suffix += " · target not independently verified"
+        target = event.get("reported_target") or "unknown"
+        suffix += " · reported target " + target + " (not independently reachable)"
     return f"Pull request #{n}{suffix}", f"https://github.com/{repo}/pull/{n}"
 
 
@@ -72,6 +73,10 @@ def html_page(data: dict) -> str:
                   ("pr_merged", "PRs merged"), ("ci_run", "Workflow runs"))
         chips = "".join("<span>" + escape(name) + ": <b>" + str(counts.get(key, 0)) +
                         "</b></span>" for key, name in labels)
+        main_target_merges = sum(e["kind"] == "pr_merged" and
+                                 e.get("reported_main_merge") is True for e in rows)
+        chips += ("<span>PR merges reporting main target: <b>" +
+                  str(main_target_merges) + "</b></span>")
         windows = []
         for key, label in (("github_pr", "Pull requests"), ("github_ci", "Actions"),
                            ("github_main_commits", "Main history")):
