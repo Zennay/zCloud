@@ -64,6 +64,10 @@ jobs:
       github.run_attempt == 1 &&
       inputs.apply == true &&
       inputs.confirm_sha == github.sha
+    # Serialize live VPS writers with the canonical production release; do not cancel an active release.
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
