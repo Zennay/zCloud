@@ -104,8 +104,10 @@ for attempt in {1..20}; do
 done
 [[ "$ready" == 1 ]] || die "New release never reported the exact deployed commit"
 sudo systemctl is-active --quiet fuckball.service || die "New service not active"
-curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$port/" |
-  grep -Fq 'career-profile.js' || die "New native client assets not being served"
+curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$port/" -o "$work/deployed.html" ||
+  die "Native home page not served"
+grep -Fq 'career-profile.js' "$work/deployed.html" ||
+  die "New native client assets not being served"
 curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$port/dist/room-browser.js" -o /dev/null ||
   curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:$port/room-browser.js" -o /dev/null ||
   die "Room browser asset not served"
