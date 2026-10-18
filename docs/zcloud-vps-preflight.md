@@ -27,3 +27,7 @@ python3 scripts/zcloud_vps_preflight.py --expected-main-sha "$VERIFIED_MAIN_SHA"
 ```
 
 This optional output is a **standalone HTML snapshot**, responsive on a phone or desktop and printable. It embeds no JavaScript, external dependencies, credentials or detailed process arguments. All derived text is HTML-escaped. Display contains release blockers, Git/ref context, resource conditions and human owner-bound recovery steps. By default only stdout is written; redirection is an explicit **operator** decision and should target a private location, never a public web root. The process still returns a nonzero code on blocked or incomplete inspections even if an HTML page was emitted.
+
+## Compare progress across owner-controlled recovery windows
+
+Save a JSON snapshot only in a **private operator-controlled** location (standard output is never automatically stored), and use `--previous-report /private/path/to/previous.json` on a later observation with either text, JSON or HTML format. Output then separates **new**, **resolved** and **still-present** finding codes, allowing operators to focus on genuinely changed blockers instead of repeatedly triaging the same issue. The older file is read without mutation; filenames, notes and free-text from older snapshots are not surfaced. Oversized, malformed, symlinked or untrusted snapshot data is refused with a safe fixed error. This comparison is not an independent CI, main provenance or release authorization mechanism.
