@@ -8,13 +8,13 @@ From this repository, on an approved operator host:
 
     python3 scripts/zcloud_github_activity_source.py --project cloud --hours 24 --max-events 80
 
-For two scoped projects, request repeated --project options. A private repository requires an existing GitHub token in the process environment with the smallest read-only permissions necessary for pulls and Actions. **Do not put a token in an argument, file, dashboard, issue or committed config.** There is no token persisted by either script. Without access the individual project reports repository_inaccessible / unavailable; an outage never becomes an empty, complete feed.
+For two or three scoped projects, request repeated --project options; use separate invocations for larger portfolios to stay within the 24-request budget. A private repository requires an existing GitHub token in the process environment with the smallest read-only permissions necessary for pulls and Actions. **Do not put a token in an argument, file, dashboard, issue or committed config.** There is no token persisted by either script. Without access the individual project reports repository_inaccessible / unavailable; an outage never becomes an empty, complete feed.
 
 Readable operational output, with links and explicit no-deployment claims:
 
     python3 scripts/zcloud_github_activity_source.py --project cloud --project supa | python3 scripts/zcloud_github_activity_digest.py
 
-The observer's output is zcloud-github-activity-readonly-v1 JSON containing event stable ID, canonical project/repository, event kind, source timestamp, separately recorded observation timestamp and coverage. It exposes no PR title, body, review content, workflow log, API response body, runner arguments or credentials. All repository identities are drawn from the canonical projects.json GitHub HTTPS allowlist; CLI parameters cannot name arbitrary repositories. The reader makes at most 24 HTTP GETs and a maximum of two 40-item pages per source; source responses and local registry have byte caps.
+The observer's output is zcloud-github-activity-readonly-v1 JSON containing event stable ID, canonical project/repository, event kind, source timestamp, separately recorded observation timestamp and coverage. It exposes no PR title, body, review content, workflow log, API response body, runner arguments or credentials. All repository identities are drawn from the canonical projects.json GitHub HTTPS allowlist; CLI parameters cannot name arbitrary repositories. The reader makes at most 24 HTTP GETs: at most five pages of ten verbose PRs and two pages of forty Actions runs per project. Source responses and the local registry have byte caps. The output explicitly marks when a source page cap truncates the older history; even a short --max-events result alternates PRs and CI so Actions volume cannot hide every PR.
 
 Kinds: pr_created means created, not merged; pr_updated means changed, not accepted; pr_merged means merged_at exists but is **not** verified on canonical main (main_merged=false); ci_run provides GitHub Actions status, conclusion and SHA, not deployment or worker resumption.
 
