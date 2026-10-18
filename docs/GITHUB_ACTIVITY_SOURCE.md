@@ -14,6 +14,14 @@ Readable operational output, with links and explicit no-deployment claims:
 
     python3 scripts/zcloud_github_activity_source.py --project cloud --project supa | python3 scripts/zcloud_github_activity_digest.py
 
+**Compare subsequent snapshots without SQLite, worker restarts or GitHub write authority:** save a first bounded receipt, then supply it on the next invocation. Both files stay local; the CLI reads the previous snapshot but never modifies it.
+
+    python3 scripts/zcloud_github_activity_source.py --project cloud --max-events 80 > /tmp/zcloud-first.json
+    python3 scripts/zcloud_github_activity_source.py --project cloud --max-events 80 --previous /tmp/zcloud-first.json > /tmp/zcloud-next.json
+    python3 scripts/zcloud_github_activity_html.py < /tmp/zcloud-next.json > /tmp/zcloud-activity-changes.html
+
+The new receipt records stable per-event `first_observed_at` and `new_since_previous`; the digest and HTML highlight events missing in the **prior bounded sample**, not necessarily newly created GitHub work. Repeated observations preserve the earliest valid first-seen timestamp carried by the supplied prior receipt. The input must be a local, bounded, non-symlink regular JSON file at most 30 days old with consistent canonical project/source identities and no authority flags. If these conditions fail the CLI refuses the comparison. This feature makes no persistent database writes or completeness claims.
+
 Mobile-readable self-contained **offline HTML view** (no JS, remote assets, tracking, server or credential persistence):
 
     python3 scripts/zcloud_github_activity_source.py --project cloud --hours 24 --max-events 60 | python3 scripts/zcloud_github_activity_html.py > /tmp/zcloud-activity-snapshot.html
