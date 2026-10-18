@@ -14,6 +14,16 @@ The panel is intentionally not loaded in the background. An unavailable API or 4
 
 The type classifier never replaces existing scope/owner arbitration, hard resource caps, human approval, memory admission, or GitHub CI gates. `claimed`, `running`, `verifying` continue to reserve their respective ownership scopes. A queue receipt does not prove that an independent runner can execute the work.
 
+## zSentinel issue-first delivery board
+
+The **zSentinel · product delivery board** is displayed first on Activity, above the existing independent GitHub, issue and worker panels. Choose one canonical project and press **Read product sources** to explicitly read its public GitHub P0/P1 issue sample, public PR/CI/main observations and the authenticated queue admission preview. Each source is bounded and independent; if one fails, the other cards remain useful and the failing source is not interpreted as empty.
+
+The board sorts observed open P0 issues ahead of P1 issues, shows relevant existing **open PR mentions** (as mentions or closing text only, not ownership), and separately lists provisional product queue candidates. No claim is inferred by matching GitHub issue IDs with queued project names. Open each original GitHub issue/PR through canonical links to verify context and current status before making a decision.
+
+Manual readings for up to **eight** canonical projects coexist in the browser tab, with at most 150 issue rows and 200 GitHub events across projects. Reading a project again replaces only its own previous sample; snapshots are not cached on disk, sent to third parties other than the explicitly requested GitHub GET, or silently refreshed. The global counts in the queue panel remain global even with a specific project filter.
+
+A missing source, a known partial window, an older observation, a linked draft or green CI always remains unverified. Source observations never authorize taking over a claimed lane or bypassing CI, review, release, human or zSSH capability gates.
+
 ## Older local history
 
 Choose **Read history** to request the first 40 items from `GET /api/activity-page`. Use **Load older** to follow the source-provided per-project keyset cursor; the list is capped at 400 distinct events in the browser. Switching Activity's project filter begins a separate scoped history. Results are not silently loaded, written to storage, or used to dispatch work.
