@@ -69,7 +69,11 @@ def incident_card(item):
     due = phrase(item.get("target_review_by"), 35)
     action = phrase(item.get("action"), 480)
     status = phrase(item.get("status"), 50)
-    problem = phrase(item.get("problem"), 120)
+    reason = item.get("problem")
+    # A zero-step completed job requires account/platform inspection. Never
+    # tell the operator that billing denial or a VPS listener is proven.
+    problem = ("GitHub-job niet gestart · oorzaak nog onbekend"
+               if reason == "github_job_unstarted" else phrase(reason, 120))
     return (f'<article class="panel warn"><span class="tag">{priority}</span>'
             f'<span class="tag">{project}</span>'
             f'<h3 class="word">Problem · {problem}</h3>'
