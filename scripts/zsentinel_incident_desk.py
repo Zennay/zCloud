@@ -184,6 +184,9 @@ Geen workflow, GitHub-write, calendar push, Notion-write, lease of deploy.</p>
 <option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label>
 <label>Soort<select id="human"><option value="">Alle blokkades</option>
 <option value="yes">Menselijke actie nodig</option><option value="no">Alleen diagnose</option></select></label>
+<label>Reviewdoel<select id="reviewTarget"><option value="">Alle deadlines</option>
+<option value="overdue">Reviewdoel verstreken</option>
+<option value="soon">Verstreken of binnen 2 uur</option></select></label>
 <label>Zoeken<input id="query" type="search" maxlength="80" placeholder="Project of probleem"></label>
 </div>
 <p id="count" aria-live="polite"></p>
@@ -235,6 +238,9 @@ function filtered(){const q=$("query").value.trim().toLowerCase();return source.
  (!$("owner").value||x.owner===$("owner").value)&&
  (!$("priority").value||x.priority===$("priority").value)&&
  (!$("human").value||(x.human?"yes":"no")===$("human").value)&&
+ (!$("reviewTarget").value||
+   ($("reviewTarget").value==="overdue"&&Date.parse(x.review_by)<=Date.now())||
+   ($("reviewTarget").value==="soon"&&Date.parse(x.review_by)<=Date.now()+7200000))&&
  (!q||(x.project+" "+x.problem+" "+x.owner).toLowerCase().includes(q)));
 }
 function render(){
@@ -243,15 +249,16 @@ function render(){
  $("ownerSummary").replaceChildren();
  const assigned=new Map();
  for(const x of filtered().filter(x=>x.human)){
-  const counts=assigned.get(x.owner)||{p0:0,p1:0,other:0};
+  const counts=assigned.get(x.owner)||{p0:0,p1:0,other:0,overdue:0};
+  if(Date.parse(x.review_by)<=Date.now())counts.overdue++;
   if(x.priority==="P0")counts.p0++;
   else if(x.priority==="P1")counts.p1++;
   else counts.other++;
   assigned.set(x.owner,counts);
  }
  if(!assigned.size)$("ownerSummary").append(el("p","Geen geobserveerde mens-afhankelijke incidenten in dit filter. Dekking blijft onvolledig."));
- for(const [owner,counts] of [...assigned.entries()].sort((a,b)=>b[1].p0-a[1].p0||b[1].p1-a[1].p1||a[0].localeCompare(b[0]))){
-  const p=el("p",owner+" · P0: "+counts.p0+" · P1: "+counts.p1+" · overige: "+counts.other);
+ for(const [owner,counts] of [...assigned.entries()].sort((a,b)=>b[1].overdue-a[1].overdue||b[1].p0-a[1].p0||b[1].p1-a[1].p1||a[0].localeCompare(b[0]))){
+  const p=el("p",owner+" · P0: "+counts.p0+" · P1: "+counts.p1+" · overige: "+counts.other+" · reviewdoel verstreken: "+counts.overdue);
   $("ownerSummary").append(p);
  }
  const rows=filtered();$("count").textContent=rows.length+" incidenten binnen huidig filter (bronmaximaal "+source.incidents.length+").";
@@ -272,7 +279,9 @@ function render(){
  for(const [label,value] of [["Probleem",x.problem],["Actie",x.action],["Bronstatus",x.status]]){
    const p=el("p",undefined,"line");p.append(el("strong",label));p.append(document.createTextNode(" "+value));box.append(p)
  }
- box.append(el("p","Review uiterlijk "+x.review_by+" (adviserend; geen vastgelegde afspraak).","meta"));
+ box.append(el("p","Reviewdoel "+x.review_by+
+   (Date.parse(x.review_by)<=Date.now()?" · VERSTREKEN (adviserend)":" · nog niet verstreken (adviserend)")+
+   ". Dit is geen kalenderafspraak of bevestigde eigenaaractie.","meta"));
  const sl=el("label","Mijn opvolgstatus (alleen privé)");const sel=el("select");
  for(const c of choices){const o=el("option",c.replaceAll("-"," "));o.value=c;sel.append(o)}
  sel.value=notes[x.id]?.status||choices[0];
@@ -284,7 +293,7 @@ function render(){
  nl.append(ta);box.append(nl);
  box.append(el("small","Dit verandert NIET de incidentstatus, CI, PR, eigenaar of queue."));
 }
-for(const id of ["project","owner","priority","human","query"])$(id).addEventListener(id==="query"?"input":"change",render);
+for(const id of ["project","owner","priority","human","reviewTarget","query"])$(id).addEventListener(id==="query"?"input":"change",render);
 function download(obj){
  const str=JSON.stringify(obj,null,2);if(new TextEncoder().encode(str).byteLength>1000000)throw Error("Overdracht te groot");
  const url=URL.createObjectURL(new Blob([str+"\n"],{type:"application/json"}));
@@ -386,7 +395,7 @@ function briefScope(){
  // local follow-up state in the preview binding. Never imply current claims.
  return JSON.stringify({source:source.fingerprint,time:source.observed_at,
   rows:rows.map(x=>({id:x.id,notes:notes[x.id]||null})),
-  filter:[$("owner").value,$("project").value,$("priority").value,$("human").value,$("query").value]});
+  filter:[$("owner").value,$("project").value,$("priority").value,$("human").value,$("reviewTarget").value,$("query").value]});
 }
 function makeBrief(){
  const selectedRows=filtered().filter(x=>x.human);
@@ -403,6 +412,7 @@ function makeBrief(){
  "- Eigenaarfilter: "+mdText($("owner").value||"alle"),
  "- Projectfilter: "+mdText($("project").value||"alle"),
  "- Prioriteitfilter: "+mdText($("priority").value||"alle"),
+ "- Reviewdoelfilter: "+mdText($("reviewTarget").value||"alle"),
  "",
  ];
  for(const x of selectedRows){
