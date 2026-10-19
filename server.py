@@ -182,7 +182,7 @@ def action_request_allowed(handler):
 def project_runner_prompt(project_id, name):
     if project_id=='zsentinel':
         return (
-            'Werk als zSentinel, de herstelrol van zCloud voor ANDERE bestaande portfolio-projecten. '
+            'Werk verder aan het herstel van ANDERE zCloud-projecten als zSentinel · Vliegende keep. '
             'PRIORITEIT NUL: zorg dat bestaande workers weer werk kunnen uitvoeren. '
             'Controleer actuele Notion-claims, blocked jobs, workerheartbeats, runnerstatus, CI, open PRs en deployments. '
             'Rangschik blokkades op aantal getroffen workers, impact op kritieke productroutes en veilige uitvoerbaarheid. '
