@@ -171,11 +171,42 @@ def next_problems(summary, decision, selected):
     }
 
 
-def problems_html(result):
+def problems_html(result, pr_desk=None):
     if (result.get("schema") != "zsentinel-next-problems-v1"
             or result.get("dispatch_authorized") is not False
             or result.get("writes_performed") is not False):
         raise ValueError("untrusted problem picker output")
+    pr_guidance = {}
+    if pr_desk is not None:
+        # Optional exact-head PR receipts already collected by the portfolio.
+        # Never infer that a referenced PR fixes the issue, or that a check is
+        # required/green from these bounded observations.
+        if (not isinstance(pr_desk, dict)
+                or pr_desk.get("schema") != "zsentinel-pr-delivery-desk-v1"
+                or pr_desk.get("merge_authorized") is not False
+                or pr_desk.get("writes_performed") is not False
+                or not isinstance(pr_desk.get("items"), list)
+                or len(pr_desk["items"]) > 3):
+            raise ValueError("untrusted optional PR delivery source")
+        from zsentinel_pr_delivery import NEXT_ACTION_NL
+        for pr in pr_desk["items"]:
+            if (not isinstance(pr, dict)
+                    or pr.get("source") != "github_exact_pr_readonly"
+                    or pr.get("merge_authorized") is not False
+                    or pr.get("next_step") not in NEXT_ACTION_NL
+                    or not isinstance(pr.get("url"), str)
+                    or not PR_URL.fullmatch(pr["url"])
+                    or pr["url"] in pr_guidance):
+                raise ValueError("invalid or duplicate exact-head PR receipt")
+            sha = pr.get("head_sha")
+            if sha is not None and (not isinstance(sha, str)
+                                    or not re.fullmatch(r"[a-f0-9]{40}", sha)):
+                raise ValueError("invalid observed PR source SHA")
+            pr_guidance[pr["url"]] = {
+                "coverage": pr.get("coverage"),
+                "next_action": NEXT_ACTION_NL[pr["next_step"]],
+                "head": sha[:12] if sha else "ONBEKEND",
+            }
     rows = []
     for issue in result["items"]:
         url = escape(issue["issue_url"], quote=True)
@@ -185,12 +216,26 @@ def problems_html(result):
             '" target="_blank" rel="noopener noreferrer">bestaande PR</a>'
             for link in issue["related_open_prs"]
         )
+        observed = []
+        for linked in issue["related_open_prs"]:
+            pr = pr_guidance.get(linked)
+            if pr is None:
+                continue
+            current = pr["coverage"] == "bounded_exact_head_review_and_checks"
+            observed.append('<li><strong>' + escape(pr["head"]) + '</strong> · ' +
+                            escape(pr["next_action"] if current else
+                                   "PR-bron onvolledig; laat huidige head met eigenaar controleren.") +
+                            ' · Alleen PR-inspectie, geen issuefix of merge bewezen.</li>')
+        evidence = (('<details><summary>Bestaande PR · actuele bronactie (' +
+                     str(len(observed)) + ')</summary><ul>' +
+                     ''.join(observed) + '</ul></details>') if observed else '')
         rows.append(
             '<article class="panel read"><h3>' + escape(issue["priority"]) +
             ' · <a href="' + url +
             '" target="_blank" rel="noopener noreferrer">' + title +
             '</a></h3><p>' + escape(issue["project_id"]) + ' · ' +
-            escape(issue["action"]) + '</p><p>' + links + '</p></article>'
+            escape(issue["action"]) + '</p><p>' + links + '</p>' + evidence +
+            '</article>'
         )
     if not rows:
         rows.append('<p class="empty">Geen betrouwbare productissue-kandidaten in dit beperkte venster. '
