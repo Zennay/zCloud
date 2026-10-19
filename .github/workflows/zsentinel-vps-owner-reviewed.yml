@@ -27,6 +27,8 @@ permissions:
   actions: read
   issues: read
   pull-requests: read
+  checks: read
+  statuses: read
 
 concurrency:
   group: zsentinel-readonly-vps
