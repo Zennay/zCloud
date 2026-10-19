@@ -163,7 +163,7 @@ def main():
                         help="read up to three selected project P0/P1 GitHub issue inboxes")
     parser.add_argument("--issue-project", action="append",
                         help="canonical issue-source project ID (up to 3, repeatable)")
-    parser.add_argument("--format", choices=("json", "text", "html"), default="text")
+    parser.add_argument("--format", choices=("json", "text", "html", "ics"), default="text")
     args = parser.parse_args()
     try:
         registry = canonical_projects(args.registry)
@@ -207,6 +207,9 @@ def main():
         if args.format == "html":
             from zsentinel_recovery_view import html_view
             rendered = html_view(routed)
+        elif args.format == "ics":
+            from zsentinel_human_agenda import human_calendar
+            rendered = human_calendar(routed)
         else:
             rendered = (json.dumps(routed, sort_keys=True, indent=2)
                         if args.format == "json" else
