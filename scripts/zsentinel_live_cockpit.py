@@ -84,7 +84,9 @@ def assemble(registry, selected, jobs, queue_path, token=None,
                 or queue.get("totals") != {}
                 or queue.get("project_groups") != []
                 or queue.get("high_churn_samples") != []
-                or queue.get("queue_source_available") is not False))
+                or queue.get("queue_source_available") is not False
+                or queue.get("queue_write_authorized") is not False
+                or queue.get("automatic_retry_authorized") is not False))
             or (not queue_missing and (
                 queue.get("source") != "local_sqlite_transaction_query_only"
                 or queue.get("database_read_only") is not True))):
