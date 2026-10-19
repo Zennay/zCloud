@@ -115,6 +115,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "recovery_proven": False, "next_action": "read_only_inspect_current_source",
             "p0_p1_issue_sample_hits": None, "incident_sample_hits": None,
             "notion_active_status_min": None,
+            "github_job_runner_route": "not_scanned",
         }
     for entry in groups:
         if not isinstance(entry, dict):
@@ -139,6 +140,24 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 if type(value) is not int or value < 0:
                     raise ValueError("invalid owned queue counter")
                 row["owned"] += value
+    live_sources = decision.get("live_sources")
+    job_data = live_sources.get("github_jobs") if isinstance(live_sources, dict) else None
+    jobs = job_data.get("refreshed_projects") if isinstance(job_data, dict) else []
+    if not isinstance(jobs, list) or len(jobs) > 8:
+        raise ValueError("invalid bounded GitHub runner route receipts")
+    routes_seen = set()
+    for item in jobs:
+        if not isinstance(item, dict):
+            raise ValueError("invalid runner route source")
+        pid = item.get("project_id")
+        if pid not in selected or pid in routes_seen:
+            raise ValueError("duplicate or unselected GitHub runner route")
+        routes_seen.add(pid)
+        route = (item.get("runner_route") if item.get("status") == "refreshed"
+                 else "degraded_unknown")
+        if route not in ("self_hosted", "hosted_or_custom", "unknown", "degraded_unknown"):
+            raise ValueError("invalid route admission category")
+        summary[pid]["github_job_runner_route"] = route
     # Counts below are lower bounds in the bounded source window,
     # NEVER total open portfolio issue/incident inventory.
     for pid in selected:
@@ -280,6 +299,16 @@ def branch_ownership_html(source):
     )
 
 
+def phrase_route(value):
+    return {
+        "self_hosted": "SELF-HOSTED joblabels bevestigd",
+        "hosted_or_custom": "Hosted/custom labels, VPS NIET aangetoond",
+        "unknown": "Joblabels ONBEKEND",
+        "degraded_unknown": "Bronfout: route ONBEKEND",
+        "not_scanned": "NIET GESCAND",
+    }.get(value) or "ONBEKEND"
+
+
 def portfolio_html(summary, decision, window_index, windows, branch_inventory=None):
     if (not isinstance(summary, dict)
             or summary.get("schema") != "zsentinel-portfolio-overview-v1"
@@ -328,6 +357,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             '<td>' + _count(row["high_claim_attempts"]) + '</td>'
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
             '<td>' + escape(github) + '</td>'
+            '<td>' + phrase_route(row["github_job_runner_route"]) + '</td>'
             '<td>' + ('ONBEKEND' if row["p0_p1_issue_sample_hits"] is None
                       else '≥' + str(row["p0_p1_issue_sample_hits"])) + '</td>'
             '<td>' + ('ONBEKEND' if row["incident_sample_hits"] is None
@@ -357,7 +387,8 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
         '<th scope="col">Notion actief (min.)</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
-        '<th scope="col">GitHub-bereik</th><th scope="col">P0/P1-issues (min.)</th>'
+        '<th scope="col">GitHub-bereik</th><th scope="col">Runnerroute</th>'
+        '<th scope="col">P0/P1-issues (min.)</th>'
         '<th scope="col">Incidenten (min.)</th><th scope="col">Veilige vervolgstap</th>'
         '</tr></thead><tbody>' +
         "".join(cells) + '</tbody></table></div>'
@@ -484,12 +515,13 @@ def main():
                 window_index + 1, len(windows), ", ".join(selected))]
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             for row in summary["rows"]:
-                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s | action=%s" % (
+                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s | route=%s | action=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
                     _count(row["notion_active_status_min"]),
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
                     _count(row["p0_p1_issue_sample_hits"]), _count(row["incident_sample_hits"]),
-                    row["github_observation"], row["next_action"]))
+                    row["github_observation"], row["github_job_runner_route"],
+                    row["next_action"]))
             if branches is not None:
                 lines.append("BRANCH EIGENDOM (%s): %s; recente kandidaten=%s; "
                              "mogelijke pad-overlap=%s; GEEN eigendomsbevestiging." % (
