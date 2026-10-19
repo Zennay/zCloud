@@ -246,6 +246,7 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             "recent_client_block_event_owner_review",
             "generating_but_progress_unverified_or_stale",
             "worker_event_stale_or_unknown",
+            "configured_running_no_event_evidence",
         }
         for worker in workers["entries"]:
             if not isinstance(worker, dict):
@@ -259,7 +260,12 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
                     or worker.get("worker_resumed_verified") is not False
                     or worker.get("repair_authorized") is not False):
                 raise ValueError("unverified worker event identity or authority")
-            if state not in worker_flags:
+            desired = worker.get("desired_state")
+            if desired not in ("running", "paused", "draining", "unknown"):
+                raise ValueError("invalid desired-state source")
+            # A paused/draining/unknown worker must NOT appear as a stalled
+            # recovery candidate simply because its last event is old.
+            if desired != "running" or state not in worker_flags:
                 continue
             age = worker.get("event_age_seconds")
             if age is not None and (type(age) is not int or age < 0):
@@ -268,12 +274,12 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
                 "kind": "read_only_worker_progress_gap_not_proven_outage",
                 "id": "worker:" + pid + ":" + str(slot),
                 "project_id": pid, "priority": "P1",
-                "problem": ("Browserworker " + str(slot) +
+                "problem": ("Actief ingestelde browserworker " + str(slot) +
                             " · bronvoortgang ontbreekt of clientblokkade mogelijk" +
                             (" · laatste event " + str(age) + " sec geleden"
                              if age is not None else " · eventtijd onbekend")),
                 "owner": "authorized_browser_worker_and_queue_owner",
-                "action": "Verifieer worker desired_state, actuele taakclaim en laatst werkelijk verschenen generatievoortgang. Geen force-push, lease reset of serviceherstart op alleen dit event.",
+                "action": "Worker is volgens huidige SQLite-desired_state running; verifieer alsnog actuele taakclaim, browserstatus en werkelijke generatievoortgang. Geen force-push, lease reset of serviceherstart op alleen dit event.",
                 "observed_from": "local_indexed_worker_event_metadata_no_claim_proof",
                 "requires_human": False,
                 "next_gate": "verify_exact_worker_claim_and_progress",
