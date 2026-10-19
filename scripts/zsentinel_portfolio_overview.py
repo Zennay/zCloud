@@ -626,6 +626,12 @@ def main():
             for item in problem_inbox["owner_only_incidents"]:
                 lines.append("  EIGENAAR NODIG %s %s: %s" % (
                     item["severity"], item["project_id"], item["action"]))
+            historic = decision["historical_unresolved"]
+            lines.append("Historische incidenten uit privé-ledger: %s open, %s weergegeven; "
+                         "GEEN geverifieerd herstel of nieuwe autorisatie." % (
+                             historic["total_unresolved"], len(historic["shown"])))
+            if historic["truncated"]:
+                lines.append("Historische lijst afgekapt, rest NIET opgelost.")
             for row in summary["rows"]:
                 lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | P0-P1>=%s | P2-onbekend>=%s | incidents>=%s | Github=%s | route=%s | action=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
@@ -640,6 +646,9 @@ def main():
                     row["github_last_attempt_at_utc"] or "ONBEKEND",
                     row["github_last_attempt_coverage"] or "ONBEKEND",
                     row["github_last_attempt_this_run"]))
+                lines.append("  Historisch NIET gereconcilieerd: %s in max.30-ledgersample; "
+                             "is GEEN huidig GitHub-incident of herstelbewijs." % (
+                                 row["historical_unresolved_sample_hits"],))
             if branches is not None:
                 lines.append("BRANCH EIGENDOM (%s): %s; recente kandidaten=%s; "
                              "mogelijke pad-overlap=%s; GEEN eigendomsbevestiging." % (
