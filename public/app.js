@@ -804,11 +804,27 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
       if(!Number.isSafeInteger(pr.number)||pr.number<=0||!pr.head||typeof pr.head.sha!=='string'||
         !/^[a-f0-9]{40}$/i.test(pr.head.sha))continue;
       const link='https://github.com/Zennay/'+repo+'/pull/'+pr.number;
-      const merged=typeof pr.merged_at==='string'&&Number.isFinite(Date.parse(pr.merged_at));
-      const kind=merged?'pr_merged':pr.created_at===pr.updated_at?'pr_created':'pr_updated';
-      const sourceTime=merged?pr.merged_at:(pr.updated_at||pr.created_at);
-      push(kind,sourceTime,link,'PR #'+pr.number+' · '+(merged?'GitHub reports merged':kind==='pr_created'?'Created':'Updated')+
-        ' · head '+pr.head.sha.slice(0,10)+(merged?' · deploy not verified':''));
+      const head=pr.head.sha.slice(0,10),draft=pr.draft===true;
+      const created=Date.parse(pr.created_at||''),updated=Date.parse(pr.updated_at||'');
+      const merged=Date.parse(pr.merged_at||''),closed=Date.parse(pr.closed_at||'');
+      const valid=t=>Number.isFinite(t)&&t>0&&t<Date.now()+120000;
+      // One current PR record can contain three distinct source lifecycle
+      // facts. Do not confuse PR creation with later updates/merges or a green
+      // CI result with an accepted deployment.
+      if(valid(created))push('pr_created',pr.created_at,link,
+        'PR #'+pr.number+' · Created'+(draft?' · draft':'')+' · head '+head);
+      const stop=valid(merged)?merged:valid(closed)?closed:Infinity;
+      if(valid(updated)&&(!valid(created)||updated-created>1000)&&updated<stop){
+        push('pr_updated',pr.updated_at,link,
+          'PR #'+pr.number+' · Updated'+(draft?' · draft':'')+' · head '+head);
+      }
+      if(valid(merged)){
+        push('pr_merged',pr.merged_at,link,'PR #'+pr.number+
+          ' · GitHub reports merged · head '+head+' · deployment not verified');
+      }else if(pr.state==='closed'&&valid(closed)){
+        push('pr_closed',pr.closed_at,link,'PR #'+pr.number+
+          ' · Closed without merge · head '+head);
+      }
     }
     const runs=outcomes[1].status==='fulfilled'&&Array.isArray(outcomes[1].value?.workflow_runs)?outcomes[1].value.workflow_runs:[];
     for(const run of runs.slice(0,20)){
