@@ -192,6 +192,19 @@ The backend accepts only projects from canonical `projects.json`, and requires t
 
 A matching GitHub event ID is not a local SQLite event, a CI success is not a merge, a reported GitHub merge target is not proof a commit reached main, and a main commit does not prove the production VPS has deployed it. All receipts explicitly carry `feed_complete=false` and deny worker recovery/merge/deploy authority. Two concurrent provider collections maximum; source reads are bounded and only started by a button click. Check actual Notion claims and immutable CI/review gates before implementation or release.
 
+## zSentinel queue retry incidents — operator import and movement
+
+Issue [#677](https://github.com/Zennay/zCloud/issues/677) can now be investigated in the **Activity → zSentinel queue retry incidents** panel, in addition to the existing issue-first workboard. This is an entirely manual, browser-local presentation of the independent source-only [retry console PR #1555](https://github.com/Zennay/zCloud/pull/1555).
+
+1. An authorized operator uses `scripts/zsentinel_retry_incident_console.py --database <existing-local-queue-db> --format json --output retry-after.json` in an allowed environment. This opens an existing DB as SQLite read-only, without claims/reconciliation/writes, and produces a bounded, privacy-safe report.
+2. In Activity select a project or All projects. Choose the **Queue snapshot JSON** file. The UI validates the exact `zsentinel-retry-incident-v1` schema, source timestamp, scoped canonical projects, explicit non-authority flags, bounded counts and opaque reference identities before using the content. Invalid sources do not replace the previous accepted evidence.
+3. To inspect movement instead of a single sample, compare two same-scope snapshots offline with `scripts/zsentinel_retry_trend.py --previous retry-before.json --current retry-after.json --format json --output retry-trend.json`. Import that into the separate **Optional trend JSON** control. The UI strictly checks `zsentinel-retry-trend-v1`, chronological observation times, project identity, total deltas, and explicit non-authorizing state.
+4. Inspect high-attempt rows ranked P0/P1 first, per-project increases/decreases and sample freshness. Use **Export retry handoff .md** to produce a small file with bounded opaque references and counts, **not** raw queue IDs, titles, prompts or secrets. Use **Clear imported evidence** before handing the screen to another operator.
+
+A current project filter never converts global counts into a false project-specific total: when local groups exist, they are used for the selected project's count; a single-project receipt for another selection is identified as a scope mismatch. The UI is in-memory only, never writes to localStorage, triggers an API or schedules a poll, and takes no existing owner lease. A stale snapshot is labelled stale; absence of samples is not a reliable assertion that no incident exists. `attempts` tracks claims **not failed work**; do not automatically requeue high counts. Verify actual Notion claims, current GitHub CI/reviews, runner headroom and serialized release separately before acting.
+
+Source branch: [#1550](https://github.com/Zennay/zCloud/pull/1550) modifies only `public/app.js`, `public/index.html` exact content pin and this guide for this UI. The separate producer/trend CLI in [#1555](https://github.com/Zennay/zCloud/pull/1555) must be independently accepted before the full workflow is considered delivered in production. Both branches remain unmerged/undeployed unless the existing required exact-head CI, independent review, protected-main and release gates pass; source UI is not a runtime adoption claim.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
