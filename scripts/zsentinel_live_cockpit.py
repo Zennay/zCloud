@@ -163,8 +163,10 @@ def assemble(registry, selected, jobs, queue_path, token=None,
 def main():
     parser = argparse.ArgumentParser(
         description="One command read-only queue + issue/GitHub zSentinel cockpit")
-    parser.add_argument("--database", required=True, type=Path,
+    parser.add_argument("--database", type=Path,
                         help="existing zCloud SQLite path; query_only/mode=ro")
+    parser.add_argument("--github-only", action="store_true",
+                        help="run without queue SQLite: claims and queue remain UNKNOWN")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append", required=True,
                         help="canonical project ID, repeat up to three times")
@@ -188,6 +190,13 @@ def main():
     args = parser.parse_args()
     ledger_lock = None
     try:
+        if args.github_only:
+            if args.database is not None:
+                raise ValueError("--github-only requires omitting --database")
+            if args.observe_vps_capacity:
+                raise ValueError("--github-only cannot prove DB-mounted VPS capacity")
+        elif args.database is None:
+            raise ValueError("--database required unless --github-only is explicit")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
@@ -214,6 +223,9 @@ def main():
                                 os.environ.get("NOTION_QUEUE_DATA_SOURCE_ID")),
             notion_token=os.environ.get("NOTION_TOKEN"),
             notion_registry=args.registry,
+            queue_snapshot=(__import__(
+                "zsentinel_queue_observer").explicitly_unobserved_queue()
+                if args.github_only else None),
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
