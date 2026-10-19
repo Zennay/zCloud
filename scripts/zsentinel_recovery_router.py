@@ -81,14 +81,42 @@ def source_incident_key(project, diagnosis):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
+def unique_fields(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("ambiguous duplicate JSON key")
+        result[key] = value
+    return result
+
+
 def read_json(path, limit, name):
+    """Read a bounded stable regular inode; reject symlinks and JSON ambiguity."""
     file_path = Path(path)
-    if file_path.is_symlink() or not file_path.is_file():
-        raise ValueError(f"{name}: regular non-symlink file required")
-    if file_path.stat().st_size > limit:
-        raise ValueError(f"{name}: size limit exceeded")
+    before = file_path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+        raise ValueError(f"{name}: bounded regular file required")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("secure no-follow file opening required")
+    fd = os.open(file_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
-        return json.loads(file_path.read_text(encoding="utf-8"))
+        opened = os.fstat(fd)
+        if (not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+                or opened.st_size > limit):
+            raise ValueError(f"{name}: source inode changed")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(limit + 1)
+        after = os.fstat(fd)
+        if (len(raw) > limit or opened.st_size != after.st_size
+                or opened.st_mtime_ns != after.st_mtime_ns):
+            raise ValueError(f"{name}: source changed or exceeded size limit")
+    finally:
+        os.close(fd)
+    try:
+        return json.loads(raw.decode("utf-8"), object_pairs_hook=unique_fields,
+                          parse_constant=lambda _: (_ for _ in ()).throw(
+                              ValueError("invalid JSON constant")))
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{name}: invalid UTF-8 JSON") from exc
 
@@ -122,7 +150,7 @@ def write_json_atomic(path, data):
 def load_state(data):
     if data is None:
         return {}
-    if not isinstance(data, dict) or data.get("schema_version") != 1:
+    if type(data) is not dict or type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise ValueError("state schema_version must be 1")
     incidents = data.get("incidents", {})
     if not isinstance(incidents, dict) or len(incidents) > MAX_LEDGER:
@@ -222,7 +250,7 @@ def plan(bundle, previous=None, now=None):
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     now = now.astimezone(UTC)
-    if not isinstance(bundle, dict) or bundle.get("schema_version") != 1:
+    if type(bundle) is not dict or type(bundle.get("schema_version")) is not int or bundle["schema_version"] != 1:
         raise ValueError("bundle schema_version must be 1")
     observations = bundle.get("evidence")
     if not isinstance(observations, dict):
