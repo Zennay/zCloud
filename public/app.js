@@ -15,7 +15,7 @@ let ACTIVITY_PROJECT_FETCH_TIME=0;
 // One bounded, ephemeral local-event cache per canonical project. The selected
 // Activity project is only a VIEW: refreshing it must never evict another
 // project's previously observed events or promote /api/status to feed proof.
-const ACTIVITY_LOCAL_PROJECT_CACHE=new Map(),ACTIVITY_LOCAL_CACHE_LIMIT=24;
+const ACTIVITY_LOCAL_PROJECT_CACHE=new Map(),ACTIVITY_LOCAL_PROJECT_ERRORS=new Set(),ACTIVITY_LOCAL_CACHE_LIMIT=24;
 function mergeLocalProjectActivity(fallback=ACTIVITY){
   const projects=(DATA?.projects||[]).filter(p=>p&&typeof p.id==='string'
     &&/^[a-z][a-z0-9_-]{0,55}$/.test(p.id)).slice(0,ACTIVITY_LOCAL_CACHE_LIMIT);
@@ -118,7 +118,12 @@ async function refreshProjectActivity(version,force=false){
     for(const existing of ACTIVITY_LOCAL_PROJECT_CACHE.keys()){
       if(!canonical.has(existing))ACTIVITY_LOCAL_PROJECT_CACHE.delete(existing);
     }
+    for(const existing of ACTIVITY_LOCAL_PROJECT_ERRORS){
+      if(!canonical.has(existing))ACTIVITY_LOCAL_PROJECT_ERRORS.delete(existing);
+    }
+    for(const id of errors)ACTIVITY_LOCAL_PROJECT_ERRORS.add(id);
     for(const [id,rows] of streams){
+      ACTIVITY_LOCAL_PROJECT_ERRORS.delete(id);
       ACTIVITY_LOCAL_PROJECT_CACHE.set(id,{rows:rows.slice(0,80),observedAt,
         limited:rows.length===80});
     }
@@ -145,6 +150,30 @@ async function refreshProjectActivity(version,force=false){
   }
 }
 
+function activityLocalCoverageDisclosure(){
+  if(!DATA||!Array.isArray(DATA.projects))return '';
+  const projects=DATA.projects.slice(0,ACTIVITY_LOCAL_CACHE_LIMIT);
+  const known=projects.filter(p=>p&&typeof p.id==='string');
+  const observed=known.filter(p=>ACTIVITY_LOCAL_PROJECT_CACHE.has(p.id)).length;
+  const parts=known.map(p=>{
+    const item=ACTIVITY_LOCAL_PROJECT_CACHE.get(p.id),failed=ACTIVITY_LOCAL_PROJECT_ERRORS.has(p.id);
+    const age=item?Date.now()-item.observedAt:null;
+    const stale=item&&(age>6*3600000||failed);
+    const status=!item?(failed?'Unavailable · no scoped read':'Not observed for this project'):
+      failed?'Read failed · retained older local events':
+      stale?'Stale local observation (>6h)':'Local source read';
+    const seen=item?date(new Date(item.observedAt).toISOString(),true):'Unknown';
+    const latest=item?.rows?.reduce((a,r)=>!a||Date.parse(r.ts)>Date.parse(a.ts)?r:a,null);
+    return '<div class="service-row"><div><strong>'+esc(p.name)+'</strong><br><small>'+
+      esc(status)+' · '+(item?item.rows.length+' bounded local events':'No scoped source')+
+      (item?.limited?' · source hit 80-row cap':'')+'</small></div><small>'+
+      esc(seen)+(latest?' · latest event '+esc(date(latest.ts,true)):'')+'</small></div>';
+  }).join('');
+  return '<details class="section-details activity-local-coverage"><summary>Per-project local coverage ('+
+    observed+'/'+known.length+' scoped observations)</summary><p class="detail-note">'+
+    'Only manual local VPS project reads are counted. A project not yet fetched, an empty local source, an old observation or a failed refresh never proves no GitHub PR/CI activity. No auto-poll or hidden claim sync.</p>'+
+    '<div class="service-list">'+parts+'</div></details>';
+}
 function loadCachedStatus(){try{const cached=JSON.parse(localStorage.getItem(STATUS_CACHE_KEY)||'null');if(!cached||!cached.data||!cached.saved_at)return null;if(Date.now()-Number(cached.saved_at)>STATUS_CACHE_MAX_AGE_MS)return null;return cached.data}catch{return null}}
 function saveCachedStatus(data){try{localStorage.setItem(STATUS_CACHE_KEY,JSON.stringify({saved_at:Date.now(),data}))}catch{}}
 function hydrate(){document.querySelectorAll('[data-icon]').forEach(el=>{el.innerHTML=icon(el.dataset.icon);el.removeAttribute('data-icon')})}
@@ -2683,6 +2712,7 @@ function activityPage(){
   ${productQueueAdmissionPanel()}
   ${pagedLocalActivityPanel()}
   <div class="panel"><div class="panel-header"><div><h2>Local event coverage</h2><p class="panel-subtitle" role="status" aria-live="polite">${esc(coverage)}</p></div><button type="button" class="runner-action" data-activity-refresh ${ACTIVITY_COVERAGE.pending?'disabled aria-busy="true"':''}>Refresh project history</button></div>
+  ${activityLocalCoverageDisclosure()}
   <div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local events are available for this selection. GitHub activity may still exist.</div>'}</div>
   <div class="detail-note">Local event timestamps are not proof that a PR was merged or a CI run passed. The API returns at most 80 events per project; projects are interleaved to stop noisy projects hiding quieter work. Archived projects are hidden.</div></div></div>`;
 }
