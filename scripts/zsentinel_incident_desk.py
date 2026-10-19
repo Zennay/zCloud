@@ -372,11 +372,13 @@ function invalidateBrief(){
  if($("briefText"))$("briefText").textContent="";
 }
 function mdText(text){
- // GitHub/Notion are NOT sent these values. Treat both source text and
- // private notes as plain Markdown text without active links/formatting.
- return String(text).replace(/[\\<>{}[\]#*_|`!]/g,"\\isFresh();render();
-</script></html>"""")
-                    .replace(/\r/g,"").replace(/\n/g,"\n> ");
+ // Render labels/notes as inert Markdown text; never turn source input into
+ // active links, headings, code fences or raw HTML in the human handoff.
+ let value=String(text).replace(/\r/g,"");
+ for(const c of ["\\","<",">","[","]","#","*","_","|","`","!","{","}"]){
+  value=value.split(c).join("\\"+c);
+ }
+ return value.replace(/\n/g,"\n> ");
 }
 function briefScope(){
  const rows=filtered().filter(x=>x.human);
