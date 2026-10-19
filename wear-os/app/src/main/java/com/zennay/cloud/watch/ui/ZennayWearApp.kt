@@ -118,6 +118,45 @@ private fun HomeScreen(
             item { ErrorCard(error ?: "Cloud offline", onRetry = { scope.launch { reload() } }) }
         }
         data?.let { snapshot ->
+            // Surface actionable blockers before progress metrics: a glance at the
+            // watch should answer "what needs me?" without scrolling through KPIs.
+            val urgent = snapshot.alerts
+                .filter { it.severity.equals("critical", true) ||
+                          it.severity.equals("high", true) ||
+                          it.severity.equals("needs_attention", true) }
+                .sortedWith(compareBy<com.zennay.cloud.watch.data.AlertItem> {
+                    if (it.severity.equals("critical", true)) 0 else 1
+                }.thenByDescending { it.occurredAt.orEmpty() })
+            if (urgent.isNotEmpty()) {
+                item { SectionLabel("AANDACHT NODIG · ${urgent.size}") }
+                items(urgent, key = { "alert:${it.id}" }) { alert ->
+                    SurfaceCard {
+                        Label(
+                            "${alert.project?.uppercase() ?: "ZCLOUD"} · ${alert.severity.uppercase()}",
+                            if (alert.severity.equals("critical", true)) Danger else Warning
+                        )
+                        Text(
+                            alert.title, color = TextMain, fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold, maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            alert.message, color = TextMuted, fontSize = 11.sp,
+                            maxLines = 4, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+            if (snapshot.stale) {
+                item {
+                    SurfaceCard {
+                        Label("GEGEVENS VEROUDERD", Warning)
+                        Text("Ververs voordat je een blokkade als opgelost beschouwt.",
+                            color = TextMain, fontSize = 10.sp)
+                    }
+                }
+            }
             item {
                 OverviewHero(
                     progress = snapshot.overallProgress,
