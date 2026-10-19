@@ -1459,3 +1459,41 @@ De andere externe P0's [#1326](https://github.com/Zennay/zCloud/issues/1326)
 en [#1523](https://github.com/Zennay/zCloud/issues/1523) blijven
 bevoegd-eigenaar-only. Exact-head verplichte CI, onafhankelijke review,
 beschermde merge en geserialiseerde deploy voor PR #1563 blijven intact.
+
+
+## Vergelijk twee opeenvolgende blockerborden (broncontinuïteit, zonder herstelclaim)
+
+De bestaande one-shot portfolio-opdracht heeft `--format json` en levert de
+`blocker_first_handoff` samen met de originele broninformatie. Sla twee
+**verschillende** uitvoermomenten in nieuwe privébestanden op (zonder overwrite)
+en vergelijk vervolgens rechtstreeks die canonieke JSON-bestanden:
+
+```bash
+python3 scripts/zsentinel_portfolio_overview.py --github-only --format json --window 0 --output /private/zsentinel-before.json
+# Op een later, bewust gestart observatiemoment:
+python3 scripts/zsentinel_portfolio_overview.py --github-only --format json --window 0 --output /private/zsentinel-after.json
+python3 scripts/zsentinel_blocker_continuity.py \
+  --before /private/zsentinel-before.json \
+  --after /private/zsentinel-after.json \
+  --format html --output /private/zsentinel-continuity.html
+```
+
+Gebruik een **eigen bestaande privémap** voor de voorbeeldpaden; de tool maakt
+nooit een map, overschrijft nooit een outputbestand, en schrijft een expliciet
+gevraagde nieuwe output met mode `0600`. `--format json` of `text` werkt
+ook (zonder `--output` naar stdout). Er worden geen credentials, browsertekst
+of ruwe queue-IDs uit eerdere source-bestanden toegevoegd.
+
+Het vervolgscherm onderscheidt *nieuw waargenomen*, *nog waargenomen* en
+*niet opnieuw gezien*. De laatste categorie is **geen afgesloten issue, geen
+runnerherstel en geen hervatte worker**: elk portfolio-venster is bewust
+begrensd, kan uitvallen en is niet noodzakelijk even vers als een ander venster.
+Ook een verschoven exacte PR-HEAD of veranderde checkobservatie is alleen een
+gewijzigde bronobservatie; het is geen voldane review/mergegate. Alle
+bronmomenten/leases/claims moeten vóór een echte herstelactie opnieuw door
+een bevoegde eigenaar worden geverifieerd.
+
+De helper `scripts/zsentinel_blocker_continuity.py` is een zelfstandig, offline
+productenoverzicht; de bestaande productiedienst, worker, runner, Notion,
+GitHub en SQLite worden **niet aangeroepen of gewijzigd**. Geen achtergrondtaak,
+scheduler, autoresume, notificatie of veronderstelde releaseautorisatie.
