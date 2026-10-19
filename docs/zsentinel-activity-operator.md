@@ -308,6 +308,13 @@ partial coverage; disappearing from the top-N sample is never claimed as task
 completion or as authority to retry. Historical aggregate-only trend receipts
 remain compatible.
 
+The high-attempt item list and the matched-item change list each show the first
+12 entries by default and offer an explicit **Show all** action when more are
+available. Display expansion is bounded to the already validated 100 sampled
+records, keeps existing project/priority filtering and never triggers an extra
+VPS read. **Show first 12** collapses the view again; Clear removes the
+evidence and resets both expansion controls.
+
 Use **Export offline trend .json** to download a sanitized canonical
 `zsentinel-retry-trend-v1` record generated from previously validated operator
 observations. This retains only canonical project IDs, UTC source times, aggregate
