@@ -14,6 +14,7 @@ import stat
 import sys
 from html import escape
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 
 SCHEMA = "zsentinel-blocker-first-board-v1"
 OUTPUT_SCHEMA = "zsentinel-blocker-continuity-v1"
@@ -220,15 +221,48 @@ def compare(before, after):
     }
 
 
+def _report_observed_utc(snapshot):
+    """Snapshot generation time only, not proof of underlying provider freshness."""
+    if type(snapshot) is not dict:
+        raise ValueError("invalid chronology snapshot")
+    overview = snapshot.get("portfolio")
+    if type(overview) is not dict:
+        return None
+    if overview.get("schema") != "zsentinel-portfolio-overview-v1":
+        raise ValueError("invalid portfolio chronology source")
+    stamp = overview.get("observed_at_utc")
+    if stamp is None:
+        return None
+    if type(stamp) is not str or len(stamp) > 45:
+        raise ValueError("invalid portfolio observation time")
+    try:
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("invalid portfolio observation time") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timezone required for report chronology")
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed > datetime.now(timezone.utc) + timedelta(minutes=2):
+        raise ValueError("portfolio chronology from the future")
+    return parsed
+
+
 def compare_history(snapshots):
     """Bounded, ordered 2-8 snapshot incident recurrence; never runtime proof."""
     if type(snapshots) is not list or not 2 <= len(snapshots) <= 8:
         raise ValueError("two to eight snapshots required")
     by_window = []
     windows = []
+    report_times = []
     for source in snapshots:
         windows.append(_window(source))
+        report_times.append(_report_observed_utc(source))
         by_window.append(_cards(_unwrap(source)))
+    chronology_verified = all(value is not None for value in report_times)
+    if chronology_verified:
+        for earlier, later in zip(report_times, report_times[1:]):
+            if not earlier < later:
+                raise ValueError("source reports must have strictly increasing UTC observation times")
     base = compare(snapshots[-2], snapshots[-1])
     seen = set().union(*(set(items) for items in by_window))
     history = []
@@ -263,12 +297,17 @@ def compare_history(snapshots):
         -row["consecutive_recent_samples"], -row["sightings_in_sample"],
         row["project_id"], row["id"]))
     urgent = sum(1 for item in history if (
-        item["priority"] == "P0" and item["consecutive_recent_samples"] >= 3))
+        chronology_verified and item["priority"] == "P0"
+        and item["consecutive_recent_samples"] >= 3))
     return {
         **base,
         "schema": "zsentinel-blocker-continuity-history-v1",
         "history_sample_count": len(snapshots),
         "history_project_windows": windows,
+        "history_report_chronology_verified": chronology_verified,
+        "history_report_timestamps_utc": (
+            [stamp.isoformat() for stamp in report_times]
+            if chronology_verified else None),
         "history_windows_different_or_unknown": (
             any(w is None for w in windows)
             or any(w != windows[0] for w in windows[1:])),
@@ -335,6 +374,8 @@ def as_text(result):
                 " | " + row["next_gate"])
         if result["history_windows_different_or_unknown"]:
             lines.append("  LET OP: projectvensters verschillen/ontbreken; niet gezien != opgelost.")
+        if not result["history_report_chronology_verified"]:
+            lines.append("  Rapporttijdstempels ONBEKEND; geen herhaalde-P0 escalatievoorstellen.")
         if result["history_items_truncated"]:
             lines.append("  Meer historische blokkades dan 96; lijst gedeeltelijk.")
         lines.append("  Menselijke P0-aandachtkandidaten (niet verzonden): " +
@@ -406,6 +447,9 @@ def as_html(result):
                      ('<p class="alert">Verschillende projectvensters: verdwenen is'
                       ' GEEN herstelbewijs.</p>'
                       if result["history_windows_different_or_unknown"] else '') +
+                     ('<p class="alert">Rapporttijdstempels ontbreken; geen'
+                      ' P0-escalatievoorspelling zonder herleidbare volgorde.</p>'
+                      if not result["history_report_chronology_verified"] else '') +
                      '<p>Menselijke P0-aandachtkandidaten: ' +
                      str(result["repeated_p0_human_attention_candidates"]) +
                      ' · er is geen melding verstuurd en geen claim gedaan.</p>' +
