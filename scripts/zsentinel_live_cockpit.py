@@ -187,26 +187,30 @@ def main():
         decision["live_sources"] = provenance
         if "notion_claims_observation" in bundle:
             decision["notion_claims_observation"] = bundle["notion_claims_observation"]
-        if args.state:
-            write_json_atomic(args.state, ledger)
+        # Render complete operator output before mutating the optional local
+        # ledger. Malformed source or a failed view must not consume incidents.
         decision["private_ledger_written"] = bool(args.state)
         if args.format == "html":
             from zsentinel_recovery_view import html_view
-            print(html_view(decision))
+            rendered = html_view(decision)
         elif args.format == "json":
-            print(json.dumps(decision, ensure_ascii=True, sort_keys=True, indent=2))
+            rendered = json.dumps(decision, ensure_ascii=True, sort_keys=True, indent=2)
         else:
-            print(operator_text(decision))
+            lines = [operator_text(decision)]
             if provenance["notion"] == "claim_status_observed_no_file_ownership":
                 observed = bundle["notion_claims_observation"]
-                print("NOTION: " + str(observed["active_count"]) +
-                      " observed Claimed/Running work items; coverage " +
-                      observed["coverage"] + ".")
+                lines.append("NOTION: " + str(observed["active_count"]) +
+                             " observed Claimed/Running work items; coverage " +
+                             observed["coverage"] + ".")
             elif provenance["notion"] == "degraded_unavailable_no_claim_authority":
-                print("NOTION: unavailable. No zero-claim assertion.")
+                lines.append("NOTION: unavailable. No zero-claim assertion.")
             else:
-                print("NOTION: not requested.")
-            print("WORKER FILE-LEVEL CLAIMS: UNKNOWN. No routing or recovery authorized.")
+                lines.append("NOTION: not requested.")
+            lines.append("WORKER FILE-LEVEL CLAIMS: UNKNOWN. No routing or recovery authorized.")
+            rendered = "\n".join(lines)
+        if args.state:
+            write_json_atomic(args.state, ledger)
+        print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel live cockpit unavailable: {exc}\n")
     return 0
