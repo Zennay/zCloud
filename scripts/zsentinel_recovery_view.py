@@ -151,6 +151,19 @@ def html_view(decision):
     coverage = phrase(coverage, 60)
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
+    live = decision.get("live_sources")
+    if live is not None and (not isinstance(live, dict)
+            or live.get("notion") != "not_observed_no_ownership_claim"
+            or live.get("runtime") != "not_observed_no_worker_recovery_claim"
+            or live.get("current_claim_inventory") != "unknown_and_not_used_for_routing"):
+        raise ValueError("invalid live source authority disclosure")
+    provenance = (
+        "Notion en runtime zijn niet uitgelezen; actieve eigenaren zijn onbekend. "
+        "Dit dashboard biedt observatie, geen automatische taakclaim."
+        if live is not None else
+        "Dit dashboard is gebaseerd op een apart aangeleverd bronpakket; "
+        "claims en runtimeherstel moeten onafhankelijk worden bevestigd."
+    )
     queue_coverage = phrase(queue["coverage"], 30)
     queue_totals = queue["totals"]
     queue_cards = [queue_card(item) for item in queue["samples"]]
@@ -214,7 +227,7 @@ def html_view(decision):
             f'Menselijke horloge-alertkandidaten: {len(watch)} (niet verstuurd)</p>'
             f'<p>VPS-capaciteitsadvies: <strong>{vps_state}</strong> · {vps_reason}. '
             'Geen VPS-startrecht.</p>'
-            f'<p class="banner">{phrase(warning, 600)}</p></header><main>'
+            f'<p class="banner">{phrase(provenance, 420)} {phrase(warning, 600)}</p></header><main>'
             f'<section><h2>Actuele blokkades ({len(incidents)})</h2>'
             + section(primary_incidents,
                       "Geen vers geverifieerde blokkades. Dat bewijst geen herstel.")
