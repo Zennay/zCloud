@@ -10,7 +10,7 @@ from html import escape
 
 
 def controls(projects):
-    if not isinstance(projects, list) or len(projects) > 3:
+    if not isinstance(projects, list) or not 1 <= len(projects) <= 18:
         raise ValueError("untrusted project selector")
     options = "".join('<option value="' + escape(pid, quote=True) +
                       '">' + escape(pid) + '</option>' for pid in projects)
