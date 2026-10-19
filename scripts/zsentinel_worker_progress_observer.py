@@ -251,6 +251,9 @@ def observe_worker_progress(database, projects, *, now=None):
         slot_columns = {r[1] for r in con.execute("PRAGMA table_info(ai_global_slots)")}
         if not {"slot", "project_id", "worker_slot"}.issubset(slot_columns):
             raise ValueError("global slot allocation source missing; no active-worker claim")
+        queue_cols = {r[1] for r in con.execute("PRAGMA table_info(portfolio_queue)")}
+        queue_available = {"project_id", "worker_slot", "status",
+                           "claim_expires", "updated_at"}.issubset(queue_cols)
         con.execute("BEGIN")
         # This is the existing *slot assignment*, not an active queue lease.
         # Limit the total cardinality and never follow unowned conversation IDs.
@@ -294,7 +297,7 @@ def observe_worker_progress(database, projects, *, now=None):
             for slot in slots[:MAX_SLOTS]:
                 entries.append(_observe_slot(
                     con, pid, slot, observed, desired.get(slot, "unknown"),
-                    global_slots.get((pid, slot))))
+                    global_slots.get((pid, slot)), queue_available))
         con.execute("COMMIT")
     finally:
         con.close()
@@ -311,6 +314,7 @@ def observe_worker_progress(database, projects, *, now=None):
         "truncated_project_ids": truncated,
         "event_inventory_complete": False,
         "global_slot_assignment_observed": True,
+        "queue_claim_source_available": bool(queue_available),
         "live_worker_claims_verified": False,
         "worker_resumed_verified": False,
         "actions_performed": False,
