@@ -26,6 +26,7 @@ from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_js
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html, link_existing_pr_actions
 from zsentinel_unblock_board import blocker_first_board, blocker_board_html, blocker_board_text
+from zsentinel_pinned_issue import pinned_receipts_html, pinned_receipts_text
 from zsentinel_pr_delivery import discover_open_prs, observe_prs, pr_delivery_html
 from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
 
@@ -487,6 +488,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         if summary.get("queue_source") == "explicitly_unobserved_no_database"
         else "")
     return raw.replace("<main>", "<main>" + queue_warning +
+                       pinned_receipts_html(decision.get("live_sources")) +
                        (blocker_board_html(unblock) if unblock is not None else "") +
                        (problems_html(problem_inbox) if problem_inbox is not None else "") +
                        (pr_delivery_html(pr_desk) if pr_desk is not None else "") +
@@ -738,6 +740,8 @@ def main():
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             if args.github_only:
                 lines.append("QUEUE: NIET WAARGENOMEN (--github-only); geen nulmeting, vrijgave of leasebewijs.")
+            if args.pin_issue:
+                lines.append(pinned_receipts_text(provenance))
             lines.append(blocker_board_text(unblock))
             lines.append("VOLGENDE PROBLEMEN (advies; eigendom en scope NIET geverifieerd):")
             for item in problem_inbox["items"]:
