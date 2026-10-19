@@ -559,7 +559,7 @@ Een `--desk-output` dat naar hetzelfde bestand verwijst als private incidentledg
 
 ## 19 oktober · Menselijke incidentoverdracht per eigenaar
 
-De offline **zSentinel-incidentenbalie** toont nu ook een compacte, uitsluitend brongebonden groepering **wie moet actie ondernemen**. De operator kan specifiek op het bron-eigenaarlabel filteren, naast bestaande project-, prioriteit- en urgentievragen. Per eigenaar toont de balie de geobserveerde P0/P1/verder geclassificeerde incidenten, maar geen impliciete eigenaarsbevestiging of gezondheidsstatus.
+De offline **zSentinel-incidentenbalie** toont nu ook een compacte, uitsluitend brongebonden groepering **wie moet actie ondernemen**. De operator kan specifiek op het bron-eigenaarlabel filteren, naast bestaande project-, prioriteit- en urgentievragen. Nieuw is de **reviewdoel-filter** (alle, reviewdoel verstreken, of verstreken/binnen twee uur) volgens de lokale browserklok. Per eigenaar toont de balie de geobserveerde P0/P1/verder geclassificeerde incidenten én het aantal verstreken beoordelingsdoelen, bovenaan gesorteerd op verstrijken en P0. Een verstreken doel is een **adviserende herbeoordelingsdatum**, niet een automatisch gemiste deadline, eigenaarsbevestiging, systeemstoring of bewezen herstel. Onbekende GitHub-bronnen blijven onbekend.
 
 ### Brongebonden privé Markdown-briefing
 
@@ -567,7 +567,7 @@ In dezelfde lokale HTML staat nu **Privé briefing per eigenaar**:
 
 1. Filter naar de gewenste eigenaar/project/ernst. Alleen incidenten met `human_escalation=true` mogen in een briefing; een gewone CI-/runtime-diagnose is geen menselijke escalatie.
 2. Kies **Voorvertoning maken** en beoordeel de volledige inhoud met SHA-256-bronidentiteit, bronmoment, bron-eigenaarlabel, afzonderlijke incident-ID's, oorspronkelijke probleem/actie/status, beoordelingsdoel en lokaal toegevoegde notities.
-3. Kies daarna **Download deze briefing (.md)**. De download is gebonden aan exact dezelfde gefilterde incidenten, notities en bron. Elk gewijzigd filter of lokaal status-/notitieveld maakt de voorvertoning ongeldig, zodat onbedoelde oudere selectie niet wordt gedownload. De download wordt nooit automatisch verzonden.
+3. Kies daarna **Download deze briefing (.md)**. De download is gebonden aan exact dezelfde gefilterde incidenten, notities en bron. Elk gewijzigd filter (waaronder eigenaar en reviewdoel) of lokaal status-/notitieveld maakt de voorvertoning ongeldig, zodat onbedoelde oudere selectie niet wordt gedownload. De download wordt nooit automatisch verzonden.
 
 De uitwisseling is expliciet *menselijk en privé*: bronadvies is geen bevoegdheid om CI te retriggeren, workerclaims over te nemen, betaling te autoriseren, incidenten te sluiten, een PR te mergen of het VPS-listenerproces te herstarten. Markdown-velden worden als gewone tekst ge-escaped; HTML- en Markdown-uitvoer leiden niet naar een GitHub/Notion/API-endpoint. De voorvertoning bevat mogelijk gevoelige persoonlijke operatornotities en moet vóór delen gecontroleerd worden. De briefing blijft begrensd tot maximaal 500.000 UTF-8-bytes per export, de al begrensde maximaal 200 bronincidenten en hoogstens 800 notitietekens per incident.
 
