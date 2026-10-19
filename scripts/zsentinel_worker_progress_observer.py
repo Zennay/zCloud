@@ -206,6 +206,66 @@ def operator_text(source):
     return "\n".join(lines)
 
 
+
+def worker_progress_html(source):
+    """Script-free, bounded view of index-backed event activity, never claims."""
+    if (not isinstance(source, dict)
+            or source.get("schema") != "zsentinel-worker-progress-observation-v1"
+            or source.get("source") != "existing_sqlite_mode_ro_query_only_indexed_runner_events"
+            or source.get("actions_performed") is not False
+            or source.get("worker_resumed_verified") is not False
+            or source.get("live_worker_claims_verified") is not False
+            or source.get("database_write_authorized") is not False
+            or not isinstance(source.get("entries"), list)
+            or len(source["entries"]) > MAX_PROJECTS * MAX_SLOTS):
+        raise ValueError("untrusted browser worker event evidence")
+    from html import escape
+    status = {
+        "recent_client_block_event_owner_review": "Recent browserblokkadesignaal; eigenaarcontrole",
+        "generation_progress_timestamp_observed": "Recente generatievoortgang waargenomen",
+        "generating_but_progress_unverified_or_stale": "Genereren gemeld, werkelijke voortgang onbekend/stale",
+        "worker_event_stale_or_unknown": "Geen recent worker-event; geen herstelbewijs",
+        "generation_finish_event_observed_not_product_delivery": "Voltooide generatie gemeld; productresultaat onbekend",
+        "recent_event_only_no_product_progress_proof": "Recent browser-event; geen productvoortgang bewezen",
+    }
+    rows = []
+    for row in source["entries"]:
+        pid = row.get("project_id")
+        slot = row.get("worker_slot")
+        state = row.get("classification")
+        if (type(pid) is not str or not PROJECT.fullmatch(pid)
+                or type(slot) is not int or not 1 <= slot <= 16
+                or state not in status
+                or row.get("owner_claim_verified") is not False
+                or row.get("worker_resumed_verified") is not False
+                or row.get("repair_authorized") is not False):
+            raise ValueError("invalid browser progress state receipt")
+        age = row.get("event_age_seconds")
+        progress = row.get("progress_age_seconds")
+        if any(value is not None and (type(value) is not int or value < 0)
+               for value in (age, progress)):
+            raise ValueError("invalid source age")
+        rows.append(
+            '<article class="panel read"><h3>' + escape(pid) + ' · worker ' +
+            str(slot) + '</h3><p>' + escape(status[state]) +
+            '</p><p class="small">Eventleeftijd: ' +
+            (str(age) + ' sec' if age is not None else 'ONBEKEND') +
+            ' · Laatste bronvoortgang: ' +
+            (str(progress) + ' sec' if progress is not None else 'ONBEKEND') +
+            ' · actueel claimrecht: ONBEKEND · werkhervatting NIET bewezen.</p>'
+            '</article>')
+    if not rows:
+        rows.append('<p class="empty">Geen eventbron in gekozen projectvenster;'
+                    ' dat bewijst GEEN nul actieve workers.</p>')
+    return (
+        '<section aria-label="Read-only browserworker voortgang">'
+        '<h2>Browserworkers · werkelijk eventbewijs</h2>'
+        '<p>Lokale geïndexeerde SQLite-read-only bron, geen browserstatus-GET,'
+        ' herstart, claim of werkafrondingsbewijs. Stale event != bewezen offline.</p>'
+        '<div class="grid">' + ''.join(rows) + '</div></section>'
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="zSentinel indexed read-only browser worker progress")
     parser.add_argument("--database", required=True, type=Path)
