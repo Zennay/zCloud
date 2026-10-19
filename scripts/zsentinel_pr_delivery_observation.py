@@ -122,11 +122,9 @@ def status_checks(repo, head, token):
                 raise ValueError("unknown check conclusion")
         elif conclusion is not None:
             raise ValueError("pending check has unexpected conclusion")
-        run_state.append({
-            "name": name,
-            "state": status,
-            "conclusion": conclusion,
-        })
+        # CI run names are arbitrary remote free text. Keep numeric/state
+        # evidence only, never export unbounded operator-visible job labels.
+        run_state.append({"state": status, "conclusion": conclusion})
     state = combined.get("state")
     if state not in ("pending", "failure", "success", "error"):
         raise ValueError("unknown combined status state")
@@ -144,7 +142,10 @@ def status_checks(repo, head, token):
         "run_count": len(run_state),
         "pending_runs": len(pending),
         "non_success_runs": len(bad),
-        "observed_runs": sorted(run_state, key=lambda x: x["name"]),
+        "completed_success_runs": sum(
+            x["state"] == "completed" and x["conclusion"] == "success"
+            for x in run_state
+        ),
         "legacy_context_count": len(statuses),
         "legacy_combined_state": state,
         "observed_check_runs_success": observed_run_success,
