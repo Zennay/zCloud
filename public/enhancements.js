@@ -144,7 +144,16 @@
       var recovery=!rollback.available?'No recovery point':rollback.status==='tested'?'Recovery tested':rollback.status==='problem'?'Recovery check needed':rollback.status==='in_progress'?'Recovery in progress':'Recovery point ready';
       return '<article class="incident-card '+esc(x.severity||'warning')+'"><div class="incident-card-head"><div><span>'+esc(project)+'</span><strong>'+esc(trText(x.title))+'</strong></div><b>'+esc(x.health||'Needs attention')+'</b></div><dl><div><dt>Cause</dt><dd>'+esc(trText(x.cause||'Unknown'))+'</dd></div><div><dt>Impact</dt><dd>'+esc(trText(x.impact||'Unknown'))+'</dd></div><div><dt>Restore</dt><dd>'+esc(recovery)+'</dd></div></dl><p class="incident-action"><b>Next step:</b> '+esc(trText(x.action||'Check this incident.'))+'</p><details class="section-details incident-details"><summary>Technical details</summary><p>'+esc(trText(x.technical_detail||'No additional technical details'))+(x.detected_at?' · '+esc(date(x.detected_at,true)):'')+'</p></details></article>';
     }).join('');
-    return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Needs attention</h2><div class="panel-subtitle">'+items.length+' concrete '+(items.length===1?'action':'actions')+' · no log spam</div></div><a class="events-link" href="#activity">History</a></div><div class="incident-list">'+rows+'</div></div>';
+    // Short decision layer for quick checks between work shifts; preserve the
+    // full cause/impact/rollback cards one disclosure below, not removed.
+    var brief=items.slice(0,5).map(function(x){
+      var project=names[x.project]||x.project||'zCloud';
+      return '<li><strong>'+esc(project)+'</strong> · '+esc(trText(x.title||'Blokkade'))+
+        '<br><b>Actie:</b> '+esc(trText(x.action||'Controleer de huidige blokkade'))+'</li>';
+    }).join('');
+    return '<div class="panel alert-panel incident-panel"><div class="panel-header"><div><h2>Wat zit vast?</h2><div class="panel-subtitle">'+items.length+' aandachtspunten · belangrijkste eerst</div></div><a class="events-link" href="#activity">Historie</a></div>'+
+      '<ol class="incident-quick" aria-label="Vijf belangrijkste blokkades">'+brief+'</ol>'+
+      '<details class="section-details"><summary>Volledige oorzaken, impact en herstelstappen</summary><div class="incident-list">'+rows+'</div></details></div>';
   }
 
   function milestonePanel(p){
@@ -167,7 +176,7 @@
   var baseOverview=overview;
   overview=function(){
     var html=baseOverview();
-    var controls='<div class="dashboard-grid top-controls">'+resourcePanel()+incidentPanel()+'</div>';
+    var controls='<div class="dashboard-grid top-controls">'+incidentPanel()+resourcePanel()+'</div>';
     return html.replace('<div class="dashboard-grid">',controls+'<div class="dashboard-grid">');
   };
 
