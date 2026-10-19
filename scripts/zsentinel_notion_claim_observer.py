@@ -61,6 +61,7 @@ def observe_claims(data_source_id, token):
     cursor = None
     seen_cursors = set()
     rows = []
+    seen_pages = set()
     incomplete = False
     opener = urllib.request.build_opener(NoRedirect())
     for index in range(MAX_PAGES):
@@ -92,8 +93,19 @@ def observe_claims(data_source_id, token):
         for page in data["results"]:
             if not isinstance(page, dict) or not isinstance(page.get("properties"), dict):
                 raise ValueError("Malformed Notion claim record")
+            page_id = page.get("id")
+            if (not isinstance(page_id, str) or not UUID.fullmatch(page_id)
+                    or page_id.lower() in seen_pages):
+                raise ValueError("Notion claim records must have distinct canonical page IDs")
+            seen_pages.add(page_id.lower())
             props = page["properties"]
-            state = _state(props.get("Status"))
+            status_prop = props.get("Status")
+            if (not isinstance(status_prop, dict)
+                    or status_prop.get("type") not in ("select", "status")):
+                raise ValueError("Missing or incompatible Notion Status property")
+            state = _state(status_prop)
+            if not isinstance(state, str):
+                raise ValueError("Invalid Notion work status type")
             if state not in ACTIVE:
                 continue
             title = _text(props.get("Work item")) or "Onbenoemd actief werk"
