@@ -536,6 +536,27 @@ def plan(bundle, previous=None, now=None):
     blocked = {"ids": blocking_ids, "gates": blocked_gates}
     routes, claims_verified = eligible_tasks(bundle, blocked, now)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
+    # Candidate feed for an authorized watch/notifier integrator, NOT a push.
+    # Stable ids allow the downstream delivery system to dedupe independently.
+    # Preserve strict human-only categorization and never expose raw job logs,
+    # prompts, claim tokens, personal data or arbitrary browser event strings.
+    watch_candidates = [
+        {
+            "alert_id": row["incident_id"],
+            "project_id": row["project_id"],
+            "severity": row["severity"],
+            "problem": row["problem"],
+            "action": row["action"],
+            "status": row["status"],
+            "review_by": row["target_review_by"],
+            "delivered": False,
+        }
+        for row in sorted(incidents, key=lambda i: (
+            0 if i["severity"] == "P0" else 1,
+            i["target_review_by"], i["incident_id"],
+        ))
+        if row["human_escalation"]
+    ][:5]
     return {
         "schema_version": 1, "observed_at_utc": utc_string(now),
         "mutations_performed": False, "runner_restarted": False,
@@ -545,6 +566,8 @@ def plan(bundle, previous=None, now=None):
         "incidents": incidents,
         "unattributed_progress_or_jobs": unattributed,
         "reconciled_exact_jobs": reconciled_jobs,
+        "watch_alert_candidates": watch_candidates,
+        "watch_delivery_performed": False,
         "unresolved_not_observed": sum(1 for v in next_state.values()
                                        if v["status"] == "not_observed_needs_reconciliation"),
         "independent_task_suggestions": routes,
