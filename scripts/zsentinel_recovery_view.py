@@ -24,7 +24,7 @@ p,li{line-height:1.5}.muted{color:#b6c7d9}.grid{display:grid;gap:1rem;grid-templ
 .tag{display:inline-block;font-size:.72rem;font-weight:700;border-radius:30px;border:1px solid #a3b4c9;padding:.2rem .55rem;margin-right:.4rem}
 .word{overflow-wrap:anywhere}small,.small{font-size:.85rem}a{color:#bcebf6}a:focus-visible{outline:3px solid #c5f285;outline-offset:3px}
 .row{margin:.6rem 0}.row strong{color:#f7faff}.empty{border:1px dashed #58657a;border-radius:12px;padding:1rem}
-.banner{background:#302720;border-left:4px solid #ffc078;padding:.8rem 1rem;border-radius:6px}
+table{width:100%;border-collapse:collapse;margin:1rem 0}td,th{padding:.55rem;text-align:left;border-bottom:1px solid #40516a;white-space:nowrap}.wrap{overflow-x:auto}details{padding:.6rem 0}summary{cursor:pointer}.banner{background:#302720;border-left:4px solid #ffc078;padding:.8rem 1rem;border-radius:6px}
 ul{padding-left:1.2rem}footer{margin:2rem 0;border-top:1px solid #44556b;padding-top:1rem}
 """
 
@@ -119,6 +119,26 @@ def queue_card(item):
     )
 
 
+def queue_group_table(groups, truncated, sample_complete):
+    if not groups:
+        return ""
+    rows=[]
+    for row in groups:
+        items = [phrase(row["project_id"],80), phrase(row["priority"],5)]
+        for name in ("queued","claimed","running","verifying",
+                     "high_claim_attempts","expired_owner_lease_rows"):
+            items.append(str(row[name]))
+        rows.append("<tr>" + "".join("<td>" + cell + "</td>" for cell in items) + "</tr>")
+    suffix = (" · meer groepen niet weergegeven" if truncated else "")
+    sample = (" · risicovoorbeelden onvolledig" if not sample_complete else "")
+    return ('<details><summary>Wachtrij per project en prioriteit (' +
+            str(len(groups)) + ')' + suffix + sample + '</summary><div class="wrap">'
+            '<table><thead><tr><th>Project</th><th>Prioriteit</th><th>Wachtend</th>'
+            '<th>Geclaimd</th><th>Running</th><th>Verifying</th>'
+            '<th>Veel claims</th><th>Lease verlopen?</th></tr></thead><tbody>' +
+            "".join(rows) + '</tbody></table></div></details>')
+
+
 def html_view(decision):
     if not isinstance(decision, dict) or decision.get("schema_version") != 1:
         raise ValueError("not a canonical zSentinel decision")
@@ -167,6 +187,13 @@ def html_view(decision):
     queue_coverage = phrase(queue["coverage"], 30)
     queue_totals = queue["totals"]
     queue_cards = [queue_card(item) for item in queue["samples"]]
+    queue_groups = queue.get("project_groups", [])
+    if (not isinstance(queue_groups,list) or len(queue_groups)>18
+            or type(queue.get("project_groups_truncated")) is not bool
+            or type(queue.get("sample_is_complete")) is not bool):
+        raise ValueError("invalid queue pressure detail contract")
+    group_html = queue_group_table(queue_groups, queue["project_groups_truncated"],
+                                   queue["sample_is_complete"])
     queue_summary = (
         "Wachtend: " + str(queue_totals.get("queued_items", 0)) +
         " · Actief: " + str(queue_totals.get("owned_items", 0)) +
@@ -238,6 +265,7 @@ def html_view(decision):
             + '</section>'
             + '<section><h2>Werkelijke wachtrijdruk · ' + queue_coverage + '</h2>'
             + '<p class="muted">' + phrase(queue_summary, 300) + '</p>'
+            + (group_html if queue_coverage == "current" else "")
             + section(queue_cards if queue_coverage == "current" else [],
                       "Geen actuele individuele wachtrijincidenten. Claimherstel blijft handmatig geautoriseerd.")
             + '</section>'
