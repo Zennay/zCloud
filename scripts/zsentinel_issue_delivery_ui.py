@@ -142,14 +142,17 @@ input("preview-issues").addEventListener("click",()=>{
     if(note) lines.push("- Mijn privénotitie: "+markdownSafe(note));
     for(const anchor of item.querySelectorAll('p a[href*="/pull/"]')){
       const address=new URL(anchor.href);
+      const segments=address.pathname.split("/").filter(Boolean);
       if(address.protocol==="https:"&&address.hostname==="github.com"&&
-         /^\\/Zennay\\/[A-Za-z0-9_.-]+\\/pull\\/[1-9][0-9]*$/.test(address.pathname)){
+         segments.length===4&&segments[0]==="Zennay"&&
+         /^[A-Za-z0-9_.-]+$/.test(segments[1])&&segments[2]==="pull"&&
+         /^[1-9][0-9]*$/.test(segments[3])){
         lines.push("- Bestaande PR-verwijzing (geen oplossing bewezen): "+address.href);
       }
     }
     const receipt=item.querySelector("details");
     if(receipt){
-      const summary=receipt.textContent.trim().replace(/\\s+/g," ").slice(0,650);
+      const summary=receipt.textContent.trim().replace(/\s+/g," ").slice(0,650);
       lines.push("- Reeds gelezen PR-bronactie: "+markdownSafe(summary));
     }
     lines.push("- Eigenaar/CI/merge: ONBEKEND of niet geautoriseerd","");
