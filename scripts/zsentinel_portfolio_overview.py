@@ -484,12 +484,12 @@ def main():
                 window_index + 1, len(windows), ", ".join(selected))]
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             for row in summary["rows"]:
-                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s" % (
+                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s | action=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
                     _count(row["notion_active_status_min"]),
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
                     _count(row["p0_p1_issue_sample_hits"]), _count(row["incident_sample_hits"]),
-                    row["github_observation"]))
+                    row["github_observation"], row["next_action"]))
             if branches is not None:
                 lines.append("BRANCH EIGENDOM (%s): %s; recente kandidaten=%s; "
                              "mogelijke pad-overlap=%s; GEEN eigendomsbevestiging." % (
