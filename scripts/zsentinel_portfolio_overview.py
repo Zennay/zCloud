@@ -609,9 +609,41 @@ def main():
                 # Other claims and PR ownership remain independent gates.
                 raise ValueError("canonical un-PR branch slice overlap or incomplete; no task claim")
         problem_inbox = next_problems(summary, decision, selected)
+        # PR observation is explicitly opt-in. Never treat GitHub metadata
+        # as an owner claim, required-check inventory or merge permission.
+        if (args.inspect_pr or args.inspect_referenced_prs) and args.format in ("ics", "desk"):
+            raise ValueError("existing PR desk supports only html, json or text")
+        pr_selection = []
+        for raw in args.inspect_pr:
+            if not isinstance(raw, str):
+                raise ValueError("invalid existing PR reference")
+            match = re.fullmatch(r"([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,8})", raw)
+            if not match or match.group(1) not in selected:
+                raise ValueError("--inspect-pr requires PROJECT:NUMBER in selected GitHub window")
+            chosen = {"project_id": match.group(1), "pr_number": int(match.group(2))}
+            if chosen in pr_selection or len(pr_selection) >= 3:
+                raise ValueError("duplicate or over-capacity existing PR inspection")
+            pr_selection.append(chosen)
+        if args.inspect_referenced_prs:
+            for item in problem_inbox["items"]:
+                if len(pr_selection) >= 3:
+                    break
+                pid = item["project_id"]
+                if pid not in selected:
+                    continue
+                for link in item["related_open_prs"]:
+                    number = int(link.rsplit("/", 1)[-1])
+                    candidate = {"project_id": pid, "pr_number": number}
+                    if candidate not in pr_selection:
+                        pr_selection.append(candidate)
+                        if len(pr_selection) >= 3:
+                            break
+        pr_desk = (observe_prs(registry, pr_selection, token=os.environ.get("GITHUB_TOKEN"))
+                   if args.inspect_pr or args.inspect_referenced_prs else None)
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
-                                      branch_inventory=branches, problem_inbox=problem_inbox)
+                                      branch_inventory=branches, problem_inbox=problem_inbox,
+                                      pr_desk=pr_desk)
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(decision)
@@ -625,6 +657,8 @@ def main():
                 "window_count": len(windows), "selected_projects": selected,
                 "source_bound_decision": decision,
                 "next_problem_shortlist": problem_inbox,
+                "existing_pr_delivery": (pr_desk if pr_desk is not None else
+                    {"coverage": "not_requested", "merge_authorized": False}),
                 "recent_unpr_branch_ownership": (
                     branches if branches is not None else
                     {"coverage": "not_requested", "owner_verified": False}),
@@ -640,6 +674,15 @@ def main():
                     item["next_step"], item["action"]))
             if not problem_inbox["items"]:
                 lines.append("  Geen kandidaten in beperkte steekproef; GEEN bewijs van nul open issues.")
+            if pr_desk is not None:
+                lines.append("BESTAANDE PR'S (exact-head steekproef, GEEN mergetoestemming):")
+                for item in pr_desk["items"]:
+                    lines.append("  %s PR #%s head=%s | bron=%s | vervolg=%s | %s" % (
+                        item["project_id"], item["pr_number"],
+                        item.get("head_sha", "ONBEKEND")[:12],
+                        item["coverage"], item["next_step"], item["url"]))
+                if not pr_desk["items"]:
+                    lines.append("  Geen PR-referenties in beperkte selectie; GEEN bewijs van nul PR's.")
             for item in problem_inbox["owner_only_incidents"]:
                 lines.append("  EIGENAAR NODIG %s %s: %s" % (
                     item["severity"], item["project_id"], item["action"]))
