@@ -1880,6 +1880,15 @@ function zSentinelDeliveryBoard(){
     ids.has(item.project_id)&&(!focus||item.project_id===focus));
   const coveredIssues=(snapshot?.coverage||[]).filter(item=>
     ids.has(item.project)&&(!focus||item.project===focus));
+  const unobservedIssueProjects=(DATA?.projects||[]).filter(p=>
+    (!focus||focus===p.id)&&!coveredIssues.some(row=>row.project===p.id)).map(p=>p.id);
+  const unlinked= relevant.filter(issue=>!issue.prs.length);
+  const fairUnlinked=fairProductIssueHistory(unlinked,coveredIssues,8);
+  const unlinkedRows=fairUnlinked.map(issue=>'<div class="service-row"><div><strong>'+
+    esc(issue.priority)+' · '+esc(issue.project)+'</strong><br>'+
+    '<a target="_blank" rel="noopener noreferrer" href="'+esc(issue.url)+'">'+esc(issue.title)+'</a>'+
+    '<br><small>No open PR relationship in BOUNDED sampled metadata · ownership unknown · review only</small>'+
+    '</div></div>').join('');
   const coveredGitHub=(github?.coverage||[]).filter(item=>
     ids.has(item.project)&&(!focus||item.project===focus));
   const staleProjects=[...new Set([...coveredIssues,...coveredGitHub]
@@ -1937,6 +1946,12 @@ function zSentinelDeliveryBoard(){
     (focus?'Project: '+esc(focus)+'.':'Select a single project to refresh the sources; current snapshots can be viewed across projects.')+
     ' Issues sampled: '+coveredIssues.length+' project sources; GitHub activity: '+
     coveredGitHub.length+' project sources.</p>'+
+    (unobservedIssueProjects.length?'<p class="detail-note" role="status">Issue source NOT OBSERVED for: '+
+      esc(unobservedIssueProjects.join(', '))+'. Use manual project-source reads; absence never means no open issues.</p>':'')+
+    '<h3>High-impact issues with no linked PR in sampled evidence ('+unlinked.length+')</h3>'+
+    (unlinkedRows?'<div class="service-list">'+unlinkedRows+'</div>':
+       '<p class="detail-note">No unmatched P0/P1 references in the current sample. This does not prove all issues have owners or PRs.</p>')+
+    (unlinked.length>8?'<p class="detail-note">Showing eight fair examples, not every open issue.</p>':'')+
     '<h3>Open high-impact product issues ('+relevant.length+' in available snapshot)</h3>'+
     (formatted?'<div class="service-list">'+formatted+'</div>':
      '<p class="detail-note">No P0/P1 issues in the available snapshot. This is NOT proof the repository has no open issues.</p>')+
