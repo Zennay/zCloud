@@ -27,7 +27,26 @@ python3 scripts/zsentinel_retry_incident_console.py \
   --threshold 3 --limit 40 --format markdown
 ```
 
-The database opens using SQLite `mode=ro` with `PRAGMA query_only=ON`; grouped and sample reads share one read transaction. Read-only queries may read existing WAL content; no `immutable=1` flag hides pending WAL. The only optional filesystem write is the operator-selected **report output** path.
+The database opens using SQLite `mode=ro` with `PRAGMA query_only=ON`; grouped and sample reads share one read transaction. Read-only queries may read existing WAL content; no `immutable=1` flag hides pending WAL. The only optional filesystem write is the operator-selected **report output**
+path. Reports are now **create-only by default**: both the live-SQLite
+snapshot CLI and the offline trend CLI first write a mode-0600 temporary file
+in the selected report directory, then atomically create the final report
+filename **only if it does not already exist**. Neither CLI opens a prior
+report, source snapshot, SQLite database, WAL/SHM sidecar, hardlink alias,
+existing symlink or unrelated file for writing. A conflicting destination
+returns a clear error; choose a fresh report filename. A failed publication
+cleans up its temporary file. This protects local source evidence even if an
+operator accidentally chooses the SQLite database or one of the trend input
+JSON files as `--output` — previous direct `write_text` behavior could
+truncate those files despite the read-only database connection. It does not
+grant any permission to mutate queue or worker state.
+
+**Operator sequence:** choose unique output names for each observation
+(e.g. `retry-before-20261019.json` and `retry-after-20261019.json`).
+Use `scripts/zsentinel_retry_trend.py --previous ... --current ...
+--format html --output ...` with a *third new* report name. Keep the two
+source snapshots for later comparison, and use the resulting HTML, Markdown
+or JSON only as bounded non-authorizing evidence.
 
 Reports include a short pseudonymous `queue_ref` so operators can correlate the same item across different snapshots without exporting raw IDs. To locate the exact task for authorized **local** investigation, explicitly resolve one reference:
 
