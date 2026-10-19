@@ -38,6 +38,108 @@ def _sha(value):
     return value
 
 
+def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
+                      exclude=None):
+    """Find existing PRs before suggesting duplicate source work.
+
+    One GitHub GET per canonical project, bounded to the 20 most recently
+    updated open PRs. This is source discovery, not active owner evidence.
+    The sampled shortlist is fair across repositories for each priority.
+    """
+    if (not isinstance(registry, dict) or not isinstance(selected_projects, list)
+            or not 1 <= len(selected_projects) <= 3
+            or len(set(selected_projects)) != len(selected_projects)
+            or type(limit) is not int or not 1 <= limit <= MAX_PRS):
+        raise ValueError("invalid existing-PR discovery scope")
+    exclude = [] if exclude is None else exclude
+    if (not isinstance(exclude, list) or len(exclude) > MAX_PRS
+            or any(not isinstance(x, dict)
+                   or set(x) != {"project_id", "pr_number"}
+                   for x in exclude)):
+        raise ValueError("invalid existing-PR exclusions")
+    blocked = {(x["project_id"], _number(x["pr_number"])) for x in exclude}
+    rows = {}
+    coverage = []
+    calls = 0
+    rate_limited = False
+    for pid in selected_projects:
+        repo = registry.get(pid) if isinstance(pid, str) else None
+        if not isinstance(repo, str) or not OWNER_REPO.fullmatch(repo):
+            raise ValueError("unknown canonical PR discovery project")
+        if rate_limited:
+            coverage.append({"project_id": pid, "status": "not_queried_after_auth_or_rate_limit"})
+            continue
+        calls += 1
+        url = ("https://api.github.com/repos/" + quote(repo, safe="/") +
+               "/pulls?state=open&sort=updated&direction=desc&per_page=20&page=1")
+        try:
+            results = bounded_get(url, token)
+            if not isinstance(results, list) or len(results) > 20:
+                raise ValueError("invalid open PR page")
+            found = []
+            seen = set()
+            for pr in results:
+                if not isinstance(pr, dict):
+                    continue
+                number = pr.get("number")
+                title = pr.get("title")
+                if (type(number) is not int or not 1 <= number <= 100000000
+                        or number in seen or type(title) is not str
+                        or not 1 <= len(title) <= 180
+                        or any(ord(c) < 32 or ord(c) == 127 for c in title)):
+                    continue
+                seen.add(number)
+                if pr.get("state") != "open" or (pid, number) in blocked:
+                    continue
+                # Only explicit title labels affect ranking. No invented P0.
+                urgency = re.match(r"^\\s*(?:\\[(P[01])\\]|(P[01])(?=\\s|:|\\-))", title, re.I)
+                priority = (urgency.group(1) or urgency.group(2)).upper() if urgency else "Unspecified"
+                found.append({
+                    "project_id": pid, "pr_number": number,
+                    "priority_from_title": priority,
+                    "draft_from_listing": pr.get("draft") is True,
+                    "owner_verified": False,
+                })
+            rows[pid] = sorted(
+                found, key=lambda row: (
+                    0 if row["priority_from_title"] == "P0" else
+                    1 if row["priority_from_title"] == "P1" else 2,
+                    row["draft_from_listing"], row["pr_number"]
+                ))
+            coverage.append({"project_id": pid,
+                             "status": "bounded_truncated" if len(results) == 20
+                             else "bounded_sample",
+                             "returned": len(results), "all_open_prs_observed": False})
+        except (OSError, ValueError) as exc:
+            reason = str(exc)
+            coverage.append({"project_id": pid, "status": "degraded",
+                             "reason": reason[:90], "all_open_prs_observed": False})
+            if reason == "github_permission_or_rate_limit":
+                rate_limited = True
+    picked = []
+    for priority in ("P0", "P1", "Unspecified"):
+        while len(picked) < limit:
+            advanced = False
+            for pid in selected_projects:
+                group = rows.get(pid, [])
+                position = next((i for i, row in enumerate(group)
+                                 if row["priority_from_title"] == priority), None)
+                if position is not None:
+                    row = group.pop(position)
+                    picked.append({"project_id": pid, "pr_number": row["pr_number"]})
+                    advanced = True
+                    if len(picked) >= limit:
+                        break
+            if not advanced:
+                break
+    return {"schema": "zsentinel-open-pr-discovery-v1",
+            "selection": picked, "coverage": coverage,
+            "calls": calls, "max_calls": len(selected_projects),
+            "all_open_prs_observed": False,
+            "owner_verified": False, "writes_performed": False,
+            "merge_authorized": False}
+
+
 def observe_prs(registry, selections, token=None):
     """Capture exact source head, bounded check-runs and same-head reviews.
 
