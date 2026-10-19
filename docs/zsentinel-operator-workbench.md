@@ -120,3 +120,19 @@ This feature is a source-observation comparison, **not** a current-state
 monitor. There are still no background updates, recovery decisions,
 CI dispatches, privileged queue operations, new test suites or runtime
 deploys. Existing source/CI/independent owner/release gates remain in force.
+
+### Source-coverage changes are visible, not silently interpreted
+
+The current generated workbench includes only the canonical **bounded
+coverage summary**, never GitHub raw response objects: project
+partial/degraded/unavailable labels, inbox pagination truncation, card-count
+truncation and source denial. It validates these before rendering. Earlier
+source imports must carry valid equivalent labels. The comparison explicitly
+shows both original capture scopes and flagged unavailable/degraded projects
+alongside the two SHA-256 source identifiers.
+
+All original zSentinel issue-inbox windows are partial, even if the
+truncation/denial flags are false. Therefore *no longer observed* must never
+be relabeled as *closed*, *resolved*, *delivered* or *free for assignment*.
+The historical comparison does not have live issue/PR/claim authority and
+cannot replace fresh GitHub+Notion owner checks.
