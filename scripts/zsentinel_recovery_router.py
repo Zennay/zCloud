@@ -840,7 +840,7 @@ def main():
             # cursor or dedup ledger: a subsequent atomic JSON write could
             # otherwise clobber the report after its exclusive creation.
             private_inputs = [args.state]
-            if any(item is not None and args.desk_output.resolve() == item.resolve()
+            if any(item is not None and args.desk_output.resolve() == Path(item).resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
