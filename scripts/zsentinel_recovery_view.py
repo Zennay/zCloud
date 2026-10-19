@@ -123,6 +123,9 @@ def html_view(decision):
     coverage = phrase(coverage, 60)
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
+    watch = decision.get("watch_alert_candidates", [])
+    if not isinstance(watch, list) or len(watch) > 5:
+        raise ValueError("unbounded watch candidate feed")
     missing = decision.get("unresolved_not_observed", 0)
     unattributed = decision.get("unattributed_progress_or_jobs", 0)
     if type(unattributed) is not int or unattributed < 0:
@@ -160,7 +163,8 @@ def html_view(decision):
             '<header><span class="tag">ZCLOUD · LOKAAL</span><h1>zSentinel herstelcockpit</h1>'
             f'<p class="muted">Bronobservatie: {phrase(decision.get("observed_at_utc"), 50)}</p>'
             f'<p>GitHub: {coverage} · GitHub-issues: {source_issues} · '
-            f'Actieve claims: {"volledig expliciet" if claims else "ONVOLLEDIG"}</p>'
+            f'Actieve claims: {"volledig expliciet" if claims else "ONVOLLEDIG"} · '
+            f'Menselijke horloge-alertkandidaten: {len(watch)} (niet verstuurd)</p>'
             f'<p class="banner">{phrase(warning, 600)}</p></header><main>'
             f'<section><h2>Actuele blokkades ({len(incidents)})</h2>'
             + section(primary_incidents,
