@@ -14,7 +14,7 @@ from html import escape
 MAX_NEXT = 8
 ISSUE_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
 PR_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
-PRIORITY = {"P0": 0, "P1": 1}
+PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
 # Explicitly known owner-only infrastructure gates must never monopolize the
 # product implementation shortlist or masquerade as free worker tasks.
 OWNER_GATED_ISSUES = frozenset({
@@ -24,7 +24,7 @@ OWNER_GATED_ISSUES = frozenset({
 
 
 def next_problems(summary, decision, selected):
-    """Rank sampled P0/P1 product issues fairly across inspected repositories.
+    """Rank sampled product issues fairly across inspected repositories.
 
     All candidates require an ownership and file-scope recheck. In particular
     even a fully observed queue only contains *aggregate* ownership here.
@@ -104,6 +104,8 @@ def next_problems(summary, decision, selected):
             if row.get("github_observation") not in ("partial_both_sources", "issue_sample_only"):
                 route = "source_incomplete_owner_review"
                 action = "GitHub-dekking onvolledig: verifieer het issue, open PR's en de huidige eigenaar."
+            if tier == "Unspecified":
+                action = "Geen prioriteit bevestigd. Verifieer ernst, eigenaar, open PR’s en padscope voordat productwerk start."
             collected[pid].append({
                 "project_id": pid,
                 "priority": tier,
@@ -125,7 +127,7 @@ def next_problems(summary, decision, selected):
             item["issue_url"],
         ))
     shortlist = []
-    for tier in ("P0", "P1"):
+    for tier in ("P0", "P1", "P2", "Unspecified"):
         active = {pid: [x for x in collected[pid] if x["priority"] == tier] for pid in selected}
         while any(active.values()) and len(shortlist) < MAX_NEXT:
             for pid in selected:
@@ -191,7 +193,7 @@ def problems_html(result):
             escape(issue["action"]) + '</p><p>' + links + '</p></article>'
         )
     if not rows:
-        rows.append('<p class="empty">Geen betrouwbare P0/P1-kandidaten in dit beperkte venster. '
+        rows.append('<p class="empty">Geen betrouwbare productissue-kandidaten in dit beperkte venster. '
                     'Dit is GEEN bewijs dat er geen problemen zijn.</p>')
     held = "".join(
         '<li><a href="' + escape(item["issue_url"], quote=True) +
@@ -208,7 +210,7 @@ def problems_html(result):
         for item in result["owner_only_incidents"]
     )
     return ('<section><h2>Volgende problemen · niet toegewezen</h2>'
-            '<p class="banner">Eerst P0, daarna P1. Bestaande PR’s vóór dubbele implementatie. '
+            '<p class="banner">Eerst P0/P1, daarna P2 en zonder prioriteitslabel. Bestaande PR’s vóór dubbele implementatie. '
             'Steekproef uit alleen het huidige GitHub-venster; projectclaims, '
             'bestandseigendom en releasegates niet geverifieerd. '
             'Dit onderdeel voert NOOIT zelf werk uit.</p><div class="grid">' +
