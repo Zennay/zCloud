@@ -146,7 +146,7 @@ def main():
     parser.add_argument("--registry", type=Path, required=True,
                         help="existing canonical projects registry JSON")
     parser.add_argument("--state", help="optional private local dedup ledger")
-    parser.add_argument("--format", choices=("json", "text"), default="text")
+    parser.add_argument("--format", choices=("json", "text", "html"), default="text")
     args = parser.parse_args()
     try:
         registry = canonical_projects(args.registry)
@@ -158,8 +158,12 @@ def main():
         if args.state:
             write_json_atomic(args.state, updated)
         routed["private_ledger_written"] = bool(args.state)
-        print(json.dumps(routed, sort_keys=True, indent=2) if args.format == "json"
-              else operator_text(routed) + "\nGitHub coverage: " + source["github_coverage"])
+        if args.format == "html":
+            from zsentinel_recovery_view import html_view
+            print(html_view(routed))
+        else:
+            print(json.dumps(routed, sort_keys=True, indent=2) if args.format == "json"
+                  else operator_text(routed) + "\nGitHub coverage: " + source["github_coverage"])
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel read-only refresh refused: {exc}\n")
     return 0
