@@ -418,7 +418,10 @@ def triage_issue_inbox(inbox, now):
         if (not isinstance(title, str) or not 1 <= len(title) <= 180
                 or any(ord(ch) < 32 for ch in title)):
             raise ValueError("invalid issue title")
-        if entry["priority"] not in ("P0", "P1") or entry["qa_only"]:
+        # The recovery operator prioritizes P0/P1 but must not silently drop
+        # legitimate lower-priority or unranked product issues. The existing
+        # issue collector marks QA-only work explicitly; it stays excluded.
+        if entry["qa_only"]:
             continue
         candidates.append({
             "project_id": pid, "priority": entry["priority"], "title": title,
@@ -427,9 +430,33 @@ def triage_issue_inbox(inbox, now):
             "action": ("Review existing PR and its current owner before implementing."
                        if linked else "Verify active claims and file scope before proposing work."),
         })
-    candidates.sort(key=lambda x: (PRIORITY[x["priority"]], x["project_id"], x["issue_url"]))
+    # Give P0 then P1 precedence, followed by explicitly P2 and finally
+    # UNRANKED (never invent severity). Round-robin each tier across sampled
+    # repositories so a busy project cannot hide another project's blockers
+    # behind the eight-result source budget.
+    issue_order = ("P0", "P1", "P2", "Unspecified")
+    by_tier_project = {}
+    for item in candidates:
+        by_tier_project.setdefault((item["priority"], item["project_id"]), []).append(item)
+    for values in by_tier_project.values():
+        values.sort(key=lambda item: (
+            0 if item["open_pr_candidates"] else 1, item["issue_url"]
+        ))
+    balanced = []
+    for tier in issue_order:
+        while any(by_tier_project.get((tier, pid)) for pid in observed_projects):
+            for pid in sorted(observed_projects):
+                remaining = by_tier_project.get((tier, pid))
+                if remaining:
+                    balanced.append(remaining.pop(0))
+                    if len(balanced) >= 8:
+                        break
+            if len(balanced) >= 8:
+                break
+        if len(balanced) >= 8:
+            break
     return {"source": "github_readonly_issue_inbox", "coverage": status,
-            "observed_at": utc_string(observed), "issues": candidates[:8],
+            "observed_at": utc_string(observed), "issues": balanced,
             "truncated": inbox["truncated"],
             "stopped_after_rate_or_auth_denial": inbox["stopped_after_rate_or_auth_denial"]}
 
