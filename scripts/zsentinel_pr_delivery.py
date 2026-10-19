@@ -341,8 +341,13 @@ def observe_prs(registry, selections, token=None):
                 next_step = "resolve_exact_head_review_with_owner"
             elif failing or legacy_failed:
                 next_step = "fix_exact_head_ci_with_owner"
+            elif combined in ("failure", "error"):
+                # The combined source reports a failure but the sampled page
+                # did not identify it: never suggest review or merge.
+                next_step = "inspect_unlisted_status_contexts_with_owner"
             elif (waiting or inconclusive or legacy_pending
-                  or len(statuses) == MAX_STATUSES or total != len(runs)):
+                  or combined == "pending" or len(statuses) == MAX_STATUSES
+                  or total != len(runs)):
                 next_step = "wait_for_complete_exact_head_ci"
             elif approvals == 0:
                 next_step = "request_independent_review"
@@ -384,6 +389,7 @@ def pr_delivery_html(report):
         "finish_existing_draft_with_owner": "Rond bestaande concept-PR af met eigenaar.",
         "resolve_exact_head_review_with_owner": "Verwerk wijzigingsverzoeken van huidige source head met eigenaar.",
         "fix_exact_head_ci_with_owner": "Los de daadwerkelijk falende head-checks op met eigenaar.",
+        "inspect_unlisted_status_contexts_with_owner": "Gecombineerde GitHub-status meldt fout; open actuele PR-checks met eigenaar, want context staat niet in de beperkte steekproef.",
         "wait_for_complete_exact_head_ci": "Wacht op ontbrekende of lopende exact-head CI; blijf aan ander werk bouwen.",
         "request_independent_review": "Vraag onafhankelijke review; geen automatische merge.",
         "confirm_branch_protection_and_release_with_owner": "Laat eigenaar volledige branchebescherming en releasevoorwaarden controleren.",
@@ -406,6 +412,7 @@ def pr_delivery_html(report):
                   " · fouten ≥" + str(len(ci.get("failed", []))) +
                   " · bezig ≥" + str(len(ci.get("pending", []))) +
                   " · niet-groen/onbeslist ≥" + str(len(ci.get("inconclusive", []))) +
+                  " · klassiek gecombineerd " + str(legacy.get("combined_observed", "onbekend")) +
                   " · klassieke statusfouten ≥" + str(len(legacy.get("failed", []))) +
                   " · klassieke statussen wachten ≥" + str(len(legacy.get("pending", []))) +
                   " · head-approvals gezien: " +
@@ -597,6 +604,9 @@ def main(argv=None):
                     if item.get("ci", {}).get(name):
                         lines.append("  check-%s: %s" % (
                             name, ", ".join(item["ci"][name])))
+                if item.get("legacy_status_contexts"):
+                    lines.append("  classic-status-combined: " +
+                                 item["legacy_status_contexts"]["combined_observed"])
                 for name in ("failed", "pending"):
                     if item.get("legacy_status_contexts", {}).get(name):
                         lines.append("  status-%s: %s" % (
