@@ -129,6 +129,7 @@ def refresh(bundle, registry, token=None):
             # Only an independently verified fresh source may set the category.
             project["github"] = updated
             output.append({"project_id": pid, "source": "github_exact_run_job",
+                           "repository": repository,
                            "status": "refreshed", "run_id": run_id, "job_id": job_id,
                            "runner_route": route["runner_route"],
                            "route_labels": route["route_labels"],
