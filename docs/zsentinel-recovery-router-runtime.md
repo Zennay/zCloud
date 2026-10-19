@@ -1,5 +1,32 @@
 # zSentinel · Runtime incident router (product-only)
 
+## Open problemen eerlijk prioriteren, óók zonder P0/P1-label (19 oktober)
+
+De bestaande read-only GitHub-issuebron kan óók open productissues zonder
+prioriteitslabel of met expliciete P2-prioriteit waarnemen. Voorheen vielen
+deze na het ophalen weg, ook als een P0/P1-venster leeg was. De huidige
+operatorroute laat nu **eerst P0**, dan **P1**, vervolgens **P2** en tenslotte
+**Unspecified** zien. Een ontbrekend label wordt **niet** tot P1 of P0
+gepromoveerd. `qa_only=true` uit de canonieke bron blijft volledig
+uitgesloten onder het product-deliverybesluit van 17 oktober.
+
+Per prioriteitsgroep wisselt de router tussen de werkelijk waargenomen
+projecten, zodat acht issues van één repo niet altijd een andere repo
+verdringen. De bestaande maximaal acht samplekaarten blijven dezelfde
+GitHub-read-only receipts hergebruiken: **nul aanvullende API-calls**, geen
+GitHub claim/issue/PR-write, geen dispatch, geen tweede eigenaar of extra CI.
+Een item verwijst eerst naar een bestaande open PR; zo niet, dan blijft
+actuele pad-/owner-/Notion-leasetoets vereist. Een P2 of ongelabeld item
+mag nooit als vrij uitvoerbaar of urgent incident worden geïnterpreteerd.
+
+Het portfolio toont de begrensde aantallen **P0/P1** en
+**P2/zonder label** apart; beide zijn steekproefondergrenzen (`≥N`).
+Projecten zonder betrouwbare issuesbron tonen `ONBEKEND` en nul in een
+succesvolle steekproef betekent niet dat een repo issuevrij of gezond is.
+De JSON handhaaft `dispatch_authorized=false` en
+`queue_owner_authorized=false`; dezelfde exacte-head security/CI-review en
+seriële runtime-ownerpoorten als in PR #1563 blijven verplicht.
+
 This is an **executable, local recovery/routing decision engine**. It consumes a trusted, fresh canonical zSentinel diagnosis snapshot alongside current queued work and live-verified active claim scopes; emits a compact three-line-per-incident operator view or machine-readable JSON, and optionally persists a private deduplicated incident ledger. It does not pretend to own the control-plane writer. This is a deliverable for [PWQ-433](https://app.notion.com/p/3fe9e19ac95581aab21ceae956954b08), guided by policy [PR #1562](https://github.com/Zennay/zCloud/pull/1562).
 
 ## Start (source-only, no production writes)
