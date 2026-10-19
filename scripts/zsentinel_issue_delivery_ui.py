@@ -46,7 +46,17 @@ def controls(projects):
         'claim, herstel of toestemming.</p>'
         '<button type="button" id="preview-issues">Voorvertoning maken</button> '
         '<button type="button" id="export-issues" disabled>Download gecontroleerde .md</button>'
-        '<pre id="issue-handoff" aria-live="polite"></pre></section>'
+        '<pre id="issue-handoff" aria-live="polite"></pre>'
+        '<h3>Privé-opvolgnotities meenemen</h3>'
+        '<p>Na voorvertoning kun je afzonderlijk maximaal 24 lokale '
+        'opvolgkeuzes/notities exporteren als JSON, later opnieuw importeren '
+        'voor exact dezelfde issue-URL’s. Dit is geen echte workerclaim. '
+        'Oude notities worden nooit automatisch met een bronstatus samengevoegd.</p>'
+        '<button type="button" id="export-followups" disabled>'
+        'Download privénotities (.json)</button> '
+        '<label>Import eigen privénotities (.json) '
+        '<input id="import-followups" type="file" accept=".json,application/json"></label>'
+        '<p id="followup-feedback" role="status" aria-live="polite"></p></section>'
     )
 
 
@@ -77,6 +87,11 @@ const boardItems=Array.from(document.querySelectorAll("article.issue[data-issue-
 const input=id=>document.getElementById(id);
 const preview=input("issue-handoff");
 const download=input("export-issues");
+const followupDownload=input("export-followups");
+const followupImport=input("import-followups");
+const feedback=input("followup-feedback");
+const followupValues=["nog-niet-beoordeeld","eigenaar-benaderen",
+  "bron-opnieuw-controleren","extern-geparkeerd"];
 let previewVersion=0;
 let latestPreview=null;
 function freshness(){
@@ -106,6 +121,7 @@ function invalidatePreview(){
   previewVersion++;
   latestPreview=null;
   download.disabled=true;
+  followupDownload.disabled=true;
   preview.textContent="Bronfilters of notities gewijzigd. Maak een nieuwe voorvertoning.";
 }
 function refresh(){
@@ -174,6 +190,93 @@ input("preview-issues").addEventListener("click",()=>{
   latestPreview={version,body:lines.join("\n"),staleAtPreview:stale};
   preview.textContent=latestPreview.body;
   download.disabled=false;
+  followupDownload.disabled=false;
+});
+followupDownload.addEventListener("click",()=>{
+  if(!latestPreview||latestPreview.version!==previewVersion)return;
+  if(freshness()&&!latestPreview.staleAtPreview){
+    invalidatePreview();
+    feedback.textContent="Bron is verouderd; maak een nieuwe voorvertoning.";
+    return;
+  }
+  // Separate user-controlled local save, never an API/claim writer.
+  const entries=boardItems.map(item=>({
+    issue_url:item.dataset.issueUrl,
+    project_id:item.dataset.project,
+    followup:item.querySelector("[data-local-followup]").value,
+    note:item.querySelector("[data-local-note]").value.slice(0,300)
+  }));
+  const receipt={
+    schema:"zsentinel-private-followups-v1",
+    source_observed_at:document.body.dataset.observedAt,
+    exported_at:new Date().toISOString(),
+    entries,
+    external_writes_performed:false,
+    owner_verified:false,
+    claims_taken:false
+  };
+  const body=JSON.stringify(receipt,null,2)+"\\n";
+  const blob=new Blob([body],{type:"application/json;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  try{
+    const link=document.createElement("a");
+    link.href=url; link.download="zsentinel-prive-opvolgnotities.json";
+    document.body.append(link);link.click();link.remove();
+  }finally{setTimeout(()=>URL.revokeObjectURL(url),30000);}
+});
+followupImport.addEventListener("change",async ()=>{
+  const file=followupImport.files&&followupImport.files[0];
+  followupImport.value="";
+  if(!file)return;
+  try{
+    if(file.size<1||file.size>65536)throw Error("Bestand groter dan 64 KiB of leeg");
+    const saved=JSON.parse(await file.text());
+    if(!saved||saved.schema!=="zsentinel-private-followups-v1"||
+       saved.external_writes_performed!==false||
+       saved.owner_verified!==false||saved.claims_taken!==false||
+       typeof saved.source_observed_at!=="string"||
+       saved.source_observed_at.length>50||
+       !Array.isArray(saved.entries)||saved.entries.length>24){
+      throw Error("Geen compatibele begrensde privénotities");
+    }
+    const byIssue=new Map(boardItems.map(item=>[item.dataset.issueUrl,item]));
+    const seen=new Set();
+    const entries=[];
+    for(const record of saved.entries){
+      if(!record||typeof record.issue_url!=="string"||
+         record.issue_url.length>240||
+         typeof record.project_id!=="string"||
+         !followupValues.includes(record.followup)||
+         typeof record.note!=="string"||record.note.length>300||
+         seen.has(record.issue_url))throw Error("Ongeldige of dubbele issue-notitie");
+      seen.add(record.issue_url);
+      const item=byIssue.get(record.issue_url);
+      if(item){
+        if(item.dataset.project!==record.project_id)
+          throw Error("Notitie heeft andere projectidentiteit");
+        entries.push({item,record});
+      }
+    }
+    if(!entries.length){
+      feedback.textContent="Geen overlappende issue-URL in dit bronvenster; niets geïmporteerd.";
+      return;
+    }
+    if(!window.confirm("Importeer "+entries.length+
+      " eigen notities in dit TABBLAD? Dit verandert geen GitHub/Notion/workerstatus.")){
+      feedback.textContent="Import geannuleerd. Niets gewijzigd.";
+      return;
+    }
+    for(const {item,record} of entries){
+      item.querySelector("[data-local-followup]").value=record.followup;
+      item.querySelector("[data-local-note]").value=record.note;
+    }
+    invalidatePreview();
+    feedback.textContent=entries.length+" persoonlijke notities lokaal hersteld; "+
+      "eerder bronmoment "+saved.source_observed_at+
+      ". Eigendom/issuefix blijft ONBEKEND.";
+  }catch(error){
+    feedback.textContent="Privé-import geweigerd: "+String(error.message).slice(0,100);
+  }
 });
 download.addEventListener("click",()=>{
   if(!latestPreview||latestPreview.version!==previewVersion)return;
