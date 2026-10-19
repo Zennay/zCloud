@@ -172,6 +172,8 @@ def main(argv=None):
     p.add_argument("--snapshot", type=Path, action="append", required=True,
                    help="one through six bounded original JSON files")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
+    p.add_argument("--queue-overview", type=Path,
+                   help="existing local read-only zSentinel portfolio JSON; no queue writes")
     args = p.parse_args(argv)
     try:
         if not 1 <= len(args.snapshot) <= MAX_WINDOWS:
@@ -179,6 +181,10 @@ def main(argv=None):
         registry = canonical_projects(args.registry)
         board = combine_workboards(
             [load_private_prior(path) for path in args.snapshot], registry)
+        if args.queue_overview:
+            from zsentinel_workboard_queue import read_queue_overview, attach_queue_pressure
+            attach_queue_pressure(board, read_queue_overview(args.queue_overview),
+                                  registry)
         if args.format == "html":
             output = render_html(board)
         elif args.format == "md":
