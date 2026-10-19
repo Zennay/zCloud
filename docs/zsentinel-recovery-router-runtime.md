@@ -1497,3 +1497,26 @@ De helper `scripts/zsentinel_blocker_continuity.py` is een zelfstandig, offline
 productenoverzicht; de bestaande productiedienst, worker, runner, Notion,
 GitHub en SQLite worden **niet aangeroepen of gewijzigd**. Geen achtergrondtaak,
 scheduler, autoresume, notificatie of veronderstelde releaseautorisatie.
+
+
+### In één nieuwe portfolio-run de vorige bron vergelijken
+
+Dezelfde hoofdopdracht kan nu het eerdere JSON-bronmoment direct meenemen.
+Dit is een normale **eenmalige operatoraanroep**, geen scheduler of herstelactie:
+
+```bash
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --format html --window 0 \
+  --compare-with /private/zsentinel-before.json \
+  --output /private/zsentinel-with-continuity.html
+```
+
+De HTML bevat nu direct de continuïteit boven het actuele herstelbord;
+`--format json` levert tevens `blocker_continuity` en
+`--format text` een Nederlandstalige bronvergelijking.
+Het bestaande zelfstandige `zsentinel_blocker_continuity.py` blijft beschikbaar
+om twee reeds opgeslagen rapporten zonder nieuwe netwerkbronopvraag te
+vergelijken, inclusief verandering in exacte PR HEAD en checkobservaties.
+`--output` accepteert alleen nieuwe `.html`, `.json` en voor tekst `.md`
+in een bestaande map; bronbestand, ledger en runtime-database mogen niet als
+output gebruikt worden. Zonder expliciete output blijft de CLI stdout gebruiken.
