@@ -148,6 +148,13 @@ def refresh(bundle, registry, token=None):
                            "job_status": status, "runner_assigned": bool(runner_id),
                            "runner_route": route["runner_route"],
                            "route_labels": route["route_labels"],
+                           "no_job_steps": updated.get("no_job_steps"),
+                           "job_start_evidence": (
+                               "completed_without_steps" if status == "completed"
+                               and updated.get("no_job_steps") is True
+                               else "completed_with_steps" if status == "completed"
+                               and updated.get("no_job_steps") is False
+                               else "unknown_not_proven"),
                            "may_restart_runner": False})
         except ValueError as exc:
             # Unavailable/partial GitHub must not cause stale old receipts to
