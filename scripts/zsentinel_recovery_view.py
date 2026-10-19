@@ -180,6 +180,62 @@ def html_view(decision):
             or live.get("runtime") != "not_observed_no_worker_recovery_claim"
             or live.get("current_claim_inventory") != "unknown_and_not_used_for_routing"):
         raise ValueError("invalid live source authority disclosure")
+    # Explain *why* a queued job was classified as a self-hosted route,
+    # while retaining explicit unknown for degraded, missing or hosted labels.
+    runner_route_cards = []
+    job_source = live.get("github_jobs") if isinstance(live, dict) else None
+    route_rows = job_source.get("refreshed_projects") if isinstance(job_source, dict) else None
+    if route_rows is not None:
+        if not isinstance(route_rows, list) or len(route_rows) > 8:
+            raise ValueError("runner label evidence outside bounded GitHub refresh")
+        for row in route_rows:
+            if not isinstance(row, dict) or row.get("status") not in ("refreshed", "degraded"):
+                raise ValueError("invalid route evidence")
+            if row["status"] == "degraded":
+                runner_route_cards.append(
+                    '<article class="panel warn"><h3>' + phrase(row.get("project_id"), 80) +
+                    ' · bron onbereikbaar</h3><p>De exacte joblabels en runnerroute zijn '
+                    'ONBEKEND; geen diagnose of runnerherstart toegestaan.</p></article>'
+                )
+                continue
+            if (row.get("source") != "github_exact_run_job"
+                    or row.get("may_restart_runner") is not False
+                    or row.get("runner_route") not in ("self_hosted", "hosted_or_custom", "unknown")
+                    or not isinstance(row.get("route_labels"), list)
+                    or len(row["route_labels"]) > 16
+                    or any(not isinstance(v, str) or len(v) > 64
+                           for v in row["route_labels"])):
+                raise ValueError("invalid exact job route receipt")
+            repository = row.get("repository")
+            run_id, job_id = row.get("run_id"), row.get("job_id")
+            if (not isinstance(repository, str) or not repository.startswith("Zennay/")
+                    or repository.count("/") != 1 or
+                    any(not c.isascii() or not (c.isalnum() or c in "._-")
+                        for c in repository.split("/")[1])
+                    or type(run_id) is not int or type(job_id) is not int
+                    or not 0 < run_id <= 2**53-1 or not 0 < job_id <= 2**53-1):
+                raise ValueError("invalid exact GitHub job route identity")
+            href = ("https://github.com/" + repository + "/actions/runs/" +
+                    str(run_id) + "/job/" + str(job_id))
+            route_description = {
+                "self_hosted": "Self-hosted jobroute bevestigd; oningedeelde queue kan runner/label-toegang vereisen.",
+                "hosted_or_custom": "Geen self-hosted-label op deze job; geen bewijs van VPS-runnerstoring.",
+                "unknown": "Vereiste runnerlabels onbekend; geen bewijs van VPS-runnerstoring.",
+            }[row["runner_route"]]
+            runner_route_cards.append(
+                '<article class="panel read"><h3><a target="_blank" rel="noopener noreferrer" '
+                'href="' + escape(href, quote=True) + '">' + phrase(row.get("project_id"), 80) +
+                ' · exacte GitHub-job</a></h3><p>' +
+                phrase(route_description, 180) + '</p><p class="small">Vereiste labels: ' +
+                (", ".join(phrase(v, 64) for v in row["route_labels"])
+                 if row["route_labels"] else "ONBEKEND") +
+                ' · alleen read-only bronbewijs, geen runnerstartrecht.</p></article>'
+            )
+    runner_route_panel = ('<section><h2>GitHub-jobroute · exacte runnerlabels</h2>' +
+                          ('<div class="grid">' + ''.join(runner_route_cards) + '</div>'
+                           if runner_route_cards else
+                           '<p class="empty">Geen exacte runnerlabels uitgelezen; '
+                           'runnerstatus niet geverifieerd.</p>') + '</section>')
     notion_mode = live.get("notion") if isinstance(live, dict) else None
     if notion_mode == "claim_status_observed_no_file_ownership":
         provenance = ("Notion actieve werkstatus is alleen read-only geobserveerd. "
@@ -313,6 +369,7 @@ def html_view(decision):
             + section(primary_incidents,
                       "Geen vers geverifieerde blokkades. Dat bewijst geen herstel.")
             + extra_incidents + '</section>'
+            + runner_route_panel
             + f'<section><h2>Open P0/P1-productissues ({len(triage["issues"])})</h2>'
             + section([issue_card(row) for row in triage["issues"]],
                       "Geen issuewaarnemingen beschikbaar. Raadpleeg de brondekking.")
