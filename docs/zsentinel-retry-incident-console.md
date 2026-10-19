@@ -41,7 +41,7 @@ This drill-down prints the current raw queue ID and stored task title to the **l
 
 Use `--include-titles` only for an explicitly approved **local** JSON/Markdown review; by default reports exclude task titles, raw `queue_id`, lease ownership IDs, prompt/criteria, evidence, metadata, and tokens. HTML does not offer the title override and has all displayed values escaped.
 
-If the DB schema is missing required columns, the path does not exist, or SQLite cannot establish a read-only consistent snapshot, the command exits non-zero and produces no fake empty success report. Maximum sample size is 100; threshold and project arguments are validated; it does not scan external providers or fetch GitHub API.
+If the DB schema is missing required columns, the path does not exist, or SQLite cannot establish a read-only consistent snapshot, the command exits non-zero and produces no fake empty success report. The console reads at most one extra row beyond the requested sample so `sample_is_complete` is true even when the complete set contains exactly `--limit` entries. It never exports that lookahead row. Maximum exported sample size is 100; threshold and project arguments are validated; it does not scan external providers or fetch GitHub API.
 
 ## Show change over time (independent offline trend console)
 
