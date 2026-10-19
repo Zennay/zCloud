@@ -178,6 +178,12 @@ def build_workboard(inbox, registry, token=None):
         "exact_head_pr_requests": inspected["request_count"],
         "source_budget_maximum": len(project_names)*3 + MAX_PRS*5,
         "issue_count": len(sampled),
+        "product_issue_count": sum(
+            x["next_step"] != "authorized_infrastructure_owner_required"
+            for x in sampled),
+        "human_owner_issue_count": sum(
+            x["next_step"] == "authorized_infrastructure_owner_required"
+            for x in sampled),
         "items": sampled,
         "inspected_pr_count": len(inspected["items"]),
         "stopped_after_permission_or_rate_limit": degraded,
@@ -306,6 +312,7 @@ def render_html(board):
              '(NIET gesloten)</summary><ul>' + older +
              '</ul></details>' if older else "") + '</section>')
     sections = []
+    owner_cards = []
     for level in SEVERITY:
         cards = []
         for item in board["items"]:
@@ -338,7 +345,7 @@ def render_html(board):
                     for check in pr["ci_attention"]) + "</ul>"
                  if pr["ci_attention"] else "") + "</li>"
                 for pr in item["inspected_prs"])
-            cards.append(
+            card = (
                 '<article class="issue" data-change="' +
                 escape(change_key, quote=True) + '" data-project="' +
                 escape(item["project_id"], quote=True) + '" data-priority="' +
@@ -360,11 +367,23 @@ def render_html(board):
                 pr_links + '</p>' + ('<details><summary>Exacte PR-bron</summary><ul>' +
                 evidence + '</ul></details>' if evidence else '') +
                 change_detail + followup_controls() + '</article>')
+            if item["next_step"] == "authorized_infrastructure_owner_required":
+                owner_cards.append(card)
+            else:
+                cards.append(card)
         sections.append('<section data-priority-group="' + escape(level, quote=True) +
                         '"><h2>' + level + ' · ' + str(len(cards)) +
                         ' in beperkte bron · <small data-visible-group-count></small></h2>' + ("".join(cards) or
                         '<p class="muted">Geen kandidaat in deze steekproef; niet bewezen leeg.</p>') +
                         "</section>")
+    owner_panel = (
+        '<section aria-label="P0 eigenaarafhankelijke blokkades">'
+        '<h2>Menselijke infrastructuuractie · ' + str(len(owner_cards)) +
+        '</h2><p>Runner, billing en andere menselijke bevoegdheden '
+        'mogen onafhankelijke productissues niet verdringen.</p>'
+        '<details><summary>Bekijk eigenaarblokkades (' +
+        str(len(owner_cards)) + ')</summary>' + "".join(owner_cards) +
+        '</details></section>' if owner_cards else "")
     coverage = "".join(
         "<li>" + escape(str(row["project"])) + " · " +
         escape(str(row["status"])) +
@@ -406,7 +425,7 @@ def render_html(board):
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
         ' · productissues: ' + str(board["issue_count"]) + '</p>' +
         source_warning + '</header><main>' +
-        controls(board["projects"]) + notion_panel + progress_panel + "".join(sections) + '<section><details><summary>Brondekking en '
+        controls(board["projects"]) + notion_panel + progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
         'niet geverifieerd.</p></details></section></main><footer>Alle links openen '
@@ -449,7 +468,9 @@ def render_markdown(board):
                          _markdown_literal(source["project"]) +
                          " (" + _markdown_literal(source["status"]) +
                          "); geen nul-issues of herstelbewijs.")
-    for item in board["items"]:
+    for item in sorted(board["items"],
+                       key=lambda row: row["next_step"] ==
+                                       "authorized_infrastructure_owner_required"):
         lines += ["", "## " + item["priority"] + " · [" +
                   _markdown_literal(item["title"]) + "](" + item["issue_url"] + ")",
                   "- **Probleem:** " + _markdown_literal(item["next_step"]),
