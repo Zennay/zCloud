@@ -20,7 +20,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from zsentinel_product_issue_inbox import canonical_projects
-from zsentinel_queue_observer import observe
+from zsentinel_queue_observer import observe, explicitly_unobserved_queue
 from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic, acquire_private_ledger_lock
 from zsentinel_recovery_view import html_view
@@ -87,11 +87,21 @@ def verified_source_coverage(selected, provenance, bundle):
 
 def portfolio_summary(registry, queue, selected, github_coverage, decision):
     """Coverage-aware project rows; zero is never emitted for absent evidence."""
+    queue_missing = (isinstance(queue, dict)
+                     and queue.get("source") == "explicitly_unobserved_no_database")
     if (not isinstance(queue, dict)
             or queue.get("schema") != "zsentinel-queue-pressure-v1"
-            or queue.get("database_read_only") is not True
-            or queue.get("claim_ownership_verified") is not False):
-        raise ValueError("untrusted queue observation")
+            or queue.get("claim_ownership_verified") is not False
+            or (queue_missing and (
+                queue.get("database_read_only") is not False
+                or queue.get("queue_inventory_complete") is not False
+                or queue.get("totals") != {}
+                or queue.get("project_groups") != []
+                or queue.get("queue_write_authorized") is not False))
+            or (not queue_missing and (
+                queue.get("source") != "local_sqlite_transaction_query_only"
+                or queue.get("database_read_only") is not True))):
+        raise ValueError("untrusted or authorizing queue observation")
     totals = queue.get("totals")
     groups = queue.get("project_groups")
     if not isinstance(totals, dict) or not isinstance(groups, list):
@@ -119,7 +129,9 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         summary[key] = {
             "project_id": key, "github_repo": repository,
             "github_observation": github_coverage.get(key, "not_queried"),
-            "queue_observation": ("complete_active_rows" if complete else "partial_unreliable"),
+            "queue_observation": ("not_observed_explicitly" if queue_missing
+                                  else "complete_active_rows" if complete
+                                  else "partial_unreliable"),
             "queued": 0 if complete else None,
             "owned": 0 if complete else None,
             "high_claim_attempts": 0 if complete else None,
@@ -257,6 +269,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             for pid in selected),
         "github_coverage_is_partial": True,
         "queue_inventory_complete": complete,
+        "queue_source": ("explicitly_unobserved_no_database" if queue_missing
+                         else "local_sqlite_transaction_query_only"),
         "queue_owner_authorized": False,
         "unregistered_queue_project_groups": unknown_count,
         "rows": list(summary.values()),
@@ -475,8 +489,10 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
 
 def main():
     parser = argparse.ArgumentParser(description="Read-only complete zSentinel portfolio and bounded GitHub window")
-    parser.add_argument("--database", type=Path, required=True,
+    parser.add_argument("--database", type=Path,
                         help="existing zCloud SQLite file (never created or modified)")
+    parser.add_argument("--github-only", action="store_true",
+                        help="explicitly run without SQLite: queue/claim status UNKNOWN; only GitHub/optional Notion sources")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--window", default="auto",
                         help="auto rotates by UTC hour or a private cursor, or specify a window index")
@@ -510,6 +526,13 @@ def main():
     window_lock = None
     ledger_lock = None
     try:
+        if args.github_only:
+            if args.database is not None:
+                raise ValueError("--github-only requires omitting --database")
+            if args.observe_vps_capacity:
+                raise ValueError("--github-only cannot infer database-mounted VPS capacity")
+        elif args.database is None:
+            raise ValueError("--database is required unless --github-only was chosen")
         if args.inspect_hosted_no_start and not (
                 args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs):
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
@@ -559,7 +582,8 @@ def main():
             raise ValueError("branch inspection must target a project in the selected window")
         if (args.branch_prefix or args.current_path or args.require_clear_unpr_slice) and not args.inspect_unpr_branches:
             raise ValueError("branch scope/filter/strict mode require --inspect-unpr-branches")
-        queue = observe(args.database)
+        queue = (explicitly_unobserved_queue() if args.github_only
+                 else observe(args.database))
         bundle, provenance = assemble(
             registry, selected, [], args.database,
             token=os.environ.get("GITHUB_TOKEN"),
@@ -701,6 +725,8 @@ def main():
             lines = ["zSentinel portfolio | venster %d/%d | GitHub: %s" % (
                 window_index + 1, len(windows), ", ".join(selected))]
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
+            if args.github_only:
+                lines.append("QUEUE: NIET WAARGENOMEN (--github-only); geen nulmeting, vrijgave of leasebewijs.")
             lines.append(blocker_board_text(unblock))
             lines.append("VOLGENDE PROBLEMEN (advies; eigendom en scope NIET geverifieerd):")
             for item in problem_inbox["items"]:
