@@ -2179,6 +2179,44 @@ function combinedActivityCoverage(){
   ];
   return textParts.filter(Boolean).join(' · ');
 }
+function combinedProjectCoverageRows(){
+  const projectIds=(DATA?.projects||[]).map(project=>project.id).filter(id=>!filter||filter===id);
+  const observations=IMPORTED_GITHUB_ACTIVITY?.coverage||[];
+  const current=Date.now(),rows=[];
+  for(const id of projectIds.slice(0,24)){
+    const local=(ACTIVITY||[]).filter(item=>item?.project===id
+      &&Number.isFinite(Date.parse(item.ts)));
+    const github=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(item=>item?.project===id
+      &&Number.isFinite(Date.parse(item.ts)));
+    const localLast=local.length?local.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y).ts:null;
+    const ghLast=github.length?github.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y).ts:null;
+    const ghCoverage=observations.find(c=>c.project===id);
+    const syncAt=ghCoverage?.observedAt||null;
+    const localFresh=localLast&&current-Date.parse(localLast)<=6*3600000;
+    const ghFresh=syncAt&&current-Date.parse(syncAt)<=6*3600000;
+    // A read source returning zero events is not proof of no source activity.
+    const status=!ghCoverage?'not observed':ghCoverage.status==='unavailable'
+      ?'unavailable':!ghFresh||ghCoverage.staleEvidence?'stale/partial':
+      ghCoverage.status||'partial';
+    rows.push({project:id,localLast,ghLast,syncAt,status,localFresh:Boolean(localFresh)});
+  }
+  return rows;
+}
+function combinedProjectCoverageTable(){
+  const entries=combinedProjectCoverageRows();
+  const missing=entries.filter(r=>r.status==='not observed').length;
+  const stale=entries.filter(r=>['stale/partial','unavailable'].includes(r.status)).length;
+  return '<details data-disclosure="timelineCoverage"><summary>Project source coverage ('+
+    entries.length+' projects · '+missing+' GitHub unobserved · '+stale+' GitHub unavailable/stale)</summary>'+
+    '<div class="service-list">'+entries.map(row=>
+      '<div class="service-row"><div><a class="text-link" href="#activity?project='+encodeURIComponent(row.project)+'">'+
+      esc((DATA.projects.find(p=>p.id===row.project)||{}).name||row.project)+'</a><br>'+
+      '<small>Local last event: '+(row.localLast?esc(date(row.localLast,true)):'unknown')+
+      ' · GitHub last event: '+(row.ghLast?esc(date(row.ghLast,true)):'unknown')+
+      '</small></div><small>GitHub '+esc(row.status)+'<br>'+
+      (row.syncAt?esc(date(row.syncAt,true)):'not fetched')+'</small></div>').join('')+
+    '</div><p class="detail-note">This table measures observed evidence coverage, not product completion, actual claim ownership or deployment. Stale data is retained, not treated as no work.</p></details>';
+}
 function combinedActivityPanel(){
   const rows=combinedActivityRows();
   const list=rows.map(row=>{
@@ -2207,6 +2245,7 @@ function combinedActivityPanel(){
       (COMBINED_ACTIVITY_SOURCE===pair[0]?'true':'false')+'">'+pair[1]+'</button>').join('')+
     '</div>'+
     '<p class="detail-note" role="status">'+esc(combinedActivityCoverage())+'</p>'+
+    combinedProjectCoverageTable()+
     '<div class="service-list">'+(list||'<div class="empty">No evidence for the selected source and project. Missing coverage is not proof of zero work.</div>')+'</div>'+
     '<p class="detail-note">'+rows.length+' visible bounded events; local event IDs and GitHub provider IDs stay distinct. '+
     'Use the separate manual source buttons to refresh GitHub. No automatic GitHub polling, lease assignment, PR merge or deploy occurs here.</p></section>';
