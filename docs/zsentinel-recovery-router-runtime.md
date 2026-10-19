@@ -1,5 +1,41 @@
 # zSentinel · Runtime incident router (product-only)
 
+## GitHub-job voltooid zonder één stap: aparte menselijke probleemroute (19 oktober)
+
+Een exact door GitHub teruggelezen job kan als `completed/failure` eindigen
+terwijl de job nooit een runnerstap uitvoerde. Dat is **niet hetzelfde**
+als een mislukte bronbuild. De GitHub REST-job levert daarbij soms letterlijk
+`"steps": null`, niet `[]`. De bestaande collector herkende alleen de
+lege lijst, zodat operators zulke echte platformadmissiegevallen enkel als
+gewone CI-bronfout zagen.
+
+`zsentinel_recovery_refresh.py` bewaart nu voor een **expliciet aanwezige**
+`steps: null` of `steps: []` exact `no_job_steps=true`, uitsluitend uit
+de pin `repository + run_id + job_id + head_sha`. Bij een gefaalde of
+door een platform afgebroken **afgeronde** job zonder toegewezen runner
+wordt `verified_failure_category=job_unstarted` gezet. Als de steps-property
+ontbreekt, blijft deze bron **ONBEKEND**; ontbrekende velden mogen geen
+incident of automatische handeling veroorzaken.
+
+De bestaande router onderscheidt dan `github_job_unstarted` (P1,
+menselijke check vereist) van een bron-/testfout en van P0
+`github_hosted_billing_admission`. Alleen die laatste vereist apart
+geverifieerde billing-aanwijzingen; `steps:null` alleen is **nooit**
+een bewijs van betalingsweigering, approval-wachtstand of VPS-listeneruitval.
+De operatorcockpit toont daarom letterlijk *GitHub-job niet gestart ·
+oorzaak nog onbekend* met een gerichte actie om exacte GitHub
+check-run/annotaties en accounttoestemming door de bevoegde eigenaar te
+laten controleren. Geen automatische retry, geld, runnerrestart,
+sourceclaim of production write.
+
+Deze wijziging ligt in dezelfde bestaande [PR #1563](https://github.com/Zennay/zCloud/pull/1563).
+De oudere vaste CI-verwachting voor een ongelabelde queued runner is
+**niet** aangepast: `queued` zonder bewezen self-hosted labels mag
+nooit als offline VPS-listener P0 worden aangemerkt. Verplichte exact-head
+CI, onafhankelijke review en geserialiseerde productie-release blijven
+van kracht. De bronfix is geen bewijs van geïnstalleerde scheduler of
+herstelde job.
+
 ## Open problemen eerlijk prioriteren, óók zonder P0/P1-label (19 oktober)
 
 De bestaande read-only GitHub-issuebron kan óók open productissues zonder
