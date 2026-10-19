@@ -33,9 +33,20 @@ def unresolved_backlog(state, now, *, max_rows=MAX_ROWS):
         context = entry.get("source_context")
         source_identity = entry.get("source_identity")
         if context is None:
-            # Old v1 ledgers did not retain context; this remains a genuine
-            # unknown, never inferred from a hash or guessed by project.
-            project, reason, severity, human = ("unknown", "unattributed_historical_incident", "P1", False)
+            # Old v1 ledgers may still retain the *exact validated GitHub*
+            # run/job source identity. That identifies a project/reason, not
+            # owner, claim, current severity or current job health.
+            if source_identity is not None:
+                project = source_identity["project_id"]
+                reason = source_identity["reason"]
+                severity = ("P0" if reason in (
+                    "github_job_unassigned", "github_hosted_billing_admission") else "P1")
+                human = reason in (
+                    "github_job_unassigned", "github_hosted_billing_admission",
+                    "github_required_owner_approval")
+            else:
+                project, reason, severity, human = (
+                    "unknown", "unattributed_historical_incident", "P1", False)
         else:
             project = context["project_id"]
             reason = context["reason"]
