@@ -994,6 +994,15 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
     const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
     const previousCoverage=previousGitHub.coverage.find(row=>row.project===projectId);
     const previousRows=previousGitHub.events.filter(row=>row.project===projectId);
+    // "First seen" is an observation delta, not proof a PR was created now.
+    // Only compare two independently successful bounded three-source reads.
+    const comparablePrior=previousCoverage?.status==='partial_sources'
+      &&previousCoverage.staleEvidence!==true;
+    if(good===3&&comparablePrior){
+      const previousIds=new Set(previousRows.map(row=>row.id)
+        .filter(id=>typeof id==='string'));
+      for(const event of events)event.firstSeen=!previousIds.has(event.id);
+    }
     const sampledAt=new Date().toISOString();
     const githubCoverage=[...previousGitHub.coverage.filter(row=>row.project!==projectId),
       {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable',
@@ -2614,7 +2623,7 @@ function combinedActivityRows(){
     seen.add(key);
     groups.get(row.project).push({key,source:'github',project:row.project,
       kind:row.kind,summary:row.description,
-      detail:row.firstSeen?'New in latest bounded GitHub observation':'GitHub observation',
+      detail:row.firstSeen?'First observed in this bounded sample; not proof of new work':'GitHub observation',
       observedAt:(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||null,
       ts:row.ts,url:row.url});
   }
