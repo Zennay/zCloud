@@ -168,8 +168,10 @@ def main():
                         help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
     try:
-        if (args.format == "desk") != (args.desk_output is not None):
-            raise ValueError("--format desk requires --desk-output; --desk-output requires desk format")
+        if args.format == "desk" and args.desk_output is None:
+            raise ValueError("--format desk requires --desk-output")
+        if args.desk_output is not None and args.format not in ("desk", "html"):
+            raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
             # Do not create a private HTML report on top of a pending
             # cursor or dedup ledger: a subsequent atomic JSON write could
@@ -229,9 +231,10 @@ def main():
             rendered = (json.dumps(routed, sort_keys=True, indent=2)
                         if args.format == "json" else
                         operator_text(routed) + "\\nGitHub coverage: " + source["github_coverage"])
-        if args.format == "desk":
-            from zsentinel_incident_desk import write_private_html
-            write_private_html(args.desk_output, rendered)
+        if args.desk_output is not None:
+            from zsentinel_incident_desk import write_private_html, review_html
+            private_desk = rendered if args.format == "desk" else review_html(routed)
+            write_private_html(args.desk_output, private_desk)
         # A broken HTML/source cannot silently acknowledge incident history.
         if args.state:
             write_json_atomic(args.state, updated)
