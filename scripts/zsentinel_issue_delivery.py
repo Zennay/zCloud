@@ -248,9 +248,12 @@ def attach_notion_work_visibility(board, observed):
 
 
 def render_html(board):
-    if (board.get("schema") != "zsentinel-issue-delivery-board-v1"
+    if (board.get("schema") not in
+            ("zsentinel-issue-delivery-board-v1", "zsentinel-portfolio-workboard-v1")
             or board.get("writes_performed") is not False
-            or board.get("dispatch_authorized") is not False):
+            or board.get("dispatch_authorized") is not False
+            or board.get("ownership_verified") is not False
+            or board.get("merge_authorized") is not False):
         raise ValueError("invalid workboard")
     from zsentinel_product_issue_inbox import STYLE
     from zsentinel_issue_delivery_ui import (
@@ -314,6 +317,36 @@ def render_html(board):
             ('<details><summary>Eerder gezien, nu niet waargenomen '
              '(NIET gesloten)</summary><ul>' + older +
              '</ul></details>' if older else "") + '</section>')
+    windows = board.get("source_windows", [])
+    overview_panel = ""
+    if windows:
+        if (board.get("schema") != "zsentinel-portfolio-workboard-v1"
+                or len(windows) > 6
+                or not isinstance(board.get("project_summary"), dict)):
+            raise ValueError("untrusted portfolio window evidence")
+        lines = []
+        for pid in board["projects"]:
+            source = next((w for w in windows if pid in w["projects"]), None)
+            if source is None:
+                raise ValueError("uncovered portfolio project")
+            summary = board["project_summary"][pid]
+            lines.append(
+                "<li><strong>" + escape(pid) + "</strong> · " +
+                str(summary["issues_sampled"]) + " issue(s) in steekproef · " +
+                str(summary["owner_only_sampled"]) + " eigenaar-P0 · " +
+                ("VEROUDERD (" + str(source["age_seconds"] // 60) + " min)"
+                 if source["stale_after_10_minutes"] else "recent bronmoment") +
+                " · " + escape(source["source_coverage"][pid]) +
+                "</li>"
+            )
+        overview_panel = (
+            '<section aria-label="Portfolio-breed werkoverzicht"><h2>Gecombineerd '
+            'portfolio · ' + str(len(board["projects"])) + ' projecten</h2>'
+            '<p class="notice">Dit document combineert aparte GitHub-bronmomenten. '
+            'Er is géén live synchronisatie en geen eigendoms-/herstelbewijs. '
+            'Verouderde of ontbrekende bron vereist nieuwe observatie.</p>'
+            '<ul>' + "".join(lines) + '</ul></section>'
+        )
     sections = []
     owner_cards = []
     for level in SEVERITY:
@@ -348,6 +381,12 @@ def render_html(board):
                     for check in pr["ci_attention"]) + "</ul>"
                  if pr["ci_attention"] else "") + "</li>"
                 for pr in item["inspected_prs"])
+            source_age = item.get("source_age_seconds")
+            source_age_label = (
+                '<p><strong>Eigen bronmoment:</strong> ' +
+                escape(item.get("source_observed_at_utc", "ONBEKEND")) +
+                (' · VEROUDERD' if item.get("source_stale") else '') +
+                '</p>' if source_age is not None else '')
             card = (
                 '<article class="issue" data-change="' +
                 escape(change_key, quote=True) + '" data-project="' +
@@ -369,7 +408,8 @@ def render_html(board):
                 'bestandscope en herstel niet geverifieerd.</p><p>' +
                 pr_links + '</p>' + ('<details><summary>Exacte PR-bron</summary><ul>' +
                 evidence + '</ul></details>' if evidence else '') +
-                change_detail + followup_controls() + '</article>')
+                source_age_label + change_detail +
+                followup_controls() + '</article>')
             if item["next_step"] == "authorized_infrastructure_owner_required":
                 owner_cards.append(card)
             else:
@@ -428,7 +468,8 @@ def render_html(board):
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
         ' · productissues: ' + str(board["issue_count"]) + '</p>' +
         source_warning + '</header><main>' +
-        controls(board["projects"]) + notion_panel + progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
+        controls(board["projects"]) + overview_panel + notion_panel +
+        progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
         'niet geverifieerd.</p></details></section></main><footer>Alle links openen '
@@ -444,7 +485,18 @@ def render_markdown(board):
              "Beperkte issue-/PR-steekproef. Geen eigenaar, scope, fix of merge goedgekeurd."]
     progress = board.get("progress_since_previous")
     notion = board.get("notion_active_work_observation")
+    windows = board.get("source_windows", [])
     change_map = {}
+    if windows:
+        lines.extend(["", "## Gecombineerde portfolio-bronvensters",
+                      "Dit is een samengevoegde momentopname, geen complete "
+                      "portfolio-/eigenaarsinventaris."])
+        for win in windows:
+            lines.append("- Venster " + str(win["index"]) + ": " +
+                         ", ".join(win["projects"]) + " · " +
+                         _markdown_literal(win["observed_at_utc"]) +
+                         (" · VEROUDERD" if win["stale_after_10_minutes"] else ""))
+
     if notion:
         lines.extend(["", "## Notion actief werk (statuswaarneming, geen file-owner)",
                       "Dekking: " + _markdown_literal(notion["coverage"]),
