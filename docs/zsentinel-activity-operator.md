@@ -205,6 +205,32 @@ A current project filter never converts global counts into a false project-speci
 
 Source branch: [#1550](https://github.com/Zennay/zCloud/pull/1550) modifies only `public/app.js`, `public/index.html` exact content pin and this guide for this UI. The separate producer/trend CLI in [#1555](https://github.com/Zennay/zCloud/pull/1555) must be independently accepted before the full workflow is considered delivered in production. Both branches remain unmerged/undeployed unless the existing required exact-head CI, independent review, protected-main and release gates pass; source UI is not a runtime adoption claim.
 
+## Trusted one-click VPS queue retry source (backend #1549)
+
+A new **Read VPS queue** control, beside the file import, calls
+`GET /api/queue-retry-incidents?project=<selected-project|all>` **only when
+clicked**. It uses the existing management peer authorization; 403 means the
+source is unavailable to the browser and must not be bypassed. The backend
+returns the same restricted `zsentinel-retry-incident-v1` source format as the
+standalone #1555 CLI. No credentials, arbitrary database path, URL or retry
+threshold can be supplied from the browser.
+
+For a first click the panel displays a bounded prioritised queue view.
+On a **second** explicit click for the same canonical scope/threshold it
+calculates an in-memory before/after comparison without a background timer or
+HTTP stream. Changing the project filter does not join unrelated snapshots.
+The browser never uses a successful HTTP response as worker ownership,
+retry/deploy authorization or a lease-free guarantee. HTTP failure, 403 and
+untrusted/malformed response preserve the previous observation and show a
+distinct unavailable message. Manual JSON import remains independent.
+
+Backend: [PR #1549](https://github.com/Zennay/zCloud/pull/1549), source
+`scripts/zcloud_queue_retry_live.py`, built as an explicit read-only SQLite
+snapshot and guarded GET route. UI: [PR #1550](https://github.com/Zennay/zCloud/pull/1550).
+Both require their own existing exact-head CI, independent review and serialized
+production release. This feature does not implement #677 writer-side finite
+retry or backoff policy.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
