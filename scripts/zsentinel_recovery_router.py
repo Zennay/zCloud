@@ -188,6 +188,20 @@ def load_state(data):
                     or not 1 <= identity["run_id"] <= 2**53-1
                     or not 1 <= identity["job_id"] <= 2**53-1):
                 raise ValueError("invalid exact GitHub incident source identity")
+        context = entry.get("source_context")
+        if context is not None:
+            if (type(context) is not dict
+                    or type(context.get("project_id")) is not str
+                    or not SLUG.fullmatch(context["project_id"])
+                    or type(context.get("reason")) is not str
+                    or not re.fullmatch(r"[a-z][a-z0-9_]{1,119}", context["reason"])
+                    or context.get("severity") not in ("P0", "P1")
+                    or type(context.get("human_escalation")) is not bool):
+                raise ValueError("untrusted historical incident source context")
+            if identity is not None and (
+                    context["project_id"] != identity["project_id"]
+                    or context["reason"] != identity["reason"]):
+                raise ValueError("historical incident context contradicts exact job identity")
         gates = entry.get("blocked_gates", [])
         if (not isinstance(gates, list) or len(gates) > 2
                 or any(gate not in ("github_hosted", "self_hosted") for gate in gates)):
@@ -655,6 +669,12 @@ def plan(bundle, previous=None, now=None):
             "blocked_gates": (["self_hosted"] if reason == "github_job_unassigned"
                               else ["github_hosted"] if reason == "github_hosted_billing_admission"
                               else []),
+            "source_context": {
+                "project_id": incident["project_id"],
+                "reason": reason,
+                "severity": severity,
+                "human_escalation": human,
+            },
         }
         if (reason.startswith("github_") and github.get("run_id") is not None
                 and github.get("job_id") is not None
@@ -731,6 +751,8 @@ def plan(bundle, previous=None, now=None):
         if entry["status"] == "not_observed_needs_reconciliation":
             blocking_ids.add(key)
             blocked_gates.update(entry.get("blocked_gates", ["self_hosted", "github_hosted"]))
+    from zsentinel_historical_backlog import unresolved_backlog
+    historical = unresolved_backlog(next_state, now)
     blocked = {"ids": blocking_ids, "gates": blocked_gates}
     capacity = vps_capacity(bundle, now)
     routes, claims_verified = eligible_tasks(bundle, blocked, now, capacity)
@@ -770,8 +792,8 @@ def plan(bundle, previous=None, now=None):
         "reclassified_exact_jobs": reclassified_jobs,
         "watch_alert_candidates": watch_candidates,
         "watch_delivery_performed": False,
-        "unresolved_not_observed": sum(1 for v in next_state.values()
-                                       if v["status"] == "not_observed_needs_reconciliation"),
+        "unresolved_not_observed": historical["total_unresolved"],
+        "historical_unresolved": historical,
         "independent_task_suggestions": routes,
         "open_product_issue_triage": issue_triage,
         "live_queue_pressure": queue_triage,
@@ -794,6 +816,19 @@ def operator_text(result):
         lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
     lines.append(f"Human-only watch candidates (NOT delivered): {len(result['watch_alert_candidates'])}")
+    historic = result.get("historical_unresolved", {})
+    if historic.get("total_unresolved", 0):
+        lines.append(f"Historical not-observed incidents (NOT recovered): {historic['total_unresolved']}")
+        for item in historic.get("shown", []):
+            job = item.get("exact_github_job")
+            ref = (f"run {job['run_id']} / job {job['job_id']} / exact head {job['head_sha']}"
+                   if job else "exact source unavailable")
+            lines.append(
+                f"Historical {item['severity']} {item['project_id']} · {item['problem']} · "
+                f"last observed {item['last_seen']} · {ref} · VERIFY with authorized owner, never auto-retry."
+            )
+        if historic.get("truncated"):
+            lines.append("Historical backlog truncated to bounded first 30; no hidden row is resolved.")
     if result.get("unattributed_progress_or_jobs"):
         lines.append("Unattributed runtime/jobs (no incident ownership): " +
                      str(result["unattributed_progress_or_jobs"]))
