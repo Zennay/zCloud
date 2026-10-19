@@ -15,6 +15,12 @@ MAX_NEXT = 8
 ISSUE_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
 PR_URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
 PRIORITY = {"P0": 0, "P1": 1}
+# Explicitly known owner-only infrastructure gates must never monopolize the
+# product implementation shortlist or masquerade as free worker tasks.
+OWNER_GATED_ISSUES = frozenset({
+    "https://github.com/Zennay/zCloud/issues/1326",  # VPS runner listener
+    "https://github.com/Zennay/zCloud/issues/1523",  # GitHub account billing
+})
 
 
 def next_problems(summary, decision, selected):
@@ -46,6 +52,7 @@ def next_problems(summary, decision, selected):
     if not isinstance(issues, list) or len(issues) > 8:
         raise ValueError("unbounded issue source sample")
     collected = {pid: [] for pid in selected}
+    held_issues = []
     seen = set()
     if coverage != "stale":
         for issue in issues:
@@ -68,6 +75,17 @@ def next_problems(summary, decision, selected):
                         and link.startswith(prefix + "/pull/") for link in links)):
                 raise ValueError("invalid candidate PR reference")
             seen.add(url)
+            if url in OWNER_GATED_ISSUES:
+                held_issues.append({
+                    "project_id": pid,
+                    "priority": tier,
+                    "title": issue.get("title", "")[:180],
+                    "issue_url": url,
+                    "next_step": "authorized_infrastructure_owner_required",
+                    "action": "Bevoegde runner- of billing-eigenaar nodig; geen worker-retry, betaling of productclaim.",
+                    "dispatch_authorized": False,
+                })
+                continue
             row = mapping[pid]
             owned, notion = row.get("owned"), row.get("notion_active_status_min")
             if owned is not None and (type(owned) is not int or owned < 0):
@@ -142,6 +160,8 @@ def next_problems(summary, decision, selected):
         "sampled_issue_count": len(issues),
         "items": shortlist,
         "owner_only_incidents": owner_blockers,
+        "owner_only_issue_candidates": sorted(
+            held_issues, key=lambda x: (PRIORITY[x["priority"]], x["issue_url"])),
         "ownership_verified": False,
         "dispatch_authorized": False,
         "writes_performed": False,
@@ -173,6 +193,13 @@ def problems_html(result):
     if not rows:
         rows.append('<p class="empty">Geen betrouwbare P0/P1-kandidaten in dit beperkte venster. '
                     'Dit is GEEN bewijs dat er geen problemen zijn.</p>')
+    held = "".join(
+        '<li><a href="' + escape(item["issue_url"], quote=True) +
+        '" target="_blank" rel="noopener noreferrer">' +
+        escape(item["priority"] + " " + item["title"]) + '</a> — ' +
+        escape(item["action"]) + '</li>'
+        for item in result["owner_only_issue_candidates"]
+    )
     blockers = "".join(
         '<li>' + escape(str(item["severity"])) + ' ' +
         escape(str(item["project_id"])) + ': ' +
@@ -186,5 +213,7 @@ def problems_html(result):
             'bestandseigendom en releasegates niet geverifieerd. '
             'Dit onderdeel voert NOOIT zelf werk uit.</p><div class="grid">' +
             "".join(rows) + '</div>' +
-            ('<details><summary>Blokkades met vereiste eigenaaractie</summary><ul>' +
+            ('<details><summary>Issueblokkades die een infrastructuureigenaar vereisen</summary><ul>' +
+             held + '</ul></details>' if held else '') +
+            ('<details><summary>CI-/runtime-incidenten die eigenaaractie vereisen</summary><ul>' +
              blockers + '</ul></details>' if blockers else '') + '</section>')
