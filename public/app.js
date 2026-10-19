@@ -1995,7 +1995,57 @@ function validateRetryTrend(raw){
       throw Error('Invalid retry trend totals');
     metrics[name]={before:v.before,after:v.after,delta:v.delta};
   }
-  return {before:raw.before_utc,after:raw.after_utc,scope,projects,metrics};
+  // Optional extended evidence from zsentinel_retry_trend.py. Preserve legacy
+  // aggregate-only imports; fail closed when an extended payload is malformed.
+  let sampleCoverage=null,recordChanges=[];
+  if(raw.sample_coverage!==undefined||raw.record_changes!==undefined){
+    const c=raw.sample_coverage,changes=raw.record_changes;
+    const numbers=['previous_sampled','current_sampled','matched_samples',
+      'only_previous_sample','only_current_sample',
+      'matched_rows_with_increased_claim_cycles','known_increase_in_claim_cycles'];
+    if(!c||typeof c!=='object'||!Array.isArray(changes)||changes.length>100
+      ||numbers.some(k=>!retryCount(c[k]))
+      ||typeof c.both_samples_complete!=='boolean'
+      ||c.not_in_both_samples_is_not_completion!==true
+      ||c.previous_sampled>100||c.current_sampled>100
+      ||c.matched_samples>Math.min(c.previous_sampled,c.current_sampled)
+      ||c.only_previous_sample!==c.previous_sampled-c.matched_samples
+      ||c.only_current_sample!==c.current_sampled-c.matched_samples)
+      throw Error('Invalid retry sample movement coverage');
+    const refs=new Set();
+    for(const row of changes){
+      if(!row||typeof row.queue_ref!=='string'||!/^[0-9a-f]{16}$/.test(row.queue_ref)
+        ||refs.has(row.queue_ref)||!known.has(row.project)
+        ||scope.project!=='all'&&row.project!==scope.project
+        ||!['P0','P1','P2','P3'].includes(row.priority_before)
+        ||!['P0','P1','P2','P3'].includes(row.priority_after)
+        ||!['queued','claimed','running','verifying'].includes(row.status_before)
+        ||!['queued','claimed','running','verifying'].includes(row.status_after)
+        ||!retryCount(row.attempts_before)||!retryCount(row.attempts_after)
+        ||!Number.isSafeInteger(row.claim_cycle_delta)
+        ||row.claim_cycle_delta!==row.attempts_after-row.attempts_before
+        ||!['claim_cycles_increased','claim_counter_decreased_review',
+             'status_changed','priority_changed'].includes(row.observation)
+        ||(row.claim_cycle_delta>0)!==(row.observation==='claim_cycles_increased')
+        ||(row.claim_cycle_delta<0)!==(row.observation==='claim_counter_decreased_review')
+        ||row.claim_cycle_delta===0&&row.status_before===row.status_after
+          &&row.priority_before===row.priority_after)
+        throw Error('Invalid retry record movement');
+      refs.add(row.queue_ref);
+      recordChanges.push({ref:row.queue_ref,project:row.project,
+        priority:row.priority_after,beforeStatus:row.status_before,afterStatus:row.status_after,
+        beforeAttempts:row.attempts_before,afterAttempts:row.attempts_after,
+        delta:row.claim_cycle_delta,observation:row.observation});
+    }
+    if(changes.length>c.matched_samples
+      ||c.matched_rows_with_increased_claim_cycles!==recordChanges.filter(r=>r.delta>0).length
+      ||c.known_increase_in_claim_cycles!==recordChanges.reduce((n,r)=>n+Math.max(0,r.delta),0))
+      throw Error('Retry movement does not match coverage');
+    sampleCoverage={...Object.fromEntries(numbers.map(k=>[k,c[k]])),
+      bothSamplesComplete:c.both_samples_complete};
+  }
+  return {before:raw.before_utc,after:raw.after_utc,scope,projects,metrics,
+    sampleCoverage,recordChanges};
 }
 
 function retryTrendFromSnapshots(before,after){
@@ -2014,8 +2064,32 @@ function retryTrendFromSnapshots(before,after){
     projects.push({project,before:a,after:b,delta:b-a});
   }
   projects.sort((a,b)=>b.delta-a.delta||a.project.localeCompare(b.project));
+  const earlier=new Map(before.rows.map(r=>[r.ref,r]));
+  const later=new Map(after.rows.map(r=>[r.ref,r]));
+  const matched=[...later.keys()].filter(ref=>earlier.has(ref));
+  const recordChanges=[];
+  for(const ref of matched){
+    const a=earlier.get(ref),b=later.get(ref),delta=b.attempts-a.attempts;
+    if(a.project!==b.project)continue; // hash collision / source identity invalid
+    if(!delta&&a.status===b.status&&a.priority===b.priority)continue;
+    recordChanges.push({ref,project:b.project,priority:b.priority,beforeStatus:a.status,
+      afterStatus:b.status,beforeAttempts:a.attempts,afterAttempts:b.attempts,delta,
+      observation:delta>0?'claim_cycles_increased':delta<0?'claim_counter_decreased_review':
+        a.status!==b.status?'status_changed':'priority_changed'});
+  }
+  recordChanges.sort((a,b)=>
+    ({P0:0,P1:1,P2:2,P3:3}[a.priority]-{P0:0,P1:1,P2:2,P3:3}[b.priority])
+    ||b.delta-a.delta||a.project.localeCompare(b.project));
+  const sampleCoverage={
+    previous_sampled:earlier.size,current_sampled:later.size,matched_samples:matched.length,
+    only_previous_sample:earlier.size-matched.length,
+    only_current_sample:later.size-matched.length,
+    matched_rows_with_increased_claim_cycles:recordChanges.filter(r=>r.delta>0).length,
+    known_increase_in_claim_cycles:recordChanges.reduce((n,r)=>n+Math.max(0,r.delta),0),
+    bothSamplesComplete:before.complete&&after.complete,
+  };
   return {before:before.observedAt,after:after.observedAt,scope:after.scope,
-    projects,metrics};
+    projects,metrics,sampleCoverage,recordChanges};
 }
 async function readVpsRetryIncidents(){
   if(ZSENTINEL_RETRY_BUSY||route!=='activity')return;
@@ -2049,6 +2123,8 @@ function zSentinelRetryPanel(){
   const samples=(snap?.rows||[]).filter(r=>known.has(r.project)&&(!project||r.project===project));
   const groups=(snap?.groups||[]).filter(r=>known.has(r.project)&&(!project||r.project===project));
   const changed=(trend?.projects||[]).filter(r=>known.has(r.project)&&(!project||r.project===project));
+  const observedRows=(trend?.recordChanges||[]).filter(r=>known.has(r.project)
+    &&(!project||r.project===project));
   const stale=snap&&Date.now()-Date.parse(snap.observedAt)>6*3600000;
   const trendStale=trend&&Date.now()-Date.parse(trend.after)>6*3600000;
   const trendCovered=!project||(trend&&(trend.scope.project==='all'||trend.scope.project===project));
@@ -2099,6 +2175,24 @@ function zSentinelRetryPanel(){
         '</strong></div>').join('')||
         '<p class="detail-note">'+(trendCovered?'No movement in available project sample.':'Project movement unknown: imported trend covers another scope.')+'</p>')+
       '</div>':'')+
+    (trend?.sampleCoverage?'<h3>Matched individual queue items</h3>'+
+      '<p class="detail-note">Compared '+trend.sampleCoverage.matched_samples+' opaque references · '+
+      trend.sampleCoverage.matched_rows_with_increased_claim_cycles+
+      ' matched items gained '+trend.sampleCoverage.known_increase_in_claim_cycles+
+      ' claim cycles. Earlier-only '+trend.sampleCoverage.only_previous_sample+
+      ' · later-only '+trend.sampleCoverage.only_current_sample+
+      '. '+(trend.sampleCoverage.bothSamplesComplete?'Both bounded samples marked complete.':
+        'PARTIAL: one or both bounded samples may omit items.')+
+      ' Disappearance from a sample never proves completion.</p>'+
+      '<div class="service-list">'+
+      (observedRows.slice(0,12).map(row=>'<div class="service-row"><div><strong>'+
+        esc(row.priority)+' · '+esc(row.project)+' · '+esc(row.ref)+
+        '</strong><br><small>'+esc(row.beforeStatus)+' → '+esc(row.afterStatus)+
+        ' · '+row.beforeAttempts+' → '+row.afterAttempts+' claims ('+
+        esc(row.delta>0?'+'+row.delta:String(row.delta))+') · '+esc(row.observation)+
+        '</small></div></div>').join('')||
+        '<p class="detail-note">No changed items in the matched sample; does not prove no churn.</p>')+
+      '</div>':'')+
     '<p class="detail-note">Local browser memory only. No upload, auto-polling, credential storage, queue write, claim takeover or retry dispatch. '+
     '<a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Queue retry issue #677</a>.</p></section>';
 }
@@ -2123,6 +2217,22 @@ function exportRetryHandoff(){
     lines.push('','## Offline trend',clean(trend.before)+' → '+clean(trend.after),'');
     for(const row of trend.projects.filter(x=>known.has(x.project)&&(!filter||x.project===filter)).slice(0,30))
       lines.push('- '+row.project+': '+row.before+' → '+row.after+' ('+(row.delta>0?'+':'')+row.delta+')');
+    if(trend.sampleCoverage){
+      const c=trend.sampleCoverage;
+      lines.push('','## Matched queue-item movement',
+        'Matched '+c.matched_samples+' items; additional claim cycles observed: '+
+          c.known_increase_in_claim_cycles+' across '+
+          c.matched_rows_with_increased_claim_cycles+' matched rows.',
+        'Only in earlier sample: '+c.only_previous_sample+
+          '; only in later sample: '+c.only_current_sample+
+          '; both samples complete: '+c.bothSamplesComplete+'.',
+        'Not sampled in both does NOT prove completion, creation or release.','');
+      for(const row of (trend.recordChanges||[]).filter(x=>known.has(x.project)
+          &&(!filter||x.project===filter)).slice(0,30))
+        lines.push('- '+row.project+' ['+row.ref+']: '+row.beforeAttempts+' → '+
+          row.afterAttempts+' claim cycles ('+(row.delta>0?'+':'')+row.delta+
+          '); '+row.beforeStatus+' → '+row.afterStatus+'; '+row.observation+'.');
+    }
   }else lines.push('','No trend snapshot available.');
   lines.push('','Read-only evidence only. Preserve original claims and the serialized runtime owner/release gates.','');
   const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'}),url=URL.createObjectURL(blob);
