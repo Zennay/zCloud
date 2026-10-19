@@ -8,7 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
+import tempfile
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from html import escape
 
@@ -100,6 +104,37 @@ def _source(decision):
     return {"observed_at": source_time, "incidents": items,
             "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             "source_partial": True, "authorizes_actions": False}
+
+
+def write_private_html(path, rendered):
+    """Create-only private static operator artifact; never overwrite an export."""
+    target = Path(path)
+    parent = target.parent
+    if (not isinstance(rendered, str) or not rendered.startswith("<!doctype html>")
+            or target.suffix.lower() != ".html"
+            or not parent.is_dir() or parent.is_symlink()
+            or not hasattr(os, "O_NOFOLLOW")):
+        raise ValueError("private desk requires an existing safe directory and .html output")
+    info = parent.stat()
+    if (info.st_uid != os.geteuid() or
+            stat.S_IMODE(info.st_mode) & 0o022):
+        raise ValueError("private desk directory must be owned and not group/world writable")
+    raw = rendered.encode("utf-8")
+    if len(raw) > 1_000_000:
+        raise ValueError("bounded private desk HTML required")
+    fd, temporary = tempfile.mkstemp(prefix=".zsentinel-desk-", dir=parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Hard-link existing safe temporary into a new *absent* target.
+        # Fails if target already exists (regular file or symlink).
+        os.link(temporary, target)
+    finally:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
 
 
 def review_html(decision):
