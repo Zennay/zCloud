@@ -71,7 +71,7 @@ def source_incident_key(project, diagnosis):
             ids.append(f"{name}:{value}")
     if raw_job is not None and raw_run is None:
         raise ValueError("github.job_id requires run_id")
-    if kind.startswith("github_") and not ids:
+    if kind.startswith("github_") and (raw_run is None or raw_job is None):
         # Without a run identity a cross-snapshot 'dedup' could hide a different job.
         return None
     sha = github.get("head_sha", "")
@@ -162,8 +162,22 @@ def load_state(data):
         last = timestamp(entry.get("last_seen"), "last_seen")
         if first > last:
             raise ValueError("incident state first_seen after last_seen")
-        if entry.get("status") not in ("human_action_required", "read_only_diagnosis_required", "not_observed_needs_reconciliation"):
+        if entry.get("status") not in ("human_action_required", "read_only_diagnosis_required", "not_observed_needs_reconciliation", "exact_job_completed_source_reconciled"):
             raise ValueError("unsupported incident state")
+        identity = entry.get("source_identity")
+        if identity is not None:
+            if (not isinstance(identity, dict)
+                    or not isinstance(identity.get("project_id"), str)
+                    or not SLUG.fullmatch(identity["project_id"])
+                    or not isinstance(identity.get("reason"), str)
+                    or not identity["reason"].startswith("github_")
+                    or not isinstance(identity.get("head_sha"), str)
+                    or not SHA.fullmatch(identity["head_sha"])
+                    or type(identity.get("run_id")) is not int
+                    or type(identity.get("job_id")) is not int
+                    or not 1 <= identity["run_id"] <= 2**53-1
+                    or not 1 <= identity["job_id"] <= 2**53-1):
+                raise ValueError("invalid exact GitHub incident source identity")
         gates = entry.get("blocked_gates", [])
         if (not isinstance(gates, list) or len(gates) > 2
                 or any(gate not in ("github_hosted", "self_hosted") for gate in gates)):
@@ -456,9 +470,43 @@ def plan(bundle, previous=None, now=None):
                               else ["github_hosted"] if reason == "github_hosted_billing_admission"
                               else []),
         }
-    # Disappeared from a later partial snapshot is NOT proof of recovery.
+        if reason.startswith("github_") and github.get("run_id") is not None and github.get("job_id") is not None:
+            next_state[key]["source_identity"] = {
+                "project_id": incident["project_id"], "reason": reason,
+                "run_id": github["run_id"], "job_id": github["job_id"],
+                "head_sha": github["head_sha"],
+            }
+    # A *specific* previously blocked GitHub job can be marked source-reconciled
+    # ONLY when a later canonical live GET proves that SAME run/job/head actually
+    # executed and completed successfully. This is not a service or repo recovery.
+    reconciled_jobs = []
     for key, entry in prior.items():
-        if key not in next_state:
+        if key in next_state:
+            continue
+        if entry["status"] == "exact_job_completed_source_reconciled":
+            next_state[key] = entry
+            continue
+        identity = entry.get("source_identity")
+        observed = by_project.get(identity["project_id"]) if identity else None
+        gh = observed.get("github", {}) if observed else {}
+        matches = bool(identity and
+            gh.get("verified_receipt") == "github_exact_run_job"
+            and gh.get("run_id") == identity["run_id"]
+            and gh.get("job_id") == identity["job_id"]
+            and gh.get("head_sha") == identity["head_sha"]
+            and gh.get("job_status") == "completed"
+            and gh.get("conclusion") == "success"
+            and gh.get("runner_assigned") is True
+            and gh.get("no_job_steps") is False
+            and now - timestamp(gh.get("observed_at"), "reconciled_github_observed_at") <= timedelta(minutes=30))
+        if matches:
+            next_state[key] = {**entry, "last_seen": utc_string(now),
+                               "status": "exact_job_completed_source_reconciled",
+                               "blocked_gates": []}
+            reconciled_jobs.append({"incident_id": key, "project_id": identity["project_id"],
+                                    "status": "exact_job_success_no_runtime_recovery_claim"})
+        else:
+            # Missing from a later partial snapshot is NOT proof of recovery.
             next_state[key] = {**entry, "status": "not_observed_needs_reconciliation"}
     if len(next_state) > MAX_LEDGER:
         # Never silently evict unresolved incidents or their dedup history.
@@ -479,6 +527,7 @@ def plan(bundle, previous=None, now=None):
         "deployment_authorized": False,
         "claim_inventory_complete": claims_verified,
         "incidents": incidents,
+        "reconciled_exact_jobs": reconciled_jobs,
         "unresolved_not_observed": sum(1 for v in next_state.values()
                                        if v["status"] == "not_observed_needs_reconciliation"),
         "independent_task_suggestions": routes,
@@ -499,6 +548,9 @@ def operator_text(result):
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
     if not result["claim_inventory_complete"]:
         lines.append("Claim coverage incomplete: routing suppressed.")
+    if result.get("reconciled_exact_jobs"):
+        lines.append("Exact GitHub jobs source-reconciled (no runtime proof): " +
+                     str(len(result["reconciled_exact_jobs"])))
     triage = result["open_product_issue_triage"]
     lines.append("P0/P1 issue inbox: " + triage["coverage"] + " (inspection only)")
     for issue in triage["issues"]:
