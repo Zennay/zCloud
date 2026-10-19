@@ -485,7 +485,9 @@ python3 scripts/zsentinel_portfolio_overview.py \
   --format html > /secure/portfolio.html
 ```
 
-- De optionele lokale cursor bevat enkel registry-fingerprint, volgende vensterindex, de vorige poging, tijdstip en de **partiële** GitHub-bronstatus per geselecteerd project; nooit tokens, ruwe queue IDs, claims of API-antwoorden. Schrijfacties zijn uitsluitend in dit expliciet gekozen privébestand; de SQLite-database blijft mode=ro.
+- De optionele lokale cursor bevat enkel registry-fingerprint, volgende vensterindex, de vorige poging en per canoniek project maximaal één laatst geobserveerd pogingstijdstip plus de **partiële** GitHub-bronstatus; nooit tokens, ruwe queue IDs, claims of API-antwoorden. Schrijfacties zijn uitsluitend in dit expliciet gekozen privébestand; de SQLite-database blijft mode=ro.
+- HTML-, JSON- en tekstoverzichten tonen per project de **laatste bronpoging** met leeftijd, dekkingstype en onderscheid huidige run/historische bron. Historische pogingen zijn geen live bron, tellen niet mee als huidige dekking en bewijzen geen herstel, CI-succes of vrij eigendom. Projecten zonder eerdere cursorpoging blijven `ONBEKEND`.
+- De private projecthistorie blijft begrensd tot 32 canonieke projecten (4 KiB bestand) en wordt bij een veranderde registry weggegooid; een ongeldige of toekomstige historische tijd wordt niet geaccepteerd.
 - Bij een gewijzigde canonieke projectregistry begint de cyclus opnieuw op venster nul; oude dekking wordt **niet** overgenomen of als gezond voorgesteld. Ongeldige of gemanipuleerde cursorinhoud wordt geweigerd.
 - Cursorverplaatsing gebeurt pas na bronvalidatie en rapport-rendering. Een gelijktijdige operatorrun met intussen gewijzigde cursor mag deze niet overschrijven. De cursor is géén scheduler, geen lease, geen claim en geen eigendomsbewijs. Opeenvolgende pogingen betekenen niet dat elk project aantoonbaar gezond is.
 - Een expliciet `--window N` blijft beschikbaar **zonder** cursor; combinatie met `--window-state` wordt geweigerd. `--state` is de **afzonderlijke** optionele incident-ledger en mag niet naar hetzelfde pad verwijzen.
