@@ -231,6 +231,16 @@ Both require their own existing exact-head CI, independent review and serialized
 production release. This feature does not implement #677 writer-side finite
 retry or backoff policy.
 
+## Unified Activity timeline — issue #1518 (19 October)
+
+The Activity screen now includes **Project timeline · VPS + GitHub** ahead of the existing independent source panels. It combines the already-observed local `/api/activity` events and the opt-in, validated GitHub PR/CI/main-commit snapshots into one timestamped list. The existing public/VPS GitHub read buttons and the JSON importer remain the only GitHub refresh mechanisms. Changing the source filter (All, Local VPS, GitHub) does **not** schedule or trigger provider reads.
+
+The combined list retains explicit project, source and source event type for every row, plus bounded privacy-safe GitHub links. P0/P1 inbox and worker/queue panels remain independent: observing an issue or PR never acquires ownership. GitHub source availability, missing per-project coverage and source staleness are shown separately from local host connectivity. A read-only `Export timeline .md` creates an operator handoff without queue IDs, tokens, prompts or credentials.
+
+The list reserves round-robin opportunities for quieter canonical projects before displaying the retained events by source timestamp (max 140 rows); an active project's volume cannot erase all others. Only an **exact project + full 40-character SHA** match between a local `project:git:SHA` event and a validated GitHub `main_commit:SHA` event merges them into one combined observation. This is an evidence join, not a deployment claim; unrelated commits, PR updates, CI runs, and events on different projects remain distinct. Each timeline row is fully escaped, GitHub hrefs are restricted to canonical project repo URLs and known event paths.
+
+This source change and its exact `app.js` cache pin live on [PR #1550](https://github.com/Zennay/zCloud/pull/1550) until mandatory exact-head CI, independent reviewer, protected-main and serialized release authorization complete. It is **not** evidence that the live VPS UI is already updated. No new QA or regression suite was created or run manually.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
