@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from zsentinel_product_issue_inbox import canonical_projects, collect
-from zsentinel_queue_observer import observe
+from zsentinel_queue_observer import observe, explicitly_unobserved_queue
 from zsentinel_github_discovery import discover
 from zsentinel_recovery_refresh import refresh
 from zsentinel_recovery_router import (
@@ -223,9 +223,8 @@ def main():
                                 os.environ.get("NOTION_QUEUE_DATA_SOURCE_ID")),
             notion_token=os.environ.get("NOTION_TOKEN"),
             notion_registry=args.registry,
-            queue_snapshot=(__import__(
-                "zsentinel_queue_observer").explicitly_unobserved_queue()
-                if args.github_only else None),
+            queue_snapshot=(explicitly_unobserved_queue()
+                            if args.github_only else None),
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
