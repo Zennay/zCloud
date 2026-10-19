@@ -302,7 +302,7 @@ def _layout_known_unique_ids(items, allowed_ids):
     allowed=set(allowed_ids)
     result=[]
     seen=set()
-    for value in items if isinstance(items,list) else []:
+    for value in (items if isinstance(items,list) else []):
         if isinstance(value,str) and value in allowed and value not in seen:
             seen.add(value)
             result.append(value)
@@ -310,7 +310,8 @@ def _layout_known_unique_ids(items, allowed_ids):
 
 def load_project_layout(projects=None):
     projects=projects if projects is not None else json.loads((ROOT/'projects.json').read_text())
-    ids=_layout_known_unique_ids([p['id'] for p in projects], [p['id'] for p in projects])
+    ids=[p['id'] for p in projects]
+    ids=_layout_known_unique_ids(ids,ids)
     default={'order':ids,'archived':[]}
     if not LAYOUT_FILE.exists():
         return default
@@ -325,7 +326,8 @@ def load_project_layout(projects=None):
         return default
 
 def save_project_layout(layout, projects):
-    ids=_layout_known_unique_ids([p['id'] for p in projects], [p['id'] for p in projects])
+    ids=[p['id'] for p in projects]
+    ids=_layout_known_unique_ids(ids,ids)
     order=_layout_known_unique_ids(layout.get('order',[]),ids)
     order += [x for x in ids if x not in order]
     archived=_layout_known_unique_ids(layout.get('archived',[]),ids)
