@@ -68,11 +68,16 @@ jobs:
       github.repository == 'Zennay/zCloud' &&
       github.ref == 'refs/heads/main' &&
       github.actor == 'Zennay' &&
+      github.triggering_actor == 'Zennay' &&
+      github.run_attempt == 1 &&
       inputs.apply == true &&
       inputs.confirm_sha == github.sha
     needs: unit
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
+    concurrency:
+      group: zcloud-production-deploy
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -90,6 +95,8 @@ jobs:
           test "$GITHUB_REPOSITORY" = Zennay/zCloud
           test "$GITHUB_REF" = refs/heads/main
           test "$GITHUB_ACTOR" = Zennay
+          test "$GITHUB_TRIGGERING_ACTOR" = Zennay
+          test "$GITHUB_RUN_ATTEMPT" = 1
           test "$APPLY" = true
           [[ "$CONFIRM_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$CONFIRM_SHA" = "$GITHUB_SHA"
@@ -109,6 +116,11 @@ jobs:
           test "$(hostname)" = "vps-bb300bba"
           test "$(id -un)" = "ubuntu"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # This job can wait for the shared release lock: recheck the remote
+          # main head immediately before any production file replacement.
+          live_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$live_main"
+          test "$live_main" = "$GITHUB_SHA"
           source="/home/ubuntu/zennay-cloud/firefox-extension"
           live="$HOME/snap/firefox/common/chatgpt-project-extension"
           if [ ! -f "$source/manifest.json" ] || [ ! -f "$live/manifest.json" ]; then
@@ -189,6 +201,12 @@ jobs:
           fi
           # Reload only the extension, never terminate the visible Firefox
           # session. Defer activation if there is no debugger connection.
+          # Do not activate a build that ceased to be current main while
+          # waiting for an idle browser; defer rather than switching versions.
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          live_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
+          test -n "$live_main"
+          test "$live_main" = "$GITHUB_SHA"
           if node scripts/zcloud_reload_extension.mjs; then
             echo "WORKER_TAB_GUARD_ACTIVATED_IN_PLACE=1"
           else
