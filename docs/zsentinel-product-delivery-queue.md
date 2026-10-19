@@ -57,3 +57,38 @@ The product admission predicate **is unchanged**. Instead, `held_queue_review_re
 - `invalid_metadata`, `invalid_title`, or `oversized_criteria`: counted in a distinct `queued_requires_owner_review`, with up to eight bounded `review_items` identifying project, priority and constant reason. The row is **not claimed, assigned or auto-repaired**.
 
 The operator UI in PR #1550 now displays these separately; the exported Markdown handoff carries only project, priority, reason and aggregate count (not raw queue IDs). Existing claimed/running/verifying records, ACL, lease, scope, quota and mandatory CI/release gates remain intact. This is a source-visible product unblocking aid, not verified production queue remediation.
+
+## On-demand queue retry incidents (#677; source 19 Oct 2026)
+
+This backend branch also exposes a **trusted management GET only**
+`/api/queue-retry-incidents?project=<canonical-id|all>` in `server.py`.
+The handler applies the existing loopback/explicit management peer gate **before**
+any SQLite access, accepts one exact project parameter, and does not touch
+the writable portfolio queue pathways. It uses
+`scripts/zcloud_queue_retry_live.py` to open existing `history.db` using
+SQLite `mode=ro` + `PRAGMA query_only=ON`, then binds project grouping and
+a top-40 incident sample in one deferred read transaction.
+
+Response schema matches the independent zSentinel offline console
+`zsentinel-retry-incident-v1` used by the Activity UI integration
+[#1550](https://github.com/Zennay/zCloud/pull/1550):
+- canonical P0–P3 project/status grouping and high-claim-attempt counts;
+- total active items, ten-plus claim cycles, expired active lease timestamps;
+- privacy-safe SHA256-derived 16-hex queue references, **never raw queue IDs,
+  task titles, prompts, worker identities, claim tokens, evidence or metadata**;
+- explicit bounded sample completeness; 40 rows only; hard-coded retry
+  threshold 3 and no arbitrary SQL, path, or remote API parameters;
+- explicit `database_read_only=true`, `safe_to_authorize_retry=false` and
+  `attempts_count_claims_not_failures=true`.
+
+Missing/unknown SQLite schema, unsupported project/priority, or a failed
+read returns an unavailable response rather than an empty successful list.
+Only a deliberate UI click invokes this endpoint; there is no scheduler or
+background provider work. Two deliberate reads on the same scope can be
+compared client-side without persisting raw queue data. Source-only until
+[#1549](https://github.com/Zennay/zCloud/pull/1549), [#1550](https://github.com/Zennay/zCloud/pull/1550)
+and the independent offline CLI [#1555](https://github.com/Zennay/zCloud/pull/1555)
+are accepted under existing exact-head CI, independent review, protected-main
+and serialized release policies. Native finite retry/backoff and automated
+`NEEDS_AI` disposition from [#677](https://github.com/Zennay/zCloud/issues/677)
+remain **not implemented**. No live queue, claims, workers, service or billing changed.
