@@ -1238,12 +1238,23 @@ async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
     const coveredProjects=new Set(issueCoverage.map(row=>row.project));
     const currentRows=[...issues.values()].map(row=>{
       const old=priorRows.find(item=>item.number===row.number);
-      // Missing provider pages are not evidence that referenced PRs vanished.
-      return outcomes[2].status!=='fulfilled'&&old?.prs?.length
+      // Missing provider PR pages are not proof a previously referenced PR
+      // vanished. Retain the last known reference but never verify its owner.
+      const updated=outcomes[2].status!=='fulfilled'&&old?.prs?.length
         ?{...row,prs:old.prs.slice(0,3)}:row;
+      return {...updated,staleUnverified:false,confirmedOpenAt:sampledAt};
     });
-    const safeRows=readable===3?currentRows:[...priorRows.filter(row=>
-      !currentRows.some(fresh=>fresh.number===row.number)),...currentRows];
+    // Two 30-issue pages (oldest and most recently updated) NEVER constitute
+    // an exhaustive repository issue inventory. A previously seen issue in the
+    // middle cannot disappear solely because it fell out of both windows.
+    // Retain it with an explicit unknown-current-state label; do not assert it
+    // remains open, unclaimed or free. Canonical per-repo cap stays 150 globally.
+    const safeRows=[
+      ...priorRows.filter(row=>!issues.has(row.number)).map(row=>({
+        ...row,staleUnverified:true
+      })),
+      ...currentRows
+    ];
     const issueRows=fairProductIssueHistory([
       ...previousIssues.issues.filter(row=>row.project!==projectId&&coveredProjects.has(row.project)),
       ...safeRows],issueCoverage);
@@ -1796,7 +1807,7 @@ function zSentinelIssueTriage(issue,coverage){
   const observation=Date.parse(source?.observedAt||'');
   // Every bounded issue receipt is partial by definition. A fresh complete
   // *request set* is not a complete GitHub issue-history inventory.
-  const uncertain=!source||source.staleEvidence===true
+  const uncertain=issue.staleUnverified===true||!source||source.staleEvidence===true
     ||['degraded','unavailable'].includes(source.status)
     ||!Number.isFinite(observation)||observation>Date.now()+120000
     ||Date.now()-observation>6*3600000;
@@ -1849,6 +1860,7 @@ function exportZSentinelHandoff(){
     const triage=zSentinelIssueTriage(item,observedCoverage);
     lines.push('- **'+item.priority+' '+clean(item.project,56)+' #'+item.number+'** '+clean(item.title)+
       ' — '+item.url+' · '+clean(triage.label,32)+
+      (item.staleUnverified?' · PREVIOUSLY OPEN, NOT REOBSERVED in latest issue windows':'')+
       (triage.uncertain?' · SOURCE STALE/UNAVAILABLE/INCOMPLETE':'')+
       ' · claim unverified');
     const prs=(item.prs||[]).slice(0,3).filter(pr=>
@@ -2025,7 +2037,9 @@ function zSentinelDeliveryBoard(){
     return '<div class="service-row"><div><strong>'+esc(issue.priority)+' · '+esc(issue.project)+
       ' · '+esc(triage.label)+'</strong><br>'+
       '<a target="_blank" rel="noopener noreferrer" href="'+esc(issue.url)+'">'+esc(issue.title)+
-      '</a><br><small>GitHub #'+issue.number+' · '+esc(proof)+
+      '</a><br><small>GitHub #'+issue.number+
+      (issue.staleUnverified?' · PREVIOUSLY OPEN; NOT REOBSERVED in latest bounded pages':' · observed open in bounded source')+
+      ' · '+esc(proof)+
       ' · no claim authority</small>'+
       (refs?'<div class="detail-note">Open PR references in sample: '+refs+'</div>':
        '<div class="detail-note">No linked PR in sampled source, ownership unknown.</div>')+
