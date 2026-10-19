@@ -296,14 +296,23 @@ def compare_history(snapshots):
         not row["current_sample_observed"], PRIORITY[row["priority"]],
         -row["consecutive_recent_samples"], -row["sightings_in_sample"],
         row["project_id"], row["id"]))
+    consistent_windows = (
+        all(window is not None for window in windows)
+        and all(window == windows[0] for window in windows[1:]))
+    # A historical ledger item can be present in every report while the
+    # underlying runner/job has never been refreshed. Repetition alone must
+    # not silently promote that historical record to a live P0 escalation.
     urgent = sum(1 for item in history if (
-        chronology_verified and item["priority"] == "P0"
+        chronology_verified and consistent_windows
+        and item["kind"] == "verified_source_incident_not_runtime_recovery"
+        and item["priority"] == "P0"
         and item["consecutive_recent_samples"] >= 3))
     return {
         **base,
         "schema": "zsentinel-blocker-continuity-history-v1",
         "history_sample_count": len(snapshots),
         "history_project_windows": windows,
+        "history_consistent_verified_project_windows": consistent_windows,
         "history_report_chronology_verified": chronology_verified,
         "history_report_timestamps_utc": (
             [stamp.isoformat() for stamp in report_times]
