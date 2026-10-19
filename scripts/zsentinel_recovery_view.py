@@ -257,7 +257,10 @@ def html_view(decision):
             started = row.get("job_start_evidence", "unknown_not_proven")
             if (started not in ("completed_without_steps", "completed_with_steps",
                                 "unknown_not_proven")
-                    or row.get("no_job_steps") not in (True, False, None)
+                    or (row.get("no_job_steps") is not None
+                        and type(row.get("no_job_steps")) is not bool)
+                    or (started == "unknown_not_proven"
+                        and row.get("no_job_steps") is not None)
                     or (started == "completed_without_steps"
                         and (row["job_status"] != "completed"
                              or row.get("no_job_steps") is not True))
