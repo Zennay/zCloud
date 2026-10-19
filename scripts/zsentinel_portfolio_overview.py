@@ -672,7 +672,7 @@ def main():
             # The same already-read exact-head PR advice is available in
             # HTML, JSON and plain text; no extra GitHub calls or claims.
             problem_inbox = link_existing_pr_actions(problem_inbox, pr_desk)
-        unblock = blocker_first_board(summary, decision, problem_inbox)
+        unblock = blocker_first_board(summary, decision, problem_inbox, pr_desk=pr_desk)
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
