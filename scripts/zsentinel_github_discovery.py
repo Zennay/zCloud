@@ -85,12 +85,15 @@ def run_job_candidates(root, run_id, sha, token, kind):
         if kind in ("queued", "in_progress"):
             if status != "queued" or bool(runner) or now-created < timedelta(minutes=30):
                 continue
-            rank = 0
-        else:
-            if status != "completed" or conclusion not in RESULTS:
-                continue
-            rank = 1
+        elif status != "completed" or conclusion not in RESULTS:
+            continue
         route = runner_route(job)
+        # An explicitly labelled self-hosted queue is stronger evidence
+        # than an ambiguous queue, which itself is stronger than hosted.
+        # Search both queued and running workflows before selecting: an
+        # unrelated hosted queue must never hide a genuine VPS backlog.
+        rank = ({"self_hosted": 0, "unknown": 1, "hosted_or_custom": 2}[
+            route["runner_route"]] if status == "queued" else 3)
         candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner, route, kind))
     return candidates
 
@@ -120,7 +123,11 @@ def discover(registry, selected, token=None):
                     request_count += 1
                     checked += 1
                     candidates.extend(run_job_candidates(root, run_id, sha, token, status))
-                if candidates:
+                # A queued-workflow candidate must not suppress discovery
+                # of a stronger self-hosted queue in a RUNNING workflow.
+                # Once both waiting windows were sampled, failures are a
+                # fallback only if no queued job was found.
+                if status == "in_progress" and candidates:
                     break
             if not candidates:
                 coverage.append({
