@@ -522,7 +522,8 @@ De bestaande zSentinel-router kan nu een **volledig lokale interactieve incident
 # Gebruik bestaande echte bron/queue/GitHub-readers en schrijf alleen een privé offline HTML.
 python3 scripts/zsentinel_live_cockpit.py \
   --database /path/to/existing/zcloud.sqlite3 \
-  --project cloud --format desk > /secure/zsentinel-incident-desk.html
+  --project cloud --format desk \
+  --desk-output /secure/zsentinel-incident-desk.html
 
 # Zelfde product is ook beschikbaar via:
 #   zsentinel_portfolio_overview.py --database ... --format desk
@@ -531,6 +532,10 @@ python3 scripts/zsentinel_live_cockpit.py \
 ```
 
 De operator kan zoeken op project/probleem/eigenaar, filteren op P0–P3 en expliciete menselijke noodzaak, en binnen de gekozen kaart precies **probleem / actie / bronstatus** bekijken. Een eigen opvolgstatus (nog niet beoordeeld, eigenaar benaderen, in behandeling bij eigenaar, extern geparkeerd, opnieuw verifiëren) en maximaal 800 tekens vrije notitie blijven *uitsluitend in het huidige tabblad*.
+
+**Verdere opvolging over meerdere runs:** naast een exact dezelfde-bronimport bestaat een afzonderlijke, expliciet bevestigde import van *oudere* privénotities. Alleen notities met identieke incident-ID worden gekopieerd; oude eigenaar-/herstelstatussen worden niet meegenomen en de lokale status wordt altijd **bron opnieuw verifiëren**. Meerdere regels in notities blijven behouden, ongeldige controltekens worden geweigerd. Een oude bron zonder overlap wordt geweigerd in plaats van een vals herstelbericht te maken.
+
+**Bestandsveiligheid:** voor `--format desk` is nu verplicht `--desk-output /bestaande/privémap/nieuw.html`. De tool creëert uitsluitend een **nieuw** mode-0600 bestand in een door de operator beheerde, niet groeps-/wereld-schrijfbare map. Bestaande bestanden en symlinks worden nooit overschreven; de HTML wordt volledig opgebouwd vóór de exclusieve write. Er wordt geen HTML naar de gewone stdout gelogd. De expliciete create-only file write is **uitsluitend het privé operatorbestand**, geen productie-/queue-/lease-/runnerwijziging.
 
 **Voltooide privé-overdracht**: met één bewuste klik kan de operator een lokaal JSON-bestand downloaden dat alleen incident-ID, menselijke opvolgstatus en privénotitie bevat. De handoff is aan de SHA-256 van de volledig gevalideerde incidententabel, de oorspronkelijke tijd en het incidentenaantal gebonden. Een later geïmporteerde handoff wordt volledig geweigerd als bronhash, datum, aantal, statuswaarden of incident-ID niet exact overeenkomen; geldige import vervangt de notities in één keer. Er is geen autosave, achtergrondnetwork, externe HTML, lokale browseropslag, push of Notion-/GitHub-write. Privénotities niet delen als publiek issuecommentaar.
 
