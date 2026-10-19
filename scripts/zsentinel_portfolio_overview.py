@@ -61,7 +61,7 @@ def portfolio_summary(registry, queue, selected):
             "high_claim_attempts": 0 if complete else None,
             "expired_owner_leases": 0 if complete else None,
             "worker_ownership_verified": False,
-            "recovery_proven": False,
+            "recovery_proven": False, "next_action": "read_only_inspect_current_source",
         }
     for entry in groups:
         if not isinstance(entry, dict):
@@ -86,6 +86,22 @@ def portfolio_summary(registry, queue, selected):
                 if type(value) is not int or value < 0:
                     raise ValueError("invalid owned queue counter")
                 row["owned"] += value
+    for row in summary.values():
+        if not complete:
+            row["next_action"] = "queue_source_incomplete_owner_must_review"
+        elif row["expired_owner_leases"]:
+            row["next_action"] = "request_owner_lease_review_never_release"
+        elif row["high_claim_attempts"]:
+            row["next_action"] = "inspect_claim_churn_no_auto_retry"
+        elif row["github_observation"] == "not_queried":
+            row["next_action"] = "github_source_not_scanned_next_window"
+        else:
+            row["next_action"] = "inspect_open_issue_pr_and_exact_ci_gates"
+    unknown_count = sum(
+        1 for entry in groups
+        if isinstance(entry, dict) and isinstance(entry.get("project_id"), str)
+        and entry["project_id"] not in registry
+    )
     return {
         "schema": "zsentinel-portfolio-overview-v1",
         "observed_at_utc": queue.get("observed_at_utc"),
@@ -94,11 +110,7 @@ def portfolio_summary(registry, queue, selected):
         "github_coverage_is_partial": True,
         "queue_inventory_complete": complete,
         "queue_owner_authorized": False,
-        "unknown_queue_project_groups": sorted({
-            entry["project_id"] for entry in groups
-            if isinstance(entry, dict) and isinstance(entry.get("project_id"), str)
-            and entry["project_id"] not in registry
-        })[:20],
+        "unregistered_queue_project_groups": unknown_count,
         "rows": list(summary.values()),
         "actions_performed": False,
         "runner_recovered": False,
@@ -128,6 +140,15 @@ def portfolio_html(summary, decision, window_index, windows):
         github = ("Dít venster · beperkte GitHub-steekproef"
                   if row["github_observation"] == "bounded_window"
                   else "NIET GESCAND · onbekend")
+        action_text = {
+            "queue_source_incomplete_owner_must_review": "Wachtrij incompleet; bron-/ownercontrole nodig",
+            "request_owner_lease_review_never_release": "Vraag leasebeoordeling; niet vrijgeven",
+            "inspect_claim_churn_no_auto_retry": "Onderzoek claimchurn; geen retry",
+            "github_source_not_scanned_next_window": "GitHub onbekend; volgend venster",
+            "inspect_open_issue_pr_and_exact_ci_gates": "Bekijk issues, PR en exacte CI",
+        }.get(row["next_action"])
+        if action_text is None:
+            raise ValueError("unsupported portfolio recommendation")
         cells.append(
             '<tr><th scope="row"><a href="' + link +
             '" target="_blank" rel="noopener noreferrer">' + name + '</a></th>'
@@ -135,7 +156,8 @@ def portfolio_html(summary, decision, window_index, windows):
             '<td>' + _count(row["owned"]) + '</td>'
             '<td>' + _count(row["high_claim_attempts"]) + '</td>'
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
-            '<td>' + escape(github) + '</td></tr>'
+            '<td>' + escape(github) + '</td>'
+            '<td>' + escape(action_text) + '</td></tr>'
         )
     selected = ", ".join(escape(x) for x in windows[window_index])
     caption = (
@@ -157,10 +179,13 @@ def portfolio_html(summary, decision, window_index, windows):
         '<div class="wrap"><table><thead><tr><th scope="col">Project</th>'
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
-        '<th scope="col">GitHub-bereik</th></tr></thead><tbody>' +
+        '<th scope="col">GitHub-bereik</th><th scope="col">Veilige vervolgstap</th>'
+        '</tr></thead><tbody>' +
         "".join(cells) + '</tbody></table></div>'
-        '<p class="muted small">Vensterkeuze: herhaal read-only met '
-        '<code>--window 0</code> tot <code>--window ' +
+        '<p class="muted small">Standaard kiest <code>--window auto</code> '
+        'elk UTC-uur een ander bronvenster, alleen bij een nieuwe '
+        'handmatig of geautoriseerd geplande uitvoering. '
+        'Handmatig kiezen: <code>--window 0</code> tot <code>--window ' +
         str(len(windows)-1) +
         '</code>. Eén run scant nooit stiekem alle repositories via GitHub.</p>'
         '</section>'
