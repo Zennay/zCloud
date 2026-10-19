@@ -254,6 +254,24 @@ def html_view(decision):
                     or type(run_id) is not int or type(job_id) is not int
                     or not 0 < run_id <= 2**53-1 or not 0 < job_id <= 2**53-1):
                 raise ValueError("invalid exact GitHub job route identity")
+            started = row.get("job_start_evidence", "unknown_not_proven")
+            if (started not in ("completed_without_steps", "completed_with_steps",
+                                "unknown_not_proven")
+                    or row.get("no_job_steps") not in (True, False, None)
+                    or (started == "completed_without_steps"
+                        and (row["job_status"] != "completed"
+                             or row.get("no_job_steps") is not True))
+                    or (started == "completed_with_steps"
+                        and (row["job_status"] != "completed"
+                             or row.get("no_job_steps") is not False))):
+                raise ValueError("contradictory exact GitHub job start evidence")
+            start_message = {
+                "completed_without_steps":
+                    "Afgerond zonder één uitgevoerde jobstap: mogelijke platformadmissie. "
+                    "Oorzaak ONBEKEND; eigenaar moet exact job-/check-runannotaties controleren.",
+                "completed_with_steps": "Uitgevoerde stappen aanwezig: beoordeel de werkelijke buildfout.",
+                "unknown_not_proven": "Jobstart niet geverifieerd; geen billing- of VPS-conclusie.",
+            }[started]
             href = ("https://github.com/" + repository + "/actions/runs/" +
                     str(run_id) + "/job/" + str(job_id))
             route_description = {
@@ -268,6 +286,7 @@ def html_view(decision):
                 phrase(route_description, 180) + '</p><p class="small">Jobstatus: ' +
                 phrase(row["job_status"], 30) + ' · runner toegewezen: ' +
                 ('ja' if row["runner_assigned"] else 'nee') +
+                '</p><p class="small">Startbewijs: ' + phrase(start_message, 250) +
                 '</p><p class="small">Vereiste labels: ' +
                 (", ".join(phrase(v, 64) for v in row["route_labels"])
                  if row["route_labels"] else "ONBEKEND") +
