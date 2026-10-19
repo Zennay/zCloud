@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from datetime import datetime, timezone
 from html import escape
 import json
@@ -15,6 +16,7 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import tempfile
 
 
 ACTIVE = ("queued", "claimed", "running", "verifying")
@@ -270,6 +272,31 @@ def resolve_reference(path: Path, reference: str) -> dict:
     }
 
 
+def write_new_private_report(path: Path, payload: str) -> None:
+    """Publish one complete operator report without replacing ANY existing file.
+
+    In particular --output may accidentally name the live SQLite DB, its WAL,
+    a hardlink alias, an existing handoff or a symlink. Plain Path.write_text()
+    would truncate it. Write a mode-0600 temporary file in the destination
+    directory, then create the requested name with an atomic no-replace hard
+    link. Existing destinations are never opened for writing.
+    """
+    pending: Path | None = None
+    try:
+        descriptor, name = tempfile.mkstemp(
+            prefix=".zsentinel-retry-report-", dir=str(path.parent)
+        )
+        pending = Path(name)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload)
+        # link(2) refuses an existing output, including dangling symlinks and
+        # hardlinks to DB/WAL files. A same-directory temp keeps one filesystem.
+        os.link(pending, path)
+    finally:
+        if pending is not None:
+            pending.unlink(missing_ok=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", type=Path, required=True, help="Existing zCloud SQLite DB")
@@ -277,7 +304,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--threshold", type=int, default=3)
     parser.add_argument("--limit", type=int, default=40)
     parser.add_argument("--format", choices=("json", "markdown", "html"), default="html")
-    parser.add_argument("--output", type=Path, help="Write a local report; otherwise stdout")
+    parser.add_argument("--output", type=Path,
+                        help="Create a NEW private report atomically; never overwrite an existing path")
     parser.add_argument("--resolve-ref", help="Opt-in local sensitive drill-down of 16-hex report reference")
     parser.add_argument("--include-titles", action="store_true",
                         help="Explicitly include local task titles in JSON/Markdown (never HTML)")
@@ -308,7 +336,16 @@ def main(argv: list[str] | None = None) -> int:
                if args.format == "json" else
                markdown(report) if args.format == "markdown" else html_page(report))
     if args.output:
-        args.output.write_text(payload, encoding="utf-8")
+        try:
+            write_new_private_report(args.output, payload)
+        except FileExistsError:
+            print("Report not written: output already exists. Choose a new report "
+                  "filename; SQLite sources and existing files are never replaced.",
+                  file=sys.stderr)
+            return 2
+        except OSError as exc:
+            print(f"Report not written: {exc}", file=sys.stderr)
+            return 2
     else:
         print(payload)
     return 0
