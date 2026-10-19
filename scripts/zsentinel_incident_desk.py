@@ -101,7 +101,63 @@ def _source(decision):
         not x["human"], x["review_by"], x["id"]))
     canonical = json.dumps({"time": source_time, "incidents": items},
                            ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-    return {"observed_at": source_time, "incidents": items,
+    historical = decision.get("historical_unresolved", {
+        "schema": "zsentinel-historical-backlog-v1",
+        "total_unresolved": 0, "shown": [], "truncated": False,
+        "source_partial": True, "action_authorized": False,
+    })
+    total = decision.get("unresolved_not_observed", 0)
+    if (type(total) is not int or total < 0 or type(historical) is not dict
+            or historical.get("schema") != "zsentinel-historical-backlog-v1"
+            or historical.get("action_authorized") is not False
+            or historical.get("source_partial") is not True
+            or type(historical.get("total_unresolved")) is not int
+            or historical["total_unresolved"] != total
+            or type(historical.get("shown")) is not list
+            or len(historical["shown"]) > 30
+            or len(historical["shown"]) > total
+            or historical.get("truncated") is not (total > len(historical["shown"]))):
+        raise ValueError("untrusted historical desk inventory")
+    historical_rows = []
+    historical_seen = set()
+    for row in historical["shown"]:
+        if type(row) is not dict or any(row.get(k) is not v for k, v in (
+                ("current_source_observed", False), ("mutation_authorized", False))):
+            raise ValueError("history cannot become current or privileged")
+        ident, pid = row.get("incident_id"), row.get("project_id")
+        if (type(ident) is not str or not IDENT.fullmatch(ident)
+                or ident in historical_seen or ident in seen
+                or type(pid) is not str or not SLUG.fullmatch(pid)
+                or row.get("source_status") != "not_observed_needs_reconciliation"
+                or row.get("severity") not in ("P0", "P1")
+                or type(row.get("human_escalation_historical")) is not bool):
+            raise ValueError("untrusted historical row")
+        historical_seen.add(ident)
+        last = _stamp(row.get("last_seen"))
+        reason = row.get("problem")
+        if type(reason) is not str or not PROBLEM.fullmatch(reason):
+            raise ValueError("untrusted historical cause")
+        source_job = row.get("exact_github_job")
+        if source_job is not None:
+            if (type(source_job) is not dict
+                    or type(source_job.get("run_id")) is not int
+                    or type(source_job.get("job_id")) is not int
+                    or not 1 <= source_job["run_id"] < 2**53
+                    or not 1 <= source_job["job_id"] < 2**53
+                    or type(source_job.get("head_sha")) is not str
+                    or not re.fullmatch(r"[0-9a-f]{40}", source_job["head_sha"])):
+                raise ValueError("untrusted historical exact job")
+        historical_rows.append({
+            "id": ident, "project": pid, "priority": row["severity"],
+            "problem": reason, "last": last, "exact_github_job": source_job,
+            "human_historical": row["human_escalation_historical"],
+            "current_source_observed": False, "source_status": "historical_unresolved",
+            "action_authorized": False,
+        })
+    return {"historical": historical_rows,
+            "historical_count": total,
+            "historical_truncated": historical["truncated"],
+            "observed_at": source_time, "incidents": items,
             "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             "source_partial": True, "authorizes_actions": False}
 
@@ -190,6 +246,13 @@ Geen workflow, GitHub-write, calendar push, Notion-write, lease of deploy.</p>
 <label>Zoeken<input id="query" type="search" maxlength="80" placeholder="Project of probleem"></label>
 </div>
 <p id="count" aria-live="polite"></p>
+<section class="panel" aria-label="Historische niet-meer-geobserveerde incidenten">
+<h2>Historisch verdwenen uit beperkte bron · NIET opgelost</h2>
+<p>Dit zijn oude privé-ledgerincidenten die een latere bron niet opnieuw zag. Ze zijn
+geen huidige incidenten, watch-alerts of nieuwe taakclaims. Controleer exact bronbewijs
+met een bevoegde eigenaar; er worden nooit retries of herstelacties gestart.</p>
+<p id="historyCount" class="meta"></p><div id="historical" class="scroll"></div>
+</section>
 <section class="panel" aria-label="Human escalation overview"><h2>Wie heeft actie nodig?</h2>
 <p class="meta">Alleen huidige gedeeltelijke bron: eigenaarverdeling is geen eigenaarsbewijs of werktoewijzing.</p>
 <div id="ownerSummary"></div></section>
@@ -245,6 +308,24 @@ function filtered(){const q=$("query").value.trim().toLowerCase();return source.
 }
 function render(){
  invalidateBrief();
+ $("historical").replaceChildren();
+ $("historyCount").textContent=source.historical_count+
+  " historische incidenten niet gereconcilieerd; "+source.historical.length+
+  " brongebonden voorbeelden, nooit als huidige alarmen gepresenteerd."+
+  (source.historical_truncated?" Lijst is afgekapt.":"");
+ if(!source.historical.length)
+   $("historical").append(el("p","Geen historische details beschikbaar; een lege lijst is geen algemene herstelsignalering."));
+ for(const old of source.historical){
+   const block=el("article",undefined,"panel");
+   block.append(el("h3",old.priority+" · "+old.project+" · "+old.problem));
+   block.append(el("p","HISTORISCH, NIET ACTUEEL · laatste waarneming: "+old.last,"meta"));
+   if(old.exact_github_job)
+     block.append(el("p","Exact oud GitHub-run "+old.exact_github_job.run_id+
+       " · job "+old.exact_github_job.job_id+" · commit "+old.exact_github_job.head_sha,"code"));
+   else block.append(el("p","Exacte jobidentiteit onbekend; geen aannames over herstel.","meta"));
+   block.append(el("p","Actie: vraag een bevoegde eigenaar de oorspronkelijke bron opnieuw te verifiëren."));
+   $("historical").append(block);
+ }
  $("items").replaceChildren();
  $("ownerSummary").replaceChildren();
  const assigned=new Map();
