@@ -79,3 +79,76 @@ def unresolved_backlog(state, now, *, max_rows=MAX_ROWS):
         "source_partial": True,
         "action_authorized": False,
     }
+
+
+def pin_historical_jobs(bundle, prior, registry, *, limit=3):
+    """Opt-in pins for exact read-only GitHub refresh, never CI reruns.
+
+    A historical pin can only fill a project with *no current GitHub job
+    evidence*. It cannot replace a newer live job, owner receipt or claim.
+    The existing refresh subsequently makes at most two read-only GitHub
+    GETs per selected exact run/job, with canonical repo/head checking.
+    """
+    import copy
+
+    if (type(limit) is not int or not 1 <= limit <= 3
+            or not isinstance(bundle, dict) or not isinstance(registry, dict)):
+        raise ValueError("invalid bounded historical recheck request")
+    raw_evidence = bundle.get("evidence")
+    projects = raw_evidence.get("projects") if isinstance(raw_evidence, dict) else None
+    if not isinstance(projects, list) or len(projects) > 200:
+        raise ValueError("historical job recheck requires a canonical source bundle")
+    current = {}
+    for item in projects:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise ValueError("invalid recheck project")
+        pid = item["id"]
+        if pid in current:
+            raise ValueError("duplicate project in historical recheck source")
+        current[pid] = item
+    if not isinstance(prior, dict):
+        raise ValueError("historical recheck requires private prior ledger")
+    # The caller must use load_state() first; fail closed on malformed
+    # entries and never read tokens, ownership or arbitrary GitHub URLs here.
+    output = copy.deepcopy(bundle)
+    dest = {p["id"]: p for p in output["evidence"]["projects"]}
+    candidates = unresolved_backlog(prior, datetime.now(timezone.utc), max_rows=MAX_ROWS)
+    # Do not count projects with current pinned GitHub data as eligible.
+    picked = []
+    for row in candidates["shown"]:
+        pin = row.get("exact_github_job")
+        pid = row["project_id"]
+        if pin is None or pid not in registry or pid not in current:
+            continue
+        if pid in (x["project_id"] for x in picked):
+            continue
+        source = current[pid].get("github", {})
+        if type(source) is not dict:
+            raise ValueError("malformed current GitHub observation")
+        if source:
+            # A newer job could be the actual incident. Never overwrite it.
+            continue
+        dest[pid]["github"] = {
+            "run_id": pin["run_id"],
+            "job_id": pin["job_id"],
+            "head_sha": pin["head_sha"],
+        }
+        picked.append({
+            "project_id": pid, "run_id": pin["run_id"],
+            "job_id": pin["job_id"], "head_sha": pin["head_sha"],
+            "historical_incident_id": row["incident_id"],
+        })
+        if len(picked) >= limit:
+            break
+    if not picked:
+        raise ValueError("no historical exact jobs fit free project slots; current source pins untouched")
+    return output, {
+        "schema": "zsentinel-historical-recheck-selection-v1",
+        "selected": picked,
+        "selected_count": len(picked),
+        "max_readonly_github_get": len(picked) * 2,
+        "runner_restart_authorized": False,
+        "ci_retry_authorized": False,
+        "owner_claim_authorized": False,
+        "source_partial": True,
+    }
