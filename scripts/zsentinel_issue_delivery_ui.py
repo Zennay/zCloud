@@ -48,9 +48,11 @@ def controls(projects):
         '<button type="button" id="export-issues" disabled>Download gecontroleerde .md</button>'
         '<pre id="issue-handoff" aria-live="polite"></pre>'
         '<h3>Privé-opvolgnotities meenemen</h3>'
-        '<p>Na voorvertoning kun je afzonderlijk maximaal 24 lokale '
-        'opvolgkeuzes/notities exporteren als JSON, later opnieuw importeren '
-        'voor exact dezelfde issue-URL’s. Dit is geen echte workerclaim. '
+        '<p>Na voorvertoning kun je maximaal 24 <strong>gewijzigde</strong> '
+        'opvolgkeuzes/notities van de momenteel zichtbare gefilterde issues '
+        'exporteren als JSON, later opnieuw importeren voor exact dezelfde '
+        'issue-URL’s. Filter een ander project voor een volgende export. '
+        'Dit is geen echte workerclaim. '
         'Oude notities worden nooit automatisch met een bronstatus samengevoegd.</p>'
         '<button type="button" id="export-followups" disabled>'
         'Download privénotities (.json)</button> '
@@ -299,8 +301,8 @@ followupDownload.addEventListener("click",()=>{
     return;
   }
   // Export only intentionally edited notes/decisions. A portfolio may
-  // contain 144 issues, but private continuity remains capped at 24.
-  const entries=boardItems.map(item=>({
+  // contain 144 issues; visible filters make 24-item private batches possible.
+  const entries=visibleItems().map(item=>({
     issue_url:item.dataset.issueUrl,
     project_id:item.dataset.project,
     followup:item.querySelector("[data-local-followup]").value,
@@ -314,7 +316,7 @@ followupDownload.addEventListener("click",()=>{
   if(entries.length>24){
     feedback.textContent=entries.length+
       " gewijzigde items; maximaal 24 privénotities per export. " +
-      "Gebruik een kleinere selectie of meerdere herstelmomenten.";
+      "Filter op project of beperk de zichtbare issues en probeer opnieuw.";
     return;
   }
   const receipt={
