@@ -59,7 +59,20 @@ python3 scripts/zsentinel_pr_delivery.py --pr cloud:1563 --format html > zsentin
 
 # Eén tot drie bestaande PR's met bronbewijs en eigenaaradvies als JSON:
 python3 scripts/zsentinel_pr_delivery.py --pr cloud:1563 --format json
+
+# Menselijke productoverdracht van bestaande PR's, direct lokaal als Markdown.
+# Inclusief exacte HEAD, moderne + klassieke GitHub-checks, PR-tekst-issueverwijzingen
+# en brongebonden volgende stap (nooit merge- of claimtoestemming).
+python3 scripts/zsentinel_pr_delivery.py \
+  --pr cloud:1563 --format md > /private/operator-only/zsentinel-pr-handoff.md
 ```
+
+De optionele Markdown-overdracht is voor een **bewust gekozen menselijke**
+reviewer of release-eigenaar. Zij bevat uitsluitend gebonden PR-metadata en
+**niet-geverifieerde** issueverwijzingen, geen tekst van privéincidenten,
+tokens, opdrachten, automatische API-schrijfoperaties of machtigingen. Een
+gewijzigde HEAD of ontbrekende statuscontext maakt de bron onvolledig;
+de bevoegde eigenaar moet alsnog de echte GitHub-gates controleren.
 
 Geen automatische periodieke uitvoering: dit is een eenmalig operatorcommando.
 Het gegenereerde HTML-document is volledig lokaal, zonder scripts, netwerk,
