@@ -158,6 +158,9 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .triage ol{padding-left:23px;margin:8px 0;max-height:360px;overflow:auto}.triage li{padding:5px 0;overflow-wrap:anywhere}
 .triage button{background:#243c56;color:#ecf5ff;border:1px solid #7897b6;padding:6px 9px;margin-right:8px}
 .triage small{display:inline-block;margin:2px}
+.comparison{border:1px solid #486f87;border-radius:12px;padding:15px;margin:16px 0;background:#132237}
+.comparison ol{padding-left:25px;max-height:320px;overflow:auto}.comparison li{margin:7px 0;overflow-wrap:anywhere}
+.comparison strong{color:#d7f0ff}
 .brief pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:330px;overflow:auto;background:#091627;padding:12px}
 .stack{display:grid;grid-template-columns:minmax(210px,40%) 1fr;gap:16px}
 .list{list-style:none;padding:0;margin:0;max-height:68vh;overflow:auto}
@@ -200,6 +203,16 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <ul id="projectCounts"></ul>
 <small>Counts describe only this saved, bounded source snapshot. No checked claim, available worker or release-ready status is inferred.</small>
 </section>
+<section class="comparison" aria-label="Compare with a previous offline board">
+<h2>Compare two saved observations</h2>
+<p>Load an earlier private JSON delivery-board snapshot to see new, still-observed
+and no-longer-visible issues. A disappearance is <strong>not evidence of a fix</strong>:
+source coverage, permissions or filters may have changed.</p>
+<label>Earlier source snapshot <input id="baseline" type="file" accept=".json,application/json"></label>
+<button id="clearBaseline" type="button" disabled>Clear comparison</button>
+<p id="comparisonMeta" aria-live="polite">Only this captured board is loaded; no baseline or live comparison.</p>
+<dl id="comparisonStats" class="portfolio"></dl><ol id="comparisonRows"></ol>
+</section>
 <section class="triage" aria-label="Human-only priority and blocker queue">
 <h2>Next-action queue · observed evidence only</h2>
 <p>Prioritizes the currently filtered P0/P1 issues and the work you explicitly parked.
@@ -234,6 +247,9 @@ Downloaded notes belong to the operator and are not authorization to act on queu
 <script>
 const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
+const baselineSchema = 'zsentinel-product-delivery-triage-v1';
+const issuePattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
+let baseline=null;
 const issueList=document.getElementById('issues'),detail=document.getElementById('detail');
 const status=document.getElementById('status');
 const entries=new Map(board.cards.map(c=>[c.issue,c]));
@@ -315,6 +331,88 @@ function refreshTriage(){
   li.append(b,elem('small',c.project+' · '+human+' · '+line(gap,160)));list.append(li);
  });
 }
+function sourceInstant(value){
+ if(typeof value!=='string'||value.length>45||!/(Z|[+-][0-9]{2}:[0-9]{2})$/.test(value))return null;
+ const t=Date.parse(value);
+ return Number.isFinite(t)?t:null;
+}
+function acceptBaseline(data){
+ if(!data||Array.isArray(data)||data.schema!==baselineSchema||
+    data.authorizes_claim!==false||data.authorizes_merge!==false||
+    data.authorizes_deploy!==false||data.automatic_dispatch_enabled!==false||
+    !Array.isArray(data.cards)||data.cards.length>60)throw Error('unsafe baseline');
+ const earlier=sourceInstant(data.observed_at_utc);
+ const current=sourceInstant(board.observed_at_utc);
+ if(earlier===null||current===null||earlier>=current||earlier>Date.now()+300000)
+   throw Error('baseline must predate current observation');
+ const items=new Map();
+ for(const c of data.cards){
+  if(!c||Array.isArray(c)||typeof c.issue!=='string'||!issuePattern.test(c.issue)||
+     items.has(c.issue)||typeof c.project!=='string'||
+     !/^[a-z][a-z0-9_-]{0,63}$/.test(c.project)||
+     !['P0','P1','P2','Unspecified'].includes(c.priority)||
+     c.claim_authorized!==false||c.merge_authorized!==false||c.deploy_authorized!==false||
+     !Array.isArray(c.open_pr_candidates)||c.open_pr_candidates.length>3||
+     !Array.isArray(c.evidence_gaps)||c.evidence_gaps.length>15)
+       throw Error('invalid earlier issue card');
+  if(c.open_pr_candidates.some(p=>typeof p!=='string'||!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]{0,8}$/.test(p))||
+     c.evidence_gaps.some(g=>typeof g!=='string'||g.length>300))
+       throw Error('invalid earlier evidence');
+  items.set(c.issue,{issue:c.issue,project:c.project,priority:c.priority,
+   prs:new Set(c.open_pr_candidates),gaps:c.evidence_gaps.length});
+ }
+ return {observed_at_utc:data.observed_at_utc,items};
+}
+function changesSinceBaseline(){
+ if(!baseline)return [];
+ const now=new Map(board.cards.map(c=>[c.issue,c]));
+ const result=[];
+ for(const c of board.cards){
+  const old=baseline.items.get(c.issue);
+  if(!old){result.push({kind:'new-observation',issue:c.issue,priority:c.priority});continue;}
+  const changed=old.priority!==c.priority||
+    old.prs.size!==new Set(c.open_pr_candidates).size||
+    c.open_pr_candidates.some(p=>!old.prs.has(p))||
+    old.gaps!==c.evidence_gaps.length;
+  result.push({kind:changed?'changed-evidence':'still-observed',issue:c.issue,priority:c.priority});
+ }
+ for(const old of baseline.items.values())if(!now.has(old.issue))
+   result.push({kind:'not-observed',issue:old.issue,priority:old.priority});
+ return result;
+}
+function refreshComparison(){
+ const meta=document.getElementById('comparisonMeta');
+ const stats=document.getElementById('comparisonStats'),list=document.getElementById('comparisonRows');
+ stats.replaceChildren();list.replaceChildren();
+ document.getElementById('clearBaseline').disabled=!baseline;
+ if(!baseline){
+  meta.textContent='Only this captured board is loaded; no baseline or live comparison.';
+  return;
+ }
+ const age=Date.parse(board.observed_at_utc)-Date.parse(baseline.observed_at_utc);
+ meta.textContent='Earlier '+baseline.observed_at_utc+' → current '+board.observed_at_utc+
+  ' · '+(age/3600000).toFixed(1)+' hours between captured observations.'+
+  ' Original earlier source SHA256: '+baseline.sha+
+  '. No issue resolution or deploy inferred.';
+ const events=changesSinceBaseline();
+ const names=[['new-observation','New in current snapshot'],
+  ['changed-evidence','Changed priority/PR/gap observation'],
+  ['still-observed','Still observed'],['not-observed','No longer in current snapshot (NOT resolved)']];
+ for(const [kind,title] of names){
+  const subset=events.filter(e=>e.kind===kind);
+  const dt=elem('dt',title),dd=elem('dd',String(subset.length));stats.append(dt,dd);
+  subset.forEach(e=>{
+   const li=elem('li');
+   li.append(elem('strong',title+' · '),elem('span',e.priority+' '+e.issue));
+   if(e.kind!=='not-observed'){
+    const b=elem('button','Inspect current issue');b.type='button';
+    b.onclick=()=>{saveSelection();invalidateBrief();selected=e.issue;drawList();drawDetail();detail.scrollIntoView({block:'nearest'});};
+    li.append(' ',b);
+   }
+   list.append(li);
+  });
+ }
+}
 function line(value,limit=500){
  return String(value??'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/[<>\x60]/g,'').slice(0,limit).trim();
 }
@@ -331,6 +429,8 @@ function currentBrief(){
   'Source SHA256: '+boardSha,
   'Observed at UTC: '+board.observed_at_utc,
   'Issues selected: '+rows.length+' of '+board.cards.length,
+  'Comparison baseline: '+(baseline?baseline.sha+' observed '+baseline.observed_at_utc:
+   'not loaded; no historical comparison'),
   'Status: observational, claims and releases NOT AUTHORIZED.',
   'MANDATORY: verify active owner/claim, exact-head required CI, security, review and release consent before action.',
   ''
@@ -351,6 +451,14 @@ function currentBrief(){
   if(human?.note)lines.push('Private human note: '+line(human.note,1000));
   lines.push('');
  });
+ if(baseline){
+  const diff=changesSinceBaseline();
+  lines.push('## Historical source comparison (not resolution evidence)','',
+    'Current/previous issue visibility may differ due to coverage, permissions or bounded collectors.',
+    ...['new-observation','changed-evidence','still-observed','not-observed'].map(kind=>
+     kind+': '+diff.filter(item=>item.kind===kind).map(item=>line(item.issue,110)).join(', ')),
+    '');
+ }
  lines.push('No live reassignment, dispatch, queue mutation or production readiness is asserted.','');
  return lines.join('\n');
 }
@@ -414,6 +522,27 @@ document.getElementById('export').onclick=()=>{
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
  status.textContent='Private source-bound handoff downloaded. Nothing was submitted.';
 };
+document.getElementById('baseline').addEventListener('change',async event=>{
+ const file=event.currentTarget.files?.[0];if(!file)return;
+ try{
+  if(file.size<4||file.size>2097152)throw Error('file bounds');
+  if(!globalThis.crypto?.subtle)throw Error('SHA-256 unavailable');
+  const buf=await file.arrayBuffer();
+  const txt=new TextDecoder('utf-8',{fatal:true}).decode(buf);
+  const value=JSON.parse(txt);
+  const checked=acceptBaseline(value);
+  checked.sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buf)),
+    byte=>byte.toString(16).padStart(2,'0')).join('');
+  if(checked.sha===boardSha)throw Error('baseline and current board are identical');
+  baseline=checked;invalidateBrief();refreshComparison();
+  status.textContent='Earlier bounded source loaded locally. Missing issues are not proven resolved.';
+ }catch{
+  status.textContent='Previous source rejected: invalid, unsafe, future, or not earlier than this board.';
+ }finally{event.currentTarget.value='';}
+});
+document.getElementById('clearBaseline').onclick=()=>{
+ baseline=null;invalidateBrief();refreshComparison();status.textContent='Earlier source comparison cleared.';
+};
 document.getElementById('restore').addEventListener('change',async event=>{
  const file=event.currentTarget.files?.[0];if(!file)return;
  try{
@@ -471,7 +600,7 @@ document.getElementById('downloadBrief').onclick=()=>{
  invalidateBrief();
 };
 document.getElementById('print').onclick=()=>window.print();
-refreshPortfolio();drawList();drawDetail();
+refreshPortfolio();refreshComparison();drawList();drawDetail();
 </script></html>
 """
 
