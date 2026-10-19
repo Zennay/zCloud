@@ -1836,7 +1836,11 @@ function zSentinelDeliveryBoard(){
  * The companion offline CLI is in PR #1555. */
 let ZSENTINEL_RETRY_SNAPSHOT=null,ZSENTINEL_RETRY_TREND=null,ZSENTINEL_RETRY_MESSAGE='';
 let ZSENTINEL_RETRY_BUSY=false;
-function retryKnownProjects(){return new Set([...(DATA?.projects||[]),...(DATA?.archived_projects||[])].map(p=>p.id))}
+function retryKnownProjects(){
+  const active=Array.isArray(DATA?.projects)?DATA.projects:[];
+  const archived=Array.isArray(DATA?.archived_projects)?DATA.archived_projects:[];
+  return new Set([...active,...archived].map(project=>project.id));
+}
 function retryTime(value){
   return typeof value==='string'&&value.length<=45&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)
     &&/(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isFinite(Date.parse(value))
