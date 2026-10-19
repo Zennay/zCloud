@@ -11,6 +11,7 @@ import copy
 import json
 import os
 import re
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -147,6 +148,8 @@ def main():
     parser.add_argument("--registry", type=Path, required=True,
                         help="existing canonical projects registry JSON")
     parser.add_argument("--state", help="optional private local dedup ledger")
+    parser.add_argument("--queue-database", type=Path,
+                        help="read existing live SQLite queue pressure with mode=ro only")
     parser.add_argument("--read-product-issues", action="store_true",
                         help="read up to three selected project P0/P1 GitHub issue inboxes")
     parser.add_argument("--issue-project", action="append",
@@ -181,6 +184,14 @@ def main():
                 enriched.pop("issue_inbox", None)
                 source["issue_source"] = "degraded_not_fetched"
                 source["issue_source_reason"] = str(exc)[:80]
+        if args.queue_database is not None:
+            from zsentinel_queue_observer import observe
+            try:
+                enriched["queue_pressure"] = observe(args.queue_database)
+                source["queue_source"] = "local_sqlite_transaction_query_only"
+            except (OSError, ValueError, sqlite3.Error):
+                enriched.pop("queue_pressure", None)
+                source["queue_source"] = "degraded_unavailable_no_mutation"
         routed, updated = plan(enriched, old)
         routed["live_github_read"] = source
         if args.state:
