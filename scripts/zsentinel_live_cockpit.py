@@ -55,7 +55,8 @@ def parse_jobs(raw, names):
 
 def assemble(registry, selected, jobs, queue_path, token=None,
              include_issues=True, include_ci_discovery=True, observe_vps=False,
-             include_notion=False, notion_data_source=None, notion_token=None):
+             include_notion=False, notion_data_source=None, notion_token=None,
+             notion_registry=ROOT / "projects.json"):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
@@ -108,8 +109,9 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         # Status visibility only: Notion rows contain no current file-scope
         # leases and MUST NOT enable the independent task router.
         try:
-            from zsentinel_notion_claim_observer import observe_claims
-            claims = observe_claims(notion_data_source, notion_token)
+            from zsentinel_notion_claim_observer import observe_claims, project_labels
+            labels = project_labels(notion_registry, registry)
+            claims = observe_claims(notion_data_source, notion_token, labels)
             bundle["notion_claims_observation"] = claims
             source["notion"] = "claim_status_observed_no_file_ownership"
             source["notion_claim_coverage"] = claims["coverage"]
@@ -170,6 +172,7 @@ def main():
             notion_data_source=(args.notion_data_source or
                                 os.environ.get("NOTION_QUEUE_DATA_SOURCE_ID")),
             notion_token=os.environ.get("NOTION_TOKEN"),
+            notion_registry=args.registry,
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
