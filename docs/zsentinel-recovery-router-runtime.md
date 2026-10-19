@@ -2,7 +2,7 @@
 
 ## Zelf bestaande open PR's vinden en afmaken (19 oktober)
 
-De PR-afrondingsdesk kan nu zonder bekend PR-nummer de recent
+De PR-afrondingsdesk toont ook maximaal vijf canonieke **same-repository**\nissueverwijzingen uit de bestaande PR-beschrijving als directe links,\nzonder extra GitHub-GETs. Zo is in één oogopslag te zien op welke\nproblemen een PR zich beweert te richten; zo'n tekstverwijzing bewijst\nnoch een open issue, noch eigenaarschap, noch dat de fix echt werkt.\nBij een gewijzigde PR-head worden ook de oude verwijzingen gewist uit\nhet geretourneerde bronbewijs.\n\nDe PR-afrondingsdesk kan nu zonder bekend PR-nummer de recent
 bijgewerkte **bestaande** pull requests uit het project ophalen. Hij
 gebruikt `state=open`, de eerste 20 PR's per canoniek project en
 maximaal **één extra GitHub-GET per project**. Expliciete P0/P1-titels
