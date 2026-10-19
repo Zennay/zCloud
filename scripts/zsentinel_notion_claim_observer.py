@@ -107,7 +107,16 @@ def observe_claims(data_source_id, token, known_projects=None):
     incomplete = False
     opener = urllib.request.build_opener(NoRedirect())
     for index in range(MAX_PAGES):
-        payload = {"page_size": PAGE_SIZE}
+        # Canonical Portfolio Work Queue Status is a Notion SELECT property.
+        # Filter at the source so historic Done/Dropped rows cannot bury
+        # current owners beyond the bounded pagination budget.
+        payload = {
+            "page_size": PAGE_SIZE,
+            "filter": {"or": [
+                {"property": "Status", "select": {"equals": "Claimed"}},
+                {"property": "Status", "select": {"equals": "Running"}},
+            ]},
+        }
         if cursor is not None:
             payload["start_cursor"] = cursor
         request = urllib.request.Request(endpoint,
