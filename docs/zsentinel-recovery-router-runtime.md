@@ -1,5 +1,42 @@
 # zSentinel · Runtime incident router (product-only)
 
+## Privé-opvolgnotities en optioneel Notion actief werk (19 oktober)
+
+De offline HTML-bediening kan na een **bewuste voorvertoning** maximaal
+24 eigen opvolgkeuzes/notities (maximaal 300 tekens per issue) als privé-JSON
+exporteren. Via een apart gekozen importbestand kunnen dezelfde notities
+in een nieuw bronvenster teruggezet worden, **uitsluitend wanneer de
+canonieke GitHub-issue-URL en projectidentiteit overeenkomen**. De import
+vereist expliciete browserbevestiging, weigert dubbele/onbegrensde entries,
+leest maximaal 64 KiB en gebruikt uitsluitend tekstveldwaarden; hij
+raakt geen live queue, GitHub, Notion, worker, browseropslag of netwerk.
+Bij elke wijziging moet de handmatige overdracht opnieuw worden bekeken.
+Deze privénotities zijn *nooit* statusbewijs, toestemming of actieve claim.
+
+De bestaande read-only Notion-claimobserver kan daarnaast bewust worden
+ingeschakeld om te laten zien of er momenteel **actief projectwerk**
+in Notion staat (niet om dat werk over te nemen):
+
+```sh
+# Vereist een al geautoriseerde privé NOTION_TOKEN uit de omgeving.
+# De data-source-UUID moet overeenkomen met de eigen Portfolio Work Queue.
+umask 077
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud --read-notion-claims \
+  --notion-data-source 86e406fd-2c99-4ef5-8058-363c1004b3eb \
+  --format html > /private/operator-only/zsentinel-met-notion.html
+```
+
+Notion is **opt-in**: standaard geen token nodig en geen extra requests.
+De adapter gebruikt het bestaande strikt gebonden maximaal 4 pagina's ×
+100 actieve statussen leesvenster. Alleen projecttellingen/bronmoment komen
+in het herstelbord, geen privé-taaktitels of token. Positieve telling
+verschijnt als *minstens N actief*; een afwezige telling is **ONBEKEND**,
+nooit "project vrij". Notion-statussen bewijzen geen file-scope-claim,
+lease-eigenaar, werktoewijzing of merge-/releaseautorisatie. Zonder
+geautoriseerde Notion-bron is de optionele uitvoer niet beschikbaar; alle
+overige herstelbordfuncties blijven onafhankelijk werken.
+
 ## Echte voortgang tussen twee bronmomenten (19 oktober)
 
 Met `scripts/zsentinel_issue_progress.py` ondersteunt het zelfstandige
