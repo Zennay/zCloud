@@ -65,7 +65,9 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         raise ValueError("select one to three distinct canonical projects")
     if pinned_issues is None:
         pinned_issues = []
-    if pinned_issues and not include_issues:
+    from zsentinel_pinned_issue import validate_pin_specs
+    validated_pins = validate_pin_specs(registry, selected, pinned_issues)
+    if validated_pins and not include_issues:
         raise ValueError("pinned P0/P1 issue reads need GitHub issue discovery")
     pins = parse_jobs(jobs, selected)
     discovery = {"source":"not_requested","coverage":[], "request_count":0,
@@ -132,7 +134,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         "runtime": "not_observed_no_worker_recovery_claim",
         "current_claim_inventory": "unknown_and_not_used_for_routing",
         "max_github_gets": 2*len(pins) + (3*len(selected) if include_issues else 0)
-                           + discovery["request_count"],
+                           + discovery["request_count"] + len(validated_pins),
         "ci_discovery":discovery,
         "github_budget_is_per_invocation_not_global": True,
     }
