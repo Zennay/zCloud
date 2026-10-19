@@ -1329,3 +1329,52 @@ krijgt de oorspronkelijke éénmalige read-only inspectie.
 Voor beide CLI-ingangen geldt: `--github-only` en `--database` mogen
 niet tegelijk worden opgegeven. De vlag is nooit een stille databasefout-
 fallback; geen fout wordt tot een gezonde nulstatus opgewaardeerd.
+
+
+### 19 oktober — exacte P0-issues vastzetten, ook buiten de GitHub-steekproef
+
+Het venster met de oudste en recentst bijgewerkte open issues is bewust
+begrensd; een ouder P0-incident mag daarom niet verdwijnen uit de cockpit
+en ook niet fictief als hersteld gelden. Beide zSentinel-operingangen hebben
+nu dezelfde optionele **maximaal drie exacte GitHub issue GETs**:
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 --skip-ci-discovery \
+  --pin-issue cloud:1326 --pin-issue cloud:1523 --format text
+
+python3 scripts/zsentinel_live_cockpit.py \
+  --project cloud --github-only --skip-ci-discovery \
+  --pin-issue cloud:1326 --pin-issue cloud:1523 --format html
+```
+
+- Elke `--pin-issue PROJECT:NUMBER` moet een **uniek** canoniek
+  project in het gekozen venster zijn. Ongeldige, herhaalde,
+  buiten-venster of meer dan drie referenties falen **vóór** een GitHub
+  netwerkverzoek. De functie is niet toegestaan met
+  `--skip-github-issues`.
+- Extra bron: exact `GET /repos/{owner}/{repo}/issues/{id}`, met
+  geverifieerde URL, nummer, open/gesloten status en brontijd.
+  Pull requests kunnen niet als issue worden ingelezen, QA-only werk
+  blijft uitgesloten; assignees zijn GEEN workerclaims.
+- Exact gepinde open P0's hebben voorrang bij de router die maximaal acht
+  bestaande issue-kandidaten toont. Zichtbare eigenaar-only issues
+  verschijnen **in de eerste blocker-sectie**, geen automatische
+  `attempts` reset, workerclaim, betalingswijziging of runneractie.
+- Bij `closed` meldt de bron uitsluitend dat het **issue** gesloten
+  is; een runner, job of worker is daarmee niet bewezen hersteld.
+  Bij 403/rate-limit, foutieve identiteit of brononbeschikbaarheid
+  wordt **geen gesloten-status geconstrueerd**. HTML, tekst en JSON
+  tonen de echte afgebakende `pinned_issue_receipts` / bronfoutstatus.
+- `max_github_gets` telt deze maximaal drie optionele GETs mee.
+  Alle bronantwoorden blijven read-only en bron/operationeel bewijs
+  worden uitdrukkelijk onderscheiden.
+
+**Werkelijke operatoruitvoering op de verbonden VPS via geïsoleerde
+GitHub source-checkout:** CLI met twee gepinde cloud P0-issues en een
+expliciet overgeslagen CI-discovery, `--format text`, **exitcode 0**.
+De actuele GitHub-issuebron rapporteerde exact `cloud#1326: EXACT OPEN`
+en `cloud#1523: EXACT OPEN`; beide stonden als afzonderlijke P0's
+boven het reguliere P1-productwerk. Dit is bewijs van de actuele
+**open issue-status** en de werking van de interface, niet van de
+onderliggende VPS-/GitHub-billingstatus of herstelde workers.
