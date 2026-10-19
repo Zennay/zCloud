@@ -186,8 +186,14 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 raise ValueError("invalid active project status counter")
         for pid in summary:
             summary[pid]["notion_active_status_min"] = counts.get(pid, 0)
+    unassigned_hosted_projects = {
+        item.get("project_id") for item in incidents
+        if isinstance(item, dict) and item.get("problem") == "github_job_unassigned"
+    }
     for row in summary.values():
-        if not complete:
+        if row["project_id"] in unassigned_hosted_projects:
+            row["next_action"] = "selfhosted_unassigned_owner_review"
+        elif not complete:
             row["next_action"] = "queue_source_incomplete_owner_must_review"
         elif row["expired_owner_leases"]:
             row["next_action"] = "request_owner_lease_review_never_release"
@@ -336,6 +342,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             raise ValueError("unsupported GitHub coverage class")
         action_text = {
             "queue_source_incomplete_owner_must_review": "Wachtrij incompleet; bron-/ownercontrole nodig",
+            "selfhosted_unassigned_owner_review": "P0: GitHub runnerlabels, repo-toegang en listener door eigenaar controleren",
             "request_owner_lease_review_never_release": "Vraag leasebeoordeling; niet vrijgeven",
             "inspect_claim_churn_no_auto_retry": "Onderzoek claimchurn; geen retry",
             "github_source_not_scanned_next_window": "GitHub onbekend; volgend venster",
