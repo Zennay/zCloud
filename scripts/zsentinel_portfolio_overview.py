@@ -740,7 +740,7 @@ def main():
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             if args.github_only:
                 lines.append("QUEUE: NIET WAARGENOMEN (--github-only); geen nulmeting, vrijgave of leasebewijs.")
-            if args.pin_issue:
+            if provenance.get("pinned_requested"):
                 lines.append(pinned_receipts_text(provenance))
             lines.append(blocker_board_text(unblock))
             lines.append("VOLGENDE PROBLEMEN (advies; eigendom en scope NIET geverifieerd):")
