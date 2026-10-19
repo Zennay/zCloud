@@ -251,8 +251,12 @@ def branch_ownership_html(source):
             '<p><strong>' + ("MOGELIJKE PADOVERLAP" if entry["potential_overlap"]
                             else "Geen overlap in opgegeven scope gevonden") +
             '</strong> · actief eigendom NIET bevestigd.</p>'
-            '<details><summary>Gewijzigde paden bekijken</summary><ul>' +
-            paths + '</ul></details></article>'
+            '<details><summary>Gewijzigde paden bekijken</summary>'
+            + ('<p class="muted">Toont maximaal 100 van ' +
+               str(entry["path_count"]) + ' brongevalideerde paden; '
+               'overlapanalyse gebruikt het volledige bewijs.</p>'
+               if entry.get("paths_truncated_for_view") else '')
+            + '<ul>' + paths + '</ul></details></article>'
         )
     return (
         '<section><h2>Recente branches zonder open PR · read-only</h2>'
