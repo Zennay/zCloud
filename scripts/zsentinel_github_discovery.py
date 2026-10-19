@@ -112,17 +112,24 @@ def discover(registry, selected, token=None):
         root = f"https://api.github.com/repos/{canonical_repository}"
         candidates = []
         checked = 0
+        incomplete_windows = []
         try:
             # Jobs can remain queued even after other jobs make the *workflow*
             # in_progress. Inspect both workflow windows before old failures;
             # otherwise a stuck self-hosted job can disappear from P0 view.
             for status in RUN_WINDOWS:
-                request_count += 1
-                run_ids = recent_runs(root, canonical_repository, token, status)
-                for run_id, sha in run_ids:
+                try:
                     request_count += 1
-                    checked += 1
-                    candidates.extend(run_job_candidates(root, run_id, sha, token, status))
+                    run_ids = recent_runs(root, canonical_repository, token, status)
+                    for run_id, sha in run_ids:
+                        request_count += 1
+                        checked += 1
+                        candidates.extend(run_job_candidates(root, run_id, sha, token, status))
+                except (OSError, ValueError):
+                    # Keep independently observed exact job candidates, but
+                    # explicitly mark any missed workflow window INCOMPLETE.
+                    # No source failure is promoted to an all-clear.
+                    incomplete_windows.append(status)
                 # A queued-workflow candidate must not suppress discovery
                 # of a stronger self-hosted queue in a RUNNING workflow.
                 # Once both waiting windows were sampled, failures are a
@@ -131,8 +138,12 @@ def discover(registry, selected, token=None):
                     break
             if not candidates:
                 coverage.append({
-                    "project_id": pid, "status": "no_actionable_job_in_sampled_windows",
-                    "run_pages_checked": checked, "authoritative_all_clear": False
+                    "project_id": pid, "status": (
+                        "degraded_unavailable" if incomplete_windows
+                        else "no_actionable_job_in_sampled_windows"),
+                    "run_pages_checked": checked,
+                    "incomplete_windows": incomplete_windows,
+                    "authoritative_all_clear": False
                 })
                 continue
             candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
@@ -150,9 +161,12 @@ def discover(registry, selected, token=None):
                 receipt["conclusion"] = conclusion
             receipts[pid] = receipt
             coverage.append({
-                "project_id": pid, "status": "selected_one_source_bound_job",
+                "project_id": pid, "status": (
+                    "selected_one_source_bound_job_partial_window" if incomplete_windows
+                    else "selected_one_source_bound_job"),
                 "run_id": run_id, "job_id": job_id,
                 "run_pages_checked": checked, "workflow_status_window": window,
+                "incomplete_windows": incomplete_windows,
                 "authoritative_all_clear": False
             })
         except (OSError, ValueError):
