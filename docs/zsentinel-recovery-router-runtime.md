@@ -55,6 +55,17 @@ This is an **on-demand bounded live GitHub read**, not a daemon and not a comple
   "task_inventory_complete": true,
   "claim_observed_at": "2026-10-19T10:29:00Z",
   "task_observed_at": "2026-10-19T10:29:00Z",
+  "resources": {
+    "source": "trusted_readonly_vps_snapshot",
+    "observed_at": "2026-10-19T10:29:00Z",
+    "vps": {
+      "cores": 6,
+      "load_5m": 1.2,
+      "available_memory_mib": 4096,
+      "available_swap_mib": 1024,
+      "free_disk_gib": 20
+    }
+  },
   "issue_inbox": null,
   "active_claims": [{"project_id": "supa", "active": true, "paths": ["src/prices"]}],
   "tasks": [{
@@ -66,6 +77,7 @@ This is an **on-demand bounded live GitHub read**, not a daemon and not a comple
     "qa_only": false,
     "human_gate": false,
     "active_owner": false,
+    "requires_vps": false,
     "required_gates": ["none"],
     "depends_on_incidents": [],
     "paths": ["src/recipes"]
@@ -84,6 +96,7 @@ A task suggestion requires **separate fresh (within 5 minutes)** `claim_observed
 - **Incident identity:** Stable local SHA-256 key over project, kind, exact commit and GitHub run/job identity when present. A job that disappears from a later snapshot is marked `not_observed_needs_reconciliation`, **never automatically resolved**. Incoming optional prior state is schema-checked; ledger saturation refuses truncation.
 - **Prioritization:** Verified GitHub-hosted billing admission (including explicit no-steps evidence) is separately P0/human-only and blocks suggestions requiring `github_hosted`. Verified PR owner-approval waits are human-only, never retried. Explicit `github.verified_approval_wait=true` on a fresh `waiting` or `pending` job creates a distinct human-approval card **without** misclassifying it as an unassigned runner; absent independent verification, a waiting/pending job remains a normal wait. P0 unassigned GitHub queued runner jobs receive a *human-action-required* review target 2 hours from initial observation, not an unapproved runner restart. P1 workflow failure or missing runtime progress receives a read-only diagnosis target 12 hours from first observation. Targets are advisory, not Notion deadlines or automatic claims.
 - **Issue-first inspection:** Pass a complete JSON result from the existing `scripts/zsentinel_product_issue_inbox.py` collector as optional `issue_inbox` (or omit/null to disable). Up to eight P0/P1 non-QA issues appear with canonical GitHub links and existing PR candidates to inspect *first*. The original collector's partial/degraded/unavailable/truncation/denial flags and observation age remain visible; no GitHub assignee/PR is treated as a live claim. This is an inspection list, not an automatic eligible queue.
+- **Capacity governance:** Every self-hosted/VPS-dependent candidate requires a trusted **at most 3 minutes old** read-only VPS snapshot including cores, 5-minute load, available memory, swap and disk. It is withheld when 5-minute load exceeds 1.5× cores, available memory falls below 1 GiB, swap below 256 MiB, free disk below 2 GiB, or evidence is missing/stale. `vps_resource_admission` explicitly distinguishes unknown, stale, overloaded and *advisory* headroom. Suggestions not requiring self-hosted compute must explicitly set `requires_vps=false` instead of relying on unknown destination. Resource headroom never authorizes a worker claim, runner restart or deploy.
 - **Independent delivery:** At most five P0 → P3 file-disjoint candidate tasks are proposed, without modifying queue ownership. Required CI/review/merge/privacy/device/security/finance gates remain independent. A recommendation is **never** an authorization to edit an owner's files or dispatch a job.
 - **Wear OS escalation feed:** Machine JSON also includes at most five P0-first `watch_alert_candidates` **only** for incidents with `human_escalation=true` (e.g. verified billing admission, genuine unassigned runner, verified owner approval). Stable incident-derived `alert_id` supports downstream idempotency. `delivered=false` and `watch_delivery_performed=false` are deliberate: this CLI never contacts a watch, schedules a notification or marks alerts delivered. Only the separately authorized watch integration may perform and acknowledge push.
 - **Operator view:** Up to three bounded lines per active incident: *problem*, *action/owner*, *status and target review*. Machine output explicitly states no mutations/claims/CI retries/deployment. Historical absence and CI-green alone are never recovered.
