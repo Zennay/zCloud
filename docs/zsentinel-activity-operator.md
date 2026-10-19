@@ -69,6 +69,20 @@ Issue [#1305](https://github.com/Zennay/zCloud/issues/1305) remains open
 until the complete versioning contract and current live served bytes can be
 reviewed by its owner.
 
+## Operator JSON import: preserving useful evidence
+
+Issue-inbox and GitHub Activity offline `.json` imports now follow the same
+non-destructive failure contract as the branch-import panel. Files larger than
+1 MiB, malformed JSON and receipts failing the pre-existing strict schema
+validation are rejected **without clearing any previously accepted sample**.
+The panel displays the import error and explains that the older evidence
+remains; only the explicit **Clear** button discards it. A validated new import
+replaces the panel's imported sample as requested.
+
+Source-only safeguards protect operator evidence during provider outages and
+when manually switching files; none grants claim ownership, merges, deployment
+or a verified runner/service recovery.
+
 ## PR lifecycle provenance from bounded GitHub samples
 
 A manually requested GitHub `pulls?state=all` source now retains separate,
