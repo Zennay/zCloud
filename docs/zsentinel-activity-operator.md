@@ -76,8 +76,13 @@ non-destructive failure contract as the branch-import panel. Files larger than
 1 MiB, malformed JSON and receipts failing the pre-existing strict schema
 validation are rejected **without clearing any previously accepted sample**.
 The panel displays the import error and explains that the older evidence
-remains; only the explicit **Clear** button discards it. A validated new import
-replaces the panel's imported sample as requested.
+remains; only the explicit **Clear** button discards it. A validated new import replaces **only the projects explicitly covered
+by that file**, preserving already observed other projects (up to the existing
+eight-project source budget). A new file with an older source observation
+for an already covered project is rejected to avoid silently rolling back
+fresh evidence; use **Clear** to intentionally start a different historical
+observation. GitHub events retain the existing fair, 200-event limit and issue
+rows the existing 150-row bound. No raw provider payload is persisted.
 
 Source-only safeguards protect operator evidence during provider outages and
 when manually switching files; none grants claim ownership, merges, deployment
