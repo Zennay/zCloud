@@ -1213,6 +1213,14 @@ en geen tweede queue-transactie nodig.
   Onafhankelijke open productissue-kandidaten linken alleen naar het
   canonieke GitHub-repository van hun project; cross-repo verwisseling
   wordt geweigerd. De offline HTML-oplossing doet zelf geen netwerkverzoek.
+- Ook **bestaande PR-afrondingsgates** kunnen nu vóór de issuebacklog worden
+  getoond: bij optioneel reeds ingeschakelde `--inspect-pr`,
+  `--inspect-referenced-prs` of `--discover-open-prs` toont het eerste
+  werkbord een directe bestaande PR-link en de concrete brongebonden
+  vervolgactie op dezelfde exacte-head check-/reviewsteekproef. Het
+  vermeldt nadrukkelijk wanneer bron of required-check dekking onvolledig
+  is. Een PR-verwijzing neemt nooit een actieve eigenaar over en opent
+  geen tweede PR. De reeds bestaande opt-in GET-limieten blijven gelijk.
 
 Dit productoverzicht vervangt **niet** PR #1565, waarin een aparte eigenaar
 de echte `server.py` workerprompt voor blocker-first volgorde bouwt.
