@@ -59,3 +59,29 @@ in the file, so do not put it on a public issue or share it without review.
 The extension uses only inline static UI code in the existing HTML output.
 No live web browser automation, service route, SQLite, git action, worker
 dispatcher, queue, new dependencies, QA suites or test runs were added.
+
+## P0/P1 human triage queue and disposition filters (19 October)
+
+The offline Workbench now exposes a **Next-action queue** below the snapshot
+portfolio. It displays currently filtered P0/P1 issue cards plus lower-priority
+items that the operator explicitly marked as **park-blocker**. The queue uses
+the same local, bounded immutable source cards, sorts P0 before P1 and shows
+the first available recorded evidence gap together with the **human-only**
+disposition. Clicking one entry opens the existing issue details, its original
+GitHub issue, candidate PR links and missing evidence. This is a *navigation
+tool*, not a scheduler or admission gate.
+
+The **Human disposition** filter works together with existing project, priority
+and text filters and controls both the queue and the exact-source Markdown
+briefing preview. The default "Investigate / not yet reviewed" includes cards
+without a saved choice; **Candidate only** explicitly means "verify live
+claims", never that a worker has already been assigned or may claim it.
+Changing a disposition invalidates the current Markdown preview and updates
+the displayed work. Imported private handoffs repopulate the same filters and
+queue from their original board SHA. A missing P0/P1 card means only that the
+saved snapshot/filter has none; not that the real GitHub portfolio is clear.
+
+Neither action calls external APIs or modifies Notion, GitHub, SQLite, an
+active lease, a runner, or production. The user must still independently check
+real ownership, exact-head required CI, review, permissions and serialized
+release approval. The source changes do not create or run QA test suites.
