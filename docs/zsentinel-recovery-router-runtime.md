@@ -36,6 +36,44 @@ python3 scripts/zsentinel_live_cockpit.py \
   --project cloud --skip-github-issues --skip-ci-discovery --format text
 ```
 
+### Actuele Notion-werkstatus zichtbaar, zonder eigendomsclaim (opt-in)
+
+De cockpit kan nu de bestaande Notion Portfolio Work Queue via de officiële
+Notion **read/query** data-source API raadplegen. Dit is een **read-only POST**,
+geen taakmutatie. Opt-in, omdat deze integratie nooit stilzwijgend gebruikers-
+of workerstatus mag aannemen:
+
+```bash
+# Set these privately in the operator session; never commit or echo tokens:
+export NOTION_TOKEN=<private-read-capable-integration-token>
+export NOTION_QUEUE_DATA_SOURCE_ID=<authorized-portfolio-queue-data-source-uuid>
+
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --project cloud --project supa \
+  --read-notion-claims --format html > /private/operator-only/zsentinel.html
+
+# May be combined with --observe-vps-capacity only on the intended Linux VPS.
+```
+
+De adapter `scripts/zsentinel_notion_claim_observer.py` leest maximaal vier
+Notion-pagina's van elk honderd records met begrensde body en acht seconden
+timeout per pagina, zonder redirect. Alleen `Claimed`/`Running` worden
+in de privé-cockpit weergegeven (maximaal dertig zichtbare regels met totaal
+en pagineringswaarschuwing). Er verschijnen **geen** Notion-pagina-ID's,
+relatiedoelen, bearer tokens of provider-response dumps. Notion 401/403,
+verbroken netwerk, ongeldige configuratie, onvolledige paginering of gewijzigde
+API-schema's zijn niet bewijs van een lege work queue.
+
+**Autoriteitsgrens:** zelfs een volledig verse Notion-werkstatuslijst vertelt
+niet welke concrete repositorypaden, live worker lease-epochs of filesystem
+locks een andere eigenaar vandaag heeft. Daarom blijven
+`claim_inventory_complete=false`, `task_inventory_complete=false` en alle
+automatische onafhankelijke werkvoorstellen geblokkeerd. Een Notion-werkitem
+met de status `Done` bewijst evenmin dat een PR door verplichte gates is
+gekomen of daadwerkelijk gedeployed is. De bronadapter mag nooit claims
+vrijgeven, taken dispatchen, reviewers passeren of lopende writers overnemen.
+
 ### Host capacity in the same incident cockpit (opt-in)
 
 On the **actual intended Linux VPS**, operators can add a fresh local capacity
