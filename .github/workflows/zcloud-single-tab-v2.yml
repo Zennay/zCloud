@@ -48,11 +48,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  tests:
-    if: >-
-      github.repository == 'Zennay/zCloud' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+  untrusted-pr:
+    if: github.event_name == 'pull_request' && github.repository == 'Zennay/zCloud' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -74,6 +71,57 @@ jobs:
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - name: Install pinned Node 24 for hosted regressions
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Validate v2 one-tab ownership and High-thinking gate
+        run: |
+          set -euo pipefail
+          node --check firefox-extension/background.js
+          node --check firefox-extension/worker-controller-v2.js
+          node --check public/zcloud-worker-v2-engine.js
+          node --check public/zcloud-worker.user.js
+          node tests/test_single_tab_v2_crash_recovery.js
+          node tests/test_single_tab_v2_auto_heal.js
+          node tests/test_v2_auto_open_missing_worker_ids_20261013_w4.js
+          node tests/test_single_tab_worker_v2.js
+          node tests/test_single_tab_v2_thinking_high.js
+          node tests/test_v2_workmode_high_controls.js
+          node tests/test_single_tab_v2_cycle.js
+          node tests/test_v2_dispatch_recovery_20261013_w3.js
+          node tests/test_worker_tab_identity_guard.js
+          node tests/test_worker_tab_reuse.js
+          node tests/test_firefox_recovery_contract.js
+          python3 -m unittest tests.test_violentmonkey_runner tests.test_zcloud_single_tab_v2_ci_quarantine_20261014
+          echo 'ONE_TAB_PER_WORKER_V2_TESTS_GREEN=1'
+
+
+  trusted-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    concurrency:
+      group: zcloud-one-tab-main-vps
+      cancel-in-progress: false
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact immutable source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+      - name: Prove exact canonical source before executing one-tab code
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_REPOSITORY" = "Zennay/zCloud"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Install pinned Node 24 for trusted main checks
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
