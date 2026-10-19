@@ -383,8 +383,10 @@ an incomplete global list. Neither symptom was proof of no work.
 
 The existing browser now retains up to **24 canonical project** read-only
 local event streams in ephemeral tab memory, up to 80 events each, and
-fairly reconstructs at most **240 displayed local events** across all
-visible projects. A successful empty project read is remembered as empty;
+fairly selects at most **240 displayed local events** across all
+visible projects and then orders the selected events by their actual source
+timestamps (newest first). Quiet projects remain represented, but the
+resulting **Recent activity** view is no longer misleadingly out of time order. A successful empty project read is remembered as empty;
 a different project's refresh never evicts it or other scoped histories.
 When a local GET fails, its last successful source is retained and explicitly
 labelled as an older observation, not current success. Before a project has
