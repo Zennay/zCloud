@@ -33,9 +33,13 @@ De adapter gebruikt het bestaande strikt gebonden maximaal 4 pagina's ×
 in het herstelbord, geen privé-taaktitels of token. Positieve telling
 verschijnt als *minstens N actief*; een afwezige telling is **ONBEKEND**,
 nooit "project vrij". Notion-statussen bewijzen geen file-scope-claim,
-lease-eigenaar, werktoewijzing of merge-/releaseautorisatie. Zonder
-geautoriseerde Notion-bron is de optionele uitvoer niet beschikbaar; alle
-overige herstelbordfuncties blijven onafhankelijk werken.
+lease-eigenaar, werktoewijzing of merge-/releaseautorisatie. Zonder geautoriseerde Notion-bron of bij providerfout wordt de
+Notion-dekking expliciet `unavailable`, blijven de projecttellingen
+`ONBEKEND` en wordt de eenmalige uitvoer met een niet-successtatus
+afgerond, maar **de reeds opgehaalde GitHub-productissues en bestaande
+PR's blijven zichtbaar/exporteerbaar**. Externe foutmetadata of tokens
+worden niet getoond. Zonder de optionele Notion-vlag is deze afhankelijkheid
+helemaal niet van toepassing.
 
 ## Echte voortgang tussen twee bronmomenten (19 oktober)
 
