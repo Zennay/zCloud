@@ -67,3 +67,31 @@ python3 scripts/zsentinel_product_delivery_delta.py \\
 ```
 
 The delta command requires two distinct, monotonically timestamped snapshots no more than seven days apart with the **same project inventory scope**. It reports newly **observed** issues, issues **absent from a later bounded sample**, PR-reference changes, and per-project increases/decreases in active queue entries, claim-cycle pressure and expired leases. It never interprets a missing issue as closed, a new PR reference as merged, a lower claim count as success, a branch name as ownership or an empty operator claims list as a lease release. Missing queue data is explicitly `unknown`, not zero. Like the board, its HTML is fully offline and its report publication is create-only. It contains no automation, polling, GitHub requests, SQLite or production mutation.
+
+
+## Exact-head GitHub PR blockers (optional; no release authority)
+
+The delivery board can now consume a fourth independent source: exact commit-level GitHub PR observations from `scripts/zsentinel_pr_delivery_observation.py`. It reads **only GET** on the canonical `api.github.com` host. It never requests approvals, dispatches CI, merges, deploys or modifies a worker.
+
+```sh
+# Public repository queries work where GitHub allows anonymous API access.
+# Optional: provide a user-approved read-only GITHUB_TOKEN through normal
+# environment handling; never include the credential in the command line.
+python3 scripts/zsentinel_pr_delivery_observation.py \
+  --target 'Zennay/zCloud#1556' \
+  --target 'Zennay/Haxlab#579' \
+  --output ./pr-head-observations.json
+
+python3 scripts/zsentinel_product_delivery_board.py \
+  --inbox ./issue-inbox.json \
+  --prs ./pr-head-observations.json \
+  --format html --output ./delivery-with-pr-gates.html
+```
+
+Each target requires a canonical owner/repository and numeric PR identifier; at most **five** separate targets / **20** bounded read-only API calls per invocation. The collector opens only the immutable PR head, exact-SHA check-runs, exact-SHA legacy statuses and independent reviewer submissions, rejects malformed/partial or paginated responses, and publishes the observation file with the board's create-only private file writer. No PR body, arbitrary check output, commit message, prompt, raw token, user data or issue discussion is exported.
+
+The board displays the exact observed PR SHA, check observations and count of independent observed approvals alongside explicit release unknowns. It never calls the state `release-ready`, even when GitHub says `mergeable` and all observed checks succeeded, because required branch protection, Code Owner/review freshness, active Notion claims, production gates and owner release authorization are *not* established by these endpoints. A newer branch commit invalidates the old exact-head observation until the collector is run again. Snapshots >24 hours old or >6 hours apart from the issue inbox are rejected as decision context (not erased).
+
+The offline delta command also identifies when the observed PR **head SHA**, check result or review count changed, without inferring merge, issue closure, reviewer release approval or worker recovery. The original three source reporters (#1539/#1554/#1555) remain separate until their own CI/independent review/release gates are satisfied. A hosted GitHub permission/rate/billing refusal is surfaced as an incomplete evidence error; no token, billing or privileged workaround is attempted.
+
+**Capability boundaries:** no paid runner dispatch, no automatic claim, no review assignment, no CI retrigger, no bypass of protected main, no production promotion and no QA suite written or manually executed.
