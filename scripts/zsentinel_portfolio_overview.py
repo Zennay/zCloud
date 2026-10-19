@@ -21,7 +21,7 @@ from urllib.parse import quote
 from zsentinel_product_issue_inbox import canonical_projects
 from zsentinel_queue_observer import observe
 from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
-from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic
+from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic, acquire_private_ledger_lock
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html
 from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
@@ -488,6 +488,7 @@ def main():
                         help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
     window_lock = None
+    ledger_lock = None
     try:
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
@@ -501,6 +502,8 @@ def main():
             if any(item is not None and args.desk_output.resolve() == item.resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
+        if args.state is not None:
+            ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
         windows = project_windows(registry)
         previous_window_state = None
@@ -679,6 +682,8 @@ def main():
     finally:
         if window_lock is not None:
             window_lock.close()
+        if ledger_lock is not None:
+            ledger_lock.close()
     return 0
 
 
