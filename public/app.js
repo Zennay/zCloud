@@ -46,6 +46,11 @@ function mergeLocalProjectActivity(fallback=ACTIVITY){
     }
     if(!advanced)break;
   }
+  // Fairly choose which projects have a place first; then show selected events
+  // in honest source-time order. A noisy project still cannot monopolize the
+  // bounded list, but "recent activity" is no longer visually out of sequence.
+  merged.sort((a,b)=>(Date.parse(b.ts)||0)-(Date.parse(a.ts)||0)
+    ||a.project.localeCompare(b.project)||String(a.id).localeCompare(String(b.id)));
   return merged;
 }
 function activityCoverageText(){
