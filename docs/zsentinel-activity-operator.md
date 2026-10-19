@@ -315,6 +315,22 @@ records, keeps existing project/priority filtering and never triggers an extra
 VPS read. **Show first 12** collapses the view again; Clear removes the
 evidence and resets both expansion controls.
 
+Use **Export snapshot .json** immediately after **Read VPS queue** to save a
+portable, redacted `zsentinel-retry-incident-v1` source observation. It
+reconstructs only the normalized and validated project/priority/status counts,
+up to 100 pseudonymous queue references and explicit sample-completeness
+metadata; arbitrary API fields, raw queue identifiers, assignment records,
+titles, prompts and credentials are **not** copied. Re-import this JSON later
+as one of the two before/after snapshots or pass two saved files to the
+standalone offline trend CLI in PR #1555. All file downloads are deliberate
+browser-local actions without storage on the VPS.
+
+A new trusted VPS reading may update the view only if it is strictly newer
+than the last observation of the **same scope**. Re-importing an older trend
+likewise requires clearing its existing comparable history. This prevents
+temporary source-clock regressions or stale responses from silently erasing
+the most recent operator evidence.
+
 Use **Export offline trend .json** to download a sanitized canonical
 `zsentinel-retry-trend-v1` record generated from previously validated operator
 observations. This retains only canonical project IDs, UTC source times, aggregate
