@@ -94,6 +94,39 @@ ze authoriseren nooit claim, automatische retry, merge of productieactie.
 De browser heeft een extra filter voor bronverandering en neemt de
 bewuste vergelijking op in een lokale handmatige overdracht.
 
+## Brongebonden conceptwerkpakket voor een bevoegde worker (19 oktober)
+
+De zelfstandige én gecombineerde offline cockpit laten nu **expliciet**
+maximaal twaalf productissues selecteren als kandidaat-werkpakket.
+Echte owner-only infrastructuurissues (#1326 runner, #1523 billing)
+hebben geen werkpakket-selectie. De operator ziet eerst de volledige
+JSON in een **afzonderlijke voorvertoning**. Daarna kan uitsluitend door
+een tweede expliciete klik een lokale
+`zsentinel-concept-werkpakket.json` worden gedownload.
+
+Het pakket `zsentinel-product-work-packet-draft-v1` bevat per issue
+canoniek project, originele GitHub-issue-URL, originele titel,
+prioriteit, gewenste vervolgrichting, bijbehorend bronmoment,
+onbevestigde bestaande PR-links en (bij meerdere vensters) het
+oorspronkelijke bronvenster. De JSON vermeldt altijd:
+
+- `requires_current_claim_file_ci_review_check=true`: de volgende
+  worker of bevoegde operator moet eigenaren, actieve Notion-/runtime-
+  claims, bestandscope, bestaande PRs en required CI opnieuw controleren.
+- `owner_verified=false`, `permission_to_dispatch=false`,
+  `permission_to_merge=false`, `claims_taken=false` en
+  `writes_performed=false`: een pakket **is geen claim, goedkeuring,
+  workflow-dispatch of release**.
+
+Filter- en selectiewijzigingen maken het voorbeoordeelde pakket
+ongeldig. Als een voorheen recent bronmoment tijdens de bediening
+ouder dan tien minuten wordt, is een nieuwe expliciete (als historisch
+gemarkeerde) voorvertoning vereist. Pakketexport vindt uitsluitend
+lokaal in het huidige browsertabblad plaats: geen localStorage,
+providerrequest, tokens of automatische workerworkflow. Het bestaande
+veiligheids- en productbeleid blijft leidend wanneer iemand het
+pakket later bewust in een andere tool aanbiedt.
+
 ## Portfolio-breed gecombineerd productherstel (19 oktober)
 
 Het nieuwe `scripts/zsentinel_portfolio_workboard.py` combineert één tot
