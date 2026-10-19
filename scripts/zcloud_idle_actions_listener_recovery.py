@@ -115,7 +115,7 @@ def runner_process_count(lane: str) -> int:
             count += 1
         elif (user == UNITS[lane][1]
               and ("Runner.Listener" in command or "Runner.Worker" in command)
-              and not re.search(r"/[A-Za-z0-9_./-]+/bin/Runner\\.(?:Listener|Worker)", command)):
+              and not re.search(r"/[A-Za-z0-9_./-]+/bin/Runner\.(?:Listener|Worker)", command)):
             # A relative/unknown runner command cannot be attributed safely.
             count += 1
     return count
@@ -126,7 +126,7 @@ def service_unit_matches(unit: str, lane: str, expected_owner: str) -> bool:
     output = call("systemctl", "show", unit, "--property=ExecStart",
                   "--property=User", "--no-pager")
     props = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-    starts = re.findall(r"(?:^|\\s)path=([^\\s;]+)", props.get("ExecStart", ""))
+    starts = re.findall(r"(?:^|\s)path=([^\s;]+)", props.get("ExecStart", ""))
     return props.get("User") == expected_owner and starts == [RUNNER_ROOTS[lane] + "runsvc.sh"]
 
 def service_state(unit: str) -> tuple[str, str]:
