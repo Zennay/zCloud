@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from zsentinel_recovery_router import read_json, write_json_atomic
@@ -48,13 +48,60 @@ def select_next(windows, registry, path):
         raise ValueError("invalid private window cursor; refusing silent rotation")
     last = previous.get("last_coverage")
     if (not isinstance(last, dict) or len(last) > 3
-            or any(k not in registry or v not in VALID_COVERAGE for k, v in last.items())):
+            or any(not isinstance(k, str) or len(k) > 48
+                   or v not in VALID_COVERAGE for k, v in last.items())):
         raise ValueError("invalid cursor source coverage")
+    # Registry changes invalidate every old sample, even if an old project
+    # was removed. Do not accidentally keep a past project as current.
     if previous["registry_sha256"] != identity:
         return 0, previous, "registry_changed_start_new_cycle"
+    _trusted_history(previous, registry)
     if previous["next_window"] >= len(windows):
         raise ValueError("window cursor index outside registry")
     return previous["next_window"], previous, "private_round_robin"
+
+
+def _trusted_history(previous, registry):
+    """Validate bounded historical attempts, never promote them to live health."""
+    if previous is None:
+        return {}
+    source = previous.get("attempt_history", {})
+    if not isinstance(source, dict) or len(source) > 32:
+        raise ValueError("invalid private source history")
+    now = datetime.now(timezone.utc)
+    history = {}
+    for pid, row in source.items():
+        if (pid not in registry or not isinstance(row, dict)
+                or row.get("coverage") not in VALID_COVERAGE
+                or not isinstance(row.get("at_utc"), str)
+                or len(row["at_utc"]) > 40):
+            raise ValueError("invalid historic project receipt")
+        try:
+            stamp = datetime.fromisoformat(row["at_utc"])
+        except ValueError as exc:
+            raise ValueError("invalid historic source timestamp") from exc
+        if (stamp.tzinfo is None or stamp.utcoffset() is None
+                or stamp > now + timedelta(minutes=2)):
+            raise ValueError("untrusted historic source timestamp")
+        history[pid] = {"at_utc": stamp.astimezone(timezone.utc).isoformat(),
+                        "coverage": row["coverage"]}
+    return history
+
+
+def coverage_history(windows, registry, previous, selected_index, coverage):
+    """Show when sources were last *attempted*, not falsely last healthy."""
+    if not isinstance(coverage, dict) or set(coverage) != set(windows[selected_index]):
+        raise ValueError("missing source coverage for selected window")
+    identity = fingerprint(windows, registry)
+    history = (_trusted_history(previous, registry)
+               if previous is not None and previous["registry_sha256"] == identity
+               else {})
+    now = datetime.now(timezone.utc).isoformat()
+    for pid in windows[selected_index]:
+        if coverage[pid] not in VALID_COVERAGE:
+            raise ValueError("invalid source-coverage class")
+        history[pid] = {"at_utc": now, "coverage": coverage[pid]}
+    return history
 
 
 def advance(path, windows, registry, previous, selected_index, coverage):
@@ -68,6 +115,7 @@ def advance(path, windows, registry, previous, selected_index, coverage):
     latest = read_json(path, MAX_BYTES, "window cursor") if path.exists() or path.is_symlink() else None
     if latest != previous:
         raise ValueError("private window cursor changed during scan; refusing lost update")
+    history = coverage_history(windows, registry, previous, selected_index, coverage)
     next_state = {
         "schema": SCHEMA,
         "registry_sha256": fingerprint(windows, registry),
@@ -75,6 +123,7 @@ def advance(path, windows, registry, previous, selected_index, coverage):
         "last_attempted_window": selected_index,
         "last_attempted_at_utc": datetime.now(timezone.utc).isoformat(),
         "last_coverage": {pid: coverage[pid] for pid in windows[selected_index]},
+        "attempt_history": history,
         "claim_authorized": False,
         "actions_performed": False,
     }
