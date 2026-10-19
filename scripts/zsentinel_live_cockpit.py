@@ -165,7 +165,7 @@ def main():
                         help="explicitly skip public GitHub issue/PR API reads")
     parser.add_argument("--state", type=Path,
                         help="optional local private incident ledger file")
-    parser.add_argument("--format", choices=("text", "json", "html", "ics"), default="html")
+    parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
     args = parser.parse_args()
     try:
         registry = canonical_projects(args.registry)
@@ -198,6 +198,9 @@ def main():
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(decision)
+        elif args.format == "desk":
+            from zsentinel_incident_desk import review_html
+            rendered = review_html(decision)
         else:
             lines = [operator_text(decision)]
             if provenance["notion"] == "claim_status_observed_no_file_ownership":
