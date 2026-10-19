@@ -109,6 +109,22 @@ def validated_view(source: dict) -> dict:
             "claim_context": ("reported_observation_only" if
                               card.get("observed_claim_ids") else "not_verified"),
         })
+    coverage = source.get("coverage")
+    if type(coverage) is not dict or type(coverage.get("projects")) is not dict or (
+        len(coverage["projects"]) > 50
+    ) or any(type(p) is not str or not PROJECT.fullmatch(p) or
+             status not in ("partial", "degraded", "unavailable")
+             for p, status in coverage["projects"].items()) or any(
+        type(coverage.get(flag)) is not bool for flag in
+        ("inbox_truncated", "cards_truncated", "github_denial")
+    ):
+        raise ValueError("Source board has incomplete coverage labels")
+    safe_coverage = {
+        "projects": coverage["projects"],
+        "inbox_truncated": coverage["inbox_truncated"],
+        "cards_truncated": coverage["cards_truncated"],
+        "github_denial": coverage["github_denial"],
+    }
     rows = source.get("project_operations")
     if type(rows) is not list or len(rows) > 60:
         raise ValueError("Source board contains invalid project operations")
@@ -120,6 +136,7 @@ def validated_view(source: dict) -> dict:
         projects.append(row["project"])
     return {"observed_at_utc": source["observed_at_utc"],
             "cards": chosen,
+            "coverage": safe_coverage,
             "projects": sorted(set(projects) | {r["project"] for r in chosen}),
             "global_gate": "live claims, exact-head CI, review and release authority unverified"}
 
@@ -211,6 +228,7 @@ source coverage, permissions or filters may have changed.</p>
 <label>Earlier source snapshot <input id="baseline" type="file" accept=".json,application/json"></label>
 <button id="clearBaseline" type="button" disabled>Clear comparison</button>
 <p id="comparisonMeta" aria-live="polite">Only this captured board is loaded; no baseline or live comparison.</p>
+<p id="comparisonCoverage" aria-live="polite">Coverage: current bounded source only.</p>
 <dl id="comparisonStats" class="portfolio"></dl><ol id="comparisonRows"></ol>
 </section>
 <section class="triage" aria-label="Human-only priority and blocker queue">
@@ -345,6 +363,14 @@ function acceptBaseline(data){
     data.authorizes_claim!==false||data.authorizes_merge!==false||
     data.authorizes_deploy!==false||data.automatic_dispatch_enabled!==false||
     !Array.isArray(data.cards)||data.cards.length>60)throw Error('unsafe baseline');
+ const cov=data.coverage;
+ if(!cov||Array.isArray(cov)||!cov.projects||Array.isArray(cov.projects)||
+    typeof cov.projects!=='object'||Object.keys(cov.projects).length>50||
+    ['inbox_truncated','cards_truncated','github_denial'].some(f=>typeof cov[f]!=='boolean')||
+    Object.entries(cov.projects).some(([p,status])=>
+      !/^[a-z][a-z0-9_-]{0,63}$/.test(p)||
+      !['partial','degraded','unavailable'].includes(status)))
+      throw Error('untrusted earlier source coverage');
  const earlier=sourceInstant(data.observed_at_utc);
  const current=sourceInstant(board.observed_at_utc);
  if(earlier===null||current===null||earlier>=current||earlier>Date.now()+300000)
@@ -365,7 +391,9 @@ function acceptBaseline(data){
   items.set(c.issue,{issue:c.issue,project:c.project,priority:c.priority,
    prs:new Set(c.open_pr_candidates),gaps:c.evidence_gaps.length});
  }
- return {observed_at_utc:data.observed_at_utc,items};
+ return {observed_at_utc:data.observed_at_utc,items,
+  coverage:{projects:cov.projects,inbox_truncated:cov.inbox_truncated,
+    cards_truncated:cov.cards_truncated,github_denial:cov.github_denial}};
 }
 function changesSinceBaseline(){
  if(!baseline)return [];
@@ -386,11 +414,13 @@ function changesSinceBaseline(){
 }
 function refreshComparison(){
  const meta=document.getElementById('comparisonMeta');
+ const covLabel=document.getElementById('comparisonCoverage');
  const stats=document.getElementById('comparisonStats'),list=document.getElementById('comparisonRows');
  stats.replaceChildren();list.replaceChildren();
  document.getElementById('clearBaseline').disabled=!baseline;
  if(!baseline){
   meta.textContent='Only this captured board is loaded; no baseline or live comparison.';
+  covLabel.textContent='Current source: bounded; original GitHub issue coverage is never a complete portfolio inventory.';
   return;
  }
  const age=Date.parse(board.observed_at_utc)-Date.parse(baseline.observed_at_utc);
@@ -398,6 +428,15 @@ function refreshComparison(){
   ' · '+(age/3600000).toFixed(1)+' hours between captured observations.'+
   ' Original earlier source SHA256: '+baseline.sha+
   '. No issue resolution or deploy inferred.';
+ const flag=c=>(c.inbox_truncated||c.cards_truncated||c.github_denial)?
+  'truncated/denied snapshot': 'bounded partial snapshot';
+ const degraded=c=>Object.entries(c.projects).filter(([,v])=>v!=='partial')
+  .map(([p,v])=>p+':'+v).slice(0,20).join(', ')||'none flagged (still partial)';
+ covLabel.textContent='Earlier: '+flag(baseline.coverage)+
+  '; unavailable/degraded projects: '+degraded(baseline.coverage)+
+  '. Current: '+flag(board.coverage)+
+  '; unavailable/degraded projects: '+degraded(board.coverage)+
+  '. Neither board establishes completeness, resolution or current ownership.';
  const events=changesSinceBaseline();
  const names=[['new-observation','New in current snapshot'],
   ['changed-evidence','Changed priority/PR/gap observation'],
@@ -459,6 +498,10 @@ function currentBrief(){
   const diff=changesSinceBaseline();
   lines.push('## Historical source comparison (not resolution evidence)','',
     'Current/previous issue visibility may differ due to coverage, permissions or bounded collectors.',
+    'Earlier coverage: '+(baseline.coverage.inbox_truncated||baseline.coverage.cards_truncated||baseline.coverage.github_denial?
+      'truncated, bounded or denied':'bounded partial')+
+      '; current coverage: '+(board.coverage.inbox_truncated||board.coverage.cards_truncated||board.coverage.github_denial?
+       'truncated, bounded or denied':'bounded partial')+'.',
     ...['new-observation','changed-evidence','still-observed','not-observed'].map(kind=>
      kind+': '+diff.filter(item=>item.kind===kind).map(item=>line(item.issue,110)).join(', ')),
     '');
