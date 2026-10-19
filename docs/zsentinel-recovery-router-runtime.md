@@ -1301,3 +1301,31 @@ worker-/herstelclaims. De commandovoering gebruikte geen bestaand
 dat de productingang zonder SQLite werkelijk werkt; het bewijst
 geen actuele GitHub/P0-inventaris, runnerherstel of productiedeployment.
 De tijdelijke geïsoleerde GitHub source checkout werd na uitvoer opgeruimd.
+
+
+### Snelle single-project herstelcockpit zonder SQLite
+
+Dezelfde expliciete `--github-only` modus is beschikbaar in de bestaande
+`scripts/zsentinel_live_cockpit.py`. Een werkend mini-voorbeeld zonder
+externe provideractie is:
+
+```sh
+python3 scripts/zsentinel_live_cockpit.py \
+  --project cloud --github-only \
+  --skip-ci-discovery --skip-github-issues --format text
+```
+
+Direct uitgevoerd vanaf de bestaande source-PR op de verbonden VPS
+(19 oktober 2026): **exit 0**. De uitvoer gaf
+`Read-only queue pressure: not_supplied`,
+`Claim coverage incomplete: routing suppressed` en
+`WORKER FILE-LEVEL CLAIMS: UNKNOWN`. Deze optionele skip-invocatie is
+**geen** GitHub-job/issue- of workerherstelbewijs. De HTML-variant
+geeft bovendien een opvallende waarschuwing dat de lokale queue, claims,
+leases en workerstatus **niet gelezen** zijn. Wie een echt bestaand
+SQLite-pad heeft, gebruikt de onveranderde `--database` route en
+krijgt de oorspronkelijke éénmalige read-only inspectie.
+
+Voor beide CLI-ingangen geldt: `--github-only` en `--database` mogen
+niet tegelijk worden opgegeven. De vlag is nooit een stille databasefout-
+fallback; geen fout wordt tot een gezonde nulstatus opgewaardeerd.
