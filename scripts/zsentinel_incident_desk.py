@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 
 IDENT = re.compile(r"^[a-f0-9]{32}$")
@@ -29,10 +29,8 @@ def _stamp(value):
         raise ValueError("untrusted incident datetime") from exc
     if dt.tzinfo is None or dt.utcoffset() is None:
         raise ValueError("incident datetime lacks zone")
-    if dt > datetime.now(timezone.utc).replace(microsecond=0).astimezone(timezone.utc):
-        # Clock-skew tolerance belongs to source collection, not this display.
-        # A slightly future observation is still not valid source history.
-        raise ValueError("incident date is in the future")
+    if dt > datetime.now(timezone.utc) + timedelta(minutes=2):
+        raise ValueError("incident timestamp beyond tolerated source clock skew")
     return dt.astimezone(timezone.utc).isoformat()
 
 
