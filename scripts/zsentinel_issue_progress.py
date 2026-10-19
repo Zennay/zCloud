@@ -70,6 +70,8 @@ def _source(report):
                 or type(item.get("title")) is not str
                 or len(item["title"]) > 180
                 or item.get("priority") not in PRIORITIES
+                or type(item.get("next_step")) is not str
+                or not 1 <= len(item["next_step"]) <= 100
                 or type(item.get("issue_url")) is not str
                 or not ISSUE.fullmatch(item["issue_url"])
                 or item["issue_url"] in items
@@ -86,6 +88,10 @@ def _source(report):
                 or not link.startswith(repo_prefix + "/pull/")
                 for link in item["existing_pr_links_unverified"])):
             raise ValueError("untrusted cross-repository PR links")
+        active_min = item.get("notion_active_work_min")
+        if (active_min is not None and
+                (type(active_min) is not int or not 1 <= active_min <= 400)):
+            raise ValueError("untrusted active Notion work lower bound")
         linked = {}
         for pr in item["inspected_prs"]:
             if (not isinstance(pr, dict)
@@ -104,6 +110,8 @@ def _source(report):
         items[item["issue_url"]] = {
             "project_id": item["project_id"],
             "priority": item["priority"],
+            "next_step": item["next_step"],
+            "notion_active_min": active_min,
             "title": item["title"],
             "pr_links": tuple(item["existing_pr_links_unverified"]),
             "inspected": linked,
@@ -143,6 +151,18 @@ def progress_since(current, previous, now=None):
         if prior and verified_both_samples:
             if item["priority"] != prior["priority"]:
                 changes.append("priority_changed")
+            if item["next_step"] != prior["next_step"]:
+                changes.append("issue_owner_review_route_changed")
+            notion_prev = previous.get("notion_active_work_observation")
+            notion_now = current.get("notion_active_work_observation")
+            if (isinstance(notion_prev, dict) and
+                    isinstance(notion_now, dict) and
+                    notion_prev.get("coverage") in ("current_pages_only", "incomplete") and
+                    notion_now.get("coverage") in ("current_pages_only", "incomplete") and
+                    item["notion_active_min"] is not None and
+                    prior["notion_active_min"] is not None and
+                    item["notion_active_min"] != prior["notion_active_min"]):
+                changes.append("notion_active_work_lower_bound_changed")
             if set(item["pr_links"]) != set(prior["pr_links"]):
                 changes.append("pr_references_changed")
             for link, evidence in item["inspected"].items():
