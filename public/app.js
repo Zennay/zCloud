@@ -124,6 +124,10 @@ async function refreshProjectActivity(version,force=false){
     for(const id of errors)ACTIVITY_LOCAL_PROJECT_ERRORS.add(id);
     for(const [id,rows] of streams){
       ACTIVITY_LOCAL_PROJECT_ERRORS.delete(id);
+      if(!ACTIVITY_LOCAL_PROJECT_CACHE.has(id)
+        &&ACTIVITY_LOCAL_PROJECT_CACHE.size>=ACTIVITY_LOCAL_CACHE_LIMIT)
+        ACTIVITY_LOCAL_PROJECT_CACHE.delete(ACTIVITY_LOCAL_PROJECT_CACHE.keys().next().value);
+      ACTIVITY_LOCAL_PROJECT_CACHE.delete(id);
       ACTIVITY_LOCAL_PROJECT_CACHE.set(id,{rows:rows.slice(0,80),observedAt,
         limited:rows.length===80});
     }
@@ -1908,7 +1912,7 @@ function zSentinelDeliveryBoard(){
   const active=ZSENTINEL_SOURCES_BUSY||ZSENTINEL_ALL_RUNNING||PUBLIC_ISSUES_BUSY||PUBLIC_GITHUB_BUSY||DELIVERY_QUEUE_BUSY;
   return '<section class="panel" id="zSentinelDeliveryBoard"><div class="panel-header">'+
     '<div><h2>zSentinel · product delivery board</h2>'+
-    '<p class="panel-subtitle">P0/P1 issues first; existing PR references and queue candidates without false ownership claims.</p></div>'+
+    '<p class="panel-subtitle">Start here: currently sampled open P0/P1 issues, related PR evidence, and eligible queue candidates. Sources are manual and may be stale; no automatic claim.</p></div>'+
     '<button type="button" class="runner-action" data-zsentinel-source-read '+
     (active?'disabled aria-busy="true"':'')+'>'+
     (active?'Reading…':'Read product sources')+'</button>'+
@@ -2702,8 +2706,8 @@ function activityPage(){
   const coverage=activityCoverageText();
   return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Local project activity.','Local VPS commits and milestones, not a complete GitHub activity history.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${esc(p.id)}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`)}
   ${zSentinelCapacityNotice()}
-  ${combinedActivityPanel()}
   ${zSentinelDeliveryBoard()}
+  ${combinedActivityPanel()}
   ${zSentinelRetryPanel()}
   ${zSentinelBranchEvidencePanel()}
   ${githubActivityImportPanel()}
