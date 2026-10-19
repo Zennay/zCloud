@@ -258,7 +258,9 @@ def render_html(board):
         'connect-src &#39;none&#39;; img-src &#39;none&#39;; form-action &#39;none&#39;">'
         '<title>zSentinel · Productherstelbord</title><style>' + STYLE +
         INTERACTIVE_CSS +
-        '</style></head><body><header><h1>Vliegende keep · productherstelbord</h1>'
+        '</style></head><body data-observed-at="' +
+        escape(board["observed_at"], quote=True) +
+        '"><header><h1>Vliegende keep · productherstelbord</h1>'
         '<p>Open problemen eerst, bestaande PR vóór dubbel bouwen.</p>'
         '<p class="notice">Bronsteekproef, geen eigendomsbewijs. '
         'Geen claim, QA-ronde, runneractie, review, merge of deploy vanuit dit bord.</p>'
