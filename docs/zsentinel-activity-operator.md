@@ -64,6 +64,34 @@ to its exact source blob (see [#1305](https://github.com/Zennay/zCloud/issues/13
 As with other UI source changes, that pin does not by itself prove the
 production server is serving updated bytes.
 
+## Fair GitHub history and read-only VPS pressure
+
+When Activity reads source PRs/CI/commits for multiple repositories, the
+in-memory 200-event window now chooses entries in round-robin project order
+before sorting them by original event timestamp for display. A noisy project
+can no longer consume all 200 entries while a sampled quiet repository has
+recent events. Each project still has its own partial/unknown coverage;
+neither this fairness nor a successful `/api/status` proves globally complete
+GitHub synchronization.
+
+Activity also displays **zSentinel · VPS capacity signals** from the existing
+read-only `/api/status` host sample. The backend host read-model in
+[PR #1549](https://github.com/Zennay/zCloud/pull/1549) now includes
+`swap: {total, used, free}` in bytes, in addition to existing host load
+and disk. The panel reports (a) load more than twice the declared vCPU count,
+(b) at least 85% swap use or less than 512 MiB free swap, and (c) at least
+90% disk usage. These are operator attention signals, not an algorithm to
+kill tabs or confirm that a runner is healthy. When the host sample is older
+than 120 seconds, missing, or does not include a coherent swap observation,
+the panel labels **UNKNOWN** rather than falsely reporting healthy.
+It never asks for VPS credentials, writes to SQLite, restarts systemd or
+clears swap. Use the authorized zSSH route and existing owner approval before
+any operational remediation.
+
+The two branches are separately source-owned and neither is production
+without exact-head CI, independent review, protected-main and serialized
+release. Source-only UI updates cannot prove the current VPS status.
+
 ## PR-less branch overlap — manual project work handoff
 
 The Activity screen now has an optional **Unmerged branches / Import branch .json** panel. This pairs with [PR #1554](https://github.com/Zennay/zCloud/pull/1554), the standalone read-only GitHub branch inventory for repository `Zennay/zCloud`. The reporter can scan a 12-branch namespace slice and print a bounded JSON receipt; import the JSON file manually on Activity. The UI does not fetch or execute repository content, call GitHub, persist tokens or modify a project queue.
