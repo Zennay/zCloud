@@ -185,6 +185,8 @@ def pinned_receipts(source):
 def pinned_receipts_text(source):
     rows = pinned_receipts(source)
     if not rows:
+        if isinstance(source, dict) and type(source.get("pinned_requested")) is int and 0 < source["pinned_requested"] <= MAX_PIN_READS:
+            return "GERICHTE ISSUE-BRON: ONBESCHIKBAAR (geen exacte open/gesloten-status bewezen)."
         return ""
     return "\n".join(
         "GERICHT OPEN ISSUE " + pid + "#" + str(num) + ": " + status +
@@ -195,6 +197,10 @@ def pinned_receipts_text(source):
 def pinned_receipts_html(source):
     rows = pinned_receipts(source)
     if not rows:
+        if isinstance(source, dict) and type(source.get("pinned_requested")) is int and 0 < source["pinned_requested"] <= MAX_PIN_READS:
+            return ('<section><h2>Gerichte issuebron</h2><p class="banner">'
+                    'GEEN betrouwbare exacte GitHub-bron; niet als gesloten of hersteld tellen.'
+                    '</p></section>')
         return ""
     from html import escape
     return ('<section aria-label="Gerichte GitHub-bronissues">'
