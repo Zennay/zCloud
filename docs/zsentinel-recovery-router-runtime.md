@@ -1,5 +1,53 @@
 # zSentinel · Runtime incident router (product-only)
 
+## Productissues direct naar een bruikbaar herstelwerkbord (19 oktober)
+
+Het nieuwe standalone `scripts/zsentinel_issue_delivery.py` werkt zonder
+VPS-productiedatabase, Notion API-token of scheduler. Het leest de bestaande
+canonieke GitHub-productissuebron (P0, P1, P2 en onbekende prioriteit;
+QA-only uitgesloten), hergebruikt **bestaande** PR-referenties en leest
+maximaal drie geselecteerde exacte-head PR's via de bestaande veilige
+read-only bronadapter. De eigenaar/scope/claim blijven nadrukkelijk
+onbekend; een PR-verwijzing bewijst nooit dat het issue is opgelost.
+
+```sh
+# Gebruik een privé-outputdirectory. Geen background-daemon of workflow dispatch.
+umask 077
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud --project supa --format html \
+  > /private/operator-only/zsentinel-productherstel.html
+
+# Machineleesbaar rapport voor menselijk issue-overzicht:
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud --format json > /private/operator-only/zsentinel-issues.json
+
+# Duidelijke menselijke overdracht op basis van dezelfde begrensde bronnen:
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud --format md > /private/operator-only/zsentinel-issues.md
+```
+
+Het offline HTML-bord heeft direct werkende filters voor titel, project,
+prioriteit en route; privé-opvolgkeuze en notities (maximaal 300 tekens per
+issue) leven **alleen in het huidige browsertabblad**, zonder cookies,
+localStorage of externe requests. Een Markdown-overdracht kan pas via
+**voorvertoning en afzonderlijke downloadknop** worden opgeslagen. Bij
+filter- of notitiewijzigingen vervalt de eerdere voorvertoning. Niets
+wordt automatisch naar GitHub, Notion, een worker of een eigenaar gestuurd.
+
+Per uitvoering maximaal **drie canonieke projecten**, **24** bronissues,
+**drie** gekoppelde bestaande PR's en maximaal **24 GitHub GETs**
+(3 per project voor issues/PR-index + 5 per exact geselecteerde PR).
+403/429 of ontbrekende bron blijft onbekend en stopt vervolglezingen na
+rate-/autorisatieweigering. P0 runnerlistener #1326 en GitHub billing
+#1523 staan als *human-only*, nooit als automatische retry-/herstartactie.
+Ook lege bronvensters bewijzen geen afwezige problemen, en een GitHub
+assignee is geen geverifieerde actieve queueclaim.
+
+**Geen claim-, scheduler-, test-, CI-retry-, betaal-, review-, merge-,
+release- of productieactie.** De bestaande protected-main, exacte-head
+required checks, onafhankelijke review, FTMO/security/device-gates en
+zCloud runtime-eigenaarschap blijven onafhankelijk van het herstelbord.
+
 ## Zelf bestaande open PR's vinden en afmaken (19 oktober)
 
 De PR-afrondingsdesk toont ook maximaal vijf canonieke **same-repository**\nissueverwijzingen uit de bestaande PR-beschrijving als directe links,\nzonder extra GitHub-GETs. Zo is in één oogopslag te zien op welke\nproblemen een PR zich beweert te richten; zo'n tekstverwijzing bewijst\nnoch een open issue, noch eigenaarschap, noch dat de fix echt werkt.\nBij een gewijzigde PR-head worden ook de oude verwijzingen gewist uit\nhet geretourneerde bronbewijs.\n\nDe PR-afrondingsdesk kan nu zonder bekend PR-nummer de recent
