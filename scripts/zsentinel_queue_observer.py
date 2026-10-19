@@ -171,6 +171,31 @@ def observe(path, now=None):
     }
 
 
+
+def explicitly_unobserved_queue():
+    """No queue database was supplied: preserve UNKNOWN, never fabricate zero.
+
+    Used only by the opt-in GitHub-only operator frontend when the active
+    SQLite queue cannot be reached. A caller must not reinterpret this as
+    the result of an actual mode=ro SQLite transaction or file lease check.
+    """
+    return {
+        "schema": "zsentinel-queue-pressure-v1",
+        "source": "explicitly_unobserved_no_database",
+        "database_read_only": False,
+        "sample_is_complete": False,
+        "queue_inventory_complete": False,
+        "claim_ownership_verified": False,
+        "automatic_retry_authorized": False,
+        "queue_write_authorized": False,
+        "attempts_are_claims_not_failures": True,
+        "totals": {},
+        "project_groups": [],
+        "high_churn_samples": [],
+        "queue_source_available": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Read-only queue retry/lease observation")
     parser.add_argument("--database", required=True, type=Path,
