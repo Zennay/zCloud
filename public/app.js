@@ -2191,6 +2191,31 @@ function combinedActivityRows(){
       observedAt:(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||null,
       ts:row.ts,url:row.url});
   }
+  // Operator-imported PR-less zCloud branches carry an actual last-commit
+  // timestamp but only a bounded source-observation moment. They are not
+  // GitHub main commits, merge proof or evidence of an active Notion owner.
+  const zcloud=(DATA?.projects||[]).find(p=>
+    /^https:\/\/github\.com\/Zennay\/zCloud\/?$/.test(p.repo_url||''));
+  const imported=IMPORTED_PRLESS_BRANCHES;
+  if(zcloud&&groups.has(zcloud.id)&&imported?.repository==='Zennay/zCloud'){
+    for(const row of (imported.branches||[]).slice(0,96)){
+      if(!row||typeof row.ref!=='string'||!/^[A-Za-z0-9_./-]{1,200}$/.test(row.ref)
+          ||row.ref.includes('..')||!(/^[a-f0-9]{40}$/).test(row.sha)
+          ||!Number.isFinite(Date.parse(row.lastCommit))
+          ||Date.parse(row.lastCommit)>Date.now()+300000)continue;
+      const key='prless:'+zcloud.id+':'+row.ref+':'+row.sha;
+      if(seen.has(key))continue;
+      seen.add(key);
+      groups.get(zcloud.id).push({
+        key,source:'github',project:zcloud.id,kind:'branch_observed',
+        summary:'PR-less branch '+row.ref+' · '+row.classification,
+        detail:'Offline imported branch inventory; owner NOT verified; '+row.sha.slice(0,12)+
+          ' · '+(row.ahead===null?'ahead count unknown':'ahead '+row.ahead)+
+          (row.overlapCount?' · possible path overlaps '+row.overlapCount:''),
+        observedAt:imported.observedAt,ts:row.lastCommit,url:'',
+      });
+    }
+  }
   for(const rows of groups.values()){
     rows.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)||a.key.localeCompare(b.key));
   }
@@ -2233,6 +2258,12 @@ function combinedActivityCoverage(){
     liveProjects?'partial source '+liveProjects:'',
     'never a complete GitHub or production ledger'
   ];
+  if(IMPORTED_PRLESS_BRANCHES&&scope.includes(
+      (DATA?.projects||[]).find(p=>/^https:\/\/github\.com\/Zennay\/zCloud\/?$/.test(p.repo_url||''))?.id)){
+    textParts.push('PR-less branch inventory '+IMPORTED_PRLESS_BRANCHES.scanned+
+      ' sampled, '+(IMPORTED_PRLESS_BRANCHES.coverageComplete?'whole when observed':'PARTIAL')+
+      (Date.now()-Date.parse(IMPORTED_PRLESS_BRANCHES.observedAt)>6*3600000?' (stale)':''));
+  }
   return textParts.filter(Boolean).join(' · ');
 }
 function combinedProjectCoverageRows(){
