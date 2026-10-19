@@ -53,6 +53,13 @@ def blocker_first_board(summary, decision, issues):
     are reconfirmed by the runtime owner at the moment of action.
     """
     known = _non_authorizing(summary, decision, issues)
+    repo_for = {}
+    for project_row in summary["rows"]:
+        canonical = project_row.get("github_repo")
+        if (type(canonical) is not str
+                or not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", canonical)):
+            raise ValueError("untrusted canonical repository mapping")
+        repo_for[project_row["project_id"]] = canonical
     incidents = decision.get("incidents")
     backlog = decision.get("historical_unresolved")
     suggestions = decision.get("independent_task_suggestions")
@@ -118,7 +125,25 @@ def blocker_first_board(summary, decision, issues):
         if ident in seen:
             continue
         seen.add(ident)
+        # Keep exact *historical* GitHub links as a one-click owner review
+        # path; a link itself cannot assert the old job remains blocked.
+        historic_job = row.get("exact_github_job")
+        historic_link = None
+        if historic_job is not None:
+            if (not isinstance(historic_job, dict)
+                    or historic_job.get("project_id") != pid
+                    or any(type(historic_job.get(key)) is not int
+                           or not 1 <= historic_job[key] <= 2**53-1
+                           for key in ("run_id", "job_id"))
+                    or type(historic_job.get("head_sha")) is not str
+                    or not re.fullmatch(r"[0-9a-f]{40}", historic_job["head_sha"])):
+                raise ValueError("untrusted historical job link")
+            historic_link = (
+                "https://github.com/" + repo_for[pid] +
+                "/actions/runs/" + str(historic_job["run_id"]) +
+                "/job/" + str(historic_job["job_id"]))
         cards.append({
+            "source_job_url_historical_only": historic_link,
             "kind": "historical_not_reconciled", "id": ident,
             "project_id": pid,
             "priority": row.get("severity") if row.get("severity") in PRIORITY else "P1",
@@ -191,8 +216,10 @@ def blocker_first_board(summary, decision, issues):
                 raise ValueError("untrusted fallback product issue")
             url = row.get("issue_url")
             if (type(url) is not str or
-                    not url.startswith("https://github.com/") or len(url) > 230):
-                raise ValueError("untrusted product issue URL")
+                    not re.fullmatch(r"https://github[.]com/" +
+                                     re.escape(repo_for[row["project_id"]]) +
+                                     r"/issues/[1-9][0-9]{0,8}", url)):
+                raise ValueError("untrusted cross-repository issue URL")
             fallback.append({
                 "kind": "product_issue_inspection_only",
                 "project_id": row["project_id"], "priority": row["priority"],
@@ -235,21 +262,34 @@ def blocker_board_html(board):
         action = escape(str(row["action"])[:550])
         owner = escape(str(row["owner"])[:100])
         basis = escape(str(row["observed_from"])[:90])
+        job_link = row.get("source_job_url_historical_only")
+        historical_source = (
+            '<p><a href="' + escape(job_link, quote=True) +
+            '" target="_blank" rel="noopener noreferrer">Bekijk exact historisch GitHub-jobbewijs</a>'
+            ' (geen actuele herstelstatus).</p>'
+            if isinstance(job_link, str) else '')
         cards.append(
             '<article class="panel warn"><h3>' + tag + ' · ' + name +
             '</h3><p><strong>' + what + '</strong></p><p>Actie: ' +
             action + '</p><p class="muted">Eigenaar: ' + owner +
             ' · bron: ' + basis +
-            ' · werknemer/runner hervat: NIET bewezen.</p></article>')
+            ' · worker/runner hervat: NIET bewezen.</p>' +
+            historical_source + '</article>')
     if not cards:
         cards = ['<p class="empty">Geen actuele blockerkaart in deze begrensde'
                  ' bron. Dat bewijst GEEN gezonde werknemers of complete backlog.</p>']
     fallbacks = []
     for row in board["independent_fallback_inspection"]:
+        issue_link = row.get("issue_url")
+        if isinstance(issue_link, str):
+            issue_label = (' · <a href="' + escape(issue_link, quote=True) +
+                           '" target="_blank" rel="noopener noreferrer">Open bestaand productissue</a>')
+        else:
+            issue_label = ''
         fallbacks.append('<li>' + escape(str(row["project_id"])[:45]) +
                          ' · ' + escape(str(row["priority"])[:12]) +
                          ' · ' + escape(str(row["next_gate"])[:90]) +
-                         ' · GEEN claim of dispatch</li>')
+                         issue_label + ' · GEEN claim of dispatch</li>')
     return (
         '<section aria-label="Eerst blokkades opheffen">'
         '<h2>1 · Eerst vastgelopen werk vrijmaken</h2>'
@@ -290,6 +330,7 @@ def blocker_board_text(board):
     lines.append("DAARNA VRIJ PRODUCTWERK (alleen bronvoorstel):")
     for item in board["independent_fallback_inspection"]:
         lines.append("  " + item["priority"] + " " + item["project_id"] +
+                     " | " + item.get("issue_url", "bestaande bron-taak") +
                      " | " + item["next_gate"] + " | geen claim")
     if not board["independent_fallback_inspection"]:
         lines.append("  Geen vrij werk bewezen.")
