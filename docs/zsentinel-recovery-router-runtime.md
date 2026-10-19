@@ -13,58 +13,59 @@ For a browser-ready view without contacting a server, choose `--format html` and
 
 The optional `--state` ledger stores incident fingerprints and observed timestamps locally with permissions `0600`, atomic replacement and strict size/schema limits. Use a **trusted private directory**, never a live queue/SQLite, checked-in repo path, shared mount or an untrusted symlink. It does not call GitHub, Notion or the VPS, start any timer, enqueue work, acquire a task, rerun CI, alter any worker, or deploy. Feed it new complete observations only after upstream independent collectors/owners have gathered them. One invocation provides one decision snapshot. Actual activation as a production service awaits the serialized runtime owner.
 
-## Recent branch-eigendom zonder open PR · productissue #870
+## Recente PR-loze branches · integratie van bestaand bronproduct #1554
 
-Nieuwe zSentinel-bron `scripts/zsentinel_recent_branch_ownership.py` vult de
-bestaande PR-eigendomsinventaris aan: een worker kan code op een branch hebben
-gepusht voordat een PR bestaat. Dit is een **read-only kandidaatcontrole**,
-niet een nieuwe daadwerkelijke workerclaim of controle van actieve leases.
+Deze operatorintegratie **hergebruikt** de reeds op zCloud-main gemergede
+`scripts/zcloud_recent_prless_ownership.py` ([PR #1554](https://github.com/Zennay/zCloud/pull/1554)),
+die op zijn beurt de canonieke dubbele GitHub branch/PR-inventaris
+`zcloud_deploy_prless_inventory_20261013_w1.py` (#1164) gebruikt.
+`scripts/zsentinel_recent_branch_ownership.py` is nu alleen een **smalle
+UI-adapter**, geen tweede crawler of nieuwe eigendomsbron. De bestaande
+open-PR-overlapintegratie [#866](https://github.com/Zennay/zCloud/issues/866)
+blijft een zelfstandige, te respecteren gate.
 
 ```bash
-# Eén canoniek project, maximaal begrensde GitHub-bronuitvraag:
+# Eén bestandsscope vergelijken tegen recente PR-loze branches:
 python3 scripts/zsentinel_recent_branch_ownership.py \
-  --project cloud --branch-prefix feat/ --current-path scripts/new_module.py
+  --project cloud --current-path scripts/new_module.py
 
-# Exit 2 als werkelijk bronbewijs incompleet is, een recent conflicterend
-# bestand wordt gezien of een te beoordelen --current-path ontbreekt.
+# Fail-closed advies: exit 2 bij onvolledig bronbereik, overlap of
+# ontbrekende --current-path. Zelfs exit 0 verleent GEEN work-claim.
 python3 scripts/zsentinel_recent_branch_ownership.py \
   --project cloud --current-path scripts/new_module.py --require-clear-slice
 
-# Dezelfde eigendomskandidaten zichtbaar in de portfolio-cockpit:
+# Toon exact dezelfde geverifieerde bron in het portfolio-overzicht.
+# Kies een venster dat 'cloud' bevat (standaard --window 0):
 python3 scripts/zsentinel_portfolio_overview.py \
   --database /path/to/existing/zcloud.sqlite3 --window 0 \
-  --inspect-unpr-branches cloud --branch-prefix feat/ \
-  --current-path scripts/new_module.py --format html \
-  > /private/operator-only/zsentinel-branches.html
+  --inspect-unpr-branches cloud --current-path scripts/new_module.py \
+  --format html > /private/operator-only/zsentinel-branches.html
 ```
 
-Een externe geautoriseerde GitHub `GITHUB_TOKEN` is optioneel voor publiek
-leesbare projecten en verplicht waar privétoegang nodig is. Tokens worden
-niet geprint of opgeslagen. De adapter gebruikt zCloud's bestaande
-`bounded_get` (geen redirects, beperkt aantal bytes, 8 s timeout).
-Maximaal vier pagina's van honderd branchrefs, drie van honderd **open** PRs,
-één immutable `main` ref plus maximaal twaalf geadresseerde branch-commits
-en twaalf immutable SHA→SHA-vergelijkingen per uitvoering. Iedere onvolledige
-paginering, gewijzigde SHA, afwijkende vergelijking, bronweigering of afgekapt
-bestandsbewijs kan **nooit** als 'vrije scope' worden beschouwd. Een expliciete
-`--branch-prefix` kan de inspectie beperken maar autoriseert geen ongescande
-branches.
+Deze adapter is voorlopig uitsluitend voor het canonieke `Zennay/zCloud`
+repository waar de bestaande bron voor gebouwd is. Een projectnaam of
+namespacefilter kan de onderliggende complete inventaris **niet** veranderen
+in een globale veiligheidsverklaring. Het adaptercommand pinnt eerst de
+huidige exacte main-SHA; de bestaande collector leest de volledige GitHub
+branch/PR-lijst, inspecteert maximaal twaalf branches per bronvenster,
+vergelijkt immutable commit-SHA's en voert de tweede stabiele inventaris-
+controle uit. De adapter verifieert vervolgens opnieuw dat main niet is
+verplaatst. Alle requests zijn read-only GitHub GETs zonder onbeperkte polling.
 
-Alleen exacte commit-committerdatum binnen 72 uur en `ahead_by > 0`
-levert een **recente kandidaat** op. Oudere commits zijn historische bron,
-nooit automatisch actief eigendom. De adapter vergelijkt paden inclusief
-beide kanten van renames; de output bevat alleen branchref, twee exacte SHA's,
-afgeronde leeftijd, aantal commits vooruit op main, begrensde gewijzigde
-bestandsnamen en eventuele overlap. Geen commitberichten, prompts, PR-bodies,
-API-tokens of inhoud van bronbestanden. Gebruik `--require-clear-slice`
-uitsluitend als een **fail-closed adviespoort** voor de *recente
-un-PR-branchsteekproef*: succes betekent niet dat huidige Notion-leases, alle
-open PRs, workerclaims, CI/review of de productie-release geverifieerd zijn.
+Het canonieke bewijs onderscheidt branches ouder dan **zeven dagen** als
+historisch, niet als actieve eigenaren. Recent maar niet meer ahead-of-main
+wordt evenmin automatisch als actieve eigenaar geïnterpreteerd.
+Herkomst/afwijking in een dubbele momentopname, incomplete branchpaging,
+ongeldige exacte commit of afgekapt vergelijkingsbewijs leidt tot weigering.
+De volledige overlapberekening wordt hergebruikt. De HTML-view kan voor
+leesbaarheid maximaal honderd padnamen laten zien, met een expliciete
+truncatiemelding en het volledige brongebaseerde overlapsignaal.
 
-Deze productlevering raakt geen `server.py`, queue writer, worker, bestaande
-open-PR owner-audit of productie-workflows. De daadwerkelijke eindacceptatie
-van #870 blijft onder de bestaande onafhankelijke review en verplichte
-CI/VPS-rechten vallen; deze PR voert zelf geen QA-suites uit.
+De JSON/HTML bevatten alleen veilige branchref, exacte SHA, afgeronde
+commitleeftijd, ahead-telling, begrensde paden en overlap. Geen commitberichten,
+PR-teksten, geheimen, branchwrites, runnerstarts, serviceacties of claims.
+De bestaande onafhankelijke CI/review en trusted `[self-hosted,zcloud,vps]`
+gates blijven vereist; deze integratie schrijft of draait geen QA-suite.
 
 ## Volledig portfolio in één offline cockpit · begrensde GitHub-vensters
 
