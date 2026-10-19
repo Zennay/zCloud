@@ -1561,8 +1561,12 @@ compacte HTML-scherm); overschrijding wordt expliciet gemeld.
 
 Een P0 die bij **drie opeenvolgende echte gerapporteerde bronmomenten**
 nog zichtbaar is, wordt hoogstens **kandidaat voor menselijke beoordeling**.
-Hiervoor zijn per rapport geldige, strikt stijgende UTC-rapporttijdstempels
-vereist. Bij ontbreken ervan wordt géén herhaalde-P0-aandachtkandidaat geteld;
+Hiervoor zijn per rapport geldige, strikt stijgende UTC-rapporttijdstempels,
+hetzelfde volledig herleidbare geselecteerde projectvenster en drie herhaalde
+**vers-geclassificeerde bronincidenten** nodig. Louter drie keer dezelfde
+historische incident-ledgerkaart of open infrastructuurissue zien is nooit
+huidig runnerherstel of nieuwe P0-escalatie. Bij ontbrekende onderbouwing
+wordt géén herhaalde-P0-aandachtkandidaat geteld;
 niet-chronologische of toekomstige bronmomenten worden geweigerd. Let op:
 een rapporttijdstempel bewijst niet dat alle externe GitHub-/Notion-bronnen vers
 waren. Andere projectvensters en onvolledige bronrechten blijven zichtbaar als
