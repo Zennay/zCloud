@@ -131,6 +131,7 @@ def refresh(bundle, registry, token=None):
             output.append({"project_id": pid, "source": "github_exact_run_job",
                            "repository": repository,
                            "status": "refreshed", "run_id": run_id, "job_id": job_id,
+                           "job_status": status, "runner_assigned": bool(runner_id),
                            "runner_route": route["runner_route"],
                            "route_labels": route["route_labels"],
                            "may_restart_runner": False})
