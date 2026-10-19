@@ -228,6 +228,59 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
                 "owner_claim_verified": False,
             })
             pr_gate_count += 1
+    # Real browser-worker event gaps are useful existing-work blockers. They
+    # are never equivalent to a verified active claim or failed product task.
+    worker_gap_count = 0
+    workers = decision.get("worker_progress_observation")
+    if workers is not None:
+        if (not isinstance(workers, dict)
+                or workers.get("schema") != "zsentinel-worker-progress-observation-v1"
+                or workers.get("source") != "existing_sqlite_mode_ro_query_only_indexed_runner_events"
+                or workers.get("worker_resumed_verified") is not False
+                or workers.get("live_worker_claims_verified") is not False
+                or workers.get("actions_performed") is not False
+                or not isinstance(workers.get("entries"), list)
+                or len(workers["entries"]) > 24):
+            raise ValueError("untrusted worker progress blocker source")
+        worker_flags = {
+            "recent_client_block_event_owner_review",
+            "generating_but_progress_unverified_or_stale",
+            "worker_event_stale_or_unknown",
+        }
+        for worker in workers["entries"]:
+            if not isinstance(worker, dict):
+                raise ValueError("untrusted individual worker event")
+            pid, slot, state = (worker.get("project_id"),
+                                worker.get("worker_slot"),
+                                worker.get("classification"))
+            if (pid not in known or type(slot) is not int
+                    or not 1 <= slot <= 16
+                    or worker.get("owner_claim_verified") is not False
+                    or worker.get("worker_resumed_verified") is not False
+                    or worker.get("repair_authorized") is not False):
+                raise ValueError("unverified worker event identity or authority")
+            if state not in worker_flags:
+                continue
+            age = worker.get("event_age_seconds")
+            if age is not None and (type(age) is not int or age < 0):
+                raise ValueError("invalid browser worker event age")
+            cards.append({
+                "kind": "read_only_worker_progress_gap_not_proven_outage",
+                "id": "worker:" + pid + ":" + str(slot),
+                "project_id": pid, "priority": "P1",
+                "problem": ("Browserworker " + str(slot) +
+                            " · bronvoortgang ontbreekt of clientblokkade mogelijk" +
+                            (" · laatste event " + str(age) + " sec geleden"
+                             if age is not None else " · eventtijd onbekend")),
+                "owner": "authorized_browser_worker_and_queue_owner",
+                "action": "Verifieer worker desired_state, actuele taakclaim en laatst werkelijk verschenen generatievoortgang. Geen force-push, lease reset of serviceherstart op alleen dit event.",
+                "observed_from": "local_indexed_worker_event_metadata_no_claim_proof",
+                "requires_human": False,
+                "next_gate": "verify_exact_worker_claim_and_progress",
+                "worker_resumed_verified": False, "permission_to_recover": False,
+                "owner_claim_verified": False,
+            })
+            worker_gap_count += 1
     # A private old incident is not a currently active outage, but still must
     # remain visible before ordinary work; missing from a window != resolved.
     for row in backlog["shown"]:
@@ -274,7 +327,8 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             "worker_resumed_verified": False, "permission_to_recover": False,
             "owner_claim_verified": False,
         })
-    historical_count = len(cards) - live_observed_count - pr_gate_count - issue_gate_count
+    historical_count = (len(cards) - live_observed_count - pr_gate_count
+                        - issue_gate_count - worker_gap_count)
     # A historical incident may reference a project removed from today's
     # canonical registry. Do not crash the whole workboard or silently mark
     # that earlier incident recovered; surface it as unmapped source debt.
@@ -316,9 +370,10 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
     order = {
         "verified_source_incident_not_runtime_recovery": 0,
         "open_owner_only_issue_not_current_outage_proof": 1,
-        "queue_pressure_not_proven_outage": 2,
-        "existing_product_pr_gate_inspection_only": 3,
-        "historical_not_reconciled": 4,
+        "read_only_worker_progress_gap_not_proven_outage": 2,
+        "queue_pressure_not_proven_outage": 3,
+        "existing_product_pr_gate_inspection_only": 4,
+        "historical_not_reconciled": 5,
     }
     cards.sort(key=lambda c: (
         PRIORITY[c["priority"]],
@@ -370,7 +425,8 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
         "historical_unmapped_or_unshown": unseen_historical_count,
         "existing_pr_gate_observations": pr_gate_count,
         "owner_only_open_issue_observations": issue_gate_count,
-        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count - issue_gate_count,
+        "worker_event_gap_observations": worker_gap_count,
+        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count - issue_gate_count - worker_gap_count,
         "shown_blocker_cards": shown,
         "blocker_cards_truncated": len(cards) > len(shown),
         "independent_fallback_inspection": fallback[:5],
@@ -457,6 +513,7 @@ def blocker_board_html(board):
         '<p class="muted">Nu waargenomen incidenten: ' +
         str(board["live_incident_observations"]) +
         ' · eigenaargebonden P0/P1 issues: ' + str(board["owner_only_open_issue_observations"]) +
+        ' · worker-eventgaten: ' + str(board["worker_event_gap_observations"]) +
         ' · bestaande PR-gates: ' + str(board["existing_pr_gate_observations"]) +
         ' · historisch te hercontroleren: ' +
         str(board["historical_not_reconciled"]) +
