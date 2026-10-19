@@ -50,14 +50,33 @@ def _age(value, now):
     return max(0, int(seconds))
 
 
-def _observe_slot(con, project, slot, now):
+def _observe_slot(con, project, slot, now, desired_state):
     args = (project, slot)
     last = con.execute(
         "SELECT id,ts,event,generating,sending,progress_at,assistant_chars "
         "FROM runner_events WHERE project_id=? AND worker_slot=? "
         "ORDER BY id DESC LIMIT 1", args).fetchone()
     if last is None:
-        return None
+        return {
+            "project_id": project, "worker_slot": slot,
+            "desired_state": desired_state,
+            "desired_state_source_observed": desired_state != "unknown",
+            "last_event_type": None, "event_age_seconds": None,
+            "progress_age_seconds": None, "assistant_character_count": None,
+            "browser_generating": False, "browser_sending": False,
+            "recent_block_event_after_last_prompt": False,
+            "classification": (
+                "configured_running_no_event_evidence"
+                if desired_state == "running"
+                else "configured_paused_not_incident"
+                if desired_state == "paused"
+                else "configured_draining_owner_hold"
+                if desired_state == "draining"
+                else "desired_state_unknown_no_automatic_action"),
+            "event_source": "indexed_local_runner_events_only",
+            "owner_claim_verified": False, "worker_resumed_verified": False,
+            "repair_authorized": False,
+        }
     last_id, timestamp, event, generating, sending, progress, chars = last
     if type(last_id) is not int or last_id < 1:
         raise ValueError("invalid worker event row identity")
@@ -95,7 +114,13 @@ def _observe_slot(con, project, slot, now):
         and (prompt is None or blocked[0] > prompt[0])
         and block_age is not None and block_age <= 900
     )
-    if blocked_after_prompt:
+    if desired_state == "paused":
+        state = "configured_paused_not_incident"
+    elif desired_state == "draining":
+        state = "configured_draining_owner_hold"
+    elif desired_state != "running":
+        state = "desired_state_unknown_no_automatic_action"
+    elif blocked_after_prompt:
         state = "recent_client_block_event_owner_review"
     elif (generating and event_age is not None and event_age <= 180
           and progress_age is not None and progress_age <= 180):
@@ -110,6 +135,8 @@ def _observe_slot(con, project, slot, now):
         state = "recent_event_only_no_product_progress_proof"
     return {
         "project_id": project, "worker_slot": slot,
+        "desired_state": desired_state,
+        "desired_state_source_observed": desired_state != "unknown",
         "last_event_type": event if event in SAFE_EVENT else "other_event",
         "event_age_seconds": event_age,
         "progress_age_seconds": progress_age,
