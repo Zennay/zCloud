@@ -27,6 +27,7 @@ from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html, link_existing_pr_actions
 from zsentinel_unblock_board import blocker_first_board, blocker_board_html, blocker_board_text
 from zsentinel_pinned_issue import pinned_receipts_html, pinned_receipts_text
+from zsentinel_worker_progress_observer import worker_progress_html, operator_text as worker_progress_text
 from zsentinel_pr_delivery import discover_open_prs, observe_prs, pr_delivery_html
 from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
 
@@ -487,9 +488,16 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         'Geen toestemming voor workerherstel of release.</p>'
         if summary.get("queue_source") == "explicitly_unobserved_no_database"
         else "")
+    progress = decision.get("worker_progress_observation")
+    progress_view = (
+        worker_progress_html(progress) if isinstance(progress, dict)
+        else '<p class="banner">WORKER-EVENTBRON ONBESCHIKBAAR · geen huidige claim-/workerhervattingsbewijzen.</p>'
+             if decision.get("live_sources", {}).get("worker_progress")
+             == "unavailable_no_worker_recovery_proof" else "")
     return raw.replace("<main>", "<main>" + queue_warning +
                        pinned_receipts_html(decision.get("live_sources")) +
                        (blocker_board_html(unblock) if unblock is not None else "") +
+                       progress_view +
                        (problems_html(problem_inbox) if problem_inbox is not None else "") +
                        (pr_delivery_html(pr_desk) if pr_desk is not None else "") +
                        table + branch_ownership_html(branch_inventory), 1)
@@ -513,6 +521,8 @@ def main():
     parser.add_argument("--read-notion-claims", action="store_true")
     parser.add_argument("--notion-data-source")
     parser.add_argument("--observe-vps-capacity", action="store_true")
+    parser.add_argument("--worker-events-database", type=Path,
+                        help="optional existing history.db: indexed read-only worker progress, no worker claim/commands")
     parser.add_argument("--inspect-unpr-branches",
                         help="canonical project ID in selected GitHub window for a bounded read-only branch ownership sample")
     parser.add_argument("--require-clear-unpr-slice", action="store_true",
@@ -609,11 +619,14 @@ def main():
             observe_vps=args.observe_vps_capacity,
             queue_snapshot=queue,
             pinned_issues=args.pin_issue,
+            worker_events_database=args.worker_events_database,
         )
         old = read_json(args.state, MAX_STATE_BYTES, "state") if (
             args.state and args.state.exists()) else None
         decision, state = plan(bundle, old)
         decision["live_sources"] = provenance
+        if "worker_progress_observation" in bundle:
+            decision["worker_progress_observation"] = bundle["worker_progress_observation"]
         if "notion_claims_observation" in bundle:
             decision["notion_claims_observation"] = bundle["notion_claims_observation"]
         # Complete all source validation and output rendering before
@@ -743,6 +756,10 @@ def main():
             if provenance.get("pinned_requested"):
                 lines.append(pinned_receipts_text(provenance))
             lines.append(blocker_board_text(unblock))
+            if "worker_progress_observation" in decision:
+                lines.append(worker_progress_text(decision["worker_progress_observation"]))
+            elif args.worker_events_database is not None:
+                lines.append("WORKER-EVENTBRON ONBESCHIKBAAR · geen bewijs van workerhervatting.")
             lines.append("VOLGENDE PROBLEMEN (advies; eigendom en scope NIET geverifieerd):")
             for item in problem_inbox["items"]:
                 lines.append("  %s %s %s | %s | %s" % (
