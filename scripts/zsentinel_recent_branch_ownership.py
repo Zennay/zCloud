@@ -144,9 +144,11 @@ def inventory(repo, token=None, prefix=None, current_paths=None, now=None):
         # Compare immutable SHAs: ref names can move between requests.
         url = root + "/compare/" + main_sha + "..." + sha + "?per_page=100&page=1"
         compared = bounded_get(url, token)
-        if (not isinstance(compared, dict)
-                or compared.get("base_commit", {}).get("sha") != main_sha
-                or compared.get("head_commit", {}).get("sha") != sha):
+        base_obj = compared.get("base_commit") if isinstance(compared, dict) else None
+        head_obj = compared.get("head_commit") if isinstance(compared, dict) else None
+        if (not isinstance(base_obj, dict) or not isinstance(head_obj, dict)
+                or base_obj.get("sha") != main_sha
+                or head_obj.get("sha") != sha):
             raise ValueError("compare changed while sampling; do not claim ownership")
         ahead = compared.get("ahead_by")
         if type(ahead) is not int or ahead < 0:
@@ -159,7 +161,7 @@ def inventory(repo, token=None, prefix=None, current_paths=None, now=None):
         # Never call the first page a complete scope at that ceiling.
         if (not isinstance(files, list) or len(files) >= 300
                 or type(compared.get("total_commits")) is not int
-                or compared["total_commits"] > 100):
+                or not 1 <= compared["total_commits"] <= 100):
             incomplete_paths += 1
             coverage_complete = False
             continue
