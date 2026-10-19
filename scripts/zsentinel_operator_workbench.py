@@ -10,12 +10,14 @@ import argparse
 import hashlib
 from html import escape
 import json
+import os
+import stat
 from pathlib import Path
 import re
 import sys
 
 from zsentinel_product_delivery_board import (
-    ISSUE, PROJECT, URL, read, write_create_only, when,
+    ISSUE, PROJECT, URL, SCHEMAS, MAX_INPUT, unique, write_create_only, when,
 )
 
 MAX_CARDS = 60
@@ -26,6 +28,35 @@ PRIORITIES = {"P0", "P1", "P2", "Unspecified"}
 DECISIONS = ("investigate", "integrate-existing-pr", "coordinate-owner",
              "park-blocker", "ready-for-new-product-work")
 HEX = re.compile(r"^[a-f0-9]{64}$")
+
+
+def read_source_and_sha(path: Path):
+    """Validate one stable, bounded regular snapshot and hash the SAME bytes."""
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("No-follow file opening is unavailable")
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 1 <= before.st_size <= MAX_INPUT:
+        raise ValueError("Expected a bounded regular source snapshot")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+    try:
+        first = os.fstat(fd)
+        if not stat.S_ISREG(first.st_mode) or (
+                first.st_dev, first.st_ino) != (before.st_dev, before.st_ino):
+            raise ValueError("Board source identity drift")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(MAX_INPUT + 1)
+        last = os.fstat(fd)
+        if (len(raw) != first.st_size or len(raw) > MAX_INPUT or
+                (first.st_dev, first.st_ino, first.st_size, first.st_mtime_ns) !=
+                (last.st_dev, last.st_ino, last.st_size, last.st_mtime_ns)):
+            raise ValueError("Board source changed during read")
+    finally:
+        os.close(fd)
+    parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=unique,
+                        parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid JSON constant")))
+    if type(parsed) is not dict or parsed.get("schema") != SCHEMAS["board"]:
+        raise ValueError("Unsupported source board schema")
+    return parsed, hashlib.sha256(raw).hexdigest()
 
 
 def validated_view(source: dict) -> dict:
@@ -232,7 +263,7 @@ document.getElementById('export').onclick=()=>{
  const payload={schema_version:1,kind:'zsentinel-private-human-delivery-handoff',
    source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
    authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false,entries:rows};
- const uri=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\n'],{type:'application/json'}));
+ const uri=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\\n'],{type:'application/json'}));
  const a=elem('a');a.href=uri;a.download='zsentinel-human-handoff.json';a.click();
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
  status.textContent='Private source-bound handoff downloaded. Nothing was submitted.';
@@ -255,7 +286,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
          next.has(v.issue)||!permitted.has(v.decision)||
          typeof v.note!=='string'||v.note.length>1000||
          new TextEncoder().encode(v.note).length>4000||
-         [...v.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\n'&&ch!=='\t'))throw Error('malformed note');
+         [...v.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t'))throw Error('malformed note');
      next.set(v.issue,{decision:v.decision,note:v.note});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));drawDetail();
@@ -280,9 +311,8 @@ def main(argv=None):
     try:
         if args.board.resolve() == args.output.resolve():
             raise ValueError("Output must not overwrite board evidence")
-        source = read(args.board, "board")
+        source, board_sha = read_source_and_sha(args.board)
         view = validated_view(source)
-        board_sha = hashlib.sha256(args.board.read_bytes()).hexdigest()
         write_create_only(args.output, html_document(view, board_sha))
         print(args.output)
         return 0
