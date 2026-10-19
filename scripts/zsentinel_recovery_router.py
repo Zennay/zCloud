@@ -437,7 +437,9 @@ def triage_issue_inbox(inbox, now):
 def queue_pressure_summary(source, now):
     """Read-only SQLite pressure in reports only, never a lease or retry claim."""
     if source is None:
-        return {"coverage":"not_supplied", "totals":{}, "samples":[], "claim_ownership_verified":False}
+        return {"coverage":"not_supplied", "totals":{}, "samples":[],
+                "sample_is_complete":False, "project_groups":[],
+                "project_groups_truncated":False, "claim_ownership_verified":False}
     required = {"schema":"zsentinel-queue-pressure-v1",
                 "source":"local_sqlite_transaction_query_only",
                 "database_read_only":True, "automatic_retry_authorized":False,
@@ -452,7 +454,10 @@ def queue_pressure_summary(source, now):
     if source.get("queue_inventory_complete") is not True and coverage == "current":
         coverage = "incomplete"
     totals, samples = source.get("totals"), source.get("high_churn_samples")
-    if not isinstance(totals, dict) or not isinstance(samples, list) or len(samples) > 20:
+    groups = source.get("project_groups")
+    if (not isinstance(totals, dict) or not isinstance(samples, list) or len(samples) > 20
+            or not isinstance(groups, list) or len(groups) > 2500
+            or type(source.get("sample_is_complete")) is not bool):
         raise ValueError("queue pressure report bounds invalid")
     safe_totals = {}
     for name in ("active_items","queued_items","owned_items","high_claim_attempt_items",
@@ -467,6 +472,28 @@ def queue_pressure_summary(source, now):
             or safe_totals["ten_plus_claim_attempt_items"] > safe_totals["high_claim_attempt_items"]
             or safe_totals["expired_owner_lease_rows"] > safe_totals["owned_items"]):
         raise ValueError("queue pressure totals incoherent")
+    safe_groups=[]
+    for group in groups:
+        if not isinstance(group,dict):
+            raise ValueError("invalid queue project group")
+        project,priority = group.get("project_id"),group.get("priority")
+        if (not isinstance(project,str) or not SLUG.fullmatch(project)
+                or priority not in PRIORITY):
+            raise ValueError("invalid queue group scope")
+        counts={}
+        for name in ("queued","claimed","running","verifying",
+                     "high_claim_attempts","ten_plus_claim_attempts",
+                     "expired_owner_lease_rows","max_claim_attempts"):
+            value=group.get(name)
+            if type(value) is not int or not 0<=value<=10**9:
+                raise ValueError("invalid queue group count")
+            counts[name]=value
+        active=sum(counts[state] for state in ("queued","claimed","running","verifying"))
+        if (counts["high_claim_attempts"]>active
+                or counts["ten_plus_claim_attempts"]>counts["high_claim_attempts"]
+                or counts["expired_owner_lease_rows"]>active-counts["queued"]):
+            raise ValueError("incoherent queue group count")
+        safe_groups.append({"project_id":project, "priority":priority, **counts})
     safe_samples=[]
     for row in samples:
         if not isinstance(row,dict):
@@ -492,6 +519,9 @@ def queue_pressure_summary(source, now):
         })
     return {"coverage":coverage,"observed_at":utc_string(observed),
             "totals":safe_totals,"samples":safe_samples if coverage=="current" else [],
+            "sample_is_complete":source["sample_is_complete"],
+            "project_groups":safe_groups[:18] if coverage=="current" else [],
+            "project_groups_truncated":len(safe_groups)>18,
             "claim_ownership_verified":False}
 
 
