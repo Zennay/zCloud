@@ -173,17 +173,59 @@ def html_view(decision):
     source_issues = phrase(triage.get("coverage"), 40)
     live = decision.get("live_sources")
     if live is not None and (not isinstance(live, dict)
-            or live.get("notion") != "not_observed_no_ownership_claim"
+            or live.get("notion") not in (
+                    "not_observed_no_ownership_claim",
+                    "claim_status_observed_no_file_ownership",
+                    "degraded_unavailable_no_claim_authority")
             or live.get("runtime") != "not_observed_no_worker_recovery_claim"
             or live.get("current_claim_inventory") != "unknown_and_not_used_for_routing"):
         raise ValueError("invalid live source authority disclosure")
-    provenance = (
-        "Notion en runtime zijn niet uitgelezen; actieve eigenaren zijn onbekend. "
-        "Dit dashboard biedt observatie, geen automatische taakclaim."
-        if live is not None else
-        "Dit dashboard is gebaseerd op een apart aangeleverd bronpakket; "
-        "claims en runtimeherstel moeten onafhankelijk worden bevestigd."
-    )
+    notion_mode = live.get("notion") if isinstance(live, dict) else None
+    if notion_mode == "claim_status_observed_no_file_ownership":
+        provenance = ("Notion actieve werkstatus is alleen read-only geobserveerd. "
+                      "Bestandsscope, lease en worker zijn NIET geverifieerd; geen automatische taakclaim.")
+    elif notion_mode == "degraded_unavailable_no_claim_authority":
+        provenance = ("Notion claimstatus kon niet worden gelezen; nul actieve claims "
+                      "mag hier niet uit worden afgeleid. Geen automatische taakclaim.")
+    elif live is not None:
+        provenance = ("Notion en runtime zijn niet uitgelezen; actieve eigenaren zijn onbekend. "
+                      "Dit dashboard biedt observatie, geen automatische taakclaim.")
+    else:
+        provenance = ("Dit dashboard is gebaseerd op een apart aangeleverd bronpakket; "
+                      "claims en runtimeherstel moeten onafhankelijk worden bevestigd.")
+    notion = decision.get("notion_claims_observation")
+    notion_panel = '<p class="empty">Niet opgevraagd; actuele eigendom onbekend.</p>'
+    if notion is not None:
+        if (not isinstance(notion, dict) or notion.get("source") != "notion_readonly_data_source_pages"
+                or notion.get("coverage") not in ("current_pages_only", "incomplete")
+                or notion.get("claim_scope_verified") is not False
+                or notion.get("task_inventory_verified") is not False
+                or notion.get("can_dispatch") is not False
+                or notion.get("can_release_claim") is not False
+                or type(notion.get("active_count")) is not int
+                or not 0 <= notion["active_count"] <= 400
+                or not isinstance(notion.get("items"), list)
+                or len(notion["items"]) > 30
+                or type(notion.get("items_truncated")) is not bool):
+            raise ValueError("invalid Notion claim visibility snapshot")
+        rows = []
+        for item in notion["items"]:
+            if (not isinstance(item, dict) or item.get("status") not in ("Claimed", "Running")):
+                raise ValueError("invalid Notion active claim")
+            rows.append('<li class="word"><strong>' + phrase(item.get("work"), 35) +
+                        ' · ' + phrase(item.get("status"), 12) +
+                        '</strong>: ' + phrase(item.get("title"), 120) + '</li>')
+        caveat = ("Onvolledige Notion-paginering" if notion["coverage"] == "incomplete"
+                  else "Notion werkstatuspagina's opgevraagd")
+        notion_panel = (
+            '<p>' + phrase(caveat, 80) + ' · actieve regels: ' +
+            str(notion["active_count"]) + ' · geen bestandsscope, claimvrijgave of dispatch.</p>' +
+            ('<ul>' + ''.join(rows) + '</ul>' if rows else
+             '<p class="empty">Geen actieve regels in deze waarneming; geen bewijs van vrije scope.</p>') +
+            ('<p>Voorbeelden afgekapt na 30.</p>' if notion["items_truncated"] else '')
+        )
+    elif notion_mode == "degraded_unavailable_no_claim_authority":
+        notion_panel = '<p class="empty">Notion-bron niet bereikbaar; status onbekend (niet nul).</p>'
     queue_coverage = phrase(queue["coverage"], 30)
     queue_totals = queue["totals"]
     queue_cards = [queue_card(item) for item in queue["samples"]]
@@ -274,6 +316,8 @@ def html_view(decision):
             + section([issue_card(row) for row in triage["issues"]],
                       "Geen issuewaarnemingen beschikbaar. Raadpleeg de brondekking.")
             + '</section>'
+            + '<section><h2>Notion · actieve werkstatus (geen eigendomsbewijs)</h2>'
+            + notion_panel + '</section>'
             + '<section><h2>Werkelijke wachtrijdruk · ' + queue_coverage + '</h2>'
             + '<p class="muted">' + phrase(queue_summary, 300) + '</p>'
             + (group_html if queue_coverage == "current" else "")
