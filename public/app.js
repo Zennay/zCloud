@@ -1898,6 +1898,13 @@ function retryTime(value){
     &&/(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isFinite(Date.parse(value))
     &&Date.parse(value)<=Date.now()+120000;
 }
+function retryLeaseTime(value){
+  // Lease deadlines can legitimately be later than the report observation.
+  // Unlike source timestamps they must NOT be capped at now + 2 minutes.
+  return typeof value==='string'&&value.length<=45
+    &&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)
+    &&/(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isFinite(Date.parse(value));
+}
 function retryScope(raw){
   const known=retryKnownProjects();
   if(!raw||typeof raw!=='object'||Array.isArray(raw)
@@ -1953,7 +1960,7 @@ function validateRetryIncident(raw){
       ||refs.has(item.queue_ref)||!retryCount(item.attempts)
       ||item.attempts<scope.minimum_claim_attempts||typeof item.eligible!=='boolean'
       ||!retryTime(item.updated_at)||item.title!==undefined||item.queue_id!==undefined
-      ||(item.lease_expires_at!==null&&!retryTime(item.lease_expires_at)))
+      ||(item.lease_expires_at!==null&&!retryLeaseTime(item.lease_expires_at)))
       throw Error('Invalid, duplicate or sensitive retry item');
     refs.add(item.queue_ref);
     rows.push({project:item.project,priority:item.priority,status:item.status,
