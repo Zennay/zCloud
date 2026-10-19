@@ -473,6 +473,24 @@ A task suggestion requires **separate fresh (within 5 minutes)** `claim_observed
 - **Operator view:** Up to three bounded lines per active incident: *problem*, *action/owner*, *status and target review*. Machine output explicitly states no mutations/claims/CI retries/deployment. Historical absence and CI-green alone are never recovered.
 - **Bounded work:** One 1 MiB securely opened, inode-bound UTF-8 JSON input with duplicate-key rejection, up to 250 tasks/claims, 150 sourced inbox issues, 200 incident ledger entries; no background job, automatic CI loop or runaway retry. Refuses malformed gates/paths, duplicate work IDs, unauthorized inputs and invalid/symlink local state.
 
+
+## 19 oktober · Opeenvolgende portefeuilledekking zonder extra API-burst
+
+De read-only portefeuille-operator kan nu naast de standaard UTC-uurrotatie een **privé venstercursor** gebruiken. Hiermee bezoekt elke opeenvolgende, volledig gerenderde operatorrun het volgende groepje van maximaal drie canonieke repositories — ook wanneer meerdere handmatige starts binnen hetzelfde uur plaatsvinden. Eén run doet nooit méér GitHub-verzoeken dan voorheen en een niet-geobserveerd project blijft expliciet onbekend.
+
+```bash
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --window auto --window-state /secure/zsentinel-windows.json \
+  --format html > /secure/portfolio.html
+```
+
+- De optionele lokale cursor bevat enkel registry-fingerprint, volgende vensterindex, de vorige poging, tijdstip en de **partiële** GitHub-bronstatus per geselecteerd project; nooit tokens, ruwe queue IDs, claims of API-antwoorden. Schrijfacties zijn uitsluitend in dit expliciet gekozen privébestand; de SQLite-database blijft mode=ro.
+- Bij een gewijzigde canonieke projectregistry begint de cyclus opnieuw op venster nul; oude dekking wordt **niet** overgenomen of als gezond voorgesteld. Ongeldige of gemanipuleerde cursorinhoud wordt geweigerd.
+- Cursorverplaatsing gebeurt pas na bronvalidatie en rapport-rendering. Een gelijktijdige operatorrun met intussen gewijzigde cursor mag deze niet overschrijven. De cursor is géén scheduler, geen lease, geen claim en geen eigendomsbewijs. Opeenvolgende pogingen betekenen niet dat elk project aantoonbaar gezond is.
+- Een expliciet `--window N` blijft beschikbaar **zonder** cursor; combinatie met `--window-state` wordt geweigerd. `--state` is de **afzonderlijke** optionele incident-ledger en mag niet naar hetzelfde pad verwijzen.
+- De CLI schrijft geen productie-queue, restarts, GH workflow dispatches of reviewergoedkeuringen en activeert geen achtergrondtaak. Automatische uitvoering vereist nog steeds expliciete toestemming van de scheduler-/release-eigenaar.
+
 ### Release boundary
 
 The script is useful offline immediately after a source checkout. It is **not running autonomously in production** until an authorized integration owner connects a complete read-only source collector, controls private state storage, coordinates conflict-free live claim acquisition, and promotes the reviewed, exact-head CI-approved change through the existing serialized zCloud release gate. Self-hosted runner [P0 #1326](https://github.com/Zennay/zCloud/issues/1326) and private hosted account admission [#1523](https://github.com/Zennay/zCloud/issues/1523) remain separate human-controlled incidents; neither is fixed or bypassed by this script. No QA suite was created or manually executed for this change.
