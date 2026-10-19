@@ -56,7 +56,16 @@ def controls(projects):
         'Download privénotities (.json)</button> '
         '<label>Import eigen privénotities (.json) '
         '<input id="import-followups" type="file" accept=".json,application/json"></label>'
-        '<p id="followup-feedback" role="status" aria-live="polite"></p></section>'
+        '<p id="followup-feedback" role="status" aria-live="polite"></p>'
+        '<h3>Voorbereid werkpakket voor een bevoegde worker</h3>'
+        '<p>Vink alleen concrete, niet-infrastructurele productissues aan '
+        '(maximaal 12) en maak een machineleesbare conceptopdracht. '
+        'Controleer eigenaar, bestandsscope, bestaande PR en required CI vóór '
+        'een bevoegde worker iets mag claimen. De knop dispatcht NIETS.</p>'
+        '<button type="button" id="preview-packet">Conceptwerkpakket bekijken</button> '
+        '<button type="button" id="download-packet" disabled>Download concept .json</button>'
+        '<p id="packet-feedback" role="status" aria-live="polite"></p>'
+        '<pre id="packet-preview"></pre></section>'
     )
 
 
@@ -90,6 +99,11 @@ const download=input("export-issues");
 const followupDownload=input("export-followups");
 const followupImport=input("import-followups");
 const feedback=input("followup-feedback");
+const packetPreview=input("packet-preview");
+const packetDownload=input("download-packet");
+const packetFeedback=input("packet-feedback");
+let packetGeneration=0;
+let lastPacket=null;
 const followupValues=["nog-niet-beoordeeld","eigenaar-benaderen",
   "bron-opnieuw-controleren","extern-geparkeerd"];
 let previewVersion=0;
@@ -117,7 +131,14 @@ function visibleItems(){
     (!route||item.dataset.route===route)&&
     (!progress||item.dataset.change===progress));
 }
+function invalidatePacket(){
+  packetGeneration++;
+  lastPacket=null;
+  packetDownload.disabled=true;
+  packetPreview.textContent="Selectie of bron veranderd. Bekijk het werkpakket opnieuw.";
+}
 function invalidatePreview(){
+  invalidatePacket();
   previewVersion++;
   latestPreview=null;
   download.disabled=true;
@@ -140,12 +161,90 @@ for(const id of ["issue-search","issue-project","issue-priority","issue-route","
   input(id).addEventListener("input",refresh);
 }
 for(const item of boardItems){
+  const picker=item.querySelector("[data-work-packet]");
+  if(picker)picker.addEventListener("change",invalidatePacket);
   item.querySelector("[data-local-followup]").addEventListener("change",invalidatePreview);
   item.querySelector("[data-local-note]").addEventListener("input",invalidatePreview);
 }
 function markdownSafe(text){
   return String(text).replace(/[\\`*_{}\[\]()>#+.!|-]/g, "\\$&").replace(/[\r\n]+/g," ").slice(0,350);
 }
+input("preview-packet").addEventListener("click",()=>{
+  const selected=visibleItems().filter(item=>
+    item.querySelector("[data-work-packet]")?.checked);
+  if(!selected.length||selected.length>12){
+    invalidatePacket();
+    packetFeedback.textContent="Selecteer 1 t/m 12 zichtbare productissues. Infrastructuur-P0 is uitgesloten.";
+    return;
+  }
+  const seen=new Set();
+  const entries=[];
+  for(const item of selected){
+    const project=item.dataset.project;
+    const raw=item.dataset.issueUrl;
+    const parts=new URL(raw);
+    const tokens=parts.pathname.split("/").filter(Boolean);
+    if(parts.hostname!=="github.com"||parts.protocol!=="https:"||
+       tokens.length!==4||tokens[0]!=="Zennay"||tokens[2]!=="issues"||
+       !/^[1-9][0-9]*$/.test(tokens[3])||seen.has(raw)||
+       item.dataset.route==="authorized_infrastructure_owner_required"){
+      invalidatePacket();
+      packetFeedback.textContent="Onbetrouwbare of dubbele issuebron; geen werkpakket.";
+      return;
+    }
+    seen.add(raw);
+    const prs=[];
+    for(const a of item.querySelectorAll('p a[href*="/pull/"]')){
+      const dest=new URL(a.href);
+      const p=dest.pathname.split("/").filter(Boolean);
+      if(dest.hostname==="github.com"&&dest.protocol==="https:"&&
+         p.length===4&&p[0]==="Zennay"&&p[1]===tokens[1]&&
+         p[2]==="pull"&&/^[1-9][0-9]*$/.test(p[3]))
+         prs.push(dest.href);
+    }
+    entries.push({
+      project_id:project,issue_url:raw,title:item.dataset.title.slice(0,180),
+      priority:item.dataset.priority,next_step:item.dataset.route,
+      source_observed_at:item.dataset.sourceObservedAt||
+        document.body.dataset.observedAt,
+      source_window:item.dataset.sourceWindow||null,
+      existing_prs_unverified:prs.slice(0,3),
+      active_claim_verified:false,file_scope_verified:false,
+      issue_fixed:false,dispatch_authorized:false,merge_authorized:false
+    });
+  }
+  const payload={
+    schema:"zsentinel-product-work-packet-draft-v1",
+    created_at:new Date().toISOString(),
+    source_time_oldest:document.body.dataset.observedAt,
+    source_stale:freshness(),
+    requires_current_claim_file_ci_review_check:true,
+    owner_verified:false,permission_to_dispatch:false,
+    permission_to_merge:false,claims_taken:false,writes_performed:false,
+    items:entries
+  };
+  lastPacket={version:packetGeneration,payload};
+  packetPreview.textContent=JSON.stringify(payload,null,2);
+  packetFeedback.textContent=entries.length+
+    " conceptitem(s); bron en bevoegdheid moeten nog gecontroleerd worden.";
+  packetDownload.disabled=false;
+});
+packetDownload.addEventListener("click",()=>{
+  if(!lastPacket||lastPacket.version!==packetGeneration)return;
+  if(freshness()&&!lastPacket.payload.source_stale){
+    invalidatePacket();
+    packetFeedback.textContent="Bron is intussen ouder dan tien minuten; opnieuw bekijken.";
+    return;
+  }
+  const data=JSON.stringify(lastPacket.payload,null,2)+"\n";
+  const blob=new Blob([data],{type:"application/json;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  try{
+    const link=document.createElement("a");
+    link.href=url;link.download="zsentinel-concept-werkpakket.json";
+    document.body.append(link);link.click();link.remove();
+  }finally{setTimeout(()=>URL.revokeObjectURL(url),30000);}
+});
 input("preview-issues").addEventListener("click",()=>{
   const version=previewVersion;
   const stale=freshness();
@@ -301,6 +400,12 @@ setInterval(freshness,60*1000);
 
 def script_tag():
     return "<script>" + INTERACTIVE_JS + "</script>"
+
+
+def packet_selector():
+    return ('<label class="work-packet"><input type="checkbox" '
+            'data-work-packet> Voorbereiden als conceptwerkpakket '
+            '(GEEN claim)</label>')
 
 
 def followup_controls():
