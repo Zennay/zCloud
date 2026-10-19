@@ -113,6 +113,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "worker_ownership_verified": False,
             "recovery_proven": False, "next_action": "read_only_inspect_current_source",
             "p0_p1_issue_sample_hits": None, "incident_sample_hits": None,
+            "notion_active_status_min": None,
         }
     for entry in groups:
         if not isinstance(entry, dict):
@@ -150,6 +151,21 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 isinstance(item, dict) and item.get("project_id") == pid
                 for item in incidents
             )
+    notion = decision.get("notion_claims_observation")
+    if notion is not None:
+        if (not isinstance(notion, dict)
+                or notion.get("source") != "notion_readonly_data_source_pages"
+                or notion.get("claim_scope_verified") is not False
+                or notion.get("can_dispatch") is not False
+                or notion.get("coverage") not in ("current_pages_only", "incomplete")
+                or not isinstance(notion.get("active_project_counts"), dict)):
+            raise ValueError("invalid Notion project statuses")
+        counts = notion["active_project_counts"]
+        for key, value in counts.items():
+            if not isinstance(key, str) or type(value) is not int or value < 0 or value > 400:
+                raise ValueError("invalid active project status counter")
+        for pid in summary:
+            summary[pid]["notion_active_status_min"] = counts.get(pid, 0)
     for row in summary.values():
         if not complete:
             row["next_action"] = "queue_source_incomplete_owner_must_review"
@@ -232,6 +248,8 @@ def portfolio_html(summary, decision, window_index, windows):
             '" target="_blank" rel="noopener noreferrer">' + name + '</a></th>'
             '<td>' + _count(row["queued"]) + '</td>'
             '<td>' + _count(row["owned"]) + '</td>'
+            '<td>' + ('ONBEKEND' if row["notion_active_status_min"] is None
+                      else '≥' + str(row["notion_active_status_min"])) + '</td>'
             '<td>' + _count(row["high_claim_attempts"]) + '</td>'
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
             '<td>' + escape(github) + '</td>'
@@ -262,6 +280,7 @@ def portfolio_html(summary, decision, window_index, windows):
         ' Geen claim, workflow, herstart, lease of deploy uitgevoerd.</p>'
         '<div class="wrap"><table><thead><tr><th scope="col">Project</th>'
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
+        '<th scope="col">Notion actief (min.)</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
         '<th scope="col">GitHub-bereik</th><th scope="col">P0/P1-issues (min.)</th>'
         '<th scope="col">Incidenten (min.)</th><th scope="col">Veilige vervolgstap</th>'
@@ -354,8 +373,9 @@ def main():
                 window_index + 1, len(windows), ", ".join(selected)))
             print("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             for row in summary["rows"]:
-                print("%s | queued=%s | owned=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s" % (
+                print("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
+                    _count(row["notion_active_status_min"]),
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
                     _count(row["p0_p1_issue_sample_hits"]), _count(row["incident_sample_hits"]),
                     row["github_observation"]))
