@@ -122,9 +122,23 @@ def refresh(bundle, registry, token=None):
             }
             if status == "completed":
                 updated["conclusion"] = conclusion
-                steps = job.get("steps")
-                if isinstance(steps, list):
-                    updated["no_job_steps"] = len(steps) == 0
+                # GitHub can explicitly return steps=null when the platform
+                # finishes a job before it executes any runner step. A missing
+                # property is UNKNOWN: do not invent a failed admission.
+                if "steps" in job:
+                    steps = job["steps"]
+                    if steps is None:
+                        updated["no_job_steps"] = True
+                    elif isinstance(steps, list):
+                        updated["no_job_steps"] = len(steps) == 0
+                    else:
+                        raise ValueError("github_job_steps_evidence_invalid")
+                if (conclusion in ("failure", "timed_out", "action_required")
+                        and updated.get("no_job_steps") is True
+                        and not runner_id):
+                    # This is NOT a billing verdict. Platform annotations
+                    # and account-owner permissions must be checked separately.
+                    updated["verified_failure_category"] = "job_unstarted"
             # Drop an old unproven diagnosis instead of replaying 'billing' as fact.
             # Only an independently verified fresh source may set the category.
             project["github"] = updated
