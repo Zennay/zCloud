@@ -137,11 +137,13 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
         if type(refs) is not list or len(refs) > 3:
             raise ValueError("invalid PR reference bounds")
         links = []
+        expected_pr_prefix = "https://github.com/" + key.rsplit("#", 1)[0] + "/pull/"
         for ref in refs:
             link = ref.get("url") if type(ref) is dict else None
             if (type(link) is not str or not URL.fullmatch(link)
-                    or "/pull/" not in link or ref.get("active_claim") != "not_verified"):
-                raise ValueError("non-canonical or authoritative PR reference")
+                    or not link.startswith(expected_pr_prefix)
+                    or ref.get("active_claim") != "not_verified"):
+                raise ValueError("cross-repository, non-canonical or authoritative PR reference")
             links.append(link)
         title = row.get("title")
         if type(title) is not str or not title or len(title) > 180:
