@@ -322,6 +322,23 @@ def as_text(result):
                          " · vereiste exacte-head CI/review opnieuw controleren")
     if not result["changed_source_details"]:
         lines.append("  Geen wijziging waargenomen in deze begrensde steekproef.")
+    if result.get("schema") == "zsentinel-blocker-continuity-history-v1":
+        lines.append("HERHAALDE P0/P1 BLOKKADES (" + str(result["history_sample_count"]) +
+                     " BEGRENZDE BRONMOMENTEN):")
+        for row in result["history_items"][:36]:
+            lines.append(
+                "  " + row["priority"] + " " + row["project_id"] +
+                " · gezien " + str(row["sightings_in_sample"]) + "×" +
+                " · huidige reeks " + str(row["consecutive_recent_samples"]) +
+                " · laatste bron " + ("WAARGENOMEN" if row["current_sample_observed"]
+                                     else "ONBEKEND / NIET OPGELOST") +
+                " | " + row["next_gate"])
+        if result["history_windows_different_or_unknown"]:
+            lines.append("  LET OP: projectvensters verschillen/ontbreken; niet gezien != opgelost.")
+        if result["history_items_truncated"]:
+            lines.append("  Meer historische blokkades dan 96; lijst gedeeltelijk.")
+        lines.append("  Menselijke P0-aandachtkandidaten (niet verzonden): " +
+                     str(result["repeated_p0_human_attention_candidates"]))
     lines.append("Bronmoment en vereiste toestemming moeten opnieuw worden gecontroleerd.")
     return "\n".join(lines) + "\n"
 
@@ -364,6 +381,31 @@ def as_html(result):
                  (''.join(edits) if edits else
                   '<p>Geen verschillen gezien; dit bewijst geen herstel.</p>') +
                  '</section>')
+    if result.get("schema") == "zsentinel-blocker-continuity-history-v1":
+        recurring = []
+        for item in result["history_items"][:48]:
+            recurring.append(
+                '<article><strong>' + escape(item["priority"]) + ' · ' +
+                escape(item["project_id"]) + '</strong><p>' +
+                escape(item["problem"]) + '</p><small>' +
+                'Waargenomen: ' + str(item["sightings_in_sample"]) + '/' +
+                str(result["history_sample_count"]) + ' bronmomenten · ' +
+                'reeks: ' + str(item["consecutive_recent_samples"]) + ' · ' +
+                ('actueel gezien' if item["current_sample_observed"] else
+                 'huidige bron ONBEKEND / niet opgelost') +
+                ' · actie: ' + escape(item["next_gate"]) + '</small></article>')
+        cards.insert(0, '<section><h2>Herhaald herstelwerk · ' +
+                     str(result["history_sample_count"]) + ' bronmomenten</h2>' +
+                     ('<p class="alert">Verschillende projectvensters: verdwenen is'
+                      ' GEEN herstelbewijs.</p>'
+                      if result["history_windows_different_or_unknown"] else '') +
+                     '<p>Menselijke P0-aandachtkandidaten: ' +
+                     str(result["repeated_p0_human_attention_candidates"]) +
+                     ' · er is geen melding verstuurd en geen claim gedaan.</p>' +
+                     (''.join(recurring) or '<p>Geen incidentkaarten in deze steekproef.</p>') +
+                     ('<p>Meer dan 48 regels; weergave beperkt.</p>'
+                      if len(result["history_items"]) > 48 else '') +
+                     '</section>')
     return ('<!doctype html><html lang="nl"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">'
@@ -401,17 +443,21 @@ def _write_new(path: Path, content: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Compare two existing private zSentinel blocker board JSON snapshots without network writes")
-    parser.add_argument("--before", required=True, type=Path)
+    parser.add_argument("--before", required=True, action="append", type=Path,
+                        help="repeat 1..7 previous chronological portfolio snapshots")
     parser.add_argument("--after", required=True, type=Path)
     parser.add_argument("--format", choices=("json", "text", "html"), default="html")
     parser.add_argument("--output", type=Path, help="new exclusive 0600 output file; default stdout")
     args = parser.parse_args()
     try:
-        if args.before.resolve() == args.after.resolve():
-            raise ValueError("two distinct existing source snapshots are required")
-        if args.output and args.output.resolve() in (args.before.resolve(), args.after.resolve()):
-            raise ValueError("output cannot replace a source snapshot")
-        result = compare(_read(args.before), _read(args.after))
+        paths = args.before + [args.after]
+        if len(paths) > 8 or len({p.resolve() for p in paths}) != len(paths):
+            raise ValueError("two to eight distinct existing snapshots required")
+        if args.output and args.output.resolve() in {p.resolve() for p in paths}:
+            raise ValueError("output cannot replace an input snapshot")
+        inputs = [_read(path) for path in paths]
+        result = (compare(inputs[0], inputs[1]) if len(inputs) == 2
+                  else compare_history(inputs))
         rendered = (json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
                     if args.format == "json" else
                     as_text(result) if args.format == "text" else as_html(result))
