@@ -94,6 +94,69 @@ ze authoriseren nooit claim, automatische retry, merge of productieactie.
 De browser heeft een extra filter voor bronverandering en neemt de
 bewuste vergelijking op in een lokale handmatige overdracht.
 
+## Portfolio-breed gecombineerd productherstel (19 oktober)
+
+Het nieuwe `scripts/zsentinel_portfolio_workboard.py` combineert één tot
+zes **afzonderlijk vastgelegde, disjuncte** privé-JSON-bronvensters van
+`zsentinel_issue_delivery.py` tot één **zoekbaar, responsief portfolio-bord**
+voor maximaal 18 canonieke projecten en 144 issuekaarten. Het werkbord
+hergebruikt exact dezelfde offline filters, PR-bronacties, persoonlijke
+opvolgnotities en bewuste voorvertoning/export. Binnen iedere prioriteit
+worden projecten eerlijk verweven zodat één druk project andere
+productissues niet uit beeld duwt. Geen nieuwe GitHub/Notion/queue-requests
+bij samenvoegen, en geen nieuwe workerclaims.
+
+```sh
+# Maak aparte actuele JSON-opnames; live ophalen blijft begrensd op max.
+# drie projecten per commando en drie gerelateerde exacte-head PR-bronnen.
+umask 077
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud --project supa --format json > /private/venster-1.json
+python3 scripts/zsentinel_issue_delivery.py \
+  --project ftmo --project lightup --format json > /private/venster-2.json
+
+# Eén gecombineerd lokaal HTML-bord, ook als een venster onvolledig was.
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --snapshot /private/venster-1.json \
+  --snapshot /private/venster-2.json \
+  --format html > /private/portfolio-werkbord.html
+```
+
+De invoer moet uit unieke canonieke projecten bestaan (geen dubbel
+project, issue of vervalste repoidentiteit). Elk bestand maximaal 512 KiB,
+30 dagen bronhistorie en maximaal 24 issues; onvolledige of verlopen
+bronnen blijven zichtbaar als onbekend/VEROUDERD, niet als opgeloste
+issues of vrije workerclaims. De browser gebruikt het **oudste**
+onderliggende bronmoment voor de globale freshnesswaarschuwing. Per
+project blijft de exacte oorspronkelijke tijd en GitHub-dekking zichtbaar.
+Een niet-volledig of verouderd gecombineerd venster verlaat de CLI met
+status 3, maar behoudt het leesbare rapport. Geen verborgen continu
+verzamelen, andere API-rechten of achtergrondservice.
+
+### Eén operatorbord met bestaande lokale queue-pressure (opt-in)
+
+Een eerder **bevoegd, read-only** aangemaakt JSON-rapport van
+`scripts/zsentinel_portfolio_overview.py --format json` kan aan het
+standalone of gecombineerde werkbord worden gekoppeld:
+
+```sh
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --snapshot /private/venster-1.json --snapshot /private/venster-2.json \
+  --queue-overview /private/bestaande-zcloud-portfolio.json \
+  --format html > /private/portfolio-met-wachtrij.html
+```
+
+Dit maakt in dezelfde UI wachtende taken, actieve statussen, claim-churn
+en verlopen lease-rijen zichtbaar. Alle 13 (of de actuele canonieke)
+projectrijen en dezelfde repositoryidentiteit moeten aantoonbaar aanwezig
+zijn; de lokale queue-bron wordt nergens stilzwijgend ingevuld. De source
+is maximaal 1 MiB en maximaal 30 dagen oud; >10 minuten verschijnt als
+**VEROUDERD**. Bij een onvolledige queue-observatie blijven counters
+expliciet `ONBEKEND`. Ook een waargenomen `owned=0` is **nooit**
+file-scope- of lease-eigendomvrijgave. Het werkbord doet geen queue-, DB-,
+lease-, worker-, CI-, dispatch- of release-write. Als de lokale bron ontbreekt
+kan de operator de optionele vlag weglaten en verder met GitHub-only.
+
 ## Productissues direct naar een bruikbaar herstelwerkbord (19 oktober)
 
 Het nieuwe standalone `scripts/zsentinel_issue_delivery.py` werkt zonder
