@@ -18,7 +18,7 @@ SHA=re.compile(r"^[a-f0-9]{40}$")
 MAX_PROJECTS=3
 MAX_RUNS=5
 MAX_JOBS=10
-MAX_GETS_PER_PROJECT=2
+MAX_GETS_PER_PROJECT=4
 RELEVANT_STATES={"queued","completed","in_progress"}
 FAILURES={"failure","timed_out","action_required"}
 
@@ -36,7 +36,7 @@ def parse_time(value):
 
 
 def discover(registry, selected, token=None):
-    """One selected bounded recent workflow run and at most ten jobs / repo."""
+    """At most three recent workflow runs and ten jobs per run/repo."""
     if (not isinstance(selected,list) or not 1<=len(selected)<=MAX_PROJECTS
             or len(set(selected))!=len(selected)
             or any(name not in registry for name in selected)):
@@ -76,45 +76,50 @@ def discover(registry, selected, token=None):
                 coverage.append({"project_id":pid,"status":"no_relevant_run_in_recent_window",
                                  "authoritative_all_clear":False})
                 continue
-            run_id,sha,_=shortlisted[0]
-            request_count+=1
-            query=urlencode({"per_page":MAX_JOBS,"page":1})
-            jobs_result=bounded_get(f"{root}/actions/runs/{run_id}/jobs?{query}",token)
-            if not isinstance(jobs_result,dict) or not isinstance(jobs_result.get("jobs"),list):
-                raise ValueError("github workflow jobs shape invalid")
-            jobs=jobs_result["jobs"]
-            if len(jobs)>MAX_JOBS:
-                raise ValueError("github workflow jobs exceed bounds")
             candidates=[]
-            for job in jobs:
-                if not isinstance(job,dict):
-                    continue
-                job_id,actual_run=job.get("id"),job.get("run_id")
-                status=job.get("status")
-                result_state=job.get("conclusion")
-                assigned=job.get("runner_id")
-                if (type(job_id) is not int or not 1<=job_id<=2**53-1
-                        or actual_run!=run_id or status not in RELEVANT_STATES
-                        or (assigned is not None and
-                            (type(assigned) is not int or assigned<0))):
-                    continue
-                created=parse_time(job.get("created_at"))
-                observed=datetime.now(UTC)
-                if created>observed+timedelta(minutes=2):
-                    continue
-                if status=="queued" and not assigned and observed-created>=timedelta(minutes=30):
-                    importance=0
-                elif status=="completed" and result_state in FAILURES:
-                    importance=1
-                else:
-                    continue
-                candidates.append((importance,created,job_id,status,result_state,assigned))
+            checked_runs=0
+            # Sample up to three recent independent run receipts, not just
+            # the latest (which may be green while an older job is unassigned).
+            for run_id,sha,_ in shortlisted[:3]:
+                checked_runs+=1
+                request_count+=1
+                query=urlencode({"per_page":MAX_JOBS,"page":1})
+                jobs_result=bounded_get(f"{root}/actions/runs/{run_id}/jobs?{query}",token)
+                if not isinstance(jobs_result,dict) or not isinstance(jobs_result.get("jobs"),list):
+                    raise ValueError("github workflow jobs shape invalid")
+                jobs=jobs_result["jobs"]
+                if len(jobs)>MAX_JOBS:
+                    raise ValueError("github workflow jobs exceed bounds")
+                for job in jobs:
+                    if not isinstance(job,dict):
+                        continue
+                    job_id,actual_run=job.get("id"),job.get("run_id")
+                    status=job.get("status")
+                    result_state=job.get("conclusion")
+                    assigned=job.get("runner_id")
+                    if (type(job_id) is not int or not 1<=job_id<=2**53-1
+                            or actual_run!=run_id or status not in RELEVANT_STATES
+                            or (assigned is not None and
+                                (type(assigned) is not int or assigned<0))):
+                        continue
+                    created=parse_time(job.get("created_at"))
+                    observed=datetime.now(UTC)
+                    if created>observed+timedelta(minutes=2):
+                        continue
+                    if status=="queued" and not assigned and observed-created>=timedelta(minutes=30):
+                        importance=0
+                    elif status=="completed" and result_state in FAILURES:
+                        importance=1
+                    else:
+                        continue
+                    candidates.append((importance,created,run_id,job_id,sha,status,result_state,assigned))
             if not candidates:
                 coverage.append({"project_id":pid,"status":"no_selected_incident_in_bounded_jobs",
+                                 "runs_checked":checked_runs,
                                  "authoritative_all_clear":False})
                 continue
-            candidates.sort(key=lambda x:(x[0],x[1],x[2]))
-            _,created,job_id,status,result_state,assigned=candidates[0]
+            candidates.sort(key=lambda x:(x[0],x[1],x[2],x[3]))
+            _,created,run_id,job_id,sha,status,result_state,assigned=candidates[0]
             observed=datetime.now(UTC)
             receipt={
                 "run_id":run_id,"job_id":job_id,"head_sha":sha,
@@ -128,6 +133,7 @@ def discover(registry, selected, token=None):
             receipts[pid]=receipt
             coverage.append({"project_id":pid,"status":"selected_one_source_bound_job",
                              "run_id":run_id,"job_id":job_id,
+                             "runs_checked":checked_runs,
                              "authoritative_all_clear":False})
         except (ValueError,OSError):
             coverage.append({"project_id":pid,"status":"degraded_unavailable",
