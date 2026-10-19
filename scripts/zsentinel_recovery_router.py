@@ -343,7 +343,20 @@ def plan(bundle, previous=None, now=None):
     next_state = {}
     blocking_ids = set()
     blocked_gates = set()
-    for incident in report["incidents"]:
+    # GitHub's waiting/pending states must never be diagnosed as runner outages.
+    # An explicit, separately verified approval hold is nevertheless a human
+    # decision that deserves a distinct operator card, without auto-retrying.
+    actionable = list(report["incidents"])
+    for entry in observations["projects"]:
+        github = entry.get("github", {})
+        if (github.get("job_status") in ("waiting", "pending")
+                and github.get("verified_approval_wait") is True):
+            actionable.append({
+                "project_id": entry["id"],
+                "reason": "github_required_owner_approval",
+                "next_action": "Wait for authorized GitHub owner approval; do not rerun jobs.",
+            })
+    for incident in actionable:
         project = by_project[incident["project_id"]]
         # waiting/pending represent approval or a scheduler wait, never a missing runner.
         job_status = project.get("github", {}).get("job_status")
