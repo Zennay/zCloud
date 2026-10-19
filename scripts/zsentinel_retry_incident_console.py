@@ -73,7 +73,7 @@ def read_snapshot(path: Path, *, project: str | None, threshold: int, limit: int
                          WHEN 'P2' THEN 2 ELSE 3 END,
                          attempts DESC,updated_at ASC
                 LIMIT ?""",
-            [*args, threshold, limit],
+            [*args, threshold, limit + 1],
         )]
         connection.execute("ROLLBACK")
     finally:
@@ -89,7 +89,7 @@ def read_snapshot(path: Path, *, project: str | None, threshold: int, limit: int
             else "candidate-for-manual-retry-policy-review"
         ) if item["high_attempts"] else "no-high-attempts-observed"
     samples = []
-    for row in rows:
+    for row in rows[:limit]:
         status = str(row["status"])
         if status == "queued" and row["eligible"]:
             next_action = "Investigate repeat claim/requeue; do not auto-retry."
@@ -118,7 +118,7 @@ def read_snapshot(path: Path, *, project: str | None, threshold: int, limit: int
         "coverage": {
             "active_queue_states_only": list(ACTIVE),
             "sample_limit": limit,
-            "sample_is_complete": len(samples) < limit,
+            "sample_is_complete": len(rows) <= limit,
             "database_read_only": True,
             "safe_to_authorize_retry": False,
             "attempts_count_claims_not_failures": True,
