@@ -268,6 +268,30 @@ def html_view(decision):
                         and (row["job_status"] != "completed"
                              or row.get("no_job_steps") is not False))):
                 raise ValueError("contradictory exact GitHub job start evidence")
+            canonical_assignment = row.get(
+                "canonical_zcloud_runner_assignment_observed")
+            exact_runner_id = row.get("runner_id_observed")
+            if (canonical_assignment is not None
+                    and type(canonical_assignment) is not bool):
+                raise ValueError("untrusted canonical runner assignment claim")
+            if exact_runner_id is not None and (
+                    type(exact_runner_id) is not int
+                    or not 1 <= exact_runner_id <= 2**53-1):
+                raise ValueError("untrusted GitHub runner ID")
+            if canonical_assignment is True and (
+                    not row["runner_assigned"]
+                    or row["runner_route"] != "self_hosted"
+                    or exact_runner_id is None):
+                raise ValueError("canonical runner source receipt is contradictory")
+            canonical_details = (
+                "Exacte job toegewezen aan zcloud-vps-1 (runner_id=" +
+                str(exact_runner_id) +
+                "); dit is géén bewijs van huidige runnergezondheid of workerhervatting."
+                if canonical_assignment is True else
+                "Deze job bevestigt geen toewijzing aan zcloud-vps-1."
+                if canonical_assignment is False else
+                "Canonieke zCloud-runneridentiteit niet afzonderlijk waargenomen."
+            )
             start_message = {
                 "completed_without_steps":
                     "Afgerond zonder één uitgevoerde jobstap: mogelijke platformadmissie. "
@@ -289,6 +313,8 @@ def html_view(decision):
                 phrase(route_description, 180) + '</p><p class="small">Jobstatus: ' +
                 phrase(row["job_status"], 30) + ' · runner toegewezen: ' +
                 ('ja' if row["runner_assigned"] else 'nee') +
+                '</p><p class="small">zCloud-toewijzingsbewijs: ' +
+                phrase(canonical_details, 230) +
                 '</p><p class="small">Startbewijs: ' + phrase(start_message, 250) +
                 '</p><p class="small">Vereiste labels: ' +
                 (", ".join(phrase(v, 64) for v in row["route_labels"])
