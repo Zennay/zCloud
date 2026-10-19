@@ -114,6 +114,11 @@ Daarvoor wordt niets extra opgehaald: alleen PR-links die de bestaande
 issuebron zelf noemt en waarvan de geselecteerde PR expliciet is
 geobserveerd, worden verrijkt. Bij een onvolledige PR-bron toont de
 issuekaart uitsluitend de verplichte nieuwe eigenaarinspectie.
+Hetzelfde brongebonden PR-advies staat ook in de JSON-shortlist als
+`inspected_linked_prs` en in de platte tekstuitvoer bij het oorspronkelijke
+issue. De referentie draagt expliciet `issue_fix_verified=false` en
+`merge_authorized=false`; dezelfde ontvangen PR-bron wordt voor alle
+uitvoerformaten hergebruikt, zonder verborgen vervolgrequests.
 Een link of groene check is nooit bewijs dat het issue al is opgelost.
 
 De Nederlandse operatorweergave laat per PR zien wat de eerstvolgende
