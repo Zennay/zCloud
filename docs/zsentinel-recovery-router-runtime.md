@@ -15,7 +15,7 @@ The optional `--state` ledger stores incident fingerprints and observed timestam
 
 ## Direct live cockpit: no hand-created evidence bundle
 
-The new `scripts/zsentinel_live_cockpit.py` is a complete, **one-shot** CLI product. It reads the real existing SQLite `portfolio_queue` using `mode=ro` / `PRAGMA query_only=ON`, merges a bounded public GitHub issue/PR inbox and optional pinned GitHub jobs, then renders a responsive **Dutch offline dashboard** in one command:
+The new `scripts/zsentinel_live_cockpit.py` is a complete, **one-shot** CLI product. It now also **automatically samples recent GitHub CI runs and relevant queued/failed jobs**, so a specific job ID is not needed to obtain initial GitHub blocker observations. It reads the real existing SQLite `portfolio_queue` using `mode=ro` / `PRAGMA query_only=ON`, merges a bounded public GitHub issue/PR inbox and optional pinned GitHub jobs, then renders a responsive **Dutch offline dashboard** in one command:
 
 ```bash
 python3 scripts/zsentinel_live_cockpit.py \
@@ -30,13 +30,15 @@ python3 scripts/zsentinel_live_cockpit.py \
   --job cloud:39000012345:117000123456:0123456789abcdef0123456789abcdef01234567 \
   --format json
 
-# Skip external GitHub API calls entirely:
+# Skip all automatic GitHub issue and CI discovery entirely:
 python3 scripts/zsentinel_live_cockpit.py \
   --database /path/to/existing/zcloud.sqlite3 \
-  --project cloud --skip-github-issues --format text
+  --project cloud --skip-github-issues --skip-ci-discovery --format text
 ```
 
-**These are examples, not claims that the example IDs/database exist.** Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The job collector uses up to two additional GETs per pinned job. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
+**These are examples, not claims that the example IDs/database exist.** The default live command uses a bounded read-only GitHub CI discovery source (`scripts/zsentinel_github_discovery.py`): a maximum of five recent pull-request workflow runs and ten jobs from a sampled relevant run per selected project. Only a *specific* queued unassigned job older than 30 minutes or a completed failed/timed-out/action-required job becomes a candidate for the source-bound router. Job/run/commit identities must match GitHub. Incomplete/permission-limited sampling is **not** interpreted as zero CI incidents; successful completed jobs are not treated as evidence of live VPS recovery. Use `--skip-ci-discovery` to disable this GET source; `--job` pins an exact run/job to fetch independently. Discovery does not start, rerun, cancel, label, assign or restart anything.
+
+ Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The job collector uses up to two additional GETs per pinned job. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
 
 The queue observer in `scripts/zsentinel_queue_observer.py` also runs standalone:
 
