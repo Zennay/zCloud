@@ -135,9 +135,10 @@ def status_checks(repo, head, token):
         raise ValueError("unknown legacy commit context")
     pending = [x for x in run_state if x["state"] != "completed"]
     bad = [x for x in run_state if x["state"] == "completed" and x["conclusion"] != "success"]
-    observed_green = bool(run_state) and not pending and not bad and state == "success"
-    # GitHub's combined state can be pending if there are no legacy contexts.
-    # Do not promote observed check success to protected-branch required-check proof.
+    observed_run_success = bool(run_state) and not pending and not bad
+    # GitHub's combined status can remain pending when no legacy contexts
+    # exist. Report native check success independently; neither value
+    # attests the repository's required branch protection rules.
     return {
         "exact_head_sha": head,
         "run_count": len(run_state),
@@ -146,7 +147,9 @@ def status_checks(repo, head, token):
         "observed_runs": sorted(run_state, key=lambda x: x["name"]),
         "legacy_context_count": len(statuses),
         "legacy_combined_state": state,
-        "observed_checks_and_legacy_success": observed_green,
+        "observed_check_runs_success": observed_run_success,
+        "observed_legacy_contexts_success": (
+            state == "success" if statuses else None),
         "branch_required_check_rules_verified": False,
     }
 
@@ -216,8 +219,12 @@ def fetch_target(target, token):
         reasons.append("draft_pr")
     if pr.get("mergeable") is not True:
         reasons.append("mergeability_unverified_or_conflicted")
-    if not checks["observed_checks_and_legacy_success"]:
-        reasons.append("checks_or_legacy_contexts_unverified")
+    if not checks["observed_check_runs_success"]:
+        reasons.append("check_runs_pending_or_unsuccessful")
+    if checks["observed_legacy_contexts_success"] is False:
+        reasons.append("legacy_commit_context_not_successful")
+    if checks["observed_legacy_contexts_success"] is None:
+        reasons.append("legacy_context_requirement_unknown")
     if reviews["observed_distinct_non_author_approvals"] == 0:
         reasons.append("no_independent_approval_observed")
     if reviews["observed_changes_requested"]:
