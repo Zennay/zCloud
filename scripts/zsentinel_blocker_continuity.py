@@ -147,7 +147,23 @@ def _unwrap(snapshot):
     return snapshot["blocker_first_handoff"]
 
 
+def _window(snapshot):
+    """A source window is a sampled slice, never a complete issue inventory."""
+    if type(snapshot) is not dict or "blocker_first_handoff" not in snapshot:
+        return None
+    selected = snapshot.get("selected_projects")
+    if selected is None:
+        return None
+    if (type(selected) is not list or not 1 <= len(selected) <= 3
+            or len(selected) != len(set(selected))
+            or any(type(pid) is not str or not PROJECT.fullmatch(pid)
+                   for pid in selected)):
+        raise ValueError("invalid selected GitHub window")
+    return sorted(selected)
+
+
 def compare(before, after):
+    before_window, after_window = _window(before), _window(after)
     before, after = _unwrap(before), _unwrap(after)
     old, new = _cards(before), _cards(after)
     current, first_seen, not_reobserved, changed = [], [], [], []
@@ -158,6 +174,8 @@ def compare(before, after):
             first_seen.append(item)
             continue
         earlier = old[key]
+        if earlier["project_id"] != item["project_id"]:
+            raise ValueError("cross-project incident identity drift")
         current.append(item)
         fields = ("kind", "priority", "problem", "action", "owner",
                   "next_gate", "source_pr_head", "observed_check_gates")
@@ -175,6 +193,14 @@ def compare(before, after):
         "after_sampled_cards": len(new),
         "before_truncated": before["blocker_cards_truncated"],
         "after_truncated": after["blocker_cards_truncated"],
+        "before_sampled_projects": before_window,
+        "after_sampled_projects": after_window,
+        "same_project_window_verified": (
+            before_window == after_window
+            if before_window is not None and after_window is not None else False),
+        "window_mismatch_or_unknown": (
+            before_window is None or after_window is None
+            or before_window != after_window),
         "still_observed": current,
         "newly_observed": first_seen,
         "changed_source_details": changed,
@@ -198,6 +224,9 @@ def as_text(result):
     lines = [
         "zSentinel · bronvergelijking van twee begrensde blockerborden",
         "LET OP: niet opnieuw gezien != opgelost; geen actuele leases of hervatte workers bewezen.",
+        ("LET OP: venster verschilt of is ONBEKEND; afwezigheid kan door brondekking komen."
+         if result["window_mismatch_or_unknown"] else
+         "Beide rapporten hebben hetzelfde geselecteerde projectvenster (niet volledig)."),
         "Huidig " + str(result["after_sampled_cards"]) +
         " | nieuw " + str(len(result["newly_observed"])) +
         " | nog gezien " + str(len(result["still_observed"])) +
@@ -280,7 +309,11 @@ def as_html(result):
             'padding:1rem;margin:.6rem 0;border-radius:8px}a{color:#9ecfff}small{color:#c6d0dc}'
             '.alert{border:1px solid #e0bd70;padding:1rem;border-radius:8px}</style></head>'
             '<body><main><h1>zSentinel · blokkades eerst</h1>'
-            '<p class="alert">Dit vergelijkt twee beperkte bronmomenten. Verdwenen ≠ opgelost;'
+            '<p class="alert">' +
+            ('Projectvenster VERSCHILT/ONBEKEND; bronnen zijn niet volledig vergelijkbaar. '
+             if result["window_mismatch_or_unknown"] else
+             'Het projectvenster is gelijk, maar bronnen blijven beperkt. ') +
+            'Dit vergelijkt twee beperkte bronmomenten. Verdwenen ≠ opgelost;'
             ' geen bewijs van hervatte workers, nieuwe claim, CI-vrijgave of productieherstel.</p>' +
             "".join(cards) + '</main></body></html>')
 
