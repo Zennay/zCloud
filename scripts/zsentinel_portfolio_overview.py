@@ -36,7 +36,50 @@ def project_windows(registry):
     return [ids[i:i+MAX_PROJECTS] for i in range(0, len(ids), MAX_PROJECTS)]
 
 
-def portfolio_summary(registry, queue, selected):
+def verified_source_coverage(selected, provenance, bundle):
+    """Never confuse an attempted GitHub window with successfully read sources.
+
+    Source admission is explicitly a bounded sample; even a successful read
+    never proves all jobs, open PRs or project health.
+    """
+    result = {}
+    ci = provenance.get("ci_discovery")
+    ci_rows = ci.get("coverage") if isinstance(ci, dict) else None
+    if not isinstance(ci_rows, list):
+        ci_rows = []
+    inbox = bundle.get("issue_inbox")
+    issue_rows = inbox.get("coverage") if isinstance(inbox, dict) else None
+    if not isinstance(issue_rows, list):
+        issue_rows = []
+    for pid in selected:
+        ci_status = [
+            row.get("status") for row in ci_rows
+            if isinstance(row, dict) and row.get("project_id") == pid
+        ]
+        issue_status = [
+            row.get("status") for row in issue_rows
+            if isinstance(row, dict) and row.get("project") == pid
+        ]
+        ci_ok = (len(ci_status) == 1 and ci_status[0] in (
+            "selected_one_source_bound_job", "no_actionable_job_in_sampled_windows"))
+        issue_ok = (len(issue_status) == 1 and issue_status[0] == "partial"
+                    and not inbox.get("stopped_after_rate_or_auth_denial", False))
+        # A truncated issue feed is still a partial observation, not an
+        # authoritative full issue list. It should not mask a CI denial.
+        if ci_ok and issue_ok:
+            result[pid] = "partial_both_sources"
+        elif ci_ok:
+            result[pid] = "ci_sample_only"
+        elif issue_ok:
+            result[pid] = "issue_sample_only"
+        elif ci_status or issue_status or provenance.get("issue_inbox") == "degraded_unavailable":
+            result[pid] = "degraded_or_denied"
+        else:
+            result[pid] = "not_requested_or_unavailable"
+    return result
+
+
+def portfolio_summary(registry, queue, selected, github_coverage):
     """Coverage-aware project rows; zero is never emitted for absent evidence."""
     if (not isinstance(queue, dict)
             or queue.get("schema") != "zsentinel-queue-pressure-v1"
@@ -48,13 +91,15 @@ def portfolio_summary(registry, queue, selected):
     if not isinstance(totals, dict) or not isinstance(groups, list):
         raise ValueError("incomplete queue pressure contract")
     complete = queue.get("queue_inventory_complete") is True
+    if (not isinstance(github_coverage, dict) or set(github_coverage) != set(selected)):
+        raise ValueError("GitHub source coverage missing for selected window")
     summary = {}
     for key, repository in registry.items():
         if not isinstance(key, str) or not isinstance(repository, str):
             raise ValueError("invalid canonical project mapping")
         summary[key] = {
             "project_id": key, "github_repo": repository,
-            "github_observation": ("bounded_window" if key in selected else "not_queried"),
+            "github_observation": github_coverage.get(key, "not_queried"),
             "queue_observation": ("complete_active_rows" if complete else "partial_unreliable"),
             "queued": 0 if complete else None,
             "owned": 0 if complete else None,
@@ -95,6 +140,8 @@ def portfolio_summary(registry, queue, selected):
             row["next_action"] = "inspect_claim_churn_no_auto_retry"
         elif row["github_observation"] == "not_queried":
             row["next_action"] = "github_source_not_scanned_next_window"
+        elif row["github_observation"] in ("degraded_or_denied", "not_requested_or_unavailable"):
+            row["next_action"] = "github_source_unavailable_no_all_clear"
         else:
             row["next_action"] = "inspect_open_issue_pr_and_exact_ci_gates"
     unknown_count = sum(
@@ -106,7 +153,11 @@ def portfolio_summary(registry, queue, selected):
         "schema": "zsentinel-portfolio-overview-v1",
         "observed_at_utc": queue.get("observed_at_utc"),
         "canonical_projects": len(registry),
-        "github_projects_observed": len(selected),
+        "github_projects_selected": len(selected),
+        "github_projects_observed": sum(
+            github_coverage.get(pid) in (
+                "partial_both_sources", "ci_sample_only", "issue_sample_only")
+            for pid in selected),
         "github_coverage_is_partial": True,
         "queue_inventory_complete": complete,
         "queue_owner_authorized": False,
@@ -137,14 +188,22 @@ def portfolio_html(summary, decision, window_index, windows):
                 or not all(c.isascii() and (c.isalnum() or c in "_-.") for c in repo.split("/")[1])):
             raise ValueError("untrusted repository link")
         link = "https://github.com/" + escape(repo, quote=True)
-        github = ("Dít venster · beperkte GitHub-steekproef"
-                  if row["github_observation"] == "bounded_window"
-                  else "NIET GESCAND · onbekend")
+        github = {
+            "partial_both_sources": "BEPERKTE CI + issues",
+            "ci_sample_only": "BEPERKTE CI · issues onbekend",
+            "issue_sample_only": "BEPERKTE issues · CI onbekend",
+            "degraded_or_denied": "BRONFOUT / geen volledige dekking",
+            "not_requested_or_unavailable": "NIET BESCHIKBAAR / geen scan",
+            "not_queried": "NIET GESCAND · onbekend",
+        }.get(row["github_observation"])
+        if github is None:
+            raise ValueError("unsupported GitHub coverage class")
         action_text = {
             "queue_source_incomplete_owner_must_review": "Wachtrij incompleet; bron-/ownercontrole nodig",
             "request_owner_lease_review_never_release": "Vraag leasebeoordeling; niet vrijgeven",
             "inspect_claim_churn_no_auto_retry": "Onderzoek claimchurn; geen retry",
             "github_source_not_scanned_next_window": "GitHub onbekend; volgend venster",
+            "github_source_unavailable_no_all_clear": "Bronfout: opnieuw via geautoriseerde route",
             "inspect_open_issue_pr_and_exact_ci_gates": "Bekijk issues, PR en exacte CI",
         }.get(row["next_action"])
         if action_text is None:
@@ -163,8 +222,10 @@ def portfolio_html(summary, decision, window_index, windows):
     caption = (
         f'Venster {window_index + 1} van {len(windows)}: <strong>{selected}</strong>. '
         f'{summary["canonical_projects"]} canonieke projecten zichtbaar; '
-        f'slechts {summary["github_projects_observed"]} projectbronnen '
-        'met beperkte GitHub-observatie. Niet gescand betekent niet gezond.'
+        f'{summary["github_projects_observed"]} van '
+        f'{summary["github_projects_selected"]} geselecteerde projecten met '
+        'daadwerkelijk beperkte GitHub-bronobservatie. '
+        'Niet opgevraagd of mislukt betekent niet gezond.'
     )
     coverage = (
         "Huidige wachtrijmomentopname is volledig binnen de observerlimiet; "
@@ -251,7 +312,8 @@ def main():
         if args.state:
             write_json_atomic(args.state, state)
         decision["private_ledger_written"] = bool(args.state)
-        summary = portfolio_summary(registry, queue, selected)
+        github_coverage = verified_source_coverage(selected, provenance, bundle)
+        summary = portfolio_summary(registry, queue, selected, github_coverage)
         if args.format == "html":
             print(portfolio_html(summary, decision, window_index, windows))
         elif args.format == "json":
