@@ -203,7 +203,57 @@ def admit_paths(task):
     return tuple(bounded_path(item) for item in paths)
 
 
-def eligible_tasks(bundle, blocked, now):
+def vps_capacity(bundle, now):
+    """Advisory, fail-closed VPS resource admission for suggestions.
+
+    The single source snapshot must be trusted and fresh. This does not
+    restart the listener, authorize compute, or create worker capacity.
+    """
+    data = bundle.get("resources")
+    if data is None:
+        return {"state": "unavailable", "reason": "no_vps_observation"}
+    if not isinstance(data, dict) or data.get("source") != "trusted_readonly_vps_snapshot":
+        raise ValueError("resources must be an explicitly trusted read-only VPS snapshot")
+    observed = timestamp(data.get("observed_at"), "resources.observed_at")
+    if observed > now + timedelta(minutes=2) or now - observed > timedelta(minutes=3):
+        return {"state": "stale", "reason": "vps_observation_outdated"}
+    metrics = data.get("vps")
+    if not isinstance(metrics, dict):
+        raise ValueError("resources.vps must be an object")
+    cores = metrics.get("cores")
+    load = metrics.get("load_5m")
+    memory = metrics.get("available_memory_mib")
+    swap = metrics.get("available_swap_mib")
+    disk = metrics.get("free_disk_gib")
+    if type(cores) is not int or not 1 <= cores <= 128:
+        raise ValueError("invalid VPS vCPU capacity")
+    for key, value, maximum in (
+        ("load_5m", load, 5000),
+        ("available_memory_mib", memory, 1048576),
+        ("available_swap_mib", swap, 1048576),
+        ("free_disk_gib", disk, 100000),
+    ):
+        if type(value) not in (int, float) or not 0 <= value <= maximum:
+            raise ValueError(f"invalid VPS resource: {key}")
+    overloaded = load > 1.5 * cores
+    low_memory = memory < 1024
+    low_swap = swap < 256
+    low_disk = disk < 2
+    if overloaded or low_memory or low_swap or low_disk:
+        reasons = []
+        if overloaded:
+            reasons.append("load_above_conservative_capacity")
+        if low_memory:
+            reasons.append("memory_headroom_low")
+        if low_swap:
+            reasons.append("swap_headroom_low")
+        if low_disk:
+            reasons.append("disk_headroom_low")
+        return {"state": "overloaded", "reason": ",".join(reasons)}
+    return {"state": "advisory_headroom", "reason": "thresholds_met_not_release_authorization"}
+
+
+def eligible_tasks(bundle, blocked, now, capacity):
     tasks = bundle.get("tasks", [])
     claims = bundle.get("active_claims", [])
     complete = (bundle.get("claim_inventory_complete") is True
@@ -272,6 +322,11 @@ def eligible_tasks(bundle, blocked, now):
         if "none" in requirements and len(requirements) != 1:
             raise ValueError("none cannot be combined with other required_gates")
         if set(requirements) & blocked["gates"]:
+            continue
+        if "self_hosted" in requirements and capacity["state"] != "advisory_headroom":
+            continue
+        # Unknown compute destination is not evidence of non-VPS work.
+        if task.get("requires_vps") is not False and "self_hosted" not in requirements:
             continue
         recommendations.append({
             "id": ident,
@@ -534,7 +589,8 @@ def plan(bundle, previous=None, now=None):
             blocking_ids.add(key)
             blocked_gates.update(entry.get("blocked_gates", ["self_hosted", "github_hosted"]))
     blocked = {"ids": blocking_ids, "gates": blocked_gates}
-    routes, claims_verified = eligible_tasks(bundle, blocked, now)
+    capacity = vps_capacity(bundle, now)
+    routes, claims_verified = eligible_tasks(bundle, blocked, now, capacity)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     # Candidate feed for an authorized watch/notifier integrator, NOT a push.
     # Stable ids allow the downstream delivery system to dedupe independently.
@@ -563,6 +619,7 @@ def plan(bundle, previous=None, now=None):
         "queue_claims_changed": False, "ci_retried": False,
         "deployment_authorized": False,
         "claim_inventory_complete": claims_verified,
+        "vps_resource_admission": capacity,
         "incidents": incidents,
         "unattributed_progress_or_jobs": unattributed,
         "reconciled_exact_jobs": reconciled_jobs,
@@ -595,6 +652,8 @@ def operator_text(result):
     if result.get("reconciled_exact_jobs"):
         lines.append("Exact GitHub jobs source-reconciled (no runtime proof): " +
                      str(len(result["reconciled_exact_jobs"])))
+    lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
+                 " / " + result["vps_resource_admission"]["reason"])
     triage = result["open_product_issue_triage"]
     lines.append("P0/P1 issue inbox: " + triage["coverage"] + " (inspection only)")
     for issue in triage["issues"]:
