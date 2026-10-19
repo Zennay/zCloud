@@ -500,7 +500,7 @@ def main():
     parser = argparse.ArgumentParser(description="zSentinel bounded incident dedup and independent work router")
     parser.add_argument("bundle", help="trusted JSON evidence + tasks + active-claim inventory")
     parser.add_argument("--state", help="optional private local incident dedup ledger (JSON)")
-    parser.add_argument("--format", choices=("json", "text"), default="text")
+    parser.add_argument("--format", choices=("json", "text", "html"), default="text")
     args = parser.parse_args()
     try:
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
@@ -509,7 +509,11 @@ def main():
         if args.state:
             write_json_atomic(args.state, state)
         output["private_ledger_written"] = bool(args.state)
-        print(json.dumps(output, sort_keys=True, indent=2) if args.format == "json" else operator_text(output))
+        if args.format == "html":
+            from zsentinel_recovery_view import html_view
+            print(html_view(output))
+        else:
+            print(json.dumps(output, sort_keys=True, indent=2) if args.format == "json" else operator_text(output))
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel routing refused: {exc}\n")
     return 0
