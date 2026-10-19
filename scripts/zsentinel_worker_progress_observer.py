@@ -50,7 +50,7 @@ def _age(value, now):
     return max(0, int(seconds))
 
 
-def _observe_slot(con, project, slot, now, desired_state):
+def _observe_slot(con, project, slot, now, desired_state, global_slot):
     args = (project, slot)
     last = con.execute(
         "SELECT id,ts,event,generating,sending,progress_at,assistant_chars "
@@ -61,13 +61,16 @@ def _observe_slot(con, project, slot, now, desired_state):
             "project_id": project, "worker_slot": slot,
             "desired_state": desired_state,
             "desired_state_source_observed": desired_state != "unknown",
+            "allocated_global_slot": global_slot,
             "last_event_type": None, "event_age_seconds": None,
             "progress_age_seconds": None, "assistant_character_count": None,
             "browser_generating": False, "browser_sending": False,
             "recent_block_event_after_last_prompt": False,
             "classification": (
                 "configured_running_no_event_evidence"
-                if desired_state == "running"
+                if desired_state == "running" and global_slot is not None
+                else "configured_not_allocated_not_a_stalled_worker"
+                if global_slot is None and desired_state == "running"
                 else "configured_paused_not_incident"
                 if desired_state == "paused"
                 else "configured_draining_owner_hold"
@@ -120,6 +123,10 @@ def _observe_slot(con, project, slot, now, desired_state):
         state = "configured_draining_owner_hold"
     elif desired_state != "running":
         state = "desired_state_unknown_no_automatic_action"
+    elif global_slot is None:
+        # A lingering running configuration without an assigned global slot
+        # is not an active, stalled worker, regardless of old events.
+        state = "configured_not_allocated_not_a_stalled_worker"
     elif blocked_after_prompt:
         state = "recent_client_block_event_owner_review"
     elif (generating and event_age is not None and event_age <= 180
@@ -137,6 +144,7 @@ def _observe_slot(con, project, slot, now, desired_state):
         "project_id": project, "worker_slot": slot,
         "desired_state": desired_state,
         "desired_state_source_observed": desired_state != "unknown",
+        "allocated_global_slot": global_slot,
         "last_event_type": event if event in SAFE_EVENT else "other_event",
         "event_age_seconds": event_age,
         "progress_age_seconds": progress_age,
