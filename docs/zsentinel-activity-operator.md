@@ -241,6 +241,19 @@ The list reserves round-robin opportunities for quieter canonical projects befor
 
 This source change and its exact `app.js` cache pin live on [PR #1550](https://github.com/Zennay/zCloud/pull/1550) until mandatory exact-head CI, independent reviewer, protected-main and serialized release authorization complete. It is **not** evidence that the live VPS UI is already updated. No new QA or regression suite was created or run manually.
 
+
+## Complete 13-project source retention and fair P0/P1 operator inbox (19 October)
+
+The portfolio currently has **13 canonical projects**, but the earlier browser Activity importer and GitHub/issue source refresh retained only the **last eight** observed project coverages. Reading the next batch silently discarded evidence for previously inspected projects, even when there was room in the existing bounded UI. That was a real operator handoff defect, not proof of inactivity.
+
+The same existing Activity integration branch now retains **up to 16 canonical project source records** across manual public GitHub reads, trusted VPS reads and explicit operator JSON imports. The global GitHub event history remains capped at **200 distinct events**, fairly allocated across all retained projects instead of just the first eight. Per-import schema maximums (eight requested projects, 200 events and existing exact-source validations) are **unchanged**; the new limit only applies to the accumulated in-memory observation store. No tokens, browser localStorage, hidden polling or provider background sync were added. Older records are not treated as live current status.
+
+Issue discovery remains bounded to **150 unique project/issue references**. It now fairly interleaves source-covered projects **within each priority class**, processing P0 before P1 before lower priorities, instead of letting one high-volume repository starve the rest of the portfolio. Current source observations replace identical previously observed issue IDs; missing/corrupt/inaccessible sources still show partial or unknown rather than zero. This does not infer claim authority or trigger write/repair/merge/deploy actions.
+
+Use the existing **Read next 4 project sources** button until all 13 are covered in the bounded browser view. New canonical projects are accommodated up to the fixed 16-source cap; larger future portfolios require an explicit review of memory and provider quotas. The earlier note about retaining only eight recent projects has been corrected in the UI.
+
+Release: [PR #1550](https://github.com/Zennay/zCloud/pull/1550), source-only until current exact-head mandatory CI, independent review, protected-main merge and serialized VPS promotion. No manual QA or regression suite was authored or executed for this change.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
