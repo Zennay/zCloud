@@ -24,7 +24,7 @@ from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html
-from zsentinel_portfolio_windows import select_next, advance, coverage_history
+from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
 
 
 def project_windows(registry):
@@ -463,6 +463,7 @@ def main():
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text", "ics"), default="html")
     args = parser.parse_args()
+    window_lock = None
     try:
         registry = canonical_projects(args.registry)
         windows = project_windows(registry)
@@ -471,6 +472,10 @@ def main():
             raise ValueError("window cursor and incident ledger must use separate private files")
         if args.window == "auto":
             if args.window_state:
+                # Retain a nonblocking exclusive lock across ALL source reads
+                # and the eventual cursor write. Cursor inode itself changes
+                # atomically, so locking only that inode is not sufficient.
+                window_lock = acquire_window_lock(args.window_state)
                 window_index, previous_window_state, window_mode = select_next(
                     windows, registry, args.window_state)
             else:
@@ -618,6 +623,9 @@ def main():
         print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel portfolio overview unavailable: {exc}\n")
+    finally:
+        if window_lock is not None:
+            window_lock.close()
     return 0
 
 
