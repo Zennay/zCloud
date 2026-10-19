@@ -16,6 +16,30 @@ REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 MAX_PIN_READS = 3
 
 
+def known_owner_gate_specs(registry, selected):
+    """Auto-refresh only registered existing owner-held P0 issue identities.
+
+    A known issue identity says where to read, not whether a runner is down,
+    an account needs payment, or a worker may be claimed/restarted.
+    """
+    if (not isinstance(registry, dict) or not isinstance(selected, list)
+            or len(selected) > 3 or len(selected) != len(set(selected))):
+        raise ValueError("invalid auto pin project window")
+    if "cloud" not in selected or registry.get("cloud") != "Zennay/zCloud":
+        return []
+    from zsentinel_problem_picker import OWNER_GATED_ISSUES
+    found = []
+    for url in sorted(OWNER_GATED_ISSUES):
+        match = re.fullmatch(
+            r"https://github[.]com/Zennay/zCloud/issues/([1-9][0-9]{0,8})", url)
+        if match:
+            found.append("cloud:" + match.group(1))
+    if len(found) > MAX_PIN_READS:
+        # Do not silently discard new critical owner gates.
+        raise ValueError("too many known owner-only gates for bounded auto pin window")
+    return found
+
+
 def validate_pin_specs(registry, selected, pins):
     """Pure preflight: invalid operator input must fail before any GitHub GET."""
     if (not isinstance(registry, dict) or not isinstance(selected, list)
