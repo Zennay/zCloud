@@ -260,6 +260,33 @@ When the operator imports a validated `zsentinel-recent-prless-ownership-v1` sli
 
 The existing All / Local VPS / GitHub source filters remain simple: branch observations appear in GitHub because they originate from an operator-imported GitHub inventory, not because the UI polled GitHub. The provenance line distinguishes private local inventory from direct PR/CI reads. The extra events are bounded to 96 imported branch rows and the existing 140-event combined timeline cap; an empty/nonmatching zCloud scope is unknown, not a cleared ownership finding. This is a read-only improvement to [issue #1518](https://github.com/Zennay/zCloud/issues/1518) with source inventory [PR #1554](https://github.com/Zennay/zCloud/pull/1554) as a separately held dependency.
 
+## Per-item retry churn in the existing Activity cockpit (19 October)
+
+The existing **zSentinel · queue retry incidents** Activity panel now accepts the
+extended JSON exported by [retry trend PR #1555](https://github.com/Zennay/zCloud/pull/1555).
+It displays **matched pseudonymous queue-item references**, observed claim-cycle
+deltas, status transitions, high-priority items and explicit sample-completeness
+indicators. The **Export retry handoff .md** includes a bounded matched-item
+movement section without raw IDs or titles. The panel remains accessible through
+the existing manual, operator-initiated JSON import and the authorized read-only
+VPS endpoint; a second explicit VPS read of the same scope computes the equivalent
+bounded movement in browser memory.
+
+For each pair of observations, only queue refs seen in **both** snapshots are
+correlated. Earlier-only/later-only counts are **not** presented as finished/new
+tasks, released claims or permissions to retry. A partial sample is labelled
+partial, an unobserved project remains unknown, and older aggregate-only trend
+files remain importable. Extended JSON is validated against the known projects,
+scope, allowed priorities/statuses, 16-hex opaque reference, <=100 bounded rows,
+exact count deltas and source coverage. Unexpected metadata fails closed; all UI
+fields are escaped; no credentials, titles, raw queue IDs, worker prompts, or
+claim controls are added. Nothing automatically polls the VPS or changes SQLite.
+
+This new UI source and exact Git blob pin are in [PR #1550](https://github.com/Zennay/zCloud/pull/1550).
+The producing offline trend CLI is in **separate PR #1555**. Both remain
+source-only until the normal exact-head CI/review/merge and serialized production
+release. No standalone QA or regression suite was written or manually invoked.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
