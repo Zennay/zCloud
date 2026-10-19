@@ -92,7 +92,7 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
                 if pr.get("state") != "open" or (pid, number) in blocked:
                     continue
                 # Only explicit title labels affect ranking. No invented P0.
-                urgency = re.match(r"^\\s*(?:\\[(P[01])\\]|(P[01])(?=\\s|:|\\-))", title, re.I)
+                urgency = re.match(r"^\s*(?:\[(P[01])\]|(P[01])(?=\s|:|-))", title, re.I)
                 priority = (urgency.group(1) or urgency.group(2)).upper() if urgency else "Unspecified"
                 found.append({
                     "project_id": pid, "pr_number": number,
