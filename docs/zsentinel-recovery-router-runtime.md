@@ -1578,45 +1578,61 @@ alleen nieuwe exclusieve outputbestanden (mode 0600). De hoofdopdracht blijft
 de bestaande private outputhelper en actieve ledger-/claimgrenzen respecteren.
 
 
-## Self-hosted VPS-uitvoering — alleen vertrouwde main-bron
+## Self-hosted zSentinel: expliciete eigenaarstart op vertrouwde main
 
-De workflow [`.github/workflows/zsentinel-vps-hourly-readonly.yml`](../.github/workflows/zsentinel-vps-hourly-readonly.yml)
-is een echte zSentinel **self-hosted job**; `runs-on: [self-hosted, zcloud, vps]`,
-**geen `ubuntu-latest` job**. Een uurtrigger (`23 * * * *`) of een expliciete
-door `Zennay` aangevraagde handmatige run start exact dezelfde begrensde
-read-only audit. Hij kan pas in de GitHub Actions UI uitgevoerd worden **nadat
-de PR langs bestaande exacte-HEAD CI, onafhankelijke review en branch
-protection naar `main` is gemerged**. Onbeoordeelde pull-requestbron draait
-nooit op de persistente VPS-runner.
+[Dedicated workflow](../.github/workflows/zsentinel-vps-owner-reviewed.yml):
+`runs-on: [self-hosted, zcloud, vps]`, **geen GitHub-hosted job** in deze
+zSentinel-workflow. Werkt uitsluitend op de bestaande permanente
+`zcloud-vps-1` runner op `vps-bb300bba`, niet op het actieve dev-checkout
+of een PR-branch. Op de VPS is de echte bron
+`/home/ubuntu/zennay-cloud/history.db`; de bestanden
+`portfolio_queue.db` en `portfolio_queue.sqlite` waren op 19 oktober
+beide leeg en mogen niet gebruikt worden als live queue. De echte
+`history.db` bevat `portfolio_queue` en `runner_events`. Broninspectie
+was `sqlite3 mode=ro` + `PRAGMA query_only`, zonder mutatie.
 
-De job controleert runner `zcloud-vps-1`, host `vps-bb300bba`, aanwezigheid
-van echte SQLite-bron `/home/ubuntu/zennay-cloud/history.db`, geheugen/CPU-
-headroom, de uitgecheckte immutable `main`-SHA en de live remote `main`-SHA.
-Is het te druk (minder dan 1,5 GiB RAM beschikbaar of load > 2,5 × CPU's),
-dan verschijnt een expliciete **uitgestelde, niet-bevestigde audit**, geen
-verzonnen herstelbewijs of oneindige retrylus.
+**GitHub-branchebescherming heeft een automatische hourly self-hosted trigger
+voor nieuwe workflows expliciet afgekeurd.** In plaats van die vereiste
+security gate te omzeilen is dit bewust een **owner-only
+`workflow_dispatch` op exact current `main`**, met verplichte bevestiging
+van de 40-karakter `confirm_sha`. Nooit `pull_request`, geen cron,
+geen runtime command vanaf een ongereviewde PR en geen verborgen scheduler.
+Een echte automatische uurtrigger zou apart door de bevoegde runtime-/policy-
+eigenaar goedgekeurd moeten worden. Er is nu nog geen automatische
+uuraudit ingesteld.
 
-De daadwerkelijke bronoproep gebruikt
-`scripts/zsentinel_portfolio_overview.py --database /home/ubuntu/zennay-cloud/history.db --worker-events-database /home/ubuntu/zennay-cloud/history.db --window auto --discover-open-prs --inspect-referenced-prs --format json`.
-De operator ziet een klein, niet-geheim GitHub Actions joboverzicht; het ruwe
-rapport blijft tijdelijk uitsluitend als privé `0600`-bestand in
-`RUNNER_TEMP` en wordt altijd na afloop opgeruimd. De job schrijft **niet**
-naar SQLite, workers, active claims, GitHub API, Notion, services, runner,
-productie-queue of releasepaden. Externe Notion-claimstatus zonder bron blijft
-onbekend; deze workflow is geen autonome autorisatiemotor of productie-deploy.
+Na gewone merge met alle bestaande CI/reviewgates:
 
-**Om de workflow na reguliere merge handmatig te activeren:**
-`Zennay/zCloud → Actions → zSentinel VPS hourly read-only audit → Run workflow →
-main → window: auto`. Daarna moet in het daadwerkelijke jobbewijs de runner
-`zcloud-vps-1` met `runner_id > 0` voorkomen en moet de job de privé
-operator-samenvatting schrijven. Een lopende `Runner.Listener` of broncommit
-zonder toegekende GitHub-job bewijst **niet** dat deze specifieke audit draait.
+1. Open `Zennay/zCloud → Commits → main`; kopieer de **volledige actuele**
+   commit-SHA (geen afgekorte 7/12-karakterversie).
+2. Open `Zennay/zCloud → Actions → zSentinel owner-confirmed VPS read-only
+   audit → Run workflow`; kies de branch **main**, vul exact de SHA in bij
+   `confirm_sha` en kies `window=auto`.
+3. Controleer in de uitgevoerde job `runner_name=zcloud-vps-1`,
+   `runner_id > 0`, en het read-only zSentinel-operatoroverzicht. Een
+   luisterende `Runner.Listener` of groene hosted CI is geen bewijs dat
+   die nieuwe job al is uitgevoerd.
 
-Op 19 oktober wees de verbonden zSSH-connector wel een levende zCloud
-`Runner.Listener` en later een echte `Runner.Worker` aan, maar geen
-autorisatie om de service te herstarten. De oorspronkelijke P0-issue #1326
-mag daarom niet automatisch als opgelost gelden en de private hosted billing
-P0 #1523 is een afzonderlijk account-eigenaarprobleem. Bestaande workflows
-die nog `ubuntu-latest` gebruiken zijn hierdoor **niet omgeschakeld**:
-zSentinel-bronuitvoering op self-hosted is een begrensde nieuwe lane, geen
-stille vervanging van vereiste PR-checks of hun bestaande security gates.
+De workflow doet eerst een pinned checkout zonder persistente credentials
+en **direct daarna** de bestaande
+`python3 scripts/zcloud_vps_runner_guard.py --json` identiteitspoort.
+Daarna verifieert hij repository, actor, runnernaam, hostname, exacte lokale
+`GITHUB_SHA`, handmatig `confirm_sha` en actuele remote-main-SHA vóór
+zSentinel-broncode wordt uitgevoerd. Ook de load-/geheugenpoort voorkomt
+een extra run bij <1,5 GiB available RAM of load > 2,5×CPU-aantal. Hoge druk
+leidt tot een zichtbare uitstelling, **niet** tot een runner-restart.
+
+De read-only audit leest de queue en workerhistorie uit de bestaande
+`history.db`, plus begrensde GitHub-issues/PR-checks uit de GitHub API
+met `contents:read, actions:read, issues:read, pull-requests:read`.
+De bronoutput wordt alleen met create-only `0600` tijdelijk in
+`RUNNER_TEMP` opgeslagen en in dezelfde bronopdracht verwijderd via
+een shell EXIT-cleanup; GitHub job summary bevat uitsluitend minimale
+aantallen, geen queue-ID's, secrets of volledige workerdata.
+
+De workflow doet **geen** queue-/SQLite-write, worker-claim/retry,
+GitHub-dispatch, runner-restart, Notion-write of productie-deploy.
+Actuele Notion ownership zonder expliciete bron blijft UNKNOWN.
+De bestaande PR-review, exact-head CI, security/privacy-/releasegates,
+P0 #1326 en accountbeheerder P0 #1523 blijven gescheiden.
+Andere workflows met `ubuntu-latest` zijn hiermee **niet** omgeschakeld.
