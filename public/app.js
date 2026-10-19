@@ -1494,7 +1494,10 @@ function zSentinelCapacityNotice(){
   if(finite(cores)&&cores>0&&finite(load)&&load>cores*2){
     warnings.push('Host load '+num(load)+' exceeds twice '+num(cores)+' vCPU; queued jobs may take longer.');
   }
-  if(finite(swap.total)&&swap.total>0&&finite(swap.free)&&finite(swap.used)){
+  const swapObserved=finite(swap.total)&&finite(swap.free)&&finite(swap.used)
+    &&swap.free<=swap.total&&swap.used<=swap.total
+    &&swap.free+swap.used===swap.total;
+  if(swapObserved&&swap.total>0){
     const pct=swap.used/swap.total*100;
     if(pct>=85||swap.free<512*1048576){
       warnings.push('Swap '+num(pct)+'% used · '+gb(swap.free)+' free. Capacity for new workers may be constrained.');
@@ -1505,7 +1508,8 @@ function zSentinelCapacityNotice(){
     warnings.push('Disk '+num(disk.used/disk.total*100)+'% used; investigate free space before additional builds.');
   }
   const status=!fresh?'Host observation stale or unavailable; capacity UNKNOWN.':
-    warnings.length?'Capacity warnings based on current host telemetry:':'No threshold warnings in sampled host telemetry.';
+    !swapObserved?'Swap telemetry not yet available from the deployed backend; complete capacity assessment UNKNOWN.':
+    warnings.length?'Capacity warnings based on current host telemetry:':'No configured threshold exceeded in available host telemetry. Runner health still unverified.';
   return '<section class="panel" id="zSentinelCapacityNotice">'+
     '<div class="panel-header"><div><h3>zSentinel · VPS capacity signals</h3>'+
     '<p class="panel-subtitle">Read-only CPU/load, disk and swap from /api/status; never a proof of runner availability.</p></div></div>'+
