@@ -60,7 +60,13 @@ P0/P1-issues en actieve incidenten, en een **concrete niet-muterende
 vervolgstap**. Een getoond `≥0` betekent uitsluitend dat in de beperkte
 steekproef niets is gevonden: het is nadrukkelijk geen volledig nulrisico.
 Wanneer een GitHub-bron niet daadwerkelijk beschikbaar was, staat
-`ONBEKEND` in plaats van `0`. Claim attempts
+`ONBEKEND` in plaats van `0`. Met `--read-notion-claims` toont dezelfde
+portfolio-tabel bovendien per project `Notion actief (min.)`: alle bounded
+Notion pagina's tellen mee (ook als het detailpaneel slechts 30 voorbeelden
+toont). Zonder ingeschakelde/toegankelijke Notion-bron staat er
+`ONBEKEND`; een getoond `≥N` betekent alléén zoveel gevonden
+`Claimed/Running`-statussen uit de bron. Het is nooit bewijs van een
+correcte lease, complete pad-eigendom, vrij baan of veilige task-dispatch. Claim attempts
 betekenen niet automatisch mislukkingen, en een mogelijk verlopen lease is
 niet vrijgegeven. Onbekende repositoryprojecten worden niet stilzwijgend
 gelijkgesteld met een geregistreerd project; hun aantal kan zonder hun
