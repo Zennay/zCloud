@@ -107,6 +107,15 @@ Met inspectie zonder open-PR-discovery maximaal 15 extra GETs bovenop
 42, dus maximaal **57** bij drie projecten. Met open-PR-discovery
 komt maximaal één extra GET per geselecteerd project bij: **60** totaal.
 
+Wanneer de portfolio-CLI tegelijk een productissue-shortlist en
+`--inspect-pr`/`--inspect-referenced-prs` gebruikt, verschijnt de reeds
+opgehaalde exacte-head PR-actie ook **in de gekoppelde issuekaart**.
+Daarvoor wordt niets extra opgehaald: alleen PR-links die de bestaande
+issuebron zelf noemt en waarvan de geselecteerde PR expliciet is
+geobserveerd, worden verrijkt. Bij een onvolledige PR-bron toont de
+issuekaart uitsluitend de verplichte nieuwe eigenaarinspectie.
+Een link of groene check is nooit bewijs dat het issue al is opgelost.
+
 De Nederlandse operatorweergave laat per PR zien wat de eerstvolgende
 **menselijke** stap is: concept afronden; reviewverzoeken verwerken;
 actuele gefaalde CI herstellen; wachten op ontbrekende checks; onafhankelijke
