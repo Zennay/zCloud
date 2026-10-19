@@ -9,12 +9,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
 from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect
-from zsentinel_pr_delivery import NEXT_ACTION_NL, handoff_markdown, observe_prs
+from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 24
@@ -65,6 +64,7 @@ def build_workboard(inbox, registry, token=None):
                 or len(row["related_open_prs"]) > 3):
             raise ValueError("invalid canonical issue candidate")
         matches = []
+        human_only = row["url"] in HUMAN_ONLY
         for reference in row["related_open_prs"]:
             if (not isinstance(reference, dict)
                     or type(reference.get("number")) is not int
@@ -76,10 +76,9 @@ def build_workboard(inbox, registry, token=None):
                 raise ValueError("invalid issue-to-PR reference")
             matches.append(reference["url"])
             key = (row["project"], reference["number"])
-            if key not in seen_pr and len(prs) < MAX_PRS:
+            if not human_only and key not in seen_pr and len(prs) < MAX_PRS:
                 prs.append({"project_id": row["project"], "pr_number": reference["number"]})
                 seen_pr.add(key)
-        human_only = row["url"] in HUMAN_ONLY
         if human_only:
             route = "authorized_infrastructure_owner_required"
             action = "Bevoegde infrastructuureigenaar nodig; geen runner-restart, betaling of claim."
@@ -171,6 +170,9 @@ def render_html(board):
             or board.get("dispatch_authorized") is not False):
         raise ValueError("invalid workboard")
     from zsentinel_product_issue_inbox import STYLE
+    from zsentinel_issue_delivery_ui import (
+        controls, script_tag, followup_controls, INTERACTIVE_CSS,
+    )
     sections = []
     for level in SEVERITY:
         cards = []
@@ -187,7 +189,15 @@ def render_html(board):
                 " · nooit oplossings- of mergebewijs</li>"
                 for pr in item["inspected_prs"])
             cards.append(
-                '<article class="issue"><a class="issue-title" href="' +
+                '<article class="issue" data-project="' +
+                escape(item["project_id"], quote=True) + '" data-priority="' +
+                escape(item["priority"], quote=True) + '" data-route="' +
+                escape(item["next_step"], quote=True) + '" data-search="' +
+                escape((item["title"] + " " + item["project_id"] + " " +
+                        item["action"]).lower(), quote=True) + '" data-title="' +
+                escape(item["title"], quote=True) + '" data-issue-url="' +
+                escape(item["issue_url"], quote=True) +
+                '"><a class="issue-title" href="' +
                 escape(item["issue_url"], quote=True) +
                 '" target="_blank" rel="noopener noreferrer">' +
                 escape(item["title"]) + '</a><span class="tag">' +
@@ -197,9 +207,11 @@ def render_html(board):
                 escape(item["action"]) + '</p><p><strong>Status:</strong> eigendom, '
                 'bestandscope en herstel niet geverifieerd.</p><p>' +
                 pr_links + '</p>' + ('<details><summary>Exacte PR-bron</summary><ul>' +
-                evidence + '</ul></details>' if evidence else '') + '</article>')
-        sections.append("<section><h2>" + level + " · " + str(len(cards)) +
-                        " in beperkte bron</h2>" + ("".join(cards) or
+                evidence + '</ul></details>' if evidence else '') +
+                followup_controls() + '</article>')
+        sections.append('<section data-priority-group="' + escape(level, quote=True) +
+                        '"><h2>' + level + ' · ' + str(len(cards)) +
+                        ' in beperkte bron · <small data-visible-group-count></small></h2>' + ("".join(cards) or
                         '<p class="muted">Geen kandidaat in deze steekproef; niet bewezen leeg.</p>') +
                         "</section>")
     coverage = "".join("<li>" + escape(str(row["project"])) +
@@ -210,9 +222,12 @@ def render_html(board):
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta name="referrer" content="no-referrer">'
         '<meta http-equiv="Content-Security-Policy" '
-        'content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; '
+        'content="default-src &#39;none&#39;; script-src &#39;unsafe-inline&#39;; '
+        'object-src &#39;none&#39;; base-uri &#39;none&#39;; '
+        'style-src &#39;unsafe-inline&#39;; '
         'connect-src &#39;none&#39;; img-src &#39;none&#39;; form-action &#39;none&#39;">'
         '<title>zSentinel · Productherstelbord</title><style>' + STYLE +
+        INTERACTIVE_CSS +
         '</style></head><body><header><h1>Vliegende keep · productherstelbord</h1>'
         '<p>Open problemen eerst, bestaande PR vóór dubbel bouwen.</p>'
         '<p class="notice">Bronsteekproef, geen eigendomsbewijs. '
@@ -220,11 +235,12 @@ def render_html(board):
         '<p class="muted">Bronmoment UTC: ' + escape(board["observed_at"]) +
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
         ' · productissues: ' + str(board["issue_count"]) + '</p></header><main>' +
-        "".join(sections) + '<section><details><summary>Brondekking en '
+        controls(board["projects"]) + "".join(sections) + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
         'niet geverifieerd.</p></details></section></main><footer>Alle links openen '
-        'GitHub. Bron- en mergeautorisatie blijven gescheiden.</footer></body></html>'
+        'GitHub. Bron- en mergeautorisatie blijven gescheiden.</footer>' +
+        script_tag() + '</body></html>'
     )
 
 
