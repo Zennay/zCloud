@@ -7,11 +7,15 @@ leases and required review policy must still be checked at the actual merge.
 """
 from __future__ import annotations
 
+import argparse
+import json
+import os
 import re
 from html import escape
+from pathlib import Path
 from urllib.parse import quote
 
-from zsentinel_product_issue_inbox import bounded_get
+from zsentinel_product_issue_inbox import ROOT, bounded_get, canonical_projects
 
 SHA = re.compile(r"^[a-f0-9]{40}$")
 OWNER_REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
@@ -269,3 +273,76 @@ def pr_delivery_html(report):
             '<div class="grid">' + ("".join(cards) if cards else
                 '<p class="empty">Geen bestaande PR’s geselecteerd; dit bewijst niet dat er geen open PR’s zijn.</p>') +
             '</div></section>')
+
+
+def standalone_html(report):
+    """Script-free, network-free output once GitHub metadata was read."""
+    from zsentinel_recovery_view import CSS
+    body = pr_delivery_html(report)
+    return (
+        '<!doctype html><html lang="nl"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="referrer" content="no-referrer">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; '
+        'style-src \'unsafe-inline\'; base-uri \'none\'; img-src \'none\'; '
+        'connect-src \'none\'; form-action \'none\'">'
+        '<title>zSentinel · Bestaande PR-afronding</title><style>' + CSS +
+        '</style></head><body><header><h1>zSentinel · Bestaande PR-afronding</h1>'
+        '<p class="muted">Privé, brongebonden operatoroverzicht. Geen live '
+        'merge-/runner-/claim- of productiebevoegdheid.</p></header><main>' +
+        body + '</main><footer class="muted">Geen automatische retry, review, '
+        'merge, deploy, claim of gegevensverzending vanuit dit HTML-document.'
+        '</footer></body></html>'
+    )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Offline operator output for bounded, live-read GitHub PR metadata")
+    parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
+    parser.add_argument("--pr", action="append", required=True,
+                        help="canonical existing PR PROJECT:NUMBER; repeat up to three")
+    parser.add_argument("--format", choices=("html", "json", "text"), default="html")
+    args = parser.parse_args(argv)
+    try:
+        if len(args.pr) > MAX_PRS:
+            raise ValueError("at most three existing PRs")
+        registry = canonical_projects(args.registry)
+        selected = []
+        for value in args.pr:
+            if not isinstance(value, str):
+                raise ValueError("invalid PR input")
+            match = re.fullmatch(r"([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,8})", value)
+            if not match:
+                raise ValueError("expected PROJECT:NUMBER")
+            selected.append({
+                "project_id": match.group(1), "pr_number": int(match.group(2))
+            })
+        report = observe_prs(registry, selected, token=os.environ.get("GITHUB_TOKEN"))
+        if args.format == "html":
+            output = standalone_html(report)
+        elif args.format == "json":
+            output = json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2)
+        else:
+            lines = ["zSentinel · bestaande PR-afronding; maximaal 3 read-only bronnen"]
+            for item in report["items"]:
+                lines.append(
+                    "%s #%s | head=%s | bron=%s | volgende actie=%s | %s" % (
+                        item["project_id"], item["pr_number"],
+                        item.get("head_sha", "ONBEKEND")[:12],
+                        item["coverage"], item["next_step"], item["url"]
+                    )
+                )
+                for name in ("failed", "pending", "inconclusive"):
+                    if item.get("ci", {}).get(name):
+                        lines.append("  %s: %s" % (name, ", ".join(item["ci"][name])))
+            lines.append("Geen eigenaar/required CI/review/merge/deploy geautoriseerd.")
+            output = "\n".join(lines)
+        print(output)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        parser.exit(2, "zSentinel PR-afronding niet beschikbaar: " + str(exc)[:160] + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
