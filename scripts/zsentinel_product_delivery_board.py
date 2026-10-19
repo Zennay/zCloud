@@ -413,6 +413,17 @@ def markdown(data):
             row["issue"], links, row["recommended_next_step"]))) + " |")
         lines.extend("- " + safe(row["issue"]) + ": " + safe(g)
                      for g in row["evidence_gaps"])
+    lines.extend(["", "## Exact-head PR CI and independent review observations",
+                  "| PR | Exact head | Checks observed green | Independent approvals seen | Remaining gates |",
+                  "|---|---|---|---:|---|"])
+    for row in data["pr_delivery_observations"]:
+        lines.append("| " + " | ".join(map(safe, (
+            row["url"], row["head_sha"][:12],
+            row["observed_check_success"], row["observed_approvals"],
+            ", ".join(row["blocking_unknowns"]) or "branch and release authority unverified",
+        ))) + " |")
+    if not data["pr_delivery_observations"]:
+        lines.append("No fresh PR exact-head observation supplied or accepted.")
     lines.extend(["", "## Project-wide queue and ownership context",
                   "| Project | P0 | P1 | High claim cycles | Expired leases | Operator next step |",
                   "|---|---:|---:|---:|---:|---|"])
@@ -429,6 +440,15 @@ def markdown(data):
 
 
 def html(data):
+    pr_rows = []
+    for pr in data["pr_delivery_observations"]:
+        pr_rows.append("<tr><td><a target='_blank' rel='noopener noreferrer' href='" +
+            escape(pr["url"], quote=True) + "'>" +
+            escape(pr["url"].rsplit("/", 1)[-1]) + "</a></td><td><code>" +
+            escape(pr["head_sha"][:12]) + "</code></td><td>" +
+            escape(str(pr["observed_check_success"]).lower()) + "</td><td>" +
+            str(pr["observed_approvals"]) + "</td><td>" +
+            escape(", ".join(pr["blocking_unknowns"])) + "</td></tr>")
     projects = []
     for entry in data["project_operations"]:
         queue = entry["queue_observation"] or {}
@@ -471,7 +491,11 @@ table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;pa
             '<p class="notice">' + escape(data["operator_note"]) + '</p>'
             '<p>Issues observed: ' + str(data["items_available"]) +
             ' · Source truncated: ' + str(data["coverage"]["inbox_truncated"]).lower() +
-            '</p><h2>Project-wide operations</h2><div class="scroll"><table>'
+            '</p><h2>PR exact-head CI &amp; review evidence (not release approval)</h2>'
+            '<div class="scroll"><table><thead><tr><th>PR</th><th>Commit</th>'
+            '<th>Checks</th><th>Approvals</th><th>Remaining gates</th></tr></thead><tbody>' +
+            "".join(pr_rows) + '</tbody></table></div>'
+            '<h2>Project-wide operations</h2><div class="scroll"><table>'
             '<thead><tr><th>Project</th><th>P0</th><th>P1</th>'
             '<th>Claim cycles</th><th>Expired leases</th><th>Next step</th>'
             '</tr></thead><tbody>' + "".join(projects) + '</tbody></table></div>'
