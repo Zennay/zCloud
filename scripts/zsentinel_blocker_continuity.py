@@ -215,6 +215,20 @@ def as_text(result):
                          " · " + row["problem"] + " | " + row["next_gate"])
         if not result[field]:
             lines.append("  Geen binnen deze steekproef.")
+    lines.append("GEWIJZIGD TUSSEN BEIDE BRONMOMENTEN (geen vrijgave):")
+    for item in result["changed_source_details"]:
+        lines.append("  " + item["priority"] + " " + item["project_id"] +
+                     " · " + item["id"] + " | " +
+                     ", ".join(item["changed_fields"]))
+        before_head = item["previous"]["source_pr_head"]
+        after_head = item["current"]["source_pr_head"]
+        if before_head != after_head:
+            lines.append("    PR-bron HEAD: " +
+                         str(before_head or "ONBEKEND")[:12] + " → " +
+                         str(after_head or "ONBEKEND")[:12] +
+                         " · vereiste exacte-head CI/review opnieuw controleren")
+    if not result["changed_source_details"]:
+        lines.append("  Geen wijziging waargenomen in deze begrensde steekproef.")
     lines.append("Bronmoment en vereiste toestemming moeten opnieuw worden gecontroleerd.")
     return "\n".join(lines) + "\n"
 
@@ -242,6 +256,21 @@ def as_html(result):
         cards.append('<section><h2>' + label + '</h2>' +
                      ("".join(rows) if rows else "<p>Geen in deze bronsteekproef.</p>") +
                      "</section>")
+    edits = []
+    for change in result["changed_source_details"]:
+        before_head = change["previous"]["source_pr_head"]
+        after_head = change["current"]["source_pr_head"]
+        edits.append(
+            '<article><strong>' + escape(change["priority"]) + ' · ' +
+            escape(change["project_id"]) + '</strong><p>Gewijzigd: ' +
+            escape(", ".join(change["changed_fields"])) + '</p><p>' +
+            'PR-bron HEAD: ' + escape((before_head or "ONBEKEND")[:12]) +
+            ' → ' + escape((after_head or "ONBEKEND")[:12]) +
+            ' · geen CI-/review-vrijgave.</p></article>')
+    cards.insert(2, '<section><h2>Wijzigingen in bron- of PR-gates</h2>' +
+                 (''.join(edits) if edits else
+                  '<p>Geen verschillen gezien; dit bewijst geen herstel.</p>') +
+                 '</section>')
     return ('<!doctype html><html lang="nl"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;">'
