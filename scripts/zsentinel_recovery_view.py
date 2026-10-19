@@ -124,6 +124,9 @@ def html_view(decision):
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
     missing = decision.get("unresolved_not_observed", 0)
+    unattributed = decision.get("unattributed_progress_or_jobs", 0)
+    if type(unattributed) is not int or unattributed < 0:
+        raise ValueError("invalid unattributed evidence count")
     reconciled = decision.get("reconciled_exact_jobs", [])
     if not isinstance(reconciled, list) or len(reconciled) > MAX_INCIDENTS:
         raise ValueError("invalid exact-job reconciliations")
@@ -159,7 +162,8 @@ def html_view(decision):
             + '</section>'
             + f'<p class="muted">Niet meer waargenomen, nog te reconciliëren incidenten: {missing}. '
               f'Exact succesvol afgeronde GitHub-jobs (geen bewijs van algeheel herstel): '
-              f'{len(reconciled)}.</p>'
+              f'{len(reconciled)}. Zonder geverifieerde claim/job-identiteit: '
+              f'{unattributed}.</p>'
             + '</main><footer class="muted">Offline HTML, geen netwerk, geen scripts, '
             'geen worker-, runner-, queue-, claim-, CI-, of VPS-mutaties. '
             'Huidige bronweergave is geen bewijs van productieherstel.</footer></body></html>')
