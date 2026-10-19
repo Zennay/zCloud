@@ -124,6 +124,9 @@ def html_view(decision):
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
     missing = decision.get("unresolved_not_observed", 0)
+    reconciled = decision.get("reconciled_exact_jobs", [])
+    if not isinstance(reconciled, list) or len(reconciled) > MAX_INCIDENTS:
+        raise ValueError("invalid exact-job reconciliations")
     if type(missing) is not int or missing < 0:
         raise ValueError("invalid unresolved incident count")
     def section(cards, empty):
@@ -154,7 +157,9 @@ def html_view(decision):
             + section([task_card(row) for row in tasks],
                       "Geen claim- en gate-veilig onafhankelijk werk aangetoond.")
             + '</section>'
-            + f'<p class="muted">Niet meer waargenomen, nog te reconciliëren incidenten: {missing}.</p>'
+            + f'<p class="muted">Niet meer waargenomen, nog te reconciliëren incidenten: {missing}. '
+              f'Exact succesvol afgeronde GitHub-jobs (geen bewijs van algeheel herstel): '
+              f'{len(reconciled)}.</p>'
             + '</main><footer class="muted">Offline HTML, geen netwerk, geen scripts, '
             'geen worker-, runner-, queue-, claim-, CI-, of VPS-mutaties. '
             'Huidige bronweergave is geen bewijs van productieherstel.</footer></body></html>')
