@@ -114,7 +114,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "expired_owner_leases": 0 if complete else None,
             "worker_ownership_verified": False,
             "recovery_proven": False, "next_action": "read_only_inspect_current_source",
-            "p0_p1_issue_sample_hits": None, "incident_sample_hits": None,
+            "p0_p1_issue_sample_hits": None, "p2_unranked_issue_sample_hits": None,
+            "incident_sample_hits": None,
             "notion_active_status_min": None,
             "github_job_runner_route": "not_scanned",
         }
@@ -165,7 +166,11 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         if github_coverage[pid] in ("partial_both_sources", "issue_sample_only"):
             summary[pid]["p0_p1_issue_sample_hits"] = sum(
                 isinstance(item, dict) and item.get("project_id") == pid
-                for item in issue_items
+                and item.get("priority") in ("P0", "P1") for item in issue_items
+            )
+            summary[pid]["p2_unranked_issue_sample_hits"] = sum(
+                isinstance(item, dict) and item.get("project_id") == pid
+                and item.get("priority") in ("P2", "Unspecified") for item in issue_items
             )
         if github_coverage[pid] in ("partial_both_sources", "ci_sample_only"):
             summary[pid]["incident_sample_hits"] = sum(
@@ -368,6 +373,8 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             '<td>' + phrase_route(row["github_job_runner_route"]) + '</td>'
             '<td>' + ('ONBEKEND' if row["p0_p1_issue_sample_hits"] is None
                       else '≥' + str(row["p0_p1_issue_sample_hits"])) + '</td>'
+            '<td>' + ('ONBEKEND' if row["p2_unranked_issue_sample_hits"] is None
+                      else '≥' + str(row["p2_unranked_issue_sample_hits"])) + '</td>'
             '<td>' + ('ONBEKEND' if row["incident_sample_hits"] is None
                       else '≥' + str(row["incident_sample_hits"])) + '</td>'
             '<td>' + escape(action_text) + '</td></tr>'
@@ -397,6 +404,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
         '<th scope="col">GitHub-bereik</th><th scope="col">Runnerroute</th>'
         '<th scope="col">P0/P1-issues (min.)</th>'
+        '<th scope="col">P2/zonder label (min.)</th>'
         '<th scope="col">Incidenten (min.)</th><th scope="col">Veilige vervolgstap</th>'
         '</tr></thead><tbody>' +
         "".join(cells) + '</tbody></table></div>'
@@ -537,11 +545,13 @@ def main():
                 lines.append("  EIGENAAR NODIG %s %s: %s" % (
                     item["severity"], item["project_id"], item["action"]))
             for row in summary["rows"]:
-                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s | route=%s | action=%s" % (
+                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | P0-P1>=%s | P2-onbekend>=%s | incidents>=%s | Github=%s | route=%s | action=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
                     _count(row["notion_active_status_min"]),
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
-                    _count(row["p0_p1_issue_sample_hits"]), _count(row["incident_sample_hits"]),
+                    _count(row["p0_p1_issue_sample_hits"]),
+                    _count(row["p2_unranked_issue_sample_hits"]),
+                    _count(row["incident_sample_hits"]),
                     row["github_observation"], row["github_job_runner_route"],
                     row["next_action"]))
             if branches is not None:
