@@ -13,7 +13,12 @@ from pathlib import Path
 import re
 import sys
 
-from zsentinel_retry_incident_console import write_new_private_report
+# Works both as python3 scripts/zsentinel_retry_trend.py and as
+# import scripts.zsentinel_retry_trend from the repository root.
+if __package__:
+    from .zsentinel_retry_incident_console import write_new_private_report
+else:
+    from zsentinel_retry_incident_console import write_new_private_report
 
 SCHEMA = "zsentinel-retry-incident-v1"
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
