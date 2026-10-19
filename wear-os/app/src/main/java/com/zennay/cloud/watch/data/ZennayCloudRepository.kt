@@ -56,7 +56,10 @@ class ZennayCloudRepository(
                 load = host.optDouble("load", 0.0)
             ),
             warnings = root.getJSONArray("warnings").mapObjects(::parseWarning),
-            alerts = root.optJSONArray("alerts")?.mapObjects(::parseAlert).orEmpty(),
+            // Use resolved/expired-aware Incident Center data when available.
+            // Legacy servers only expose an historical feed under "alerts".
+            alerts = (if (root.has("active_blockers")) root.optJSONArray("active_blockers")
+                      else root.optJSONArray("alerts"))?.mapObjects(::parseAlert).orEmpty(),
             projects = root.getJSONArray("projects").mapObjects(::parseSummary)
         )
     }
