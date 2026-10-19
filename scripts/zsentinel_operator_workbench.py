@@ -94,6 +94,9 @@ def validated_view(source: dict) -> dict:
         if (type(gaps) is not list or len(gaps) > MAX_GAPS or
             any(type(g) is not str or len(g) > 300 for g in gaps)):
             raise ValueError("Untrusted or unbounded evidence gaps")
+        title = card.get("title")
+        if type(title) is not str or not title.strip() or len(title) > 180:
+            raise ValueError("Invalid bounded original issue title")
         next_step = card.get("recommended_next_step")
         if type(next_step) is not str or len(next_step) > 650:
             raise ValueError("Noncanonical recommended next step")
@@ -102,6 +105,7 @@ def validated_view(source: dict) -> dict:
         repo, number = issue.rsplit("#", 1)
         chosen.append({
             "issue": issue, "project": project, "priority": priority,
+            "title": title,
             "url": "https://github.com/" + repo + "/issues/" + number,
             "open_pr_candidates": refs, "evidence_gaps": gaps,
             "recommended_next_step": next_step,
@@ -294,7 +298,7 @@ function filtered(){
  const decision=document.getElementById('disposition').value;
  return board.cards.filter(c=>(!p||p===c.priority)&&(!project||project===c.project)&&
    (!decision||decision===(handoffs.get(c.issue)?.decision||'investigate'))&&
-   (!q||(c.issue+' '+c.project+' '+c.recommended_next_step).toLowerCase().includes(q)));
+   (!q||(c.issue+' '+c.title+' '+c.project+' '+c.recommended_next_step).toLowerCase().includes(q)));
 }
 function refreshPortfolio(){
  const cards=board.cards;
@@ -350,7 +354,8 @@ function refreshTriage(){
   const gap=c.evidence_gaps.length?c.evidence_gaps[0]:
    'live owner, exact-head CI and release admission unverified';
   const changed=observations?.get(c.issue);
-  li.append(b,elem('small',c.project+' · '+(changed?changed+' · ':'')+human+' · '+line(gap,160)));list.append(li);
+  li.append(b,elem('strong',' '+c.title),
+   elem('small',' · '+c.project+' · '+(changed?changed+' · ':'')+human+' · '+line(gap,160)));list.append(li);
  });
 }
 function sourceInstant(value){
@@ -484,6 +489,7 @@ function currentBrief(){
   const human=handoffs.get(card.issue);
   lines.push('### '+line(card.issue,110)+' · '+line(card.priority,20),
     'Original: '+card.url,
+    'Original issue title: '+line(card.title,180),
     'Human disposition: '+line(human?.decision||'investigate',40)+' (not an owner claim)',
     'Claim context: '+line(card.claim_context,100),
     'Observed PRs: '+(card.open_pr_candidates.length?
@@ -514,7 +520,8 @@ function drawList(){
  view.forEach(c=>{
    const li=elem('li'),b=elem('button');b.type='button';
    b.setAttribute('aria-current',c.issue===selected?'true':'false');
-   b.append(elem('span',c.issue,'issue-id'),elem('span',c.priority+' · '+c.project,'meta'));
+   b.append(elem('span',c.issue,'issue-id'),elem('span',c.title),
+     elem('span',c.priority+' · '+c.project,'meta'));
    b.onclick=()=>{saveSelection();invalidateBrief();selected=c.issue;drawList();drawDetail()};li.append(b);issueList.append(li);
  });
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
@@ -530,7 +537,8 @@ function drawDetail(){
  }
  const card=entries.get(selected);
  detail.append(elem('small',card.priority+' · '+card.project),
-   elem('h2',card.issue),link('Open original GitHub issue ↗',card.url),
+   elem('h2',card.title),elem('p',card.issue,'code'),
+   link('Open original GitHub issue ↗',card.url),
    elem('p','Owner status: '+card.claim_context+' · source coverage: '+card.issue_coverage,'meta'),
    elem('h3','Proposed next investigation'),elem('p',card.recommended_next_step));
  const prs=elem('div');prs.append(elem('h3','Existing PR references (not ownership proof)'));
