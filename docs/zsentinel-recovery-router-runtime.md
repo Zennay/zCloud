@@ -40,6 +40,13 @@ python3 scripts/zsentinel_portfolio_overview.py \
   --database /path/to/existing/zcloud.sqlite3 --window 0 \
   --inspect-unpr-branches cloud --current-path scripts/new_module.py \
   --format html > /private/operator-only/zsentinel-branches.html
+
+# Zelfde actuele portfolio-CLI, maar exit nonzero als de volledige
+# canonieke PR-loze slice geen betrouwbare overlapvrije dekking kan tonen:
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 --window 0 \
+  --inspect-unpr-branches cloud --current-path scripts/new_module.py \
+  --require-clear-unpr-slice --format json
 ```
 
 Deze adapter is voorlopig uitsluitend voor het canonieke `Zennay/zCloud`
