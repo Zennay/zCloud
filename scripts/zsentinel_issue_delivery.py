@@ -281,6 +281,37 @@ def render_html(board):
                     for pid, value in notion["active_project_min"].items()) +
             '</ul></section>'
         )
+    queue = board.get("queue_pressure_observation")
+    queue_panel = ""
+    if queue is not None:
+        if (not isinstance(queue, dict)
+                or queue.get("source") != "existing_readonly_portfolio_overview"
+                or queue.get("can_claim_task") is not False
+                or queue.get("can_release_lease") is not False
+                or queue.get("writes_performed") is not False
+                or not isinstance(queue.get("projects"), dict)):
+            raise ValueError("untrusted queue visibility")
+        qlines = []
+        for pid in board["projects"]:
+            info = queue["projects"][pid]
+            fmt = lambda key: str(info[key]) if info[key] is not None else "ONBEKEND"
+            qlines.append(
+                "<li><strong>" + escape(pid) + "</strong> · wachtend " +
+                fmt("queued") + " · actief (status) " + fmt("owned") +
+                " · hoge claimpogingen " + fmt("high_claim_attempts") +
+                " · verlopen lease-rijen " + fmt("expired_owner_leases") +
+                " · herstelroute " + escape(info["owner_next_action"]) +
+                "</li>"
+            )
+        queue_panel = (
+            '<section aria-label="zCloud lokale queue-druk"><h2>Waargenomen '
+            'zCloud-wachtrijdruk</h2><p class="notice">' +
+            ("VEROUDERD · " if queue["stale_after_10_minutes"] else "") +
+            "Bronmoment " + escape(queue["observed_at_utc"]) +
+            '. Projectstatussen en counters zijn geen actuele worker- of '
+            'bestandseigendom; geen lease/retry/claim toegestaan.</p>'
+            '<ul>' + "".join(qlines) + '</ul></section>'
+        )
     comparison = {}
     progress_panel = ""
     if progress is not None:
@@ -387,6 +418,18 @@ def render_html(board):
                 escape(item.get("source_observed_at_utc", "ONBEKEND")) +
                 (' · VEROUDERD' if item.get("source_stale") else '') +
                 '</p>' if source_age is not None else '')
+            queue_notice = ""
+            if item.get("queue_pressure") is not None:
+                value = item["queue_pressure"]
+                queue_notice = (
+                    '<p><strong>Lokale queue:</strong> actief ' +
+                    (str(value["observed_owned_min"]) if
+                     value["observed_owned_min"] is not None else "ONBEKEND") +
+                    ', wachtend ' +
+                    (str(value["observed_queued"]) if
+                     value["observed_queued"] is not None else "ONBEKEND") +
+                    '; GEEN claimtoestemming.</p>'
+                )
             card = (
                 '<article class="issue" data-change="' +
                 escape(change_key, quote=True) + '" data-project="' +
@@ -408,7 +451,7 @@ def render_html(board):
                 'bestandscope en herstel niet geverifieerd.</p><p>' +
                 pr_links + '</p>' + ('<details><summary>Exacte PR-bron</summary><ul>' +
                 evidence + '</ul></details>' if evidence else '') +
-                source_age_label + change_detail +
+                source_age_label + queue_notice + change_detail +
                 followup_controls() + '</article>')
             if item["next_step"] == "authorized_infrastructure_owner_required":
                 owner_cards.append(card)
@@ -468,8 +511,8 @@ def render_html(board):
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
         ' · productissues: ' + str(board["issue_count"]) + '</p>' +
         source_warning + '</header><main>' +
-        controls(board["projects"]) + overview_panel + notion_panel +
-        progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
+        controls(board["projects"]) + overview_panel + queue_panel +
+        notion_panel + progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
         'niet geverifieerd.</p></details></section></main><footer>Alle links openen '
@@ -486,7 +529,21 @@ def render_markdown(board):
     progress = board.get("progress_since_previous")
     notion = board.get("notion_active_work_observation")
     windows = board.get("source_windows", [])
+    queue = board.get("queue_pressure_observation")
     change_map = {}
+    if queue:
+        lines.extend([
+            "", "## Lokale zCloud-queuedruk (gezien, niet vrijgegeven)",
+            "Bronmoment: " + _markdown_literal(queue["observed_at_utc"]),
+            "Geen gevalideerde worker/fileclaims of autorisatie."
+        ])
+        for pid, info in queue["projects"].items():
+            lines.append("- " + _markdown_literal(pid) +
+                         " · wachtend=" + str(info["queued"]) +
+                         " · actief=" + str(info["owned"]) +
+                         " · herhaalde claims=" + str(info["high_claim_attempts"]) +
+                         " · lease-review=" + str(info["expired_owner_leases"]) +
+                         " · actie=" + _markdown_literal(info["owner_next_action"]))
     if windows:
         lines.extend(["", "## Gecombineerde portfolio-bronvensters",
                       "Dit is een samengevoegde momentopname, geen complete "
@@ -574,6 +631,8 @@ def main(argv=None):
     p.add_argument("--max-items", type=int, default=MAX_ISSUES)
     p.add_argument("--previous", type=Path,
                    help="optional earlier local JSON workboard snapshot; never a closure proof")
+    p.add_argument("--queue-overview", type=Path,
+                   help="optional existing offline JSON portfolio overview; no live queue writes")
     p.add_argument("--read-notion-claims", action="store_true",
                    help="optional read-only Notion active statuses; never file/lease owner proof")
     p.add_argument("--notion-data-source",
@@ -588,6 +647,10 @@ def main(argv=None):
         registry = canonical_projects(args.registry)
         inbox = collect(registry, args.project, os.getenv("GITHUB_TOKEN"), args.max_items)
         board = build_workboard(inbox, registry, os.getenv("GITHUB_TOKEN"))
+        if args.queue_overview:
+            from zsentinel_workboard_queue import read_queue_overview, attach_queue_pressure
+            attach_queue_pressure(board, read_queue_overview(args.queue_overview),
+                                  registry)
         if args.read_notion_claims:
             from zsentinel_notion_claim_observer import (
                 observe_claims, project_labels,
