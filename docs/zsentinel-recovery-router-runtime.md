@@ -31,7 +31,12 @@ prioriteit en route; privé-opvolgkeuze en notities (maximaal 300 tekens per
 issue) leven **alleen in het huidige browsertabblad**, zonder cookies,
 localStorage of externe requests. Een Markdown-overdracht kan pas via
 **voorvertoning en afzonderlijke downloadknop** worden opgeslagen. Bij
-filter- of notitiewijzigingen vervalt de eerdere voorvertoning. Niets
+filter- of notitiewijzigingen vervalt de eerdere voorvertoning. De
+handmatige overdracht bewaart ook het oorspronkelijke **UTC-bronmoment**,
+kanonieke bestaande PR-links en de reeds ontvangen, begrensde head-/CI-
+bronactie. Een HTML-document dat meer dan tien minuten oud is of een
+afwijkende systeemklok heeft, krijgt expliciet **HISTORISCH / OPNIEUW
+CONTROLEREN** in de browser én in de bewust gedownloade overdracht. Niets
 wordt automatisch naar GitHub, Notion, een worker of een eigenaar gestuurd.
 
 Per uitvoering maximaal **drie canonieke projecten**, **24** bronissues,
