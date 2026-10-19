@@ -38,6 +38,12 @@ een nieuw issue), **veranderde prioriteit/PR-verwijzing, geobserveerde
 PR-SHA of opvolgactie**, en **eerder gezien maar nu buiten de steekproef**.
 Ook de laatste categorie betekent *nooit* dat een issue gesloten of
 hersteld is; de machineleesbare bron zet `closed_issues_verified=0`.
+Als de nieuwe GitHub-bron **helemaal niet bereikbaar is**, wordt zelfs
+"niet opnieuw in de steekproef" niet geconcludeerd. Het rapport toont
+dan afzonderlijk `previously_sampled_unverifiable_count` met de
+bronstatus `current_source_unavailable_previous_state_only`. Bij een
+wel gedeeltelijk leesbare bron blijft een afwezig issue slechts
+`not_in_current_bounded_sample_NOT_CLOSED`.
 Onvolledige bronvensters en oudere momentopnames degraderen zekerheid,
 ze authoriseren nooit claim, automatische retry, merge of productieactie.
 De browser heeft een extra filter voor bronverandering en neemt de
