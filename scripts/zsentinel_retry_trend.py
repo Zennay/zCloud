@@ -81,7 +81,10 @@ def sample_changes(previous: dict, current: dict) -> tuple[dict, list[dict]]:
                 or len(rows) > coverage["sample_limit"]):
             raise ValueError("Incomplete or unsafe queue sample contract")
         indexed: dict[str, dict] = {}
-        scope = item["scope"].get("project")
+        raw_scope = item.get("scope")
+        if not isinstance(raw_scope, dict) or not isinstance(raw_scope.get("project"), str):
+            raise ValueError("Missing queue snapshot scope")
+        scope = raw_scope["project"]
         for row in rows:
             if not isinstance(row, dict):
                 raise ValueError("Malformed queue sample")
@@ -222,7 +225,7 @@ def markdown(trend: dict) -> str:
               "", "| Opaque ref | Project | Priority | Status before → after | Claim cycles before → after | Change |",
               "|---|---|---|---|---|---|"]
     for row in trend["record_changes"][:100]:
-        lines.append(f"| \`{row['queue_ref']}\` | {row['project']} | {row['priority_after']} | "
+        lines.append(f"| `{row['queue_ref']}` | {row['project']} | {row['priority_after']} | "
                      f"{row['status_before']} → {row['status_after']} | "
                      f"{row['attempts_before']} → {row['attempts_after']} "
                      f"({row['claim_cycle_delta']:+d}) | {row['observation']} |")
