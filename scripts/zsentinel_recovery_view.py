@@ -319,15 +319,26 @@ def html_view(decision):
             if (not isinstance(row, dict)
                     or row.get("status") not in (
                         "selected_one_source_bound_job",
+                        "selected_one_source_bound_job_partial_window",
                         "no_actionable_job_in_sampled_windows",
                         "degraded_unavailable")):
                 raise ValueError("invalid GitHub workflow window coverage")
             pid = phrase(row.get("project_id"), 80)
-            if row["status"] == "selected_one_source_bound_job":
+            incomplete = row.get("incomplete_windows", [])
+            if (not isinstance(incomplete, list) or len(incomplete) > 3
+                    or any(x not in labels for x in incomplete)
+                    or len(set(incomplete)) != len(incomplete)
+                    or (row["status"] == "selected_one_source_bound_job_partial_window"
+                        and not incomplete)):
+                raise ValueError("invalid incomplete workflow window receipt")
+            if row["status"] in ("selected_one_source_bound_job",
+                                  "selected_one_source_bound_job_partial_window"):
                 window = row.get("workflow_status_window")
                 if window not in labels:
                     raise ValueError("unknown discovered workflow status window")
                 description = labels[window] + "; één exacte job geselecteerd. Geen volledig CI-overzicht."
+                if incomplete:
+                    description += " Niet bereikbaar: " + ", ".join(labels[x] for x in incomplete) + "."
             elif row["status"] == "degraded_unavailable":
                 description = "GitHub-venster onbereikbaar; overige jobs en gezondheid ONBEKEND."
             else:
