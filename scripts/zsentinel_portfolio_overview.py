@@ -16,6 +16,7 @@ import sqlite3
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 
 from zsentinel_product_issue_inbox import canonical_projects
 from zsentinel_queue_observer import observe
@@ -208,7 +209,66 @@ def _count(value):
     return "ONBEKEND" if value is None else str(value)
 
 
-def portfolio_html(summary, decision, window_index, windows):
+def branch_ownership_html(source):
+    if source is None:
+        return ('<section><h2>Branches zonder PR</h2><p class="empty">'
+                'Niet opgevraagd; recente branch-eigenaren blijven onbekend.</p></section>')
+    if (not isinstance(source, dict)
+            or source.get("schema") != "zsentinel-recent-unpr-branches-v1"
+            or source.get("coverage") not in ("bounded_complete", "incomplete_owner_review")
+            or source.get("worker_claims_changed") is not False
+            or source.get("current_slice_safe_to_claim") is not False
+            or not isinstance(source.get("recent_candidates"), list)
+            or len(source["recent_candidates"]) > 12):
+        raise ValueError("untrusted or authorizing branch observation")
+    repo = source.get("repository")
+    if (not isinstance(repo, str) or not repo.startswith("Zennay/")
+            or repo.count("/") != 1):
+        raise ValueError("invalid canonical repository for branch report")
+    cards = []
+    for entry in source["recent_candidates"]:
+        if (not isinstance(entry, dict) or entry.get("owner_verified") is not False
+                or entry.get("claim_authorized") is not False
+                or not isinstance(entry.get("branch"), str)
+                or not isinstance(entry.get("head_sha"), str)
+                or not isinstance(entry.get("paths"), list)
+                or len(entry["paths"]) > 100):
+            raise ValueError("invalid branch ownership record")
+        sha = entry["head_sha"]
+        if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+            raise ValueError("invalid branch commit identity")
+        linked = ("https://github.com/" + quote(repo, safe="/") +
+                  "/tree/" + quote(entry["branch"], safe=""))
+        paths = "".join("<li>" + escape(p) + "</li>" for p in entry["paths"])
+        cards.append(
+            '<article class="panel read"><h3><a target="_blank" '
+            'rel="noopener noreferrer" href="' + escape(linked, quote=True) +
+            '">' + escape(entry["branch"]) + '</a></h3>'
+            '<p class="small">Exact commit: <code>' + sha + '</code> · leeftijd: ' +
+            str(entry["commit_age_hours"]) + ' uur · vooruit op main: ' +
+            str(entry["ahead_by"]) + ' commits · bestanden: ' +
+            str(entry["path_count"]) + '.</p>'
+            '<p><strong>' + ("MOGELIJKE PADOVERLAP" if entry["potential_overlap"]
+                            else "Geen overlap in opgegeven scope gevonden") +
+            '</strong> · actief eigendom NIET bevestigd.</p>'
+            '<details><summary>Gewijzigde paden bekijken</summary><ul>' +
+            paths + '</ul></details></article>'
+        )
+    return (
+        '<section><h2>Recente branches zonder open PR · read-only</h2>'
+        '<p class="banner">Brondekking: ' + escape(source["coverage"]) +
+        '. Een oude branch is geen actieve eigenaar; ontbrekende '
+        'of afgekapt bronbewijs is nooit bewijs van vrije scope. '
+        'Geen automatische claimvrijgave of overname.</p>'
+        '<div class="grid">' +
+        ("".join(cards) if cards else
+         '<p class="empty">Geen recente kandidaten in dit begrensde venster; '
+         'geen bewijs van complete eigendomsvrijheid.</p>') +
+        '</div></section>'
+    )
+
+
+def portfolio_html(summary, decision, window_index, windows, branch_inventory=None):
     if (not isinstance(summary, dict)
             or summary.get("schema") != "zsentinel-portfolio-overview-v1"
             or summary.get("actions_performed") is not False
@@ -299,7 +359,7 @@ def portfolio_html(summary, decision, window_index, windows):
     raw = html_view(decision)
     if raw.count("<main>") != 1:
         raise ValueError("incompatible underlying offline operator view")
-    return raw.replace("<main>", "<main>" + table, 1)
+    return raw.replace("<main>", "<main>" + table + branch_ownership_html(branch_inventory), 1)
 
 
 def main():
