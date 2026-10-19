@@ -29,6 +29,16 @@ python3 scripts/zsentinel_retry_incident_console.py \
 
 The database opens using SQLite `mode=ro` with `PRAGMA query_only=ON`; grouped and sample reads share one read transaction. Read-only queries may read existing WAL content; no `immutable=1` flag hides pending WAL. The only optional filesystem write is the operator-selected **report output** path.
 
+Reports include a short pseudonymous `queue_ref` so operators can correlate the same item across different snapshots without exporting raw IDs. To locate the exact task for authorized **local** investigation, explicitly resolve one reference:
+
+```sh
+python3 scripts/zsentinel_retry_incident_console.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --resolve-ref 0123456789abcdef
+```
+
+This drill-down prints the current raw queue ID and stored task title to the **local console only**, does not support file export, refuses missing/ambiguous references and inventories over 50,000 records, and never conveys ownership or retry permission. Do not paste its sensitive result into public PR comments.
+
 Use `--include-titles` only for an explicitly approved **local** JSON/Markdown review; by default reports exclude task titles, raw `queue_id`, lease ownership IDs, prompt/criteria, evidence, metadata, and tokens. HTML does not offer the title override and has all displayed values escaped.
 
 If the DB schema is missing required columns, the path does not exist, or SQLite cannot establish a read-only consistent snapshot, the command exits non-zero and produces no fake empty success report. Maximum sample size is 100; threshold and project arguments are validated; it does not scan external providers or fetch GitHub API.
