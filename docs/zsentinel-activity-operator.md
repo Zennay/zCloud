@@ -69,6 +69,20 @@ Issue [#1305](https://github.com/Zennay/zCloud/issues/1305) remains open
 until the complete versioning contract and current live served bytes can be
 reviewed by its owner.
 
+## PR lifecycle provenance from bounded GitHub samples
+
+A manually requested GitHub `pulls?state=all` source now retains separate,
+immutable provider dates for **created**, **updated**, **merged** and
+**closed without merge** milestones (where the current record supplies valid
+timestamps). Draft status is displayed as draft. An update at/after merge or
+closure is not misrepresented as work completed before that transition.
+Each event is a bounded read-only provider observation, and the 200-item
+in-memory selection still gives every sampled project a share before
+timestamp sorting. Event IDs are derived from canonical project/type/PR link
+and the source remains explicitly partial (20 recent updated PRs per selected
+repository). Nothing infers that a GitHub merge has been deployed or that
+an open PR represents ownership of a Notion claim.
+
 ## GitHub outage: retain last successful P0/P1 and PR/CI evidence
 
 Manual public GitHub reads no longer delete a project's previously observed
