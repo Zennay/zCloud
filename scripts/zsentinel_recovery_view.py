@@ -378,7 +378,7 @@ def html_view(decision):
                       "Geen vers geverifieerde blokkades. Dat bewijst geen herstel.")
             + extra_incidents + '</section>'
             + runner_route_panel
-            + f'<section><h2>Open P0/P1-productissues ({len(triage["issues"])})</h2>'
+            + f'<section><h2>Open productissues · P0/P1 eerst, daarna P2 en zonder label ({len(triage["issues"])})</h2>'
             + section([issue_card(row) for row in triage["issues"]],
                       "Geen issuewaarnemingen beschikbaar. Raadpleeg de brondekking.")
             + '</section>'
