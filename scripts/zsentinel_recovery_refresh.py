@@ -14,7 +14,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-from zsentinel_product_issue_inbox import bounded_get, canonical_projects
+from zsentinel_product_issue_inbox import bounded_get, canonical_projects, collect
 from zsentinel_recovery_router import (
     MAX_INPUT_BYTES, MAX_STATE_BYTES, plan, read_json, write_json_atomic,
     operator_text, utc_string,
@@ -146,13 +146,40 @@ def main():
     parser.add_argument("--registry", type=Path, required=True,
                         help="existing canonical projects registry JSON")
     parser.add_argument("--state", help="optional private local dedup ledger")
+    parser.add_argument("--read-product-issues", action="store_true",
+                        help="read up to three selected project P0/P1 GitHub issue inboxes")
+    parser.add_argument("--issue-project", action="append",
+                        help="canonical issue-source project ID (up to 3, repeatable)")
     parser.add_argument("--format", choices=("json", "text", "html"), default="text")
     args = parser.parse_args()
     try:
         registry = canonical_projects(args.registry)
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
-        enriched, source = refresh(bundle, registry, os.environ.get("GITHUB_TOKEN"))
+        token = os.environ.get("GITHUB_TOKEN")
+        enriched, source = refresh(bundle, registry, token)
+        if args.issue_project and not args.read_product_issues:
+            raise ValueError("--issue-project requires --read-product-issues")
+        if args.read_product_issues:
+            requested = (args.issue_project
+                         if args.issue_project else [
+                             row["id"] for row in bundle["evidence"]["projects"]
+                             if isinstance(row, dict) and row.get("id") in registry
+                         ][:3])
+            if (not requested or len(requested) > 3 or len(set(requested)) != len(requested)
+                    or any(name not in registry for name in requested)):
+                raise ValueError("issue source requires one to three distinct canonical projects")
+            # Existing collector spends at most three public GETs per project
+            # (oldest, newest, linked PR window). It never claims ownership.
+            try:
+                enriched["issue_inbox"] = collect(registry, requested, token, max_items=40)
+                source["issue_source"] = "github_readonly_selected_projects"
+                source["issue_projects"] = requested
+                source["issue_requests_attempted"] = enriched["issue_inbox"]["request_count"]
+            except (ValueError, OSError) as exc:
+                enriched.pop("issue_inbox", None)
+                source["issue_source"] = "degraded_not_fetched"
+                source["issue_source_reason"] = str(exc)[:80]
         routed, updated = plan(enriched, old)
         routed["live_github_read"] = source
         if args.state:
