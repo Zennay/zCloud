@@ -2040,7 +2040,8 @@ function validateRetryTrend(raw){
         throw Error('Invalid retry record movement');
       refs.add(row.queue_ref);
       recordChanges.push({ref:row.queue_ref,project:row.project,
-        priority:row.priority_after,beforeStatus:row.status_before,afterStatus:row.status_after,
+        priority:row.priority_after,beforePriority:row.priority_before,
+        beforeStatus:row.status_before,afterStatus:row.status_after,
         beforeAttempts:row.attempts_before,afterAttempts:row.attempts_after,
         delta:row.claim_cycle_delta,observation:row.observation});
     }
@@ -2086,7 +2087,8 @@ function retryTrendFromSnapshots(before,after){
     const a=earlier.get(ref),b=later.get(ref),delta=b.attempts-a.attempts;
     if(a.project!==b.project)throw Error('Ambiguous queue reference across snapshots');
     if(!delta&&a.status===b.status&&a.priority===b.priority)continue;
-    recordChanges.push({ref,project:b.project,priority:b.priority,beforeStatus:a.status,
+    recordChanges.push({ref,project:b.project,priority:b.priority,beforePriority:a.priority,
+      beforeStatus:a.status,
       afterStatus:b.status,beforeAttempts:a.attempts,afterAttempts:b.attempts,delta,
       observation:delta>0?'claim_cycles_increased':delta<0?'claim_counter_decreased_review':
         a.status!==b.status?'status_changed':'priority_changed'});
@@ -2289,7 +2291,7 @@ function exportRetryTrendJson(){
     };
     raw.record_changes=(trend.recordChanges||[]).slice(0,100).map(row=>({
       queue_ref:row.ref,project:row.project,
-      priority_before:row.priority,priority_after:row.priority,
+      priority_before:row.beforePriority,priority_after:row.priority,
       status_before:row.beforeStatus,status_after:row.afterStatus,
       attempts_before:row.beforeAttempts,attempts_after:row.afterAttempts,
       claim_cycle_delta:row.delta,observation:row.observation
