@@ -1676,3 +1676,25 @@ deduplicatiesleutel voor route onbekend** en een verplicht
 `niet concluderen dat VPS stuk is / niet herstarten`-advies. Een
 `waiting`/`pending`-approval blijft een intentievolle wait, geen
 runneruitval. Regressietests/QA zijn niet gewijzigd of handmatig gestart.
+
+
+### Twee onafhankelijke signalen: lokaal proces versus GitHub-job
+
+Een lokaal `Runner.Listener`-proces en een GitHub `runner_id` zijn **andere
+soorten bewijs**. Bij een expliciet gepinde en exact opgehaalde
+`run_id + job_id + head_sha` uit de bestaande GitHub collector noteert
+zSentinel daarom apart
+`canonical_zcloud_runner_assignment_observed` met de numerieke
+`runner_id_observed`, en alleen `true` wanneer de GitHub Actions
+jobgegevens een toegewezen `zcloud-vps-1` **én**
+`runner_route=self_hosted` aangeven. De operatorkaart linkt rechtstreeks
+naar die exacte GitHub-job. Een lokaal aanwezig listenerproces kan dit veld
+nooit op `true` zetten.
+
+De observatie is een read-only **moment-/historisch jobbewijs**, geen bewijs
+dat de runner nú ingelogd, veilig idle, permanent gezond of geautoriseerd voor
+een nieuwe productie-deploy is. Mislukte of onvoldoende metadata blijft
+ONBEKEND, zonder restarts of onterechte activiteitsclaims. In een autoritatief
+herstelrapport blijft `worker_resumed_verified=false` tenzij een bevoegde
+runtime-owner daadwerkelijke herstart en nieuwe taakuitvoering onafhankelijk
+bevestigt.
