@@ -1130,3 +1130,47 @@ of handmatig uitgevoerd.
 ### Release boundary
 
 The script is useful offline immediately after a source checkout. It is **not running autonomously in production** until an authorized integration owner connects a complete read-only source collector, controls private state storage, coordinates conflict-free live claim acquisition, and promotes the reviewed, exact-head CI-approved change through the existing serialized zCloud release gate. Self-hosted runner [P0 #1326](https://github.com/Zennay/zCloud/issues/1326) and private hosted account admission [#1523](https://github.com/Zennay/zCloud/issues/1523) remain separate human-controlled incidents; neither is fixed or bypassed by this script. No QA suite was created or manually executed for this change.
+
+
+### Product-PR's eerst en echte hosted startweigering onderscheiden (19 oktober)
+
+De bestaande PR-afrondingsdesk gebruikt nu de daadwerkelijke sortering van de
+maximaal 20 laatst bijgewerkte PR's per expliciet gekozen project. Bij dezelfde
+titel-P0/P1 krijgt het **recentst bijgewerkte** productwerk voorrang; een lager
+PR-nummer is geen reden om ouder werk te blijven herkiezen. Een uit de bron
+expliciet herkende QA-only titel (`test/qa/quality-validation`), branchprefix
+(`qa/`, `test/`, `tests/`) of QA-only GitHub-label wordt niet automatisch
+geselecteerd. Onbekende metadata verleent nooit eigendoms- of productbewijs.
+Dit verandert geen bestaande expliciete `--pr PROJECT:NUMBER`-keuze of
+GitHub issue-status.
+
+De exact-head check-run-bron herkent nu tevens een **expliciet door GitHub
+gemelde** hosted-admissionweigering ("job was not started" samen met een
+betalings-/bestedingslimietmelding) in het bestaande check-run outputveld.
+Wanneer de bron die boodschap niet bevat, wordt facturatie **niet** geraden
+op grond van een algemene failure/statuscode. Om ook de afzonderlijke GitHub
+check-annotations van hoogstens één falende exacte HEAD-check per geselecteerde
+PR te raadplegen, is de optionele read-only opdracht beschikbaar:
+
+```sh
+python3 scripts/zsentinel_pr_delivery.py \
+  --pr cloud:1563 --inspect-hosted-no-start --format md
+```
+
+Deze opt-in voegt maximaal **één extra GET per geselecteerde PR** toe
+(maximaal drie extra GETs bovenop 5×3 basiscalls). Een 403/limietweigering,
+ontbrekende exacte checkidentiteit of te grote/onbetrouwbare bron toont
+onbekende annotatiedekking; de gewone PR-status blijft bruikbaar.
+Berichtteksten, annotatiepaden, tokens en accountgegevens worden nooit
+door de operator-export opgenomen. De herkenning biedt een **administratief
+actiepad** alleen wanneer uit een volledige check-steekproef precies één
+checkstartweigering blijkt en er geen andere falende klassieke status bestaat;
+bij meerdere/ontbrekende checks blijft de generieke niet-groene CI-route
+van toepassing. Geen automatische facturatie-aanpassing, retry, review,
+workerclaim, release, branch-protectionbypass of productieactie.
+
+De al bestaande verplichte `critical-runner-flows`-workflow kan op dezelfde
+PR nog falen op historische asserties die onassigned jobs zonder geverifieerd
+self-hosted label als runnerincident verwachten. De veilige productclassificatie
+is bewust **niet** afgezwakt om oudere aannames passend te maken; onafhankelijke
+CI-/review-eigenaren moeten de vereiste exacte-head gate afhandelen.
