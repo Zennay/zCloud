@@ -646,6 +646,7 @@ def plan(bundle, previous=None, now=None):
             **incident,
             "reason": ("github_hosted_billing_admission" if initial_category == "billing_admission"
                        else "github_required_owner_approval" if initial_category == "owner_approval"
+                       else "github_job_unstarted" if initial_category == "job_unstarted"
                        else incident["reason"])
         })
         if key is None:
@@ -660,7 +661,7 @@ def plan(bundle, previous=None, now=None):
         reason = incident["reason"]
         github = project.get("github", {})
         category = github.get("verified_failure_category")
-        if category is not None and category not in ("billing_admission", "owner_approval", "ordinary_failure"):
+        if category is not None and category not in ("billing_admission", "owner_approval", "ordinary_failure", "job_unstarted"):
             raise ValueError("github.verified_failure_category: unsupported")
         if category and reason != "github_workflow_failed":
             raise ValueError("failure category requires a fresh failed GitHub job")
@@ -671,23 +672,34 @@ def plan(bundle, previous=None, now=None):
             blocked_gates.add("github_hosted")
         elif category == "owner_approval":
             reason = "github_required_owner_approval"
+        elif category == "job_unstarted":
+            if (github.get("no_job_steps") is not True
+                    or github.get("runner_assigned") is not False
+                    or github.get("verified_receipt") != "github_exact_run_job"):
+                raise ValueError("unstarted GitHub job requires exact no-steps/runner source")
+            reason = "github_job_unstarted"
         severity = "P0" if reason in ("github_job_unassigned", "github_hosted_billing_admission") else "P1"
         owner = project.get("notion", {}).get("owner") or project.get("runtime", {}).get("owner")
         if not isinstance(owner, str) or not 1 <= len(owner) <= 80 or any(ord(c) < 32 for c in owner):
             owner = "owner_confirmation_required"
         human = reason in ("github_job_unassigned", "github_hosted_billing_admission",
-                           "github_required_owner_approval")
+                           "github_required_owner_approval", "github_job_unstarted")
         if reason == "github_job_unassigned":
             blocked_gates.add("self_hosted")
         if reason == "github_hosted_billing_admission":
             owner = "GitHub account billing owner"
         if reason == "github_required_owner_approval":
             owner = "authorized PR/release owner"
+        if reason == "github_job_unstarted":
+            owner = "GitHub workflow/account owner"
         action = incident["next_action"]
         if reason == "github_hosted_billing_admission":
             action = "Account owner reviews GitHub billing/spend admission; do not retry paid jobs or change billing."
         elif reason == "github_required_owner_approval":
             action = "Wait for authorized GitHub owner review; no runner restart or PR merge."
+        elif reason == "github_job_unstarted":
+            action = ("Inspect this exact GitHub job's platform/check-run annotations and billing "
+                      "admission with the account owner; no blind retry or VPS restart.")
         blocking_ids.add(key)
         previous_status = prior_entry.get("status", "")
         incidents.append({
