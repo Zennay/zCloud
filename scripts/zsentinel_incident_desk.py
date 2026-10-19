@@ -257,7 +257,7 @@ function render(){
 }
 for(const id of ["project","priority","human","query"])$(id).addEventListener(id==="query"?"input":"change",render);
 function download(obj){
- const str=JSON.stringify(obj,null,2);if(str.length>100000)throw Error("Overdracht te groot");
+ const str=JSON.stringify(obj,null,2);if(new TextEncoder().encode(str).byteLength>1000000)throw Error("Overdracht te groot");
  const url=URL.createObjectURL(new Blob([str+"\n"],{type:"application/json"}));
  const a=el("a");a.href=url;a.download="zsentinel-private-human-handoff.json";
  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -271,7 +271,7 @@ $("export").onclick=()=>{try{
  }catch(_){$("feedback").textContent="Export geweigerd; controleer lokale gegevens."}};
 $("import").onchange=async event=>{
  try{
-  const file=event.target.files?.[0];if(!file||file.size>100000)throw Error("size");
+  const file=event.target.files?.[0];if(!file||file.size>1000000)throw Error("size");
   const raw=await file.text();const data=JSON.parse(raw);
   if(!data||data.schema!=="zsentinel-human-followup-v1"||data.source_sha256!==source.fingerprint||
      data.source_at!==source.observed_at||data.read_only!==true||data.action_authorized!==false||
@@ -296,7 +296,7 @@ $("import").onchange=async event=>{
 $("carry").onchange=async event=>{
  try{
   const file=event.target.files?.[0];
-  if(!file||file.size>100000)throw Error("size");
+  if(!file||file.size>1000000)throw Error("size");
   const data=JSON.parse(await file.text());
   const older=Date.parse(data?.source_at);
   const current=Date.parse(source.observed_at);
