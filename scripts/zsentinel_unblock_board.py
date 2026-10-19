@@ -44,7 +44,7 @@ def _non_authorizing(summary, decision, issues):
     return known
 
 
-def blocker_first_board(summary, decision, issues):
+def blocker_first_board(summary, decision, issues, pr_desk=None):
     """Produce a bounded *operator* sequence, not a dispatch/release plan.
 
     Stalled incident cards are source observations. Missing incident coverage,
@@ -110,6 +110,57 @@ def blocker_first_board(summary, decision, issues):
         })
     cards.sort(key=lambda item: (PRIORITY[item["priority"]], item["project_id"], item["id"]))
     live_observed_count = len(cards)
+    # Existing source PRs can unblock actual product delivery without creating
+    # duplicate implementation. PR metadata is a bounded non-authorizing
+    # source, never a file lease, branch protection or review approval.
+    pr_gate_count = 0
+    if pr_desk is not None:
+        from zsentinel_pr_delivery import NEXT_ACTION_NL
+        if (not isinstance(pr_desk, dict)
+                or pr_desk.get("schema") != "zsentinel-pr-delivery-desk-v1"
+                or pr_desk.get("merge_authorized") is not False
+                or pr_desk.get("writes_performed") is not False
+                or not isinstance(pr_desk.get("items"), list)
+                or len(pr_desk["items"]) > 3):
+            raise ValueError("untrusted PR delivery desk")
+        for pr in pr_desk["items"]:
+            if not isinstance(pr, dict):
+                raise ValueError("untrusted PR blocker")
+            pid, number = pr.get("project_id"), pr.get("pr_number")
+            if (pid not in known or type(number) is not int
+                    or not 1 <= number <= 100000000
+                    or pr.get("repository") != repo_for[pid]
+                    or pr.get("source") != "github_exact_pr_readonly"
+                    or pr.get("merge_authorized") is not False
+                    or pr.get("next_step") not in NEXT_ACTION_NL):
+                raise ValueError("invalid existing PR owner/source")
+            url = ("https://github.com/" + repo_for[pid] +
+                   "/pull/" + str(number))
+            if pr.get("url") != url:
+                raise ValueError("noncanonical existing PR URL")
+            complete = pr.get("coverage") == "bounded_exact_head_review_and_checks"
+            head = pr.get("head_sha") if complete else None
+            if head is not None and (type(head) is not str or
+                                    not re.fullmatch(r"[a-f0-9]{40}", head)):
+                raise ValueError("untrusted exact-head PR source")
+            cards.append({
+                "kind": "existing_product_pr_gate_inspection_only",
+                "id": "pr:" + pid + ":" + str(number),
+                "project_id": pid, "priority": "P1",
+                "problem": "Bestaande product-PR wacht op afrondingscontrole",
+                "owner": "authorized_pr_and_release_owner",
+                "action": (NEXT_ACTION_NL[pr["next_step"]] if complete else
+                           "PR-bron onvolledig; hercontroleer exacte HEAD, eigenaar en vereiste checks."),
+                "observed_from": ("bounded_exact_head_pr_gate_not_required_ci_proof"
+                                  if complete else "incomplete_pr_source"),
+                "source_pr_url": url,
+                "source_pr_head": head,
+                "requires_human": True,
+                "next_gate": pr["next_step"] if complete else "verify_pr_source_with_owner",
+                "worker_resumed_verified": False, "permission_to_recover": False,
+                "owner_claim_verified": False,
+            })
+            pr_gate_count += 1
     # A private old incident is not a currently active outage, but still must
     # remain visible before ordinary work; missing from a window != resolved.
     for row in backlog["shown"]:
@@ -156,7 +207,7 @@ def blocker_first_board(summary, decision, issues):
             "worker_resumed_verified": False, "permission_to_recover": False,
             "owner_claim_verified": False,
         })
-    historical_count = len(cards) - live_observed_count
+    historical_count = len(cards) - live_observed_count - pr_gate_count
     # A historical incident may reference a project removed from today's
     # canonical registry. Do not crash the whole workboard or silently mark
     # that earlier incident recovered; surface it as unmapped source debt.
@@ -234,7 +285,8 @@ def blocker_first_board(summary, decision, issues):
         "live_incident_observations": live_observed_count,
         "historical_not_reconciled": historical_count,
         "historical_unmapped_or_unshown": unseen_historical_count,
-        "queue_pressure_observations": len(cards) - live_observed_count - historical_count,
+        "existing_pr_gate_observations": pr_gate_count,
+        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count,
         "shown_blocker_cards": shown,
         "blocker_cards_truncated": len(cards) > len(shown),
         "independent_fallback_inspection": fallback[:5],
@@ -263,6 +315,12 @@ def blocker_board_html(board):
         owner = escape(str(row["owner"])[:100])
         basis = escape(str(row["observed_from"])[:90])
         job_link = row.get("source_job_url_historical_only")
+        pr_link = row.get("source_pr_url")
+        pr_source = (
+            '<p><a href="' + escape(pr_link, quote=True) +
+            '" target="_blank" rel="noopener noreferrer">Bekijk bestaande PR en exacte checks</a>'
+            ' · merge/review/release NIET geautoriseerd.</p>'
+            if isinstance(pr_link, str) else '')
         historical_source = (
             '<p><a href="' + escape(job_link, quote=True) +
             '" target="_blank" rel="noopener noreferrer">Bekijk exact historisch GitHub-jobbewijs</a>'
@@ -274,7 +332,7 @@ def blocker_board_html(board):
             action + '</p><p class="muted">Eigenaar: ' + owner +
             ' · bron: ' + basis +
             ' · worker/runner hervat: NIET bewezen.</p>' +
-            historical_source + '</article>')
+            historical_source + pr_source + '</article>')
     if not cards:
         cards = ['<p class="empty">Geen actuele blockerkaart in deze begrensde'
                  ' bron. Dat bewijst GEEN gezonde werknemers of complete backlog.</p>']
@@ -298,6 +356,7 @@ def blocker_board_html(board):
         ' Alleen geautoriseerde eigenaaracties; geen automatische herstart.</p>'
         '<p class="muted">Nu waargenomen incidenten: ' +
         str(board["live_incident_observations"]) +
+        ' · bestaande PR-gates: ' + str(board["existing_pr_gate_observations"]) +
         ' · historisch te hercontroleren: ' +
         str(board["historical_not_reconciled"]) +
         ' · meer historisch onbekend/niet getoond: ' +
