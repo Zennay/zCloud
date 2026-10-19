@@ -287,6 +287,43 @@ The producing offline trend CLI is in **separate PR #1555**. Both remain
 source-only until the normal exact-head CI/review/merge and serialized production
 release. No standalone QA or regression suite was written or manually invoked.
 
+## Safe offline two-snapshot retry comparison and JSON handoff (19 October)
+
+In the existing zSentinel retry incident panel, select **up to two queue snapshot
+JSON files** at once. Their source timestamps determine the before/after order.
+A two-file comparison requires the same canonical project (or both all), the
+same claim-attempt threshold and strictly increasing observation timestamps.
+The importer validates both receipts **before updating the visible evidence**:
+malformed/oversized files or mixed scopes preserve the prior view. One snapshot
+can also be followed by a newer same-scope snapshot; an older second snapshot
+requires an explicit Clear or deliberate two-file comparison. Any single new
+scope clears the previous unrelated trend.
+
+An imported **Optional trend JSON** is bound to the visible snapshot's project,
+threshold **and exact ending observation time**. If they differ, the import is
+refused rather than combining unrelated queue histories. Standalone trend imports
+remain usable when no snapshot is loaded. The panel shows which rows appeared in
+both bounded samples, their observed claim-cycle and status movement and explicit
+partial coverage; disappearing from the top-N sample is never claimed as task
+completion or as authority to retry. Historical aggregate-only trend receipts
+remain compatible.
+
+Use **Export offline trend .json** to download a sanitized canonical
+`zsentinel-retry-trend-v1` record generated from previously validated operator
+observations. This retains only canonical project IDs, UTC source times, aggregate
+counts, bounded opaque 16-hex queue refs and observed deltas. It contains no raw
+queue IDs, titles, prompts, tokens, claims or credentials. Other operators can
+open it through the existing Optional trend JSON importer, subject to source
+scope and timestamp gates. The existing **Export retry handoff .md** remains
+available separately. Neither export makes an HTTP call, starts a poller, or
+modifies any worker, lease or SQLite record.
+
+**Source-only delivery:** [PR #1550](https://github.com/Zennay/zCloud/pull/1550);
+offline CLI producer [PR #1555](https://github.com/Zennay/zCloud/pull/1555).
+Mandatory exact-head GitHub checks, independent review, protected-main merge
+and serialized authorized VPS release remain required. No QA suites authored or
+manually run.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
