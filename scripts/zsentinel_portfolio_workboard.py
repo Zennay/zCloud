@@ -172,6 +172,8 @@ def main(argv=None):
     p.add_argument("--snapshot", type=Path, action="append", required=True,
                    help="one through six bounded original JSON files")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
+    p.add_argument("--output", type=Path,
+                   help="explicit create-only private report output; never overwrites")
     p.add_argument("--queue-overview", type=Path,
                    help="existing local read-only zSentinel portfolio JSON; no queue writes")
     args = p.parse_args(argv)
@@ -191,7 +193,11 @@ def main(argv=None):
             output = render_markdown(board)
         else:
             output = json.dumps(board, ensure_ascii=True, sort_keys=True, indent=2)
-        print(output)
+        if args.output is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.output, output, args.format)
+        else:
+            print(output)
         complete = all(
             row.get("status") == "partial" for row in board["coverage"])
         return 0 if complete and board["all_projects_currently_read"] else 3
