@@ -9,15 +9,53 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.parse
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 UUID = re.compile(r"^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$", re.I)
 MAX_PAGES = 4
 PAGE_SIZE = 100
 MAX_BODY = 600_000
 ACTIVE = frozenset(("Claimed", "Running"))
+NOTION_PROJECT_URL = re.compile(r"^https://app[.]notion[.]com/p/([0-9a-f]{32})(?:[?].*)?$", re.I)
+
+
+def project_labels(registry_path: Path, canonical: dict):
+    """Match known project relations to canonical registry, never arbitrary Notion titles."""
+    if not isinstance(registry_path, Path) or not registry_path.is_file():
+        raise ValueError("canonical project registry unavailable")
+    entries = json.loads(registry_path.read_text(encoding="utf-8"))
+    if not isinstance(entries, list):
+        raise ValueError("invalid canonical project registry")
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("id") not in canonical:
+            continue
+        url = entry.get("notion_url")
+        match = NOTION_PROJECT_URL.fullmatch(url) if isinstance(url, str) else None
+        if match:
+            slug = entry["id"]
+            key = match.group(1).lower()
+            if key in result:
+                raise ValueError("duplicate Notion project mapping")
+            result[key] = slug
+    return result
+
+
+def _project_name(prop, known):
+    if not isinstance(prop, dict) or prop.get("type") != "relation" or prop.get("has_more") is True:
+        return "onbekend"
+    ids = prop.get("relation")
+    if not isinstance(ids, list) or len(ids) != 1 or not isinstance(ids[0], dict):
+        return "onbekend"
+    target = ids[0].get("id")
+    if not isinstance(target, str) or not UUID.fullmatch(target):
+        return "onbekend"
+    return known.get(target.replace("-", "").lower(), "niet in projectregister")
+
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -52,11 +90,15 @@ def _work_number(prop):
     return value if type(value) is int and 0 < value < 10**9 else None
 
 
-def observe_claims(data_source_id, token):
+def observe_claims(data_source_id, token, known_projects=None):
     if not isinstance(data_source_id, str) or not UUID.fullmatch(data_source_id):
         raise ValueError("Notion claim data source must be a canonical UUID")
     if not isinstance(token, str) or not token or len(token) > 512 or "\n" in token or "\r" in token:
         raise ValueError("Notion read token unavailable or invalid")
+    if known_projects is None:
+        known_projects = {}
+    if not isinstance(known_projects, dict):
+        raise ValueError("invalid Notion project mapping")
     endpoint = "https://api.notion.com/v1/data_sources/" + data_source_id + "/query"
     cursor = None
     seen_cursors = set()
@@ -112,7 +154,7 @@ def observe_claims(data_source_id, token):
             number = _work_number(props.get("Work ID"))
             rows.append({"work": ("PWQ-" + str(number) if number else "Werk-ID onbekend"),
                          "title": title, "status": state,
-                         "project": "niet op padniveau geverifieerd"})
+                         "project": _project_name(props.get("Project"), known_projects)})
         more = data.get("has_more")
         if type(more) is not bool:
             raise ValueError("Invalid Notion pagination status")
