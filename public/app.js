@@ -1733,7 +1733,7 @@ function exportZSentinelHandoff(){
     {name:'P0/P1 issue source',data:IMPORTED_PRODUCT_ISSUES},
     {name:'PR/CI GitHub source',data:IMPORTED_GITHUB_ACTIVITY}
   ]){
-    for(const row of (source.data?.coverage||[]).filter(r=>projects.has(r.project)&&(!filter||r.project===filter)).slice(0,8)){
+    for(const row of (source.data?.coverage||[]).filter(r=>projects.has(r.project)&&(!filter||r.project===filter)).slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT)){
       lines.push('- '+source.name+' '+clean(row.project,56)+' · '+clean(row.status,32)+
         ' · observed '+clean(row.observedAt||'unknown',48)+
         (row.staleEvidence?' · STALE RETAINED EVIDENCE, NOT CURRENT STATUS':'')+
@@ -1812,7 +1812,11 @@ function zSentinelDeliveryBoard(){
     ids.has(item.project)&&(!focus||item.project===focus));
   const staleProjects=[...new Set([...coveredIssues,...coveredGitHub]
     .filter(row=>row.staleEvidence===true).map(row=>row.project))];
-  const formatted=relevant.slice(0,24).map(issue=>{
+  // First 24 P0/P1 issue cards should not be monopolized by one
+  // high-volume project after 13-project source coverage is retained.
+  const fairHighImpact=fairProductIssueHistory(
+    relevant,(snapshot?.coverage||[]).filter(item=>ids.has(item.project)&&(!focus||item.project===focus)),24);
+  const formatted=fairHighImpact.map(issue=>{
     const refs=issue.prs.slice(0,3).map(pr=>
       '<a target="_blank" rel="noopener noreferrer" href="'+esc(pr.url)+'">PR #'+pr.number+
       (pr.draft?' (draft)':'')+'</a> <small>'+
