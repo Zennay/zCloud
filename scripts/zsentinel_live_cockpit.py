@@ -56,7 +56,7 @@ def parse_jobs(raw, names):
 def assemble(registry, selected, jobs, queue_path, token=None,
              include_issues=True, include_ci_discovery=True, observe_vps=False,
              include_notion=False, notion_data_source=None, notion_token=None,
-             notion_registry=ROOT / "projects.json"):
+             notion_registry=ROOT / "projects.json", queue_snapshot=None):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
@@ -69,7 +69,14 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         if remaining:
             found, discovery = discover(registry, remaining, token)
             pins.update(found)
-    queue = observe(queue_path)
+    # A portfolio caller may provide the observer's same immutable read-only
+    # snapshot. This prevents duplicate live DB sampling within one report.
+    queue = observe(queue_path) if queue_snapshot is None else queue_snapshot
+    if (not isinstance(queue, dict)
+            or queue.get("schema") != "zsentinel-queue-pressure-v1"
+            or queue.get("database_read_only") is not True
+            or queue.get("claim_ownership_verified") is not False):
+        raise ValueError("invalid read-only queue observation")
     observed = datetime.now(UTC)
     # The baseline lacks Notion/worker provenance by design; absence is NOT
     # proof that a task has no owner or that a project is recovered.
