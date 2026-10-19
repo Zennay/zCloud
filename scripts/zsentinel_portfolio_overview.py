@@ -461,7 +461,7 @@ def main():
     parser.add_argument("--current-path", action="append", default=[],
                         help="proposed unclaimed repository-relative scope (only for --inspect-unpr-branches)")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
-    parser.add_argument("--format", choices=("html", "json", "text"), default="html")
+    parser.add_argument("--format", choices=("html", "json", "text", "ics"), default="html")
     args = parser.parse_args()
     try:
         registry = canonical_projects(args.registry)
@@ -554,6 +554,9 @@ def main():
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox)
+        elif args.format == "ics":
+            from zsentinel_human_agenda import human_calendar
+            rendered = human_calendar(decision)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
