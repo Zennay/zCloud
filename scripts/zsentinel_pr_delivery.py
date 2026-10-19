@@ -402,13 +402,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Offline operator output for bounded, live-read GitHub PR metadata")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
-    parser.add_argument("--pr", action="append", required=True,
+    parser.add_argument("--pr", action="append", default=[],
                         help="canonical existing PR PROJECT:NUMBER; repeat up to three")
+    parser.add_argument("--project", action="append", default=[],
+                        help="canonical project to sample for existing open PRs")
+    parser.add_argument("--discover-open", action="store_true",
+                        help="read one bounded open-PR window per project before further source work")
     parser.add_argument("--format", choices=("html", "json", "text"), default="html")
     args = parser.parse_args(argv)
     try:
         if len(args.pr) > MAX_PRS:
             raise ValueError("at most three existing PRs")
+        if not args.pr and not args.discover_open:
+            raise ValueError("provide --pr or --project PROJECT --discover-open")
+        if args.discover_open and (not args.project or len(args.project) > 3):
+            raise ValueError("discover-open requires one to three --project values")
+        if args.project and not args.discover_open:
+            raise ValueError("--project requires --discover-open")
         registry = canonical_projects(args.registry)
         selected = []
         for value in args.pr:
@@ -420,13 +430,33 @@ def main(argv=None):
             selected.append({
                 "project_id": match.group(1), "pr_number": int(match.group(2))
             })
-        report = observe_prs(registry, selected, token=os.environ.get("GITHUB_TOKEN"))
+        discovery = None
+        token = os.environ.get("GITHUB_TOKEN")
+        if args.discover_open:
+            if len(selected) < MAX_PRS:
+                discovery = discover_open_prs(
+                    registry, args.project, token=token,
+                    limit=MAX_PRS - len(selected), exclude=selected)
+                selected.extend(discovery["selection"])
+            else:
+                discovery = {"schema": "zsentinel-open-pr-discovery-v1",
+                             "coverage": "not_requested_capacity_full",
+                             "selection": [], "calls": 0,
+                             "all_open_prs_observed": False,
+                             "owner_verified": False,
+                             "writes_performed": False, "merge_authorized": False}
+        report = observe_prs(registry, selected, token=token)
+        report["open_pr_discovery"] = discovery if discovery is not None else {
+            "coverage": "not_requested", "all_open_prs_observed": False,
+            "merge_authorized": False}
         if args.format == "html":
             output = standalone_html(report)
         elif args.format == "json":
             output = json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2)
         else:
             lines = ["zSentinel · bestaande PR-afronding; maximaal 3 read-only bronnen"]
+            if discovery is not None:
+                lines.append("Open PR discovery: bounded, not all branches or active owners.")
             for item in report["items"]:
                 lines.append(
                     "%s #%s | head=%s | bron=%s | volgende actie=%s | %s" % (
