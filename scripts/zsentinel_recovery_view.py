@@ -183,7 +183,8 @@ def html_view(decision):
     # Explain *why* a queued job was classified as a self-hosted route,
     # while retaining explicit unknown for degraded, missing or hosted labels.
     runner_route_cards = []
-    job_source = live.get("github_jobs") if isinstance(live, dict) else None
+    job_source = (live.get("github_jobs") if isinstance(live, dict)
+                  else source if isinstance(source, dict) else None)
     route_rows = job_source.get("refreshed_projects") if isinstance(job_source, dict) else None
     if route_rows is not None:
         if not isinstance(route_rows, list) or len(route_rows) > 8:
@@ -201,6 +202,8 @@ def html_view(decision):
             if (row.get("source") != "github_exact_run_job"
                     or row.get("may_restart_runner") is not False
                     or row.get("runner_route") not in ("self_hosted", "hosted_or_custom", "unknown")
+                    or row.get("job_status") not in ("queued", "in_progress", "completed", "waiting", "pending")
+                    or type(row.get("runner_assigned")) is not bool
                     or not isinstance(row.get("route_labels"), list)
                     or len(row["route_labels"]) > 16
                     or any(not isinstance(v, str) or len(v) > 64
@@ -226,7 +229,10 @@ def html_view(decision):
                 '<article class="panel read"><h3><a target="_blank" rel="noopener noreferrer" '
                 'href="' + escape(href, quote=True) + '">' + phrase(row.get("project_id"), 80) +
                 ' · exacte GitHub-job</a></h3><p>' +
-                phrase(route_description, 180) + '</p><p class="small">Vereiste labels: ' +
+                phrase(route_description, 180) + '</p><p class="small">Jobstatus: ' +
+                phrase(row["job_status"], 30) + ' · runner toegewezen: ' +
+                ('ja' if row["runner_assigned"] else 'nee') +
+                '</p><p class="small">Vereiste labels: ' +
                 (", ".join(phrase(v, 64) for v in row["route_labels"])
                  if row["route_labels"] else "ONBEKEND") +
                 ' · alleen read-only bronbewijs, geen runnerstartrecht.</p></article>'
