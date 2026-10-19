@@ -18,6 +18,7 @@ SCHEMAS = {
     "branches": "zsentinel-recent-prless-ownership-v1",
     "claims": "zsentinel-operator-claims-v1",
     "board": "zsentinel-product-delivery-triage-v1",
+    "prs": "zsentinel-pr-delivery-observation-v1",
 }
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ISSUE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$")
@@ -93,7 +94,8 @@ def count(value):
     return value
 
 
-def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
+def prepare(inbox, retry=None, branches=None, claims=None, prs=None,
+            hours=24, limit=40):
     if (inbox.get("actions_authorized") is not False
             or inbox.get("active_claims_verified") is not False
             or inbox.get("queue_ownership_known") is not False):
@@ -225,10 +227,64 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
                 raise ValueError("invalid active-claim entry")
             pid, work_id = project(row.get("project")), count(row.get("work_id"))
             claims_by_project.setdefault(pid, []).append(work_id)
+    pr_evidence = {}
+    if prs is not None:
+        if (prs.get("source") != "github_readonly_exact_head"
+                or prs.get("inventory_complete_for_requested_targets") is not True
+                or prs.get("required_branch_protection_verified") is not False
+                or prs.get("active_claims_verified") is not False
+                or prs.get("merge_authorized") is not False
+                or prs.get("deploy_authorized") is not False):
+            raise ValueError("PR snapshot attempts to authorize release")
+        source_times["prs"] = when(prs.get("observed_at_utc"))
+        targets = prs.get("targets")
+        if type(targets) is not list or not 1 <= len(targets) <= 5:
+            raise ValueError("invalid bounded PR target inventory")
+        for item in targets:
+            if type(item) is not dict:
+                raise ValueError("invalid PR target row")
+            repo, number, link = (item.get("repository"), item.get("number"),
+                                  item.get("url"))
+            if (type(repo) is not str or not re.fullmatch(
+                    r"Zennay/[A-Za-z0-9_.-]{1,80}", repo)
+                    or type(number) is not int or not 1 <= number <= 99999999
+                    or link != "https://github.com/" + repo + "/pull/" + str(number)
+                    or link in pr_evidence):
+                raise ValueError("ambiguous PR identity or cross-repo evidence")
+            head, checks, reviews = (item.get("head_sha"), item.get("checks"),
+                                     item.get("reviews"))
+            if type(head) is not str or not re.fullmatch(r"[a-f0-9]{40}", head):
+                raise ValueError("invalid exact PR head")
+            blockers = item.get("blocking_unknowns")
+            if (type(checks) is not dict or checks.get("exact_head_sha") != head
+                    or checks.get("branch_required_check_rules_verified") is not False
+                    or type(reviews) is not dict
+                    or reviews.get("review_freshness_against_latest_push_verified") is not False
+                    or type(blockers) is not list or len(blockers) > 20
+                    or any(type(b) is not str or not re.fullmatch(
+                        r"[a-z][a-z0-9_]{0,70}", b) for b in blockers)
+                    or item.get("merge_authorized") is not False
+                    or item.get("deploy_authorized") is not False):
+                raise ValueError("PR check/review evidence inconsistent")
+            approvals = reviews.get("observed_distinct_non_author_approvals")
+            if type(approvals) is not int or not 0 <= approvals <= 100:
+                raise ValueError("invalid observed approval count")
+            if type(item.get("mergeable_observed")) is not bool:
+                raise ValueError("invalid PR mergeable evidence")
+            pr_evidence[link] = {
+                "url": link, "head_sha": head,
+                "observed_approvals": approvals,
+                "observed_check_success": (
+                    checks.get("observed_checks_and_legacy_success") is True),
+                "mergeable_observed": item["mergeable_observed"],
+                "blocking_unknowns": sorted(set(blockers)),
+                "merge_authorized": False,
+            }
+
     now = datetime.now(timezone.utc)
     fresh = {name: (now - stamp <= timedelta(hours=hours))
              for name, stamp in source_times.items()}
-    for name in ("retry", "branches", "claims"):
+    for name in ("retry", "branches", "claims", "prs"):
         if name in fresh and abs(source_times[name] - observed) > timedelta(hours=6):
             fresh[name] = False
     issues.sort(key=lambda x: (PRIORITY[x["priority"]],
@@ -241,8 +297,12 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
                  retry_meta["scope"] in ("all", pid) else None)
         claim_ids = (claims_by_project.get(pid, []) if fresh.get("claims")
                      and claims_by_project is not None else None)
+        matching_prs = [pr_evidence[link] for link in row["open_pr_candidates"]
+                        if fresh.get("prs") is True and link in pr_evidence]
         if claim_ids:
             next_step = "Coordinate with the current claim holder, do not displace."
+        elif matching_prs:
+            next_step = "Inspect exact-head PR gates and unresolved release authorization."
         elif row["open_pr_candidates"]:
             next_step = "Inspect the already open PR, CI and independent review first."
         elif queue and queue["expired_active_leases"]:
@@ -266,7 +326,10 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
             gaps.append("Current branch overlap evidence unavailable.")
         elif pid == "cloud" and not branch_meta["coverage_complete"]:
             gaps.append("zCloud PR-less branch sample covers only part of the inventory.")
+        if row["open_pr_candidates"] and not matching_prs:
+            gaps.append("No fresh exact-head CI/review evidence for linked PRs.")
         cards.append({**row, "queue": queue, "observed_claim_ids": claim_ids,
+                      "pr_delivery_candidates": matching_prs,
                       "project_issue_coverage": coverage[pid],
                       "recommended_next_step": next_step, "evidence_gaps": gaps,
                       "claim_authorized": False, "merge_authorized": False,
@@ -319,10 +382,14 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
         "coverage": {"projects": coverage, "inbox_truncated": inbox["truncated"],
                      "github_denial": inbox["stopped_after_rate_or_auth_denial"],
                      "retry": retry_meta, "branches": branch_meta,
+                     "prs_supplied": prs is not None,
                      "claims_supplied": claims is not None,
                      "cards_truncated": len(issues) > limit},
         "items_available": len(issues), "cards": cards,
         "project_operations": project_operations,
+        "pr_delivery_observations": (
+            [pr_evidence[key] for key in sorted(pr_evidence)]
+            if fresh.get("prs") is True else []),
         "authorizes_claim": False, "authorizes_merge": False,
         "authorizes_deploy": False, "automatic_dispatch_enabled": False,
         "operator_note": "Bounded evidence only. Assignees, PR mentions, branch age and "
@@ -432,6 +499,8 @@ def main(argv=None):
     parser.add_argument("--retry", type=Path)
     parser.add_argument("--branches", type=Path)
     parser.add_argument("--claims", type=Path)
+    parser.add_argument("--prs", type=Path,
+                        help="Optional exact-head PR CI/review observation")
     parser.add_argument("--limit", type=int, default=40)
     parser.add_argument("--max-age-hours", type=int, default=24)
     parser.add_argument("--format", choices=("json", "markdown", "html"), default="html")
@@ -440,13 +509,14 @@ def main(argv=None):
     if not 1 <= args.limit <= 60 or not 1 <= args.max_age_hours <= 168:
         parser.error("limit must be 1–60 and max-age-hours 1–168")
     try:
-        paths = [x for x in (args.inbox, args.retry, args.branches, args.claims) if x]
+        paths = [x for x in (args.inbox, args.retry, args.branches, args.claims, args.prs) if x]
         if len({x.resolve() for x in paths}) != len(paths):
             raise ValueError("sources must be separate immutable files")
         result = prepare(read(args.inbox, "inbox"),
             retry=read(args.retry, "retry") if args.retry else None,
             branches=read(args.branches, "branches") if args.branches else None,
             claims=read(args.claims, "claims") if args.claims else None,
+            prs=read(args.prs, "prs") if args.prs else None,
             hours=args.max_age_hours, limit=args.limit)
         output = (json.dumps(result, ensure_ascii=False, indent=2) + "\n"
                   if args.format == "json" else
