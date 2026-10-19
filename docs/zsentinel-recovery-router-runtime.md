@@ -513,6 +513,29 @@ Ook de reeds bestaande offline bronrouter (`scripts/zsentinel_recovery_router.py
 
 Het ICS-bestand is een **lokaal bestand**: geen push, geen automatische kalenderkoppeling, geen verzonden notificatie, geen nieuwe scheduler. Per huidige begrensde bronrun zijn er maximaal vijf afspraken. Ze worden uitsluitend afgeleid van dezelfde canonieke incident-ID, actie, severity en `human_escalation=true` die ook in het oorspronkelijke routerbesluit staan. Onjuiste, dubbele of ongeautoriseerde notificatieclaims leiden tot weigering in plaats van willekeurige afspraken. Elk item heeft een stabiele private UID, UTC-beoordelingsdeadline en een **optioneel door de ontvangende agenda ondersteund** 15-minuten-voorafsignaal. Na import kan een agenda-aanbieder de privéactiegegevens verwerken; deel het bestand niet onbedoeld. Een lege source sample produceert geen fictieve afspraken en betekent niet dat alle projecten probleemvrij zijn. Verstreken reviewdeadlines worden niet stilzwijgend verlengd of op een andere datum gezet. Project-/run-/CI-dekking, betaalautorisatie, eigenaarschap en productieherstel blijven onbewezen waar de bron dat niet bevestigt.
 
+
+## 19 oktober · Privé incidentenbalie · brongebonden menselijke opvolging
+
+De bestaande zSentinel-router kan nu een **volledig lokale interactieve incidentenbalie** maken. De ingang gebruikt een werkelijk routerbesluit, dus er worden géén extra GitHub-, Notion-, VPS- of queue-vragen gestart. Een incident blijft brongebonden aan `incident_id`, project, ernst, eerste/laatste waarneming, oorspronkelijke beoordelingsdeadline en feitelijke routerstatus. De balie sorteert P0 vóór P1 en maakt het verschil tussen `human_action_required` en `read_only_diagnosis_required` zichtbaar.
+
+```sh
+# Gebruik bestaande echte bron/queue/GitHub-readers en schrijf alleen een privé offline HTML.
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --project cloud --format desk > /secure/zsentinel-incident-desk.html
+
+# Zelfde product is ook beschikbaar via:
+#   zsentinel_portfolio_overview.py --database ... --format desk
+#   zsentinel_recovery_router.py ./actual-observation.json --format desk
+#   zsentinel_recovery_refresh.py ./actual-observation.json --registry projects.json --format desk
+```
+
+De operator kan zoeken op project/probleem/eigenaar, filteren op P0–P3 en expliciete menselijke noodzaak, en binnen de gekozen kaart precies **probleem / actie / bronstatus** bekijken. Een eigen opvolgstatus (nog niet beoordeeld, eigenaar benaderen, in behandeling bij eigenaar, extern geparkeerd, opnieuw verifiëren) en maximaal 800 tekens vrije notitie blijven *uitsluitend in het huidige tabblad*.
+
+**Voltooide privé-overdracht**: met één bewuste klik kan de operator een lokaal JSON-bestand downloaden dat alleen incident-ID, menselijke opvolgstatus en privénotitie bevat. De handoff is aan de SHA-256 van de volledig gevalideerde incidententabel, de oorspronkelijke tijd en het incidentenaantal gebonden. Een later geïmporteerde handoff wordt volledig geweigerd als bronhash, datum, aantal, statuswaarden of incident-ID niet exact overeenkomen; geldige import vervangt de notities in één keer. Er is geen autosave, achtergrondnetwork, externe HTML, lokale browseropslag, push of Notion-/GitHub-write. Privénotities niet delen als publiek issuecommentaar.
+
+**Grenzen:** de ingebedde bron heeft altijd partiële dekking; weggevallen incidenten of lege filters bewijzen nooit dat CI, eigenaar, runner of project hersteld is. Lokale keuzes autoriseren geen claim, slot/release, betaling, automatische CI-retry, worker dispatch, productie deploy, of het afsluiten van een echt incident. De gegenereerde HTML verklaart ouder dan tien minuten expliciet op basis van de browserklok en meldt klokafwijking. Er is geen nieuwe QA-/regressie-/testcode geschreven of handmatig gedraaid. De reeds verplichte exacte-head CI en onafhankelijke review blijven volledig gelden.
+
 ### Release boundary
 
 The script is useful offline immediately after a source checkout. It is **not running autonomously in production** until an authorized integration owner connects a complete read-only source collector, controls private state storage, coordinates conflict-free live claim acquisition, and promotes the reviewed, exact-head CI-approved change through the existing serialized zCloud release gate. Self-hosted runner [P0 #1326](https://github.com/Zennay/zCloud/issues/1326) and private hosted account admission [#1523](https://github.com/Zennay/zCloud/issues/1523) remain separate human-controlled incidents; neither is fixed or bypassed by this script. No QA suite was created or manually executed for this change.
