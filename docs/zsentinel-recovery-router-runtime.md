@@ -1,5 +1,49 @@
 # zSentinel · Runtime incident router (product-only)
 
+## Bestaande PR's afronden: actuele exacte-head beslisdesk (19 oktober)
+
+De nieuwe `scripts/zsentinel_pr_delivery.py` leest alleen **bestaande,
+expliciet gekozen** pull requests uit de canonieke projectregistratie.
+Binnen één portfolio-venster is dit direct beschikbaar als opt-in:
+
+```sh
+# Project 'cloud' zit standaard in --window 0. Geen productie-DB aanmaken.
+python3 scripts/zsentinel_portfolio_overview.py \\
+  --database /path/to/existing/zcloud.sqlite3 --window 0 \\
+  --inspect-pr cloud:1563 --format html \\
+  > /private/operator-only/zsentinel-existing-prs.html
+
+# Of uitsluitend PR-referenties uit de actuele beperkte issue-shortlist.
+python3 scripts/zsentinel_portfolio_overview.py \\
+  --database /path/to/existing/zcloud.sqlite3 --window 0 \\
+  --inspect-referenced-prs --format json
+```
+
+Maximaal drie PR's per operatoractie en **drie extra GitHub-GETs per PR**:
+exacte PR-metadata met `head.sha` en `base.sha`, de eerste 30
+check-runs **op die HEAD**, en de eerste 30 review-ontvangsten.
+Zonder `--inspect-pr` of `--inspect-referenced-prs` zijn dit **nul**
+aanvullende verzoeken; bovenop de normale 42 maximaal 9 opt-in-GETs,
+dus samen maximaal **51** bij drie geselecteerde projecten.
+
+De Nederlandse operatorweergave laat per PR zien wat de eerstvolgende
+**menselijke** stap is: concept afronden; reviewverzoeken verwerken;
+actuele gefaalde CI herstellen; wachten op ontbrekende checks; onafhankelijke
+review vragen; of volledige release-policy vooraf laten controleren.
+Alle selecties blijven bronsteekproeven. Een eerdere approval op een
+andere commit-SHA telt **niet** mee als exacte-head observatie.
+Check-runs zijn nooit gelijk aan alle beschermde branch-statuscontexten;
+review-paginering is niet compleet als de eerste pagina vol is.
+Daarom verklaren zelfs groene checks en één approval **nooit**
+`merge_authorized`, `deploy_authorized` of `owner_verified` waar.
+De bevoegde PR-/runtime-eigenaar moet de huidige GitHub branch-protection,
+required CI, onafhankelijke reviews, echte claim- en productiereleasepoort
+zelf blijven respecteren.
+
+Dit is een read-only operatorfunctie in dezelfde open [zCloud #1563](https://github.com/Zennay/zCloud/pull/1563).
+De tool opent alleen bestaande GitHub GETs en lokale read-only SQLite;
+geen nieuwe QA, runnerstart, CI retry, PR-merge, Notion of productie-write.
+
 ## Lopende workflows met wachtende jobs: P0-route niet meer overgeslagen (19 oktober)
 
 GitHub Actions heeft **twee aparte statussen**: de workflow-run en elke
