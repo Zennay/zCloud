@@ -254,6 +254,12 @@ Use the existing **Read next 4 project sources** button until all 13 are covered
 
 Release: [PR #1550](https://github.com/Zennay/zCloud/pull/1550), source-only until current exact-head mandatory CI, independent review, protected-main merge and serialized VPS promotion. No manual QA or regression suite was authored or executed for this change.
 
+### Imported PR-less branches in unified timeline
+
+When the operator imports a validated `zsentinel-recent-prless-ownership-v1` slice for canonical `Zennay/zCloud`, the unified timeline now presents its **PR-less branch observations** beside local VPS and GitHub PR/CI/main-commit records. The visible timestamp is the branch's validated `last_commit_at`; the importer observation time is shown separately as freshness evidence. Each branch is clearly labelled **offline source, unverified owner, not main and not deployed**. Branch references are escaped plain text; no branch URL, token, private file path, raw prompts or authority is exported.
+
+The existing All / Local VPS / GitHub source filters remain simple: branch observations appear in GitHub because they originate from an operator-imported GitHub inventory, not because the UI polled GitHub. The provenance line distinguishes private local inventory from direct PR/CI reads. The extra events are bounded to 96 imported branch rows and the existing 140-event combined timeline cap; an empty/nonmatching zCloud scope is unknown, not a cleared ownership finding. This is a read-only improvement to [issue #1518](https://github.com/Zennay/zCloud/issues/1518) with source inventory [PR #1554](https://github.com/Zennay/zCloud/pull/1554) as a separately held dependency.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
