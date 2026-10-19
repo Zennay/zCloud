@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Bounded read-only recent un-PR branch ownership evidence (zCloud #870).
+"""zSentinel UI adapter for the ALREADY INTEGRATED PR-less ownership source.
 
-This is an advisory collision preflight, not a lease, worker heartbeat or
-authorized claim. It never writes to GitHub, zCloud, Notion, or the VPS.
+Do not implement a second GitHub branch/PR crawler here. Delegate inventory,
+double-read consistency, immutable compares and rename handling to canonical
+scripts/zcloud_recent_prless_ownership.py (zCloud PR #1554 / issue #870).
+Neither that source nor this adapter grants actual ownership or runs on VPS.
 """
 from __future__ import annotations
 
@@ -10,228 +12,130 @@ import argparse
 import json
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote, urlencode
 
-from zsentinel_product_issue_inbox import ROOT, bounded_get, canonical_projects
+from zsentinel_product_issue_inbox import ROOT, canonical_projects, bounded_get
+from zcloud_recent_prless_ownership import inventory as canonical_inventory
+from zcloud_deploy_prless_inventory_20261013_w1 import InventoryDenied
 
-SHA = re.compile(r"^[0-9a-f]{40}$")
-BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]{0,119}$")
-PATH = re.compile(r"^[A-Za-z0-9_.@/+ -]{1,220}$")
-REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
-MAX_BRANCH_PAGES = 4
-MAX_PR_PAGES = 3
-PAGE_SIZE = 100
-MAX_CANDIDATES = 12
-MAX_FILES = 100
-RECENT_HOURS = 72
+SHA = re.compile(r"^[a-f0-9]{40}$")
 UTC = timezone.utc
 
 
-def bounded_branch(name):
-    if (not isinstance(name, str) or not BRANCH.fullmatch(name)
-            or any(part in ("", ".", "..") for part in name.split("/"))):
-        raise ValueError("unsafe GitHub branch ref")
-    return name
-
-
-def bounded_path(name):
-    if (not isinstance(name, str) or not PATH.fullmatch(name)
-            or name.startswith("/") or name.endswith("/")
-            or any(part in ("", ".", "..") for part in name.split("/"))):
-        raise ValueError("invalid GitHub changed path")
-    return name
-
-
-def overlaps(a, b):
-    return a == b or a.startswith(b + "/") or b.startswith(a + "/")
-
-
-def pages(root, suffix, token, maximum, extra=None):
-    all_rows = []
-    for page in range(1, maximum + 1):
-        query = {"per_page": PAGE_SIZE, "page": page}
-        if extra:
-            query.update(extra)
-        data = bounded_get(root + suffix + "?" + urlencode(query), token)
-        if not isinstance(data, list) or len(data) > PAGE_SIZE:
-            raise ValueError("invalid bounded GitHub list source")
-        all_rows.extend(data)
-        if len(data) < PAGE_SIZE:
-            return all_rows
-    raise ValueError("incomplete branch/PR listing; manual owner inspection needed")
-
-
-def parse_time(value):
-    if not isinstance(value, str) or len(value) > 45:
-        raise ValueError("invalid exact commit clock")
-    try:
-        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise ValueError("invalid exact commit clock") from None
-    if stamp.tzinfo is None or stamp.utcoffset() is None:
-        raise ValueError("commit clock requires timezone")
-    return stamp.astimezone(UTC)
+def _main_sha(token):
+    """Fetch pinned main revision; all subsequent comparisons use this SHA."""
+    ref = bounded_get("https://api.github.com/repos/Zennay/zCloud/git/ref/heads/main", token)
+    ref_obj = ref.get("object") if isinstance(ref, dict) else None
+    sha = ref_obj.get("sha") if isinstance(ref_obj, dict) else None
+    if not isinstance(sha, str) or not SHA.fullmatch(sha):
+        raise InventoryDenied("canonical_main_ref_unavailable")
+    return sha
 
 
 def inventory(repo, token=None, prefix=None, current_paths=None, now=None):
-    if not isinstance(repo, str) or not REPO.fullmatch(repo):
-        raise ValueError("use a canonical Zennay repository")
-    if prefix is not None:
-        prefix = bounded_branch(prefix)
+    """Read and normalize canonical PR-less evidence for the offline cockpit.
+
+    The canonical collector has stronger completeness and stability checks
+    than a second ad-hoc branch listing, including post-scan double reads.
+    """
+    if repo != "Zennay/zCloud":
+        raise InventoryDenied("canonical_owner_source_only_zcloud")
     current_paths = [] if current_paths is None else current_paths
     if not isinstance(current_paths, list) or len(current_paths) > 25:
-        raise ValueError("at most 25 current scoped changed paths")
-    current_paths = [bounded_path(p) for p in current_paths]
-    instant = (now or datetime.now(UTC))
-    if instant.tzinfo is None:
-        raise ValueError("timezone-aware clock required")
-    instant = instant.astimezone(UTC)
-    root = "https://api.github.com/repos/" + repo
-    branches = pages(root, "/branches", token, MAX_BRANCH_PAGES)
-    pulls = pages(root, "/pulls", token, MAX_PR_PAGES, {"state":"open"})
-    represented = set()
-    for pr in pulls:
-        if not isinstance(pr, dict) or not isinstance(pr.get("head"), dict):
-            raise ValueError("incomplete open PR head ownership")
-        head = pr["head"]
-        source = head.get("repo")
-        if not isinstance(source, dict) or not isinstance(source.get("full_name"), str):
-            raise ValueError("unknown open PR head repository")
-        if source["full_name"] == repo:
-            represented.add(bounded_branch(head.get("ref")))
-    ref = bounded_get(root + "/git/ref/heads/main", token)
-    base = ref.get("object") if isinstance(ref, dict) else None
-    main_sha = base.get("sha") if isinstance(base, dict) else None
-    if not isinstance(main_sha, str) or not SHA.fullmatch(main_sha):
-        raise ValueError("exact current main reference unavailable")
-    candidates = []
-    seen = set()
-    for branch in branches:
-        if not isinstance(branch, dict) or not isinstance(branch.get("commit"), dict):
-            raise ValueError("invalid branch inventory")
-        name = bounded_branch(branch.get("name"))
-        commit = branch["commit"].get("sha")
-        if not isinstance(commit, str) or not SHA.fullmatch(commit) or name in seen:
-            raise ValueError("duplicate or invalid exact branch SHA")
-        seen.add(name)
-        if name == "main" or name in represented or (prefix and not name.startswith(prefix)):
-            continue
-        candidates.append((name, commit))
-    # Alphabetical branch listing is not proof that omitted names are stale.
-    coverage_complete = len(candidates) <= MAX_CANDIDATES
-    candidates = candidates[:MAX_CANDIDATES]
-    recent = []
+        raise InventoryDenied("invalid_current_path_inventory")
+    observed = now or datetime.now(UTC)
+    if not isinstance(observed, datetime) or observed.utcoffset() is None:
+        raise InventoryDenied("invalid_observation_time")
+    observed = observed.astimezone(UTC)
+    pinned = _main_sha(token)
+    evidence = canonical_inventory(
+        pinned, owned_paths=current_paths, branch_prefix=prefix,
+        token=token or "", now=observed)
+    if (evidence.get("schema") != "zsentinel-recent-prless-ownership-v1"
+            or evidence.get("repository") != repo
+            or evidence.get("main_sha") != pinned
+            or evidence.get("snapshot_complete") is not True
+            or evidence.get("may_admit_work") is not False
+            or evidence.get("ownership_granted") is not False
+            or evidence.get("release_authorized") is not False):
+        raise InventoryDenied("invalid_canonical_branch_evidence")
+    if _main_sha(token) != pinned:
+        raise InventoryDenied("main_moved_during_branch_inventory")
+    rows = []
     historical = 0
-    not_ahead = 0
-    incomplete_paths = 0
-    for name, sha in candidates:
-        commit = bounded_get(root + "/commits/" + sha, token)
-        if not isinstance(commit, dict) or commit.get("sha") != sha:
-            raise ValueError("exact commit receipt mismatch")
-        inner = commit.get("commit")
-        committer = inner.get("committer") if isinstance(inner, dict) else None
-        if not isinstance(committer, dict):
-            raise ValueError("missing exact commit timestamp")
-        written = parse_time(committer.get("date"))
-        if written > instant + timedelta(minutes=2):
-            raise ValueError("future commit timestamp, source untrusted")
-        age_hours = max(0, int((instant-written).total_seconds() // 3600))
-        if age_hours > RECENT_HOURS:
+    for item in evidence.get("branches", []):
+        if not isinstance(item, dict):
+            raise InventoryDenied("invalid_canonical_branch_row")
+        kind = item.get("classification")
+        if kind == "historical":
             historical += 1
             continue
-        # Compare immutable SHAs: ref names can move between requests.
-        url = root + "/compare/" + main_sha + "..." + sha + "?per_page=100&page=1"
-        compared = bounded_get(url, token)
-        base_obj = compared.get("base_commit") if isinstance(compared, dict) else None
-        head_obj = compared.get("head_commit") if isinstance(compared, dict) else None
-        if (not isinstance(base_obj, dict) or not isinstance(head_obj, dict)
-                or base_obj.get("sha") != main_sha
-                or head_obj.get("sha") != sha):
-            raise ValueError("compare changed while sampling; do not claim ownership")
-        ahead = compared.get("ahead_by")
-        if type(ahead) is not int or ahead < 0:
-            raise ValueError("invalid ahead-of-main evidence")
-        if ahead == 0:
-            not_ahead += 1
+        if kind != "recent_unmerged":
             continue
-        files = compared.get("files")
-        # GitHub compare returns at most 300 filenames on the first page.
-        # Never call the first page a complete scope at that ceiling.
-        if (not isinstance(files, list) or len(files) >= 300
-                or type(compared.get("total_commits")) is not int
-                or not 1 <= compared["total_commits"] <= 100):
-            incomplete_paths += 1
-            coverage_complete = False
-            continue
-        paths = set()
-        for entry in files:
-            if not isinstance(entry, dict):
-                raise ValueError("invalid GitHub changed file record")
-            paths.add(bounded_path(entry.get("filename")))
-            if entry.get("status") == "renamed":
-                paths.add(bounded_path(entry.get("previous_filename")))
-        if len(paths) > MAX_FILES:
-            incomplete_paths += 1
-            coverage_complete = False
-            continue
-        changed = sorted(paths)
-        collide = [p for p in changed if any(overlaps(p, own) for own in current_paths)]
-        recent.append({
-            "branch": name, "head_sha": sha, "main_sha": main_sha,
-            "commit_age_hours": age_hours, "ahead_by": ahead,
-            "paths": changed, "path_count": len(changed),
-            "overlapping_paths": collide[:MAX_FILES],
-            "potential_overlap": bool(collide),
+        sha = item.get("sha")
+        if not isinstance(sha, str) or not SHA.fullmatch(sha):
+            raise InventoryDenied("invalid_exact_branch_sha")
+        timestamp = datetime.fromisoformat(item["last_commit_at"].replace("Z", "+00:00"))
+        if timestamp.utcoffset() is None:
+            raise InventoryDenied("branch_clock_without_timezone")
+        age = max(0, int((observed-timestamp.astimezone(UTC)).total_seconds() // 3600))
+        paths = item.get("changed_paths")
+        conflicts = item.get("overlapping_paths")
+        if (not isinstance(paths, list) or not isinstance(conflicts, list)
+                or len(paths) > 299 or len(conflicts) > 299):
+            raise InventoryDenied("unbounded_canonical_file_paths")
+        rows.append({
+            "branch": item["ref"], "head_sha": sha, "main_sha": pinned,
+            "commit_age_hours": age, "ahead_by": item["ahead_commits"],
+            "paths": paths, "path_count": len(paths),
+            "overlapping_paths": conflicts,
+            "potential_overlap": bool(conflicts),
             "owner_verified": False, "claim_authorized": False,
         })
     return {
         "schema": "zsentinel-recent-unpr-branches-v1",
-        "source": "github_exact_readonly_commit_compare",
-        "repository": repo, "main_sha": main_sha,
-        "observed_at": instant.isoformat().replace("+00:00", "Z"),
-        "recent_window_hours": RECENT_HOURS,
-        "coverage": "bounded_complete" if coverage_complete else "incomplete_owner_review",
-        "sampled_unpr_branches": len(candidates),
+        "source": "canonical_zcloud_recent_prless_ownership_v1",
+        "repository": repo, "main_sha": pinned,
+        "observed_at": observed.isoformat().replace("+00:00", "Z"),
+        "recent_window_hours": 24 * evidence["lookback_days"],
+        "coverage": ("bounded_complete" if evidence["coverage_complete"]
+                     else "incomplete_owner_review"),
+        "sampled_unpr_branches": evidence["slice_count"],
         "historical_in_sample": historical,
-        "not_ahead_in_sample": not_ahead,
-        "incomplete_path_samples": incomplete_paths,
         "current_paths_known": bool(current_paths),
         "current_slice_safe_to_claim": False,
         "recent_branch_slice_no_overlap_observed": (
-            coverage_complete and bool(current_paths)
-            and not any(x["potential_overlap"] for x in recent)),
-        "recent_candidate_count": len(recent),
-        "recent_candidates": recent,
-        "potential_overlap_observed": any(x["potential_overlap"] for x in recent),
+            evidence["coverage_complete"] and bool(current_paths)
+            and not evidence["overlap_in_slice"]),
+        "recent_candidate_count": len(rows),
+        "recent_candidates": rows,
+        "potential_overlap_observed": bool(evidence["overlap_in_slice"]),
         "branches_deleted": False, "worker_claims_changed": False,
         "workflows_retried": False,
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Read-only bounded un-PR branch collision candidates")
+    parser = argparse.ArgumentParser(description="Canonical read-only un-PR owner evidence")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", required=True)
-    parser.add_argument("--branch-prefix", help="optional bounded branch ref prefix")
-    parser.add_argument("--current-path", action="append", default=[],
-                        help="current proposed project-relative scope, repeat up to 25")
-    parser.add_argument("--require-clear-slice", action="store_true",
-                        help="exit nonzero on candidate overlap, incomplete source or missing scope; never authorize a claim")
+    parser.add_argument("--branch-prefix")
+    parser.add_argument("--current-path", action="append", default=[])
+    parser.add_argument("--require-clear-slice", action="store_true")
     args = parser.parse_args()
     try:
         projects = canonical_projects(args.registry)
         if args.project not in projects:
-            raise ValueError("project absent from canonical registry")
-        observation = inventory(projects[args.project], os.environ.get("GITHUB_TOKEN"),
-                                args.branch_prefix, args.current_path)
-        if args.require_clear_slice and not observation["recent_branch_slice_no_overlap_observed"]:
-            raise ValueError("recent un-PR branch slice not clear or source incomplete; no work claim")
-        print(json.dumps(observation, sort_keys=True, indent=2))
+            raise InventoryDenied("unknown_canonical_project")
+        source = inventory(projects[args.project], os.environ.get("GITHUB_TOKEN"),
+                           args.branch_prefix, args.current_path)
+        if args.require_clear_slice and not source["recent_branch_slice_no_overlap_observed"]:
+            raise InventoryDenied("recent_branch_slice_incomplete_or_overlap")
+        print(json.dumps(source, sort_keys=True, indent=2))
     except (ValueError, OSError) as exc:
-        parser.exit(2, "zSentinel branch ownership evidence unavailable: " +
-                    str(exc)[:140] + "\n")
+        parser.exit(2, "zSentinel canonical branch source unavailable: " +
+                    str(exc)[:120] + "\n")
     return 0
 
 
