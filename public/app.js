@@ -827,18 +827,24 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
     }
     const good=outcomes.filter((o,i)=>o.status==='fulfilled'&&
       (i===1?Array.isArray(o.value?.workflow_runs):Array.isArray(o.value))).length;
-    // Keep bounded, manually read evidence from other projects. This is an
-    // in-memory sample, not background synchronization or a durable event log.
+    // Provider failure MUST NOT turn previously observed PR/CI activity into
+    // an empty current result. Incomplete source windows can retain older
+    // evidence, clearly labelled stale/partial, until a full new sample arrives.
     const previousGitHub=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
+    const previousCoverage=previousGitHub.coverage.find(row=>row.project===projectId);
+    const previousRows=previousGitHub.events.filter(row=>row.project===projectId);
+    const sampledAt=new Date().toISOString();
     const githubCoverage=[...previousGitHub.coverage.filter(row=>row.project!==projectId),
       {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable',
-        observedAt:new Date().toISOString()}].slice(-8);
+        observedAt:good===3||!previousCoverage?sampledAt:previousCoverage.observedAt,
+        lastAttemptAt:sampledAt,staleEvidence:good<3&&previousRows.length>0}].slice(-8);
     const coveredIds=new Set(githubCoverage.map(row=>row.project));
+    const retainedProjectRows=good===3?events:[...previousRows,...events];
     const githubEvents=fairPublicGitHubHistory(
-      [...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),...events],
-      githubCoverage);
-    IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),events:githubEvents,coverage:githubCoverage};
-    IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); ':'Public GitHub source sample ready; ')+
+      [...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
+       ...retainedProjectRows],githubCoverage);
+    IMPORTED_GITHUB_ACTIVITY={observedAt:sampledAt,events:githubEvents,coverage:githubCoverage};
+    IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); prior observations retained and may be stale. ':'Public GitHub source sample ready; ')+
       'branch-only work and private repositories are not covered. Not a live deployment receipt.';
   }catch(_error){
     IMPORTED_GITHUB_ERROR='Public GitHub source could not be interpreted. No authorization or deployment inferred.';
@@ -1043,23 +1049,30 @@ async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
     }
     const ranked={P0:0,P1:1,P2:2,Unspecified:3};
     const readable=outcomes.filter(o=>o.status==='fulfilled'&&Array.isArray(o.value)).length;
-    // One project fetch must not erase manually observed P0/P1 work from
-    // another project. A refreshed project replaces its own older observations.
+    // A failed or incomplete GitHub read must not erase known open P0/P1
+    // work. Only the full bounded sample can supersede prior source evidence.
     const previousIssues=IMPORTED_PRODUCT_ISSUES||{issues:[],coverage:[]};
+    const priorCoverage=previousIssues.coverage.find(row=>row.project===projectId);
+    const priorRows=previousIssues.issues.filter(row=>row.project===projectId);
+    const sampledAt=new Date().toISOString();
     const currentCoverage={project:projectId,status:readable===3?'partial':readable?'degraded':'unavailable',
-      observedAt:new Date().toISOString(),
+      observedAt:readable===3||!priorCoverage?sampledAt:priorCoverage.observedAt,
+      lastAttemptAt:sampledAt,staleEvidence:readable<3&&priorRows.length>0,
       oldest:outcomes[0].status==='fulfilled'?'bounded 30':'unavailable',
       recent:outcomes[1].status==='fulfilled'?'bounded 30':'unavailable',
       prs:outcomes[2].status==='fulfilled'?'bounded 12':'unavailable'};
     const issueCoverage=[...previousIssues.coverage.filter(row=>row.project!==projectId),
       currentCoverage].slice(-8);
     const coveredProjects=new Set(issueCoverage.map(row=>row.project));
+    const currentRows=[...issues.values()];
+    const safeRows=readable===3?currentRows:[...priorRows.filter(row=>
+      !currentRows.some(fresh=>fresh.number===row.number)),...currentRows];
     const issueRows=[...previousIssues.issues.filter(row=>row.project!==projectId&&coveredProjects.has(row.project)),
-      ...issues.values()].sort((a,b)=>ranked[a.priority]-ranked[b.priority]||b.observed-a.observed).slice(0,150);
-    IMPORTED_PRODUCT_ISSUES={observedAt:new Date().toISOString(),partial:true,
-      issues:issueRows,coverage:issueCoverage};
+      ...safeRows].sort((a,b)=>ranked[a.priority]-ranked[b.priority]||
+      (Number(b.observed)||0)-(Number(a.observed)||0)).slice(0,150);
+    IMPORTED_PRODUCT_ISSUES={observedAt:sampledAt,partial:true,issues:issueRows,coverage:issueCoverage};
     IMPORTED_ISSUE_SHOW_ALL=false;
-    IMPORTED_PRODUCT_ERROR=(readable===3?'Public issue sample loaded. ':'Partial public issue source ('+readable+'/3 readable). ')+
+    IMPORTED_PRODUCT_ERROR=(readable===3?'Public issue sample loaded. ':'Partial public issue source ('+readable+'/3 readable); older P0/P1 observations retained and may be stale. ')+
       'These references do not verify fixes, worker ownership or queue claims.';
   }catch(_error){
     IMPORTED_PRODUCT_ERROR='Public issue source unavailable or malformed. No queue claim taken.';
