@@ -1287,3 +1287,17 @@ Dit is een **operationeel alternatief voor brongebrek**, niet het herstel
 van de VPS-wachtrij of het daadwerkelijk vrijgeven van vastgelopen workers.
 De bestaande source PR #1563 wacht nog op verplichte exacte-head CI,
 onafhankelijke review en geserialiseerde releasegoedkeuring.
+
+
+**Directe productuitvoering op verbonden zSSH / geïsoleerde source checkout
+(19 oktober 2026, circa 20:08 UTC):** éénmalig de échte portfolio-CLI
+aangeroepen met `--github-only --window 0 --skip-ci-discovery
+--skip-github-issues --format text`. Exitcode **0**. Concrete uitvoer
+`QUEUE: NIET WAARGENOMEN (--github-only)`, `queued=ONBEKEND`,
+`owned=ONBEKEND`, `lease=ONBEKEND`, en geen ongefundeerde
+worker-/herstelclaims. De commandovoering gebruikte geen bestaand
+`portfolio_queue.sqlite` als bron en activeerde door de expliciete
+`--skip-*` opties **geen** live GitHub CI-/issuebron. Dit bewijst alleen
+dat de productingang zonder SQLite werkelijk werkt; het bewijst
+geen actuele GitHub/P0-inventaris, runnerherstel of productiedeployment.
+De tijdelijke geïsoleerde GitHub source checkout werd na uitvoer opgeruimd.
