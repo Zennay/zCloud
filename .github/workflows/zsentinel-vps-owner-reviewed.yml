@@ -125,6 +125,8 @@ jobs:
             --database "$QUEUE_DB" \
             --worker-events-database "$WORKER_EVENTS_DB" \
             --window "$SOURCE_WINDOW" \
+            --observe-local-runner \
+            --observe-vps-capacity \
             --discover-open-prs \
             --inspect-referenced-prs \
             --format json \
@@ -135,6 +137,9 @@ jobs:
               report = json.load(source)
           portfolio = report["portfolio"]
           board = report["blocker_first_handoff"]
+          local_runner = report["local_runner_observation"]
+          if local_runner is None or local_runner.get("source") != "local_proc_bounded_no_credentials":
+              raise SystemExit("DENY_MISSING_LOCAL_RUNNER_SOURCE")
           print("## zSentinel on zcloud-vps-1 (read-only)")
           print("Exact source SHA: " + os.environ["GITHUB_SHA"][:12])
           print("Fresh observed incidents: " + str(board["live_incident_observations"]))
@@ -143,6 +148,10 @@ jobs:
           print("Existing PR gates: " + str(board["existing_pr_gate_observations"]))
           print("Historical unreconciled items: " + str(board["historical_not_reconciled"]))
           print("Canonical project count: " + str(portfolio["canonical_projects"]))
+          print("Live VPS listener processes seen: " + str(local_runner["listener_processes_observed"]))
+          print("Live VPS worker processes seen: " + str(local_runner["worker_processes_observed"]))
+          print("Local process coverage complete: " + str(local_runner["process_inventory_complete"]))
+          print("Local process evidence does NOT prove runner job assignment, safe idle or recovery.")
           print("No claims/leases changed, runner restarted, workflows dispatched or production deployed.")
           print("Source selection is bounded and does not prove all workers healthy.")
           PY
