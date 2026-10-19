@@ -180,7 +180,11 @@ def rescue(lane: str, apply: bool) -> dict:
         if latest["decision"] != "eligible_memory_headroom":
             evidence["decision"] = "deny_memory_headroom_changed"
             return evidence
-        if runner_process_count(lane):
+        # Only reset-failed creates a separate intermediate service
+        # transition. An already-inactive unit has just passed the direct
+        # pre-start process check; rechecking again would not close the
+        # eventual systemd scheduling race.
+        if active == "failed" and runner_process_count(lane):
             evidence["decision"] = "deny_residual_processes_or_changed_unit"
             return evidence
         evidence["mutation_attempted"] = True
