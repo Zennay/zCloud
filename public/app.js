@@ -745,19 +745,19 @@ async function publicGitHubGET(repository,suffix){
   if(raw.length>600000)throw Error('GitHub source too large');
   return JSON.parse(raw);
 }
-async function refreshPublicGitHubEvidence(){
+async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
   if(PUBLIC_GITHUB_BUSY)return;
-  const selected=(DATA?.projects||[]).find(p=>p.id===filter);
-  if(!selected){IMPORTED_GITHUB_ERROR='Select one project before fetching public GitHub evidence.';render();return}
+  const selected=selectedOverride||(DATA?.projects||[]).find(p=>p.id===filter);
+  if(!selected){IMPORTED_GITHUB_ERROR='Select one project before fetching public GitHub evidence.';if(!quiet)render();return}
   const m=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
-  if(!m){IMPORTED_GITHUB_ERROR='This project has no canonical public GitHub repository.';render();return}
+  if(!m){IMPORTED_GITHUB_ERROR='This project has no canonical public GitHub repository.';if(!quiet)render();return}
   const repo=m[1],projectId=selected.id;
   if(Date.now()-(PUBLIC_GITHUB_LAST_FETCH.get(projectId)||0)<120000){
     IMPORTED_GITHUB_ERROR='Public GitHub may be rate limited. Recheck is limited to once per project every two minutes.';
-    render();return;
+    if(!quiet)render();return;
   }
   PUBLIC_GITHUB_BUSY=true;PUBLIC_GITHUB_LAST_FETCH.set(projectId,Date.now());
-  IMPORTED_GITHUB_ERROR='Reading public PR, CI and main-commit evidence…';render();
+  if(!quiet){IMPORTED_GITHUB_ERROR='Reading public PR, CI and main-commit evidence…';render();}
   const suffixes=['pulls?state=all&sort=updated&direction=desc&per_page=20',
     'actions/runs?per_page=20','commits?sha=main&per_page=15'];
   const outcomes=await Promise.allSettled(suffixes.map(suffix=>publicGitHubGET(repo,suffix)));
@@ -811,7 +811,7 @@ async function refreshPublicGitHubEvidence(){
       'branch-only work and private repositories are not covered. Not a live deployment receipt.';
   }catch(_error){
     IMPORTED_GITHUB_ERROR='Public GitHub source could not be interpreted. No authorization or deployment inferred.';
-  }finally{PUBLIC_GITHUB_BUSY=false;if(route==='activity')render()}
+  }finally{PUBLIC_GITHUB_BUSY=false;if(!quiet&&route==='activity')render()}
 }
 
 // Explicit operator request. Source side uses 5-minute in-memory server cache,
@@ -957,18 +957,18 @@ function validateProductIssueInbox(value){
 // The result is a bounded advisory sample, never queue authorization.
 let PUBLIC_ISSUES_BUSY=false;
 const PUBLIC_ISSUES_LAST_FETCH=new Map();
-async function refreshPublicProductIssues(){
+async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
   if(PUBLIC_ISSUES_BUSY)return;
-  const selected=(DATA?.projects||[]).find(p=>p.id===filter);
-  if(!selected){IMPORTED_PRODUCT_ERROR='Select one project before fetching public product issues.';render();return}
+  const selected=selectedOverride||(DATA?.projects||[]).find(p=>p.id===filter);
+  if(!selected){IMPORTED_PRODUCT_ERROR='Select one project before fetching public product issues.';if(!quiet)render();return}
   const match=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(selected.repo_url||'');
-  if(!match){IMPORTED_PRODUCT_ERROR='The selected project has no canonical public GitHub repository.';render();return}
+  if(!match){IMPORTED_PRODUCT_ERROR='The selected project has no canonical public GitHub repository.';if(!quiet)render();return}
   const projectId=selected.id,repository=match[1];
   if(Date.now()-(PUBLIC_ISSUES_LAST_FETCH.get(projectId)||0)<120000){
-    IMPORTED_PRODUCT_ERROR='Recent public issue lookup is cached; retry after two minutes.';render();return;
+    IMPORTED_PRODUCT_ERROR='Recent public issue lookup is cached; retry after two minutes.';if(!quiet)render();return;
   }
   PUBLIC_ISSUES_BUSY=true;PUBLIC_ISSUES_LAST_FETCH.set(projectId,Date.now());
-  IMPORTED_PRODUCT_ERROR='Reading bounded public issues and existing PR references…';render();
+  if(!quiet){IMPORTED_PRODUCT_ERROR='Reading bounded public issues and existing PR references…';render();}
   const tasks=['issues?state=open&sort=created&direction=asc&per_page=30',
     'issues?state=open&sort=updated&direction=desc&per_page=30',
     'pulls?state=open&sort=updated&direction=desc&per_page=12'];
@@ -1031,7 +1031,7 @@ async function refreshPublicProductIssues(){
       'These references do not verify fixes, worker ownership or queue claims.';
   }catch(_error){
     IMPORTED_PRODUCT_ERROR='Public issue source unavailable or malformed. No queue claim taken.';
-  }finally{PUBLIC_ISSUES_BUSY=false;if(route==='activity')render()}
+  }finally{PUBLIC_ISSUES_BUSY=false;if(!quiet&&route==='activity')render()}
 }
 
 // Bounded operator-requested source from the trusted VPS endpoint. The server
