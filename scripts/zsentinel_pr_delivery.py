@@ -177,20 +177,21 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
             "merge_authorized": False}
 
 
-def observe_prs(registry, selections, token=None):
+def observe_prs(registry, selections, token=None, inspect_no_start_annotations=False):
     """Capture exact source head, bounded check-runs and same-head reviews.
 
     No output claims that checks are *required*, full, protection-satisfying,
     owner-approved or merge-ready. Other PRs and unobserved jobs stay UNKNOWN.
     """
     if (not isinstance(registry, dict) or not isinstance(selections, list)
-            or len(selections) > MAX_PRS):
+            or len(selections) > MAX_PRS or type(inspect_no_start_annotations) is not bool):
         raise ValueError("invalid bounded PR selection")
     seen = set()
     items = []
     calls = 0
     rate_limited = False
     observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    annotations_denied = False
     for row in selections:
         if not isinstance(row, dict) or set(row) != {"project_id", "pr_number"}:
             raise ValueError("invalid PR selection row")
@@ -299,6 +300,49 @@ def observe_prs(registry, selections, token=None):
                 "status_contexts_verified": False,
             }
             item["coverage"] = "exact_head_checks_observed"
+            # Extra source is opt-in and costs at most ONE exact failed-check
+            # GitHub annotation GET per PR. Read message strings only to
+            # identify platform start refusal. Never return annotation text,
+            # paths, credentials, headers or user-generated failure output.
+            if inspect_no_start_annotations and failing and not hosted_billing_start_denial:
+                item["ci"]["no_start_annotation_coverage"] = "no_exact_check_selected"
+                candidate = next((c for c in runs if (
+                    isinstance(c, dict) and c.get("conclusion") in FAILURE
+                    and c.get("head_sha") == head_sha
+                    and type(c.get("id")) is int
+                    and 1 <= c["id"] <= 2**53 - 1
+                )), None)
+                if candidate is not None and not annotations_denied:
+                    calls += 1
+                    try:
+                        notes = bounded_get(
+                            base_url + "/check-runs/" + str(candidate["id"]) +
+                            "/annotations?per_page=10", token)
+                        if not isinstance(notes, list) or len(notes) > 10:
+                            raise ValueError("invalid bounded check annotations")
+                        for note in notes:
+                            if not isinstance(note, dict):
+                                raise ValueError("invalid check annotation row")
+                            message = note.get("message")
+                            if type(message) is not str or len(message) > 12000:
+                                raise ValueError("invalid check annotation message")
+                            signal = message.lower()
+                            if ("job was not started" in signal and
+                                    ("payments have failed" in signal or
+                                     "spending limit" in signal)):
+                                hosted_billing_start_denial = True
+                        item["ci"]["no_start_annotation_coverage"] = (
+                            "bounded_exact_head_check_annotations")
+                    except (OSError, ValueError, TypeError, KeyError) as error:
+                        # A source or permission denial degrades ONLY this
+                        # optional diagnosis, not the core PR/CI evidence.
+                        item["ci"]["no_start_annotation_coverage"] = "unavailable"
+                        if str(error) == "github_permission_or_rate_limit":
+                            annotations_denied = True
+                elif annotations_denied:
+                    item["ci"]["no_start_annotation_coverage"] = "not_queried_after_denial"
+                item["ci"]["observed_hosted_billing_start_denial"] = (
+                    hosted_billing_start_denial)
             # The GitHub check-runs API does not include legacy commit status
             # contexts. Read the exact same SHA separately; still never treat
             # this bounded page as proof that branch protection has passed.
@@ -423,7 +467,7 @@ def observe_prs(registry, selections, token=None):
         "source": "github_canonical_readonly_bounded_pr_gets",
         "items": items, "request_count": calls,
         "observed_at_utc": observed_at,
-        "maximum_requests": MAX_CALLS,
+        "maximum_requests": MAX_CALLS + (MAX_PRS if inspect_no_start_annotations else 0),
         "merge_authorized": False, "deploy_authorized": False,
         "owner_verified": False, "writes_performed": False,
     }
@@ -681,6 +725,8 @@ def main(argv=None):
                         help="canonical existing PR PROJECT:NUMBER; repeat up to three")
     parser.add_argument("--project", action="append", default=[],
                         help="canonical project to sample for existing open PRs")
+    parser.add_argument("--inspect-hosted-no-start", action="store_true",
+                        help="optional bounded exact failed-check annotation source, no retry or billing mutation")
     parser.add_argument("--discover-open", action="store_true",
                         help="read one bounded open-PR window per project before further source work")
     parser.add_argument("--format", choices=("html", "json", "text", "md"), default="html")
@@ -720,7 +766,8 @@ def main(argv=None):
                              "all_open_prs_observed": False,
                              "owner_verified": False,
                              "writes_performed": False, "merge_authorized": False}
-        report = observe_prs(registry, selected, token=token)
+        report = observe_prs(registry, selected, token=token,
+                             inspect_no_start_annotations=args.inspect_hosted_no_start)
         report["open_pr_discovery"] = discovery if discovery is not None else {
             "coverage": "not_requested", "all_open_prs_observed": False,
             "merge_authorized": False}
