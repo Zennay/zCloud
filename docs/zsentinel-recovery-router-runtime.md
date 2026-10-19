@@ -36,6 +36,44 @@ python3 scripts/zsentinel_live_cockpit.py \
   --project cloud --skip-github-issues --skip-ci-discovery --format text
 ```
 
+### Host capacity in the same incident cockpit (opt-in)
+
+On the **actual intended Linux VPS**, operators can add a fresh local capacity
+observation to the same one-shot dashboard without SSH, service access, an API
+token, a privileged runner action or a separate hand-written evidence JSON:
+
+```bash
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --project cloud --project supa \
+  --observe-vps-capacity --format html > /private/operator-only/zsentinel.html
+
+# Also available as a standalone read-only JSON source:
+python3 scripts/zsentinel_vps_resource_observer.py \
+  --database /path/to/existing/zcloud.sqlite3
+```
+
+**Source identity is host-local.** The flag intentionally defaults to OFF.
+It samples only the host on which the Python process actually executes, never
+a remote host named by the database path. Enable the flag only from an
+authorized session already running on the canonical VPS. The local observer
+reads 5-minute load/CPU affinity and kernel `/proc/meminfo`, and measures
+free bytes on the **same filesystem as the existing database** via
+`statvfs`. It rejects a missing/symlink database, invalid kernel metrics
+or non-Linux host, and exposes only bounded aggregates (no raw `/proc`,
+process list, paths, tokens or private file content). It writes nothing.
+A user redirecting stdout remains responsible for placing HTML or JSON in
+a private directory. This is intentionally *not* a remote host authenticator,
+inventory-completeness proof, or trusted authorization to provision capacity.
+
+A successful explicit sample is marked
+`live_sources.vps_capacity=same_host_readonly_opt_in`; the dashboard exposes
+that provenance, including the warning that it is VPS data **only when run on
+the intended VPS**. With the flag OFF the capacity remains unknown rather than
+being fabricated from the workstation. The router's conservative overload
+thresholds still apply; resource headroom alone cannot claim a work item,
+restart a runner, approve a PR, enable paid Actions, or deploy.
+
 **These are examples, not claims that the example IDs/database exist.** The default live command uses a bounded read-only GitHub CI discovery source (`scripts/zsentinel_github_discovery.py`): two separate bounded GitHub Actions windows (queued jobs first, failed workflows second) across all workflow event types, each listing at most five runs and inspecting at most two of them with ten jobs per run. Only a *specific* queued unassigned job older than 30 minutes or a completed failed/timed-out/action-required job becomes a candidate for the source-bound router. Job/run/commit identities must match GitHub. Incomplete/permission-limited sampling is **not** interpreted as zero CI incidents; successful completed jobs are not treated as evidence of live VPS recovery. Use `--skip-ci-discovery` to disable this GET source; `--job` pins an exact run/job to fetch independently. Discovery does not start, rerun, cancel, label, assign or restart anything.
 
  Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The CI discovery reader uses up to six GitHub GETs per project (two status-filtered run windows plus at most two job pages for each). The exact pinned-job collector uses up to two additional GETs per pinned or discovered job. The default combined bound for three projects is at most 33 GitHub GETs per invocation (18 discovery + 9 issue/PR + 6 exact-job reads), with no background polling. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
