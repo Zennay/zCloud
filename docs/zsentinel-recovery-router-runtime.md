@@ -531,7 +531,7 @@ python3 scripts/zsentinel_live_cockpit.py \
 #   zsentinel_recovery_refresh.py ./actual-observation.json --registry projects.json --format desk
 ```
 
-De operator kan zoeken op project/probleem/eigenaar, filteren op P0–P3 en expliciete menselijke noodzaak, en binnen de gekozen kaart precies **probleem / actie / bronstatus** bekijken. Een eigen opvolgstatus (nog niet beoordeeld, eigenaar benaderen, in behandeling bij eigenaar, extern geparkeerd, opnieuw verifiëren) en maximaal 800 tekens vrije notitie blijven *uitsluitend in het huidige tabblad*.
+De operator kan zoeken op project/probleem/eigenaar, filteren op P0–P3 en expliciete menselijke noodzaak, en binnen de gekozen kaart precies **probleem / actie / bronstatus** bekijken. Een eigen opvolgstatus (nog niet beoordeeld, eigenaar benaderen, in behandeling bij eigenaar, extern geparkeerd, opnieuw verifiëren) en maximaal 800 tekens vrije notitie blijven *uitsluitend in het huidige tabblad*. Privéoverdrachten ondersteunen de volledige maximale incidentenset (200 bronincidenten) met een harde 1 MiB UTF-8 bestandsgrens voor export en beide importpaden, zonder notities stilzwijgend af te knippen tijdens dezelfde-bronexport.
 
 **Verdere opvolging over meerdere runs:** naast een exact dezelfde-bronimport bestaat een afzonderlijke, expliciet bevestigde import van *oudere* privénotities. Alleen notities met identieke incident-ID worden gekopieerd; oude eigenaar-/herstelstatussen worden niet meegenomen en de lokale status wordt altijd **bron opnieuw verifiëren**. Meerdere regels in notities blijven behouden, ongeldige controltekens worden geweigerd. Een oude bron zonder overlap wordt geweigerd in plaats van een vals herstelbericht te maken.
 
