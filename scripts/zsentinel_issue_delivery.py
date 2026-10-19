@@ -267,8 +267,11 @@ def render_html(board):
         notion_panel = (
             '<section aria-label="Notion bestaand actief werk"><h2>'
             'Notion: bestaand actief projectwerk</h2><p>'
-            'Actieve statussen zijn geen bestandseigendom of vrije claim. '
-            'De telling is een ondergrens, ook bij lege projecten.</p><ul>' +
+            'Bron: ' + escape(str(notion.get("coverage", "unknown"))) +
+            '. Actieve statussen zijn geen bestandseigendom of vrije claim. '
+            'De telling is een ondergrens, ook bij lege projecten. '
+            'Bij bronweigering blijft alles ONBEKEND; zelfstandig '
+            'GitHub-productoverzicht blijft werken.</p><ul>' +
             "".join('<li>' + escape(pid) + ': ' +
                     ('minstens ' + str(value) + ' actief'
                      if value is not None else 'ONBEKEND') + '</li>'
@@ -444,6 +447,7 @@ def render_markdown(board):
     change_map = {}
     if notion:
         lines.extend(["", "## Notion actief werk (statuswaarneming, geen file-owner)",
+                      "Dekking: " + _markdown_literal(notion["coverage"]),
                       "Bron: " + _markdown_literal(notion["observed_at_utc"])])
         for pid, amount in notion["active_project_min"].items():
             lines.append("- " + _markdown_literal(pid) + ": " +
@@ -537,10 +541,24 @@ def main(argv=None):
                 observe_claims, project_labels,
             )
             mapping = project_labels(args.registry, registry)
-            notion_source = observe_claims(
-                args.notion_data_source or os.getenv("NOTION_QUEUE_DATA_SOURCE_ID"),
-                os.getenv("NOTION_TOKEN"), known_projects=mapping)
-            attach_notion_work_visibility(board, notion_source)
+            try:
+                notion_source = observe_claims(
+                    args.notion_data_source or os.getenv("NOTION_QUEUE_DATA_SOURCE_ID"),
+                    os.getenv("NOTION_TOKEN"), known_projects=mapping)
+                attach_notion_work_visibility(board, notion_source)
+            except (ValueError, OSError):
+                # Optional external source failure blocks only Notion data,
+                # never the already-observed independent GitHub workboard.
+                # Do not echo provider errors or leaked request metadata.
+                board["notion_active_work_observation"] = {
+                    "source": "notion_readonly_active_status_only",
+                    "observed_at_utc": None,
+                    "coverage": "unavailable",
+                    "active_project_min": {pid: None for pid in board["projects"]},
+                    "file_scope_verified": False,
+                    "lease_owner_verified": False,
+                    "can_dispatch": False, "writes_performed": False,
+                }
         elif args.notion_data_source:
             raise ValueError("--notion-data-source requires --read-notion-claims")
         if args.previous:
@@ -553,7 +571,12 @@ def main(argv=None):
         else:
             output = render_html(board)
         print(output)
-        return 0 if all(x["status"] == "partial" for x in board["coverage"]) else 3
+        fully_read = all(x["status"] == "partial" for x in board["coverage"])
+        if args.read_notion_claims:
+            fully_read = (fully_read and
+                          board["notion_active_work_observation"]["coverage"] ==
+                          "current_pages_only")
+        return 0 if fully_read else 3
     except (ValueError, TypeError, KeyError, OSError, json.JSONDecodeError) as error:
         p.exit(2, "zSentinel herstelbord bron onvolledig/ongeldig: " +
                str(error)[:120] + "\n")
