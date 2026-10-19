@@ -1,0 +1,69 @@
+# zSentinel · Runtime incident router (product-only)
+
+This is an **executable, local recovery/routing decision engine**. It consumes a trusted, fresh canonical zSentinel diagnosis snapshot alongside current queued work and live-verified active claim scopes; emits a compact three-line-per-incident operator view or machine-readable JSON, and optionally persists a private deduplicated incident ledger. It does not pretend to own the control-plane writer. This is a deliverable for [PWQ-433](https://app.notion.com/p/3fe9e19ac95581aab21ceae956954b08), guided by policy [PR #1562](https://github.com/Zennay/zCloud/pull/1562).
+
+## Start (source-only, no production writes)
+
+```bash
+python3 scripts/zsentinel_recovery_router.py /secure/operator-observations.json --format text
+python3 scripts/zsentinel_recovery_router.py /secure/operator-observations.json --state /secure/zsentinel-ledger.json --format json
+```
+
+The optional `--state` ledger stores incident fingerprints and observed timestamps locally with permissions `0600`, atomic replacement and strict size/schema limits. Use a **trusted private directory**, never a live queue/SQLite, checked-in repo path, shared mount or an untrusted symlink. It does not call GitHub, Notion or the VPS, start any timer, enqueue work, acquire a task, rerun CI, alter any worker, or deploy. Feed it new complete observations only after upstream independent collectors/owners have gathered them. One invocation provides one decision snapshot. Actual activation as a production service awaits the serialized runtime owner.
+
+## Input contract (JSON)
+
+```json
+{
+  "schema_version": 1,
+  "evidence": {
+    "schema_version": 1,
+    "observed_at": "2026-10-19T10:30:00Z",
+    "projects": [{
+      "id": "zcloud",
+      "notion": {"posture": "incubate", "owner": "zCloud runtime owner"},
+      "github": {
+        "job_status": "queued",
+        "queued_at": "2026-10-19T09:30:00Z",
+        "observed_at": "2026-10-19T10:29:00Z",
+        "runner_assigned": false,
+        "run_id": 39000012345,
+        "job_id": 117000123456,
+        "head_sha": "0123456789abcdef0123456789abcdef01234567"
+      },
+      "runtime": {}
+    }]
+  },
+  "claim_inventory_complete": true,
+  "active_claims": [{"project_id": "supa", "active": true, "paths": ["src/prices"]}],
+  "tasks": [{
+    "id": "supa-recipe-import",
+    "project_id": "supa",
+    "priority": "P1",
+    "state": "queued",
+    "eligible": true,
+    "qa_only": false,
+    "human_gate": false,
+    "active_owner": false,
+    "required_gates": ["none"],
+    "depends_on_incidents": [],
+    "paths": ["src/recipes"]
+  }]
+}
+```
+
+All dates must be timezone-aware. Underlying `zsentinel_diagnose.py` already rejects stale (>30 min) snapshots and unproven/future timestamps. The router further requires distinct positive `run_id` and optional `job_id` for GitHub incident identity; multiple jobs on a single SHA cannot be accidentally deduplicated into one incident. `waiting` / `pending` is **not** interpreted as a runner outage, even if an upstream legacy classifier thinks a job is unassigned.
+
+A task suggestion requires every positive field: `queued`, `eligible=true`, `qa_only=false`, `human_gate=false`, `active_owner=false`, an explicit bounded file scope and an explicit set of required gates. Claim inventory must be declared complete and every active claim must have a known scope. A missing/unknown active claim scope suppresses **all** suggestions. Overlapping ancestor/descendant paths are not routed. Dependencies referencing currently observed incident IDs prevent routing. A runner outage prevents suggestions requiring `self_hosted`. Never infer a claim is free from a missing PR alone; proof of source completeness and fresh claims is the upstream operator/collector's responsibility.
+
+## Product behavior and limitations
+
+- **Incident identity:** Stable local SHA-256 key over project, kind, exact commit and GitHub run/job identity when present. A job that disappears from a later snapshot is marked `not_observed_needs_reconciliation`, **never automatically resolved**. Incoming optional prior state is schema-checked; ledger saturation refuses truncation.
+- **Prioritization:** P0 unassigned GitHub queued runner jobs receive a *human-action-required* review target 2 hours from initial observation, not an unapproved runner restart. P1 workflow failure or missing runtime progress receives a read-only diagnosis target 12 hours from first observation. Targets are advisory, not Notion deadlines or automatic claims.
+- **Independent delivery:** At most five P0 → P3 file-disjoint candidate tasks are proposed, without modifying queue ownership. Required CI/review/merge/privacy/device/security/finance gates remain independent. A recommendation is **never** an authorization to edit an owner's files or dispatch a job.
+- **Operator view:** Up to three bounded lines per active incident: *problem*, *action/owner*, *status and target review*. Machine output explicitly states no mutations/claims/CI retries/deployment. Historical absence and CI-green alone are never recovered.
+- **Bounded work:** One 1 MiB input, up to 250 tasks/claims, 200 incident ledger entries; no background job, automatic CI loop or runaway retry. Refuses malformed gates/paths, duplicate work IDs, unauthorized inputs and invalid/symlink local state.
+
+### Release boundary
+
+The script is useful offline immediately after a source checkout. It is **not running autonomously in production** until an authorized integration owner connects a complete read-only source collector, controls private state storage, coordinates conflict-free live claim acquisition, and promotes the reviewed, exact-head CI-approved change through the existing serialized zCloud release gate. Self-hosted runner [P0 #1326](https://github.com/Zennay/zCloud/issues/1326) and private hosted account admission [#1523](https://github.com/Zennay/zCloud/issues/1523) remain separate human-controlled incidents; neither is fixed or bypassed by this script. No QA suite was created or manually executed for this change.
