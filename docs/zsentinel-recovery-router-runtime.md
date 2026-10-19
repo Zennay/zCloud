@@ -1,5 +1,26 @@
 # zSentinel · Runtime incident router (product-only)
 
+## Lopende workflows met wachtende jobs: P0-route niet meer overgeslagen (19 oktober)
+
+GitHub Actions heeft **twee aparte statussen**: de workflow-run en elke
+individuele job. Een workflow kan `in_progress` zijn terwijl een vereiste
+self-hosted job nog `queued` is. Alleen workflow-status `queued` lezen
+mist dat scenario. zSentinel doorzoekt daarom in vaste, begrensde volgorde
+`queued` → `in_progress` → `failure` en selecteert een gedateerde,
+run-ID/job-ID/SHA-gebonden job die in de steekproef werkelijk `queued`
+is. De bestaande exacte jobverificatie en self-hosted-**labelvereiste**
+blijven ongewijzigd. Zonder die labels is wachttijd nooit een bewezen
+VPS-listenerstoring.
+
+De operatorcockpit vermeldt het workflowvenster waarop de selectie berust:
+*Al lopende workflow, maar job nog wachtend* is niet hetzelfde als een
+mislukte workflow. Buiten de begrensde eerste twee runs per venster en de
+eerste tien jobs per run is het resultaat ONBEKEND; nul kandidaten is
+geen bewijs dat de portfolio gezond is. Maximaal 9 discovery-GETs per
+project en maximaal 42 gecombineerde GETs voor drie projecten inclusief
+issue- en exact-job-bronnen. Geen achtergrondpolling, nieuwe QA,
+runnerherstart, betaalde reruns of queue-claims.
+
 ## GitHub-job voltooid zonder één stap: aparte menselijke probleemroute (19 oktober)
 
 Een exact door GitHub teruggelezen job kan als `completed/failure` eindigen
@@ -407,7 +428,7 @@ restart a runner, approve a PR, enable paid Actions, or deploy.
 
 **These are examples, not claims that the example IDs/database exist.** The default live command uses a bounded read-only GitHub CI discovery source (`scripts/zsentinel_github_discovery.py`): two separate bounded GitHub Actions windows (queued jobs first, failed workflows second) across all workflow event types, each listing at most five runs and inspecting at most two of them with ten jobs per run. Only a *specific* queued unassigned job older than 30 minutes or a completed failed/timed-out/action-required job becomes a candidate for the source-bound router. Job/run/commit identities must match GitHub. Incomplete/permission-limited sampling is **not** interpreted as zero CI incidents; successful completed jobs are not treated as evidence of live VPS recovery. Use `--skip-ci-discovery` to disable this GET source; `--job` pins an exact run/job to fetch independently. Discovery does not start, rerun, cancel, label, assign or restart anything.
 
- Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The CI discovery reader uses up to six GitHub GETs per project (two status-filtered run windows plus at most two job pages for each). The exact pinned-job collector uses up to two additional GETs per pinned or discovered job. The default combined bound for three projects is at most 33 GitHub GETs per invocation (18 discovery + 9 issue/PR + 6 exact-job reads), with no background polling. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
+ Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The CI discovery reader uses up to nine GitHub GETs per project (three status-filtered workflow windows: `queued`, `in_progress`, `failure`; each has one bounded run-list GET plus at most two bounded job-list GETs). The exact pinned-job collector uses up to two additional GETs per pinned or discovered job. The default combined bound for three projects is at most 42 GitHub GETs per invocation (27 discovery + 9 issue/PR + 6 exact-job reads), with no background polling. A workflow may already be `in_progress` while one of its jobs is still `queued`: the previous two-window lookup silently missed this high-impact runner scenario. All three windows are only sampled, never an all-clear. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
 
 The queue observer in `scripts/zsentinel_queue_observer.py` also runs standalone:
 
