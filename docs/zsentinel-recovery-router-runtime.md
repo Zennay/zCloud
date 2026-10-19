@@ -1520,3 +1520,55 @@ vergelijken, inclusief verandering in exacte PR HEAD en checkobservaties.
 `--output` accepteert alleen nieuwe `.html`, `.json` en voor tekst `.md`
 in een bestaande map; bronbestand, ledger en runtime-database mogen niet als
 output gebruikt worden. Zonder expliciete output blijft de CLI stdout gebruiken.
+
+
+### Herhaald terugkerende blockers over 3–8 bronmomenten
+
+De broncontinuïteits-CLI is nu een *tijdlijn* in plaats van alleen een paarvergelijking.
+Maximaal zeven chronologisch aangeleverde oude operator-JSON-rapporten en één
+huidig rapport zijn toegestaan. Dit is geen nieuwe poller, notifier of autonome
+worker: er worden uitsluitend reeds aanwezige bronmomentopnames verwerkt.
+
+```bash
+# Maak onderstaande rapporten op verschillende momenten met de hierboven
+# beschreven eenmalige --github-only --format json --output procedure.
+python3 scripts/zsentinel_blocker_continuity.py \
+  --before /private/zsentinel-1.json \
+  --before /private/zsentinel-2.json \
+  --before /private/zsentinel-3.json \
+  --after /private/zsentinel-4.json \
+  --format html --output /private/zsentinel-history.html
+```
+
+De hoofdopdracht biedt precies dezelfde workflow, maar haalt de *huidige*
+momentopname in dezelfde aanroep op:
+
+```bash
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 --format html \
+  --compare-with /private/zsentinel-1.json \
+  --compare-with /private/zsentinel-2.json \
+  --compare-with /private/zsentinel-3.json \
+  --output /private/zsentinel-current-history.html
+```
+
+Resultaten tonen herhaald waargenomen P0/P1-incidenten, het aantal steekproeven
+waarin dezelfde exacte blocker-id voorkomt, de meest recente aaneengesloten
+observatiereeks, opnieuw verschijnen na een ontbrekende bron, source-bound
+GitHub-links en de bestaande eigenaar/volgende controlepoort. Maximaal 96
+unieke historische blockerkaarten worden als JSON opgenomen (maximaal 48 op het
+compacte HTML-scherm); overschrijding wordt expliciet gemeld.
+
+Een P0 die bij **drie opeenvolgende echte gerapporteerde bronmomenten**
+nog zichtbaar is, wordt hoogstens **kandidaat voor menselijke beoordeling**.
+Hiervoor zijn per rapport geldige, strikt stijgende UTC-rapporttijdstempels
+vereist. Bij ontbreken ervan wordt géén herhaalde-P0-aandachtkandidaat geteld;
+niet-chronologische of toekomstige bronmomenten worden geweigerd. Let op:
+een rapporttijdstempel bewijst niet dat alle externe GitHub-/Notion-bronnen vers
+waren. Andere projectvensters en onvolledige bronrechten blijven zichtbaar als
+onzekerheid; nooit een herstelclaim. Er wordt niet automatisch gewaarschuwd,
+geclaimd, herstart, gemerged, gedispatcht of gedeployed.
+
+Bestaande historie-momentopnames blijven read-only. De zelfstandige CLI accepteert
+alleen nieuwe exclusieve outputbestanden (mode 0600). De hoofdopdracht blijft
+de bestaande private outputhelper en actieve ledger-/claimgrenzen respecteren.
