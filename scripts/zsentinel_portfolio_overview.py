@@ -466,7 +466,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     if raw.count("<main>") != 1:
         raise ValueError("incompatible underlying offline operator view")
     return raw.replace("<main>", "<main>" +
-                       (problems_html(problem_inbox) if problem_inbox is not None else "") +
+                       (problems_html(problem_inbox, pr_desk=pr_desk) if problem_inbox is not None else "") +
                        (pr_delivery_html(pr_desk) if pr_desk is not None else "") +
                        table + branch_ownership_html(branch_inventory), 1)
 
