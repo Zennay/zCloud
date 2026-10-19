@@ -2180,7 +2180,9 @@ async function readVpsRetryIncidents(){
       ' No worker state changed.';
   }catch(error){
     if(routeVersion===version&&(filter||'all')===project)
-      ZSENTINEL_RETRY_MESSAGE='VPS retry source unavailable or denied ('+
+      ZSENTINEL_RETRY_MESSAGE=String(error.message||'').includes('not newer')?
+        'VPS supplied no newer queue observation; existing source evidence retained.':
+        'VPS retry source unavailable or denied ('+
         (String(error.message||'').includes('403')?'management access required':
          String(error.message||'').includes('503')?'queue read incomplete':'unverified response')+
         '). Existing evidence preserved; offline import remains available.';
@@ -2298,7 +2300,8 @@ function exportRetrySnapshotJson(){
       items:row.items,eligible_items:row.eligible,high_attempts:row.high,
       ten_plus:row.tenPlus,max_attempts:row.maxAttempts,
       expired_lease_rows:row.expired,
-      interpretation:row.status==='queued'?'candidate-for-manual-retry-policy-review':
+      interpretation:row.high===0?'no-high-attempts-observed':
+        row.status==='queued'?'candidate-for-manual-retry-policy-review':
         'requires-owner-review: active claim/lease'
     })),
     high_attempt_samples:snap.rows.map(row=>({
