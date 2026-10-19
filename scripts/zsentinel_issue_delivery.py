@@ -14,6 +14,7 @@ from pathlib import Path
 
 from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect
 from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs
+from zsentinel_issue_progress import load_private_prior, progress_since
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 24
@@ -195,12 +196,54 @@ def render_html(board):
     from zsentinel_issue_delivery_ui import (
         controls, script_tag, followup_controls, INTERACTIVE_CSS,
     )
+    progress = board.get("progress_since_previous")
+    comparison = {}
+    progress_panel = ""
+    if progress is not None:
+        if (not isinstance(progress, dict)
+                or progress.get("schema") != "zsentinel-issue-progress-v1"
+                or progress.get("closed_issues_verified") != 0
+                or progress.get("merge_authorized") is not False):
+            raise ValueError("untrusted historical issue comparison")
+        comparison = {row["issue_url"]: row for row in progress["observed_changes"]}
+        older = "".join(
+            '<li><a href="' + escape(entry["issue_url"], quote=True) +
+            '" rel="noopener noreferrer" target="_blank">' +
+            escape(entry["title"]) + '</a> · NIET meer in de huidige '
+            'steekproef; niet als gesloten of opgelost bewezen.</li>'
+            for entry in progress["prior_issues_outside_current_sample"])
+        progress_panel = (
+            '<section aria-label="Voortgang sinds vorige bronmomentopname">'
+            '<h2>Verandering sinds vorige momentopname</h2><p class="notice">'
+            'Dit is GEEN complete backlog of sluitingscontrole. '
+            'Een ontbrekend issue is nooit automatisch opgelost.</p>'
+            '<p>Bronmoment eerder: ' +
+            escape(progress["previous_observed_at_utc"]) +
+            ' · Nieuw in steekproef: ' + str(progress["newly_sampled_count"]) +
+            ' · Gewijzigde broninformatie: ' +
+            str(progress["changed_source_receipts_count"]) +
+            ' · Nu buiten steekproef: ' +
+            str(progress["previously_sampled_missing_count"]) +
+            '</p>' +
+            ('<details><summary>Eerder gezien, nu niet waargenomen '
+             '(NIET gesloten)</summary><ul>' + older +
+             '</ul></details>' if older else "") + '</section>')
     sections = []
     for level in SEVERITY:
         cards = []
         for item in board["items"]:
             if item["priority"] != level:
                 continue
+            observed = comparison.get(item["issue_url"])
+            change_key = ("not-compared" if progress is None else
+                          "sourceunknown" if observed is None or
+                          not observed["source_comparable"] else
+                          "new" if observed["observation"] == "newly_sampled_not_new_issue"
+                          else "changed" if observed["observed_changes"] else "unchanged")
+            change_detail = ("<p><strong>Bronverandering:</strong> " +
+                             escape(", ".join(observed["observed_changes"]) or
+                                    observed["observation"]) + "</p>"
+                             if observed is not None else "")
             pr_links = "".join(
                 '<a href="' + escape(link, quote=True) +
                 '" target="_blank" rel="noopener noreferrer">Bestaande PR</a> '
@@ -219,7 +262,8 @@ def render_html(board):
                  if pr["ci_attention"] else "") + "</li>"
                 for pr in item["inspected_prs"])
             cards.append(
-                '<article class="issue" data-project="' +
+                '<article class="issue" data-change="' +
+                escape(change_key, quote=True) + '" data-project="' +
                 escape(item["project_id"], quote=True) + '" data-priority="' +
                 escape(item["priority"], quote=True) + '" data-route="' +
                 escape(item["next_step"], quote=True) + '" data-search="' +
@@ -238,7 +282,7 @@ def render_html(board):
                 'bestandscope en herstel niet geverifieerd.</p><p>' +
                 pr_links + '</p>' + ('<details><summary>Exacte PR-bron</summary><ul>' +
                 evidence + '</ul></details>' if evidence else '') +
-                followup_controls() + '</article>')
+                change_detail + followup_controls() + '</article>')
         sections.append('<section data-priority-group="' + escape(level, quote=True) +
                         '"><h2>' + level + ' · ' + str(len(cards)) +
                         ' in beperkte bron · <small data-visible-group-count></small></h2>' + ("".join(cards) or
@@ -267,7 +311,7 @@ def render_html(board):
         '<p class="muted">Bronmoment UTC: ' + escape(board["observed_at"]) +
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
         ' · productissues: ' + str(board["issue_count"]) + '</p></header><main>' +
-        controls(board["projects"]) + "".join(sections) + '<section><details><summary>Brondekking en '
+        controls(board["projects"]) + progress_panel + "".join(sections) + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
         'niet geverifieerd.</p></details></section></main><footer>Alle links openen '
@@ -281,12 +325,31 @@ def render_markdown(board):
     lines = ["# zSentinel · Productherstelbord",
              "Bronmoment UTC: " + _markdown_literal(board["observed_at"], 40),
              "Beperkte issue-/PR-steekproef. Geen eigenaar, scope, fix of merge goedgekeurd."]
+    progress = board.get("progress_since_previous")
+    change_map = {}
+    if progress is not None:
+        change_map = {entry["issue_url"]: entry for entry in progress["observed_changes"]}
+        lines.extend([
+            "", "## Verandering sinds vorige bronmomentopname",
+            "- Vorige bron: " + _markdown_literal(progress["previous_observed_at_utc"], 50),
+            "- Nieuw gesampled (niet nieuw issue): " + str(progress["newly_sampled_count"]),
+            "- Bronwijzigingen bij bestaande issues: " + str(progress["changed_source_receipts_count"]),
+            "- Eerder gezien maar nu uit steekproef (NIET gesloten): " +
+            str(progress["previously_sampled_missing_count"]),
+            "- Geen totale backlog of actuele sluitingsstatus bewezen."
+        ])
     for item in board["items"]:
         lines += ["", "## " + item["priority"] + " · [" +
                   _markdown_literal(item["title"]) + "](" + item["issue_url"] + ")",
                   "- **Probleem:** " + _markdown_literal(item["next_step"]),
                   "- **Actie:** " + _markdown_literal(item["action"]),
                   "- **Status:** owner/fileclaim onbekend; issue niet geverifieerd opgelost."]
+        changed = change_map.get(item["issue_url"])
+        if changed is not None:
+            lines.append("- **Bronvergelijking:** " +
+                         _markdown_literal(changed["observation"]) +
+                         ("; " + ", ".join(changed["observed_changes"])
+                          if changed["observed_changes"] else ""))
         for pr in item["inspected_prs"]:
             lines.append("- **Bestaande PR:** [" + _markdown_literal(pr["url"]) +
                          "](" + pr["url"] + "); " + _markdown_literal(pr["action"]) +
@@ -298,6 +361,13 @@ def render_markdown(board):
                     check["origin"] + " " + check["state"] + ": " + check["name"]))
         if item["existing_pr_links_unverified"] and not item["inspected_prs"]:
             lines.append("- **PR-bron:** verwijzingen bestaan, exacte status niet vastgesteld.")
+    if progress is not None:
+        for historic in progress["prior_issues_outside_current_sample"]:
+            lines.extend([
+                "", "- Eerder gezien, nu niet gesampled (NIET gesloten): [" +
+                _markdown_literal(historic["title"]) + "](" +
+                historic["issue_url"] + ")"
+            ])
     lines += ["", "Brondekking: " + ", ".join(
         _markdown_literal(row["project"] + "=" + row["status"])
         for row in board["coverage"]), "",
@@ -310,6 +380,8 @@ def main(argv=None):
     p.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     p.add_argument("--project", action="append", required=True)
     p.add_argument("--max-items", type=int, default=MAX_ISSUES)
+    p.add_argument("--previous", type=Path,
+                   help="optional earlier local JSON workboard snapshot; never a closure proof")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
     args = p.parse_args(argv)
     try:
@@ -320,6 +392,9 @@ def main(argv=None):
         registry = canonical_projects(args.registry)
         inbox = collect(registry, args.project, os.getenv("GITHUB_TOKEN"), args.max_items)
         board = build_workboard(inbox, registry, os.getenv("GITHUB_TOKEN"))
+        if args.previous:
+            board["progress_since_previous"] = progress_since(
+                board, load_private_prior(args.previous))
         if args.format == "json":
             output = json.dumps(board, sort_keys=True, ensure_ascii=True, indent=2)
         elif args.format == "md":
