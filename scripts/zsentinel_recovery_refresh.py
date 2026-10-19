@@ -18,7 +18,7 @@ from pathlib import Path
 from zsentinel_product_issue_inbox import bounded_get, canonical_projects, collect
 from zsentinel_recovery_router import (
     MAX_INPUT_BYTES, MAX_STATE_BYTES, plan, read_json, write_json_atomic,
-    operator_text, utc_string,
+    operator_text, utc_string, load_state,
 )
 from zsentinel_runner_route import runner_route
 
@@ -157,6 +157,8 @@ def main():
     parser.add_argument("--registry", type=Path, required=True,
                         help="existing canonical projects registry JSON")
     parser.add_argument("--state", help="optional private local dedup ledger")
+    parser.add_argument("--recheck-historical-jobs", action="store_true",
+                        help="opt-in: use private unresolved exact run/job SHA to perform bounded GET-only reconciliation")
     parser.add_argument("--queue-database", type=Path,
                         help="read existing live SQLite queue pressure with mode=ro only")
     parser.add_argument("--read-product-issues", action="store_true",
@@ -183,8 +185,17 @@ def main():
         registry = canonical_projects(args.registry)
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
+        selected_historical = None
+        if args.recheck_historical_jobs:
+            if old is None:
+                raise ValueError("--recheck-historical-jobs requires an existing private --state ledger")
+            from zsentinel_historical_backlog import pin_historical_jobs
+            bundle, selected_historical = pin_historical_jobs(
+                bundle, load_state(old), registry, limit=3)
         token = os.environ.get("GITHUB_TOKEN")
         enriched, source = refresh(bundle, registry, token)
+        if selected_historical is not None:
+            source["historical_recheck"] = selected_historical
         if args.issue_project and not args.read_product_issues:
             raise ValueError("--issue-project requires --read-product-issues")
         if args.read_product_issues:
