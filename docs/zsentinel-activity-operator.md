@@ -36,6 +36,34 @@ The admission read-model differentiates **QA-only queued work held from fresh cl
 
 The locally downloaded handoff contains no raw queue identifiers for these rows; it includes only their project, priority, constant reason (`invalid_metadata`, `invalid_title`, `oversized_criteria`) and total count. A real owner must correct source queue metadata through the existing authenticated control-plane path, after independent claim/lease/source review. This UI cannot grant itself permission to perform that correction. QA-only work remains excluded from *new* admission under the 17 October policy.
 
+## All projects: bounded issue-first portfolio discovery
+
+Select **All projects** on Activity and press **Read next 4 projects** to
+inspect four canonical Zennay GitHub repositories in one explicit batch.
+Each project uses the already available, read-only browser GitHub importer:
+a bounded oldest/recent open-issue sample plus current open-PR references,
+and a separate bounded PR/CI/main-commit sample. P0/P1 non-QA issues are
+shown first in the existing product board, with independent per-project
+coverage and error indicators. A completed HTTP read is not proof that a
+feature was merged, deployed, or assigned to an unclaimed worker.
+
+The button never schedules automatic background requests, cancels CI,
+dispatches workflows or mutates VPS/queue/claim data. Work is sequential,
+bounded to four repositories per operator click and preserves the existing
+per-project two-minute public GitHub cooldown. Anonymous provider requests
+can be rate-limited: partial/error states are labelled **unknown**, not
+zero work, and the button does not bypass the existing provider cap.
+Snapshots are limited to eight project sources, 200 PR/CI entries and the
+existing bounded issue list in browser memory; later batches can evict
+older project evidence. The counter measures repositories **visited**,
+not globally synchronized. Select one project to use the existing trusted
+VPS read-only source, when authorized by the normal access boundary.
+
+The dashboard's `enhancements.css` static cache token has also been pinned
+to its exact source blob (see [#1305](https://github.com/Zennay/zCloud/issues/1305)).
+As with other UI source changes, that pin does not by itself prove the
+production server is serving updated bytes.
+
 ## PR-less branch overlap — manual project work handoff
 
 The Activity screen now has an optional **Unmerged branches / Import branch .json** panel. This pairs with [PR #1554](https://github.com/Zennay/zCloud/pull/1554), the standalone read-only GitHub branch inventory for repository `Zennay/zCloud`. The reporter can scan a 12-branch namespace slice and print a bounded JSON receipt; import the JSON file manually on Activity. The UI does not fetch or execute repository content, call GitHub, persist tokens or modify a project queue.
