@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.OneTimeWorkRequestBuilder
@@ -29,13 +30,17 @@ class MainActivity : ComponentActivity() {
 
     private fun scheduleImportantAlerts() {
         val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-        val work = PeriodicWorkRequestBuilder<AlertWorker>(1, TimeUnit.HOURS).setConstraints(constraints).build()
+        val work = PeriodicWorkRequestBuilder<AlertWorker>(15, TimeUnit.MINUTES).setConstraints(constraints).build()
         val manager = WorkManager.getInstance(this)
         manager.enqueueUniquePeriodicWork(
             "zennay-important-alerts",
             ExistingPeriodicWorkPolicy.UPDATE,
             work
         )
-        manager.enqueue(OneTimeWorkRequestBuilder<AlertWorker>().setConstraints(constraints).build())
+        manager.enqueueUniqueWork(
+            "zennay-important-alerts-initial",
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<AlertWorker>().setConstraints(constraints).build()
+        )
     }
 }
