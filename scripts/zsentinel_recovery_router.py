@@ -470,7 +470,10 @@ def plan(bundle, previous=None, now=None):
                               else ["github_hosted"] if reason == "github_hosted_billing_admission"
                               else []),
         }
-        if reason.startswith("github_") and github.get("run_id") is not None and github.get("job_id") is not None:
+        if (reason.startswith("github_") and github.get("run_id") is not None
+                and github.get("job_id") is not None
+                and isinstance(github.get("head_sha"), str)
+                and SHA.fullmatch(github["head_sha"])):
             next_state[key]["source_identity"] = {
                 "project_id": incident["project_id"], "reason": reason,
                 "run_id": github["run_id"], "job_id": github["job_id"],
