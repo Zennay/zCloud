@@ -388,6 +388,8 @@ def main():
     parser.add_argument("--observe-vps-capacity", action="store_true")
     parser.add_argument("--inspect-unpr-branches",
                         help="canonical project ID in selected GitHub window for a bounded read-only branch ownership sample")
+    parser.add_argument("--require-clear-unpr-slice", action="store_true",
+                        help="fail closed if canonical un-PR source is incomplete or overlaps; never grants claims")
     parser.add_argument("--branch-prefix", help="optional exact branch prefix for source-limited branch inspection")
     parser.add_argument("--current-path", action="append", default=[],
                         help="proposed unclaimed repository-relative scope (only for --inspect-unpr-branches)")
@@ -413,8 +415,8 @@ def main():
         selected = windows[window_index]
         if (args.inspect_unpr_branches and args.inspect_unpr_branches not in selected):
             raise ValueError("branch inspection must target a project in the selected window")
-        if (args.branch_prefix or args.current_path) and not args.inspect_unpr_branches:
-            raise ValueError("branch filter/current paths require an explicit project inspection")
+        if (args.branch_prefix or args.current_path or args.require_clear_unpr_slice) and not args.inspect_unpr_branches:
+            raise ValueError("branch scope/filter/strict mode require --inspect-unpr-branches")
         queue = observe(args.database)
         bundle, provenance = assemble(
             registry, selected, [], args.database,
@@ -447,6 +449,11 @@ def main():
             branches = inventory(
                 registry[args.inspect_unpr_branches], token=os.environ.get("GITHUB_TOKEN"),
                 prefix=args.branch_prefix, current_paths=args.current_path)
+            if (args.require_clear_unpr_slice
+                    and not branches["recent_branch_slice_no_overlap_observed"]):
+                # This asserts only no overlap in one verified branch slice.
+                # Other claims and PR ownership remain independent gates.
+                raise ValueError("canonical un-PR branch slice overlap or incomplete; no task claim")
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches)
