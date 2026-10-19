@@ -158,19 +158,24 @@ input("preview-issues").addEventListener("click",()=>{
     lines.push("- Eigenaar/CI/merge: ONBEKEND of niet geautoriseerd","");
   }
   if(lines.length===5)lines.push("Geen issues zichtbaar. Dit bewijst NIET dat er geen problemen zijn.");
-  latestPreview={version,body:lines.join("\n")};
+  latestPreview={version,body:lines.join("\n"),staleAtPreview:stale};
   preview.textContent=latestPreview.body;
   download.disabled=false;
 });
 download.addEventListener("click",()=>{
   if(!latestPreview||latestPreview.version!==previewVersion)return;
+  if(freshness()&&!latestPreview.staleAtPreview){
+    invalidatePreview();
+    preview.textContent="Bron werd intussen historisch. Maak een nieuwe, expliciet als historisch gemarkeerde voorvertoning.";
+    return;
+  }
   const blob=new Blob([latestPreview.body],{type:"text/markdown;charset=utf-8"});
   const url=URL.createObjectURL(blob);
   try{
     const link=document.createElement("a");
     link.href=url; link.download="zsentinel-productoverdracht.md";
     document.body.append(link); link.click();link.remove();
-  }finally{URL.revokeObjectURL(url);}
+  }finally{setTimeout(()=>URL.revokeObjectURL(url),30000);}
 });
 refresh();
 freshness();
