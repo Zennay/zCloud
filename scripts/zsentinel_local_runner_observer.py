@@ -51,7 +51,7 @@ def observe_local_runner():
                 if len(command) > MAX_CMDLINE_BYTES:
                     unreadable += 1
                     continue
-                first = command.split(b"\\0", 1)[0]
+                first = command.split(b"\0", 1)[0]
                 if first not in (LISTENER, WORKER):
                     continue
                 with (process / "stat").open("rb", buffering=0) as status:
