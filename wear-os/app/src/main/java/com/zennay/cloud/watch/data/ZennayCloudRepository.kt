@@ -115,8 +115,12 @@ class ZennayCloudRepository(
         severity = o.optString("severity"),
         project = o.optNullableString("project"),
         title = o.optString("title"),
-        message = o.optString("message"),
-        occurredAt = o.optNullableString("occurred_at")
+        // The real /api/v1/watch alert rows originate from enhancements.list_alerts:
+        // they use "detail" and "ts", not the legacy "message"/"occurred_at".
+        message = o.optNullableString("detail")
+            ?: o.optNullableString("message")
+            ?: "Open zCloud voor meer informatie.",
+        occurredAt = o.optNullableString("ts") ?: o.optNullableString("occurred_at")
     )
 }
 
