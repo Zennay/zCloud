@@ -270,6 +270,7 @@ def operator_text(source):
         lines.append(
             f"  {row['project_id']} worker {row['worker_slot']} · {row['classification']}"
             f" · desired_state={row['desired_state']}"
+            f" · global_slot={row['allocated_global_slot'] if row['allocated_global_slot'] is not None else 'NIET TOEGEWEZEN'}"
             f" · event_age_s={row['event_age_seconds']}"
             f" · progress_age_s={row['progress_age_seconds']}"
             f" · claim=ONBEKEND")
@@ -300,6 +301,7 @@ def worker_progress_html(source):
         "generation_finish_event_observed_not_product_delivery": "Voltooide generatie gemeld; productresultaat onbekend",
         "recent_event_only_no_product_progress_proof": "Recent browser-event; geen productvoortgang bewezen",
         "configured_paused_not_incident": "Opzettelijk gepauzeerde worker; GEEN herstelincident",
+        "configured_not_allocated_not_a_stalled_worker": "Worker heeft geen globale toewijzing; oude config/events zijn GEEN actieve storing",
         "configured_draining_owner_hold": "Worker wordt door eigenaar gedraineerd; geen automatische herstart",
         "configured_running_no_event_evidence": "Worker staat op running maar heeft geen eventbron; eerst eigendom en start controleren",
         "desired_state_unknown_no_automatic_action": "Gewenste workerstatus onbekend; geen automatische actie",
@@ -310,6 +312,10 @@ def worker_progress_html(source):
         slot = row.get("worker_slot")
         state = row.get("classification")
         desired = row.get("desired_state")
+        global_slot = row.get("allocated_global_slot")
+        if (global_slot is not None and
+                (type(global_slot) is not int or not 1 <= global_slot <= 32)):
+            raise ValueError("untrusted observed global worker slot")
         if (desired not in ("running", "paused", "draining", "unknown")
                 or row.get("desired_state_source_observed") is not
                    (desired != "unknown")):
@@ -330,6 +336,8 @@ def worker_progress_html(source):
             '<article class="panel read"><h3>' + escape(pid) + ' · worker ' +
             str(slot) + '</h3><p>' + escape(status[state]) +
             '</p><p class="small">Gewenste status: ' + escape(desired) +
+            ' · Globale toewijzing: ' +
+            (str(global_slot) if global_slot is not None else 'GEEN') +
             ' · Eventleeftijd: ' +
             (str(age) + ' sec' if age is not None else 'ONBEKEND') +
             ' · Laatste bronvoortgang: ' +
