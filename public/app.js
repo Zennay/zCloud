@@ -1485,6 +1485,38 @@ async function readZSentinelAllProjects(){
   }finally{ZSENTINEL_ALL_RUNNING=false;if(route==='activity')render();}
 }
 
+function zSentinelCapacityNotice(){
+  const metrics=DATA?.host||{},stamp=Date.parse(DATA?.time||'');
+  const fresh=Number.isFinite(stamp)&&stamp<=Date.now()+120000&&Date.now()-stamp<=120000;
+  const finite=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0;
+  const cores=metrics.cores,load=metrics.load,swap=metrics.swap||{};
+  const disk=metrics.disk||{},warnings=[];
+  if(finite(cores)&&cores>0&&finite(load)&&load>cores*2){
+    warnings.push('Host load '+num(load)+' exceeds twice '+num(cores)+' vCPU; queued jobs may take longer.');
+  }
+  if(finite(swap.total)&&swap.total>0&&finite(swap.free)&&finite(swap.used)){
+    const pct=swap.used/swap.total*100;
+    if(pct>=85||swap.free<512*1048576){
+      warnings.push('Swap '+num(pct)+'% used · '+gb(swap.free)+' free. Capacity for new workers may be constrained.');
+    }
+  }
+  if(finite(disk.total)&&disk.total>0&&finite(disk.used)
+      &&disk.used/disk.total>=0.9){
+    warnings.push('Disk '+num(disk.used/disk.total*100)+'% used; investigate free space before additional builds.');
+  }
+  const status=!fresh?'Host observation stale or unavailable; capacity UNKNOWN.':
+    warnings.length?'Capacity warnings based on current host telemetry:':'No threshold warnings in sampled host telemetry.';
+  return '<section class="panel" id="zSentinelCapacityNotice">'+
+    '<div class="panel-header"><div><h3>zSentinel · VPS capacity signals</h3>'+
+    '<p class="panel-subtitle">Read-only CPU/load, disk and swap from /api/status; never a proof of runner availability.</p></div></div>'+
+    '<p role="status" class="detail-note">'+esc(status)+'</p>'+
+    (fresh&&warnings.length?'<div class="service-list">'+
+      warnings.map(message=>'<div class="service-row"><div>'+esc(message)+'</div></div>').join('')+
+      '</div>':'')+
+    '<p class="detail-note">No automatic service restarts, worker cancellations or swap clearing. Use the authorised zSSH path and owner coordination for recovery.</p>'+
+    '</section>';
+}
+
 /* zSentinel issue-first delivery board: a joined READ VIEW, never an
    automatic owner/approval/CI or runner authorization decision. */
 let ZSENTINEL_SOURCES_BUSY=false;
@@ -1687,6 +1719,7 @@ function activityPage(){
   const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
   const coverage=activityCoverageText();
   return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Local project activity.','Local VPS commits and milestones, not a complete GitHub activity history.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${esc(p.id)}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`)}
+  ${zSentinelCapacityNotice()}
   ${zSentinelDeliveryBoard()}
   ${zSentinelBranchEvidencePanel()}
   ${githubActivityImportPanel()}
