@@ -904,6 +904,7 @@ def main():
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
+    ledger_lock = None
     try:
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
@@ -917,6 +918,8 @@ def main():
             if any(item is not None and args.desk_output.resolve() == Path(item).resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
+        if args.state is not None:
+            ledger_lock = acquire_private_ledger_lock(args.state)
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
         output, state = plan(bundle, old)
@@ -944,6 +947,9 @@ def main():
             print(rendered)
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel routing refused: {exc}\n")
+    finally:
+        if ledger_lock is not None:
+            ledger_lock.close()
     return 0
 
 
