@@ -65,7 +65,10 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
     backlog = decision.get("historical_unresolved")
     suggestions = decision.get("independent_task_suggestions")
     problem_items = issues.get("items")
-    if (not isinstance(incidents, list) or len(incidents) > 200
+    owner_held_issues = issues.get("owner_only_issue_candidates")
+    if (not isinstance(owner_held_issues, list)
+            or len(owner_held_issues) > 8
+            or not isinstance(incidents, list) or len(incidents) > 200
             or not isinstance(backlog, dict)
             or backlog.get("schema") != "zsentinel-historical-backlog-v1"
             or backlog.get("action_authorized") is not False
@@ -111,6 +114,40 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
         })
     cards.sort(key=lambda item: (PRIORITY[item["priority"]], item["project_id"], item["id"]))
     live_observed_count = len(cards)
+    # Explicitly open owner-only P0/P1 GitHub issues are blockers, not free
+    # product work. This is an issue-status observation, *not* evidence that
+    # the VPS listener is currently offline or that private billing failed.
+    issue_gate_count = 0
+    held_urls = set()
+    for held in owner_held_issues:
+        if not isinstance(held, dict):
+            raise ValueError("invalid owner-only issue record")
+        pid, priority, url = (held.get("project_id"), held.get("priority"),
+                              held.get("issue_url"))
+        if (pid not in known or priority not in PRIORITY
+                or type(url) is not str or url in held_urls
+                or not re.fullmatch(r"https://github[.]com/" +
+                                    re.escape(repo_for[pid]) +
+                                    r"/issues/[1-9][0-9]{0,8}", url)
+                or held.get("dispatch_authorized") is not False
+                or held.get("next_step") != "authorized_infrastructure_owner_required"):
+            raise ValueError("untrusted owner-only issue gate")
+        held_urls.add(url)
+        cards.append({
+            "kind": "open_owner_only_issue_not_current_outage_proof",
+            "id": "owner-issue:" + pid + ":" + url.rsplit("/", 1)[1],
+            "project_id": pid, "priority": priority,
+            "problem": "Open infrastructuurblokkade; actuele oorzaak/runnergezondheid niet bewezen",
+            "owner": "authorized_infrastructure_or_account_owner",
+            "action": "Bevoegde eigenaar beoordeelt dit bestaande open P0/P1-issue; geen ongeautoriseerde serviceherstart, CI-retry of betaalactie.",
+            "observed_from": "bounded_open_github_issue_only",
+            "source_owner_issue_url": url,
+            "requires_human": True,
+            "next_gate": "authorized_infrastructure_owner_required",
+            "worker_resumed_verified": False, "permission_to_recover": False,
+            "owner_claim_verified": False,
+        })
+        issue_gate_count += 1
     # Existing source PRs can unblock actual product delivery without creating
     # duplicate implementation. PR metadata is a bounded non-authorizing
     # source, never a file lease, branch protection or review approval.
@@ -237,7 +274,7 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             "worker_resumed_verified": False, "permission_to_recover": False,
             "owner_claim_verified": False,
         })
-    historical_count = len(cards) - live_observed_count - pr_gate_count
+    historical_count = len(cards) - live_observed_count - pr_gate_count - issue_gate_count
     # A historical incident may reference a project removed from today's
     # canonical registry. Do not crash the whole workboard or silently mark
     # that earlier incident recovered; surface it as unmapped source debt.
@@ -278,13 +315,14 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
     # any evidence that a source is resolved, owned or safe to mutate.
     order = {
         "verified_source_incident_not_runtime_recovery": 0,
-        "queue_pressure_not_proven_outage": 1,
-        "existing_product_pr_gate_inspection_only": 2,
-        "historical_not_reconciled": 3,
+        "open_owner_only_issue_not_current_outage_proof": 1,
+        "queue_pressure_not_proven_outage": 2,
+        "existing_product_pr_gate_inspection_only": 3,
+        "historical_not_reconciled": 4,
     }
     cards.sort(key=lambda c: (
-        order[c["kind"]],
         PRIORITY[c["priority"]],
+        order[c["kind"]],
         c["project_id"],
         c["id"],
     ))
@@ -331,7 +369,8 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
         "historical_not_reconciled": historical_count,
         "historical_unmapped_or_unshown": unseen_historical_count,
         "existing_pr_gate_observations": pr_gate_count,
-        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count,
+        "owner_only_open_issue_observations": issue_gate_count,
+        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count - issue_gate_count,
         "shown_blocker_cards": shown,
         "blocker_cards_truncated": len(cards) > len(shown),
         "independent_fallback_inspection": fallback[:5],
@@ -361,6 +400,12 @@ def blocker_board_html(board):
         basis = escape(str(row["observed_from"])[:90])
         job_link = row.get("source_job_url_historical_only")
         pr_link = row.get("source_pr_url")
+        owner_issue_link = row.get("source_owner_issue_url")
+        owner_issue_source = (
+            '<p><a href="' + escape(owner_issue_link, quote=True) +
+            '" target="_blank" rel="noopener noreferrer">Open bestaande P0/P1 eigenaarblokkade</a>'
+            ' · issue OPEN in beperkte GitHub-steekproef, geen actuele outage bewezen.</p>'
+            if isinstance(owner_issue_link, str) else '')
         pr_source = (
             '<p><a href="' + escape(pr_link, quote=True) +
             '" target="_blank" rel="noopener noreferrer">Bekijk bestaande PR en exacte checks</a>'
@@ -387,7 +432,7 @@ def blocker_board_html(board):
             action + '</p><p class="muted">Eigenaar: ' + owner +
             ' · bron: ' + basis +
             ' · worker/runner hervat: NIET bewezen.</p>' +
-            historical_source + pr_source + gate_preview + '</article>')
+            historical_source + owner_issue_source + pr_source + gate_preview + '</article>')
     if not cards:
         cards = ['<p class="empty">Geen actuele blockerkaart in deze begrensde'
                  ' bron. Dat bewijst GEEN gezonde werknemers of complete backlog.</p>']
@@ -411,6 +456,7 @@ def blocker_board_html(board):
         ' Alleen geautoriseerde eigenaaracties; geen automatische herstart.</p>'
         '<p class="muted">Nu waargenomen incidenten: ' +
         str(board["live_incident_observations"]) +
+        ' · eigenaargebonden P0/P1 issues: ' + str(board["owner_only_open_issue_observations"]) +
         ' · bestaande PR-gates: ' + str(board["existing_pr_gate_observations"]) +
         ' · historisch te hercontroleren: ' +
         str(board["historical_not_reconciled"]) +
@@ -437,6 +483,9 @@ def blocker_board_text(board):
     for item in board["shown_blocker_cards"]:
         lines.append("  " + item["priority"] + " " + item["project_id"] +
                      " · " + item["problem"] + " | " + item["next_gate"])
+        if item.get("source_owner_issue_url"):
+            lines.append("    eigenaar-only bronissue: " + item["source_owner_issue_url"] +
+                         " · geen actuele outage bewezen")
         if item.get("observed_check_gates"):
             lines.append("    exacte HEAD " +
                          str(item.get("source_pr_head") or "UNKNOWN")[:12] +
