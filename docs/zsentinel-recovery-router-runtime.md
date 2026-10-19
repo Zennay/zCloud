@@ -60,7 +60,10 @@ De adapter `scripts/zsentinel_notion_claim_observer.py` leest maximaal vier
 Notion-pagina's van elk honderd records met begrensde body en acht seconden
 timeout per pagina, zonder redirect. Alleen `Claimed`/`Running` worden
 in de privé-cockpit weergegeven (maximaal dertig zichtbare regels met totaal
-en pagineringswaarschuwing). Er verschijnen **geen** Notion-pagina-ID's,
+en pagineringswaarschuwing). Alleen Project-relaties die exact overeenkomen
+met de canonieke `projects.json` Notion-project-URL krijgen een leesbaar
+projectlabel; onbekende/afgeschermde relaties blijven expliciet onbekend.
+Projectlabels vormen **geen** bestandscope of toestemming tot eigendomsovername. Er verschijnen **geen** Notion-pagina-ID's,
 relatiedoelen, bearer tokens of provider-response dumps. Notion 401/403,
 verbroken netwerk, ongeldige configuratie, onvolledige paginering of gewijzigde
 API-schema's zijn niet bewijs van een lege work queue.
