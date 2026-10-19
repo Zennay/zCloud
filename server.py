@@ -1265,8 +1265,12 @@ def host_metrics():
     if CPU_PREV and total > CPU_PREV[0]: cpu = round(100*(1-(idle-CPU_PREV[1])/(total-CPU_PREV[0])),1)
     CPU_PREV = (total,idle)
     m = {a:int(b.split()[0])*1024 for a,b in (line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())}
+    # Swap is part of the read-only host capacity observation. It is not a
+    # worker-lease or a reason to restart a running listener automatically.
+    swap_total=max(0,m.get('SwapTotal',0))
+    swap_free=max(0,min(swap_total,m.get('SwapFree',0)))
     d = shutil.disk_usage('/')
-    return {'cpu':cpu, 'cores':os.cpu_count(), 'load':round(os.getloadavg()[0],2), 'uptime':int(float(Path('/proc/uptime').read_text().split()[0])), 'memory':{'total':m['MemTotal'],'used':m['MemTotal']-m['MemAvailable']}, 'disk':{'total':d.total,'used':d.used,'free':d.free}}
+    return {'cpu':cpu, 'cores':os.cpu_count(), 'load':round(os.getloadavg()[0],2), 'uptime':int(float(Path('/proc/uptime').read_text().split()[0])), 'memory':{'total':m['MemTotal'],'used':m['MemTotal']-m['MemAvailable']}, 'swap':{'total':swap_total,'used':swap_total-swap_free,'free':swap_free}, 'disk':{'total':d.total,'used':d.used,'free':d.free}}
 
 def service_states():
     out = cmd(['systemctl','show',*SERVICES,'--property=Id,ActiveState,SubState,Result,ExecMainExitTimestamp,LastTriggerUSec'])
