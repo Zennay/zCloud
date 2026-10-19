@@ -493,6 +493,24 @@ python3 scripts/zsentinel_portfolio_overview.py \
 - Een expliciet `--window N` blijft beschikbaar **zonder** cursor; combinatie met `--window-state` wordt geweigerd. `--state` is de **afzonderlijke** optionele incident-ledger en mag niet naar hetzelfde pad verwijzen.
 - De CLI schrijft geen productie-queue, restarts, GH workflow dispatches of reviewergoedkeuringen en activeert geen achtergrondtaak. Automatische uitvoering vereist nog steeds expliciete toestemming van de scheduler-/release-eigenaar.
 
+## 19 oktober · Handmatig kalenderoverzicht voor uitsluitend menselijke blokkades
+
+De bestaande `watch_alert_candidates`-bron heeft nu een bruikbaar **privé iCalendar-exportpad**. De gebruiker kan P0/P1-escalaties met vereiste menselijke eigenaaractie bewust in een agenda importeren zonder runner-, betalings-, Notion-, worker- of releasebevoegdheid aan de scanner te geven.
+
+```bash
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --project cloud --format ics > /secure/zsentinel-human-only.ics
+
+# Of, met de al bestaande private vensterrotatie:
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --window-state /secure/zsentinel-windows.json \
+  --format ics > /secure/zsentinel-human-only.ics
+```
+
+Het ICS-bestand is een **lokaal bestand**: geen push, geen automatische kalenderkoppeling, geen verzonden notificatie, geen nieuwe scheduler. Per huidige begrensde bronrun zijn er maximaal vijf afspraken. Ze worden uitsluitend afgeleid van dezelfde canonieke incident-ID, actie, severity en `human_escalation=true` die ook in het oorspronkelijke routerbesluit staan. Onjuiste, dubbele of ongeautoriseerde notificatieclaims leiden tot weigering in plaats van willekeurige afspraken. Elk item heeft een stabiele private UID, UTC-beoordelingsdeadline en een **optioneel door de ontvangende agenda ondersteund** 15-minuten-voorafsignaal. Na import kan een agenda-aanbieder de privéactiegegevens verwerken; deel het bestand niet onbedoeld. Een lege source sample produceert geen fictieve afspraken en betekent niet dat alle projecten probleemvrij zijn. Verstreken reviewdeadlines worden niet stilzwijgend verlengd of op een andere datum gezet. Project-/run-/CI-dekking, betaalautorisatie, eigenaarschap en productieherstel blijven onbewezen waar de bron dat niet bevestigt.
+
 ### Release boundary
 
 The script is useful offline immediately after a source checkout. It is **not running autonomously in production** until an authorized integration owner connects a complete read-only source collector, controls private state storage, coordinates conflict-free live claim acquisition, and promotes the reviewed, exact-head CI-approved change through the existing serialized zCloud release gate. Self-hosted runner [P0 #1326](https://github.com/Zennay/zCloud/issues/1326) and private hosted account admission [#1523](https://github.com/Zennay/zCloud/issues/1523) remain separate human-controlled incidents; neither is fixed or bypassed by this script. No QA suite was created or manually executed for this change.
