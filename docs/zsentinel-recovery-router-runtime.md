@@ -1378,3 +1378,83 @@ en `cloud#1523: EXACT OPEN`; beide stonden als afzonderlijke P0's
 boven het reguliere P1-productwerk. Dit is bewijs van de actuele
 **open issue-status** en de werking van de interface, niet van de
 onderliggende VPS-/GitHub-billingstatus of herstelde workers.
+
+
+### 19 oktober 2026 — canonieke lokale queue en geclaimde, gepauzeerde worker
+
+**Broncorrectie:** de losse bestanden `portfolio_queue.sqlite` en
+`portfolio_queue.db` in de VPS-checkout waren 0 bytes; dat zijn **niet**
+de canonieke actuele wachtrij. De daadwerkelijke zCloud-control-plane
+gebruikt `server.py: DB = ROOT / 'history.db'`. Op de verbonden VPS
+bevat `history.db` de tabellen `portfolio_queue`, `runner_events`,
+`runner_workers`, `ai_global_slots` en `runner_targets`. Gebruik
+op die host dus expliciet die bestaande database als bron:
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /home/ubuntu/zennay-cloud/history.db \
+  --worker-events-database /home/ubuntu/zennay-cloud/history.db \
+  --window 0 --format html > /private/operator/zsentinel-live.html
+```
+
+De `--github-only` modus blijft bewust bestaan voor een host zonder
+toegankelijk SQLite-bestand, maar mag **niet** als reden worden gebruikt
+om een aanwezige canonieke queue tot `ONBEKEND` of nul weg te schrijven.
+Zonder expliciete `--worker-events-database` worden workerclaims en
+browservoortgang in de operatorsectie niet als bekend verondersteld.
+
+**Nieuwe concrete productroute:** de add-only
+`scripts/zsentinel_worker_progress_observer.py` leest rechtstreeks
+`mode=ro` met `PRAGMA query_only=ON` en geïndexeerde
+`runner_events` metadata. Het vergelijkt, binnen één afgebakende
+SQLite-leestransactie, voor maximaal drie projecten en acht slots per
+project: het laatste browser-event/progress-at, de gewenste status uit
+`runner_workers`, de **werkelijke** globale toewijzing uit
+`ai_global_slots` en de bijbehorende actuele
+`portfolio_queue` status plus getoetste leasetijd.
+
+De veilige blocker-first categorisering is:
+
+- `desired_state=paused`, maar **geen** globale toewijzing of actuele
+  queueclaim: informatief, **geen** op te heffen workerincident.
+- `desired_state=running` maar **niet** toegewezen: oude configuratie;
+  **geen** actief vastgelopen browserworkerbewijs.
+- `desired_state=running`, daadwerkelijk globaal toegewezen, en
+  een ontbrekende/verouderde gebeurtenis: read-only P1-kandidaat
+  voor onafhankelijke eigenaar-/claimcontrole; geen auto-retry.
+- `desired_state=paused` **én** werkelijk toegewezen globale slot
+  **én** dezelfde huidige, niet verlopen `claimed/running/verifying`
+  queuelease: **P0 eigenaarbeoordeling**. De controller mag niet zomaar
+  de pauze opheffen, de queuelease vrijgeven of een worker overnemen.
+
+Dezelfde bron is in `scripts/zsentinel_live_cockpit.py` én
+`scripts/zsentinel_portfolio_overview.py` geïntegreerd.
+Beide tonen brongebonden status in HTML/tekst/JSON, zonder raw queue-ID,
+gesprek-URL, prompthistorie, foutbericht of clientreason door te geven.
+Geen nieuwe QA- of regressiesuite gebouwd of handmatig gestart.
+
+**Directe uitvoering via de verbonden zSSH op bestaande canonieke
+`history.db` (19 oktober, rond 20:45 UTC):** de echte read-only
+queue-observer retourneerde `active_items=68`, `queued_items=60`,
+`owned_items=8`, `high_claim_attempt_items=24`,
+`expired_owner_lease_rows=0` en `max_claim_attempts=14775`.
+Die attemptteller is een *claimpogingenteller*, geen bewezen foutteller.
+De complete product-CLI met live GitHub-issuebron en beide SQLite-bronnen
+eindigde met exitcode **0**. Zichtbare P0:
+`cloud` / global worker-slot **1**, `runner_workers.desired_state=paused`
+terwijl dezelfde slot een actuele geldige **claimed** queuelease heeft.
+Een eerder oud event alleen zou **geen** P0 zijn; het is de brongebonden
+*pausestatus + toewijzing + queuelease* die deze afwijking maakt.
+De daadwerkelijk geobserveerde FTP/FTMO worker 1 toonde generatievoortgang,
+maar werkafronding blijft **NIET** bewezen; oude niet-toegewezen FTMO-
+slots 2/3 en Fuckball-slot 1 werden niet als actieve incidenten aangemerkt.
+
+**Onafhankelijke eigenaaractie:** controleer het gewenste pauzebeleid,
+de lopende exacte workerclaim, gesprekstoegang, en de reden voor eventuele
+pauze, voordat de bevoegde runtime-eigenaar een hervatting of veilige
+herroutering overweegt. Het rapport **neemt geen claim over**, wijzigt
+geen `desired_state`, lease of database, en dispatcht geen CI/worker.
+De andere externe P0's [#1326](https://github.com/Zennay/zCloud/issues/1326)
+en [#1523](https://github.com/Zennay/zCloud/issues/1523) blijven
+bevoegd-eigenaar-only. Exact-head verplichte CI, onafhankelijke review,
+beschermde merge en geserialiseerde deploy voor PR #1563 blijven intact.
