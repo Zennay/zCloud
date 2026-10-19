@@ -77,6 +77,16 @@ def source_incident_key(project, diagnosis):
     sha = github.get("head_sha", "")
     if sha and (not isinstance(sha, str) or not SHA.fullmatch(sha)):
         raise ValueError("github.head_sha: full lowercase SHA required")
+    if kind == "runtime_progress_missing":
+        # A heartbeat from a different claim epoch cannot identify this incident.
+        runtime = project.get("runtime", {})
+        claim = runtime.get("claim_id")
+        epoch = runtime.get("claim_epoch")
+        if (not isinstance(claim, str) or not SLUG.fullmatch(claim)
+                or type(epoch) is not int or not 1 <= epoch <= 2**53 - 1
+                or runtime.get("claim_identity_verified") is not True):
+            return None
+        ids.extend((f"claim:{claim}", f"epoch:{epoch}"))
     raw = "|".join((project["id"], kind, sha, *ids))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
@@ -383,6 +393,7 @@ def plan(bundle, previous=None, now=None):
     by_project = {item["id"]: item for item in observations["projects"]}
     prior = load_state(previous)
     incidents = []
+    unattributed = 0
     next_state = {}
     blocking_ids = set()
     blocked_gates = set()
@@ -414,7 +425,9 @@ def plan(bundle, previous=None, now=None):
                        else incident["reason"])
         })
         if key is None:
-            # Do not dedupe, retry or act on a GitHub job without a stable job/run.
+            # Missing GitHub run/job or verified runtime claim identity does not
+            # license an incident, runner action or historical dedup.
+            unattributed += 1
             continue
         prior_entry = prior.get(key, {})
         first = timestamp(prior_entry["first_seen"], "first_seen") if prior_entry else now
@@ -530,6 +543,7 @@ def plan(bundle, previous=None, now=None):
         "deployment_authorized": False,
         "claim_inventory_complete": claims_verified,
         "incidents": incidents,
+        "unattributed_progress_or_jobs": unattributed,
         "reconciled_exact_jobs": reconciled_jobs,
         "unresolved_not_observed": sum(1 for v in next_state.values()
                                        if v["status"] == "not_observed_needs_reconciliation"),
@@ -549,6 +563,9 @@ def operator_text(result):
     if not result["incidents"]:
         lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
+    if result.get("unattributed_progress_or_jobs"):
+        lines.append("Unattributed runtime/jobs (no incident ownership): " +
+                     str(result["unattributed_progress_or_jobs"]))
     if not result["claim_inventory_complete"]:
         lines.append("Claim coverage incomplete: routing suppressed.")
     if result.get("reconciled_exact_jobs"):
