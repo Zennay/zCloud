@@ -405,6 +405,21 @@ existing read-only local endpoint. It never claims a queue item, resets a
 worker, merges a PR or makes an event current merely because /api/status
 still responds.
 
+A change to the Activity project dropdown is an explicit bounded source
+request. The reader fetches the selected canonical project's existing local GET
+unless its exact scope was observed within the current two-minute local cache
+window. It does not fetch GitHub automatically. The same scoped read is available
+with **Read project** in the freshness disclosure. This fixes the former case
+where changing the dropdown merely filtered a stale global snapshot.
+
+**Export timeline .md** now includes a per-project local VPS source coverage
+section alongside its bounded events: latest successful scoped read time, sampled
+event count, 80-row truncation and stale/failed/never-observed classification.
+This allows the next operator or zSentinel worker to see missing source evidence
+without mistaking a green /api/status response for proof of GitHub completeness.
+Canonical project IDs, UTC source timestamps and counts only are exported in
+the added section; no queue IDs, claims, prompts or credentials.
+
 The **zSentinel product delivery board** (sampled P0/P1 issues and existing PR
 references) now precedes the Activity timeline, keeping issue-first product
 work in the first view instead of burying it under historic host events.
