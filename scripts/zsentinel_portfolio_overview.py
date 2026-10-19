@@ -24,7 +24,7 @@ from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html
-from zsentinel_portfolio_windows import select_next, advance
+from zsentinel_portfolio_windows import select_next, advance, coverage_history
 
 
 def project_windows(registry):
@@ -361,6 +361,16 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         }.get(row["next_action"])
         if action_text is None:
             raise ValueError("unsupported portfolio recommendation")
+        attempt = row.get("github_last_attempt_at_utc")
+        attempt_status = row.get("github_last_attempt_coverage")
+        # A historical read is a private source-attempt receipt, not a current
+        # API, owner, runner or CI health assertion.
+        attempt_label = (
+            ("HUIDIGE POGING" if row.get("github_last_attempt_this_run") else "HISTORISCH") +
+            " · " + str(row.get("github_last_attempt_age_hours")) + " uur geleden" +
+            " · " + str(attempt_status)
+            if attempt else "NOOIT IN PRIVÉVENSTER WAARGENOMEN"
+        )
         cells.append(
             '<tr><th scope="row"><a href="' + link +
             '" target="_blank" rel="noopener noreferrer">' + name + '</a></th>'
@@ -371,6 +381,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             '<td>' + _count(row["high_claim_attempts"]) + '</td>'
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
             '<td>' + escape(github) + '</td>'
+            '<td>' + escape(attempt_label) + '</td>'
             '<td>' + phrase_route(row["github_job_runner_route"]) + '</td>'
             '<td>' + ('ONBEKEND' if row["p0_p1_issue_sample_hits"] is None
                       else '≥' + str(row["p0_p1_issue_sample_hits"])) + '</td>'
@@ -387,7 +398,8 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         f'{summary["github_projects_observed"]} van '
         f'{summary["github_projects_selected"]} geselecteerde projecten met '
         'daadwerkelijk beperkte GitHub-bronobservatie. '
-        'Niet opgevraagd of mislukt betekent niet gezond.'
+        'Niet opgevraagd of mislukt betekent niet gezond. Laatste bronpoging '
+        'komt alleen uit de optionele privécursor en bewijst nooit actuele CI/gezondheid.'
     )
     coverage = (
         "Huidige wachtrijmomentopname is volledig binnen de observerlimiet; "
@@ -403,7 +415,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
         '<th scope="col">Notion actief (min.)</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
-        '<th scope="col">GitHub-bereik</th><th scope="col">Runnerroute</th>'
+        '<th scope="col">GitHub-bereik</th><th scope="col">Laatste bronpoging (geen health)</th><th scope="col">Runnerroute</th>'
         '<th scope="col">P0/P1-issues (min.)</th>'
         '<th scope="col">P2/zonder label (min.)</th>'
         '<th scope="col">Incidenten (min.)</th><th scope="col">Veilige vervolgstap</th>'
@@ -506,6 +518,18 @@ def main():
         decision["private_ledger_written"] = bool(args.state)
         github_coverage = verified_source_coverage(selected, provenance, bundle)
         summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
+        attempts = coverage_history(
+            windows, registry, previous_window_state if args.window_state else None,
+            window_index, github_coverage)
+        for row in summary["rows"]:
+            attempt = attempts.get(row["project_id"])
+            row["github_last_attempt_at_utc"] = attempt["at_utc"] if attempt else None
+            row["github_last_attempt_coverage"] = attempt["coverage"] if attempt else None
+            row["github_last_attempt_this_run"] = row["project_id"] in selected
+            row["github_last_attempt_age_hours"] = (
+                max(0, int((datetime.now(timezone.utc) -
+                            datetime.fromisoformat(attempt["at_utc"])).total_seconds() // 3600))
+                if attempt else None)
         branches = None
         if args.inspect_unpr_branches:
             from zsentinel_recent_branch_ownership import inventory
@@ -565,6 +589,10 @@ def main():
                     _count(row["incident_sample_hits"]),
                     row["github_observation"], row["github_job_runner_route"],
                     row["next_action"]))
+                lines.append("  GitHub bronpoging: %s (%s, huidige run: %s); historische poging is GEEN health." % (
+                    row["github_last_attempt_at_utc"] or "ONBEKEND",
+                    row["github_last_attempt_coverage"] or "ONBEKEND",
+                    row["github_last_attempt_this_run"]))
             if branches is not None:
                 lines.append("BRANCH EIGENDOM (%s): %s; recente kandidaten=%s; "
                              "mogelijke pad-overlap=%s; GEEN eigendomsbevestiging." % (
