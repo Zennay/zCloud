@@ -2076,12 +2076,141 @@ function exportRetryHandoff(){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
+// Issue #1518: unified, explicitly sourced operator timeline.
+//
+// Evidence reaches this view only through the existing verified per-project
+// local Activity API or validated, manually requested GitHub observations.
+// No new poller, API mutation, source authorization or background fetch.
+let COMBINED_ACTIVITY_SOURCE='all';
+const COMBINED_ACTIVITY_LIMIT=140;
+function combinedActivityRows(){
+  const visible=new Set((DATA?.projects||[]).map(project=>project.id));
+  const groups=new Map([...visible].filter(id=>!filter||id===filter).map(id=>[id,[]]));
+  const seen=new Set();
+  for(const row of ACTIVITY||[]){
+    if(!row||!groups.has(row.project)||typeof row.id!=='string'
+        ||typeof row.title!=='string'||typeof row.ts!=='string'
+        ||!Number.isFinite(Date.parse(row.ts)))continue;
+    const key='local:'+row.project+':'+row.id;
+    if(seen.has(key))continue;
+    seen.add(key);
+    groups.get(row.project).push({key,source:'local',project:row.project,
+      kind:row.kind,summary:row.title,detail:row.detail||'Local project event',
+      observedAt:row.ts,ts:row.ts,url:''});
+  }
+  for(const row of IMPORTED_GITHUB_ACTIVITY?.events||[]){
+    if(!row||!groups.has(row.project)||!GITHUB_RECEIPT_KINDS.has(row.kind)
+        ||typeof row.id!=='string'||typeof row.description!=='string'
+        ||typeof row.url!=='string'||typeof row.ts!=='string'
+        ||!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(row.url)
+        ||!Number.isFinite(Date.parse(row.ts)))continue;
+    const key='github:'+row.project+':'+row.id;
+    if(seen.has(key))continue;
+    seen.add(key);
+    groups.get(row.project).push({key,source:'github',project:row.project,
+      kind:row.kind,summary:row.description,
+      detail:row.firstSeen?'New in latest bounded GitHub observation':'GitHub observation',
+      observedAt:(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||null,
+      ts:row.ts,url:row.url});
+  }
+  for(const rows of groups.values()){
+    rows.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)||a.key.localeCompare(b.key));
+  }
+  // Reserve turns for quiet projects instead of allowing a flood from zCloud
+  // or Supa to crowd out every other project's latest event.
+  const keys=[...groups.keys()].sort(),cursor=new Map(keys.map(key=>[key,0]));
+  const output=[];
+  while(output.length<COMBINED_ACTIVITY_LIMIT){
+    let changed=false;
+    for(const project of keys){
+      const rows=groups.get(project),index=cursor.get(project);
+      if(index<rows.length){
+        const row=rows[index];
+        cursor.set(project,index+1);
+        if(COMBINED_ACTIVITY_SOURCE==='all'||row.source===COMBINED_ACTIVITY_SOURCE){
+          output.push(row);
+        }
+        changed=true;
+      }
+      if(output.length>=COMBINED_ACTIVITY_LIMIT)break;
+    }
+    if(!changed)break;
+  }
+  return output.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)||a.key.localeCompare(b.key));
+}
+function combinedActivityCoverage(){
+  const visible=new Set((DATA?.projects||[]).map(p=>p.id));
+  const scope=[...visible].filter(id=>!filter||id===filter);
+  const local=ACTIVITY_COVERAGE,coverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[])
+    .filter(c=>scope.includes(c.project));
+  const liveProjects=coverage.filter(c=>c.status==='partial_sources').length;
+  const stale=coverage.filter(c=>c.staleEvidence||
+    !Number.isFinite(Date.parse(c.observedAt))||Date.now()-Date.parse(c.observedAt)>6*3600000).length;
+  const missing=scope.length-coverage.length;
+  const textParts=[
+    'Local VPS '+(local.lastSuccess?'last read '+date(local.lastSuccess,true):'not yet read'),
+    'GitHub '+coverage.length+'/'+scope.length+' projects observed in bounded windows',
+    missing?'missing '+missing:'',stale?'stale '+stale:'',
+    liveProjects?'partial source '+liveProjects:'',
+    'never a complete GitHub or production ledger'
+  ];
+  return textParts.filter(Boolean).join(' · ');
+}
+function combinedActivityPanel(){
+  const rows=combinedActivityRows();
+  const list=rows.map(row=>{
+    const project=DATA.projects.find(p=>p.id===row.project);
+    const main=row.url?
+      '<a href="'+esc(row.url)+'" rel="noopener noreferrer" target="_blank">'+esc(row.summary)+'</a>':
+      '<strong>'+esc(row.summary)+'</strong>';
+    const source=row.source==='github'?'GitHub '+row.kind.replaceAll('_',' '):'Local VPS '+(row.kind||'event');
+    const freshness=row.observedAt&&Date.now()-Date.parse(row.observedAt)>6*3600000?' · STALE OBSERVATION':'';
+    return '<div class="service-row"><div>'+main+'<br><small>'+
+      esc(project?.name||row.project)+' · '+esc(source)+
+      ' · '+esc(row.detail)+esc(freshness)+'</small></div><small>'+
+      esc(date(row.ts,true))+'</small></div>';
+  }).join('');
+  return '<section class="panel" id="combinedActivityTimeline">'+
+    '<div class="panel-header"><div><h2>Project timeline · VPS + GitHub</h2>'+
+    '<p class="panel-subtitle">Unified read-only evidence. A PR, CI completion, and main merge are different events; none alone proves VPS deployment.</p></div>'+
+    '<button type="button" class="runner-action runner-action-secondary" data-activity-timeline-export>'+
+    'Export timeline .md</button></div>'+
+    '<div role="group" aria-label="Timeline source" class="range-control">'+
+    [['all','All sources'],['local','Local VPS'],['github','GitHub']].map(pair=>
+      '<button type="button" data-activity-source="'+pair[0]+'" class="'+
+      (COMBINED_ACTIVITY_SOURCE===pair[0]?'active':'')+'" aria-pressed="'+
+      (COMBINED_ACTIVITY_SOURCE===pair[0]?'true':'false')+'">'+pair[1]+'</button>').join('')+
+    '</div>'+
+    '<p class="detail-note" role="status">'+esc(combinedActivityCoverage())+'</p>'+
+    '<div class="service-list">'+(list||'<div class="empty">No evidence for the selected source and project. Missing coverage is not proof of zero work.</div>')+'</div>'+
+    '<p class="detail-note">'+rows.length+' visible bounded events; local event IDs and GitHub provider IDs stay distinct. '+
+    'Use the separate manual source buttons to refresh GitHub. No automatic GitHub polling, lease assignment, PR merge or deploy occurs here.</p></section>';
+}
+function exportCombinedActivityTimeline(){
+  const rows=combinedActivityRows(),clean=value=>String(value||'').replace(/[\r\n<>|]/g,' ').slice(0,200);
+  const lines=['# zCloud combined Activity handoff','','Observation only · no claim/merge/deploy authorization.',
+    'Source scope: '+clean(COMBINED_ACTIVITY_SOURCE),'Project filter: '+clean(filter||'all'),'',
+    combinedActivityCoverage(),'','## Bounded timeline',''];
+  for(const row of rows){
+    lines.push('- '+clean(row.ts)+' · '+clean(row.project)+' · '+clean(row.source)+
+      '/'+clean(row.kind)+' · '+clean(row.summary)+
+      (row.url?' · '+row.url:''));
+  }
+  lines.push('','Missing provider coverage is unknown, not zero. An Actions run is not production proof.','');
+  const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
+  const url=URL.createObjectURL(blob),link=document.createElement('a');
+  link.href=url;link.download='zcloud-activity-'+clean(filter||'portfolio')+'.md';
+  document.body.appendChild(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 function activityPage(){
   const visible=new Set(DATA.projects.map(p=>p.id));
   const list=ACTIVITY.filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
   const coverage=activityCoverageText();
   return `<div class="activity-page">${heading('WORKSPACE / ACTIVITY LOG','Local project activity.','Local VPS commits and milestones, not a complete GitHub activity history.',`<select class="filter-select" id="activityFilter" aria-label="Filter activity by project"><option value="">All projects</option>${DATA.projects.map(p=>`<option value="${esc(p.id)}" ${filter===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>`)}
   ${zSentinelCapacityNotice()}
+  ${combinedActivityPanel()}
   ${zSentinelDeliveryBoard()}
   ${zSentinelRetryPanel()}
   ${zSentinelBranchEvidencePanel()}
@@ -2114,7 +2243,7 @@ document.addEventListener('dragover',e=>{const card=e.target.closest('[data-proj
 document.addEventListener('dragleave',e=>{e.target.closest('[data-project-id]')?.classList.remove('drag-over')});
 document.addEventListener('drop',async e=>{const target=e.target.closest('[data-project-id]');if(!target||!draggedProject)return;e.preventDefault();if(projectLayoutActionPending){draggedProject=null;projectLayoutNotice('Finish archiving or restoring before reordering projects.');return}const ids=DATA.projects.map(p=>p.id).filter(id=>id!==draggedProject);const targetIndex=ids.indexOf(target.dataset.projectId);const rect=target.getBoundingClientRect();const after=e.clientY>rect.top+rect.height/2;ids.splice(targetIndex+(after?1:0),0,draggedProject);const archived=(DATA.archived_projects||[]).map(p=>p.id);const tail=(DATA.project_layout?.order||[]).filter(id=>archived.includes(id));await saveProjectLayout([...ids,...tail],archived);draggedProject=null});
 document.addEventListener('dragend',()=>{document.querySelectorAll('.dragging,.drag-over').forEach(el=>el.classList.remove('dragging','drag-over'));draggedProject=null});
-document.addEventListener('click',async e=>{const retryVps=e.target.closest('[data-retry-vps-read]');if(retryVps){e.preventDefault();void readVpsRetryIncidents();return}const retryClear=e.target.closest('[data-retry-clear]');if(retryClear){e.preventDefault();ZSENTINEL_RETRY_SNAPSHOT=null;ZSENTINEL_RETRY_TREND=null;ZSENTINEL_RETRY_MESSAGE='';render();return}const retryExport=e.target.closest('[data-retry-handoff]');if(retryExport){e.preventDefault();exportRetryHandoff();return}const vpsIssuesRead=e.target.closest('[data-vps-issues-read]');if(vpsIssuesRead){e.preventDefault();void readVpsProductIssues();return}const vpsGithubRead=e.target.closest('[data-vps-github-refresh]');if(vpsGithubRead){e.preventDefault();void readVpsGitHubActivity();return}const branchImport=e.target.closest('[data-zsentinel-branch-open]');if(branchImport){e.preventDefault();document.getElementById('zSentinelBranchFile')?.click();return}const branchClear=e.target.closest('[data-zsentinel-branch-clear]');if(branchClear){e.preventDefault();IMPORTED_PRLESS_BRANCHES=null;IMPORTED_PRLESS_ERROR='';render();return}const zSentinelExport=e.target.closest('[data-zsentinel-export]');if(zSentinelExport){e.preventDefault();exportZSentinelHandoff();return}const zSentinelAll=e.target.closest('[data-zsentinel-all-read]');if(zSentinelAll){e.preventDefault();void readZSentinelAllProjects();return}const zSentinelRead=e.target.closest('[data-zsentinel-source-read]');if(zSentinelRead){e.preventDefault();void readZSentinelSources();return}const localPage=e.target.closest('[data-local-activity-next]');if(localPage){e.preventDefault();void readPagedLocalActivity();return}const deliveryRefresh=e.target.closest('[data-delivery-queue-refresh]');if(deliveryRefresh){e.preventDefault();void refreshDeliveryQueue();return}const progressRefresh=e.target.closest('[data-worker-progress-refresh]');if(progressRefresh){e.preventDefault();void refreshWorkerProgress();return}const issueRefresh=e.target.closest('[data-public-issues-refresh]');if(issueRefresh){e.preventDefault();void refreshPublicProductIssues();return}const publicRefresh=e.target.closest('[data-github-public-refresh]');if(publicRefresh){e.preventDefault();void refreshPublicGitHubEvidence();return}const priorityToggle=e.target.closest('[data-product-issues-toggle]');if(priorityToggle){e.preventDefault();IMPORTED_ISSUE_SHOW_ALL=!IMPORTED_ISSUE_SHOW_ALL;render();return}const issueClear=e.target.closest('[data-product-issues-clear]');if(issueClear){e.preventDefault();IMPORTED_PRODUCT_ISSUES=null;IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;render();return}const githubClear=e.target.closest('[data-github-receipt-clear]');if(githubClear){e.preventDefault();IMPORTED_GITHUB_ACTIVITY=null;IMPORTED_GITHUB_ERROR='';render();return}const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
+document.addEventListener('click',async e=>{const activitySource=e.target.closest('[data-activity-source]');if(activitySource){e.preventDefault();const next=activitySource.dataset.activitySource;if(['all','local','github'].includes(next)){COMBINED_ACTIVITY_SOURCE=next;render();}return}const activityTimelineExport=e.target.closest('[data-activity-timeline-export]');if(activityTimelineExport){e.preventDefault();exportCombinedActivityTimeline();return}const retryVps=e.target.closest('[data-retry-vps-read]');if(retryVps){e.preventDefault();void readVpsRetryIncidents();return}const retryClear=e.target.closest('[data-retry-clear]');if(retryClear){e.preventDefault();ZSENTINEL_RETRY_SNAPSHOT=null;ZSENTINEL_RETRY_TREND=null;ZSENTINEL_RETRY_MESSAGE='';render();return}const retryExport=e.target.closest('[data-retry-handoff]');if(retryExport){e.preventDefault();exportRetryHandoff();return}const vpsIssuesRead=e.target.closest('[data-vps-issues-read]');if(vpsIssuesRead){e.preventDefault();void readVpsProductIssues();return}const vpsGithubRead=e.target.closest('[data-vps-github-refresh]');if(vpsGithubRead){e.preventDefault();void readVpsGitHubActivity();return}const branchImport=e.target.closest('[data-zsentinel-branch-open]');if(branchImport){e.preventDefault();document.getElementById('zSentinelBranchFile')?.click();return}const branchClear=e.target.closest('[data-zsentinel-branch-clear]');if(branchClear){e.preventDefault();IMPORTED_PRLESS_BRANCHES=null;IMPORTED_PRLESS_ERROR='';render();return}const zSentinelExport=e.target.closest('[data-zsentinel-export]');if(zSentinelExport){e.preventDefault();exportZSentinelHandoff();return}const zSentinelAll=e.target.closest('[data-zsentinel-all-read]');if(zSentinelAll){e.preventDefault();void readZSentinelAllProjects();return}const zSentinelRead=e.target.closest('[data-zsentinel-source-read]');if(zSentinelRead){e.preventDefault();void readZSentinelSources();return}const localPage=e.target.closest('[data-local-activity-next]');if(localPage){e.preventDefault();void readPagedLocalActivity();return}const deliveryRefresh=e.target.closest('[data-delivery-queue-refresh]');if(deliveryRefresh){e.preventDefault();void refreshDeliveryQueue();return}const progressRefresh=e.target.closest('[data-worker-progress-refresh]');if(progressRefresh){e.preventDefault();void refreshWorkerProgress();return}const issueRefresh=e.target.closest('[data-public-issues-refresh]');if(issueRefresh){e.preventDefault();void refreshPublicProductIssues();return}const publicRefresh=e.target.closest('[data-github-public-refresh]');if(publicRefresh){e.preventDefault();void refreshPublicGitHubEvidence();return}const priorityToggle=e.target.closest('[data-product-issues-toggle]');if(priorityToggle){e.preventDefault();IMPORTED_ISSUE_SHOW_ALL=!IMPORTED_ISSUE_SHOW_ALL;render();return}const issueClear=e.target.closest('[data-product-issues-clear]');if(issueClear){e.preventDefault();IMPORTED_PRODUCT_ISSUES=null;IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;render();return}const githubClear=e.target.closest('[data-github-receipt-clear]');if(githubClear){e.preventDefault();IMPORTED_GITHUB_ACTIVITY=null;IMPORTED_GITHUB_ERROR='';render();return}const activityRefresh=e.target.closest('[data-activity-refresh]');if(activityRefresh){e.preventDefault();if(!ACTIVITY_COVERAGE.pending){ACTIVITY_PROJECT_FETCH_TIME=0;void refreshProjectActivity(routeVersion,true)}return}const workerShortcut=e.target.closest('[data-jump-workers]');if(workerShortcut){e.preventDefault();e.stopPropagation();mobileWorkersActive=true;if(route!=='overview'){scrollToWorkersOnOverview=true;location.hash='#overview'}else{if(DATA)syncNav();const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}}return}const navAction=e.target.closest('[data-nav]');if(navAction){e.preventDefault();mobileWorkersActive=false;const next=String(navAction.dataset.nav||'overview');const nextHash='#'+next;if(location.hash===nextHash){route=next;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'})}else{location.hash=next}return}const attentionResolve=e.target.closest('[data-attention-resolve]');if(attentionResolve){e.preventDefault();e.stopPropagation();attentionResolve.disabled=true;try{await post('/api/portfolio-attention',{action:'resolve',attention_id:attentionResolve.dataset.attentionResolve});DATA.attention_needed=(DATA.attention_needed||[]).filter(item=>item.attention_id!==attentionResolve.dataset.attentionResolve);render()}catch(err){attentionResolve.disabled=false;$('notice').hidden=false;$('notice').textContent='Could not mark the attention item done: '+(err.message||err)}return}const globalPlay=e.target.closest('[data-global-worker-play]');if(globalPlay){e.preventDefault();e.stopPropagation();await playGlobalWorker(Number(globalPlay.dataset.globalWorkerPlay),globalPlay);return}const globalForce=e.target.closest('[data-global-worker-force]');if(globalForce){e.preventDefault();e.stopPropagation();await forceGlobalWorker(Number(globalForce.dataset.globalWorkerForce),globalForce);return}const dynamicSave=e.target.closest('[data-save-dynamic-workers]');if(dynamicSave){e.preventDefault();e.stopPropagation();await saveDynamicWorkerSettings(dynamicSave);return}const workerAction=e.target.closest('[data-worker-action]');if(workerAction){e.preventDefault();e.stopPropagation();await controlWorker(workerAction.dataset.workerId,workerAction.dataset.workerAction,workerAction);return}const forceStartAction=e.target.closest('[data-runner-force-start]');if(forceStartAction){e.preventDefault();e.stopPropagation();await forceStartProject(forceStartAction.dataset.runnerForceStart,forceStartAction);return}const toggleAction=e.target.closest('[data-runner-toggle]');if(toggleAction){e.preventDefault();e.stopPropagation();await setRunnerActive(toggleAction.dataset.runnerToggle,toggleAction.dataset.runnerAction,toggleAction);return}const serviceAction=e.target.closest('[data-runner-service-restart]');if(serviceAction){e.preventDefault();await restartFirefoxInitiator(serviceAction);return}const startAction=e.target.closest('[data-runner-start]');if(startAction){e.preventDefault();e.stopPropagation();await setRunnerActive(startAction.dataset.runnerStart,'start',startAction);return}const pauseAction=e.target.closest('[data-runner-pause]');if(pauseAction){e.preventDefault();e.stopPropagation();await setRunnerActive(pauseAction.dataset.runnerPause,'pause',pauseAction);return}const pushAction=e.target.closest('[data-runner-push]');if(pushAction){e.preventDefault();e.stopPropagation();await pushRunner(pushAction.dataset.runnerPush,pushAction);return}const runnerAction=e.target.closest('[data-runner-new-chat]');if(runnerAction){e.preventDefault();e.stopPropagation();await restartRunner(runnerAction.dataset.runnerNewChat,runnerAction);return}const archive=e.target.closest('[data-archive]');if(archive){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=archive.dataset.archive;const archived=[...(DATA.archived_projects||[]).map(p=>p.id),id];await changeProjectLayout(archive,'archive',DATA.project_layout?.order||DATA.projects.map(p=>p.id),[...new Set(archived)]);return}const restore=e.target.closest('[data-restore]');if(restore){e.preventDefault();e.stopPropagation();if(projectLayoutActionPending)return;const id=restore.dataset.restore;const archived=(DATA.archived_projects||[]).map(p=>p.id).filter(x=>x!==id);await changeProjectLayout(restore,'restore',DATA.project_layout?.order||DATA.projects.map(p=>p.id),archived);return}const projectCardTarget=e.target.closest('[data-project-id]');if(projectCardTarget&&!e.target.closest('a,button,input,select,textarea,label,[role="button"]')){e.preventDefault();location.hash='project/'+encodeURIComponent(projectCardTarget.dataset.projectId);return}const b=e.target.closest('[data-range]');if(b){range=b.dataset.range;HISTORY={};render();loadExtras()}const point=e.target.closest('[data-point]');if(point&&$('chartDetail'))$('chartDetail').textContent=point.dataset.point;const svg=e.target.closest('.chart-svg');if(svg&&!point&&$('chartDetail')){const near=[...svg.querySelectorAll('[data-point]')].map(el=>{const r=el.getBoundingClientRect();return {el,d:(r.x+r.width/2-e.clientX)**2+(r.y+r.height/2-e.clientY)**2}}).sort((a,b)=>a.d-b.d)[0];if(near)$('chartDetail').textContent=near.el.dataset.point}if(e.target.closest('[data-retry]'))refresh(true)});
 document.addEventListener('focusin',e=>{if(e.target.dataset.point&&$('chartDetail'))$('chartDetail').textContent=e.target.dataset.point});
 document.addEventListener('keydown',e=>{if(e.target.dataset.point&&['Enter',' '].includes(e.key)){e.preventDefault();$('chartDetail').textContent=e.target.dataset.point}});
 document.addEventListener('change',async e=>{if(e.target.id==='zSentinelRetryReceiptFile'||e.target.id==='zSentinelRetryTrendFile'){const file=e.target.files?.[0];if(!file)return;try{if(file.size<2||file.size>1024*1024)throw Error('JSON file must be 2 bytes to 1 MiB');const raw=JSON.parse(await file.text());if(e.target.id==='zSentinelRetryReceiptFile')ZSENTINEL_RETRY_SNAPSHOT=validateRetryIncident(raw);else ZSENTINEL_RETRY_TREND=validateRetryTrend(raw);ZSENTINEL_RETRY_MESSAGE='Read-only retry evidence imported. No queue or worker state changed.';}catch(error){ZSENTINEL_RETRY_MESSAGE='Retry receipt rejected: '+(error instanceof SyntaxError?'invalid JSON':String(error.message||'invalid format'))+'. Existing evidence preserved.';}if(route==='activity')render();return}if(e.target.id==='zSentinelBranchFile'){const files=[...(e.target.files||[])];if(!files.length)return;try{if(files.length>8)throw Error('Import at most eight bounded branch receipts');let merged=IMPORTED_PRLESS_BRANCHES;for(const file of files){if(file.size<2||file.size>512*1024)throw Error('Each branch JSON must be under 512 KiB');const report=validateZSentinelBranchSnapshot(JSON.parse(await file.text()));merged=mergeZSentinelBranchSnapshots(merged,report);}IMPORTED_PRLESS_BRANCHES=merged;IMPORTED_PRLESS_ERROR='';}catch(error){IMPORTED_PRLESS_ERROR='Branch receipt not imported: '+(error instanceof SyntaxError?'invalid JSON':String(error.message||'invalid source'))+'; previous evidence preserved.';}if(route==='activity')render();return}if(e.target.id==='workerProgressSlot'){const slot=Number(e.target.value);WORKER_PROGRESS_SLOT=Number.isInteger(slot)&&slot>=1&&slot<=8?slot:1;WORKER_PROGRESS_DATA=null;WORKER_PROGRESS_ERROR='';render();return}if(e.target.id==='productIssueReceiptFile'){const file=e.target.files?.[0];if(!file)return;try{if(file.size>1024*1024||file.size<2)throw Error('JSON receipt exceeds 1 MiB or is empty');const receipt=validateProductIssueInbox(JSON.parse(await file.text()));IMPORTED_PRODUCT_ISSUES=mergeValidatedZSentinelReceipts(IMPORTED_PRODUCT_ISSUES,receipt,'issues');IMPORTED_PRODUCT_ERROR='';IMPORTED_ISSUE_SHOW_ALL=false;}catch(error){IMPORTED_PRODUCT_ERROR='Product issue receipt not imported: '+(error instanceof SyntaxError?'Invalid JSON':String(error.message||'Invalid receipt'))+'. Previous observations preserved; use Clear to discard them.';}if(route==='activity')render();return}if(e.target.id==='githubReceiptFile'){const file=e.target.files?.[0];if(!file)return;try{if(file.size>1024*1024||file.size<2)throw Error('JSON receipt exceeds 1 MiB or is empty');const payload=JSON.parse(await file.text());const receipt=validateGitHubActivityReceipt(payload);IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(IMPORTED_GITHUB_ACTIVITY,receipt,'github');IMPORTED_GITHUB_ERROR='';}catch(error){IMPORTED_GITHUB_ERROR='GitHub receipt not imported: '+(error instanceof SyntaxError?'Invalid JSON':String(error.message||'Invalid receipt'))+'. Previous observations preserved; use Clear to discard them.';}if(route==='activity')render();return}const projectSelector=e.target.closest?.('[data-global-worker-project]');if(projectSelector){const slot=Number(projectSelector.dataset.globalWorkerProject);GLOBAL_WORKER_PROJECT_REQUESTS[slot]=projectSelector.value;delete GLOBAL_WORKER_REQUEST_RESULTS[slot];render();return}const workerInput=e.target.closest?.('[data-runner-workers]');if(workerInput){await setRunnerWorkers(workerInput.dataset.runnerWorkers,workerInput.value,workerInput);return}if(e.target.id==='activityFilter'){filter=e.target.value;history.replaceState(null,'','#activity'+(filter?'?project='+filter:''));render()}});
