@@ -121,12 +121,16 @@ def build_workboard(inbox, registry, token=None):
             or len(inspected["items"]) > MAX_PRS):
         raise ValueError("invalid exact-head PR source")
     by_link = {}
+    selected_urls = {
+        "https://github.com/" + registry[pr["project_id"]] +
+        "/pull/" + str(pr["pr_number"]) for pr in selected
+    }
     for entry in inspected["items"]:
         if (not isinstance(entry, dict) or entry.get("merge_authorized") is not False
-                or entry.get("url") not in [r["url"] for r in
-                    ({"url": "https://github.com/" + registry[pr["project_id"]] +
-                      "/pull/" + str(pr["pr_number"])} for pr in selected)]
-                or entry.get("next_step") not in NEXT_ACTION_NL):
+                or entry.get("url") not in selected_urls
+                or entry.get("next_step") not in NEXT_ACTION_NL
+                or entry["url"] in by_link):
+
             raise ValueError("untrusted exact-head PR receipt")
         by_link[entry["url"]] = entry
     for row in sampled:
@@ -135,12 +139,30 @@ def build_workboard(inbox, registry, token=None):
                 continue
             evidence = by_link[link]
             complete = evidence.get("coverage") == "bounded_exact_head_review_and_checks"
+            ci = evidence.get("ci") if complete else None
+            legacy = evidence.get("legacy_status_contexts") if complete else None
+            ci = ci if isinstance(ci, dict) else {}
+            legacy = legacy if isinstance(legacy, dict) else {}
+            flagged = []
+            for origin, bucket, states in (
+                ("check", ci, ("failed", "pending", "inconclusive")),
+                ("status", legacy, ("failed", "pending"))):
+                for state in states:
+                    names = bucket.get(state, [])
+                    if (not isinstance(names, list) or len(names) > 8
+                            or any(type(name) is not str or len(name) > 180
+                                   for name in names)):
+                        raise ValueError("untrusted bounded CI evidence")
+                    flagged.extend({"origin": origin, "state": state,
+                                    "name": name} for name in names)
             row["inspected_prs"].append({
                 "url": link,
                 "head_sha": evidence.get("head_sha") if complete else None,
                 "coverage": evidence.get("coverage") if complete else "source_incomplete",
                 "action": NEXT_ACTION_NL[evidence["next_step"]] if complete
                           else "Onvolledige/gewijzigde PR-bron: eigenaar moet opnieuw controleren.",
+                "combined_legacy_status": legacy.get("combined_observed", "unknown"),
+                "ci_attention": flagged[:16],
                 "issue_fixed": False, "owner_verified": False,
                 "merge_authorized": False,
             })
@@ -184,9 +206,17 @@ def render_html(board):
                 '" target="_blank" rel="noopener noreferrer">Bestaande PR</a> '
                 for link in item["existing_pr_links_unverified"])
             evidence = "".join(
-                "<li>" + escape(pr["action"]) + " · head " +
+                '<li><a href="' + escape(pr["url"], quote=True) +
+                '" rel="noopener noreferrer" target="_blank">Bestaande PR</a> · ' +
+                escape(pr["action"]) + " · head " +
                 escape((pr["head_sha"] or "ONBEKEND")[:12]) +
-                " · nooit oplossings- of mergebewijs</li>"
+                " · klassieke status: " + escape(str(pr["combined_legacy_status"])) +
+                " · nooit oplossings- of mergebewijs" +
+                ("<ul>" + "".join(
+                    "<li>" + escape(check["origin"] + " " + check["state"] +
+                                    ": " + check["name"]) + "</li>"
+                    for check in pr["ci_attention"]) + "</ul>"
+                 if pr["ci_attention"] else "") + "</li>"
                 for pr in item["inspected_prs"])
             cards.append(
                 '<article class="issue" data-project="' +
@@ -258,7 +288,12 @@ def render_markdown(board):
         for pr in item["inspected_prs"]:
             lines.append("- **Bestaande PR:** [" + _markdown_literal(pr["url"]) +
                          "](" + pr["url"] + "); " + _markdown_literal(pr["action"]) +
-                         "; exacte head " + (pr["head_sha"] or "ONBEKEND")[:12])
+                         "; exacte head " + (pr["head_sha"] or "ONBEKEND")[:12] +
+                         "; klassiek gecombineerd " +
+                         _markdown_literal(pr["combined_legacy_status"]))
+            for check in pr["ci_attention"]:
+                lines.append("  - " + _markdown_literal(
+                    check["origin"] + " " + check["state"] + ": " + check["name"]))
         if item["existing_pr_links_unverified"] and not item["inspected_prs"]:
             lines.append("- **PR-bron:** verwijzingen bestaan, exacte status niet vastgesteld.")
     lines += ["", "Brondekking: " + ", ".join(
