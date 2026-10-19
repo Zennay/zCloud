@@ -3,17 +3,17 @@
     "id": "zsentinel",
     "name": "zSentinel · Vliegende keep",
     "eyebrow": "PORTFOLIO RECOVERY WORKER",
-    "goal": "Continually clear open issues, unfinished features, broken workflows and stuck projects across the entire portfolio.",
+    "goal": "Unblock stalled workers and critical delivery paths first; restore actual task execution before ordinary product work.",
     "repo_url": "https://github.com/Zennay/zCloud",
     "notion_url": "https://app.notion.com/p/3fb9e19ac95581f2b686f01ed9e4dee0",
     "phase": "Cross-project open-work recovery",
     "status": "active",
     "priority": "high",
-    "next_step": "Pick the highest-impact unowned, safe open P0/P1 issue across projects; implement, test, commit and close only after verification. Move to the next safe task instead of waiting.",
-    "milestone_revision": "zsentinel-worker-role-20261016",
+    "next_step": "Find the highest-impact stalled worker or blocked delivery; fix the root cause safely, clear required integration gates, verify work resumed, and preserve an exact next step for any unfinished work.",
+    "milestone_revision": "zsentinel-unblock-first-20261019",
     "milestones": [
       {
-        "title": "Actively repair unowned open work across projects",
+        "title": "Restore blocked workers and resume unfinished work",
         "done": false,
         "progress": 0
       }
