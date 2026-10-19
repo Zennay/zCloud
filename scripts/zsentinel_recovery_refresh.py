@@ -106,6 +106,17 @@ def refresh(bundle, registry, token=None):
                     and (not isinstance(runner_id, int) or isinstance(runner_id, bool)
                          or runner_id < 0)):
                 raise ValueError("github_runner_assignment_unavailable")
+            runner_name = job.get("runner_name")
+            if runner_name is not None and (
+                    type(runner_name) is not str or len(runner_name) > 80
+                    or any(ord(char) < 32 or ord(char) > 126
+                           for char in runner_name)):
+                raise ValueError("github_runner_name_untrusted")
+            # Exact job metadata may prove a historic assignment to a named
+            # runner. It never proves current health, registration or safe idle.
+            canonical_runner_assigned = bool(
+                runner_id and runner_name == "zcloud-vps-1"
+                and runner_route(job)["runner_route"] == "self_hosted")
             conclusion = job.get("conclusion")
             if status == "completed" and conclusion not in CONCLUSION:
                 raise ValueError("github_job_conclusion_unsupported")
@@ -116,6 +127,7 @@ def refresh(bundle, registry, token=None):
                 "queued_at": utc_string(queued_at),
                 "observed_at": utc_string(observed),
                 "runner_assigned": bool(runner_id),
+                "canonical_zcloud_runner_assignment_observed": canonical_runner_assigned,
                 "verified_receipt": "github_exact_run_job",
                 "runner_route": route["runner_route"],
                 "route_labels": route["route_labels"],
@@ -146,6 +158,8 @@ def refresh(bundle, registry, token=None):
                            "repository": repository,
                            "status": "refreshed", "run_id": run_id, "job_id": job_id,
                            "job_status": status, "runner_assigned": bool(runner_id),
+                           "canonical_zcloud_runner_assignment_observed": canonical_runner_assigned,
+                           "runner_id_observed": runner_id if runner_id else None,
                            "runner_route": route["runner_route"],
                            "route_labels": route["route_labels"],
                            "no_job_steps": updated.get("no_job_steps"),
