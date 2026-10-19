@@ -195,8 +195,19 @@ def observe_prs(registry, selections, token=None):
             if (type(title) is not str or not 1 <= len(title) <= 180
                     or any(ord(ch) < 32 or ord(ch) == 127 for ch in title)):
                 raise ValueError("untrusted PR title")
+            # The PR body may mention an issue without fixing it. Display
+            # bounded SAME-REPO references only, never infer resolution.
+            body = pr.get("body")
+            if body is not None and (type(body) is not str or len(body) > 32000):
+                raise ValueError("unbounded PR body")
+            numbers = []
+            for match in re.finditer(r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\\b", body or ""):
+                number_ref = int(match.group(1))
+                if number_ref not in numbers and len(numbers) < 5:
+                    numbers.append(number_ref)
             item.update({
                 "title": title, "head_sha": head_sha, "base_sha": base_sha,
+                "mentioned_issues_unverified": numbers,
                 "draft": pr.get("draft") is True,
                 "mergeable": pr.get("mergeable") is True,
                 "mergeable_known": pr.get("mergeable") is not None,
@@ -370,13 +381,27 @@ def pr_delivery_html(report):
         source_gap = (('<p class="muted">Bron onvolledig of gewijzigd: ' +
                        escape(str(row["source_gap"])[:120]) + '</p>')
                       if row.get("source_gap") else "")
+        issue_refs = row.get("mentioned_issues_unverified", [])
+        if (not isinstance(issue_refs, list) or len(issue_refs) > 5
+                or any(type(n) is not int or n < 1 or n > 99999999 for n in issue_refs)):
+            raise ValueError("untrusted PR body references")
+        repo = row.get("repository")
+        if not isinstance(repo, str) or not OWNER_REPO.fullmatch(repo):
+            raise ValueError("noncanonical PR source repository")
+        mention_links = ('<p class="small">In PR-tekst genoemde issues '
+                         '(niet geverifieerd als open of opgelost): ' +
+                         " · ".join('<a href="https://github.com/' +
+                                  escape(repo, quote=True) + '/issues/' + str(n) +
+                                  '" target="_blank" rel="noopener noreferrer">#' +
+                                  str(n) + '</a>' for n in issue_refs) +
+                         '</p>' if issue_refs else "")
         cards.append(
             '<article class="panel read"><h3><a href="' + link +
             '" rel="noopener noreferrer" target="_blank">' + name +
             " · " + title + '</a></h3><p>' +
             escape(labels[row["next_step"]]) +
             '</p><p class="muted">' + escape(detail) + '</p>' + observed_checks +
-            source_gap + '<p class="small">Exacte head: ' +
+            mention_links + source_gap + '<p class="small">Exacte head: ' +
             escape(sha[:12] if isinstance(sha, str) else "onbekend") +
             ' · bron: beperkte GitHub-steekproef; eigenaar, required checks, branch protection, merge/deploy NIET geautoriseerd.</p></article>'
         )
