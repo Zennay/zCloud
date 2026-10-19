@@ -25,6 +25,7 @@ from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic, acquire_private_ledger_lock
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html, link_existing_pr_actions
+from zsentinel_unblock_board import blocker_first_board, blocker_board_html, blocker_board_text
 from zsentinel_pr_delivery import discover_open_prs, observe_prs, pr_delivery_html
 from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
 
@@ -350,7 +351,7 @@ def phrase_route(value):
     }.get(value) or "ONBEKEND"
 
 
-def portfolio_html(summary, decision, window_index, windows, branch_inventory=None, problem_inbox=None, pr_desk=None):
+def portfolio_html(summary, decision, window_index, windows, branch_inventory=None, problem_inbox=None, pr_desk=None, unblock=None):
     if (not isinstance(summary, dict)
             or summary.get("schema") != "zsentinel-portfolio-overview-v1"
             or summary.get("actions_performed") is not False
@@ -466,6 +467,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     if raw.count("<main>") != 1:
         raise ValueError("incompatible underlying offline operator view")
     return raw.replace("<main>", "<main>" +
+                       (blocker_board_html(unblock) if unblock is not None else "") +
                        (problems_html(problem_inbox) if problem_inbox is not None else "") +
                        (pr_delivery_html(pr_desk) if pr_desk is not None else "") +
                        table + branch_ownership_html(branch_inventory), 1)
@@ -670,10 +672,11 @@ def main():
             # The same already-read exact-head PR advice is available in
             # HTML, JSON and plain text; no extra GitHub calls or claims.
             problem_inbox = link_existing_pr_actions(problem_inbox, pr_desk)
+        unblock = blocker_first_board(summary, decision, problem_inbox)
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
-                                      pr_desk=pr_desk)
+                                      pr_desk=pr_desk, unblock=unblock)
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(decision)
@@ -687,6 +690,7 @@ def main():
                 "window_count": len(windows), "selected_projects": selected,
                 "source_bound_decision": decision,
                 "next_problem_shortlist": problem_inbox,
+                "blocker_first_handoff": unblock,
                 "existing_pr_delivery": (pr_desk if pr_desk is not None else
                     {"coverage": "not_requested", "merge_authorized": False}),
                 "recent_unpr_branch_ownership": (
@@ -697,6 +701,7 @@ def main():
             lines = ["zSentinel portfolio | venster %d/%d | GitHub: %s" % (
                 window_index + 1, len(windows), ", ".join(selected))]
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
+            lines.append(blocker_board_text(unblock))
             lines.append("VOLGENDE PROBLEMEN (advies; eigendom en scope NIET geverifieerd):")
             for item in problem_inbox["items"]:
                 lines.append("  %s %s %s | %s | %s" % (
