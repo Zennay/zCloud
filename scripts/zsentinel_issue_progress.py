@@ -164,10 +164,16 @@ def progress_since(current, previous, now=None):
     no_longer_sampled = []
     for url, item in prior_items.items():
         if url not in current_items:
+            # A denied/unavailable current GitHub source did not establish
+            # a sampled absence at all. It cannot even say "not in sample".
+            source_ok = current_cov[item["project_id"]] == "partial"
             no_longer_sampled.append({
                 "issue_url": url, "project_id": item["project_id"],
                 "title": item["title"], "priority_at_prior_observation": item["priority"],
-                "observation": "not_in_current_bounded_sample_NOT_CLOSED",
+                "observation": ("not_in_current_bounded_sample_NOT_CLOSED"
+                                if source_ok else
+                                "current_source_unavailable_previous_state_only"),
+                "current_source_status": current_cov[item["project_id"]],
                 "source_comparable": comparable[item["project_id"]],
                 "issue_fixed": False, "closure_verified": False,
                 "ownership_verified": False, "dispatch_authorized": False,
@@ -185,7 +191,12 @@ def progress_since(current, previous, now=None):
         "prior_issues_outside_current_sample": no_longer_sampled,
         "newly_sampled_count": sum(x["observation"] == "newly_sampled_not_new_issue" for x in rows),
         "changed_source_receipts_count": sum(bool(x["observed_changes"]) for x in rows),
-        "previously_sampled_missing_count": len(no_longer_sampled),
+        "previously_sampled_missing_count": sum(
+            x["observation"] == "not_in_current_bounded_sample_NOT_CLOSED"
+            for x in no_longer_sampled),
+        "previously_sampled_unverifiable_count": sum(
+            x["observation"] == "current_source_unavailable_previous_state_only"
+            for x in no_longer_sampled),
         "closed_issues_verified": 0,
         "claims_taken": False, "writes_performed": False,
         "merge_authorized": False, "dispatch_authorized": False,
