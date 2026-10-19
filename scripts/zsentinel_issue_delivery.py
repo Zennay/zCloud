@@ -638,6 +638,8 @@ def main(argv=None):
     p.add_argument("--notion-data-source",
                    help="canonical Notion queue data source UUID for explicit source read")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
+    p.add_argument("--output", type=Path,
+                   help="optional create-only private output (.html/.json/.md); no overwrites")
     args = p.parse_args(argv)
     try:
         if (not 1 <= len(args.project) <= MAX_PROJECTS
@@ -685,7 +687,11 @@ def main(argv=None):
             output = render_markdown(board)
         else:
             output = render_html(board)
-        print(output)
+        if args.output is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.output, output, args.format)
+        else:
+            print(output)
         fully_read = all(x["status"] == "partial" for x in board["coverage"])
         if args.read_notion_claims:
             fully_read = (fully_read and
