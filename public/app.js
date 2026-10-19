@@ -925,6 +925,7 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
     IMPORTED_GITHUB_ACTIVITY={observedAt:sampledAt,events:githubEvents,coverage:githubCoverage};
     IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); prior observations retained and may be stale. ':'Public GitHub source sample ready; ')+
       'branch-only work and private repositories are not covered. Not a live deployment receipt.';
+    return {project:projectId,readable:good,attempted:true};
   }catch(_error){
     IMPORTED_GITHUB_ERROR='Public GitHub source could not be interpreted. No authorization or deployment inferred.';
   }finally{PUBLIC_GITHUB_BUSY=false;if(!quiet&&route==='activity')render()}
@@ -1159,6 +1160,7 @@ async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
     IMPORTED_ISSUE_SHOW_ALL=false;
     IMPORTED_PRODUCT_ERROR=(readable===3?'Public issue sample loaded. ':'Partial public issue source ('+readable+'/3 readable); older P0/P1 observations retained and may be stale. ')+
       'These references do not verify fixes, worker ownership or queue claims.';
+    return {project:projectId,readable,attempted:true};
   }catch(_error){
     IMPORTED_PRODUCT_ERROR='Public issue source unavailable or malformed. No queue claim taken.';
   }finally{PUBLIC_ISSUES_BUSY=false;if(!quiet&&route==='activity')render()}
@@ -1591,7 +1593,7 @@ async function readZSentinelAllProjects(){
   const batch=eligible.slice(start,start+ZSENTINEL_ALL_BATCH_SIZE);
   const version=routeVersion;
   ZSENTINEL_ALL_RUNNING=true;
-  let completed=0;
+  let completed=0,readableGitHub=0,readableIssues=0,unavailable=0;
   ZSENTINEL_ALL_MESSAGE='Reading '+batch.length+' repositories (bounded and read-only)…';
   render();
   try{
@@ -1601,17 +1603,29 @@ async function readZSentinelAllProjects(){
         break;
       }
       // A sequential, explicit operator batch avoids anonymous GitHub bursts.
-      await refreshPublicProductIssues(project,true);
-      await refreshPublicGitHubEvidence(project,true);
+      const issues=await refreshPublicProductIssues(project,true);
+      const activity=await refreshPublicGitHubEvidence(project,true);
       completed++;
-      ZSENTINEL_ALL_MESSAGE='Read '+completed+'/'+batch.length+' project(s) in this batch. Missing provider data remains unknown.';
+      if(issues?.readable>0)readableIssues++;
+      if(activity?.readable>0)readableGitHub++;
+      if(!(issues?.readable>0)||!(activity?.readable>0))unavailable++;
+      ZSENTINEL_ALL_MESSAGE='Attempted '+completed+'/'+batch.length+
+        ' project(s) · GitHub activity readable '+readableGitHub+
+        ' · issue source readable '+readableIssues+
+        ' · incomplete projects '+unavailable+
+        '. Provider denial, timeout, cache limits and private repositories stay unknown.';
       if(route==='activity')render();
     }
     ZSENTINEL_ALL_INDEX=start+completed;
     if(completed===batch.length){
-      ZSENTINEL_ALL_MESSAGE='Processed '+Math.min(ZSENTINEL_ALL_INDEX,eligible.length)+'/'+eligible.length+
-        ' eligible repositories in this pass; up to 16 project snapshots are retained in browser memory.'+
-        ' This is a bounded sample, NOT a complete synchronized Activity history.';
+      const activityCoverage=new Set((IMPORTED_GITHUB_ACTIVITY?.coverage||[]).map(row=>row.project));
+      const issueCoverage=new Set((IMPORTED_PRODUCT_ISSUES?.coverage||[]).map(row=>row.project));
+      const observedBoth=eligible.filter(p=>activityCoverage.has(p.id)&&issueCoverage.has(p.id)).length;
+      ZSENTINEL_ALL_MESSAGE='Attempted '+Math.min(ZSENTINEL_ALL_INDEX,eligible.length)+'/'+eligible.length+
+        ' eligible repositories in this scan · '+observedBoth+'/'+eligible.length+
+        ' have both bounded source records · this batch: '+readableGitHub+
+        ' GitHub activity readable, '+readableIssues+' issue source readable, '+unavailable+
+        ' incomplete. Up to 16 source records retained; NOT a complete synchronized feed.';
     }
   }finally{ZSENTINEL_ALL_RUNNING=false;if(route==='activity')render();}
 }
