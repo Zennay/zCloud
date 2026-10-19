@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -26,6 +27,10 @@ UNITS = {
 MIN_AVAILABLE_MIB = 3072
 MIN_SWAP_FREE_MIB = 512
 MIN_AVAILABLE_WITHOUT_SWAP_MIB = 4096
+RUNNER_ROOTS = {
+    'zcloud': '/home/ubuntu/actions-runner-zcloud/',
+    'ftmo': '/opt/ftmo-runner/',
+}
 
 
 def memory_headroom() -> dict:
@@ -88,18 +93,41 @@ def call(*argv: str) -> str:
     return subprocess.run(argv, check=True, capture_output=True, text=True, timeout=15).stdout.strip()
 
 
-def runner_process_count(user: str) -> int:
-    """Conservative per-user check: other runner work must not be interrupted."""
+def runner_process_count(lane: str) -> int:
+    """Resolve a listener to its exact installation path, never just a user.
+
+    Other runners can share the ubuntu account; an orphaned target process
+    can conversely survive under another Unix owner. Both cases must be
+    treated accurately before any systemd start command is permitted.
+    """
+    root = RUNNER_ROOTS[lane]
     output = call("ps", "-eo", "user:32=,args=")
     count = 0
     for line in output.splitlines():
-        fields = line.split(maxsplit=1)
-        if len(fields) == 2 and fields[0] == user and (
-            "Runner.Listener" in fields[1] or "Runner.Worker" in fields[1]
-        ):
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        user, command = parts
+        owned = any(root + suffix in command for suffix in (
+            "bin/Runner.Listener", "bin/Runner.Worker", "runsvc.sh", "run.sh",
+        ))
+        if owned:
+            count += 1
+        elif (user == UNITS[lane][1]
+              and ("Runner.Listener" in command or "Runner.Worker" in command)
+              and not re.search(r"/[A-Za-z0-9_./-]+/bin/Runner\\.(?:Listener|Worker)", command)):
+            # A relative/unknown runner command cannot be attributed safely.
             count += 1
     return count
 
+
+def service_unit_matches(unit: str, lane: str, expected_owner: str) -> bool:
+    """Bind systemd User and ExecStart to the known installed service root."""
+    output = call("systemctl", "show", unit, "--property=ExecStart",
+                  "--property=User", "--no-pager")
+    props = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    starts = re.findall(r"(?:^|\\s)path=([^\\s;]+)", props.get("ExecStart", ""))
+    return props.get("User") == expected_owner and starts == [RUNNER_ROOTS[lane] + "runsvc.sh"]
 
 def service_state(unit: str) -> tuple[str, str]:
     output = call("systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--no-pager")
@@ -110,20 +138,24 @@ def service_state(unit: str) -> tuple[str, str]:
 def rescue(lane: str, apply: bool) -> dict:
     unit, owner = UNITS[lane]
     load, active = service_state(unit)
-    processes = runner_process_count(owner)
+    processes = runner_process_count(lane)
+    identity_ok = service_unit_matches(unit, lane, owner)
     decision = decide(load, active, processes)
+    if not identity_ok:
+        decision = "deny_runner_unit_identity_mismatch"
     memory = memory_headroom()
     if decision == "eligible_start_inactive_listener" and memory["decision"] != "eligible_memory_headroom":
         decision = memory["decision"]
     evidence = {
         "lane": lane, "unit": unit, "load_state": load,
-        "active_state_before": active, "process_count_for_runner_user": processes,
+        "active_state_before": active, "process_count_for_target_root": processes,
+        "exact_system_unit_identity": identity_ok,
         "decision": decision, "mutation_performed": False,
         "mutation_attempted": False, "memory": memory,
     }
     if apply and decision == "eligible_start_inactive_listener":
         # A second independent admission read guards slow command/service races.
-        if service_state(unit) != (load, active) or runner_process_count(owner):
+        if service_state(unit) != (load, active) or not service_unit_matches(unit, lane, owner) or runner_process_count(lane):
             evidence["decision"] = "deny_state_changed"
             return evidence
         latest = memory_headroom()
@@ -146,8 +178,8 @@ def rescue(lane: str, apply: bool) -> dict:
         if latest["decision"] != "eligible_memory_headroom":
             evidence["decision"] = "deny_memory_headroom_changed"
             return evidence
-        if runner_process_count(owner):
-            evidence["decision"] = "deny_residual_runner_processes"
+        if runner_process_count(lane) or not service_unit_matches(unit, lane, owner):
+            evidence["decision"] = "deny_residual_processes_or_changed_unit"
             return evidence
         evidence["mutation_attempted"] = True
         try:
