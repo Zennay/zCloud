@@ -303,9 +303,14 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
                     "Verifieer de actuele queuelease en de bedoelde pauze met de runtime-eigenaar. Alleen een expliciet geautoriseerde hervatting of herroutering mag de queueclaim veranderen."
                     if paused_claim else
                     "Worker is volgens huidige SQLite-desired_state running en heeft een globale slottoewijzing; verifieer de taakclaim en bronvoortgang. Geen force-push of lease-reset op dit event."),
-                "observed_from": "local_indexed_worker_event_metadata_no_claim_proof",
-                "requires_human": False,
-                "next_gate": "verify_exact_worker_claim_and_progress",
+                "observed_from": (
+                    "same_read_transaction_paused_allocated_valid_queue_claim"
+                    if paused_claim else
+                    "local_indexed_worker_event_metadata_no_claim_proof"),
+                "requires_human": bool(paused_claim),
+                "next_gate": (
+                    "authorized_claim_pause_conflict_resolution"
+                    if paused_claim else "verify_exact_worker_claim_and_progress"),
                 "worker_resumed_verified": False, "permission_to_recover": False,
                 "owner_claim_verified": False,
             })
