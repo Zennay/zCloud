@@ -434,6 +434,67 @@ def triage_issue_inbox(inbox, now):
             "stopped_after_rate_or_auth_denial": inbox["stopped_after_rate_or_auth_denial"]}
 
 
+def queue_pressure_summary(source, now):
+    """Read-only SQLite pressure in reports only, never a lease or retry claim."""
+    if source is None:
+        return {"coverage":"not_supplied", "totals":{}, "samples":[], "claim_ownership_verified":False}
+    required = {"schema":"zsentinel-queue-pressure-v1",
+                "source":"local_sqlite_transaction_query_only",
+                "database_read_only":True, "automatic_retry_authorized":False,
+                "queue_write_authorized":False, "attempts_are_claims_not_failures":True,
+                "claim_ownership_verified":False}
+    if not isinstance(source, dict) or any(source.get(k) != v for k,v in required.items()):
+        raise ValueError("untrusted or authorizing queue pressure source")
+    observed = timestamp(source.get("observed_at_utc"), "queue_pressure.observed_at_utc")
+    if observed > now + timedelta(minutes=2):
+        raise ValueError("future queue pressure evidence")
+    coverage = ("current" if now - observed <= timedelta(minutes=5) else "stale")
+    if source.get("queue_inventory_complete") is not True and coverage == "current":
+        coverage = "incomplete"
+    totals, samples = source.get("totals"), source.get("high_churn_samples")
+    if not isinstance(totals, dict) or not isinstance(samples, list) or len(samples) > 20:
+        raise ValueError("queue pressure report bounds invalid")
+    safe_totals = {}
+    for name in ("active_items","queued_items","owned_items","high_claim_attempt_items",
+                 "ten_plus_claim_attempt_items","expired_owner_lease_rows",
+                 "invalid_record_rows","max_claim_attempts"):
+        value = totals.get(name)
+        if type(value) is not int or not 0 <= value <= 10**9:
+            raise ValueError("queue pressure total invalid")
+        safe_totals[name] = value
+    if (safe_totals["queued_items"] + safe_totals["owned_items"] != safe_totals["active_items"]
+            or safe_totals["high_claim_attempt_items"] > safe_totals["active_items"]
+            or safe_totals["ten_plus_claim_attempt_items"] > safe_totals["high_claim_attempt_items"]
+            or safe_totals["expired_owner_lease_rows"] > safe_totals["owned_items"]):
+        raise ValueError("queue pressure totals incoherent")
+    safe_samples=[]
+    for row in samples:
+        if not isinstance(row,dict):
+            raise ValueError("queue sample not an object")
+        ref,pid,title = row.get("queue_ref"),row.get("project_id"),row.get("title")
+        count = row.get("claim_attempts")
+        if (not isinstance(ref,str) or not re.fullmatch("[0-9a-f]{16}",ref)
+                or not isinstance(pid,str) or not SLUG.fullmatch(pid)
+                or not isinstance(title,str) or len(title)>180 or any(ord(c)<32 for c in title)
+                or row.get("priority") not in PRIORITY
+                or row.get("status") not in ("queued","claimed","running","verifying")
+                or type(count) is not int or not 0<=count<=10**9
+                or type(row.get("owner_lease_expired_observed")) is not bool):
+            raise ValueError("invalid queue sample")
+        safe_samples.append({
+            "queue_ref":ref, "project_id":pid, "title":title,
+            "priority":row["priority"], "status":row["status"],
+            "claim_attempts":count,
+            "owner_lease_expired_observed":row["owner_lease_expired_observed"],
+            "action":("Ask authorized owner to review expired lease; do not remove claim."
+                     if row["owner_lease_expired_observed"] else
+                     "Inspect claim churn; attempts are NOT failures or retry permits.")
+        })
+    return {"coverage":coverage,"observed_at":utc_string(observed),
+            "totals":safe_totals,"samples":safe_samples if coverage=="current" else [],
+            "claim_ownership_verified":False}
+
+
 def plan(bundle, previous=None, now=None):
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
@@ -592,6 +653,7 @@ def plan(bundle, previous=None, now=None):
     capacity = vps_capacity(bundle, now)
     routes, claims_verified = eligible_tasks(bundle, blocked, now, capacity)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
+    queue_triage = queue_pressure_summary(bundle.get("queue_pressure"), now)
     # Candidate feed for an authorized watch/notifier integrator, NOT a push.
     # Stable ids allow the downstream delivery system to dedupe independently.
     # Preserve strict human-only categorization and never expose raw job logs,
@@ -629,6 +691,7 @@ def plan(bundle, previous=None, now=None):
                                        if v["status"] == "not_observed_needs_reconciliation"),
         "independent_task_suggestions": routes,
         "open_product_issue_triage": issue_triage,
+        "live_queue_pressure": queue_triage,
     }, {"schema_version": 1, "incidents": next_state}
 
 
@@ -656,6 +719,14 @@ def operator_text(result):
     if result.get("reconciled_exact_jobs"):
         lines.append("Exact GitHub jobs source-reconciled (no runtime proof): " +
                      str(len(result["reconciled_exact_jobs"])))
+    queue_report = result["live_queue_pressure"]
+    lines.append("Read-only queue pressure: " + queue_report["coverage"])
+    if queue_report["totals"]:
+        values = queue_report["totals"]
+        lines.append("Queued " + str(values["queued_items"]) + " · Owned " +
+                     str(values["owned_items"]) + " · High claim attempts " +
+                     str(values["high_claim_attempt_items"]) + " · Expired leases " +
+                     str(values["expired_owner_lease_rows"]))
     lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
                  " / " + result["vps_resource_admission"]["reason"])
     triage = result["open_product_issue_triage"]
