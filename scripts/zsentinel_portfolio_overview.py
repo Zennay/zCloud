@@ -311,6 +311,9 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             "inspect_claim_churn_no_auto_retry": "Onderzoek claimchurn; geen retry",
             "github_source_not_scanned_next_window": "GitHub onbekend; volgend venster",
             "github_source_unavailable_no_all_clear": "Bronfout: opnieuw via geautoriseerde route",
+            "branch_overlap_needs_owner": "RECENTE BRANCHOVERLAP: eigenaar + PR-scope controleren",
+            "branch_inventory_partial": "PR-loze branchbron onvolledig: geen vrijgave",
+            "branch_scope_not_provided": "Geen actuele padscope: overlap onbekend",
             "inspect_open_issue_pr_and_exact_ci_gates": "Bekijk issues, PR en exacte CI",
         }.get(row["next_action"])
         if action_text is None:
@@ -449,6 +452,15 @@ def main():
             branches = inventory(
                 registry[args.inspect_unpr_branches], token=os.environ.get("GITHUB_TOKEN"),
                 prefix=args.branch_prefix, current_paths=args.current_path)
+            project_row = next(
+                row for row in summary["rows"]
+                if row["project_id"] == args.inspect_unpr_branches)
+            if branches["potential_overlap_observed"]:
+                project_row["next_action"] = "branch_overlap_needs_owner"
+            elif branches["coverage"] != "bounded_complete":
+                project_row["next_action"] = "branch_inventory_partial"
+            elif not branches["current_paths_known"]:
+                project_row["next_action"] = "branch_scope_not_provided"
             if (args.require_clear_unpr_slice
                     and not branches["recent_branch_slice_no_overlap_observed"]):
                 # This asserts only no overlap in one verified branch slice.
