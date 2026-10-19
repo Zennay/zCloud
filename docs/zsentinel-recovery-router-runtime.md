@@ -75,8 +75,12 @@ maximaal 30 dagen oud en niet later dan de nieuwe waarneming). De CLI maakt
 zelf geen historydatabase, cron, automatische alert of watch-taak aan.
 
 De offline cockpit toont **nieuw in de steekproef** (geen bewijs van
-een nieuw issue), **veranderde prioriteit/PR-verwijzing, geobserveerde
-PR-SHA of opvolgactie**, en **eerder gezien maar nu buiten de steekproef**.
+een nieuw issue), **veranderde prioriteit/PR-verwijzing, eigenaarcontrole-
+route, geobserveerde PR-SHA of opvolgactie**, en **eerder gezien maar nu
+buiten de steekproef**. Wanneer beide snapshots expliciet over geldige
+Notion-statusbronnen beschikken en positieve ondergrenzen tonen, wordt
+ook een gewijzigde *Notion actief-werk ondergrens* weergegeven; afwezig
+blijft `ONBEKEND`, nooit "0 werk" of "claim vrij".
 Ook de laatste categorie betekent *nooit* dat een issue gesloten of
 hersteld is; de machineleesbare bron zet `closed_issues_verified=0`.
 Als de nieuwe GitHub-bron **helemaal niet bereikbaar is**, wordt zelfs
