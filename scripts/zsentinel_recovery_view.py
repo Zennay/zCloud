@@ -210,6 +210,17 @@ def html_view(decision):
         raise ValueError("unverified VPS capacity summary")
     vps_state = phrase(capacity["state"], 32)
     vps_reason = phrase(capacity.get("reason"), 100)
+    vps_origin = (live.get("vps_capacity", "unknown_not_sampled")
+                  if isinstance(live, dict) else "external_observation")
+    if vps_origin not in ("unknown_not_sampled", "same_host_readonly_opt_in",
+                          "external_observation"):
+        raise ValueError("invalid VPS source label")
+    vps_disclosure = (
+        "Expliciet lokaal op deze Linux-host gemeten; alleen VPS-evidence als dit de bedoelde VPS is."
+        if vps_origin == "same_host_readonly_opt_in" else
+        "Geen lokale VPS-meting." if vps_origin == "unknown_not_sampled"
+        else "Capaciteit komt uit apart aangeleverd bronbewijs."
+    )
     watch = decision.get("watch_alert_candidates", [])
     if not isinstance(watch, list) or len(watch) > 5:
         raise ValueError("unbounded watch candidate feed")
@@ -253,7 +264,7 @@ def html_view(decision):
             f'Actieve claims: {"volledig expliciet" if claims else "ONVOLLEDIG"} · '
             f'Menselijke horloge-alertkandidaten: {len(watch)} (niet verstuurd)</p>'
             f'<p>VPS-capaciteitsadvies: <strong>{vps_state}</strong> · {vps_reason}. '
-            'Geen VPS-startrecht.</p>'
+            f'{phrase(vps_disclosure, 180)} Geen VPS-startrecht.</p>'
             f'<p class="banner">{phrase(provenance, 420)} {phrase(warning, 600)}</p></header><main>'
             f'<section><h2>Actuele blokkades ({len(incidents)})</h2>'
             + section(primary_incidents,
