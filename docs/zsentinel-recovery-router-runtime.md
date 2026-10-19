@@ -556,6 +556,23 @@ De overzichtspagina en privéincidentenbalie delen dezelfde gesamplede GitHub-/S
 
 Een `--desk-output` dat naar hetzelfde bestand verwijst als private incidentledger of venstercursor wordt vóór de bronrequest geweigerd, inclusief padnormalisatie. Hetzelfde pad hergebruiken zonder verwijderen wordt ook geweigerd; maak een **nieuw** bestandsnaam per uitdraai. Er worden nooit extra GitHub workflow runs, runnerjobs, server-/queue-/lease-writes of automatische meldingen gestart.
 
+
+## 19 oktober · Menselijke incidentoverdracht per eigenaar
+
+De offline **zSentinel-incidentenbalie** toont nu ook een compacte, uitsluitend brongebonden groepering **wie moet actie ondernemen**. De operator kan specifiek op het bron-eigenaarlabel filteren, naast bestaande project-, prioriteit- en urgentievragen. Per eigenaar toont de balie de geobserveerde P0/P1/verder geclassificeerde incidenten, maar geen impliciete eigenaarsbevestiging of gezondheidsstatus.
+
+### Brongebonden privé Markdown-briefing
+
+In dezelfde lokale HTML staat nu **Privé briefing per eigenaar**:
+
+1. Filter naar de gewenste eigenaar/project/ernst. Alleen incidenten met `human_escalation=true` mogen in een briefing; een gewone CI-/runtime-diagnose is geen menselijke escalatie.
+2. Kies **Voorvertoning maken** en beoordeel de volledige inhoud met SHA-256-bronidentiteit, bronmoment, bron-eigenaarlabel, afzonderlijke incident-ID's, oorspronkelijke probleem/actie/status, beoordelingsdoel en lokaal toegevoegde notities.
+3. Kies daarna **Download deze briefing (.md)**. De download is gebonden aan exact dezelfde gefilterde incidenten, notities en bron. Elk gewijzigd filter of lokaal status-/notitieveld maakt de voorvertoning ongeldig, zodat onbedoelde oudere selectie niet wordt gedownload. De download wordt nooit automatisch verzonden.
+
+De uitwisseling is expliciet *menselijk en privé*: bronadvies is geen bevoegdheid om CI te retriggeren, workerclaims over te nemen, betaling te autoriseren, incidenten te sluiten, een PR te mergen of het VPS-listenerproces te herstarten. Markdown-velden worden als gewone tekst ge-escaped; HTML- en Markdown-uitvoer leiden niet naar een GitHub/Notion/API-endpoint. De voorvertoning bevat mogelijk gevoelige persoonlijke operatornotities en moet vóór delen gecontroleerd worden. De briefing blijft begrensd tot maximaal 500.000 UTF-8-bytes per export, de al begrensde maximaal 200 bronincidenten en hoogstens 800 notitietekens per incident.
+
+De oorspronkelijke privé JSON-handoff blijft beschikbaar voor latere bewerking. **Markdown-briefing is alleen bedoeld om te lezen en bewust over te dragen, nooit om automatisch terug te importeren of eigenaarschap uit af te leiden.** Bewaarde statuslabels blijven lokale operatornotities; de exacte-head release- en claimgrenzen staan los van deze rapportage.
+
 ### Release boundary
 
 The script is useful offline immediately after a source checkout. It is **not running autonomously in production** until an authorized integration owner connects a complete read-only source collector, controls private state storage, coordinates conflict-free live claim acquisition, and promotes the reviewed, exact-head CI-approved change through the existing serialized zCloud release gate. Self-hosted runner [P0 #1326](https://github.com/Zennay/zCloud/issues/1326) and private hosted account admission [#1523](https://github.com/Zennay/zCloud/issues/1523) remain separate human-controlled incidents; neither is fixed or bypassed by this script. No QA suite was created or manually executed for this change.
