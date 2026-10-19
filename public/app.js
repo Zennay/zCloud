@@ -1883,6 +1883,20 @@ function exportZSentinelHandoff(){
     for(const item of rows.slice(0,8))lines.push('- '+clean(item.priority,4)+' '+clean(item.project_id,56)+
       ': candidate, unclaimed; ID withheld from export');
   }else lines.push('Queue admission source unavailable; no capacity or worker ownership inferred.');
+  lines.push('', '## GitHub delivery pulse (bounded source events in last 24h)', '');
+  const pulse=zSentinelDeliveryPulseSummary(IMPORTED_GITHUB_ACTIVITY,projects,filter);
+  lines.push('Canonical sources observed: '+pulse.covered.length+
+    ' · '+(pulse.completeSample?'all observed provider requests recently readable':
+      'source coverage PARTIAL, STALE OR UNKNOWN; events not authoritative totals'));
+  for(const kind of ['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']){
+    lines.push('- '+kind+': '+(IMPORTED_GITHUB_ACTIVITY?
+      pulse.counts[kind]:'UNKNOWN')+' observed bounded events');
+  }
+  lines.push('A GitHub PR merge does not prove live deployment. No event is a verified worker claim.');
+  for(const row of pulse.reportedMerges){
+    lines.push('- GitHub-reported PR merge '+clean(row.project,56)+
+      ' · '+clean(row.ts,40)+' · '+row.url);
+  }
   lines.push('', '## Independent existing GitHub observations (bounded)', '');
   const recent=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(item=>
     projects.has(item.project)&&(!filter||item.project===filter)).slice(0,30);
@@ -1921,7 +1935,7 @@ function exportZSentinelHandoff(){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
-function zSentinelDeliveryPulse(github,visible,focus){
+function zSentinelDeliveryPulseSummary(github,visible,focus){
   const validKinds=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']);
   const events=(github?.events||[]).filter(row=>row&&visible.has(row.project)
     &&(!focus||focus===row.project)&&validKinds.has(row.kind)
@@ -1940,6 +1954,11 @@ function zSentinelDeliveryPulse(github,visible,focus){
     &&Date.now()-Date.parse(row.observedAt)<=6*3600000);
   const reportedMerges=events.filter(row=>row.kind==='pr_merged')
     .sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,5);
+  return {events,recent,counts,covered,completeSample:!!completeSample,reportedMerges};
+}
+function zSentinelDeliveryPulse(github,visible,focus){
+  const {counts,covered,completeSample,reportedMerges}=
+    zSentinelDeliveryPulseSummary(github,visible,focus);
   const latest=reportedMerges.map(row=>'<div class="service-row"><div>'+
     '<a href="'+esc(row.url)+'" target="_blank" rel="noopener noreferrer">'+
     esc(row.project)+' · '+esc(row.description)+'</a></div>'+
