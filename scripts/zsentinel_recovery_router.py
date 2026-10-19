@@ -246,7 +246,20 @@ def eligible_tasks(bundle, blocked, now):
             "action": "Offer to an available owner; recheck live claims immediately before any write."
         })
     recommendations.sort(key=lambda item: (PRIORITY[item["priority"]], item["project_id"], item["id"]))
-    return recommendations[:MAX_RECOMMENDATIONS], complete
+    # Do not offer two mutually overlapping next tasks just because neither
+    # collides with a CURRENT active claim. Higher-priority work owns the
+    # proposal slot until an authorized controller chooses and rechecks it.
+    disjoint = []
+    for candidate in recommendations:
+        if any(candidate["project_id"] == existing["project_id"] and
+               any(paths_overlap(path, held) for path in candidate["paths"]
+                   for held in existing["paths"])
+               for existing in disjoint):
+            continue
+        disjoint.append(candidate)
+        if len(disjoint) == MAX_RECOMMENDATIONS:
+            break
+    return disjoint, complete
 
 
 def triage_issue_inbox(inbox, now):
