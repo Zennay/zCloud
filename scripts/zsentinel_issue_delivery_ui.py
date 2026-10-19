@@ -298,13 +298,25 @@ followupDownload.addEventListener("click",()=>{
     feedback.textContent="Bron is verouderd; maak een nieuwe voorvertoning.";
     return;
   }
-  // Separate user-controlled local save, never an API/claim writer.
+  // Export only intentionally edited notes/decisions. A portfolio may
+  // contain 144 issues, but private continuity remains capped at 24.
   const entries=boardItems.map(item=>({
     issue_url:item.dataset.issueUrl,
     project_id:item.dataset.project,
     followup:item.querySelector("[data-local-followup]").value,
     note:item.querySelector("[data-local-note]").value.slice(0,300)
-  }));
+  })).filter(record=>record.note.trim()!=""||
+             record.followup!="nog-niet-beoordeeld");
+  if(!entries.length){
+    feedback.textContent="Nog geen eigen notities of opvolgkeuzes om te bewaren.";
+    return;
+  }
+  if(entries.length>24){
+    feedback.textContent=entries.length+
+      " gewijzigde items; maximaal 24 privénotities per export. " +
+      "Gebruik een kleinere selectie of meerdere herstelmomenten.";
+    return;
+  }
   const receipt={
     schema:"zsentinel-private-followups-v1",
     source_observed_at:document.body.dataset.observedAt,
