@@ -828,7 +828,7 @@ def main():
     parser = argparse.ArgumentParser(description="zSentinel bounded incident dedup and independent work router")
     parser.add_argument("bundle", help="trusted JSON evidence + tasks + active-claim inventory")
     parser.add_argument("--state", help="optional private local incident dedup ledger (JSON)")
-    parser.add_argument("--format", choices=("json", "text", "html", "ics"), default="text")
+    parser.add_argument("--format", choices=("json", "text", "html", "ics", "desk"), default="text")
     args = parser.parse_args()
     try:
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
@@ -841,6 +841,9 @@ def main():
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(output)
+        elif args.format == "desk":
+            from zsentinel_incident_desk import review_html
+            rendered = review_html(output)
         else:
             rendered = (json.dumps(output, sort_keys=True, indent=2)
                         if args.format == "json" else operator_text(output))
