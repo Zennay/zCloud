@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from urllib.parse import quote
@@ -152,6 +153,8 @@ def observe_prs(registry, selections, token=None):
     seen = set()
     items = []
     calls = 0
+    rate_limited = False
+    observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for row in selections:
         if not isinstance(row, dict) or set(row) != {"project_id", "pr_number"}:
             raise ValueError("invalid PR selection row")
@@ -169,6 +172,11 @@ def observe_prs(registry, selections, token=None):
             "action_authorized": False, "merge_authorized": False,
             "deploy_authorized": False, "owner_verified": False,
         }
+        if rate_limited:
+            item["coverage"] = "not_queried_after_auth_or_rate_limit"
+            item["next_step"] = "verify_pr_source_with_owner"
+            items.append(item)
+            continue
         try:
             calls += 1
             pr = bounded_get(base_url + "/pulls/" + str(number), token)
@@ -291,6 +299,8 @@ def observe_prs(registry, selections, token=None):
                 next_step = "confirm_branch_protection_and_release_with_owner"
             item["next_step"] = next_step
         except (OSError, ValueError, TypeError, KeyError) as exc:
+            if str(exc) == "github_permission_or_rate_limit":
+                rate_limited = True
             # Partially observed checks or a moved source HEAD cannot be
             # displayed as current readiness. Keep only the safe PR link.
             for field in ("ci", "reviews", "head_sha", "base_sha"):
@@ -303,6 +313,7 @@ def observe_prs(registry, selections, token=None):
         "schema": "zsentinel-pr-delivery-desk-v1",
         "source": "github_canonical_readonly_bounded_pr_gets",
         "items": items, "request_count": calls,
+        "observed_at_utc": observed_at,
         "maximum_requests": MAX_CALLS,
         "merge_authorized": False, "deploy_authorized": False,
         "owner_verified": False, "writes_performed": False,
@@ -400,7 +411,13 @@ def pr_delivery_html(report):
                                'volledige backlog of herstel bewezen.</p></details>')
         elif coverage not in ("not_requested", "not_requested_capacity_full"):
             raise ValueError("invalid open PR discovery status")
-    return ('<section><h2>Bestaande PR’s afronden · exacte bronstatus</h2>'
+    at = report.get("observed_at_utc")
+    if at is not None and (type(at) is not str or len(at) > 40):
+        raise ValueError("untrusted PR source observation clock")
+    clock = ('<p class="muted">GitHub-bronmoment UTC: ' + escape(at) +
+             '. Een latere GitHub-wijziging kan dit overzicht verouderen.</p>'
+             if at else "")
+    return ('<section><h2>Bestaande PR’s afronden · exacte bronstatus</h2>' + clock +
             '<p class="banner">Eerst bestaande code integreren. Alleen-lezen bronstatus voor maximaal 3 '
             'expliciet gekozen of beperkt ontdekte PR’s; geen compleet check-/review-overzicht, '
             'geen toestemmings- of eigendomsbewijs.</p>' + discovery_panel +
