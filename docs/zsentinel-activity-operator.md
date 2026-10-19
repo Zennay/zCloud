@@ -461,6 +461,46 @@ separate ownership takeover or a production deployment. Source pin updated,
 normal exact-head CI/review and serialized deployment gates unchanged.
 No standalone QA or regression suite authored or invoked.
 
+## Public GitHub PR/CI/main events actually reach the unified timeline (#1518)
+
+The existing explicit **Read public GitHub** path already fetched PR lifecycle,
+Actions runs and main commits, but its browser-produced records had **no
+`id` field**. The unified `combinedActivityRows()` source contract
+rightly discards rows with no stable provider ID. Consequently, publicly
+fetched GitHub progress could appear in the separate evidence panel while
+being silently absent from **Project timeline · VPS + GitHub**.
+
+This source fix makes each authorized operator-requested public observation
+emit an immutable namespaced GitHub identity, derived strictly from its
+validated canonical GitHub URL and event type:
+
+- PR created, updated, merged or closed **without** merge:
+  `github:Zennay/<repo>:<pr_kind>:<PR number>`
+- CI run: `github:Zennay/<repo>:ci_run:<run number>`
+- Main commit: `github:Zennay/<repo>:main_commit:<40-hex SHA>`
+
+The same identity convention is used by strict operator-imported GitHub
+receipts. It avoids a fuzzy title/date join, retains distinct PR create,
+update, merge and closed-unmerged events, and allows only **exact SHA +
+canonical project** to coalesce an independently observed local commit with
+a GitHub main commit. A merged PR is not deployment evidence; a closed PR
+without a merge is not counted as delivered code.
+
+On a second successful, comparable bounded three-source GitHub read, event
+identity also enables conservative **first observed in this bounded sample**
+labels. This is **not proof the underlying branch/PR was created since the
+last read**. A failed, partial, private or rate-limited read never supplies
+authoritative 'new since last' coverage. Older known observations retain
+explicit source lag as before.
+
+All reads remain existing operator-initiated unauthenticated public GitHub
+GETs with per-project anti-burst budgets. The UI does not auto-poll PRs,
+query private branches, access tokens or update the server/worker/queue.
+Only `public/app.js`, its exact `public/index.html` source pin and the
+operator documentation were changed. Integration and release gates are still
+the normal exact-head required CI, independent review and owner-approved
+serialized deployment, not a source-only green claim.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
