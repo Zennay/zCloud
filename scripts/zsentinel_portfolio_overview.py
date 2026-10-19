@@ -226,7 +226,11 @@ def branch_ownership_html(source):
             or repo.count("/") != 1):
         raise ValueError("invalid canonical repository for branch report")
     cards = []
-    for entry in source["recent_candidates"]:
+    ordered_branches = sorted(source["recent_candidates"],
+                              key=lambda x: (not x.get("potential_overlap", False),
+                                             -x.get("ahead_by", 0),
+                                             str(x.get("branch", ""))))
+    for entry in ordered_branches:
         if (not isinstance(entry, dict) or entry.get("owner_verified") is not False
                 or entry.get("claim_authorized") is not False
                 or not isinstance(entry.get("branch"), str)
@@ -261,7 +265,11 @@ def branch_ownership_html(source):
     return (
         '<section><h2>Recente branches zonder open PR · read-only</h2>'
         '<p class="banner">Brondekking: ' + escape(source["coverage"]) +
-        '. Een oude branch is geen actieve eigenaar; ontbrekende '
+        ' · recente kandidaten: ' + str(source["recent_candidate_count"]) +
+        ' · mogelijke padbotsingen: ' +
+        str(sum(x["potential_overlap"] for x in source["recent_candidates"])) +
+        '. Mogelijke botsingen staan bovenaan. '
+        'Een oude branch is geen actieve eigenaar; ontbrekende '
         'of afgekapt bronbewijs is nooit bewijs van vrije scope. '
         'Geen automatische claimvrijgave of overname.</p>'
         '<div class="grid">' +
