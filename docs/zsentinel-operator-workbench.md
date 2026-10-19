@@ -136,3 +136,15 @@ truncation/denial flags are false. Therefore *no longer observed* must never
 be relabeled as *closed*, *resolved*, *delivered* or *free for assignment*.
 The historical comparison does not have live issue/PR/claim authority and
 cannot replace fresh GitHub+Notion owner checks.
+
+### Original issue titles in the delivery cockpit
+
+The board already contains bounded original GitHub issue titles, but the
+Workbench previously displayed only opaque repository issue IDs. The
+current cockpit now renders the **original public issue title** beside
+the canonical ID in the priority queue, issue list and detail view, and
+includes it in local text searches and previewed private Markdown
+handoffs. Titles must be nonempty, at most 180 characters and validated
+before the page is generated. UI strings are inserted only as DOM text;
+the Markdown preview uses the same length/control/HTML-delimiter cleaning
+as operator notes. Titles never establish assignee or action authority.
