@@ -521,6 +521,8 @@ def main():
     parser.add_argument("--read-notion-claims", action="store_true")
     parser.add_argument("--notion-data-source")
     parser.add_argument("--observe-vps-capacity", action="store_true")
+    parser.add_argument("--observe-local-runner", action="store_true",
+                        help="read-only bounded Linux /proc inspection of canonical zCloud listener/worker processes")
     parser.add_argument("--worker-events-database", type=Path,
                         help="optional existing history.db: indexed read-only worker progress, no worker claim/commands")
     parser.add_argument("--inspect-unpr-branches",
@@ -553,8 +555,8 @@ def main():
         if args.github_only:
             if args.database is not None:
                 raise ValueError("--github-only requires omitting --database")
-            if args.observe_vps_capacity:
-                raise ValueError("--github-only cannot infer database-mounted VPS capacity")
+            if args.observe_vps_capacity or args.observe_local_runner:
+                raise ValueError("--github-only cannot infer local VPS runtime process or capacity evidence")
         elif args.database is None:
             raise ValueError("--database is required unless --github-only was chosen")
         if args.pin_issue and args.skip_github_issues:
@@ -651,6 +653,11 @@ def main():
         # advancing the optional private dedup ledger. A failed HTML view or
         # corrupt source must not silently consume an incident notification.
         decision["private_ledger_written"] = bool(args.state)
+        local_runner = None
+        if args.observe_local_runner:
+            from zsentinel_local_runner_observer import observe_local_runner
+            local_runner = observe_local_runner()
+            decision["local_runner_observation"] = local_runner
         github_coverage = verified_source_coverage(selected, provenance, bundle)
         summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
         attempts = coverage_history(
@@ -753,6 +760,12 @@ def main():
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
                                       pr_desk=pr_desk, unblock=unblock)
+            if local_runner is not None:
+                from zsentinel_local_runner_observer import runner_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("no canonical portfolio HTML main for runner evidence")
+                rendered = rendered.replace("<main>", "<main>" +
+                                            runner_html(local_runner), 1)
             if continuity is not None:
                 from zsentinel_blocker_continuity import as_html
                 fragment = as_html(continuity).split("<main>", 1)[1].split("</main>", 1)[0]
@@ -775,6 +788,7 @@ def main():
                 "next_problem_shortlist": problem_inbox,
                 "blocker_first_handoff": unblock,
                 "blocker_continuity": continuity,
+                "local_runner_observation": local_runner,
                 "existing_pr_delivery": (pr_desk if pr_desk is not None else
                     {"coverage": "not_requested", "merge_authorized": False}),
                 "recent_unpr_branch_ownership": (
@@ -790,6 +804,9 @@ def main():
             if provenance.get("pinned_requested"):
                 lines.append(pinned_receipts_text(provenance))
             lines.append(blocker_board_text(unblock))
+            if local_runner is not None:
+                from zsentinel_local_runner_observer import runner_text
+                lines.append(runner_text(local_runner))
             if "worker_progress_observation" in decision:
                 lines.append(worker_progress_text(decision["worker_progress_observation"]))
             elif args.worker_events_database is not None:
