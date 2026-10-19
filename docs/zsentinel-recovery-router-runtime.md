@@ -19,12 +19,12 @@ python3 scripts/zsentinel_portfolio_overview.py \
   --inspect-referenced-prs --format json
 ```
 
-Maximaal drie PR's per operatoractie en **drie extra GitHub-GETs per PR**:
+Maximaal drie PR's per operatoractie en **vier extra GitHub-GETs per PR**:
 exacte PR-metadata met `head.sha` en `base.sha`, de eerste 30
-check-runs **op die HEAD**, en de eerste 30 review-ontvangsten.
+check-runs **op die HEAD**, de eerste 30 review-ontvangsten, en een\nhernieuwde PR-metadataread die een tussentijdse head/base-wijziging afwijst.
 Zonder `--inspect-pr` of `--inspect-referenced-prs` zijn dit **nul**
-aanvullende verzoeken; bovenop de normale 42 maximaal 9 opt-in-GETs,
-dus samen maximaal **51** bij drie geselecteerde projecten.
+aanvullende verzoeken; bovenop de normale 42 maximaal 12 opt-in-GETs,
+dus samen maximaal **54** bij drie geselecteerde projecten.
 
 De Nederlandse operatorweergave laat per PR zien wat de eerstvolgende
 **menselijke** stap is: concept afronden; reviewverzoeken verwerken;
@@ -32,7 +32,7 @@ actuele gefaalde CI herstellen; wachten op ontbrekende checks; onafhankelijke
 review vragen; of volledige release-policy vooraf laten controleren.
 Alle selecties blijven bronsteekproeven. Een eerdere approval op een
 andere commit-SHA telt **niet** mee als exacte-head observatie.
-Afgeronde GitHub-checks met status `neutral`, `skipped` of onbekende conclusie\nblijven apart *onbeslist*; ze worden noch als geslaagde build noch als echte\ngefaaIde bronbuild gepresenteerd.\nCheck-runs zijn nooit gelijk aan alle beschermde branch-statuscontexten;
+Afgeronde GitHub-checks met status `neutral`, `skipped` of onbekende conclusie\nblijven apart *onbeslist*; ze worden noch als geslaagde build noch als echte\ngefaalde bronbuild gepresenteerd.\nDe cockpit toont bovendien namen van falende, wachtende en onbesliste\nchecks, naast een directe link naar de actuele GitHub-PR-checkpagina.\nAls een PR tijdens het ophalen wijzigt, worden de gedeeltelijk\nverzamelde checks/reviews niet als huidige head-resultaten weergegeven.\nCheck-runs zijn nooit gelijk aan alle beschermde branch-statuscontexten;
 review-paginering is niet compleet als de eerste pagina vol is.
 Daarom verklaren zelfs groene checks en één approval **nooit**
 `merge_authorized`, `deploy_authorized` of `owner_verified` waar.
