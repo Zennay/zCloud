@@ -82,8 +82,10 @@ def inventory(repo, token=None, prefix=None, current_paths=None, now=None):
         age = max(0, int((observed-timestamp.astimezone(UTC)).total_seconds() // 3600))
         paths = item.get("changed_paths")
         conflicts = item.get("overlapping_paths")
+        # A 299-file canonical compare can expose both source and
+        # destination of renamed paths: at most 598 validated path names.
         if (not isinstance(paths, list) or not isinstance(conflicts, list)
-                or len(paths) > 299 or len(conflicts) > 299):
+                or len(paths) > 598 or len(conflicts) > 598):
             raise InventoryDenied("unbounded_canonical_file_paths")
         rows.append({
             "branch": item["ref"], "head_sha": sha, "main_sha": pinned,
