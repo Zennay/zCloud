@@ -354,32 +354,37 @@ def main():
         decision["live_sources"] = provenance
         if "notion_claims_observation" in bundle:
             decision["notion_claims_observation"] = bundle["notion_claims_observation"]
-        if args.state:
-            write_json_atomic(args.state, state)
+        # Complete all source validation and output rendering before
+        # advancing the optional private dedup ledger. A failed HTML view or
+        # corrupt source must not silently consume an incident notification.
         decision["private_ledger_written"] = bool(args.state)
         github_coverage = verified_source_coverage(selected, provenance, bundle)
         summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
         if args.format == "html":
-            print(portfolio_html(summary, decision, window_index, windows))
+            rendered = portfolio_html(summary, decision, window_index, windows)
         elif args.format == "json":
-            print(json.dumps({
+            rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
                 "selection_mode": window_mode,
                 "window_count": len(windows), "selected_projects": selected,
                 "source_bound_decision": decision,
-            }, ensure_ascii=True, sort_keys=True, indent=2))
+            }, ensure_ascii=True, sort_keys=True, indent=2)
         else:
-            print("zSentinel portfolio | venster %d/%d | GitHub: %s" % (
-                window_index + 1, len(windows), ", ".join(selected)))
-            print("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
+            lines = ["zSentinel portfolio | venster %d/%d | GitHub: %s" % (
+                window_index + 1, len(windows), ", ".join(selected))]
+            lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             for row in summary["rows"]:
-                print("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s" % (
+                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
                     _count(row["notion_active_status_min"]),
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
                     _count(row["p0_p1_issue_sample_hits"]), _count(row["incident_sample_hits"]),
                     row["github_observation"]))
-            print("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
+            lines.append("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
+            rendered = "\n".join(lines)
+        if args.state:
+            write_json_atomic(args.state, state)
+        print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel portfolio overview unavailable: {exc}\n")
     return 0
