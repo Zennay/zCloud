@@ -2695,6 +2695,18 @@ function exportCombinedActivityTimeline(){
       '/'+clean(row.kind)+' · '+clean(row.summary)+
       (row.url?' · '+row.url:''));
   }
+  lines.push('','## Scoped local VPS source coverage','',
+    'The global fallback feed is not per-project coverage. Local host status is not GitHub PR/CI proof.','');
+  for(const project of (DATA?.projects||[]).slice(0,ACTIVITY_LOCAL_CACHE_LIMIT)){
+    const item=ACTIVITY_LOCAL_PROJECT_CACHE.get(project.id);
+    const failed=ACTIVITY_LOCAL_PROJECT_ERRORS.has(project.id);
+    const stale=item&&(failed||Date.now()-item.observedAt>6*3600000);
+    lines.push('- '+clean(project.id)+' · '+(item?
+      'read '+new Date(item.observedAt).toISOString()+' · '+item.rows.length+
+        ' sampled local events'+(item.limited?' (80-row local source cap)':'')+
+        (stale?' · STALE / failed refresh':''):
+      'project source NOT OBSERVED'+(failed?' · last read unavailable':'')));
+  }
   lines.push('','Missing provider coverage is unknown, not zero. An Actions run is not production proof.','');
   const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
   const url=URL.createObjectURL(blob),link=document.createElement('a');
