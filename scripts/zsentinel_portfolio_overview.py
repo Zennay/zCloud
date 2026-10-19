@@ -462,9 +462,13 @@ def main():
                         help="proposed unclaimed repository-relative scope (only for --inspect-unpr-branches)")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk"), default="html")
+    parser.add_argument("--desk-output", type=Path,
+                        help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
     window_lock = None
     try:
+        if (args.format == "desk") != (args.desk_output is not None):
+            raise ValueError("--format desk requires --desk-output; --desk-output requires desk format")
         registry = canonical_projects(args.registry)
         windows = project_windows(registry)
         previous_window_state = None
@@ -617,13 +621,17 @@ def main():
                         str(entry["potential_overlap"])))
             lines.append("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
             rendered = "\n".join(lines)
+        if args.format == "desk":
+            from zsentinel_incident_desk import write_private_html
+            write_private_html(args.desk_output, rendered)
         if args.window_state:
             # A concurrent run must never overwrite a completed scan cursor.
             advance(args.window_state, windows, registry, previous_window_state,
                     window_index, github_coverage)
         if args.state:
             write_json_atomic(args.state, state)
-        print(rendered)
+        if args.format != "desk":
+            print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel portfolio overview unavailable: {exc}\n")
     finally:
