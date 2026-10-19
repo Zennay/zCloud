@@ -50,8 +50,58 @@ def _age(value, now):
     return max(0, int(seconds))
 
 
-def _observe_slot(con, project, slot, now, desired_state, global_slot):
+def _active_queue_assignment(con, project, global_slot, now, queue_available):
+    """Observe claim/lease state for one actual allocated global slot.
+
+    No queue IDs, titles, claims, expiry timestamps or owner identity escape.
+    A running claim without a fresh unambiguous lease is NOT permission to
+    move, reset or resume the worker.
+    """
+    if global_slot is None:
+        return {"coverage": "not_currently_allocated", "current_lease": False,
+                "status": None}
+    if not queue_available:
+        return {"coverage": "queue_source_unavailable", "current_lease": False,
+                "status": None}
+    rows = con.execute(
+        "SELECT status,claim_expires FROM portfolio_queue "
+        "WHERE project_id=? AND worker_slot=? "
+        "AND status IN ('claimed','running','verifying') "
+        "ORDER BY updated_at DESC LIMIT 2",
+        (project, global_slot)).fetchall()
+    if len(rows) > 1:
+        return {"coverage": "multiple_active_claims_owner_review",
+                "current_lease": False, "status": None}
+    if not rows:
+        return {"coverage": "no_active_claim_for_slot",
+                "current_lease": False, "status": None}
+    status, expires_at = rows[0]
+    try:
+        if type(expires_at) is not str or len(expires_at) > 55:
+            raise ValueError("missing lease clock")
+        expiry = datetime.fromisoformat(
+            expires_at.replace("Z", "+00:00"))
+        if expiry.tzinfo is None or expiry.utcoffset() is None:
+            raise ValueError("lease timezone missing")
+        seconds = (expiry.astimezone(UTC) - now).total_seconds()
+        current = 0 < seconds <= 7 * 86400
+    except ValueError:
+        current = False
+    return {
+        "coverage": ("bounded_current_claim" if current
+                     else "lease_expired_or_invalid_owner_recheck"),
+        "current_lease": bool(current),
+        "status": status if status in ("claimed", "running", "verifying") else None,
+    }
+
+
+def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_available):
     args = (project, slot)
+    assignment = _active_queue_assignment(
+        con, project, global_slot, now, queue_available)
+    paused_with_claim = bool(
+        desired_state == "paused" and global_slot is not None
+        and assignment["current_lease"] and assignment["status"] is not None)
     last = con.execute(
         "SELECT id,ts,event,generating,sending,progress_at,assistant_chars "
         "FROM runner_events WHERE project_id=? AND worker_slot=? "
@@ -62,11 +112,16 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot):
             "desired_state": desired_state,
             "desired_state_source_observed": desired_state != "unknown",
             "allocated_global_slot": global_slot,
+            "queue_claim_status_observed": assignment["status"],
+            "queue_assignment_coverage": assignment["coverage"],
+            "queue_lease_current_from_source": assignment["current_lease"],
             "last_event_type": None, "event_age_seconds": None,
             "progress_age_seconds": None, "assistant_character_count": None,
             "browser_generating": False, "browser_sending": False,
             "recent_block_event_after_last_prompt": False,
             "classification": (
+                "allocated_paused_with_claimed_queue_owner_gate"
+                if paused_with_claim else
                 "configured_running_no_event_evidence"
                 if desired_state == "running" and global_slot is not None
                 else "configured_not_allocated_not_a_stalled_worker"
@@ -117,7 +172,9 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot):
         and (prompt is None or blocked[0] > prompt[0])
         and block_age is not None and block_age <= 900
     )
-    if desired_state == "paused":
+    if paused_with_claim:
+        state = "allocated_paused_with_claimed_queue_owner_gate"
+    elif desired_state == "paused":
         state = "configured_paused_not_incident"
     elif desired_state == "draining":
         state = "configured_draining_owner_hold"
@@ -145,6 +202,9 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot):
         "desired_state": desired_state,
         "desired_state_source_observed": desired_state != "unknown",
         "allocated_global_slot": global_slot,
+        "queue_claim_status_observed": assignment["status"],
+        "queue_assignment_coverage": assignment["coverage"],
+        "queue_lease_current_from_source": assignment["current_lease"],
         "last_event_type": event if event in SAFE_EVENT else "other_event",
         "event_age_seconds": event_age,
         "progress_age_seconds": progress_age,
