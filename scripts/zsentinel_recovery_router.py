@@ -245,6 +245,86 @@ def eligible_tasks(bundle, blocked, now):
     return recommendations[:MAX_RECOMMENDATIONS], complete
 
 
+def triage_issue_inbox(inbox, now):
+    """Reuse existing GitHub issue collector receipts without inventing ownership."""
+    if inbox is None:
+        return {"source": "not_supplied", "coverage": "unknown", "issues": []}
+    if not isinstance(inbox, dict) or inbox.get("schema") != "zsentinel-product-issue-inbox-v1":
+        raise ValueError("issue inbox schema is not canonical")
+    if (inbox.get("actions_authorized") is not False
+            or inbox.get("active_claims_verified") is not False
+            or inbox.get("queue_ownership_known") is not False):
+        raise ValueError("issue inbox cannot authorize work")
+    observed = timestamp(inbox.get("observed_at"), "issue_inbox.observed_at")
+    if observed > now + timedelta(minutes=2):
+        raise ValueError("future issue inbox observation")
+    coverage = inbox.get("coverage")
+    items = inbox.get("items")
+    if (not isinstance(coverage, list) or len(coverage) > 50
+            or not isinstance(items, list) or len(items) > 150
+            or type(inbox.get("truncated")) is not bool
+            or type(inbox.get("stopped_after_rate_or_auth_denial")) is not bool):
+        raise ValueError("issue inbox missing bounded source coverage")
+    status = "stale" if now - observed > timedelta(hours=6) else "partial"
+    observed_projects = set()
+    for entry in coverage:
+        if not isinstance(entry, dict):
+            raise ValueError("invalid issue source coverage")
+        pid = bounded_slug(entry.get("project"), "coverage.project")
+        if pid in observed_projects or entry.get("status") not in ("partial", "degraded", "unavailable"):
+            raise ValueError("duplicate or invalid issue source coverage")
+        observed_projects.add(pid)
+        if entry["status"] != "partial":
+            status = "degraded" if status != "stale" else "stale"
+    if inbox["truncated"] or inbox["stopped_after_rate_or_auth_denial"]:
+        status = "degraded" if status != "stale" else "stale"
+    issue_url = re.compile(r"^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
+    pr_url = re.compile(r"^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
+    candidates = []
+    seen = set()
+    for entry in items:
+        if not isinstance(entry, dict):
+            raise ValueError("invalid issue item")
+        url, pid = entry.get("url"), bounded_slug(entry.get("project"), "issue.project")
+        if (not isinstance(url, str) or not issue_url.fullmatch(url)
+                or pid not in observed_projects or url in seen):
+            raise ValueError("noncanonical, duplicate or uncovered issue URL")
+        seen.add(url)
+        if (entry.get("priority") not in ("P0", "P1", "P2", "Unspecified")
+                or type(entry.get("qa_only")) is not bool
+                or entry.get("active_claim") != "not_verified"):
+            raise ValueError("issue inbox cannot prove an active claim")
+        links = entry.get("related_open_prs")
+        if not isinstance(links, list) or len(links) > 3:
+            raise ValueError("malformed open PR references")
+        repo_prefix = url.rsplit("/issues/", 1)[0] + "/pull/"
+        linked = []
+        for item in links:
+            link = item.get("url") if isinstance(item, dict) else None
+            if (not isinstance(link, str) or not pr_url.fullmatch(link)
+                    or not link.startswith(repo_prefix)
+                    or item.get("active_claim") != "not_verified"):
+                raise ValueError("invalid or cross-repo PR link")
+            linked.append(link)
+        title = entry.get("title")
+        if not isinstance(title, str) or not 1 <= len(title) <= 180:
+            raise ValueError("invalid issue title")
+        if entry["priority"] not in ("P0", "P1") or entry["qa_only"]:
+            continue
+        candidates.append({
+            "project_id": pid, "priority": entry["priority"], "title": title,
+            "issue_url": url, "open_pr_candidates": sorted(set(linked)),
+            "status": "inspection_only_ownership_unverified",
+            "action": ("Review existing PR and its current owner before implementing."
+                       if linked else "Verify active claims and file scope before proposing work."),
+        })
+    candidates.sort(key=lambda x: (PRIORITY[x["priority"]], x["project_id"], x["issue_url"]))
+    return {"source": "github_readonly_issue_inbox", "coverage": status,
+            "observed_at": utc_string(observed), "issues": candidates[:8],
+            "truncated": inbox["truncated"],
+            "stopped_after_rate_or_auth_denial": inbox["stopped_after_rate_or_auth_denial"]}
+
+
 def plan(bundle, previous=None, now=None):
     now = now or datetime.now(UTC)
     if now.tzinfo is None:
@@ -339,6 +419,7 @@ def plan(bundle, previous=None, now=None):
         raise ValueError("incident ledger full; human archival/reconciliation needed")
     blocked = {"ids": blocking_ids, "gates": blocked_gates}
     routes, claims_verified = eligible_tasks(bundle, blocked, now)
+    issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     return {
         "schema_version": 1, "observed_at_utc": utc_string(now),
         "mutations_performed": False, "runner_restarted": False,
@@ -349,6 +430,7 @@ def plan(bundle, previous=None, now=None):
         "unresolved_not_observed": sum(1 for v in next_state.values()
                                        if v["status"] == "not_observed_needs_reconciliation"),
         "independent_task_suggestions": routes,
+        "open_product_issue_triage": issue_triage,
     }, {"schema_version": 1, "incidents": next_state}
 
 
@@ -365,6 +447,10 @@ def operator_text(result):
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
     if not result["claim_inventory_complete"]:
         lines.append("Claim coverage incomplete: routing suppressed.")
+    triage = result["open_product_issue_triage"]
+    lines.append("P0/P1 issue inbox: " + triage["coverage"] + " (inspection only)")
+    for issue in triage["issues"]:
+        lines.append(f"- {issue['priority']} {issue['project_id']}: {issue['title']} — {issue['issue_url']}")
     for item in result["independent_task_suggestions"]:
         lines.append(f"- {item['priority']} {item['project_id']}/{item['id']}: owner must recheck claims")
     return "\n".join(lines)
