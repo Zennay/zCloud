@@ -105,6 +105,19 @@ impliciete `self_hosted`-claim. Deze aanpassing respecteert de bestaande
 exact-job-success-reconciliatie, waarbij één geslaagde job **geen bewijs**
 van volledig runnerherstel of productie-deployment is.
 
+**Bestaande foutmeldingen worden ook brongebonden heringedeeld.** Bij een
+oude `github_job_unassigned`-ledgerregel vergelijkt de router de
+`project_id`, `run_id`, `job_id`, exacte `head_sha` en een recente
+`github_exact_run_job`-observatie. Alleen wanneer **diezelfde** job nu
+`waiting/pending` blijkt te zijn, of exact `queued` is met bewezen
+`hosted_or_custom`-labels, krijgt die specifieke regel de permanente
+status `exact_job_route_reclassified_not_runner_recovered`. Alleen de
+historische onjuiste `self_hosted`-gate op die regel wordt dan vrijgemaakt.
+Andere P0's en hun gates blijven staan; een ontbrekend bewijs geeft
+`not_observed_needs_reconciliation` en houdt blokkades vast.
+De operator ziet `reclassified_exact_jobs` expliciet als **classificatie-
+correctie, GEEN listener-/worker-/deployherstel**.
+
 Ook de oorspronkelijke `zsentinel_recovery_router.py` en
 `zsentinel_recovery_refresh.py` bouwen eerst hun volledige HTML/tekst/JSON
 op en bewaren pas daarna het optionele private incidentenregister.
