@@ -157,6 +157,7 @@ def main():
         routed["live_github_read"] = source
         if args.state:
             write_json_atomic(args.state, updated)
+        routed["private_ledger_written"] = bool(args.state)
         print(json.dumps(routed, sort_keys=True, indent=2) if args.format == "json"
               else operator_text(routed) + "\nGitHub coverage: " + source["github_coverage"])
     except (OSError, ValueError, TypeError, KeyError) as exc:
