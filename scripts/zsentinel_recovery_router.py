@@ -451,6 +451,7 @@ def triage_issue_inbox(inbox, now):
         seen.add(url)
         if (entry.get("priority") not in ("P0", "P1", "P2", "Unspecified")
                 or type(entry.get("qa_only")) is not bool
+                or type(entry.get("pinned_exact_issue_read", False)) is not bool
                 or entry.get("active_claim") != "not_verified"):
             raise ValueError("issue inbox cannot prove an active claim")
         links = entry.get("related_open_prs")
@@ -477,6 +478,7 @@ def triage_issue_inbox(inbox, now):
         candidates.append({
             "project_id": pid, "priority": entry["priority"], "title": title,
             "issue_url": url, "open_pr_candidates": sorted(set(linked)),
+            "pinned_exact_issue_read": entry.get("pinned_exact_issue_read", False),
             "status": "inspection_only_ownership_unverified",
             "action": ("Review existing PR and its current owner before implementing."
                        if linked else "Verify active claims and file scope before proposing work."),
@@ -491,6 +493,7 @@ def triage_issue_inbox(inbox, now):
         by_tier_project.setdefault((item["priority"], item["project_id"]), []).append(item)
     for values in by_tier_project.values():
         values.sort(key=lambda item: (
+            0 if item["pinned_exact_issue_read"] else 1,
             0 if item["open_pr_candidates"] else 1, item["issue_url"]
         ))
     balanced = []
