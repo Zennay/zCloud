@@ -54,7 +54,7 @@ def parse_jobs(raw, names):
 
 
 def assemble(registry, selected, jobs, queue_path, token=None,
-             include_issues=True, include_ci_discovery=True):
+             include_issues=True, include_ci_discovery=True, observe_vps=False):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
@@ -86,7 +86,14 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         "claim_inventory_complete": False,
         "queue_pressure": queue,
     }
+    if observe_vps:
+        # Only a deliberate operator invocation on the intended Linux VPS
+        # may supply local capacity. This never authorizes a worker or runner.
+        from zsentinel_vps_resource_observer import observe_vps_capacity
+        bundle["resources"] = observe_vps_capacity(queue_path)
     source = {
+        "vps_capacity": ("same_host_readonly_opt_in" if observe_vps
+                         else "unknown_not_sampled"),
         "queue": "sqlite_readonly_live_observation",
         "notion": "not_observed_no_ownership_claim",
         "runtime": "not_observed_no_worker_recovery_claim",
@@ -124,6 +131,8 @@ def main():
                         help="canonical project ID, repeat up to three times")
     parser.add_argument("--job", action="append", default=[],
                         help="optional PROJECT:RUN_ID:JOB_ID:EXACT_HEAD_SHA")
+    parser.add_argument("--observe-vps-capacity", action="store_true",
+                        help="read current Linux host CPU/load/memory and database-mount disk; use ONLY on the intended VPS")
     parser.add_argument("--skip-ci-discovery", action="store_true",
                         help="disable default bounded GitHub queued/failed job discovery")
     parser.add_argument("--skip-github-issues", action="store_true",
@@ -139,6 +148,7 @@ def main():
             token=os.environ.get("GITHUB_TOKEN"),
             include_issues=not args.skip_github_issues,
             include_ci_discovery=not args.skip_ci_discovery,
+            observe_vps=args.observe_vps_capacity,
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
