@@ -129,7 +129,11 @@ def human_calendar(decision):
             "DTEND:" + (review + timedelta(minutes=15)).strftime("%Y%m%dT%H%M%SZ"),
             "SUMMARY:" + summary, "DESCRIPTION:" + description,
             "STATUS:TENTATIVE", "CLASS:PRIVATE", "TRANSP:TRANSPARENT",
-            "END:VEVENT",
+            # The receiving calendar MAY show a private reminder, but no
+            # notification is sent by zSentinel. Import is always voluntary.
+            "BEGIN:VALARM", "ACTION:DISPLAY", "TRIGGER:-PT15M",
+            "DESCRIPTION:" + _calendar_text("zSentinel menselijke beoordeling: " + pid),
+            "END:VALARM", "END:VEVENT",
         ]
     if not alerts:
         lines.append("X-ZSENTINEL-COVERAGE:NO-HUMAN-ACTION-CANDIDATES-IN-BOUNDED-SAMPLE")
