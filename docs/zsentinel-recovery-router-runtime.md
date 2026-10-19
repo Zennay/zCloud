@@ -1,5 +1,48 @@
 # zSentinel · Runtime incident router (product-only)
 
+## Echte voortgang tussen twee bronmomenten (19 oktober)
+
+Met `scripts/zsentinel_issue_progress.py` ondersteunt het zelfstandige
+herstelbord nu een expliciet lokaal bewaarde **vorige JSON-momentopname**.
+De gebruikersbediening vergelijkt maximaal 24 bronissues per gekozen
+venster van maximaal drie canonieke projecten, nooit een volledige
+GitHub-backlog. Hetzelfde venster en exact dezelfde volgorde van projecten
+is verplicht; afwijkende of onbetrouwbare bronidentiteit wordt geweigerd.
+
+```sh
+# Eerste bronmoment: uitsluitend zelfbewuste privé-export naar lokale JSON.
+umask 077
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud --format json > /private/operator-only/zsentinel-issues-eerder.json
+
+# Tweede bronmoment, wanneer er nieuwe informatie beschikbaar is:
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud \
+  --previous /private/operator-only/zsentinel-issues-eerder.json \
+  --format html > /private/operator-only/zsentinel-issues-verandering.html
+
+# Of compacte machineleesbare bronverschillen:
+python3 scripts/zsentinel_issue_delivery.py \
+  --project cloud \
+  --previous /private/operator-only/zsentinel-issues-eerder.json \
+  --format json > /private/operator-only/zsentinel-issues-met-verandering.json
+```
+
+De vorige JSON wordt alleen op expliciet opgegeven pad read-only ingelezen
+(maximaal 512 KiB, reguliere file, geen symlink, duplicate keys verboden,
+maximaal 30 dagen oud en niet later dan de nieuwe waarneming). De CLI maakt
+zelf geen historydatabase, cron, automatische alert of watch-taak aan.
+
+De offline cockpit toont **nieuw in de steekproef** (geen bewijs van
+een nieuw issue), **veranderde prioriteit/PR-verwijzing, geobserveerde
+PR-SHA of opvolgactie**, en **eerder gezien maar nu buiten de steekproef**.
+Ook de laatste categorie betekent *nooit* dat een issue gesloten of
+hersteld is; de machineleesbare bron zet `closed_issues_verified=0`.
+Onvolledige bronvensters en oudere momentopnames degraderen zekerheid,
+ze authoriseren nooit claim, automatische retry, merge of productieactie.
+De browser heeft een extra filter voor bronverandering en neemt de
+bewuste vergelijking op in een lokale handmatige overdracht.
+
 ## Productissues direct naar een bruikbaar herstelwerkbord (19 oktober)
 
 Het nieuwe standalone `scripts/zsentinel_issue_delivery.py` werkt zonder
