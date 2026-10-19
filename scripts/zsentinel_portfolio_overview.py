@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from html import escape
@@ -24,6 +25,7 @@ from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic, acquire_private_ledger_lock
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html
+from zsentinel_pr_delivery import observe_prs, pr_delivery_html
 from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
 
 
@@ -348,7 +350,7 @@ def phrase_route(value):
     }.get(value) or "ONBEKEND"
 
 
-def portfolio_html(summary, decision, window_index, windows, branch_inventory=None, problem_inbox=None):
+def portfolio_html(summary, decision, window_index, windows, branch_inventory=None, problem_inbox=None, pr_desk=None):
     if (not isinstance(summary, dict)
             or summary.get("schema") != "zsentinel-portfolio-overview-v1"
             or summary.get("actions_performed") is not False
@@ -465,6 +467,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         raise ValueError("incompatible underlying offline operator view")
     return raw.replace("<main>", "<main>" +
                        (problems_html(problem_inbox) if problem_inbox is not None else "") +
+                       (pr_delivery_html(pr_desk) if pr_desk is not None else "") +
                        table + branch_ownership_html(branch_inventory), 1)
 
 
@@ -489,6 +492,10 @@ def main():
     parser.add_argument("--branch-prefix", help="optional exact branch prefix for source-limited branch inspection")
     parser.add_argument("--current-path", action="append", default=[],
                         help="proposed unclaimed repository-relative scope (only for --inspect-unpr-branches)")
+    parser.add_argument("--inspect-pr", action="append", default=[],
+                        help="read-only exact-head PR review/CI: PROJECT:NUMBER; at most three in selected window")
+    parser.add_argument("--inspect-referenced-prs", action="store_true",
+                        help="sample up to three existing PRs linked in the current P0/P1 product issue shortlist")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk"), default="html")
     parser.add_argument("--desk-output", type=Path,
