@@ -188,7 +188,25 @@ def observe_worker_progress(database, projects, *, now=None):
         worker_columns = {r[1] for r in con.execute("PRAGMA table_info(runner_workers)")}
         if not {"project_id", "worker_slot", "desired_state"}.issubset(worker_columns):
             raise ValueError("worker desired_state source missing; cannot classify paused workers")
+        slot_columns = {r[1] for r in con.execute("PRAGMA table_info(ai_global_slots)")}
+        if not {"slot", "project_id", "worker_slot"}.issubset(slot_columns):
+            raise ValueError("global slot allocation source missing; no active-worker claim")
         con.execute("BEGIN")
+        # This is the existing *slot assignment*, not an active queue lease.
+        # Limit the total cardinality and never follow unowned conversation IDs.
+        allocations = con.execute(
+            "SELECT slot,project_id,worker_slot FROM ai_global_slots "
+            "ORDER BY slot LIMIT 33").fetchall()
+        if len(allocations) > 32:
+            raise ValueError("global worker assignment source exceeds bounded cardinality")
+        global_slots = {}
+        for global_slot, pid, worker_slot in allocations:
+            if (type(global_slot) is not int or not 1 <= global_slot <= 32
+                    or type(pid) is not str or not PROJECT.fullmatch(pid)
+                    or type(worker_slot) is not int or not 1 <= worker_slot <= 16
+                    or (pid, worker_slot) in global_slots):
+                raise ValueError("invalid current global slot assignment source")
+            global_slots[(pid, worker_slot)] = global_slot
         for pid in projects:
             configured = con.execute(
                 "SELECT worker_slot,desired_state FROM runner_workers "
@@ -204,16 +222,19 @@ def observe_worker_progress(database, projects, *, now=None):
                 if type(slot) is int and 1 <= slot <= 16:
                     desired[slot] = (value if value in ("running", "paused", "draining")
                                      else "unknown")
-            slots = sorted(set(desired) | {
-                slot for (slot,) in events if type(slot) is int and 1 <= slot <= 16
-            })
+            slots = sorted(
+                set(desired)
+                | {slot for (slot,) in events if type(slot) is int and 1 <= slot <= 16}
+                | {slot for (project, slot) in global_slots if project == pid}
+            )
             if not slots:
                 missing.append(pid)
             if len(slots) > MAX_SLOTS or len(configured) > MAX_SLOTS or len(events) > MAX_SLOTS:
                 truncated.append(pid)
             for slot in slots[:MAX_SLOTS]:
                 entries.append(_observe_slot(
-                    con, pid, slot, observed, desired.get(slot, "unknown")))
+                    con, pid, slot, observed, desired.get(slot, "unknown"),
+                    global_slots.get((pid, slot))))
         con.execute("COMMIT")
     finally:
         con.close()
@@ -229,6 +250,7 @@ def observe_worker_progress(database, projects, *, now=None):
         "unobserved_project_ids": missing,
         "truncated_project_ids": truncated,
         "event_inventory_complete": False,
+        "global_slot_assignment_observed": True,
         "live_worker_claims_verified": False,
         "worker_resumed_verified": False,
         "actions_performed": False,
