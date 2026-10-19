@@ -300,6 +300,46 @@ def html_view(decision):
                            if runner_route_cards else
                            '<p class="empty">Geen exacte runnerlabels uitgelezen; '
                            'runnerstatus niet geverifieerd.</p>') + '</section>')
+    discovery_panel = ""
+    discovery = live.get("ci_discovery") if isinstance(live, dict) else None
+    if isinstance(discovery, dict) and discovery.get("source") == "github_canonical_readonly_bounded_discovery":
+        rows = discovery.get("coverage")
+        windows = discovery.get("run_windows")
+        if (not isinstance(rows, list) or len(rows) > 3
+                or windows != ["queued", "in_progress", "failure"]
+                or discovery.get("full_repo_ci_inventory") is not False):
+            raise ValueError("noncanonical bounded GitHub workflow window receipt")
+        labels = {
+            "queued": "Wachtende workflow",
+            "in_progress": "Al lopende workflow, maar job nog wachtend",
+            "failure": "Afgeronde mislukte workflow",
+        }
+        cards = []
+        for row in rows:
+            if (not isinstance(row, dict)
+                    or row.get("status") not in (
+                        "selected_one_source_bound_job",
+                        "no_actionable_job_in_sampled_windows",
+                        "degraded_unavailable")):
+                raise ValueError("invalid GitHub workflow window coverage")
+            pid = phrase(row.get("project_id"), 80)
+            if row["status"] == "selected_one_source_bound_job":
+                window = row.get("workflow_status_window")
+                if window not in labels:
+                    raise ValueError("unknown discovered workflow status window")
+                description = labels[window] + "; één exacte job geselecteerd. Geen volledig CI-overzicht."
+            elif row["status"] == "degraded_unavailable":
+                description = "GitHub-venster onbereikbaar; overige jobs en gezondheid ONBEKEND."
+            else:
+                description = "Geen kandidaat in dit kleine venster; overige jobs ONBEKEND."
+            cards.append('<article class="panel read"><h3>' + pid +
+                         '</h3><p>' + phrase(description, 200) + '</p></article>')
+        discovery_panel = (
+            '<section><h2>GitHub-zoekvensters · alleen een beperkte steekproef</h2>'
+            '<p class="muted">Volgorde: wachtende workflows, lopende workflows met '
+            'wachtende jobs, daarna mislukte workflows. Geen GitHub-job wordt gestart.</p>'
+            '<div class="grid">' + ''.join(cards) + '</div></section>'
+        )
     notion_mode = live.get("notion") if isinstance(live, dict) else None
     if notion_mode == "claim_status_observed_no_file_ownership":
         provenance = ("Notion actieve werkstatus is alleen read-only geobserveerd. "
@@ -461,6 +501,7 @@ def html_view(decision):
             + ('<p class="muted">Historische lijst afgekapt tot 30 items; overige incidenten blijven '
                'onopgelost in het privéledger.</p>' if historic["truncated"] else "")
             + '</section>'
+            + discovery_panel
             + runner_route_panel
             + f'<section><h2>Open productissues · P0/P1 eerst, daarna P2 en zonder label ({len(triage["issues"])})</h2>'
             + section([issue_card(row) for row in triage["issues"]],
