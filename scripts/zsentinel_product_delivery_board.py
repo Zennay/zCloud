@@ -17,6 +17,7 @@ SCHEMAS = {
     "retry": "zsentinel-retry-incident-v1",
     "branches": "zsentinel-recent-prless-ownership-v1",
     "claims": "zsentinel-operator-claims-v1",
+    "board": "zsentinel-product-delivery-triage-v1",
 }
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ISSUE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$")
