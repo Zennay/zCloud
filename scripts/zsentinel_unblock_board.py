@@ -109,9 +109,12 @@ def blocker_first_board(summary, decision, issues):
         if not isinstance(row, dict):
             raise ValueError("invalid historical incident")
         pid, ident = row.get("project_id"), row.get("incident_id")
-        if (pid not in known or not isinstance(ident, str)
-                or not INCIDENT.fullmatch(ident)):
+        if not isinstance(ident, str) or not INCIDENT.fullmatch(ident):
             raise ValueError("untrusted historical identity")
+        if pid not in known:
+            # Old project was removed/renamed: still counted as unresolved
+            # in total_unresolved, not silently promoted to a current owner.
+            continue
         if ident in seen:
             continue
         seen.add(ident)
