@@ -2149,6 +2149,9 @@ async function importRetryTrend(file){
   const trend=validateRetryTrend(await retryReadJsonFile(file));
   if(!retryTrendMatchesSnapshot(trend,ZSENTINEL_RETRY_SNAPSHOT))
     throw Error('Trend scope or ending time differs from displayed queue snapshot; clear evidence first');
+  if(ZSENTINEL_RETRY_TREND&&retrySameScope(trend,ZSENTINEL_RETRY_TREND)
+      &&Date.parse(trend.after)<=Date.parse(ZSENTINEL_RETRY_TREND.after))
+    throw Error('Trend is not newer for this scope; clear existing evidence to import older history');
   ZSENTINEL_RETRY_TREND=trend;
   ZSENTINEL_RETRY_MESSAGE='Source-bound offline retry trend imported; no worker or queue changes.';
 }
@@ -2163,6 +2166,9 @@ async function readVpsRetryIncidents(){
     const fresh=validateRetryIncident(response);
     if(fresh.scope.project!==project)throw Error('VPS response scope mismatch');
     const previous=ZSENTINEL_RETRY_SNAPSHOT;
+    if(previous&&retrySameScope(previous,fresh)
+       &&Date.parse(fresh.observedAt)<=Date.parse(previous.observedAt))
+      throw Error('Trusted source observation is not newer; current evidence retained');
     // Compare only two explicit operator reads of the same scope. No poll.
     const trend=retryTrendFromSnapshots(previous,fresh);
     ZSENTINEL_RETRY_SNAPSHOT=fresh;
