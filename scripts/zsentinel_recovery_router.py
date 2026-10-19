@@ -130,8 +130,12 @@ def load_state(data):
     for key, entry in incidents.items():
         if not re.fullmatch("[0-9a-f]{32}", key) or not isinstance(entry, dict):
             raise ValueError("invalid incident state record")
-        timestamp(entry.get("first_seen"), "first_seen")
-        timestamp(entry.get("last_seen"), "last_seen")
+        first = timestamp(entry.get("first_seen"), "first_seen")
+        last = timestamp(entry.get("last_seen"), "last_seen")
+        if first > last:
+            raise ValueError("incident state first_seen after last_seen")
+        if entry.get("status") not in ("human_action_required", "read_only_diagnosis_required", "not_observed_needs_reconciliation"):
+            raise ValueError("unsupported incident state")
     return incidents
 
 
@@ -185,7 +189,7 @@ def eligible_tasks(bundle, blocked, now):
         if (not complete or task.get("state") != "queued" or task.get("eligible") is not True
                 or task.get("human_gate") is not False or task.get("qa_only") is not False
                 or task.get("active_owner") is not False or scopes is None
-                or any(dep in blocked for dep in deps)):
+                or any(dep in blocked["ids"] for dep in deps)):
             continue
         if any(pid == claimed_pid and
                any(paths_overlap(p, c) for p in scopes for c in claimed_paths)
@@ -193,10 +197,12 @@ def eligible_tasks(bundle, blocked, now):
             continue
         # Conservative: a portfolio-level runner outage or hosted billing failure
         # makes tasks requiring those gates non-routable, even across projects.
-        requirements = task.get("required_gates", [])
-        if (not isinstance(requirements, list)
+        requirements = task.get("required_gates")
+        if (not isinstance(requirements, list) or not requirements or len(requirements) > 3
                 or any(x not in ("github_hosted", "self_hosted", "none") for x in requirements)):
             raise ValueError("invalid task.required_gates")
+        if "none" in requirements and len(requirements) != 1:
+            raise ValueError("none cannot be combined with other required_gates")
         if set(requirements) & blocked["gates"]:
             continue
         recommendations.append({
