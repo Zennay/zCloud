@@ -13,6 +13,60 @@ For a browser-ready view without contacting a server, choose `--format html` and
 
 The optional `--state` ledger stores incident fingerprints and observed timestamps locally with permissions `0600`, atomic replacement and strict size/schema limits. Use a **trusted private directory**, never a live queue/SQLite, checked-in repo path, shared mount or an untrusted symlink. It does not call GitHub, Notion or the VPS, start any timer, enqueue work, acquire a task, rerun CI, alter any worker, or deploy. Feed it new complete observations only after upstream independent collectors/owners have gathered them. One invocation provides one decision snapshot. Actual activation as a production service awaits the serialized runtime owner.
 
+## Volledig portfolio in één offline cockpit · begrensde GitHub-vensters
+
+De nieuwe operatorinterface `scripts/zsentinel_portfolio_overview.py` toont
+alle projecten uit het canonieke `projects.json` en hun werkelijk op één
+SQLite-transactie gebaseerde wachtrijdruk. Het is nadrukkelijk geen nieuwe
+zelfstandig draaiende service of onbegrensde portfolio-poller.
+
+```bash
+# Eenmalig op een geautoriseerde machine met toegang tot de bestaande database:
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --format html > /private/operator-only/portfolio.html
+
+# Een specifiek GitHub-observatievenster (max. drie repo's), bv. index 0:
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --window 0 --format text
+
+# Gecombineerd met de twee bestaande opt-in read-only observatiebronnen:
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --observe-vps-capacity --read-notion-claims --format json \
+  > /private/operator-only/portfolio.json
+```
+
+Het standaardvenster is `--window auto`: bij **iedere aanroep**
+wordt deterministisch een groep van maximaal drie projectrepositories
+gekozen op basis van UTC-uur. Bij opeenvolgende uurlijkse, vooraf
+geautoriseerde aanroepen rouleert het venster. Dit command **installeert
+zelf geen timer, scheduler, webhook, PR-merge of notificatie**. Via
+`--window 0`, `--window 1`, enzovoort kan de operator gericht inspecteren.
+Alle andere GitHub-projecten blijven expliciet **NIET GESCAND** in de huidige
+momentopname; GitHub-green bij een geselecteerde job is evenmin bewijs van
+herstelde worker-, VPS- of deploymentstatus.
+
+De portfolio-overzichtrijen onderscheiden `queued`, reeds `owned`
+(`claimed/running/verifying`), hoge claimpogingen, mogelijk verlopen
+ownerleases en een **concrete niet-muterende vervolgstap**. Claim attempts
+betekenen niet automatisch mislukkingen, en een mogelijk verlopen lease is
+niet vrijgegeven. Onbekende repositoryprojecten worden niet stilzwijgend
+gelijkgesteld met een geregistreerd project; hun aantal kan zonder hun
+privé-identiteit worden getoond. Als één record misvormd is, is de
+wachtrij-inventaris onvolledig: alle per-project getallen worden
+`ONBEKEND` in plaats van misleidende nullen. Eén zelfde read-only
+database-observatie wordt gebruikt voor de projectsamenvatting en de
+bestaande zSentinel-detailcockpit; er wordt geen tweede transactie gestart.
+
+De begrenzing blijft maximaal drie GitHub-projecten per aanroep, dezelfde
+bestaande CI-discovery/issue-collector en dezelfde optionele private
+dedup-ledger. Actuele complete padscope-/claimbewijzen ontbreken nog;
+dit instrument blijft **operatoradvies zonder taken te claimen**.
+Private output blijft bij de operator; het HTML-bestand gebruikt dezelfde
+strikte scriptloze offline CSP als de reeds bestaande cockpit.
+
 ## Direct live cockpit: no hand-created evidence bundle
 
 The new `scripts/zsentinel_live_cockpit.py` is a complete, **one-shot** CLI product. It now also **automatically samples recent GitHub CI runs and relevant queued/failed jobs**, so a specific job ID is not needed to obtain initial GitHub blocker observations. It reads the real existing SQLite `portfolio_queue` using `mode=ro` / `PRAGMA query_only=ON`, merges a bounded public GitHub issue/PR inbox and optional pinned GitHub jobs, then renders a responsive **Dutch offline dashboard** in one command:
