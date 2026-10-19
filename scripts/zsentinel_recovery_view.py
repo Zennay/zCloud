@@ -134,6 +134,20 @@ def html_view(decision):
         raise ValueError("invalid unresolved incident count")
     def section(cards, empty):
         return '<div class="grid">' + ("".join(cards) if cards else '<p class="empty">' + empty + "</p>") + "</div>"
+    # Urgent first; large portfolios keep the first five visible and make
+    # remaining cards available under a native details disclosure (no JS).
+    ordered_incidents = sorted(incidents, key=lambda i: (
+        0 if i.get("severity") == "P0" else 1,
+        str(i.get("target_review_by", "")),
+        str(i.get("project_id", "")),
+    ))
+    primary_incidents = [incident_card(row) for row in ordered_incidents[:5]]
+    overflow_incidents = [incident_card(row) for row in ordered_incidents[5:]]
+    extra_incidents = (
+        '<details><summary>Overige ' + str(len(overflow_incidents)) +
+        ' incidenten bekijken</summary>' + section(overflow_incidents, "") + '</details>'
+        if overflow_incidents else ""
+    )
     warning = ("De bronnen zijn deels onbekend of niet actueel; afwezig betekent niet opgelost. "
                "Geen aanbeveling is een autorisatie voor claims, merges, financiële actie of deploy.")
     return ('<!doctype html><html lang="nl"><head><meta charset="utf-8">'
@@ -149,9 +163,9 @@ def html_view(decision):
             f'Actieve claims: {"volledig expliciet" if claims else "ONVOLLEDIG"}</p>'
             f'<p class="banner">{phrase(warning, 600)}</p></header><main>'
             f'<section><h2>Actuele blokkades ({len(incidents)})</h2>'
-            + section([incident_card(row) for row in incidents],
+            + section(primary_incidents,
                       "Geen vers geverifieerde blokkades. Dat bewijst geen herstel.")
-            + '</section>'
+            + extra_incidents + '</section>'
             + f'<section><h2>Open P0/P1-productissues ({len(triage["issues"])})</h2>'
             + section([issue_card(row) for row in triage["issues"]],
                       "Geen issuewaarnemingen beschikbaar. Raadpleeg de brondekking.")
