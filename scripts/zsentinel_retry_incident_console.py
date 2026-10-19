@@ -7,6 +7,7 @@ No privileged action is inferred from the number of claim attempts.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, timezone
 from html import escape
 import json
@@ -21,7 +22,7 @@ PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 REQUIRED = {
     "project_id", "priority", "status", "attempts", "eligible",
-    "updated_at", "claim_expires", "title",
+    "updated_at", "claim_expires", "title", "queue_id",
 }
 MAX_SAMPLE = 100
 
@@ -64,7 +65,7 @@ def read_snapshot(path: Path, *, project: str | None, threshold: int, limit: int
             [threshold, now.isoformat(), *args],
         )]
         rows = [dict(row) for row in connection.execute(
-            f"""SELECT project_id,priority,status,attempts,eligible,updated_at,claim_expires
+            f"""SELECT project_id,priority,status,attempts,eligible,updated_at,claim_expires,queue_id
                        {',title' if include_titles else ''}
                 FROM portfolio_queue
                 WHERE {where} AND attempts>=?
@@ -97,6 +98,7 @@ def read_snapshot(path: Path, *, project: str | None, threshold: int, limit: int
         else:
             next_action = "Review eligibility with queue owner."
         sample = {
+            "queue_ref": hashlib.sha256(str(row["queue_id"]).encode("utf-8")).hexdigest()[:16],
             "project": row["project_id"],
             "priority": row["priority"],
             "status": status,
@@ -162,7 +164,7 @@ def markdown(data: dict) -> str:
         )
     lines += ["", "## Bounded high-attempt observations"]
     for sample in data["high_attempt_samples"]:
-        label = sample["project"]
+        label = sample["project"] + " [" + sample["queue_ref"] + "]"
         if "title" in sample:
             label += " — " + sample["title"].replace("\n", " ")[:150]
         lines.append(
@@ -199,7 +201,7 @@ tr:nth-child(even){background:#172234}"""
     )
     sample_rows = "".join(
         "<tr>" + "".join(td(row.get(k)) for k in (
-            "project", "priority", "status", "attempts", "updated_at", "operator_action"
+            "queue_ref", "project", "priority", "status", "attempts", "updated_at", "operator_action"
         )) + "</tr>" for row in data["high_attempt_samples"]
     )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -215,11 +217,57 @@ tr:nth-child(even){background:#172234}"""
 <tbody>{group_rows}</tbody></table></div>
 <h2>High-attempt sample</h2><p>Up to {data['coverage']['sample_limit']} entries,
 ordered by priority and attempts; complete: {str(data['coverage']['sample_is_complete']).lower()}.</p>
-<div class="wrap"><table><thead><tr><th>Project</th><th>Priority</th><th>Status</th>
+<div class="wrap"><table><thead><tr><th>Ref</th><th>Project</th><th>Priority</th><th>Status</th>
 <th>Claims</th><th>Last updated</th><th>Operator action</th></tr></thead>
 <tbody>{sample_rows}</tbody></table></div>
 <footer class="muted">Offline HTML · no JavaScript, external assets, API calls,
 queue writes, or authorization to restart or dispatch.</footer></body></html>"""
+
+
+def resolve_reference(path: Path, reference: str) -> dict:
+    """Deliberately explicit local drill-down from a safe opaque report ref.
+
+    This returns the raw queue identifier only when the operator opts in.
+    Never mutates a row or implies any claim entitlement.
+    """
+    if not re.fullmatch(r"[0-9a-f]{16}", reference):
+        raise ValueError("Queue reference must be exactly 16 lowercase hex characters")
+    if not path.is_file():
+        raise ValueError("SQLite database does not exist")
+    uri = path.resolve().as_uri().replace("file://", "file:") + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True, timeout=3)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("BEGIN")
+        matches = []
+        # The hard cap is a conscious partial/unknown condition, not "not found".
+        cursor = connection.execute(
+            "SELECT queue_id,project_id,title,status,attempts FROM portfolio_queue LIMIT 50001"
+        )
+        scanned = 0
+        for row in cursor:
+            scanned += 1
+            if scanned > 50000:
+                raise ValueError("Queue inventory too large for bounded local reference lookup")
+            digest = hashlib.sha256(str(row["queue_id"]).encode("utf-8")).hexdigest()[:16]
+            if digest == reference:
+                matches.append(dict(row))
+                if len(matches) > 1:
+                    raise ValueError("Ambiguous queue reference; refuse identity resolution")
+        connection.execute("ROLLBACK")
+    finally:
+        connection.close()
+    if not matches:
+        raise ValueError("Reference not found in this current database snapshot")
+    return {
+        "schema": "zsentinel-retry-local-drilldown-v1",
+        "queue_ref": reference,
+        "record": matches[0],
+        "read_only": True,
+        "authorizes_claim": False,
+        "warning": "Local sensitive operator view: do not paste raw queue IDs or titles into public issues.",
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -230,6 +278,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=40)
     parser.add_argument("--format", choices=("json", "markdown", "html"), default="html")
     parser.add_argument("--output", type=Path, help="Write a local report; otherwise stdout")
+    parser.add_argument("--resolve-ref", help="Opt-in local sensitive drill-down of 16-hex report reference")
     parser.add_argument("--include-titles", action="store_true",
                         help="Explicitly include local task titles in JSON/Markdown (never HTML)")
     args = parser.parse_args(argv)
@@ -237,6 +286,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--project must be a canonical lowercase project ID")
     if not 1 <= args.threshold <= 1000 or not 1 <= args.limit <= MAX_SAMPLE:
         parser.error("--threshold must be 1..1000; --limit must be 1..100")
+    if args.resolve_ref and (args.output or args.include_titles):
+        parser.error("--resolve-ref only prints to the local console and cannot combine with report output")
+    if args.resolve_ref:
+        try:
+            print(json.dumps(resolve_reference(args.database, args.resolve_ref), indent=2, ensure_ascii=False))
+            return 0
+        except (ValueError, sqlite3.Error, OSError) as exc:
+            print(f"Reference resolution refused: {exc}", file=sys.stderr)
+            return 2
     if args.include_titles and args.format == "html":
         parser.error("--include-titles is deliberately unavailable for HTML")
     try:
