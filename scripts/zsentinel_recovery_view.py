@@ -214,6 +214,7 @@ def html_view(decision):
                 raise ValueError("invalid Notion active claim")
             rows.append('<li class="word"><strong>' + phrase(item.get("work"), 35) +
                         ' · ' + phrase(item.get("status"), 12) +
+                        ' · ' + phrase(item.get("project"), 80) +
                         '</strong>: ' + phrase(item.get("title"), 120) + '</li>')
         caveat = ("Onvolledige Notion-paginering" if notion["coverage"] == "incomplete"
                   else "Notion werkstatuspagina's opgevraagd")
