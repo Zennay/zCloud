@@ -60,6 +60,7 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
                 or not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", canonical)):
             raise ValueError("untrusted canonical repository mapping")
         repo_for[project_row["project_id"]] = canonical
+    from zsentinel_problem_picker import MAX_NEXT
     incidents = decision.get("incidents")
     backlog = decision.get("historical_unresolved")
     suggestions = decision.get("independent_task_suggestions")
@@ -72,7 +73,7 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             or len(backlog["shown"]) > 30
             or type(backlog.get("total_unresolved")) is not int
             or not isinstance(suggestions, list) or len(suggestions) > 5
-            or not isinstance(problem_items, list) or len(problem_items) > 5):
+            or not isinstance(problem_items, list) or len(problem_items) > MAX_NEXT):
         raise ValueError("untrusted bounded blockers or fallback source")
     cards = []
     seen = set()
