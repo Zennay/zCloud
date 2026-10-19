@@ -334,10 +334,10 @@ def markdown(data):
              "**Read-only evidence; no work ownership, merge or deployment authority.**", "",
              "| Priority | Project | Issue | PR candidates | Owner-safe next step |",
              "|---|---|---|---|---|"]
+    safe = lambda x: (str(x).replace("\\", "\\\\").replace("|", "\\|")
+                      .replace("<", "&lt;").replace(">", "&gt;")
+                      .replace("\n", " "))
     for row in data["cards"]:
-        safe = lambda x: (str(x).replace("\\", "\\\\").replace("|", "\\|")
-                          .replace("<", "&lt;").replace(">", "&gt;")
-                          .replace("\n", " "))
         links = ", ".join(row["open_pr_candidates"]) or "none in bounded sample"
         lines.append("| " + " | ".join(map(safe, (row["priority"], row["project"],
             row["issue"], links, row["recommended_next_step"]))) + " |")
