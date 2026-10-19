@@ -105,7 +105,7 @@ def next_problems(summary, decision, selected):
                 route = "source_incomplete_owner_review"
                 action = "GitHub-dekking onvolledig: verifieer het issue, open PR's en de huidige eigenaar."
             if tier == "Unspecified":
-                action = "Geen prioriteit bevestigd. Verifieer ernst, eigenaar, open PR’s en padscope voordat productwerk start."
+                action = "PRIORITEIT ONBEKEND: eerst ernst verifiëren. " + action
             collected[pid].append({
                 "project_id": pid,
                 "priority": tier,
