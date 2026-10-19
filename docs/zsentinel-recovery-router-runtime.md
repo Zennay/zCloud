@@ -4,6 +4,27 @@
 
 De nieuwe `scripts/zsentinel_pr_delivery.py` leest alleen **bestaande,
 expliciet gekozen** pull requests uit de canonieke projectregistratie.
+Dezelfde functie heeft nu ook een **zelfstandige CLI**, zonder een
+SQLite-productiewachtrij of VPS. Alleen `projects.json` en geautoriseerde
+read-only GitHub-toegang zijn vereist. Zo kan een operator buiten het
+geblokkeerde self-hosted runnerpad toch bestaande PR's beoordelen:
+
+```sh
+# Zelfstandige offline HTML-weergave na maximaal vier GETs per PR:
+python3 scripts/zsentinel_pr_delivery.py --pr cloud:1563 --format html > zsentinel-pr-1563.html
+
+# Eén tot drie bestaande PR's met bronbewijs en eigenaaradvies als JSON:
+python3 scripts/zsentinel_pr_delivery.py --pr cloud:1563 --format json
+```
+
+Geen automatische periodieke uitvoering: dit is een eenmalig operatorcommando.
+Het gegenereerde HTML-document is volledig lokaal, zonder scripts, netwerk,
+cookies of externe resources. `GITHUB_TOKEN` mag worden aangeboden als
+omgevingvariabele voor reeds toegestane privébronreads maar wordt niet
+opgenomen in het rapport. Dit commando leest **geen** Notion, queue,
+worker, runtime, VPS of service. Het product kan dus functioneren terwijl
+de VPS/self-hosted workflow afhankelijkheid geblokkeerd is.
+
 Binnen één portfolio-venster is dit direct beschikbaar als opt-in:
 
 ```sh
