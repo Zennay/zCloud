@@ -20,6 +20,7 @@ from zsentinel_recovery_router import (
     MAX_INPUT_BYTES, MAX_STATE_BYTES, plan, read_json, write_json_atomic,
     operator_text, utc_string,
 )
+from zsentinel_runner_route import runner_route
 
 UTC = timezone.utc
 MAX_TARGETS = 8
@@ -108,6 +109,7 @@ def refresh(bundle, registry, token=None):
             conclusion = job.get("conclusion")
             if status == "completed" and conclusion not in CONCLUSION:
                 raise ValueError("github_job_conclusion_unsupported")
+            route = runner_route(job)
             updated = {
                 "run_id": run_id, "job_id": job_id,
                 "head_sha": sha, "job_status": status,
@@ -115,6 +117,8 @@ def refresh(bundle, registry, token=None):
                 "observed_at": utc_string(observed),
                 "runner_assigned": bool(runner_id),
                 "verified_receipt": "github_exact_run_job",
+                "runner_route": route["runner_route"],
+                "route_labels": route["route_labels"],
             }
             if status == "completed":
                 updated["conclusion"] = conclusion
@@ -125,7 +129,10 @@ def refresh(bundle, registry, token=None):
             # Only an independently verified fresh source may set the category.
             project["github"] = updated
             output.append({"project_id": pid, "source": "github_exact_run_job",
-                           "status": "refreshed", "run_id": run_id, "job_id": job_id})
+                           "status": "refreshed", "run_id": run_id, "job_id": job_id,
+                           "runner_route": route["runner_route"],
+                           "route_labels": route["route_labels"],
+                           "may_restart_runner": False})
         except ValueError as exc:
             # Unavailable/partial GitHub must not cause stale old receipts to
             # become fresh or create a false runner outage/CI failure.
