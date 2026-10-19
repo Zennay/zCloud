@@ -13,6 +13,59 @@ For a browser-ready view without contacting a server, choose `--format html` and
 
 The optional `--state` ledger stores incident fingerprints and observed timestamps locally with permissions `0600`, atomic replacement and strict size/schema limits. Use a **trusted private directory**, never a live queue/SQLite, checked-in repo path, shared mount or an untrusted symlink. It does not call GitHub, Notion or the VPS, start any timer, enqueue work, acquire a task, rerun CI, alter any worker, or deploy. Feed it new complete observations only after upstream independent collectors/owners have gathered them. One invocation provides one decision snapshot. Actual activation as a production service awaits the serialized runtime owner.
 
+## Recent branch-eigendom zonder open PR · productissue #870
+
+Nieuwe zSentinel-bron `scripts/zsentinel_recent_branch_ownership.py` vult de
+bestaande PR-eigendomsinventaris aan: een worker kan code op een branch hebben
+gepusht voordat een PR bestaat. Dit is een **read-only kandidaatcontrole**,
+niet een nieuwe daadwerkelijke workerclaim of controle van actieve leases.
+
+```bash
+# Eén canoniek project, maximaal begrensde GitHub-bronuitvraag:
+python3 scripts/zsentinel_recent_branch_ownership.py \
+  --project cloud --branch-prefix feat/ --current-path scripts/new_module.py
+
+# Exit 2 als werkelijk bronbewijs incompleet is, een recent conflicterend
+# bestand wordt gezien of een te beoordelen --current-path ontbreekt.
+python3 scripts/zsentinel_recent_branch_ownership.py \
+  --project cloud --current-path scripts/new_module.py --require-clear-slice
+
+# Dezelfde eigendomskandidaten zichtbaar in de portfolio-cockpit:
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 --window 0 \
+  --inspect-unpr-branches cloud --branch-prefix feat/ \
+  --current-path scripts/new_module.py --format html \
+  > /private/operator-only/zsentinel-branches.html
+```
+
+Een externe geautoriseerde GitHub `GITHUB_TOKEN` is optioneel voor publiek
+leesbare projecten en verplicht waar privétoegang nodig is. Tokens worden
+niet geprint of opgeslagen. De adapter gebruikt zCloud's bestaande
+`bounded_get` (geen redirects, beperkt aantal bytes, 8 s timeout).
+Maximaal vier pagina's van honderd branchrefs, drie van honderd **open** PRs,
+één immutable `main` ref plus maximaal twaalf geadresseerde branch-commits
+en twaalf immutable SHA→SHA-vergelijkingen per uitvoering. Iedere onvolledige
+paginering, gewijzigde SHA, afwijkende vergelijking, bronweigering of afgekapt
+bestandsbewijs kan **nooit** als 'vrije scope' worden beschouwd. Een expliciete
+`--branch-prefix` kan de inspectie beperken maar autoriseert geen ongescande
+branches.
+
+Alleen exacte commit-committerdatum binnen 72 uur en `ahead_by > 0`
+levert een **recente kandidaat** op. Oudere commits zijn historische bron,
+nooit automatisch actief eigendom. De adapter vergelijkt paden inclusief
+beide kanten van renames; de output bevat alleen branchref, twee exacte SHA's,
+afgeronde leeftijd, aantal commits vooruit op main, begrensde gewijzigde
+bestandsnamen en eventuele overlap. Geen commitberichten, prompts, PR-bodies,
+API-tokens of inhoud van bronbestanden. Gebruik `--require-clear-slice`
+uitsluitend als een **fail-closed adviespoort** voor de *recente
+un-PR-branchsteekproef*: succes betekent niet dat huidige Notion-leases, alle
+open PRs, workerclaims, CI/review of de productie-release geverifieerd zijn.
+
+Deze productlevering raakt geen `server.py`, queue writer, worker, bestaande
+open-PR owner-audit of productie-workflows. De daadwerkelijke eindacceptatie
+van #870 blijft onder de bestaande onafhankelijke review en verplichte
+CI/VPS-rechten vallen; deze PR voert zelf geen QA-suites uit.
+
 ## Volledig portfolio in één offline cockpit · begrensde GitHub-vensters
 
 De nieuwe operatorinterface `scripts/zsentinel_portfolio_overview.py` toont
