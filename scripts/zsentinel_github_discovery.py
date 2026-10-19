@@ -91,7 +91,7 @@ def run_job_candidates(root, run_id, sha, token, kind):
                 continue
             rank = 1
         route = runner_route(job)
-        candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner, route))
+        candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner, route, kind))
     return candidates
 
 
@@ -129,7 +129,7 @@ def discover(registry, selected, token=None):
                 })
                 continue
             candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
-            _, created, run_id, job_id, sha, status, conclusion, runner, route = candidates[0]
+            _, created, run_id, job_id, sha, status, conclusion, runner, route, window = candidates[0]
             receipt = {
                 "run_id": run_id, "job_id": job_id, "head_sha": sha,
                 "job_status": status, "queued_at": utc_string(created),
@@ -145,7 +145,8 @@ def discover(registry, selected, token=None):
             coverage.append({
                 "project_id": pid, "status": "selected_one_source_bound_job",
                 "run_id": run_id, "job_id": job_id,
-                "run_pages_checked": checked, "authoritative_all_clear": False
+                "run_pages_checked": checked, "workflow_status_window": window,
+                "authoritative_all_clear": False
             })
         except (OSError, ValueError):
             coverage.append({
