@@ -1921,6 +1921,49 @@ function exportZSentinelHandoff(){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
+function zSentinelDeliveryPulse(github,visible,focus){
+  const validKinds=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']);
+  const events=(github?.events||[]).filter(row=>row&&visible.has(row.project)
+    &&(!focus||focus===row.project)&&validKinds.has(row.kind)
+    &&typeof row.id==='string'
+    &&typeof row.url==='string'
+    &&/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(row.url)
+    &&Number.isFinite(Date.parse(row.ts))&&Date.parse(row.ts)<=Date.now()+120000);
+  const recent=events.filter(row=>Date.now()-Date.parse(row.ts)<=86400000);
+  const counts=Object.fromEntries([...validKinds].map(key=>[
+    key,recent.filter(event=>event.kind===key).length]));
+  const covered=(github?.coverage||[]).filter(row=>visible.has(row.project)
+    &&(!focus||row.project===focus));
+  const completeSample=covered.length&&covered.every(row=>
+    row.status==='partial_sources'&&!row.staleEvidence
+    &&Number.isFinite(Date.parse(row.observedAt))
+    &&Date.now()-Date.parse(row.observedAt)<=6*3600000);
+  const reportedMerges=events.filter(row=>row.kind==='pr_merged')
+    .sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,5);
+  const latest=reportedMerges.map(row=>'<div class="service-row"><div>'+
+    '<a href="'+esc(row.url)+'" target="_blank" rel="noopener noreferrer">'+
+    esc(row.project)+' · '+esc(row.description)+'</a></div>'+
+    '<small>'+esc(date(row.ts,true))+'</small></div>').join('');
+  const keys=[['pr_created','PR created'],['pr_updated','PR updated'],
+    ['pr_merged','GitHub-reported PR merges'],['pr_closed','Closed without merge'],
+    ['ci_run','CI run observations'],['main_commit','GitHub main commits']];
+  return '<section class="section-details" aria-label="Observed GitHub delivery pulse">'+
+    '<h3>GitHub delivery pulse · bounded observations in last 24h</h3>'+
+    '<p class="detail-note" role="status">'+
+    (github?'Source has '+covered.length+' canonical project observation(s)'+
+      (completeSample?' · bounded provider responses recently readable':
+        ' · PARTIAL/STALE/UNKNOWN provider coverage'):
+      'GitHub PR/CI source NOT OBSERVED')+
+    '. These are source events within the sampled window, not portfolio totals. A PR merge is NOT a deployment.</p>'+
+    '<div class="service-list">'+keys.map(([key,label])=>
+      '<div class="service-row"><strong>'+esc(label)+'</strong><span>'+
+      (github?counts[key]:'unknown')+'</span></div>').join('')+'</div>'+
+    '<details class="section-details" data-disclosure="zsentinel-recent-merges">'+
+    '<summary>Most recent reported PR merges in sampled sources ('+
+      reportedMerges.length+')</summary><div class="service-list">'+
+      (latest||'<p class="detail-note">No sampled merge evidence available; not proof that no PRs merged.</p>')+
+    '</div></details></section>';
+}
 function zSentinelDeliveryBoard(){
   const ids=new Set((DATA?.projects||[]).map(project=>project.id));
   const snapshot=IMPORTED_PRODUCT_ISSUES;
@@ -2011,6 +2054,7 @@ function zSentinelDeliveryBoard(){
     ' · GitHub activity '+esc(gitTime)+' · Queue '+esc(queueTime)+
     '. Reads are manual, separate, bounded and may be partial or stale.</p>'+
     (staleProjects.length?'<p class="detail-note" role="alert">GitHub source unavailable/partial — last known issue/PR/CI evidence preserved, NOT current proof: '+esc(staleProjects.join(', '))+'.</p>':'')+
+    zSentinelDeliveryPulse(github,ids,focus)+
     '<p class="detail-note">'+
     (focus?'Project: '+esc(focus)+'.':'Select a single project to refresh the sources; current snapshots can be viewed across projects.')+
     ' Issues sampled: '+coveredIssues.length+' project sources; GitHub activity: '+
