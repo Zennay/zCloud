@@ -2,7 +2,7 @@
 """Read-only exact-head GitHub PR delivery desk for already-open product work.
 
 This is operator advice, NEVER a merge/release admission check. Each explicit
-PR costs <=3 canonical GETs. Existing GitHub status, branch protection, owner
+PR costs <=4 canonical GETs. Existing GitHub status, branch protection, owner
 leases and required review policy must still be checked at the actual merge.
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ OWNER_REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 MAX_PRS = 3
 MAX_CHECKS = 30
 MAX_REVIEWS = 30
-MAX_CALLS = 3 * MAX_PRS
+MAX_CALLS = 4 * MAX_PRS
 FAILURE = {"failure", "timed_out", "cancelled", "action_required"}
 
 
@@ -154,6 +154,21 @@ def observe_prs(registry, selections, token=None):
                 "review_page_full": len(reviews) == MAX_REVIEWS,
                 "independent_policy_verified": False,
             }
+            # Re-read the PR AFTER both evidence calls. A branch force-push
+            # while collecting CI/reviews must not be presented as a single
+            # up-to-date source snapshot, even in this read-only desk.
+            calls += 1
+            after = bounded_get(base_url + "/pulls/" + str(number), token)
+            later_head = after.get("head") if isinstance(after, dict) else None
+            later_base = after.get("base") if isinstance(after, dict) else None
+            if (not isinstance(after, dict) or after.get("number") != number
+                    or after.get("state") != "open"
+                    or after.get("draft") is not item["draft"]
+                    or not isinstance(later_head, dict)
+                    or not isinstance(later_base, dict)
+                    or later_head.get("sha") != head_sha
+                    or later_base.get("sha") != base_sha):
+                raise ValueError("PR source changed while reading exact-head checks/reviews")
             item["coverage"] = "bounded_exact_head_review_and_checks"
             if item["draft"]:
                 next_step = "finish_existing_draft_with_owner"
@@ -170,6 +185,11 @@ def observe_prs(registry, selections, token=None):
                 next_step = "confirm_branch_protection_and_release_with_owner"
             item["next_step"] = next_step
         except (OSError, ValueError, TypeError, KeyError) as exc:
+            # Partially observed checks or a moved source HEAD cannot be
+            # displayed as current readiness. Keep only the safe PR link.
+            for field in ("ci", "reviews", "head_sha", "base_sha"):
+                item.pop(field, None)
+            item["coverage"] = "source_incomplete_or_changed"
             item["source_gap"] = str(exc)[:120]
             item["next_step"] = "verify_pr_source_with_owner"
         items.append(item)
@@ -219,12 +239,27 @@ def pr_delivery_html(report):
                   " · head-approvals gezien: " +
                   str(reviews.get("same_head_approvals_seen", "onbekend")))
         sha = row.get("head_sha")
+        ci_names = []
+        for kind, name in (("Mislukt", "failed"), ("Nog bezig", "pending"),
+                           ("Onbeslist", "inconclusive")):
+            for check_name in ci.get(name, [])[:6]:
+                ci_names.append("<li>" + escape(kind + ": " + str(check_name)[:100]) + "</li>")
+        observed_checks = (
+            '<details><summary>Welke head-checks vragen aandacht?</summary><ul>' +
+            "".join(ci_names) + '</ul><p class="small"><a href="' + link +
+            '/checks" target="_blank" rel="noopener noreferrer">Bekijk actuele GitHub PR-checks</a>'
+            ' · lijst is een beperkte momentopname.</p></details>'
+            if ci_names else "")
+        source_gap = (('<p class="muted">Bron onvolledig of gewijzigd: ' +
+                       escape(str(row["source_gap"])[:120]) + '</p>')
+                      if row.get("source_gap") else "")
         cards.append(
             '<article class="panel read"><h3><a href="' + link +
             '" rel="noopener noreferrer" target="_blank">' + name +
             " · " + title + '</a></h3><p>' +
             escape(labels[row["next_step"]]) +
-            '</p><p class="muted">' + escape(detail) + '</p><p class="small">Exacte head: ' +
+            '</p><p class="muted">' + escape(detail) + '</p>' + observed_checks +
+            source_gap + '<p class="small">Exacte head: ' +
             escape(sha[:12] if isinstance(sha, str) else "onbekend") +
             ' · bron: beperkte GitHub-steekproef; eigenaar, required checks, branch protection, merge/deploy NIET geautoriseerd.</p></article>'
         )
