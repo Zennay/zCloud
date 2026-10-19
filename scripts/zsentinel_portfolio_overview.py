@@ -98,6 +98,14 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         raise ValueError("GitHub source coverage missing for selected window")
     triage = decision.get("open_product_issue_triage", {})
     incidents = decision.get("incidents", [])
+    history = decision.get("historical_unresolved", {})
+    if (not isinstance(history, dict)
+            or history.get("schema") != "zsentinel-historical-backlog-v1"
+            or history.get("action_authorized") is not False
+            or type(history.get("total_unresolved")) is not int
+            or type(history.get("shown")) is not list
+            or len(history["shown"]) > 30):
+        raise ValueError("missing bounded private historical source backlog")
     issue_items = triage.get("issues", []) if isinstance(triage, dict) else []
     if not isinstance(issue_items, list) or not isinstance(incidents, list):
         raise ValueError("malformed source-bound incident and issue observations")
@@ -117,6 +125,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "recovery_proven": False, "next_action": "read_only_inspect_current_source",
             "p0_p1_issue_sample_hits": None, "p2_unranked_issue_sample_hits": None,
             "incident_sample_hits": None,
+            "historical_unresolved_sample_hits": 0,
             "notion_active_status_min": None,
             "github_job_runner_route": "not_scanned",
         }
@@ -178,6 +187,15 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 isinstance(item, dict) and item.get("project_id") == pid
                 for item in incidents
             )
+    # Historical ledger counts only, never current GitHub health or claims.
+    for incident in history["shown"]:
+        if (not isinstance(incident, dict)
+                or incident.get("current_source_observed") is not False
+                or incident.get("mutation_authorized") is not False):
+            raise ValueError("historical incident cannot authorize work")
+        pid = incident.get("project_id")
+        if pid in summary:
+            summary[pid]["historical_unresolved_sample_hits"] += 1
     notion = decision.get("notion_claims_observation")
     if notion is not None:
         if (not isinstance(notion, dict)
@@ -206,6 +224,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             row["next_action"] = "request_owner_lease_review_never_release"
         elif row["high_claim_attempts"]:
             row["next_action"] = "inspect_claim_churn_no_auto_retry"
+        elif row["historical_unresolved_sample_hits"]:
+            row["next_action"] = "historical_incident_source_recheck_owner"
         elif row["github_observation"] == "not_queried":
             row["next_action"] = "github_source_not_scanned_next_window"
         elif row["github_observation"] in ("degraded_or_denied", "not_requested_or_unavailable"):
@@ -353,6 +373,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             "request_owner_lease_review_never_release": "Vraag leasebeoordeling; niet vrijgeven",
             "inspect_claim_churn_no_auto_retry": "Onderzoek claimchurn; geen retry",
             "github_source_not_scanned_next_window": "GitHub onbekend; volgend venster",
+            "historical_incident_source_recheck_owner": "Historische P0/P1-bron via eigenaar verifiëren; GEEN herstelbewijs",
             "github_source_unavailable_no_all_clear": "Bronfout: opnieuw via geautoriseerde route",
             "branch_overlap_needs_owner": "RECENTE BRANCHOVERLAP: eigenaar + PR-scope controleren",
             "branch_inventory_partial": "PR-loze branchbron onvolledig: geen vrijgave",
@@ -389,6 +410,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
                       else '≥' + str(row["p2_unranked_issue_sample_hits"])) + '</td>'
             '<td>' + ('ONBEKEND' if row["incident_sample_hits"] is None
                       else '≥' + str(row["incident_sample_hits"])) + '</td>'
+            '<td>' + str(row["historical_unresolved_sample_hits"]) + ' / steekproef</td>'
             '<td>' + escape(action_text) + '</td></tr>'
         )
     selected = ", ".join(escape(x) for x in windows[window_index])
@@ -418,7 +440,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '<th scope="col">GitHub-bereik</th><th scope="col">Laatste bronpoging (geen health)</th><th scope="col">Runnerroute</th>'
         '<th scope="col">P0/P1-issues (min.)</th>'
         '<th scope="col">P2/zonder label (min.)</th>'
-        '<th scope="col">Incidenten (min.)</th><th scope="col">Veilige vervolgstap</th>'
+        '<th scope="col">Incidenten (min.)</th><th scope="col">Historisch (steekproef)</th><th scope="col">Veilige vervolgstap</th>'
         '</tr></thead><tbody>' +
         "".join(cells) + '</tbody></table></div>'
         '<p class="muted small">Zonder privécursor kiest <code>--window auto</code> '
