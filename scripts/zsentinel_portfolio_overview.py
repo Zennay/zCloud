@@ -272,7 +272,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         "queue_source": ("explicitly_unobserved_no_database" if queue_missing
                          else "local_sqlite_transaction_query_only"),
         "queue_owner_authorized": False,
-        "unregistered_queue_project_groups": unknown_count,
+        "unregistered_queue_project_groups": None if queue_missing else unknown_count,
         "rows": list(summary.values()),
         "actions_performed": False,
         "runner_recovered": False,
