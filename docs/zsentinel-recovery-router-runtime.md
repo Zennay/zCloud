@@ -132,7 +132,12 @@ Per uitvoering maximaal **drie canonieke projecten**, **24** bronissues,
 rate-/autorisatieweigering. P0 runnerlistener #1326 en GitHub billing
 #1523 staan als *human-only*, nooit als automatische retry-/herstartactie.
 Ook lege bronvensters bewijzen geen afwezige problemen, en een GitHub
-assignee is geen geverifieerde actieve queueclaim.
+assignee is geen geverifieerde actieve queueclaim. P0-infrastructuurissues
+die echte bevoegde eigenaaractie vereisen (momenteel runner #1326 en
+billing #1523) blijven zichtbaar onder een **apart uitklapbaar
+eigenaarsoverzicht**. Zij verdringen daardoor geen zelfstandig
+uitvoerbaar productissue op het hoofdwerkbord; beide categorieën blijven
+in de JSON-bron met afzonderlijke telling beschikbaar.
 
 **Geen claim-, scheduler-, test-, CI-retry-, betaal-, review-, merge-,
 release- of productieactie.** De bestaande protected-main, exacte-head
