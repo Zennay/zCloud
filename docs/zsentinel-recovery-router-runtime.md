@@ -1636,3 +1636,43 @@ Actuele Notion ownership zonder expliciete bron blijft UNKNOWN.
 De bestaande PR-review, exact-head CI, security/privacy-/releasegates,
 P0 #1326 en accountbeheerder P0 #1523 blijven gescheiden.
 Andere workflows met `ubuntu-latest` zijn hiermee **niet** omgeschakeld.
+
+
+### Live runnerprocessen naast GitHub-jobtoewijzing
+
+De bestaande operatoropdracht biedt nu
+`--observe-local-runner`, naast `--observe-vps-capacity`. Hiermee leest
+`scripts/zsentinel_local_runner_observer.py` op **`vps-bb300bba`**
+alleen een begrensd `/proc/<pid>/cmdline` en `stat`-beeld. De bron telt
+uitsluitend exacte executables onder de bekende
+`/home/ubuntu/actions-runner-zcloud/bin/`-map; processen van FTMO/HaxLab
+worden bewust niet als zCloud-werk aangemerkt. Gelezen argumenten, PID's,
+tokens en process commandlines worden **niet** geëxporteerd. Een proces
+dat tijdens de waarneming verdwijnt resulteert in zichtbare onvolledige
+brondekking; geen stilzwijgende `idle`-conclusie.
+
+Het momentrapport toont een werkelijk waargenomen listener, workerprocessen,
+de beperkingen van de proc-inventaris en expliciete
+`github_registration_verified=false`,
+`github_job_assignment_verified=false`,
+`safe_idle_authorized=false`,
+`runner_restart_authorized=false`. Een listenerproces bewijst immers
+nooit dat GitHub een job `runner_id>0` heeft toegekend.
+Bij ontbrekende read-capability of afwijkende host faalt deze opt-in
+waarneming gesloten; zonder vlag blijft het gedrag ongewijzigd.
+
+De [owner-bevestigde VPS-workflow](../.github/workflows/zsentinel-vps-owner-reviewed.yml)
+voegt `--observe-local-runner --observe-vps-capacity` aan dezelfde
+read-only bronopdracht toe en plaatst uitsluitend aantallen en dekking in
+GitHub Actions `GITHUB_STEP_SUMMARY`. Er wordt **niets** herstart, beëindigd,
+geretryd, herverdeeld of gedeployed; de werkelijke GitHub-jobtoewijzing
+moet onafhankelijk uit de exacte Actions jobreceipt blijken.
+
+De geërfde regressie verwacht dat een >=30 minuten niet-toegewezen
+`queued`-job als *operatorincident* zichtbaar is, ook bij onbekende
+route. `scripts/zsentinel_diagnose.py` toont daarom nu wél de feitelijke
+jobblokkade met oorzaak `github_job_unassigned`, maar met een **andere
+deduplicatiesleutel voor route onbekend** en een verplicht
+`niet concluderen dat VPS stuk is / niet herstarten`-advies. Een
+`waiting`/`pending`-approval blijft een intentievolle wait, geen
+runneruitval. Regressietests/QA zijn niet gewijzigd of handmatig gestart.
