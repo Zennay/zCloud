@@ -1,151 +1,161 @@
 #!/usr/bin/env python3
-"""Bounded GitHub CI discovery for zSentinel's on-demand cockpit.
+"""zSentinel read-only source discovery: queued jobs first, then recent failures.
 
-Uses read-only canonical GitHub GETs, never reruns jobs. Returns at most one
-relevant run/job receipt per project, with explicit coverage limitations.
+The caller gets one verified (project/run/job/SHA) candidate per repository.
+All requests are canonical GitHub GETs, bounded, without redirect replay.
+This is an INCOMPLETE sample, never proof that other workflows are healthy.
 """
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from zsentinel_product_issue_inbox import bounded_get
 from zsentinel_recovery_router import utc_string
 
-UTC=timezone.utc
-SHA=re.compile(r"^[a-f0-9]{40}$")
-MAX_PROJECTS=3
-MAX_RUNS=5
-MAX_JOBS=10
-MAX_GETS_PER_PROJECT=4
-RELEVANT_STATES={"queued","completed","in_progress"}
-FAILURES={"failure","timed_out","action_required"}
+UTC = timezone.utc
+SHA = re.compile(r"^[a-f0-9]{40}$")
+MAX_PROJECTS = 3
+MAX_RUNS = 5
+MAX_JOBS = 10
+RUN_PAGES_PER_WINDOW = 2
+RUN_WINDOWS = ("queued", "failure")
+MAX_GETS_PER_PROJECT = len(RUN_WINDOWS) * (1 + RUN_PAGES_PER_WINDOW)
+RESULTS = {"failure", "timed_out", "action_required"}
 
 
 def parse_time(value):
-    if not isinstance(value,str) or len(value)>50:
-        raise ValueError("invalid github job clock")
+    if not isinstance(value, str) or len(value) > 50:
+        raise ValueError("invalid GitHub job clock")
     try:
-        dt=datetime.fromisoformat(value.replace("Z","+00:00"))
+        date = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ValueError("invalid github job clock") from exc
-    if dt.tzinfo is None or dt.utcoffset() is None:
-        raise ValueError("github job clock without timezone")
-    return dt.astimezone(UTC)
+        raise ValueError("invalid GitHub job clock") from exc
+    if date.tzinfo is None or date.utcoffset() is None:
+        raise ValueError("GitHub job clock requires UTC offset")
+    return date.astimezone(UTC)
+
+
+def recent_runs(root, canonical_repository, token, status):
+    query = urlencode({"status": status, "per_page": MAX_RUNS, "page": 1})
+    result = bounded_get(f"{root}/actions/runs?{query}", token)
+    if (not isinstance(result, dict) or not isinstance(result.get("workflow_runs"), list)
+            or len(result["workflow_runs"]) > MAX_RUNS):
+        raise ValueError("GitHub workflow list shape or bounds invalid")
+    selected = []
+    for run in result["workflow_runs"]:
+        if not isinstance(run, dict):
+            continue
+        rid, sha = run.get("id"), run.get("head_sha")
+        repository = run.get("repository")
+        if (type(rid) is not int or not 1 <= rid <= 2**53 - 1
+                or not isinstance(sha, str) or not SHA.fullmatch(sha)
+                or not isinstance(repository, dict)
+                or repository.get("full_name") != canonical_repository):
+            continue
+        selected.append((rid, sha))
+    return selected[:RUN_PAGES_PER_WINDOW]
+
+
+def run_job_candidates(root, run_id, sha, token, kind):
+    query = urlencode({"per_page": MAX_JOBS, "page": 1})
+    result = bounded_get(f"{root}/actions/runs/{run_id}/jobs?{query}", token)
+    if (not isinstance(result, dict) or not isinstance(result.get("jobs"), list)
+            or len(result["jobs"]) > MAX_JOBS):
+        raise ValueError("GitHub jobs shape or bounds invalid")
+    candidates = []
+    for job in result["jobs"]:
+        if not isinstance(job, dict):
+            continue
+        jid, actual_run = job.get("id"), job.get("run_id")
+        status, conclusion, runner = (
+            job.get("status"), job.get("conclusion"), job.get("runner_id")
+        )
+        if (type(jid) is not int or not 1 <= jid <= 2**53 - 1
+                or actual_run != run_id
+                or (runner is not None and
+                    (type(runner) is not int or runner < 0))):
+            continue
+        created = parse_time(job.get("created_at"))
+        now = datetime.now(UTC)
+        if created > now + timedelta(minutes=2):
+            continue
+        if kind == "queued":
+            if status != "queued" or bool(runner) or now-created < timedelta(minutes=30):
+                continue
+            rank = 0
+        else:
+            if status != "completed" or conclusion not in RESULTS:
+                continue
+            rank = 1
+        candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner))
+    return candidates
 
 
 def discover(registry, selected, token=None):
-    """At most three recent workflow runs and ten jobs per run/repo."""
-    if (not isinstance(selected,list) or not 1<=len(selected)<=MAX_PROJECTS
-            or len(set(selected))!=len(selected)
-            or any(name not in registry for name in selected)):
+    """At most six GitHub GETs per project and one actionable sampled job."""
+    if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
+            or len(set(selected)) != len(selected)
+            or any(pid not in registry for pid in selected)):
         raise ValueError("invalid canonical CI-discovery project selection")
-    receipts={}
-    coverage=[]
-    request_count=0
+    receipts = {}
+    coverage = []
+    request_count = 0
     for pid in selected:
-        repo=registry[pid]
-        root=f"https://api.github.com/repos/{repo}"
+        canonical_repository = registry[pid]
+        root = f"https://api.github.com/repos/{canonical_repository}"
+        candidates = []
+        checked = 0
         try:
-            query=urlencode({"event":"pull_request","per_page":MAX_RUNS,"page":1})
-            request_count+=1
-            result=bounded_get(f"{root}/actions/runs?{query}",token)
-            if not isinstance(result,dict) or not isinstance(result.get("workflow_runs"),list):
-                raise ValueError("github workflow run shape invalid")
-            runs=result["workflow_runs"]
-            if len(runs)>MAX_RUNS:
-                raise ValueError("github workflow run response exceeds bounds")
-            shortlisted=[]
-            for run in runs:
-                if not isinstance(run,dict):
-                    continue
-                rid=run.get("id")
-                sha=run.get("head_sha")
-                status=run.get("status")
-                if (type(rid) is not int or not 1<=rid<=2**53-1
-                        or not isinstance(sha,str) or not SHA.fullmatch(sha)
-                        or status not in RELEVANT_STATES):
-                    continue
-                linked=run.get("repository")
-                if not isinstance(linked,dict) or linked.get("full_name")!=repo:
-                    continue
-                shortlisted.append((rid,sha,status))
-            # Scan one newest relevant run only: partial coverage is explicit.
-            if not shortlisted:
-                coverage.append({"project_id":pid,"status":"no_relevant_run_in_recent_window",
-                                 "authoritative_all_clear":False})
-                continue
-            candidates=[]
-            checked_runs=0
-            # Sample up to three recent independent run receipts, not just
-            # the latest (which may be green while an older job is unassigned).
-            for run_id,sha,_ in shortlisted[:3]:
-                checked_runs+=1
-                request_count+=1
-                query=urlencode({"per_page":MAX_JOBS,"page":1})
-                jobs_result=bounded_get(f"{root}/actions/runs/{run_id}/jobs?{query}",token)
-                if not isinstance(jobs_result,dict) or not isinstance(jobs_result.get("jobs"),list):
-                    raise ValueError("github workflow jobs shape invalid")
-                jobs=jobs_result["jobs"]
-                if len(jobs)>MAX_JOBS:
-                    raise ValueError("github workflow jobs exceed bounds")
-                for job in jobs:
-                    if not isinstance(job,dict):
-                        continue
-                    job_id,actual_run=job.get("id"),job.get("run_id")
-                    status=job.get("status")
-                    result_state=job.get("conclusion")
-                    assigned=job.get("runner_id")
-                    if (type(job_id) is not int or not 1<=job_id<=2**53-1
-                            or actual_run!=run_id or status not in RELEVANT_STATES
-                            or (assigned is not None and
-                                (type(assigned) is not int or assigned<0))):
-                        continue
-                    created=parse_time(job.get("created_at"))
-                    observed=datetime.now(UTC)
-                    if created>observed+timedelta(minutes=2):
-                        continue
-                    if status=="queued" and not assigned and observed-created>=timedelta(minutes=30):
-                        importance=0
-                    elif status=="completed" and result_state in FAILURES:
-                        importance=1
-                    else:
-                        continue
-                    candidates.append((importance,created,run_id,job_id,sha,status,result_state,assigned))
+            # Always search unassigned QUEUED runs (including dispatch/schedule)
+            # before old CI failures. This avoids drowning P0 in green PR runs.
+            for status in RUN_WINDOWS:
+                request_count += 1
+                run_ids = recent_runs(root, canonical_repository, token, status)
+                for run_id, sha in run_ids:
+                    request_count += 1
+                    checked += 1
+                    candidates.extend(run_job_candidates(root, run_id, sha, token, status))
+                if candidates:
+                    break
             if not candidates:
-                coverage.append({"project_id":pid,"status":"no_selected_incident_in_bounded_jobs",
-                                 "runs_checked":checked_runs,
-                                 "authoritative_all_clear":False})
+                coverage.append({
+                    "project_id": pid, "status": "no_actionable_job_in_sampled_windows",
+                    "run_pages_checked": checked, "authoritative_all_clear": False
+                })
                 continue
-            candidates.sort(key=lambda x:(x[0],x[1],x[2],x[3]))
-            _,created,run_id,job_id,sha,status,result_state,assigned=candidates[0]
-            observed=datetime.now(UTC)
-            receipt={
-                "run_id":run_id,"job_id":job_id,"head_sha":sha,
-                "job_status":status,"queued_at":utc_string(created),
-                "observed_at":utc_string(observed),
-                "runner_assigned":bool(assigned),
-                "verified_receipt":"github_bounded_run_jobs_discovery",
+            candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
+            _, created, run_id, job_id, sha, status, conclusion, runner = candidates[0]
+            receipt = {
+                "run_id": run_id, "job_id": job_id, "head_sha": sha,
+                "job_status": status, "queued_at": utc_string(created),
+                "observed_at": utc_string(datetime.now(UTC)),
+                "runner_assigned": bool(runner),
+                "verified_receipt": "github_bounded_run_jobs_discovery",
             }
-            if status=="completed":
-                receipt["conclusion"]=result_state
-            receipts[pid]=receipt
-            coverage.append({"project_id":pid,"status":"selected_one_source_bound_job",
-                             "run_id":run_id,"job_id":job_id,
-                             "runs_checked":checked_runs,
-                             "authoritative_all_clear":False})
-        except (ValueError,OSError):
-            coverage.append({"project_id":pid,"status":"degraded_unavailable",
-                             "authoritative_all_clear":False})
-    return receipts,{
-        "source":"github_canonical_readonly_bounded_discovery",
-        "request_count":request_count,
-        "maximum_requests":len(selected)*MAX_GETS_PER_PROJECT,
-        "max_runs_per_project":MAX_RUNS,
-        "max_jobs_per_project":MAX_JOBS,
-        "coverage":coverage,
-        "full_repo_ci_inventory":False,
-        "jobs_restarted":False,
-        "runner_mutations":False,
+            if status == "completed":
+                receipt["conclusion"] = conclusion
+            receipts[pid] = receipt
+            coverage.append({
+                "project_id": pid, "status": "selected_one_source_bound_job",
+                "run_id": run_id, "job_id": job_id,
+                "run_pages_checked": checked, "authoritative_all_clear": False
+            })
+        except (OSError, ValueError):
+            coverage.append({
+                "project_id": pid, "status": "degraded_unavailable",
+                "run_pages_checked": checked, "authoritative_all_clear": False
+            })
+    return receipts, {
+        "source": "github_canonical_readonly_bounded_discovery",
+        "request_count": request_count,
+        "maximum_requests": len(selected) * MAX_GETS_PER_PROJECT,
+        "run_windows": list(RUN_WINDOWS),
+        "max_runs_per_window": MAX_RUNS,
+        "run_pages_per_window": RUN_PAGES_PER_WINDOW,
+        "max_jobs_per_run": MAX_JOBS,
+        "coverage": coverage,
+        "full_repo_ci_inventory": False,
+        "jobs_restarted": False, "runner_mutations": False,
     }
