@@ -182,7 +182,7 @@ def eligible_tasks(bundle, blocked, now):
             raise ValueError("task.priority must be P0..P3")
         if task.get("state") not in ("queued", "claimed", "running", "verifying", "blocked", "done"):
             raise ValueError("task.state unsupported")
-        deps = task.get("depends_on_incidents", [])
+        deps = task.get("depends_on_incidents")
         if not isinstance(deps, list) or len(deps) > 30 or any(not isinstance(x, str) for x in deps):
             raise ValueError("invalid incident dependencies")
         scopes = admit_paths(task) if task.get("state") == "queued" else None
@@ -240,7 +240,14 @@ def plan(bundle, previous=None, now=None):
         job_status = project.get("github", {}).get("job_status")
         if incident["reason"] == "github_job_unassigned" and job_status != "queued":
             continue
-        key = source_incident_key(project, incident)
+        github = project.get("github", {})
+        initial_category = github.get("verified_failure_category")
+        key = source_incident_key(project, {
+            **incident,
+            "reason": ("github_hosted_billing_admission" if initial_category == "billing_admission"
+                       else "github_required_owner_approval" if initial_category == "owner_approval"
+                       else incident["reason"])
+        })
         if key is None:
             # Do not dedupe, retry or act on a GitHub job without a stable job/run.
             continue
@@ -249,12 +256,36 @@ def plan(bundle, previous=None, now=None):
         if first > now + timedelta(minutes=2):
             raise ValueError("incident state timestamp is in the future")
         reason = incident["reason"]
-        severity = "P0" if reason == "github_job_unassigned" else "P1"
+        github = project.get("github", {})
+        category = github.get("verified_failure_category")
+        if category is not None and category not in ("billing_admission", "owner_approval", "ordinary_failure"):
+            raise ValueError("github.verified_failure_category: unsupported")
+        if category and reason != "github_workflow_failed":
+            raise ValueError("failure category requires a fresh failed GitHub job")
+        if category == "billing_admission":
+            if github.get("no_job_steps") is not True:
+                raise ValueError("billing admission requires explicit no-job-steps evidence")
+            reason = "github_hosted_billing_admission"
+            blocked_gates.add("github_hosted")
+        elif category == "owner_approval":
+            reason = "github_required_owner_approval"
+        severity = "P0" if reason in ("github_job_unassigned", "github_hosted_billing_admission") else "P1"
         owner = project.get("notion", {}).get("owner") or project.get("runtime", {}).get("owner")
         if not isinstance(owner, str) or not 1 <= len(owner) <= 80 or any(ord(c) < 32 for c in owner):
             owner = "owner_confirmation_required"
-        human = reason == "github_job_unassigned"
-        blocked_gates.update(["self_hosted"] if reason == "github_job_unassigned" else [])
+        human = reason in ("github_job_unassigned", "github_hosted_billing_admission",
+                           "github_required_owner_approval")
+        if reason == "github_job_unassigned":
+            blocked_gates.add("self_hosted")
+        if reason == "github_hosted_billing_admission":
+            owner = "GitHub account billing owner"
+        if reason == "github_required_owner_approval":
+            owner = "authorized PR/release owner"
+        action = incident["next_action"]
+        if reason == "github_hosted_billing_admission":
+            action = "Account owner reviews GitHub billing/spend admission; do not retry paid jobs or change billing."
+        elif reason == "github_required_owner_approval":
+            action = "Wait for authorized GitHub owner review; no runner restart or PR merge."
         blocking_ids.add(key)
         previous_status = prior_entry.get("status", "")
         incidents.append({
@@ -262,7 +293,7 @@ def plan(bundle, previous=None, now=None):
             "severity": severity, "problem": reason, "owner": owner,
             "first_seen": utc_string(first), "last_seen": utc_string(now),
             "target_review_by": utc_string(first + timedelta(hours=2 if severity == "P0" else 12)),
-            "action": incident["next_action"],
+            "action": action,
             "status": ("human_action_required" if human else "read_only_diagnosis_required"),
             "human_escalation": human,
             "last_status": previous_status if isinstance(previous_status, str) else "",
