@@ -263,9 +263,15 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             desired = worker.get("desired_state")
             if desired not in ("running", "paused", "draining", "unknown"):
                 raise ValueError("invalid desired-state source")
-            # A paused/draining/unknown worker must NOT appear as a stalled
-            # recovery candidate simply because its last event is old.
-            if desired != "running" or state not in worker_flags:
+            # No active global slot == no active worker to resume.
+            # Stale configured rows are intentionally retained as read-only
+            # evidence but must never become a P1 incident recommendation.
+            global_slot = worker.get("allocated_global_slot")
+            if global_slot is not None and (type(global_slot) is not int
+                                            or not 1 <= global_slot <= 32):
+                raise ValueError("untrusted worker allocation slot")
+            if (desired != "running" or global_slot is None
+                    or state not in worker_flags):
                 continue
             age = worker.get("event_age_seconds")
             if age is not None and (type(age) is not int or age < 0):
