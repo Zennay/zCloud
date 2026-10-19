@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import fcntl
 import json
 import os
 import re
@@ -129,6 +130,42 @@ def read_json(path, limit, name):
                               ValueError("invalid JSON constant")))
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{name}: invalid UTF-8 JSON") from exc
+
+
+def acquire_private_ledger_lock(path):
+    """Single-writer, fail-fast lock over a whole private zSentinel run.
+
+    Lock the adjacent stable inode, not the atomically replaced JSON inode.
+    This is local private state only; it never locks or mutates the zCloud
+    SQLite queue, GitHub, workers or a production deployment.
+    """
+    target = Path(path)
+    parent = target.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise ValueError("private incident ledger needs a real existing parent directory")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("no-follow private ledger lock not supported")
+    parent_info = parent.stat()
+    if (parent_info.st_uid != os.geteuid()
+            or stat.S_IMODE(parent_info.st_mode) & 0o022):
+        raise ValueError("private incident ledger directory must be owned and not group/world writable")
+    lockfile = str(target) + ".lock"
+    fd = os.open(lockfile, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW |
+                 getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("unsafe shared private ledger lock")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("another zSentinel operator is currently updating this ledger") from exc
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def write_json_atomic(path, data):
