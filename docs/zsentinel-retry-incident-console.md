@@ -61,7 +61,21 @@ python3 scripts/zsentinel_retry_trend.py \
 
 The trend console in [scripts/zsentinel_retry_trend.py](../scripts/zsentinel_retry_trend.py)
 provides current-vs-previous active-item counts, high attempts, expired leases,
-and a per-project rise/fall ranking. It also exports Markdown and JSON.
+and a per-project rise/fall ranking. **It now also correlates the same pseudonymous
+queue reference in both bounded samples**, highlights individual claim-cycle increases,
+status/priority changes and suspicious counter decreases, and shows explicit matched,
+earlier-only and later-only coverage in standalone HTML, Markdown and structured JSON.
+This is an operational answer to “which item kept churning?” rather than only
+“which project's aggregate got bigger?”. Raw queue IDs and optional task titles
+are never copied into the trend outputs.
+
+The per-item movement is **observed only for rows in BOTH samples**. A sampled
+item disappearing from the top-N list does **not** establish completion, deletion,
+claim release or authority to retry; a newly sampled item does not prove queue
+creation. The command reports sample limits and complete/partial coverage;
+claim counters reflect dispatch/claim cycles, not confirmed failures. The
+`record_changes` list is capped at the saved snapshot sample limit (maximum 100).
+It also exports Markdown and JSON.
 It rejects incomplete/noncanonical schema, unbounded >1 MB snapshots, missing or
 unordered timestamps, and mismatched scope/threshold instead of displaying an
 invented trend. Local JSON inputs and a selected output path are the only file
