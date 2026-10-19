@@ -45,7 +45,7 @@ def _duplicate_guard(pairs):
 def _read(path: Path):
     if path.is_symlink():
         raise ValueError("refuse source symlink")
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
@@ -114,7 +114,7 @@ def _cards(board):
         checks = row.get("observed_check_gates", [])
         if type(checks) is not list or len(checks) > 8:
             raise ValueError("unbounded check observations")
-        checks = [_plain(value, 155) for value in checks]
+        checks = [_plain(value, 190) for value in checks]
         for permission in ("worker_resumed_verified", "permission_to_recover", "owner_claim_verified"):
             if row.get(permission) is not False:
                 raise ValueError("source unexpectedly asserts authority or recovery")
@@ -132,7 +132,23 @@ def _cards(board):
     return mapped
 
 
+def _unwrap(snapshot):
+    """Accept the canonical one-command portfolio JSON or a saved board itself."""
+    if type(snapshot) is not dict:
+        raise ValueError("invalid snapshot")
+    if "blocker_first_handoff" not in snapshot:
+        return snapshot
+    portfolio = snapshot.get("portfolio")
+    if (type(portfolio) is not dict
+            or portfolio.get("schema") != "zsentinel-portfolio-overview-v1"
+            or portfolio.get("actions_performed") is not False
+            or portfolio.get("queue_owner_authorized") is not False):
+        raise ValueError("untrusted portfolio snapshot")
+    return snapshot["blocker_first_handoff"]
+
+
 def compare(before, after):
+    before, after = _unwrap(before), _unwrap(after)
     old, new = _cards(before), _cards(after)
     current, first_seen, not_reobserved, changed = [], [], [], []
     for key in sorted(new, key=lambda k: (
