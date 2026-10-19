@@ -129,6 +129,12 @@ def blocker_first_board(summary, decision, issues):
             "owner_claim_verified": False,
         })
     historical_count = len(cards) - live_observed_count
+    # A historical incident may reference a project removed from today's
+    # canonical registry. Do not crash the whole workboard or silently mark
+    # that earlier incident recovered; surface it as unmapped source debt.
+    unseen_historical_count = max(
+        0, backlog["total_unresolved"] - historical_count
+    )
     # A useful dashboard must distinguish an unobserved queue from zero.
     # Churn/expired leases are only potential blockers, not incident proof.
     for row in summary["rows"]:
@@ -197,6 +203,7 @@ def blocker_first_board(summary, decision, issues):
                          else "refresh_missing_blocker_sources_before_all_clear"),
         "live_incident_observations": live_observed_count,
         "historical_not_reconciled": historical_count,
+        "historical_unmapped_or_unshown": unseen_historical_count,
         "queue_pressure_observations": len(cards) - live_observed_count - historical_count,
         "shown_blocker_cards": shown,
         "blocker_cards_truncated": len(cards) > len(shown),
@@ -250,6 +257,8 @@ def blocker_board_html(board):
         str(board["live_incident_observations"]) +
         ' · historisch te hercontroleren: ' +
         str(board["historical_not_reconciled"]) +
+        ' · meer historisch onbekend/niet getoond: ' +
+        str(board["historical_unmapped_or_unshown"]) +
         ' · wachtrijdruk: ' + str(board["queue_pressure_observations"]) +
         (' · meer kaarten niet getoond' if board["blocker_cards_truncated"] else '') +
         '</p><div class="grid">' + ''.join(cards) + '</div>'
