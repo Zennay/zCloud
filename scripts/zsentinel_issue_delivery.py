@@ -209,8 +209,11 @@ def render_html(board):
         older = "".join(
             '<li><a href="' + escape(entry["issue_url"], quote=True) +
             '" rel="noopener noreferrer" target="_blank">' +
-            escape(entry["title"]) + '</a> · NIET meer in de huidige '
-            'steekproef; niet als gesloten of opgelost bewezen.</li>'
+            escape(entry["title"]) + '</a> · ' +
+            ('BRON NIET BESCHIKBAAR; alleen eerder bewijs aanwezig'
+             if entry["observation"] == "current_source_unavailable_previous_state_only"
+             else 'niet in huidige beperkte steekproef') +
+            '; nooit gesloten of opgelost bewezen.</li>'
             for entry in progress["prior_issues_outside_current_sample"])
         progress_panel = (
             '<section aria-label="Voortgang sinds vorige bronmomentopname">'
@@ -222,8 +225,10 @@ def render_html(board):
             ' · Nieuw in steekproef: ' + str(progress["newly_sampled_count"]) +
             ' · Gewijzigde broninformatie: ' +
             str(progress["changed_source_receipts_count"]) +
-            ' · Nu buiten steekproef: ' +
+            ' · Niet in huidige steekproef: ' +
             str(progress["previously_sampled_missing_count"]) +
+            ' · Huidige bron onbereikbaar (alleen historisch): ' +
+            str(progress["previously_sampled_unverifiable_count"]) +
             '</p>' +
             ('<details><summary>Eerder gezien, nu niet waargenomen '
              '(NIET gesloten)</summary><ul>' + older +
@@ -336,6 +341,8 @@ def render_markdown(board):
             "- Bronwijzigingen bij bestaande issues: " + str(progress["changed_source_receipts_count"]),
             "- Eerder gezien maar nu uit steekproef (NIET gesloten): " +
             str(progress["previously_sampled_missing_count"]),
+            "- Huidige bron niet bereikbaar: enkel oudere observatie: " +
+            str(progress["previously_sampled_unverifiable_count"]),
             "- Geen totale backlog of actuele sluitingsstatus bewezen."
         ])
     for item in board["items"]:
@@ -364,7 +371,11 @@ def render_markdown(board):
     if progress is not None:
         for historic in progress["prior_issues_outside_current_sample"]:
             lines.extend([
-                "", "- Eerder gezien, nu niet gesampled (NIET gesloten): [" +
+                "", "- " + ("Huidige bron ONBESCHIKBAAR, enkel oude waarneming"
+                       if historic["observation"] ==
+                          "current_source_unavailable_previous_state_only" else
+                       "Eerder gezien, nu niet in begrensde steekproef") +
+                " (NIET gesloten): [" +
                 _markdown_literal(historic["title"]) + "](" +
                 historic["issue_url"] + ")"
             ])
