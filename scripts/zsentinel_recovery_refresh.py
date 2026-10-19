@@ -202,15 +202,18 @@ def main():
                 source["queue_source"] = "degraded_unavailable_no_mutation"
         routed, updated = plan(enriched, old)
         routed["live_github_read"] = source
-        if args.state:
-            write_json_atomic(args.state, updated)
         routed["private_ledger_written"] = bool(args.state)
         if args.format == "html":
             from zsentinel_recovery_view import html_view
-            print(html_view(routed))
+            rendered = html_view(routed)
         else:
-            print(json.dumps(routed, sort_keys=True, indent=2) if args.format == "json"
-                  else operator_text(routed) + "\nGitHub coverage: " + source["github_coverage"])
+            rendered = (json.dumps(routed, sort_keys=True, indent=2)
+                        if args.format == "json" else
+                        operator_text(routed) + "\\nGitHub coverage: " + source["github_coverage"])
+        # A broken HTML/source cannot silently acknowledge incident history.
+        if args.state:
+            write_json_atomic(args.state, updated)
+        print(rendered)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel read-only refresh refused: {exc}\n")
     return 0
