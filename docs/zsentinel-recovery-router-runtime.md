@@ -44,13 +44,23 @@ gekozen op basis van UTC-uur. Bij opeenvolgende uurlijkse, vooraf
 geautoriseerde aanroepen rouleert het venster. Dit command **installeert
 zelf geen timer, scheduler, webhook, PR-merge of notificatie**. Via
 `--window 0`, `--window 1`, enzovoort kan de operator gericht inspecteren.
-Alle andere GitHub-projecten blijven expliciet **NIET GESCAND** in de huidige
-momentopname; GitHub-green bij een geselecteerde job is evenmin bewijs van
-herstelde worker-, VPS- of deploymentstatus.
+Een geselecteerd project is nog **niet** automatisch succesvol gescand:
+GitHub-issue- en CI-bronnen worden per project afzonderlijk geclassificeerd
+als gedeeltelijk uitgelezen, slechts één bron beschikbaar, geweigerd of
+niet opgevraagd. Provideruitval, 401/403, rate limiting en samplinglimieten
+zijn nooit "0 fouten" of bewijs van herstel. Alle andere GitHub-projecten
+blijven expliciet **NIET GESCAND** in de huidige momentopname; GitHub-green
+bij een geselecteerde job is evenmin bewijs van herstelde worker-, VPS-
+of deploymentstatus.
 
 De portfolio-overzichtrijen onderscheiden `queued`, reeds `owned`
 (`claimed/running/verifying`), hoge claimpogingen, mogelijk verlopen
-ownerleases en een **concrete niet-muterende vervolgstap**. Claim attempts
+ownerleases, **uit de actuele bronsteekproef bewezen minimumaantallen**
+P0/P1-issues en actieve incidenten, en een **concrete niet-muterende
+vervolgstap**. Een getoond `≥0` betekent uitsluitend dat in de beperkte
+steekproef niets is gevonden: het is nadrukkelijk geen volledig nulrisico.
+Wanneer een GitHub-bron niet daadwerkelijk beschikbaar was, staat
+`ONBEKEND` in plaats van `0`. Claim attempts
 betekenen niet automatisch mislukkingen, en een mogelijk verlopen lease is
 niet vrijgegeven. Onbekende repositoryprojecten worden niet stilzwijgend
 gelijkgesteld met een geregistreerd project; hun aantal kan zonder hun
