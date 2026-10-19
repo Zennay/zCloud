@@ -669,6 +669,43 @@ async function controlWorker(workerId,action,button,force=false,globalSlot=null)
 // the local VPS feed, and never grant merge/deploy/worker authority from a file.
 let IMPORTED_GITHUB_ACTIVITY=null,IMPORTED_GITHUB_ERROR='';
 const GITHUB_RECEIPT_KINDS=new Set(['pr_created','pr_updated','pr_merged','ci_run','main_commit']);
+const ZSENTINEL_PORTFOLIO_SOURCE_LIMIT=16; // 13 canonical projects + bounded growth.
+function fairProductIssueHistory(rows,coverage,limit=150){
+  // Global P0/P1 priority is preserved while each observed project gets an
+  // opportunity. Do not let one noisy repository erase all other P1 evidence.
+  const projects=[...new Set((coverage||[]).map(row=>row.project))]
+    .filter(id=>typeof id==='string').slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT).sort();
+  const retained=new Set(projects),known=new Map();
+  for(const item of rows||[]){
+    if(!item||!retained.has(item.project)||!Number.isSafeInteger(item.number)
+       ||item.number<1||!['P0','P1','P2','Unspecified'].includes(item.priority))continue;
+    // Fresh data is appended after older evidence by all existing callers.
+    known.set(item.project+':'+item.number,item);
+  }
+  const buckets=new Map(projects.map(id=>[id,[]]));
+  for(const item of known.values())buckets.get(item.project).push(item);
+  const rank={P0:0,P1:1,P2:2,Unspecified:3};
+  for(const bucket of buckets.values())bucket.sort((a,b)=>
+    rank[a.priority]-rank[b.priority]||a.number-b.number);
+  const output=[],used=new Map(projects.map(id=>[id,0]));
+  // Complete each global priority tier before lower priority, with fair
+  // round-robin turns inside that tier. The cap remains 150 across all repos.
+  for(const priority of ['P0','P1','P2','Unspecified']){
+    while(output.length<limit){
+      let moved=false;
+      for(const project of projects){
+        const items=buckets.get(project),cursor=used.get(project);
+        if(cursor>=items.length||items[cursor].priority!==priority)continue;
+        output.push(items[cursor]);used.set(project,cursor+1);moved=true;
+        if(output.length>=limit)break;
+      }
+      if(!moved)break;
+    }
+    if(output.length>=limit)break;
+  }
+  return output;
+}
+
 // A new validated operator receipt updates only its declared canonical
 // projects. Earlier observations for other projects remain available and
 // unchanged; an older file cannot silently roll back newer observations.
@@ -682,7 +719,7 @@ function mergeValidatedZSentinelReceipts(previous,next,kind){
       throw Error('Receipt is older than the current '+row.project+' observation; clear first if an older snapshot is intended');
     }
   }
-  const coverage=[...previous.coverage.filter(row=>!ids.has(row.project)),...next.coverage].slice(-8);
+  const coverage=[...previous.coverage.filter(row=>!ids.has(row.project)),...next.coverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
   const retained=new Set(coverage.map(row=>row.project));
   if(kind==='github'){
     const events=fairPublicGitHubHistory([
@@ -690,11 +727,9 @@ function mergeValidatedZSentinelReceipts(previous,next,kind){
       ...next.events.filter(row=>retained.has(row.project))],coverage);
     return {observedAt:new Date().toISOString(),events,coverage};
   }
-  const rank={P0:0,P1:1,P2:2,Unspecified:3};
-  const issues=[...previous.issues.filter(row=>!ids.has(row.project)&&retained.has(row.project)),
-      ...next.issues.filter(row=>retained.has(row.project))]
-      .sort((a,b)=>(rank[a.priority]??4)-(rank[b.priority]??4)||
-        a.project.localeCompare(b.project)||a.number-b.number).slice(0,150);
+  const issues=fairProductIssueHistory([
+    ...previous.issues.filter(row=>!ids.has(row.project)&&retained.has(row.project)),
+    ...next.issues.filter(row=>retained.has(row.project))],coverage);
   return {observedAt:new Date().toISOString(),issues,coverage,partial:true};
 }
 function validateGitHubActivityReceipt(value){
@@ -778,7 +813,7 @@ function fairPublicGitHubHistory(rows,coverage,limit=200){
   // out quiet projects. Reserve one round-robin slot per covered project
   // before sorting the retained events by their actual source timestamps.
   const ids=[...new Set((coverage||[]).map(row=>row.project))]
-    .filter(id=>typeof id==='string').slice(0,8);
+    .filter(id=>typeof id==='string').slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
   const grouped=new Map(ids.map(id=>[id,[]]));
   const seen=new Set();
   for(const row of rows||[]){
@@ -881,7 +916,7 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
     const githubCoverage=[...previousGitHub.coverage.filter(row=>row.project!==projectId),
       {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable',
         observedAt:good===3||!previousCoverage?sampledAt:previousCoverage.observedAt,
-        lastAttemptAt:sampledAt,staleEvidence:good<3&&previousRows.length>0}].slice(-8);
+        lastAttemptAt:sampledAt,staleEvidence:good<3&&previousRows.length>0}].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
     const coveredIds=new Set(githubCoverage.map(row=>row.project));
     const retainedProjectRows=good===3?events:[...previousRows,...events];
     const githubEvents=fairPublicGitHubHistory(
@@ -936,7 +971,7 @@ async function readVpsGitHubActivity(){
       throw Error('Server source project mismatch');
     if(routeVersion!==version||filter!==project)return;
     const prior=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
-    const retained=[...prior.coverage.filter(row=>row.project!==project),...parsed.coverage].slice(-8);
+    const retained=[...prior.coverage.filter(row=>row.project!==project),...parsed.coverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
     const projects=new Set(retained.map(row=>row.project));
     const events=fairPublicGitHubHistory(
       [...prior.events.filter(row=>row.project!==project&&projects.has(row.project)),...parsed.events],
@@ -970,7 +1005,7 @@ function githubActivityImportPanel(){
     '<button type="button" class="runner-action" data-vps-github-refresh '+
     (VPS_GITHUB_BUSY?'disabled aria-busy="true"':'')+'>Read VPS GitHub</button> '+
     (VPS_GITHUB_ERROR?'<p class="detail-note" role="status">'+esc(VPS_GITHUB_ERROR)+'</p>':'')+
-    '<span class="detail-note">Opt-in browser GET only · three bounded requests per selected project. Up to eight project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
+    '<span class="detail-note">Opt-in browser GET only · three bounded requests per selected project. Up to 16 bounded project snapshots retained in this tab; no credentials or background sync.</span><br>'+ 
     '<label for="githubReceiptFile">Or import a JSON receipt created by the zCloud GitHub activity observer</label> '+
     '<input type="file" id="githubReceiptFile" accept=".json,application/json" aria-label="Import read-only GitHub activity JSON receipt">'+
     (snapshot?'<button type="button" class="runner-action" data-github-receipt-clear>Clear snapshot</button>':'')+
@@ -1107,7 +1142,7 @@ async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
       recent:outcomes[1].status==='fulfilled'?'bounded 30':'unavailable',
       prs:outcomes[2].status==='fulfilled'?'bounded 12':'unavailable'};
     const issueCoverage=[...previousIssues.coverage.filter(row=>row.project!==projectId),
-      currentCoverage].slice(-8);
+      currentCoverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
     const coveredProjects=new Set(issueCoverage.map(row=>row.project));
     const currentRows=[...issues.values()].map(row=>{
       const old=priorRows.find(item=>item.number===row.number);
@@ -1117,9 +1152,9 @@ async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
     });
     const safeRows=readable===3?currentRows:[...priorRows.filter(row=>
       !currentRows.some(fresh=>fresh.number===row.number)),...currentRows];
-    const issueRows=[...previousIssues.issues.filter(row=>row.project!==projectId&&coveredProjects.has(row.project)),
-      ...safeRows].sort((a,b)=>ranked[a.priority]-ranked[b.priority]||
-      (Number(b.observed)||0)-(Number(a.observed)||0)).slice(0,150);
+    const issueRows=fairProductIssueHistory([
+      ...previousIssues.issues.filter(row=>row.project!==projectId&&coveredProjects.has(row.project)),
+      ...safeRows],issueCoverage);
     IMPORTED_PRODUCT_ISSUES={observedAt:sampledAt,partial:true,issues:issueRows,coverage:issueCoverage};
     IMPORTED_ISSUE_SHOW_ALL=false;
     IMPORTED_PRODUCT_ERROR=(readable===3?'Public issue sample loaded. ':'Partial public issue source ('+readable+'/3 readable); older P0/P1 observations retained and may be stale. ')+
@@ -1167,12 +1202,11 @@ async function readVpsProductIssues(){
       throw Error('Issue source project mismatch');
     if(routeVersion!==version||filter!==project)return;
     const old=IMPORTED_PRODUCT_ISSUES||{issues:[],coverage:[]};
-    const coverage=[...old.coverage.filter(row=>row.project!==project),...parsed.coverage].slice(-8);
+    const coverage=[...old.coverage.filter(row=>row.project!==project),...parsed.coverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
     const allowed=new Set(coverage.map(row=>row.project));
-    const order={P0:0,P1:1,P2:2,Unspecified:3};
-    const rows=[...old.issues.filter(row=>row.project!==project&&allowed.has(row.project)),
-      ...parsed.issues].sort((a,b)=>order[a.priority]-order[b.priority]||
-      a.project.localeCompare(b.project)||a.number-b.number).slice(0,150);
+    const rows=fairProductIssueHistory([
+      ...old.issues.filter(row=>row.project!==project&&allowed.has(row.project)),
+      ...parsed.issues],coverage);
     IMPORTED_PRODUCT_ISSUES={observedAt:new Date().toISOString(),partial:true,coverage,issues:rows};
     VPS_PRODUCT_ISSUES_ERROR='VPS issue source loaded for '+project+
       '. Partial open P0/P1 source only; ownership and deployment unverified.';
@@ -1576,7 +1610,7 @@ async function readZSentinelAllProjects(){
     ZSENTINEL_ALL_INDEX=start+completed;
     if(completed===batch.length){
       ZSENTINEL_ALL_MESSAGE='Processed '+Math.min(ZSENTINEL_ALL_INDEX,eligible.length)+'/'+eligible.length+
-        ' eligible repositories in this pass; only eight recent project snapshots remain in browser memory.'+
+        ' eligible repositories in this pass; up to 16 project snapshots are retained in browser memory.'+
         ' This is a bounded sample, NOT a complete synchronized Activity history.';
     }
   }finally{ZSENTINEL_ALL_RUNNING=false;if(route==='activity')render();}
