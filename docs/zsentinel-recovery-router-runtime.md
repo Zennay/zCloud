@@ -535,11 +535,26 @@ De operator kan zoeken op project/probleem/eigenaar, filteren op P0–P3 en expl
 
 **Verdere opvolging over meerdere runs:** naast een exact dezelfde-bronimport bestaat een afzonderlijke, expliciet bevestigde import van *oudere* privénotities. Alleen notities met identieke incident-ID worden gekopieerd; oude eigenaar-/herstelstatussen worden niet meegenomen en de lokale status wordt altijd **bron opnieuw verifiëren**. Meerdere regels in notities blijven behouden, ongeldige controltekens worden geweigerd. Een oude bron zonder overlap wordt geweigerd in plaats van een vals herstelbericht te maken.
 
-**Bestandsveiligheid:** voor `--format desk` is nu verplicht `--desk-output /bestaande/privémap/nieuw.html`. De tool creëert uitsluitend een **nieuw** mode-0600 bestand in een door de operator beheerde, niet groeps-/wereld-schrijfbare map. Bestaande bestanden en symlinks worden nooit overschreven; de HTML wordt volledig opgebouwd vóór de exclusieve write. Er wordt geen HTML naar de gewone stdout gelogd. De expliciete create-only file write is **uitsluitend het privé operatorbestand**, geen productie-/queue-/lease-/runnerwijziging.
+**Bestandsveiligheid:** voor `--format desk` is verplicht `--desk-output /bestaande/privémap/nieuw.html`. Met `--format html` mag dezelfde `--desk-output` als **extra privébijlage** worden opgegeven: de normale volledige cockpit komt via stdout, en de privéincidentenbalie wordt uit precies **hetzelfde read-only bronbesluit** geschreven. Daarmee wordt een dubbele GitHub-/SQLite-/Notion-bronscan voorkomen; elke providerlimiet per run blijft intact. De tool creëert uitsluitend een **nieuw** mode-0600 bestand in een door de operator beheerde, niet groeps-/wereld-schrijfbare map. Bestaande bestanden en symlinks worden nooit overschreven; de HTML wordt volledig opgebouwd vóór de exclusieve write. Er wordt geen HTML naar de gewone stdout gelogd. De expliciete create-only file write is **uitsluitend het privé operatorbestand**, geen productie-/queue-/lease-/runnerwijziging.
 
 **Voltooide privé-overdracht**: met één bewuste klik kan de operator een lokaal JSON-bestand downloaden dat alleen incident-ID, menselijke opvolgstatus en privénotitie bevat. De handoff is aan de SHA-256 van de volledig gevalideerde incidententabel, de oorspronkelijke tijd en het incidentenaantal gebonden. Een later geïmporteerde handoff wordt volledig geweigerd als bronhash, datum, aantal, statuswaarden of incident-ID niet exact overeenkomen; geldige import vervangt de notities in één keer. Er is geen autosave, achtergrondnetwork, externe HTML, lokale browseropslag, push of Notion-/GitHub-write. Privénotities niet delen als publiek issuecommentaar.
 
 **Grenzen:** de ingebedde bron heeft altijd partiële dekking; weggevallen incidenten of lege filters bewijzen nooit dat CI, eigenaar, runner of project hersteld is. Lokale keuzes autoriseren geen claim, slot/release, betaling, automatische CI-retry, worker dispatch, productie deploy, of het afsluiten van een echt incident. De gegenereerde HTML verklaart ouder dan tien minuten expliciet op basis van de browserklok en meldt klokafwijking. Er is geen nieuwe QA-/regressie-/testcode geschreven of handmatig gedraaid. De reeds verplichte exacte-head CI en onafhankelijke review blijven volledig gelden.
+
+### Eén bronlezing, twee operatorweergaven
+
+```sh
+# Vóór de run: /secure bestaat, is eigenaar-beheerd en niet groeps/world-writable.
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --window-state /secure/source-windows.json \
+  --format html --desk-output /secure/incident-desk.html \
+  > /secure/portfolio-cockpit.html
+```
+
+De overzichtspagina en privéincidentenbalie delen dezelfde gesamplede GitHub-/SQLite-/optionele Notion-momentopname. Er wordt in deze combinatie maar één intern `assemble(...)` en één `plan(...)` gedaan; alleen de lokale render gebeurt twee keer. De HTML-baliebijlage is create-only 0600, de stdout-overzichtspagina volgt het gewone operator-redirectbeleid. Voor de balie alleen: `--format desk --desk-output ...` (geen HTML op stdout). Beide opties zijn ook beschikbaar in de afzonderlijke live-, evidence-router- en exacte-job-refresh entrypoints.
+
+Een `--desk-output` dat naar hetzelfde bestand verwijst als private incidentledger of venstercursor wordt vóór de bronrequest geweigerd, inclusief padnormalisatie. Hetzelfde pad hergebruiken zonder verwijderen wordt ook geweigerd; maak een **nieuw** bestandsnaam per uitdraai. Er worden nooit extra GitHub workflow runs, runnerjobs, server-/queue-/lease-writes of automatische meldingen gestart.
 
 ### Release boundary
 
