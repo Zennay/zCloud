@@ -184,6 +184,14 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <label>Priority<select id="priority"><option value="">All priorities</option>
 <option>P0</option><option>P1</option><option>P2</option><option>Unspecified</option></select></label>
 <label>Project<select id="project"><option value="">All projects</option>""" + choices + """</select></label>
+<label>Human disposition<select id="disposition">
+<option value="">All decisions</option>
+<option value="investigate">Investigate / not yet reviewed</option>
+<option value="integrate-existing-pr">Inspect existing PR</option>
+<option value="coordinate-owner">Coordinate owner</option>
+<option value="park-blocker">Parked blocker</option>
+<option value="ready-for-new-product-work">Candidate only · verify live claims</option>
+</select></label>
 </div>
 <section class="portfolio" aria-label="Snapshot portfolio triage">
 <h2>Observed product workload</h2>
@@ -249,7 +257,9 @@ function filtered(){
  const q=document.getElementById('search').value.trim().toLowerCase();
  const p=document.getElementById('priority').value;
  const project=document.getElementById('project').value;
+ const decision=document.getElementById('disposition').value;
  return board.cards.filter(c=>(!p||p===c.priority)&&(!project||project===c.project)&&
+   (!decision||decision===(handoffs.get(c.issue)?.decision||'investigate'))&&
    (!q||(c.issue+' '+c.project+' '+c.recommended_next_step).toLowerCase().includes(q)));
 }
 function refreshPortfolio(){
@@ -390,7 +400,7 @@ function drawDetail(){
  sel.addEventListener('change',()=>{saveSelection();invalidateBrief();refreshTriage()});
  note.addEventListener('input',()=>{saveSelection();invalidateBrief();refreshTriage()});
 }
-['search','priority','project'].forEach(id=>document.getElementById(id).addEventListener(
+['search','priority','project','disposition'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
 document.getElementById('export').onclick=()=>{
  saveSelection();
