@@ -1,5 +1,49 @@
 # zSentinel · Runtime incident router (product-only)
 
+## Zelf bestaande open PR's vinden en afmaken (19 oktober)
+
+De PR-afrondingsdesk kan nu zonder bekend PR-nummer de recent
+bijgewerkte **bestaande** pull requests uit het project ophalen. Hij
+gebruikt `state=open`, de eerste 20 PR's per canoniek project en
+maximaal **één extra GitHub-GET per project**. Expliciete P0/P1-titels
+gaan voor; daarna overige PR's, per prioriteit eerlijk over projecten
+verdeeld. Deze titelprioriteit is een **sorteringshint**, geen
+geverifieerde issue-ernst of eigendomsclaim. Een concept-PR wordt in
+dezelfde prioriteitsgroep ná een niet-concept gekozen.
+
+```sh
+# Werkt zonder VPS of SQLite: selecteer maximaal 3 recente open PR's.
+python3 scripts/zsentinel_pr_delivery.py \
+  --project cloud --discover-open --format html > zsentinel-open-prs.html
+
+# Optioneel: beoordeel eerst exact PR 1563 en vul de overige plekken aan.
+python3 scripts/zsentinel_pr_delivery.py \
+  --pr cloud:1563 --project cloud --discover-open --format json
+
+# Binnen het portfoliovenster: eerst expliciete PR, dan PR's uit issues,
+# daarna pas overige recent open PR's voor nog vrije plekken.
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 --window 0 \
+  --inspect-referenced-prs --discover-open-prs --format html \
+  > /private/operator-only/zsentinel-existing-open-prs.html
+```
+
+GitHub-rate-limits of een onbereikbare repository stoppen aanvullende
+waarneming zonder het bestaan van andere PR's te ontkennen. De cockpit
+toont expliciet bronfouten en als het venster met 20 PR's afgekapt is.
+Nul geselecteerde PR's betekent **nooit** nul open PR's. De actieve
+Notion-claim, on-gePR'de branches, bestandspad-overlap, required checks,
+review-/releasebeleid en echte productiestatus worden niet als vrij
+afgeleid uit deze beperkte API-steekproef.
+
+Maximaal 3 projecten × 1 nieuwe discovery-GET en 3 PR's × 4
+exact-head GETs: **15 aanvullende GETs** voor standalone.
+Het opt-in portfolio heeft daarnaast maximaal 42 bestaande GETs,
+dus **57 per operatorrun** in de grootste combinatie. Zonder
+`--discover-open`/`--discover-open-prs` blijft het extra
+discovery-verbruik nul. Geen scheduler, claim, review, dispatch,
+merge, release of muterende HTTP-actie is toegevoegd.
+
 ## Bestaande PR's afronden: actuele exacte-head beslisdesk (19 oktober)
 
 De nieuwe `scripts/zsentinel_pr_delivery.py` leest alleen **bestaande,
@@ -42,7 +86,8 @@ python3 scripts/zsentinel_portfolio_overview.py \
 
 Maximaal drie PR's per operatoractie en **vier extra GitHub-GETs per PR**:
 exacte PR-metadata met `head.sha` en `base.sha`, de eerste 30
-check-runs **op die HEAD**, de eerste 30 review-ontvangsten, en een\nhernieuwde PR-metadataread die een tussentijdse head/base-wijziging afwijst.
+check-runs **op die HEAD**, de eerste 30 review-ontvangsten, en een
+hernieuwde PR-metadataread die een tussentijdse head/base-wijziging afwijst.
 Zonder `--inspect-pr` of `--inspect-referenced-prs` zijn dit **nul**
 aanvullende verzoeken; bovenop de normale 42 maximaal 12 opt-in-GETs,
 dus samen maximaal **54** bij drie geselecteerde projecten.
@@ -53,7 +98,14 @@ actuele gefaalde CI herstellen; wachten op ontbrekende checks; onafhankelijke
 review vragen; of volledige release-policy vooraf laten controleren.
 Alle selecties blijven bronsteekproeven. Een eerdere approval op een
 andere commit-SHA telt **niet** mee als exacte-head observatie.
-Afgeronde GitHub-checks met status `neutral`, `skipped` of onbekende conclusie\nblijven apart *onbeslist*; ze worden noch als geslaagde build noch als echte\ngefaalde bronbuild gepresenteerd.\nDe cockpit toont bovendien namen van falende, wachtende en onbesliste\nchecks, naast een directe link naar de actuele GitHub-PR-checkpagina.\nAls een PR tijdens het ophalen wijzigt, worden de gedeeltelijk\nverzamelde checks/reviews niet als huidige head-resultaten weergegeven.\nCheck-runs zijn nooit gelijk aan alle beschermde branch-statuscontexten;
+Afgeronde GitHub-checks met status `neutral`, `skipped` of onbekende conclusie
+blijven apart *onbeslist*; ze worden noch als geslaagde build noch als echte
+gefaalde bronbuild gepresenteerd.
+De cockpit toont bovendien namen van falende, wachtende en onbesliste
+checks, naast een directe link naar de actuele GitHub-PR-checkpagina.
+Als een PR tijdens het ophalen wijzigt, worden de gedeeltelijk
+verzamelde checks/reviews niet als huidige head-resultaten weergegeven.
+Check-runs zijn nooit gelijk aan alle beschermde branch-statuscontexten;
 review-paginering is niet compleet als de eerste pagina vol is.
 Daarom verklaren zelfs groene checks en één approval **nooit**
 `merge_authorized`, `deploy_authorized` of `owner_verified` waar.
