@@ -74,6 +74,43 @@ PR-teksten, geheimen, branchwrites, runnerstarts, serviceacties of claims.
 De bestaande onafhankelijke CI/review en trusted `[self-hosted,zcloud,vps]`
 gates blijven vereist; deze integratie schrijft of draait geen QA-suite.
 
+## GitHub-runnerroute: geen false-positive P0 bij approval of hosted queue
+
+Bij de actuele P0-runnerroute (#1326) is een queue zonder toegewezen
+`runner_id` **niet voldoende** om een offline VPS-listener te bewijzen.
+De bestaande GitHub-bron leest nu de labels van de exact gepinde job. De
+nieuwe bron `scripts/zsentinel_runner_route.py` classificeert maximaal
+zestien begrensde labels read-only; de refresh behoudt uitsluitend de
+canonieke route `self_hosted`, `hosted_or_custom` of `unknown`.
+
+In de live Nederlandse herstelcockpit verschijnt per daadwerkelijk
+opgevraagde job een link naar de exacte `Zennay/<repo>/actions/runs/<run>/job/<job>`,
+de vereiste runnerlabels en de bronstatus. Het portfoliobrede overzicht
+vermeldt bij ieder project of de uitgelezen job **self-hosted**, **hosted
+/custom**, **onbekend** of **niet gescand** was. Geen extra GitHub-calls
+nodig buiten de bestaande discovery + pinned exact-run/job GETs.
+
+**Belangrijke incidentcorrectie:** de brongebonden `github_job_unassigned`
+P0 wordt uitsluitend gemaakt wanneer een jobstatus exact `queued` is,
+de job langer dan dertig minuten geen runner toegewezen kreeg **én** exacte
+joblabels `self-hosted` bevestigen. Status `waiting` en `pending`
+zijn mogelijk approval- of concurrency-gates; die vormen op zichzelf
+geen runneruitval. Hosted/custom/onbekende runnerlabels bij een oningedeelde
+queue worden `github_queue_route_unverified`: eerst de GitHub-route,
+betaling, concurrency en toegangsrechten onderzoeken. Geen ongefundeerde
+self-hosted-runnerherstart, workflowdispatch, billingswijziging of merge.
+
+Een ontbrekende joblabelbron of verlopen GitHub-GET leidt nooit tot een
+impliciete `self_hosted`-claim. Deze aanpassing respecteert de bestaande
+exact-job-success-reconciliatie, waarbij één geslaagde job **geen bewijs**
+van volledig runnerherstel of productie-deployment is.
+
+Ook de oorspronkelijke `zsentinel_recovery_router.py` en
+`zsentinel_recovery_refresh.py` bouwen eerst hun volledige HTML/tekst/JSON
+op en bewaren pas daarna het optionele private incidentenregister.
+Een kapotte uitvoer kan daardoor niet onbedoeld het dedup-register
+vooruitzetten. De lokale state-write blijft expliciet optioneel.
+
 ## Volledig portfolio in één offline cockpit · begrensde GitHub-vensters
 
 De nieuwe operatorinterface `scripts/zsentinel_portfolio_overview.py` toont
