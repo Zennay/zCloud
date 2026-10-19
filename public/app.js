@@ -1795,13 +1795,14 @@ function exportZSentinelHandoff(){
     .replace(/[\x00-\x1f\x7f]/g,'').slice(0,n);
   const observedCoverage=new Map((IMPORTED_PRODUCT_ISSUES?.coverage||[])
     .map(item=>[item.project,item]));
-  const issues=(IMPORTED_PRODUCT_ISSUES?.issues||[]).filter(item=>
+  const eligible=(IMPORTED_PRODUCT_ISSUES?.issues||[]).filter(item=>
     projects.has(item.project)&&(!filter||item.project===filter)
     &&(item.priority==='P0'||item.priority==='P1')
-    &&zSentinelTriageMatches(item,observedCoverage)).slice(0,100);
-  const order={P0:0,P1:1};
-  issues.sort((a,b)=>order[a.priority]-order[b.priority]||
-    a.project.localeCompare(b.project)||a.number-b.number);
+    &&zSentinelTriageMatches(item,observedCoverage));
+  // The export uses the SAME fair P0/P1 inclusion contract as the visible
+  // triage list: a noisy repository cannot consume all 100 handoff entries.
+  const issues=fairProductIssueHistory(eligible,
+    (IMPORTED_PRODUCT_ISSUES?.coverage||[]).filter(row=>projects.has(row.project)),100);
   const observed=IMPORTED_PRODUCT_ISSUES?.observedAt||'unavailable';
   const github=IMPORTED_GITHUB_ACTIVITY?.observedAt||'unavailable';
   const queue=DELIVERY_QUEUE_DATA;
@@ -1809,6 +1810,7 @@ function exportZSentinelHandoff(){
     '# zSentinel product handoff — '+clean(scope,56),
     '',
     'Visible triage filter: '+clean(ZSENTINEL_TRIAGE_VIEW,20),
+    'Issues included: '+issues.length+' of '+eligible.length+' matching sampled P0/P1 (fair max 100)',
     'Source issue filter is only a bounded observation, never permission to take ownership.',
     'Snapshot generated: '+new Date().toISOString(),
     'Issue source last observed: '+clean(observed,40),
@@ -1918,13 +1920,6 @@ function zSentinelDeliveryBoard(){
     ids.has(item.project)&&(!focus||item.project===focus));
   const unobservedIssueProjects=(DATA?.projects||[]).filter(p=>
     (!focus||focus===p.id)&&!coveredIssues.some(row=>row.project===p.id)).map(p=>p.id);
-  const unlinked= relevant.filter(issue=>!issue.prs.length);
-  const fairUnlinked=fairProductIssueHistory(unlinked,coveredIssues,8);
-  const unlinkedRows=fairUnlinked.map(issue=>'<div class="service-row"><div><strong>'+
-    esc(issue.priority)+' · '+esc(issue.project)+'</strong><br>'+
-    '<a target="_blank" rel="noopener noreferrer" href="'+esc(issue.url)+'">'+esc(issue.title)+'</a>'+
-    '<br><small>No open PR relationship in BOUNDED sampled metadata · ownership unknown · review only</small>'+
-    '</div></div>').join('');
   const triageCoverage=new Map(coveredIssues.map(row=>[row.project,row]));
   const triageCounts={unlinked:0,draft:0,referenced:0,uncertain:0};
   for(const issue of relevant){
@@ -1966,24 +1961,6 @@ function zSentinelDeliveryBoard(){
     ids.has(item.project)&&(!focus||item.project===focus));
   const staleProjects=[...new Set([...coveredIssues,...coveredGitHub]
     .filter(row=>row.staleEvidence===true).map(row=>row.project))];
-  // First 24 P0/P1 issue cards should not be monopolized by one
-  // high-volume project after 13-project source coverage is retained.
-  const fairHighImpact=fairProductIssueHistory(
-    relevant,(snapshot?.coverage||[]).filter(item=>ids.has(item.project)&&(!focus||item.project===focus)),24);
-  const formatted=fairHighImpact.map(issue=>{
-    const refs=issue.prs.slice(0,3).map(pr=>
-      '<a target="_blank" rel="noopener noreferrer" href="'+esc(pr.url)+'">PR #'+pr.number+
-      (pr.draft?' (draft)':'')+'</a> <small>'+
-      (pr.relationship==='closing_keyword_only'?'closing text, unverified':'mentioned, unverified')+
-      '</small>').join(' · ');
-    return '<div class="service-row"><div><strong>'+esc(issue.priority)+
-      ' · '+esc(issue.project)+'</strong><br><a target="_blank" rel="noopener noreferrer" href="'+
-      esc(issue.url)+'">'+esc(issue.title)+'</a><br><small>GitHub #'+issue.number+
-      ' · open when observed · claim unverified</small>'+
-      (refs?'<div class="detail-note">Existing PR references: '+refs+'</div>':
-       '<div class="detail-note">No linked open PR in sampled window; ownership unknown.</div>')+
-      '</div></div>';
-  }).join('');
   const queueRows=candidates.slice(0,8).map(item=>
     '<div class="service-row"><div><strong>'+esc(item.priority)+' · '+
     esc(item.project_id)+'</strong><br><small>Queue '+esc(item.queue_id)+
@@ -2021,10 +1998,6 @@ function zSentinelDeliveryBoard(){
     coveredGitHub.length+' project sources.</p>'+
     (unobservedIssueProjects.length?'<p class="detail-note" role="status">Issue source NOT OBSERVED for: '+
       esc(unobservedIssueProjects.join(', '))+'. Use manual project-source reads; absence never means no open issues.</p>':'')+
-    '<h3>High-impact issues with no linked PR in sampled evidence ('+unlinked.length+')</h3>'+
-    (unlinkedRows?'<div class="service-list">'+unlinkedRows+'</div>':
-       '<p class="detail-note">No unmatched P0/P1 references in the current sample. This does not prove all issues have owners or PRs.</p>')+
-    (unlinked.length>8?'<p class="detail-note">Showing eight fair examples, not every open issue.</p>':'')+
     '<h3>Operator issue triage · '+focusedIssues.length+' matching of '+relevant.length+' observed P0/P1</h3>'+
     '<div role="group" aria-label="Filter product issue follow-ups" class="range-control">'+
     triageButtons+'</div>'+
