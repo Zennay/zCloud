@@ -1445,7 +1445,8 @@ eindigde met exitcode **0**. Zichtbare P0:
 terwijl dezelfde slot een actuele geldige **claimed** queuelease heeft.
 Een eerder oud event alleen zou **geen** P0 zijn; het is de brongebonden
 *pausestatus + toewijzing + queuelease* die deze afwijking maakt.
-De daadwerkelijk geobserveerde FTP/FTMO worker 1 toonde generatievoortgang,
+De P0-kaart vereist daarom expliciet een **menselijke runtime-/queue-eigenaarbeslissing** (`requires_human=true`, `next_gate=authorized_claim_pause_conflict_resolution`); de module kan deze vrijgave niet zelf autoriseren.
+De daadwerkelijk geobserveerde FTMO-worker 1 toonde generatievoortgang,
 maar werkafronding blijft **NIET** bewezen; oude niet-toegewezen FTMO-
 slots 2/3 en Fuckball-slot 1 werden niet als actieve incidenten aangemerkt.
 
