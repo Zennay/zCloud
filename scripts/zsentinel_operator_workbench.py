@@ -311,9 +311,12 @@ function refreshPortfolio(){
 }
 function refreshTriage(){
  const ranks={P0:0,P1:1,P2:2,Unspecified:3};
+ const observations=baseline?new Map(changesSinceBaseline().map(c=>[c.issue,c.kind])):null;
+ const weight=kind=>({'new-observation':0,'changed-evidence':1,'still-observed':2})[kind]??3;
  const cards=filtered().slice().sort((a,b)=>
   ranks[a.priority]-ranks[b.priority] ||
   Number(handoffs.get(a.issue)?.decision==='park-blocker')-Number(handoffs.get(b.issue)?.decision==='park-blocker') ||
+  (observations?weight(observations.get(a.issue))-weight(observations.get(b.issue)):0) ||
   a.project.localeCompare(b.project) || a.issue.localeCompare(b.issue));
  const urgent=cards.filter(c=>c.priority==='P0'||c.priority==='P1'||handoffs.get(c.issue)?.decision==='park-blocker');
  const list=document.getElementById('triageQueue');list.replaceChildren();
@@ -328,7 +331,8 @@ function refreshTriage(){
   const human=handoffs.get(c.issue)?.decision||'investigate';
   const gap=c.evidence_gaps.length?c.evidence_gaps[0]:
    'live owner, exact-head CI and release admission unverified';
-  li.append(b,elem('small',c.project+' · '+human+' · '+line(gap,160)));list.append(li);
+  const changed=observations?.get(c.issue);
+  li.append(b,elem('small',c.project+' · '+(changed?changed+' · ':'')+human+' · '+line(gap,160)));list.append(li);
  });
 }
 function sourceInstant(value){
@@ -534,14 +538,15 @@ document.getElementById('baseline').addEventListener('change',async event=>{
   checked.sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buf)),
     byte=>byte.toString(16).padStart(2,'0')).join('');
   if(checked.sha===boardSha)throw Error('baseline and current board are identical');
-  baseline=checked;invalidateBrief();refreshComparison();
+  baseline=checked;invalidateBrief();refreshComparison();refreshTriage();
   status.textContent='Earlier bounded source loaded locally. Missing issues are not proven resolved.';
  }catch{
   status.textContent='Previous source rejected: invalid, unsafe, future, or not earlier than this board.';
  }finally{event.currentTarget.value='';}
 });
 document.getElementById('clearBaseline').onclick=()=>{
- baseline=null;invalidateBrief();refreshComparison();status.textContent='Earlier source comparison cleared.';
+ baseline=null;invalidateBrief();refreshComparison();refreshTriage();
+ status.textContent='Earlier source comparison cleared.';
 };
 document.getElementById('restore').addEventListener('change',async event=>{
  const file=event.currentTarget.files?.[0];if(!file)return;
