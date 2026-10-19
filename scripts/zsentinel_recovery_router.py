@@ -835,6 +835,14 @@ def main():
     try:
         if (args.format == "desk") != (args.desk_output is not None):
             raise ValueError("--format desk requires --desk-output; --desk-output requires desk format")
+        if args.desk_output is not None:
+            # Do not create a private HTML report on top of a pending
+            # cursor or dedup ledger: a subsequent atomic JSON write could
+            # otherwise clobber the report after its exclusive creation.
+            private_inputs = [args.state]
+            if any(item is not None and args.desk_output.resolve() == item.resolve()
+                   for item in private_inputs):
+                raise ValueError("desk-output must differ from private ledger/cursor paths")
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
         output, state = plan(bundle, old)
