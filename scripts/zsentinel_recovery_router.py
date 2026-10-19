@@ -586,6 +586,7 @@ def operator_text(result):
     if not result["incidents"]:
         lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
+    lines.append(f"Human-only watch candidates (NOT delivered): {len(result['watch_alert_candidates'])}")
     if result.get("unattributed_progress_or_jobs"):
         lines.append("Unattributed runtime/jobs (no incident ownership): " +
                      str(result["unattributed_progress_or_jobs"]))
