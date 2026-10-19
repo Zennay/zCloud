@@ -270,7 +270,17 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             if global_slot is not None and (type(global_slot) is not int
                                             or not 1 <= global_slot <= 32):
                 raise ValueError("untrusted worker allocation slot")
-            if (desired != "running" or global_slot is None
+            claim = worker.get("queue_claim_status_observed")
+            lease = worker.get("queue_lease_current_from_source")
+            if claim not in (None, "claimed", "running", "verifying") or type(lease) is not bool:
+                raise ValueError("untrusted active queue lease metadata")
+            paused_claim = bool(
+                desired == "paused" and global_slot is not None and lease
+                and claim in ("claimed", "running", "verifying")
+                and state == "allocated_paused_with_claimed_queue_owner_gate"
+            )
+            if not paused_claim and (
+                    desired != "running" or global_slot is None
                     or state not in worker_flags):
                 continue
             age = worker.get("event_age_seconds")
@@ -279,13 +289,20 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             cards.append({
                 "kind": "read_only_worker_progress_gap_not_proven_outage",
                 "id": "worker:" + pid + ":" + str(slot),
-                "project_id": pid, "priority": "P1",
-                "problem": ("Actief ingestelde browserworker " + str(slot) +
-                            " · bronvoortgang ontbreekt of clientblokkade mogelijk" +
+                "project_id": pid, "priority": "P0" if paused_claim else "P1",
+                "problem": (
+                    ("GEBONDEN QUEUECLAIM maar globale worker " + str(global_slot) +
+                     " is doelbewust gepauzeerd; eigenaarbeslissing vereist")
+                    if paused_claim else
+                    ("Actief ingestelde browserworker " + str(slot) +
+                     " · bronvoortgang ontbreekt of clientblokkade mogelijk" +
                             (" · laatste event " + str(age) + " sec geleden"
-                             if age is not None else " · eventtijd onbekend")),
+                             if age is not None else " · eventtijd onbekend"))),
                 "owner": "authorized_browser_worker_and_queue_owner",
-                "action": "Worker is volgens huidige SQLite-desired_state running; verifieer alsnog actuele taakclaim, browserstatus en werkelijke generatievoortgang. Geen force-push, lease reset of serviceherstart op alleen dit event.",
+                "action": (
+                    "Verifieer de actuele queuelease en de bedoelde pauze met de runtime-eigenaar. Alleen een expliciet geautoriseerde hervatting of herroutering mag de queueclaim veranderen."
+                    if paused_claim else
+                    "Worker is volgens huidige SQLite-desired_state running en heeft een globale slottoewijzing; verifieer de taakclaim en bronvoortgang. Geen force-push of lease-reset op dit event."),
                 "observed_from": "local_indexed_worker_event_metadata_no_claim_proof",
                 "requires_human": False,
                 "next_gate": "verify_exact_worker_claim_and_progress",
