@@ -59,10 +59,15 @@ older project evidence. The counter measures repositories **visited**,
 not globally synchronized. Select one project to use the existing trusted
 VPS read-only source, when authorized by the normal access boundary.
 
-The dashboard's `enhancements.css` static cache token has also been pinned
-to its exact source blob (see [#1305](https://github.com/Zennay/zCloud/issues/1305)).
-As with other UI source changes, that pin does not by itself prove the
-production server is serving updated bytes.
+The dashboard's `app.js` cache URL retains the existing
+`v=20261016-auto` compatibility prefix and uses its current source SHA as
+a separate query parameter. The existing mobile CSS contract requires the
+literal `/enhancements.css?v=r5` URL; it is deliberately preserved.
+The backend static-file `reply()` already sends `Cache-Control: no-store`
+for CSS/JS, so this is not a claim that new CSS query tokens are required.
+Issue [#1305](https://github.com/Zennay/zCloud/issues/1305) remains open
+until the complete versioning contract and current live served bytes can be
+reviewed by its owner.
 
 ## Fair GitHub history and read-only VPS pressure
 
