@@ -297,26 +297,38 @@ RUNNER_DEFAULTS = {
 }
 LAYOUT_FILE = ROOT / 'project-layout.json'
 
+def _layout_known_unique_ids(items, allowed_ids):
+    """Keep the first occurrence of each canonical project and discard unknowns."""
+    allowed=set(allowed_ids)
+    result=[]
+    seen=set()
+    for value in items if isinstance(items,list) else []:
+        if isinstance(value,str) and value in allowed and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
 def load_project_layout(projects=None):
-    ids=[p['id'] for p in projects] if projects else [p['id'] for p in json.loads((ROOT/'projects.json').read_text())]
+    projects=projects if projects is not None else json.loads((ROOT/'projects.json').read_text())
+    ids=_layout_known_unique_ids([p['id'] for p in projects], [p['id'] for p in projects])
     default={'order':ids,'archived':[]}
     if not LAYOUT_FILE.exists():
         return default
     try:
         raw=json.loads(LAYOUT_FILE.read_text())
-        order=[x for x in raw.get('order',[]) if x in ids]
+        order=_layout_known_unique_ids(raw.get('order',[]),ids)
         order += [x for x in ids if x not in order]
-        archived=[x for x in raw.get('archived',[]) if x in ids]
+        archived=_layout_known_unique_ids(raw.get('archived',[]),ids)
         return {'order':order,'archived':archived}
     except Exception:
         logging.exception('Invalid project layout')
         return default
 
 def save_project_layout(layout, projects):
-    ids=[p['id'] for p in projects]
-    order=[x for x in layout.get('order',[]) if x in ids]
+    ids=_layout_known_unique_ids([p['id'] for p in projects], [p['id'] for p in projects])
+    order=_layout_known_unique_ids(layout.get('order',[]),ids)
     order += [x for x in ids if x not in order]
-    archived=[x for x in layout.get('archived',[]) if x in ids]
+    archived=_layout_known_unique_ids(layout.get('archived',[]),ids)
     payload={'order':order,'archived':archived}
     tmp=LAYOUT_FILE.with_suffix('.tmp')
     tmp.write_text(json.dumps(payload,ensure_ascii=False,indent=2)+'\n')
