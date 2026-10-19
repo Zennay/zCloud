@@ -540,6 +540,34 @@ in the branch; protected-main merge, exact-head CI/review and authorized
 VPS release **have not** been bypassed. No QA or regression suites were
 authored or manually run.
 
+## Previously observed GitHub P0/P1 issues outside bounded pages
+
+The manually requested public GitHub issue observation deliberately reads
+up to 30 **oldest** and 30 **most recently updated** issues, plus a bounded
+window of open PR references. This is *not* an exhaustive GitHub inventory:
+an issue observed in a previous request may remain open but fall between
+the two sampled page windows on the next apparently successful read.
+
+Previously, an all-three-requests-successful refresh silently replaced
+per-project issue evidence with only the two current 30-issue windows,
+discarding such middle-window P0/P1 work. The importer now preserves those
+previously observed issue references with an explicit
+`staleUnverified` state and shows **previously open; NOT REOBSERVED**
+in the product board and detailed issue inbox. It does **not** assert
+that the issue is still open, currently unclaimed or ready to implement.
+Current reobserved issue evidence is sorted ahead of such carried-forward
+observations *within the same P0/P1 priority tier*, preserving global
+fairness and the existing maximum of 150 sampled source items.
+
+The operator triage **Source stale / partial** filter includes these
+individual not-reobserved issues, even if the three current bounded
+provider requests succeeded. The same uncertainty appears in the
+Markdown handoff. Explicit source attribution helps avoid both losing
+real work due to pagination and silently treating historical records as
+authoritative current state. Only exact source GitHub checks, current
+Notion claims, required CI/review and actual production receipts can
+establish the respective stronger claims.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
