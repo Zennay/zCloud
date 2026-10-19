@@ -78,6 +78,38 @@ def incident_card(item):
             f'<span class="muted small">Herbeoordeling voor {due}; geen automatische retry.</span></p></article>')
 
 
+def historical_card(item):
+    """Historically unresolved only: deliberately distinct from fresh cards."""
+    if (item.get("source_status") != "not_observed_needs_reconciliation"
+            or item.get("current_source_observed") is not False
+            or item.get("mutation_authorized") is not False):
+        raise ValueError("untrusted historical incident authority")
+    severity = phrase(item.get("severity"), 5)
+    project = phrase(item.get("project_id"), 80)
+    reason = phrase(item.get("problem"), 120)
+    last = phrase(item.get("last_seen"), 45)
+    age = item.get("minutes_since_last_observed")
+    if type(age) is not int or age < 0:
+        raise ValueError("invalid historical age")
+    exact = item.get("exact_github_job")
+    if exact is None:
+        source = "Exacte bronidentiteit onbekend; overleg eerst met bevoegde eigenaar."
+    elif (type(exact) is not dict or type(exact.get("run_id")) is not int
+          or type(exact.get("job_id")) is not int
+          or not isinstance(exact.get("head_sha"), str)
+          or len(exact["head_sha"]) != 40):
+        raise ValueError("invalid exact historical job reference")
+    else:
+        source = (f"GitHub run {exact['run_id']} · job {exact['job_id']} · "
+                  f"SHA {phrase(exact['head_sha'], 40)}")
+    return (f'<article class="panel"><span class="tag">HISTORISCH · GEEN ACTUELE BRON</span>'
+            f'<span class="tag">{severity}</span><span class="tag">{project}</span>'
+            f'<h3 class="word">{reason}</h3>'
+            f'<p>Laatste waarneming: {last} · {age} minuten geleden.</p>'
+            f'<p>{source}</p><p>Actie: exacte bron/owner handmatig verifiëren. '
+            f'Geen automatische herstelclaim, retry, merge of worker-claim.</p></article>')
+
+
 def issue_card(item):
     project = phrase(item.get("project_id"), 80)
     pri = phrase(item.get("priority"), 5)
@@ -330,6 +362,23 @@ def html_view(decision):
     if not isinstance(watch, list) or len(watch) > 5:
         raise ValueError("unbounded watch candidate feed")
     missing = decision.get("unresolved_not_observed", 0)
+    historic = decision.get("historical_unresolved")
+    if historic is None:
+        historic = {"schema": "zsentinel-historical-backlog-v1",
+                    "total_unresolved": missing, "shown": [], "truncated": missing > 0,
+                    "source_partial": True, "action_authorized": False}
+    if (type(historic) is not dict
+            or historic.get("schema") != "zsentinel-historical-backlog-v1"
+            or historic.get("action_authorized") is not False
+            or historic.get("source_partial") is not True
+            or type(historic.get("total_unresolved")) is not int
+            or historic["total_unresolved"] != missing
+            or type(historic.get("shown")) is not list
+            or len(historic["shown"]) > 30
+            or len(historic["shown"]) > missing
+            or type(historic.get("truncated")) is not bool
+            or historic["truncated"] != (missing > len(historic["shown"]))):
+        raise ValueError("untrusted historical backlog receipt")
     unattributed = decision.get("unattributed_progress_or_jobs", 0)
     if type(unattributed) is not int or unattributed < 0:
         raise ValueError("invalid unattributed evidence count")
@@ -377,6 +426,15 @@ def html_view(decision):
             + section(primary_incidents,
                       "Geen vers geverifieerde blokkades. Dat bewijst geen herstel.")
             + extra_incidents + '</section>'
+            + f'<section><h2>Historisch niet meer waargenomen · nog te reconciliëren ({missing})</h2>'
+            + '<p class="muted">Deze incidenten zijn uitsluitend uit het lokale incidentledger bekend. '
+              'Een niet-bekeken projectvenster of ontbrekende GitHub-bron is GEEN herstelbewijs. '
+              'Ze staan niet in actuele watch-alerts of automatische werkvoorstellen.</p>'
+            + section([historical_card(row) for row in historic["shown"]],
+                      "Geen historische bronrijen beschikbaar; onbekend blijft onbekend.")
+            + ('<p class="muted">Historische lijst afgekapt tot 30 items; overige incidenten blijven '
+               'onopgelost in het privéledger.</p>' if historic["truncated"] else "")
+            + '</section>'
             + runner_route_panel
             + f'<section><h2>Open productissues · P0/P1 eerst, daarna P2 en zonder label ({len(triage["issues"])})</h2>'
             + section([issue_card(row) for row in triage["issues"]],
