@@ -107,6 +107,34 @@ def observe_local_runner():
     }
 
 
+def runner_text(report):
+    """Clear operator-language boundary between /proc and GitHub scheduling."""
+    if not isinstance(report, dict) or report.get("schema") != "zsentinel-local-runner-observation-v1":
+        raise ValueError("invalid local runner observation")
+    return (
+        "zSentinel runner op VPS: listenerprocessen=" +
+        str(report["listener_processes_observed"]) +
+        ", workerprocessen=" + str(report["worker_processes_observed"]) +
+        ", processdekking=" + ("volledig" if report["process_inventory_complete"] else
+                               "ONVOLLEDIG") +
+        "; GitHub toegewezen job: NIET BEWEZEN; safe idle/herstel: NIET BEWEZEN;"
+        " herstart of workerwijziging: NIET TOEGESTAAN."
+    )
+
+
+def runner_html(report):
+    """Static escaped status card, no buttons to restart or claim."""
+    from html import escape
+    note = escape(runner_text(report))
+    return ('<section aria-label="zCloud self-hosted runnerprocessen">'
+            '<h2>VPS-runner · alleen lokale proceswaarneming</h2>'
+            '<p>' + note + '</p>'
+            '<p>Een Runner.Listener of Runner.Worker in /proc bewijst geen '
+            'GitHub-runnerregistratie, toegewezen workflow of geslaagde release. '
+            'Controleer de exacte job op GitHub voordat een eigenaar herstel bevestigt.</p>'
+            '</section>')
+
+
 def main():
     parser = argparse.ArgumentParser(description="Read local runner process presence without restart")
     parser.add_argument("--format", choices=("json", "text"), default="text")
