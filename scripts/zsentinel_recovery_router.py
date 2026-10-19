@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""zSentinel recovery router: durable, fail-closed incident and independent-work decisions.
+
+Processes a trusted, bounded observation bundle. It NEVER acquires claims, dispatches
+jobs, retries CI, restarts runners or writes production/Notion/GitHub/SQLite state.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import stat
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from zsentinel_diagnose import diagnose, utc_time
+
+UTC = timezone.utc
+MAX_INPUT_BYTES = 1_000_000
+MAX_STATE_BYTES = 300_000
+MAX_TASKS = 250
+MAX_CLAIMS = 250
+MAX_LEDGER = 200
+MAX_RECOMMENDATIONS = 5
+SLUG = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$")
+SHA = re.compile(r"^[0-9a-f]{40}$")
+SAFE_PATH = re.compile(r"^[a-zA-Z0-9_.@/+ -]{1,220}$")
+PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+
+
+def timestamp(value, name):
+    return utc_time(value, name)
+
+
+def bounded_slug(value, name):
+    if not isinstance(value, str) or not SLUG.fullmatch(value):
+        raise ValueError(f"{name}: bounded ASCII identifier required")
+    return value
+
+
+def utc_string(moment):
+    return moment.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def bounded_path(path):
+    if (not isinstance(path, str) or not SAFE_PATH.fullmatch(path)
+            or path.startswith("/") or path.startswith("./")
+            or path.endswith("/") or "//" in path or "\\" in path
+            or any(bit in ("", ".", "..") for bit in path.split("/"))):
+        raise ValueError("invalid repository-relative task or claim path")
+    return path
+
+
+def paths_overlap(first, second):
+    return first == second or first.startswith(second + "/") or second.startswith(first + "/")
+
+
+def source_incident_key(project, diagnosis):
+    """Do not collapse distinct run/jobs sharing the same project and HEAD."""
+    github = project.get("github", {})
+    kind = diagnosis.get("reason", "unknown")
+    raw_run, raw_job = github.get("run_id"), github.get("job_id")
+    ids = []
+    for name, value in (("run_id", raw_run), ("job_id", raw_job)):
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 2**53 - 1:
+                raise ValueError(f"github.{name}: safe positive integer required")
+            ids.append(f"{name}:{value}")
+    if raw_job is not None and raw_run is None:
+        raise ValueError("github.job_id requires run_id")
+    if kind.startswith("github_") and not ids:
+        # Without a run identity a cross-snapshot 'dedup' could hide a different job.
+        return None
+    sha = github.get("head_sha", "")
+    if sha and (not isinstance(sha, str) or not SHA.fullmatch(sha)):
+        raise ValueError("github.head_sha: full lowercase SHA required")
+    raw = "|".join((project["id"], kind, sha, *ids))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def read_json(path, limit, name):
+    file_path = Path(path)
+    if file_path.is_symlink() or not file_path.is_file():
+        raise ValueError(f"{name}: regular non-symlink file required")
+    if file_path.stat().st_size > limit:
+        raise ValueError(f"{name}: size limit exceeded")
+    try:
+        return json.loads(file_path.read_text(encoding="utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{name}: invalid UTF-8 JSON") from exc
+
+
+def write_json_atomic(path, data):
+    """Only optional private local state. Never touch a project-controlled queue."""
+    target = Path(path)
+    parent = target.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise ValueError("state directory must already exist and not be a symlink")
+    if target.is_symlink() or (target.exists() and not target.is_file()):
+        raise ValueError("state must be a regular non-symlink file")
+    serialized = (json.dumps(data, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(serialized) > MAX_STATE_BYTES:
+        raise ValueError("state ledger exceeds size limit")
+    fd, temporary = tempfile.mkstemp(prefix=".zsentinel-", dir=parent)
+    try:
+        os.fchmod(fd, stat.S_IRUSR | stat.S_IWUSR)
+        with os.fdopen(fd, "wb") as output:
+            output.write(serialized)
+            output.flush()
+            os.fsync(output.fileno())
+        if target.is_symlink():
+            raise ValueError("state destination changed to symlink")
+        os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def load_state(data):
+    if data is None:
+        return {}
+    if not isinstance(data, dict) or data.get("schema_version") != 1:
+        raise ValueError("state schema_version must be 1")
+    incidents = data.get("incidents", {})
+    if not isinstance(incidents, dict) or len(incidents) > MAX_LEDGER:
+        raise ValueError("state incidents must be a bounded object")
+    for key, entry in incidents.items():
+        if not re.fullmatch("[0-9a-f]{32}", key) or not isinstance(entry, dict):
+            raise ValueError("invalid incident state record")
+        timestamp(entry.get("first_seen"), "first_seen")
+        timestamp(entry.get("last_seen"), "last_seen")
+    return incidents
+
+
+def admit_paths(task):
+    paths = task.get("paths")
+    if not isinstance(paths, list) or not 1 <= len(paths) <= 25:
+        # Unscoped work is not automatically routed to avoid claiming ownership.
+        return None
+    return tuple(bounded_path(item) for item in paths)
+
+
+def eligible_tasks(bundle, blocked, now):
+    tasks = bundle.get("tasks", [])
+    claims = bundle.get("active_claims", [])
+    complete = bundle.get("claim_inventory_complete") is True
+    if not isinstance(tasks, list) or len(tasks) > MAX_TASKS:
+        raise ValueError("tasks must be a bounded array")
+    if not isinstance(claims, list) or len(claims) > MAX_CLAIMS:
+        raise ValueError("active_claims must be a bounded array")
+    claim_scopes = []
+    for claim in claims:
+        if not isinstance(claim, dict):
+            raise ValueError("active claim must be an object")
+        pid = bounded_slug(claim.get("project_id"), "claim.project_id")
+        if claim.get("active") is not True:
+            raise ValueError("claim inventory must contain only active, verified claims")
+        paths = admit_paths(claim)
+        if paths is None:
+            complete = False
+        else:
+            claim_scopes.append((pid, paths))
+    recommendations = []
+    seen = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            raise ValueError("task must be an object")
+        ident = bounded_slug(task.get("id"), "task.id")
+        pid = bounded_slug(task.get("project_id"), "task.project_id")
+        if ident in seen:
+            raise ValueError("duplicate task id")
+        seen.add(ident)
+        tier = task.get("priority")
+        if tier not in PRIORITY:
+            raise ValueError("task.priority must be P0..P3")
+        if task.get("state") not in ("queued", "claimed", "running", "verifying", "blocked", "done"):
+            raise ValueError("task.state unsupported")
+        deps = task.get("depends_on_incidents", [])
+        if not isinstance(deps, list) or len(deps) > 30 or any(not isinstance(x, str) for x in deps):
+            raise ValueError("invalid incident dependencies")
+        scopes = admit_paths(task) if task.get("state") == "queued" else None
+        if (not complete or task.get("state") != "queued" or task.get("eligible") is not True
+                or task.get("human_gate") is not False or task.get("qa_only") is not False
+                or task.get("active_owner") is not False or scopes is None
+                or any(dep in blocked for dep in deps)):
+            continue
+        if any(pid == claimed_pid and
+               any(paths_overlap(p, c) for p in scopes for c in claimed_paths)
+               for claimed_pid, claimed_paths in claim_scopes):
+            continue
+        # Conservative: a portfolio-level runner outage or hosted billing failure
+        # makes tasks requiring those gates non-routable, even across projects.
+        requirements = task.get("required_gates", [])
+        if (not isinstance(requirements, list)
+                or any(x not in ("github_hosted", "self_hosted", "none") for x in requirements)):
+            raise ValueError("invalid task.required_gates")
+        if set(requirements) & blocked["gates"]:
+            continue
+        recommendations.append({
+            "id": ident,
+            "project_id": pid,
+            "priority": tier,
+            "paths": list(scopes),
+            "status": "suggested_only_no_claim",
+            "action": "Offer to an available owner; recheck live claims immediately before any write."
+        })
+    recommendations.sort(key=lambda item: (PRIORITY[item["priority"]], item["project_id"], item["id"]))
+    return recommendations[:MAX_RECOMMENDATIONS], complete
+
+
+def plan(bundle, previous=None, now=None):
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    now = now.astimezone(UTC)
+    if not isinstance(bundle, dict) or bundle.get("schema_version") != 1:
+        raise ValueError("bundle schema_version must be 1")
+    observations = bundle.get("evidence")
+    if not isinstance(observations, dict):
+        raise ValueError("evidence must be a zSentinel diagnosis input snapshot")
+    report = diagnose(observations, now=now)
+    by_project = {item["id"]: item for item in observations["projects"]}
+    prior = load_state(previous)
+    incidents = []
+    next_state = {}
+    blocking_ids = set()
+    blocked_gates = set()
+    for incident in report["incidents"]:
+        project = by_project[incident["project_id"]]
+        # waiting/pending represent approval or a scheduler wait, never a missing runner.
+        job_status = project.get("github", {}).get("job_status")
+        if incident["reason"] == "github_job_unassigned" and job_status != "queued":
+            continue
+        key = source_incident_key(project, incident)
+        if key is None:
+            # Do not dedupe, retry or act on a GitHub job without a stable job/run.
+            continue
+        prior_entry = prior.get(key, {})
+        first = timestamp(prior_entry["first_seen"], "first_seen") if prior_entry else now
+        if first > now + timedelta(minutes=2):
+            raise ValueError("incident state timestamp is in the future")
+        reason = incident["reason"]
+        severity = "P0" if reason == "github_job_unassigned" else "P1"
+        owner = project.get("notion", {}).get("owner") or project.get("runtime", {}).get("owner")
+        if not isinstance(owner, str) or not 1 <= len(owner) <= 80 or any(ord(c) < 32 for c in owner):
+            owner = "owner_confirmation_required"
+        human = reason == "github_job_unassigned"
+        blocked_gates.update(["self_hosted"] if reason == "github_job_unassigned" else [])
+        blocking_ids.add(key)
+        previous_status = prior_entry.get("status", "")
+        incidents.append({
+            "incident_id": key, "project_id": incident["project_id"],
+            "severity": severity, "problem": reason, "owner": owner,
+            "first_seen": utc_string(first), "last_seen": utc_string(now),
+            "target_review_by": utc_string(first + timedelta(hours=2 if severity == "P0" else 12)),
+            "action": incident["next_action"],
+            "status": ("human_action_required" if human else "read_only_diagnosis_required"),
+            "human_escalation": human,
+            "last_status": previous_status if isinstance(previous_status, str) else "",
+        })
+        next_state[key] = {
+            "first_seen": utc_string(first), "last_seen": utc_string(now),
+            "status": "human_action_required" if human else "read_only_diagnosis_required",
+        }
+    # Disappeared from a later partial snapshot is NOT proof of recovery.
+    for key, entry in prior.items():
+        if key not in next_state:
+            next_state[key] = {**entry, "status": "not_observed_needs_reconciliation"}
+    if len(next_state) > MAX_LEDGER:
+        # Never silently evict unresolved incidents or their dedup history.
+        raise ValueError("incident ledger full; human archival/reconciliation needed")
+    blocked = {"ids": blocking_ids, "gates": blocked_gates}
+    routes, claims_verified = eligible_tasks(bundle, blocked, now)
+    return {
+        "schema_version": 1, "observed_at_utc": utc_string(now),
+        "mutations_performed": False, "runner_restarted": False,
+        "queue_claims_changed": False, "ci_retried": False,
+        "deployment_authorized": False,
+        "claim_inventory_complete": claims_verified,
+        "incidents": incidents,
+        "unresolved_not_observed": sum(1 for v in next_state.values()
+                                       if v["status"] == "not_observed_needs_reconciliation"),
+        "independent_task_suggestions": routes,
+    }, {"schema_version": 1, "incidents": next_state}
+
+
+def operator_text(result):
+    lines = ["zSentinel recovery routing — source observations, NOT live authority"]
+    for item in result["incidents"]:
+        lines.extend((
+            f"{item['severity']} {item['project_id']} · {item['problem']}",
+            f"Action ({item['owner']}): {item['action']}",
+            f"Status: {item['status']} · review {item['target_review_by']}",
+        ))
+    if not result["incidents"]:
+        lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
+    lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
+    if not result["claim_inventory_complete"]:
+        lines.append("Claim coverage incomplete: routing suppressed.")
+    for item in result["independent_task_suggestions"]:
+        lines.append(f"- {item['priority']} {item['project_id']}/{item['id']}: owner must recheck claims")
+    return "\n".join(lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="zSentinel bounded incident dedup and independent work router")
+    parser.add_argument("bundle", help="trusted JSON evidence + tasks + active-claim inventory")
+    parser.add_argument("--state", help="optional private local incident dedup ledger (JSON)")
+    parser.add_argument("--format", choices=("json", "text"), default="text")
+    args = parser.parse_args()
+    try:
+        bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
+        old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
+        output, state = plan(bundle, old)
+        if args.state:
+            write_json_atomic(args.state, state)
+        print(json.dumps(output, sort_keys=True, indent=2) if args.format == "json" else operator_text(output))
+    except (ValueError, OSError, TypeError, KeyError) as exc:
+        parser.exit(2, f"zSentinel routing refused: {exc}\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
