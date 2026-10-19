@@ -32,6 +32,12 @@ def controls(projects):
         '<option value="review_existing_pr_first">Bestaande PR eerst</option>'
         '<option value="verify_ownership_and_scope">Eerst eigendom/scope</option>'
         '<option value="check_assignee_and_current_claim">Assignee controleren</option>'
+        '</select></label><label>Bronverandering <select id="issue-progress">'
+        '<option value="">Alle items</option>'
+        '<option value="new">Nieuw in steekproef (niet nieuw issue)</option>'
+        '<option value="changed">PR-/prioriteitsbron veranderd</option>'
+        '<option value="unchanged">Ook eerder waargenomen</option>'
+        '<option value="sourceunknown">Onvolledige bronvergelijking</option>'
         '</select></label></div>'
         '<p id="issue-visible-count" role="status" aria-live="polite"></p>'
         '<h3>Bewuste privé-overdracht</h3><p>De export bevat alleen de momenteel '
@@ -88,11 +94,13 @@ function visibleItems(){
   const project=input("issue-project").value;
   const priority=input("issue-priority").value;
   const route=input("issue-route").value;
+  const progress=input("issue-progress").value;
   return boardItems.filter(item=>
     (!q||item.dataset.search.includes(q))&&
     (!project||item.dataset.project===project)&&
     (!priority||item.dataset.priority===priority)&&
-    (!route||item.dataset.route===route));
+    (!route||item.dataset.route===route)&&
+    (!progress||item.dataset.change===progress));
 }
 function invalidatePreview(){
   previewVersion++;
@@ -112,7 +120,7 @@ function refresh(){
   }
   invalidatePreview();
 }
-for(const id of ["issue-search","issue-project","issue-priority","issue-route"]){
+for(const id of ["issue-search","issue-project","issue-priority","issue-route","issue-progress"]){
   input(id).addEventListener("input",refresh);
 }
 for(const item of boardItems){
@@ -138,6 +146,11 @@ input("preview-issues").addEventListener("click",()=>{
     lines.push("- Issue: "+item.dataset.issueUrl);
     lines.push("- Project: "+markdownSafe(item.dataset.project));
     lines.push("- Bronroute: "+markdownSafe(item.dataset.route));
+    if(item.dataset.change!=="not-compared"){
+      lines.push("- Verandering t.o.v. eerdere beperkte bron: "+
+                 markdownSafe(item.dataset.change)+
+                 " (nooit sluitings- of eigendomsbewijs)");
+    }
     lines.push("- Eigen opvolgkeuze (geen echte status): "+markdownSafe(followup));
     if(note) lines.push("- Mijn privénotitie: "+markdownSafe(note));
     for(const anchor of item.querySelectorAll('p a[href*="/pull/"]')){
@@ -157,7 +170,7 @@ input("preview-issues").addEventListener("click",()=>{
     }
     lines.push("- Eigenaar/CI/merge: ONBEKEND of niet geautoriseerd","");
   }
-  if(lines.length===5)lines.push("Geen issues zichtbaar. Dit bewijst NIET dat er geen problemen zijn.");
+  if(!visibleItems().length)lines.push("Geen issues zichtbaar. Dit bewijst NIET dat er geen problemen zijn.");
   latestPreview={version,body:lines.join("\n"),staleAtPreview:stale};
   preview.textContent=latestPreview.body;
   download.disabled=false;
