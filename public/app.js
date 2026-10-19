@@ -745,6 +745,36 @@ async function publicGitHubGET(repository,suffix){
   if(raw.length>600000)throw Error('GitHub source too large');
   return JSON.parse(raw);
 }
+function fairPublicGitHubHistory(rows,coverage,limit=200){
+  // A globally timestamp-sorted 200-item cap lets active repositories crowd
+  // out quiet projects. Reserve one round-robin slot per covered project
+  // before sorting the retained events by their actual source timestamps.
+  const ids=[...new Set((coverage||[]).map(row=>row.project))]
+    .filter(id=>typeof id==='string').slice(0,8);
+  const grouped=new Map(ids.map(id=>[id,[]]));
+  const seen=new Set();
+  for(const row of rows||[]){
+    if(!row||!grouped.has(row.project)||typeof row.url!=='string'||typeof row.kind!=='string')continue;
+    const key=row.project+'|'+row.kind+'|'+row.url;
+    if(seen.has(key))continue;
+    seen.add(key);
+    const ts=Date.parse(row.ts||'');
+    if(!Number.isFinite(ts)||ts>Date.now()+120000)continue;
+    grouped.get(row.project).push(row);
+  }
+  for(const group of grouped.values())group.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts));
+  const result=[],offsets=new Map(ids.map(id=>[id,0]));
+  while(result.length<limit){
+    let progressed=false;
+    for(const id of ids){
+      if(result.length===limit)break;
+      const group=grouped.get(id),index=offsets.get(id);
+      if(index<group.length){result.push(group[index]);offsets.set(id,index+1);progressed=true;}
+    }
+    if(!progressed)break;
+  }
+  return result.sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts));
+}
 async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
   if(PUBLIC_GITHUB_BUSY)return;
   const selected=selectedOverride||(DATA?.projects||[]).find(p=>p.id===filter);
@@ -804,8 +834,9 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
       {project:projectId,status:good===3?'partial_sources':good?'partial_error':'unavailable',
         observedAt:new Date().toISOString()}].slice(-8);
     const coveredIds=new Set(githubCoverage.map(row=>row.project));
-    const githubEvents=[...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
-      ...events].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,200);
+    const githubEvents=fairPublicGitHubHistory(
+      [...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),...events],
+      githubCoverage);
     IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),events:githubEvents,coverage:githubCoverage};
     IMPORTED_GITHUB_ERROR=(good<3?'Incomplete public GitHub sources ('+good+'/3 readable); ':'Public GitHub source sample ready; ')+
       'branch-only work and private repositories are not covered. Not a live deployment receipt.';
@@ -857,8 +888,9 @@ async function readVpsGitHubActivity(){
     const prior=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
     const retained=[...prior.coverage.filter(row=>row.project!==project),...parsed.coverage].slice(-8);
     const projects=new Set(retained.map(row=>row.project));
-    const events=[...prior.events.filter(row=>row.project!==project&&projects.has(row.project)),
-      ...parsed.events].sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,200);
+    const events=fairPublicGitHubHistory(
+      [...prior.events.filter(row=>row.project!==project&&projects.has(row.project)),...parsed.events],
+      retained);
     IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),coverage:retained,events};
     VPS_GITHUB_ERROR='Server GitHub sample loaded for '+project+
       '. Partial PR/CI/main source; no deployment or branch completeness implied.';
