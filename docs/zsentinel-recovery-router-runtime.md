@@ -601,6 +601,35 @@ De vlag vereist het bestaande ledger; zonder exacte oude GitHub-bron, canoniek p
 
 De optionele selectie beperkt zich tot de eerste 30 brongebonden historische kaarten in de privéachterstand en maximaal drie vrije canonieke projecten; dat is een **bewuste partiële broncheck**, niet een uitputtende statuscontrole van alle 200 mogelijke ledgerincidenten. Oude eigenaren worden niet geclaimd of automatisch toegewezen. Geen QA-tests geschreven of handmatig uitgevoerd; verplichte bestaande CI en toestemmingseisen blijven in stand.
 
+### Privé-incidentledger: geen verloren updates bij gelijktijdige operatorruns
+
+Alle vier bestaande zSentinel CLI-ingangen (`zsentinel_recovery_router`,
+`zsentinel_recovery_refresh`, `zsentinel_live_cockpit` en
+`zsentinel_portfolio_overview`) gebruiken voor `--state` nu dezelfde
+exclusieve **nonblocking OS-ledgerlock** op het stabiele naastgelegen
+`<state>.lock`-bestand. De lock wordt **vóór lezen** genomen en pas na
+volledige bronscan, renderen en atomisch privéledger-schrijven vrijgegeven.
+Een tweede operator kan dus nooit tegelijk dezelfde historische
+bron-incidentstate lezen en later de eerste update stilzwijgend overschrijven.
+Een conflicterende run krijgt een directe foutmelding, zonder wachtrij,
+retry of wachtlus.
+
+De lock wordt create-only/owner-mode-0600 beschermd tegen symlinks,
+hardlinks en vreemde inode-eigenaars. De operator moet een bestaande,
+eigenaar-beheerde map gebruiken die niet groeps-/wereld-schrijfbaar is
+(bijvoorbeeld `/home/ubuntu/.local/share/zsentinel/` mits die
+geautoriseerd is). Een onveilige map of bestaande zwakke lock wordt
+geweigerd, niet gerepareerd via elevated rights. De portfolio-CLI houdt
+zijn afzonderlijke privécursorlock daarnaast gewoon vast.
+
+Deze exclusiviteit geldt **alleen voor alle vier meewerkende lokale
+zSentinel-operatoringangen met hetzelfde `--state`-pad**. Ze biedt
+geen globaal transactie-/leasebewijs voor externe schrijvers, scheduler,
+GitHub, Notion, de productiequeue of de VPS-runner; dat vergt bestaande
+owner- en CI-gates. Zonder `--state` ontstaat ook geen persistent
+historisch geheugen of ledgerlock. Geen QA-/regressiesuites toegevoegd
+of handmatig uitgevoerd.
+
 ### Release boundary
 
 The script is useful offline immediately after a source checkout. It is **not running autonomously in production** until an authorized integration owner connects a complete read-only source collector, controls private state storage, coordinates conflict-free live claim acquisition, and promotes the reviewed, exact-head CI-approved change through the existing serialized zCloud release gate. Self-hosted runner [P0 #1326](https://github.com/Zennay/zCloud/issues/1326) and private hosted account admission [#1523](https://github.com/Zennay/zCloud/issues/1523) remain separate human-controlled incidents; neither is fixed or bypassed by this script. No QA suite was created or manually executed for this change.
