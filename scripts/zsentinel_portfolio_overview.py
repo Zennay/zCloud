@@ -544,8 +544,8 @@ def main():
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--output", type=Path,
                         help="new 0600 report: .html, .json or .md (text); never overwrites")
-    parser.add_argument("--compare-with", type=Path,
-                        help="optional previous canonical --format json output; never treated as proof of recovery")
+    parser.add_argument("--compare-with", type=Path, action="append",
+                        help="repeat up to seven chronological previous portfolio JSON snapshots")
     args = parser.parse_args()
     window_lock = None
     ledger_lock = None
@@ -568,20 +568,18 @@ def main():
             raise ValueError("--output supports only html, json or text")
         if args.compare_with is not None and args.format not in ("html", "json", "text"):
             raise ValueError("--compare-with supports only html, json or text")
-        if args.output is not None:
-            destinations = [args.state, args.window_state, args.desk_output,
-                            args.compare_with, args.database, args.worker_events_database]
-            if any(v is not None and args.output.resolve() == v.resolve()
-                   for v in destinations):
-                raise ValueError("--output must not replace any input, state or ledger")
-        if args.compare_with is not None:
-            sources = [args.state, args.window_state, args.database,
-                       args.worker_events_database]
-            if any(v is not None and args.compare_with.resolve() == v.resolve()
-                   for v in sources):
-                raise ValueError("--compare-with needs a prior portfolio report, not live state")
-        if args.desk_output is not None and args.format not in ("desk", "html"):
-            raise ValueError("--desk-output accepts only desk or html operator formats")
+        history_files = args.compare_with or []
+        if len(history_files) > 7 or len({p.resolve() for p in history_files}) != len(history_files):
+            raise ValueError('at most seven distinct chronological previous reports')
+        sources = [args.state, args.window_state, args.database,
+                   args.worker_events_database, args.desk_output]
+        if any(p.resolve() == q.resolve() for p in history_files
+               for q in sources if q is not None):
+            raise ValueError('compare sources must differ from live state')
+        if args.output is not None and any(
+                args.output.resolve() == v.resolve()
+                for v in [*sources, *history_files] if v is not None):
+            raise ValueError('private output must differ from input, state and ledger')
         if args.desk_output is not None:
             # Do not create a private HTML report on top of a pending
             # cursor or dedup ledger: a subsequent atomic JSON write could
@@ -744,13 +742,13 @@ def main():
             problem_inbox = link_existing_pr_actions(problem_inbox, pr_desk)
         unblock = blocker_first_board(summary, decision, problem_inbox, pr_desk=pr_desk)
         continuity = None
-        if args.compare_with is not None:
-            from zsentinel_blocker_continuity import _read, compare
-            continuity = compare(
-                _read(args.compare_with),
-                {"portfolio": summary, "blocker_first_handoff": unblock,
-                 "selected_projects": selected},
-            )
+        if history_files:
+            from zsentinel_blocker_continuity import _read, compare, compare_history
+            current = {'portfolio': summary, 'blocker_first_handoff': unblock,
+                       'selected_projects': selected}
+            snapshots = [_read(path) for path in history_files] + [current]
+            continuity = (compare(snapshots[0], snapshots[1]) if len(snapshots) == 2
+                          else compare_history(snapshots))
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
