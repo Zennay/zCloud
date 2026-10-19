@@ -537,8 +537,11 @@ def standalone_html(report):
 
 def _markdown_literal(value, limit=180):
     """Escape source text so PR titles/context names are not Markdown markup."""
-    safe = str(value or "")[:limit].replace("\\r", " ").replace("\\n", " ")
-    return re.sub(r"([\\\\\\`*_{}\\[\\]()#+\\-.!|>])", r"\\\\\\1", safe)
+    safe = str(value or "")[:limit].replace(chr(13), " ").replace(chr(10), " ")
+    escaped = []
+    for character in safe:
+        escaped.append(chr(92) + character if character in (chr(92) + "`*_{}[]()#+-.!|>") else character)
+    return "".join(escaped)
 
 
 def handoff_markdown(report):
@@ -588,7 +591,7 @@ def handoff_markdown(report):
             "- **Probleem:** bestaande PR nog niet bewezen release-klaar; "
             + _markdown_literal(item.get("coverage"), 80) + ".",
             "- **Actie:** " + _markdown_literal(NEXT_ACTION_NL[item["next_step"]]),
-            "- **Status:** head \`" + sha_label + "\`; onafhankelijke review/release niet geautoriseerd.",
+            "- **Status:** head `" + sha_label + "`; onafhankelijke review/release niet geautoriseerd.",
             "- **Checks:** waargenomen " + str(ci.get("sampled", "onbekend"))
             + " / " + str(ci.get("total_reported", "onbekend"))
             + "; klassieke gecombineerd " + _markdown_literal(legacy.get("combined_observed", "onbekend"), 30)
@@ -610,7 +613,7 @@ def handoff_markdown(report):
     if not report["items"]:
         lines.extend(["", "Geen geselecteerde PR's; dit bewijst niet dat er geen open PR's zijn."])
     lines.extend(["", "_Alle acties zijn menselijk en brongebonden; dit document voert niets uit._", ""])
-    return "\\n".join(lines)
+    return chr(10).join(lines)
 
 
 def main(argv=None):
