@@ -91,7 +91,8 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
                 raise ValueError("invalid open PR page")
             found = []
             seen = set()
-            for pr in results:
+            excluded_qa_only = 0
+            for source_rank, pr in enumerate(results):
                 if not isinstance(pr, dict):
                     continue
                 number = pr.get("number")
@@ -104,6 +105,25 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
                 seen.add(number)
                 if pr.get("state") != "open" or (pid, number) in blocked:
                     continue
+                # A flying product fixer must not route explicit QA-only work
+                # ahead of implementation. The branch prefix, title prefix
+                # and structured labels are evidence; a generic "CI" title
+                # alone is NOT proof of QA-only work (release CI may be P0).
+                labels = pr.get("labels")
+                qa_labels = (isinstance(labels, list) and any(
+                    isinstance(label, dict) and label.get("name") in (
+                        "quality-validation", "qa-validation", "qa-only")
+                    for label in labels[:30]))
+                head = pr.get("head")
+                qa_branch = (isinstance(head, dict)
+                             and isinstance(head.get("ref"), str)
+                             and head["ref"].lower().startswith(("qa/", "test/", "tests/")))
+                qa_title = bool(re.match(
+                    r"^(?:test|tests|qa|quality[-_ ]validation)(?:\b|\s*\()",
+                    title.strip(), flags=re.IGNORECASE))
+                if qa_labels or qa_branch or qa_title:
+                    excluded_qa_only += 1
+                    continue
                 # Only explicit title labels affect ranking. No invented P0.
                 urgency = re.match(r"^\s*(?:\[(P[01])\]|(P[01])(?=\s|:|-))", title, re.I)
                 priority = (urgency.group(1) or urgency.group(2)).upper() if urgency else "Unspecified"
@@ -111,18 +131,21 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
                     "project_id": pid, "pr_number": number,
                     "priority_from_title": priority,
                     "draft_from_listing": pr.get("draft") is True,
+                    "source_updated_rank": source_rank,
                     "owner_verified": False,
                 })
             rows[pid] = sorted(
                 found, key=lambda row: (
                     0 if row["priority_from_title"] == "P0" else
                     1 if row["priority_from_title"] == "P1" else 2,
-                    row["draft_from_listing"], row["pr_number"]
+                    row["draft_from_listing"], row["source_updated_rank"]
                 ))
             coverage.append({"project_id": pid,
                              "status": "bounded_truncated" if len(results) == 20
                              else "bounded_sample",
-                             "returned": len(results), "all_open_prs_observed": False})
+                             "returned": len(results),
+                             "excluded_explicit_qa_only": excluded_qa_only,
+                             "all_open_prs_observed": False})
         except (OSError, ValueError) as exc:
             reason = str(exc)
             coverage.append({"project_id": pid, "status": "degraded",
