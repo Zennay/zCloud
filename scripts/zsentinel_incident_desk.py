@@ -228,7 +228,7 @@ function download(obj){
 }
 $("export").onclick=()=>{try{
  const entries=Object.keys(notes).filter(k=>source.incidents.some(v=>v.id===k)).sort().map(id=>({id,status:notes[id].status,note:notes[id].note}));
- for(const r of entries)if(!choices.includes(r.status)||typeof r.note!=="string"||r.note.length>800)throw Error("Ongeldige notitie");
+ for(const r of entries)if(!choices.includes(r.status)||typeof r.note!=="string"||r.note.length>800||/[\u0000-\u0009\u000B-\u001F\u007F]/u.test(r.note))throw Error("Ongeldige notitie");
  download({schema:"zsentinel-human-followup-v1",source_sha256:source.fingerprint,source_at:source.observed_at,
          read_only:true,action_authorized:false,incident_count:source.incidents.length,entries});
  $("feedback").textContent="Privébestand aangeboden; er is niets verstuurd.";
@@ -245,7 +245,7 @@ $("import").onchange=async event=>{
   for(const row of data.entries){
     if(!row||typeof row.id!=="string"||!source.incidents.some(x=>x.id===row.id)||
        row.id in fresh||!choices.includes(row.status)||typeof row.note!=="string"||
-       row.note.length>800||/[\u0000-\u001F\u007F]/u.test(row.note))throw Error("entry");
+       row.note.length>800||/[\u0000-\u0009\u000B-\u001F\u007F]/u.test(row.note))throw Error("entry");
     fresh[row.id]={status:row.status,note:row.note};
   }
   for(const key of Object.keys(notes))delete notes[key];
