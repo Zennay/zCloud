@@ -154,6 +154,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .portfolio dl{display:flex;flex-wrap:wrap;gap:15px;margin:6px 0}.portfolio dt{font-size:12px;color:#b9cce6}.portfolio dd{font-size:19px;font-weight:750;margin:0}
 .portfolio ul{columns:2;list-style:none;padding:0;margin:10px 0}.portfolio li{break-inside:avoid;margin:5px 0}
 .portfolio small{color:#d5dfed}.brief{border:1px solid #53738e;border-radius:12px;padding:15px;margin:12px 0}
+.triage{border:1px solid #5c718c;background:#17283a;border-radius:12px;padding:15px;margin:14px 0}
+.triage ol{padding-left:23px;margin:8px 0;max-height:360px;overflow:auto}.triage li{padding:5px 0;overflow-wrap:anywhere}
+.triage button{background:#243c56;color:#ecf5ff;border:1px solid #7897b6;padding:6px 9px;margin-right:8px}
+.triage small{display:inline-block;margin:2px}
 .brief pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:330px;overflow:auto;background:#091627;padding:12px}
 .stack{display:grid;grid-template-columns:minmax(210px,40%) 1fr;gap:16px}
 .list{list-style:none;padding:0;margin:0;max-height:68vh;overflow:auto}
@@ -187,6 +191,12 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <dl id="portfolioStats"></dl>
 <ul id="projectCounts"></ul>
 <small>Counts describe only this saved, bounded source snapshot. No checked claim, available worker or release-ready status is inferred.</small>
+</section>
+<section class="triage" aria-label="Human-only priority and blocker queue">
+<h2>Next-action queue · observed evidence only</h2>
+<p>Prioritizes the currently filtered P0/P1 issues and the work you explicitly parked.
+No live owner/claim status is fetched or inferred. Recheck GitHub, Notion and release gates before touching code.</p>
+<p id="triageCount" aria-live="polite"></p><ol id="triageQueue"></ol>
 </section>
 <div class="stack">
 <nav aria-label="Observed product issues"><ol class="list" id="issues"></ol></nav>
@@ -273,6 +283,28 @@ function refreshPortfolio(){
    'Saved observation within six hours (not a live status).')+
    ' Recorded '+board.observed_at_utc+'.';
 }
+function refreshTriage(){
+ const ranks={P0:0,P1:1,P2:2,Unspecified:3};
+ const cards=filtered().slice().sort((a,b)=>
+  ranks[a.priority]-ranks[b.priority] ||
+  Number(handoffs.get(a.issue)?.decision==='park-blocker')-Number(handoffs.get(b.issue)?.decision==='park-blocker') ||
+  a.project.localeCompare(b.project) || a.issue.localeCompare(b.issue));
+ const urgent=cards.filter(c=>c.priority==='P0'||c.priority==='P1'||handoffs.get(c.issue)?.decision==='park-blocker');
+ const list=document.getElementById('triageQueue');list.replaceChildren();
+ const parked=urgent.filter(c=>handoffs.get(c.issue)?.decision==='park-blocker').length;
+ document.getElementById('triageCount').textContent=urgent.length+
+  ' observed priority/parked entries · '+parked+' human-parked · 0 independently authorized actions';
+ if(!urgent.length){list.append(elem('li','No P0/P1 or parked entry in this saved filtered snapshot; live backlog unknown.'));return;}
+ urgent.forEach(c=>{
+  const li=elem('li'),b=elem('button',c.priority+' '+c.issue);b.type='button';
+  b.setAttribute('aria-label','Inspect observed issue '+c.issue);
+  b.onclick=()=>{saveSelection();invalidateBrief();selected=c.issue;drawList();drawDetail();detail.scrollIntoView({block:'nearest'});};
+  const human=handoffs.get(c.issue)?.decision||'investigate';
+  const gap=c.evidence_gaps.length?c.evidence_gaps[0]:
+   'live owner, exact-head CI and release admission unverified';
+  li.append(b,elem('small',c.project+' · '+human+' · '+line(gap,160)));list.append(li);
+ });
+}
 function line(value,limit=500){
  return String(value??'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/[<>\x60]/g,'').slice(0,limit).trim();
 }
@@ -323,6 +355,7 @@ function drawList(){
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
    ' shown · observed '+board.observed_at_utc+' · no active-claim authorization';
  if(selected&&!view.some(c=>c.issue===selected)){saveSelection();selected=null;drawDetail()}
+ refreshTriage()
 }
 function drawDetail(){
  detail.replaceChildren();
@@ -354,8 +387,8 @@ function drawDetail(){
  const note=elem('textarea');note.id='note';note.maxLength=1000;note.rows=5;
  const saved=handoffs.get(selected);sel.value=saved?.decision||'investigate';note.value=saved?.note||'';
  detail.append(label,sel,nlabel,note);
- sel.addEventListener('change',invalidateBrief);
- note.addEventListener('input',invalidateBrief);
+ sel.addEventListener('change',()=>{saveSelection();invalidateBrief();refreshTriage()});
+ note.addEventListener('input',()=>{saveSelection();invalidateBrief();refreshTriage()});
 }
 ['search','priority','project'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
@@ -393,7 +426,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
      next.set(v.issue,{decision:v.decision,note:v.note});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
-   invalidateBrief();drawDetail();
+   invalidateBrief();drawList();drawDetail();
    status.textContent='Own human handoff restored from this exact original board.';
  }catch{
    status.textContent='Handoff not restored: invalid, foreign or from another board snapshot.';
