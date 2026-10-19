@@ -58,7 +58,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
              include_issues=True, include_ci_discovery=True, observe_vps=False,
              include_notion=False, notion_data_source=None, notion_token=None,
              notion_registry=ROOT / "projects.json", queue_snapshot=None,
-             pinned_issues=None):
+             pinned_issues=None, worker_events_database=None):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
@@ -151,6 +151,18 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         "pinned_requested": len(validated_pins),
         "auto_owner_gate_pin_count": auto_added,
     }
+    if worker_events_database is not None:
+        try:
+            from zsentinel_worker_progress_observer import observe_worker_progress
+            worker = observe_worker_progress(worker_events_database, selected)
+            bundle["worker_progress_observation"] = worker
+            source["worker_progress"] = worker["coverage"]
+        except (OSError, ValueError, sqlite3.Error):
+            # Missing/old database affects ONLY this opt-in worker source.
+            # Other already collected P0 and issue sources remain usable.
+            source["worker_progress"] = "unavailable_no_worker_recovery_proof"
+    else:
+        source["worker_progress"] = "not_requested"
     if include_notion:
         # Status visibility only: Notion rows contain no current file-scope
         # leases and MUST NOT enable the independent task router.
@@ -205,6 +217,8 @@ def main():
                         help="Notion queue data source UUID, or NOTION_QUEUE_DATA_SOURCE_ID environment variable")
     parser.add_argument("--observe-vps-capacity", action="store_true",
                         help="read current Linux host CPU/load/memory and database-mount disk; use ONLY on the intended VPS")
+    parser.add_argument("--worker-events-database", type=Path,
+                        help="optional existing indexed zCloud history.db: read-only browser-worker progress, no worker claims")
     parser.add_argument("--skip-ci-discovery", action="store_true",
                         help="disable default bounded GitHub queued/failed job discovery")
     parser.add_argument("--skip-github-issues", action="store_true",
@@ -257,11 +271,14 @@ def main():
             queue_snapshot=(explicitly_unobserved_queue()
                             if args.github_only else None),
             pinned_issues=args.pin_issue,
+            worker_events_database=args.worker_events_database,
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
         decision, ledger = plan(bundle, previous)
         decision["live_sources"] = provenance
+        if "worker_progress_observation" in bundle:
+            decision["worker_progress_observation"] = bundle["worker_progress_observation"]
         if "notion_claims_observation" in bundle:
             decision["notion_claims_observation"] = bundle["notion_claims_observation"]
         # Render complete operator output before mutating the optional local
@@ -270,7 +287,18 @@ def main():
         if args.format == "html":
             from zsentinel_recovery_view import html_view
             from zsentinel_pinned_issue import pinned_receipts_html
+            from zsentinel_worker_progress_observer import worker_progress_html
             rendered = html_view(decision)
+            if "worker_progress_observation" in decision:
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible read-only worker evidence HTML")
+                rendered = rendered.replace(
+                    "<main>", "<main>" +
+                    worker_progress_html(decision["worker_progress_observation"]), 1)
+            elif args.worker_events_database is not None:
+                rendered = rendered.replace(
+                    "<main>", '<main><p class="banner">WORKERBRON ONBESCHIKBAAR'
+                    ' · geen bewijs van inactieve of herstelde workers.</p>', 1)
             if provenance.get("pinned_requested"):
                 if rendered.count("<main>") != 1:
                     raise ValueError("incompatible pinned-source cockpit HTML")
@@ -294,6 +322,11 @@ def main():
             rendered = review_html(decision)
         else:
             lines = [operator_text(decision)]
+            if "worker_progress_observation" in decision:
+                from zsentinel_worker_progress_observer import operator_text as worker_text
+                lines.insert(0, worker_text(decision["worker_progress_observation"]))
+            elif args.worker_events_database is not None:
+                lines.insert(0, "WORKERBRON ONBESCHIKBAAR: claims en werkhervatting ONBEKEND.")
             if provenance.get("pinned_requested"):
                 from zsentinel_pinned_issue import pinned_receipts_text
                 lines.insert(0, pinned_receipts_text(provenance))
