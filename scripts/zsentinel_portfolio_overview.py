@@ -24,6 +24,7 @@ from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html
+from zsentinel_portfolio_windows import select_next, advance
 
 
 def project_windows(registry):
@@ -408,9 +409,9 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '<th scope="col">Incidenten (min.)</th><th scope="col">Veilige vervolgstap</th>'
         '</tr></thead><tbody>' +
         "".join(cells) + '</tbody></table></div>'
-        '<p class="muted small">Standaard kiest <code>--window auto</code> '
-        'elk UTC-uur een ander bronvenster, alleen bij een nieuwe '
-        'handmatig of geautoriseerd geplande uitvoering. '
+        '<p class="muted small">Zonder privécursor kiest <code>--window auto</code> '
+        'elk UTC-uur een ander bronvenster. Met <code>--window-state</code> '
+        'roteren opeenvolgende succesvolle operatorruns langs de bronvensters. '
         'Een getal ≥0 is alleen een ondergrens van de steekproef, '
         'nooit het totale issue- of incidentenaantal. '
         'Handmatig kiezen: <code>--window 0</code> tot <code>--window ' +
@@ -432,7 +433,9 @@ def main():
                         help="existing zCloud SQLite file (never created or modified)")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--window", default="auto",
-                        help="auto rotates by UTC hour, or specify zero-based window index")
+                        help="auto rotates by UTC hour or a private cursor, or specify a window index")
+    parser.add_argument("--window-state", type=Path,
+                        help="optional private local round-robin cursor; only with --window auto")
     parser.add_argument("--skip-github-issues", action="store_true")
     parser.add_argument("--skip-ci-discovery", action="store_true")
     parser.add_argument("--read-notion-claims", action="store_true")
@@ -451,12 +454,20 @@ def main():
     try:
         registry = canonical_projects(args.registry)
         windows = project_windows(registry)
+        previous_window_state = None
+        if args.state and args.window_state and args.state.resolve() == args.window_state.resolve():
+            raise ValueError("window cursor and incident ledger must use separate private files")
         if args.window == "auto":
-            # All fixed-hour recurring invocations rotate windows, without a
-            # disk cursor, extra GitHub requests or a long-running scheduler.
-            window_index = int(datetime.now(timezone.utc).timestamp() // 3600) % len(windows)
-            window_mode = "hourly_utc_rotation_no_scheduler"
+            if args.window_state:
+                window_index, previous_window_state, window_mode = select_next(
+                    windows, registry, args.window_state)
+            else:
+                # Stateless compatibility: hourly rotation, no persistent cursor.
+                window_index = int(datetime.now(timezone.utc).timestamp() // 3600) % len(windows)
+                window_mode = "hourly_utc_rotation_no_scheduler"
         else:
+            if args.window_state:
+                raise ValueError("--window-state requires --window auto")
             if (not isinstance(args.window, str) or not args.window.isascii()
                     or not args.window.isdecimal()):
                 raise ValueError("window must be auto or a nonnegative decimal index")
@@ -567,6 +578,10 @@ def main():
                         str(entry["potential_overlap"])))
             lines.append("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
             rendered = "\n".join(lines)
+        if args.window_state:
+            # A concurrent run must never overwrite a completed scan cursor.
+            advance(args.window_state, windows, registry, previous_window_state,
+                    window_index, github_coverage)
         if args.state:
             write_json_atomic(args.state, state)
         print(rendered)
