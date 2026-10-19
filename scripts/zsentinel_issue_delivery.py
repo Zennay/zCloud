@@ -257,7 +257,7 @@ def render_html(board):
         raise ValueError("invalid workboard")
     from zsentinel_product_issue_inbox import STYLE
     from zsentinel_issue_delivery_ui import (
-        controls, script_tag, followup_controls, INTERACTIVE_CSS,
+        controls, script_tag, followup_controls, packet_selector, INTERACTIVE_CSS,
     )
     progress = board.get("progress_since_previous")
     notion = board.get("notion_active_work_observation")
@@ -431,7 +431,11 @@ def render_html(board):
                     '; GEEN claimtoestemming.</p>'
                 )
             card = (
-                '<article class="issue" data-change="' +
+                '<article class="issue" data-source-observed-at="' +
+                escape(item.get("source_observed_at_utc") or board["observed_at"],
+                       quote=True) + '" data-source-window="' +
+                escape(str(item.get("source_window") or ""), quote=True) +
+                '" data-change="' +
                 escape(change_key, quote=True) + '" data-project="' +
                 escape(item["project_id"], quote=True) + '" data-priority="' +
                 escape(item["priority"], quote=True) + '" data-route="' +
@@ -452,6 +456,8 @@ def render_html(board):
                 pr_links + '</p>' + ('<details><summary>Exacte PR-bron</summary><ul>' +
                 evidence + '</ul></details>' if evidence else '') +
                 source_age_label + queue_notice + change_detail +
+                (packet_selector() if item["next_step"] !=
+                 "authorized_infrastructure_owner_required" else "") +
                 followup_controls() + '</article>')
             if item["next_step"] == "authorized_infrastructure_owner_required":
                 owner_cards.append(card)
