@@ -144,7 +144,36 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             if head is not None and (type(head) is not str or
                                     not re.fullmatch(r"[a-f0-9]{40}", head)):
                 raise ValueError("untrusted exact-head PR source")
+            check_details = []
+            approval_count = None
+            if complete:
+                ci = pr.get("ci")
+                legacy = pr.get("legacy_status_contexts")
+                reviews = pr.get("reviews")
+                if (not isinstance(ci, dict) or ci.get("head_sha") != head
+                        or not isinstance(legacy, dict)
+                        or legacy.get("head_sha") != head
+                        or not isinstance(reviews, dict)
+                        or reviews.get("head_sha") != head):
+                    raise ValueError("unmatched exact-head PR gate evidence")
+                for origin, receipt in (("check", ci), ("legacy", legacy)):
+                    for state in ("failed", "pending", "inconclusive"):
+                        names = receipt.get(state, []) if origin == "check" or state != "inconclusive" else []
+                        if (not isinstance(names, list) or len(names) > 8
+                                or any(type(name) is not str or not 1 <= len(name) <= 140
+                                       or any(ord(ch) < 32 for ch in name)
+                                       for name in names)):
+                            raise ValueError("untrusted PR check status evidence")
+                        for name in names:
+                            check_details.append(origin + ":" + state + ":" + name)
+                approval_count = reviews.get("same_head_approvals_seen")
+                if (type(approval_count) is not int
+                        or not 0 <= approval_count <= 30):
+                    raise ValueError("untrusted bounded PR reviewer count")
             cards.append({
+                "observed_check_gates": check_details[:8],
+                "observed_check_gates_more": len(check_details) > 8,
+                "same_head_approvals_seen_not_policy": approval_count,
                 "kind": "existing_product_pr_gate_inspection_only",
                 "id": "pr:" + pid + ":" + str(number),
                 "project_id": pid, "priority": "P1",
@@ -337,6 +366,16 @@ def blocker_board_html(board):
             '" target="_blank" rel="noopener noreferrer">Bekijk bestaande PR en exacte checks</a>'
             ' · merge/review/release NIET geautoriseerd.</p>'
             if isinstance(pr_link, str) else '')
+        gate_details = row.get("observed_check_gates")
+        gate_preview = (
+            '<p class="small">Waargenomen checks op bron-HEAD ' +
+            escape(str(row.get("source_pr_head") or "ONBEKEND")[:12]) +
+            ': ' + escape(", ".join(gate_details[:5])) +
+            (' · meer checks niet getoond' if row.get("observed_check_gates_more") else '') +
+            ' · head-approvals in steekproef: ' +
+            escape(str(row.get("same_head_approvals_seen_not_policy"))) +
+            ' (GEEN branch protection of reviewtoestemming).</p>'
+            if isinstance(gate_details, list) and gate_details else '')
         historical_source = (
             '<p><a href="' + escape(job_link, quote=True) +
             '" target="_blank" rel="noopener noreferrer">Bekijk exact historisch GitHub-jobbewijs</a>'
@@ -348,7 +387,7 @@ def blocker_board_html(board):
             action + '</p><p class="muted">Eigenaar: ' + owner +
             ' · bron: ' + basis +
             ' · worker/runner hervat: NIET bewezen.</p>' +
-            historical_source + pr_source + '</article>')
+            historical_source + pr_source + gate_preview + '</article>')
     if not cards:
         cards = ['<p class="empty">Geen actuele blockerkaart in deze begrensde'
                  ' bron. Dat bewijst GEEN gezonde werknemers of complete backlog.</p>']
@@ -398,6 +437,12 @@ def blocker_board_text(board):
     for item in board["shown_blocker_cards"]:
         lines.append("  " + item["priority"] + " " + item["project_id"] +
                      " · " + item["problem"] + " | " + item["next_gate"])
+        if item.get("observed_check_gates"):
+            lines.append("    exacte HEAD " +
+                         str(item.get("source_pr_head") or "UNKNOWN")[:12] +
+                         " · checkstatus: " +
+                         ", ".join(item["observed_check_gates"][:5]) +
+                         " · checklijst is NIET de vereiste branchebescherming")
     if not board["shown_blocker_cards"]:
         lines.append("  Bron is begrensd; afwezigheid != hersteld.")
     if board["blocker_cards_truncated"]:
