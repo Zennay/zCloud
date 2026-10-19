@@ -126,6 +126,7 @@ input("preview-issues").addEventListener("click",()=>{
   const version=previewVersion;
   const stale=freshness();
   const lines=["# zSentinel · bewuste privé productoverdracht","",
+    "Bronmoment: "+String(document.body.dataset.observedAt||"ONBEKEND"),
     stale?"LET OP: HISTORISCH BRONMOMENT; huidige claims, PR-head en CI opnieuw verifiëren.":"Momentopname was recent bij voorvertoning; kan na export verouderen.",
     "Alleen huidig gefilterde items; bronbewijs, eigendom en release NIET geverifieerd.",
     "Geen claim, retry, merge of deploy uitgevoerd.",""];
@@ -139,6 +140,18 @@ input("preview-issues").addEventListener("click",()=>{
     lines.push("- Bronroute: "+markdownSafe(item.dataset.route));
     lines.push("- Eigen opvolgkeuze (geen echte status): "+markdownSafe(followup));
     if(note) lines.push("- Mijn privénotitie: "+markdownSafe(note));
+    for(const anchor of item.querySelectorAll('p a[href*="/pull/"]')){
+      const address=new URL(anchor.href);
+      if(address.protocol==="https:"&&address.hostname==="github.com"&&
+         /^\\/Zennay\\/[A-Za-z0-9_.-]+\\/pull\\/[1-9][0-9]*$/.test(address.pathname)){
+        lines.push("- Bestaande PR-verwijzing (geen oplossing bewezen): "+address.href);
+      }
+    }
+    const receipt=item.querySelector("details");
+    if(receipt){
+      const summary=receipt.textContent.trim().replace(/\\s+/g," ").slice(0,650);
+      lines.push("- Reeds gelezen PR-bronactie: "+markdownSafe(summary));
+    }
     lines.push("- Eigenaar/CI/merge: ONBEKEND of niet geautoriseerd","");
   }
   if(lines.length===5)lines.push("Geen issues zichtbaar. Dit bewijst NIET dat er geen problemen zijn.");
