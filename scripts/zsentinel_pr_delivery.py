@@ -201,7 +201,7 @@ def observe_prs(registry, selections, token=None):
             if body is not None and (type(body) is not str or len(body) > 32000):
                 raise ValueError("unbounded PR body")
             numbers = []
-            for match in re.finditer(r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\\b", body or ""):
+            for match in re.finditer(r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b", body or ""):
                 number_ref = int(match.group(1))
                 if number_ref not in numbers and len(numbers) < 5:
                     numbers.append(number_ref)
