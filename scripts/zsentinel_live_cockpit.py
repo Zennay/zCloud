@@ -57,11 +57,16 @@ def parse_jobs(raw, names):
 def assemble(registry, selected, jobs, queue_path, token=None,
              include_issues=True, include_ci_discovery=True, observe_vps=False,
              include_notion=False, notion_data_source=None, notion_token=None,
-             notion_registry=ROOT / "projects.json", queue_snapshot=None):
+             notion_registry=ROOT / "projects.json", queue_snapshot=None,
+             pinned_issues=None):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
         raise ValueError("select one to three distinct canonical projects")
+    if pinned_issues is None:
+        pinned_issues = []
+    if pinned_issues and not include_issues:
+        raise ValueError("pinned P0/P1 issue reads need GitHub issue discovery")
     pins = parse_jobs(jobs, selected)
     discovery = {"source":"not_requested","coverage":[], "request_count":0,
                  "full_repo_ci_inventory":False}
@@ -152,6 +157,11 @@ def assemble(registry, selected, jobs, queue_path, token=None,
     if include_issues:
         try:
             inbox = collect(registry, selected, token, max_items=40)
+            if pinned_issues:
+                from zsentinel_pinned_issue import read_pinned_issues
+                inbox = read_pinned_issues(inbox, registry, selected,
+                                           pinned_issues, token)
+                source["pinned_issue_receipts"] = inbox["pinned_issue_receipts"]
             bundle["issue_inbox"] = inbox
             source["issue_inbox"] = "bounded_readonly"
             source["issue_requests"] = inbox.get("request_count")
@@ -184,6 +194,8 @@ def main():
                         help="disable default bounded GitHub queued/failed job discovery")
     parser.add_argument("--skip-github-issues", action="store_true",
                         help="explicitly skip public GitHub issue/PR API reads")
+    parser.add_argument("--pin-issue", action="append", default=[],
+                        help="extra bounded exact open GitHub issue GET, PROJECT:NUMBER, up to 3 selected projects")
     parser.add_argument("--state", type=Path,
                         help="optional local private incident ledger file")
     parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
@@ -192,6 +204,8 @@ def main():
     args = parser.parse_args()
     ledger_lock = None
     try:
+        if args.pin_issue and args.skip_github_issues:
+            raise ValueError("--pin-issue cannot be combined with --skip-github-issues")
         if args.github_only:
             if args.database is not None:
                 raise ValueError("--github-only requires omitting --database")
@@ -227,6 +241,7 @@ def main():
             notion_registry=args.registry,
             queue_snapshot=(explicitly_unobserved_queue()
                             if args.github_only else None),
+            pinned_issues=args.pin_issue,
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
