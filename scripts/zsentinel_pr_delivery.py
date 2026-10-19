@@ -504,6 +504,9 @@ def pr_delivery_html(report):
                   " · klassieke statussen wachten ≥" + str(len(legacy.get("pending", []))) +
                   " · head-approvals gezien: " +
                   str(reviews.get("same_head_approvals_seen", "onbekend")) +
+                  (" · checkannotaties: " +
+                   str(ci["no_start_annotation_coverage"])[:60]
+                   if ci.get("no_start_annotation_coverage") else "") +
                   (" · GitHub-platformstart geweigerd (billing/limiet; eigenaar)"
                    if ci.get("observed_hosted_billing_start_denial") is True else ""))
         sha = row.get("head_sha")
@@ -579,7 +582,12 @@ def pr_delivery_html(report):
                     "degraded": "GitHub bronfout: overige PR’s ONBEKEND",
                     "not_queried_after_auth_or_rate_limit": "Niet bekeken door rechten/rate limit",
                 }[status]
-                details.append("<li>" + pid + " · " + message + "</li>")
+                qa_count = observed.get("excluded_explicit_qa_only", 0)
+                if type(qa_count) is not int or not 0 <= qa_count <= 20:
+                    raise ValueError("invalid excluded QA source count")
+                details.append("<li>" + pid + " · " + message +
+                               (" · expliciet QA-only overgeslagen: " + str(qa_count)
+                                if qa_count else "") + "</li>")
             discovery_panel = ('<details><summary>Open PR-brondekking</summary><ul>' +
                                "".join(details) + '</ul><p class="muted">Geen eigendom, '
                                'volledige backlog of herstel bewezen.</p></details>')
@@ -696,6 +704,10 @@ def handoff_markdown(report):
             )
             lines.append("- **Genoemde issues (PR-tekst, open/opgelost NIET geverifieerd):** "
                          + issue_links)
+        if ci.get("no_start_annotation_coverage"):
+            lines.append("- **Job-startbron:** " +
+                         _markdown_literal(ci["no_start_annotation_coverage"], 70) +
+                         "; ontbrekende annotaties bewijzen geen gezonde jobstart.")
         if ci.get("observed_hosted_billing_start_denial") is True:
             lines.append("- **Apart platformprobleem:** GitHub heeft een hosted job vóór code-uitvoering geweigerd wegens facturatie/limiet. Alleen accountbeheerder; geen automatische betaling, retry of omweg.")
         for source, bucket in (("check-run", ci), ("klassieke status", legacy)):
@@ -793,6 +805,9 @@ def main(argv=None):
                     if item.get("ci", {}).get(name):
                         lines.append("  check-%s: %s" % (
                             name, ", ".join(item["ci"][name])))
+                if item.get("ci", {}).get("no_start_annotation_coverage"):
+                    lines.append("  job-startbron: " +
+                                 item["ci"]["no_start_annotation_coverage"][:70])
                 if item.get("ci", {}).get("observed_hosted_billing_start_denial") is True:
                     lines.append("  owner-only: hosted GitHub job start geweigerd (billing/limiet)")
                 if item.get("legacy_status_contexts"):
