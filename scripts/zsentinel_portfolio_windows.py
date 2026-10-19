@@ -6,8 +6,11 @@ claim ownership or job identifiers, and never authorizes a dispatch/retry.
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -19,6 +22,38 @@ VALID_COVERAGE = frozenset({
     "partial_both_sources", "ci_sample_only", "issue_sample_only",
     "degraded_or_denied", "not_requested_or_unavailable",
 })
+
+
+def acquire_window_lock(path):
+    """Fail fast on concurrent scans sharing one private source cursor.
+
+    An adjacent persistent lock inode, not the atomically replaced cursor
+    inode, is locked for the entire operator invocation. Locking only the
+    cursor file would fail after os.replace creates a new inode.
+    """
+    target = Path(path)
+    parent = target.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise ValueError("window cursor directory must be an existing real directory")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("secure no-follow file opening is required")
+    filename = str(target) + ".lock"
+    fd = os.open(filename, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW |
+                 getattr(os, "O_CLOEXEC", 0), 0o600)
+    try:
+        record = os.fstat(fd)
+        if (not stat.S_ISREG(record.st_mode) or record.st_nlink != 1
+                or record.st_uid != os.geteuid()
+                or stat.S_IMODE(record.st_mode) & 0o077):
+            raise ValueError("private window lock must be owned, regular, mode 0600")
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ValueError("another operator owns this private scan window") from exc
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def fingerprint(windows, registry):
