@@ -17,6 +17,7 @@ from pathlib import Path
 
 from zsentinel_product_issue_inbox import canonical_projects, collect
 from zsentinel_queue_observer import observe
+from zsentinel_github_discovery import discover
 from zsentinel_recovery_refresh import refresh
 from zsentinel_recovery_router import (
     MAX_STATE_BYTES, operator_text, plan, read_json, write_json_atomic, utc_string,
@@ -52,12 +53,20 @@ def parse_jobs(raw, names):
     return found
 
 
-def assemble(registry, selected, jobs, queue_path, token=None, include_issues=True):
+def assemble(registry, selected, jobs, queue_path, token=None,
+             include_issues=True, include_ci_discovery=True):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
         raise ValueError("select one to three distinct canonical projects")
     pins = parse_jobs(jobs, selected)
+    discovery = {"source":"not_requested","coverage":[], "request_count":0,
+                 "full_repo_ci_inventory":False}
+    if include_ci_discovery:
+        remaining = [pid for pid in selected if pid not in pins]
+        if remaining:
+            found, discovery = discover(registry, remaining, token)
+            pins.update(found)
     queue = observe(queue_path)
     observed = datetime.now(UTC)
     # The baseline lacks Notion/worker provenance by design; absence is NOT
@@ -82,14 +91,16 @@ def assemble(registry, selected, jobs, queue_path, token=None, include_issues=Tr
         "notion": "not_observed_no_ownership_claim",
         "runtime": "not_observed_no_worker_recovery_claim",
         "current_claim_inventory": "unknown_and_not_used_for_routing",
-        "max_github_gets": 2*len(pins) + (3*len(selected) if include_issues else 0),
+        "max_github_gets": 2*len(pins) + (3*len(selected) if include_issues else 0)
+                           + discovery["request_count"],
+        "ci_discovery":discovery,
         "github_budget_is_per_invocation_not_global": True,
     }
     if pins:
         bundle, github = refresh(bundle, registry, token)
         source["github_jobs"] = github
     else:
-        source["github_jobs"] = "no_pinned_jobs_not_a_zero_incident_claim"
+        source["github_jobs"] = "no_selected_jobs_not_a_zero_incident_claim"
     if include_issues:
         try:
             inbox = collect(registry, selected, token, max_items=40)
@@ -113,6 +124,8 @@ def main():
                         help="canonical project ID, repeat up to three times")
     parser.add_argument("--job", action="append", default=[],
                         help="optional PROJECT:RUN_ID:JOB_ID:EXACT_HEAD_SHA")
+    parser.add_argument("--skip-ci-discovery", action="store_true",
+                        help="disable default bounded GitHub queued/failed job discovery")
     parser.add_argument("--skip-github-issues", action="store_true",
                         help="explicitly skip public GitHub issue/PR API reads")
     parser.add_argument("--state", type=Path,
@@ -125,6 +138,7 @@ def main():
             registry, args.project, args.job, args.database,
             token=os.environ.get("GITHUB_TOKEN"),
             include_issues=not args.skip_github_issues,
+            include_ci_discovery=not args.skip_ci_discovery,
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
