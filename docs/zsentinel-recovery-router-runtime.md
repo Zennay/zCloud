@@ -1243,3 +1243,47 @@ De CLI maakt de database niet aan en opent deze `mode=ro`. De optionele
 private `--state`-ledger gebruikt zijn bestaande exclusieve 0600 lock.
 Rapporteer apart bronfix, hoofdbranchmerge, runtimebewijs en echte
 workerhervatting; het ene volgt niet automatisch uit het andere.
+
+
+### 19 oktober — GitHub-only noodmodus bij ontbrekende SQLite-wachtrij
+
+Wanneer de lokale VPS `portfolio_queue.sqlite` ontbreekt, niet leesbaar is
+of zoals aangetroffen slechts een leeg 0-byte bestand is, **open dat bestand
+niet als bewijs dat er geen werk of blockers zijn**. De complete
+`zsentinel_portfolio_overview.py` kan nu expliciet zonder database
+starten:
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 --discover-open-prs \
+  --format html > /private/operator/zsentinel-github-only.html
+```
+
+- `--github-only` is een bewuste operatorselectie, geen stille fallback na
+  SQLite-falen. Laat in deze modus `--database` weg. Zonder de vlag blijft
+  de bestaande `--database` verplicht. Een operator die de database per
+  ongeluk verkeerd opgeeft krijgt een harde fout in plaats van een schijnbaar
+  gezonde nulmeting.
+- De producer retourneert `source=explicitly_unobserved_no_database`,
+  `database_read_only=false`, `queue_inventory_complete=false`,
+  `totals={}`, geen projectgroeptellingen en **geen verzonnen observatietijd**.
+  De echte router ontvangt `queue_pressure=None` en meldt terecht
+  `coverage=not_supplied`; de portfolio-rijen tonen `ONBEKEND`.
+  Het eerste HTML-paneel waarschuwt expliciet dat queue-/worker-/claim-/lease
+  en eigenaarstatus **niet** bekend zijn.
+- GitHub wordt nog steeds slechts voor maximaal drie expliciete canonieke
+  projecten in het gekozen venster bekeken en de bestaande API-begroting
+  blijft intact. Optioneel Notion Claimed/Running toont alleen projectbrede
+  ondergrenzen, geen file-level leasebewijs.
+- De lokale `--observe-vps-capacity` optie is met `--github-only`
+  incompatibel: zonder daadwerkelijk aangewezen database-mount is een
+  schijnbaar geldige disk-/resource-admission onbetrouwbaar.
+- Offline HTML/JSON/tekst en blocker-first PR-werkbord blijven bruikbaar,
+  maar `claims_taken=false`, `worker_resumed_verified=false`,
+  `deployment_authorized=false`. Geen jobdispatched, betaalde workflow,
+  scheduler, SQLite-writer of productie-mutatie.
+
+Dit is een **operationeel alternatief voor brongebrek**, niet het herstel
+van de VPS-wachtrij of het daadwerkelijk vrijgeven van vastgelopen workers.
+De bestaande source PR #1563 wacht nog op verplichte exacte-head CI,
+onafhankelijke review en geserialiseerde releasegoedkeuring.
