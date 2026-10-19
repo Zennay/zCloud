@@ -748,7 +748,8 @@ def main():
             from zsentinel_blocker_continuity import _read, compare
             continuity = compare(
                 _read(args.compare_with),
-                {"portfolio": summary, "blocker_first_handoff": unblock},
+                {"portfolio": summary, "blocker_first_handoff": unblock,
+                 "selected_projects": selected},
             )
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
