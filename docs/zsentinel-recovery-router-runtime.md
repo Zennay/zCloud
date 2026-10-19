@@ -56,7 +56,7 @@ python3 scripts/zsentinel_live_cockpit.py \
 # May be combined with --observe-vps-capacity only on the intended Linux VPS.
 ```
 
-De adapter `scripts/zsentinel_notion_claim_observer.py` leest maximaal vier
+De adapter filtert aan de bron op de geverifieerde Portfolio Work Queue-`Status`-selecties `Claimed` en `Running`, zodat oude `Done`/`Dropped`-regels de actieve scopes niet achter de pagineringslimiet duwen. De adapter `scripts/zsentinel_notion_claim_observer.py` leest maximaal vier
 Notion-pagina's van elk honderd records met begrensde body en acht seconden
 timeout per pagina, zonder redirect. Alleen `Claimed`/`Running` worden
 in de privé-cockpit weergegeven (maximaal dertig zichtbare regels met totaal
