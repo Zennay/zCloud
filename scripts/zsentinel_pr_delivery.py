@@ -262,6 +262,7 @@ def observe_prs(registry, selections, token=None):
             failing = []
             waiting = []
             inconclusive = []
+            hosted_billing_start_denial = False
             for check in runs:
                 if not isinstance(check, dict) or type(check.get("name")) is not str:
                     raise ValueError("invalid check-run")
@@ -271,6 +272,18 @@ def observe_prs(registry, selections, token=None):
                     waiting.append(name)
                 elif conclusion in FAILURE:
                     failing.append(name)
+                    # GitHub can refuse hosted checks before running product code.
+                    # Only observed exact-head check metadata qualifies as evidence;
+                    # PR body text or check names alone cannot establish billing.
+                    output = check.get("output")
+                    if check.get("head_sha") == head_sha and isinstance(output, dict):
+                        details = (output.get("title"), output.get("summary"))
+                        if all(isinstance(v, (str, type(None))) for v in details):
+                            signal = " ".join(v[:8000] for v in details if v).lower()
+                            if ("job was not started" in signal and
+                                    ("payments have failed" in signal or
+                                     "spending limit" in signal)):
+                                hosted_billing_start_denial = True
                 elif conclusion != "success":
                     # neutral/skipped/stale/unknown are NOT successful proof.
                     # Do not mislabel a skipped workflow as a failed build.
@@ -280,6 +293,7 @@ def observe_prs(registry, selections, token=None):
                 "total_reported": total, "all_checks_observed": total == len(runs),
                 "failed": failing[:8], "pending": waiting[:8],
                 "inconclusive": inconclusive[:8],
+                "observed_hosted_billing_start_denial": hosted_billing_start_denial,
                 "branch_protection_verified": False,
                 "status_contexts_verified": False,
             }
