@@ -194,6 +194,52 @@ dit instrument blijft **operatoradvies zonder taken te claimen**.
 Private output blijft bij de operator; het HTML-bestand gebruikt dezelfde
 strikte scriptloze offline CSP als de reeds bestaande cockpit.
 
+## Volgende problemen · gekoppelde P0/P1-werkkeuze (19 oktober)
+
+De volledige portfolio-CLI integreert nu `scripts/zsentinel_problem_picker.py`.
+Dit is een **echte, read-only prioriteringslaag** op de al opgehaalde
+GitHub-P0/P1-issue-inbox en dezelfde portfolio-/Notion-status; geen extra
+GitHub-verzoeken, polling, duplicaat-controller, databasewrites of CI-retries.
+
+- Iedere geselecteerde projectrepo krijgt eerlijke rotatie binnen de prioriteit:
+  alle gevonden P0 eerst, daarna P1, maximaal acht issuekandidaten.
+- Als een bestaand open PR naar het issue verwijst, adviseert de kiezer
+  expliciet **eerst die PR controleren** in plaats van een tweede branch te maken.
+  Een verwijzing is geen bewijs dat de PR de bug oplost, actief eigendom heeft
+  of door de gates is gekomen.
+- Bij actieve projectstatus `claimed/running/verifying` in SQLite of Notion
+  wordt eerst eigenaar-/padcontrole geadviseerd. Ontbrekende scopes zijn
+  **nooit** impliciet vrij. Alle kandidaten blijven
+  `ownership_verified=false`, `dispatch_authorized=false`.
+- De expliciet bekende, afzonderlijk eigenaargebonden zCloud P0's
+  [runner #1326](https://github.com/Zennay/zCloud/issues/1326) en
+  [GitHub billing #1523](https://github.com/Zennay/zCloud/issues/1523)
+  worden apart als infrastructuurblokkades getoond en verdringen geen
+  onafhankelijke productproblemen. Andere brongebonden human-action
+  CI-/runtime-incidenten staan in een eigen paneel.
+- Wanneer GitHub-bronnen verouderd of incompleet zijn, vermeldt het overzicht
+  de beperking. Een leeg venster is **geen** bewijs dat er geen open problemen
+  bestaan; niet-geobserveerde repositories krijgen nooit een groene status.
+
+```bash
+# De nieuwe shortlist verschijnt in HTML, JSON én tekst (binnen één command):
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 --window 0 --format text
+
+# Machine-readable: veld next_problem_shortlist, inclusief classificatie en
+# bestaande PR-verwijzingen. Dit is NIET een opdracht voor de scheduler.
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/zcloud.sqlite3 --window 0 --format json \
+  > /private/operator-only/portfolio.json
+```
+
+Automatische dispatch kan pas in een **apart bevoegde scheduler-/worker-write
+integratie** nadat live file scopes, claims, ownership epochs, PR-conflicten,
+release-, CI-, resource- en securitygates voor een exact werkitem opnieuw
+zijn geverifieerd. De nieuwe shortlist maakt werkkeuze beter, maar schrijft
+geen queue-rijen of claims, neemt geen eigendom over en kan de VPS
+niet herstarten. Broncode in PR #1563 is nog geen geactiveerde productie.
+
 ## Direct live cockpit: no hand-created evidence bundle
 
 The new `scripts/zsentinel_live_cockpit.py` is a complete, **one-shot** CLI product. It now also **automatically samples recent GitHub CI runs and relevant queued/failed jobs**, so a specific job ID is not needed to obtain initial GitHub blocker observations. It reads the real existing SQLite `portfolio_queue` using `mode=ro` / `PRAGMA query_only=ON`, merges a bounded public GitHub issue/PR inbox and optional pinned GitHub jobs, then renders a responsive **Dutch offline dashboard** in one command:
