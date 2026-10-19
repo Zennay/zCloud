@@ -63,9 +63,6 @@ jobs:
       inputs.confirm_sha == github.sha
     runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
-    concurrency:
-      group: zcloud-production-deploy
-      cancel-in-progress: false
     steps:
       - name: Checkout immutable exact approved main revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
