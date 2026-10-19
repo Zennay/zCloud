@@ -220,6 +220,70 @@ def compare(before, after):
     }
 
 
+def compare_history(snapshots):
+    """Bounded, ordered 2-8 snapshot incident recurrence; never runtime proof."""
+    if type(snapshots) is not list or not 2 <= len(snapshots) <= 8:
+        raise ValueError("two to eight snapshots required")
+    by_window = []
+    windows = []
+    for source in snapshots:
+        windows.append(_window(source))
+        by_window.append(_cards(_unwrap(source)))
+    base = compare(snapshots[-2], snapshots[-1])
+    seen = set().union(*(set(items) for items in by_window))
+    history = []
+    for key in seen:
+        sightings = [i for i, items in enumerate(by_window) if key in items]
+        item = by_window[sightings[-1]][key]
+        if any(by_window[i][key]["project_id"] != item["project_id"] for i in sightings):
+            raise ValueError("cross-project incident identity drift")
+        streak = 0
+        for items in reversed(by_window):
+            if key not in items:
+                break
+            streak += 1
+        history.append({
+            "id": key, "project_id": item["project_id"],
+            "priority": item["priority"], "kind": item["kind"],
+            "sightings_in_sample": len(sightings),
+            "consecutive_recent_samples": streak,
+            "first_sample_index": sightings[0] + 1,
+            "last_sample_index": sightings[-1] + 1,
+            "current_sample_observed": sightings[-1] == len(by_window) - 1,
+            "reappeared_after_gap": (sightings[-1] == len(by_window) - 1 and
+                any(b - a > 1 for a, b in zip(sightings, sightings[1:]))),
+            "next_gate": item["next_gate"], "owner": item["owner"],
+            "links": item["links"], "problem": item["problem"],
+            "worker_resumed_verified": False,
+            "resolution_verified": False, "claims_taken": False,
+            "permission_to_retry": False,
+        })
+    history.sort(key=lambda row: (
+        not row["current_sample_observed"], PRIORITY[row["priority"]],
+        -row["consecutive_recent_samples"], -row["sightings_in_sample"],
+        row["project_id"], row["id"]))
+    urgent = sum(1 for item in history if (
+        item["priority"] == "P0" and item["consecutive_recent_samples"] >= 3))
+    return {
+        **base,
+        "schema": "zsentinel-blocker-continuity-history-v1",
+        "history_sample_count": len(snapshots),
+        "history_project_windows": windows,
+        "history_windows_different_or_unknown": (
+            any(w is None for w in windows)
+            or any(w != windows[0] for w in windows[1:])),
+        "history_items": history[:96],
+        "history_items_truncated": len(history) > 96,
+        "history_unique_items": len(history),
+        "repeated_p0_human_attention_candidates": urgent,
+        "notifications_delivered": False,
+        "resolution_verified": False,
+        "worker_resumed_verified": False,
+        "claims_taken": False,
+        "actions_performed": False,
+    }
+
+
 def as_text(result):
     lines = [
         "zSentinel · bronvergelijking van twee begrensde blockerborden",
