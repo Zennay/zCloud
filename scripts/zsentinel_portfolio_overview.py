@@ -176,8 +176,8 @@ def main():
     parser.add_argument("--database", type=Path, required=True,
                         help="existing zCloud SQLite file (never created or modified)")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
-    parser.add_argument("--window", type=int, default=0,
-                        help="stable zero-based GitHub window of at most three projects")
+    parser.add_argument("--window", default="auto",
+                        help="auto rotates by UTC hour, or specify zero-based window index")
     parser.add_argument("--skip-github-issues", action="store_true")
     parser.add_argument("--skip-ci-discovery", action="store_true")
     parser.add_argument("--read-notion-claims", action="store_true")
@@ -189,9 +189,20 @@ def main():
     try:
         registry = canonical_projects(args.registry)
         windows = project_windows(registry)
-        if not 0 <= args.window < len(windows):
+        if args.window == "auto":
+            # All fixed-hour recurring invocations rotate windows, without a
+            # disk cursor, extra GitHub requests or a long-running scheduler.
+            window_index = int(datetime.now(timezone.utc).timestamp() // 3600) % len(windows)
+            window_mode = "hourly_utc_rotation_no_scheduler"
+        else:
+            if (not isinstance(args.window, str) or not args.window.isascii()
+                    or not args.window.isdecimal()):
+                raise ValueError("window must be auto or a nonnegative decimal index")
+            window_index = int(args.window)
+            window_mode = "explicit_manual_index"
+        if not 0 <= window_index < len(windows):
             raise ValueError("window out of range for canonical projects")
-        selected = windows[args.window]
+        selected = windows[window_index]
         queue = observe(args.database)
         bundle, provenance = assemble(
             registry, selected, [], args.database,
@@ -217,16 +228,17 @@ def main():
         decision["private_ledger_written"] = bool(args.state)
         summary = portfolio_summary(registry, queue, selected)
         if args.format == "html":
-            print(portfolio_html(summary, decision, args.window, windows))
+            print(portfolio_html(summary, decision, window_index, windows))
         elif args.format == "json":
             print(json.dumps({
-                "portfolio": summary, "selected_window": args.window,
+                "portfolio": summary, "selected_window": window_index,
+                "selection_mode": window_mode,
                 "window_count": len(windows), "selected_projects": selected,
                 "source_bound_decision": decision,
             }, ensure_ascii=True, sort_keys=True, indent=2))
         else:
             print("zSentinel portfolio | venster %d/%d | GitHub: %s" % (
-                args.window + 1, len(windows), ", ".join(selected)))
+                window_index + 1, len(windows), ", ".join(selected)))
             print("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             for row in summary["rows"]:
                 print("%s | queued=%s | owned=%s | churn=%s | lease=%s | Github=%s" % (
