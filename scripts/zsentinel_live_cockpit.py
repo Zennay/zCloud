@@ -238,6 +238,14 @@ def main():
         if args.format == "html":
             from zsentinel_recovery_view import html_view
             rendered = html_view(decision)
+            if args.github_only:
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible offline cockpit HTML")
+                rendered = rendered.replace(
+                    "<main>",
+                    '<main><p class="banner">GITHUB-ONLY: geen SQLite-wachtrij gelezen.'
+                    ' Queue, leases, claims en workerstatus ONBEKEND; geen'
+                    ' toestemming voor herstel, merge of release.</p>', 1)
         elif args.format == "json":
             rendered = json.dumps(decision, ensure_ascii=True, sort_keys=True, indent=2)
         elif args.format == "ics":
@@ -248,6 +256,8 @@ def main():
             rendered = review_html(decision)
         else:
             lines = [operator_text(decision)]
+            if args.github_only:
+                lines.insert(0, "QUEUE: NIET WAARGENOMEN (--github-only); claims en werkhervatting ONBEKEND.")
             if provenance["notion"] == "claim_status_observed_no_file_ownership":
                 observed = bundle["notion_claims_observation"]
                 lines.append("NOTION: " + str(observed["active_count"]) +
