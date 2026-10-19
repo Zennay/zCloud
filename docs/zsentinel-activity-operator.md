@@ -347,6 +347,31 @@ Mandatory exact-head GitHub checks, independent review, protected-main merge
 and serialized authorized VPS release remain required. No QA suites authored or
 manually run.
 
+## Existing resource-detail product fix integrated from PR #1047 (#957)
+
+The current Activity/dashboard integration branch also reuses the **existing
+completed product markup** from [PR #1047](https://github.com/Zennay/zCloud/pull/1047)
+for [open issue #957](https://github.com/Zennay/zCloud/issues/957).
+Only the established resource technical disclosure section of
+`public/enhancements.js::resourcePanel()` was integrated. Its project-priority
+select controls, resource running status, existing #877 save/pending/error
+feedback and independent scheduling/lease semantics were left unchanged.
+
+The default view retains the project-by-project priority controls and status.
+CPU/RAM utilisation, attributed/unattributed host CPU and scheduler weights are
+behind a single keyboard-accessible native
+`<details class="section-details resource-details"><summary>Technical details</summary>`.
+This is *presentation-only* and does not read additional APIs or write any
+resource configuration. The existing `public/index.html` source pin was updated
+to the exact integrated `enhancements.js` Git blob. PR #1047 is untouched and
+remains open for independent ownership/reviewer reconciliation; this source
+composition must not be mistaken for its separate protected-main merge.
+
+Release: [PR #1550](https://github.com/Zennay/zCloud/pull/1550) is still source-only
+until existing exact-head checks, independent review and authorized release
+conditions succeed. No QA or regression suites were written, changed or
+manually invoked during the integration.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
