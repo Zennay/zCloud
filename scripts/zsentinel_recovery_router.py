@@ -164,6 +164,10 @@ def load_state(data):
             raise ValueError("incident state first_seen after last_seen")
         if entry.get("status") not in ("human_action_required", "read_only_diagnosis_required", "not_observed_needs_reconciliation"):
             raise ValueError("unsupported incident state")
+        gates = entry.get("blocked_gates", [])
+        if (not isinstance(gates, list) or len(gates) > 2
+                or any(gate not in ("github_hosted", "self_hosted") for gate in gates)):
+            raise ValueError("unsupported incident gate ledger")
     return incidents
 
 
@@ -423,6 +427,9 @@ def plan(bundle, previous=None, now=None):
         next_state[key] = {
             "first_seen": utc_string(first), "last_seen": utc_string(now),
             "status": "human_action_required" if human else "read_only_diagnosis_required",
+            "blocked_gates": (["self_hosted"] if reason == "github_job_unassigned"
+                              else ["github_hosted"] if reason == "github_hosted_billing_admission"
+                              else []),
         }
     # Disappeared from a later partial snapshot is NOT proof of recovery.
     for key, entry in prior.items():
@@ -431,6 +438,12 @@ def plan(bundle, previous=None, now=None):
     if len(next_state) > MAX_LEDGER:
         # Never silently evict unresolved incidents or their dedup history.
         raise ValueError("incident ledger full; human archival/reconciliation needed")
+    # Missing from a subsequent source is not an all-clear. Preserve dependencies
+    # and the historical global runner/billing gate until owner reconciliation.
+    for key, entry in next_state.items():
+        if entry["status"] == "not_observed_needs_reconciliation":
+            blocking_ids.add(key)
+            blocked_gates.update(entry.get("blocked_gates", ["self_hosted", "github_hosted"]))
     blocked = {"ids": blocking_ids, "gates": blocked_gates}
     routes, claims_verified = eligible_tasks(bundle, blocked, now)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
