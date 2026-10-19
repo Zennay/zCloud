@@ -65,8 +65,19 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         raise ValueError("select one to three distinct canonical projects")
     if pinned_issues is None:
         pinned_issues = []
-    from zsentinel_pinned_issue import validate_pin_specs
-    validated_pins = validate_pin_specs(registry, selected, pinned_issues)
+    from zsentinel_pinned_issue import validate_pin_specs, known_owner_gate_specs
+    # Validate operator selections FIRST. Add canonical known P0 owner-only
+    # issues only when GitHub issue discovery is enabled and cloud is selected;
+    # both together remain bounded to at most three exact additional GETs.
+    operator_pins = validate_pin_specs(registry, selected, pinned_issues)
+    effective_pins = list(pinned_issues)
+    auto_added = 0
+    if include_issues:
+        for raw in known_owner_gate_specs(registry, selected):
+            if raw not in effective_pins and len(effective_pins) < 3:
+                effective_pins.append(raw)
+                auto_added += 1
+    validated_pins = validate_pin_specs(registry, selected, effective_pins)
     if validated_pins and not include_issues:
         raise ValueError("pinned P0/P1 issue reads need GitHub issue discovery")
     pins = parse_jobs(jobs, selected)
@@ -138,6 +149,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         "ci_discovery":discovery,
         "github_budget_is_per_invocation_not_global": True,
         "pinned_requested": len(validated_pins),
+        "auto_owner_gate_pin_count": auto_added,
     }
     if include_notion:
         # Status visibility only: Notion rows contain no current file-scope
@@ -163,7 +175,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
             if pinned_issues:
                 from zsentinel_pinned_issue import read_pinned_issues
                 inbox = read_pinned_issues(inbox, registry, selected,
-                                           pinned_issues, token)
+                                           effective_pins, token)
                 source["pinned_issue_receipts"] = inbox["pinned_issue_receipts"]
             bundle["issue_inbox"] = inbox
             source["issue_inbox"] = "bounded_readonly"
@@ -259,7 +271,7 @@ def main():
             from zsentinel_recovery_view import html_view
             from zsentinel_pinned_issue import pinned_receipts_html
             rendered = html_view(decision)
-            if args.pin_issue:
+            if provenance.get("pinned_requested"):
                 if rendered.count("<main>") != 1:
                     raise ValueError("incompatible pinned-source cockpit HTML")
                 rendered = rendered.replace("<main>",
@@ -282,7 +294,7 @@ def main():
             rendered = review_html(decision)
         else:
             lines = [operator_text(decision)]
-            if args.pin_issue:
+            if provenance.get("pinned_requested"):
                 from zsentinel_pinned_issue import pinned_receipts_text
                 lines.insert(0, pinned_receipts_text(provenance))
             if args.github_only:
