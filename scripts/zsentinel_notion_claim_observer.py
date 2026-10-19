@@ -176,11 +176,18 @@ def observe_claims(data_source_id, token, known_projects=None):
         if index == MAX_PAGES - 1:
             incomplete = True
     rows.sort(key=lambda row: (row["status"], row["work"]))
+    counts = {}
+    for row in rows:
+        label = row["project"]
+        counts[label] = counts.get(label, 0) + 1
     return {
         "source": "notion_readonly_data_source_pages",
         "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "coverage": "incomplete" if incomplete else "current_pages_only",
         "active_count": len(rows),
+        # These are observed statuses, not file-level claims or worker leases.
+        # All bounded pages contribute even when only 30 examples are shown.
+        "active_project_counts": dict(sorted(counts.items())),
         "items": rows[:30],
         "items_truncated": len(rows) > 30,
         "claim_scope_verified": False,
