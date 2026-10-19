@@ -166,8 +166,12 @@ def main():
     parser.add_argument("--state", type=Path,
                         help="optional local private incident ledger file")
     parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
+    parser.add_argument("--desk-output", type=Path,
+                        help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
     try:
+        if (args.format == "desk") != (args.desk_output is not None):
+            raise ValueError("--format desk requires --desk-output; --desk-output requires desk format")
         registry = canonical_projects(args.registry)
         bundle, provenance = assemble(
             registry, args.project, args.job, args.database,
@@ -214,9 +218,13 @@ def main():
                 lines.append("NOTION: not requested.")
             lines.append("WORKER FILE-LEVEL CLAIMS: UNKNOWN. No routing or recovery authorized.")
             rendered = "\n".join(lines)
+        if args.format == "desk":
+            from zsentinel_incident_desk import write_private_html
+            write_private_html(args.desk_output, rendered)
         if args.state:
             write_json_atomic(args.state, ledger)
-        print(rendered)
+        if args.format != "desk":
+            print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel live cockpit unavailable: {exc}\n")
     return 0
