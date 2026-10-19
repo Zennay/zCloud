@@ -829,8 +829,12 @@ def main():
     parser.add_argument("bundle", help="trusted JSON evidence + tasks + active-claim inventory")
     parser.add_argument("--state", help="optional private local incident dedup ledger (JSON)")
     parser.add_argument("--format", choices=("json", "text", "html", "ics", "desk"), default="text")
+    parser.add_argument("--desk-output", type=Path,
+                        help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
     try:
+        if (args.format == "desk") != (args.desk_output is not None):
+            raise ValueError("--format desk requires --desk-output; --desk-output requires desk format")
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
         output, state = plan(bundle, old)
@@ -847,10 +851,14 @@ def main():
         else:
             rendered = (json.dumps(output, sort_keys=True, indent=2)
                         if args.format == "json" else operator_text(output))
+        if args.format == "desk":
+            from zsentinel_incident_desk import write_private_html
+            write_private_html(args.desk_output, rendered)
         # Never consume deduplicated incidents before rendering succeeds.
         if args.state:
             write_json_atomic(args.state, state)
-        print(rendered)
+        if args.format != "desk":
+            print(rendered)
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel routing refused: {exc}\n")
     return 0
