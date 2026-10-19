@@ -13,6 +13,8 @@ from pathlib import Path
 import re
 import sys
 
+from zsentinel_retry_incident_console import write_new_private_report
+
 SCHEMA = "zsentinel-retry-incident-v1"
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 METRICS = ("active_items", "high_attempt_items", "ten_plus_items",
@@ -284,7 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--previous", required=True, type=Path)
     parser.add_argument("--current", required=True, type=Path)
     parser.add_argument("--format", choices=("json", "markdown", "html"), default="html")
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path,
+                        help="Create a NEW private trend report; existing snapshots are never overwritten")
     args = parser.parse_args(argv)
     try:
         result = compare(read(args.previous), read(args.current))
@@ -292,9 +295,14 @@ def main(argv: list[str] | None = None) -> int:
                    if args.format == "json" else
                    markdown(result) if args.format == "markdown" else html(result))
         if args.output:
-            args.output.write_text(content, encoding="utf-8")
+            write_new_private_report(args.output, content)
         else:
             print(content)
+    except FileExistsError:
+        print("Trend not produced: output already exists. Select a new filename "
+              "rather than overwriting an input snapshot or previous report.",
+              file=sys.stderr)
+        return 2
     except (ValueError, OSError) as exc:
         print("Trend not produced: " + str(exc), file=sys.stderr)
         return 2
