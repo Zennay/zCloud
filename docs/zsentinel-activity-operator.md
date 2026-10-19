@@ -372,6 +372,50 @@ until existing exact-head checks, independent review and authorized release
 conditions succeed. No QA or regression suites were written, changed or
 manually invoked during the integration.
 
+## Local Activity per-project retention and outage evidence (#1518, 19 October)
+
+**Bug fixed in source:** refreshing Activity while filtering to a single project
+previously assigned its isolated local events to the entire shared
+`ACTIVITY` array. Switching back to **All projects** then lost previously
+observed events for quieter projects even though their API reads succeeded.
+A failed scoped refresh could also replace meaningful portfolio history with
+an incomplete global list. Neither symptom was proof of no work.
+
+The existing browser now retains up to **24 canonical project** read-only
+local event streams in ephemeral tab memory, up to 80 events each, and
+fairly reconstructs at most **240 displayed local events** across all
+visible projects. A successful empty project read is remembered as empty;
+a different project's refresh never evicts it or other scoped histories.
+When a local GET fails, its last successful source is retained and explicitly
+labelled as an older observation, not current success. Before a project has
+been read individually, the original global 80-row VPS API result can appear
+as a partial fallback but never proves that its project source is complete.
+Archived or unknown project IDs are pruned from retained scoped reads.
+Refresh is explicit or part of the existing Activity navigation; **no
+additional background GitHub polling or privileged worker action** was added.
+
+The **Local event coverage → Per-project local coverage** disclosure now
+shows each project's last successful scoped observation time, latest retained
+local event, bounded event count, 80-row source-cap warning and the difference
+between a successful empty read, a failed read with retained older evidence,
+a stale observation and a project never individually observed. The native
+disclosure remains open across rerenders. **Read project** targets one
+canonical project, updates the Activity filter and explicitly refreshes its
+existing read-only local endpoint. It never claims a queue item, resets a
+worker, merges a PR or makes an event current merely because /api/status
+still responds.
+
+The **zSentinel product delivery board** (sampled P0/P1 issues and existing PR
+references) now precedes the Activity timeline, keeping issue-first product
+work in the first view instead of burying it under historic host events.
+Both source completeness and GitHub-source uncertainty stay visible.
+The exact updated `public/app.js` blob is pinned in `public/index.html`.
+
+Source integration: [PR #1550](https://github.com/Zennay/zCloud/pull/1550).
+Issue: [#1518](https://github.com/Zennay/zCloud/issues/1518). Still subject to
+independent exact-head CI, review, protected main and serialized release.
+No regression or QA suites were authored or manually run.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
