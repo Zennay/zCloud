@@ -19,7 +19,7 @@ jobs:
   integrate:
     name: Autonomous development integration
     if: github.repository == 'Zennay/zCloud' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 4
     steps:
       - name: Refuse replay and untrusted dispatch before checkout or GitHub API
