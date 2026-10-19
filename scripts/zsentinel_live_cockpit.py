@@ -73,11 +73,22 @@ def assemble(registry, selected, jobs, queue_path, token=None,
     # A portfolio caller may provide the observer's same immutable read-only
     # snapshot. This prevents duplicate live DB sampling within one report.
     queue = observe(queue_path) if queue_snapshot is None else queue_snapshot
+    queue_missing = (isinstance(queue, dict)
+                     and queue.get("source") == "explicitly_unobserved_no_database")
     if (not isinstance(queue, dict)
             or queue.get("schema") != "zsentinel-queue-pressure-v1"
-            or queue.get("database_read_only") is not True
-            or queue.get("claim_ownership_verified") is not False):
-        raise ValueError("invalid read-only queue observation")
+            or queue.get("claim_ownership_verified") is not False
+            or (queue_missing and (
+                queue.get("database_read_only") is not False
+                or queue.get("queue_inventory_complete") is not False
+                or queue.get("totals") != {}
+                or queue.get("project_groups") != []
+                or queue.get("high_churn_samples") != []
+                or queue.get("queue_source_available") is not False))
+            or (not queue_missing and (
+                queue.get("source") != "local_sqlite_transaction_query_only"
+                or queue.get("database_read_only") is not True))):
+        raise ValueError("invalid source-bound queue observation")
     observed = datetime.now(UTC)
     # The baseline lacks Notion/worker provenance by design; absence is NOT
     # proof that a task has no owner or that a project is recovered.
@@ -94,8 +105,12 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         "tasks": [], "active_claims": [],
         "task_inventory_complete": False,
         "claim_inventory_complete": False,
-        "queue_pressure": queue,
+        # No SQLite observation must be absent, not represented as a
+        # plausible all-zero source in the canonical incident router.
+        "queue_pressure": None if queue_missing else queue,
     }
+    if queue_missing and observe_vps:
+        raise ValueError("host capacity sample needs an existing database mount")
     if observe_vps:
         # Only a deliberate operator invocation on the intended Linux VPS
         # may supply local capacity. This never authorizes a worker or runner.
@@ -104,7 +119,8 @@ def assemble(registry, selected, jobs, queue_path, token=None,
     source = {
         "vps_capacity": ("same_host_readonly_opt_in" if observe_vps
                          else "unknown_not_sampled"),
-        "queue": "sqlite_readonly_live_observation",
+        "queue": ("explicitly_unobserved_no_database" if queue_missing
+                  else "sqlite_readonly_live_observation"),
         "notion": "not_observed_no_ownership_claim",
         "runtime": "not_observed_no_worker_recovery_claim",
         "current_claim_inventory": "unknown_and_not_used_for_routing",
