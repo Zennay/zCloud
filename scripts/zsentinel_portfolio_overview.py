@@ -23,6 +23,7 @@ from zsentinel_queue_observer import observe
 from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic
 from zsentinel_recovery_view import html_view
+from zsentinel_problem_picker import next_problems, problems_html
 
 
 def project_windows(registry):
@@ -315,7 +316,7 @@ def phrase_route(value):
     }.get(value) or "ONBEKEND"
 
 
-def portfolio_html(summary, decision, window_index, windows, branch_inventory=None):
+def portfolio_html(summary, decision, window_index, windows, branch_inventory=None, problem_inbox=None):
     if (not isinstance(summary, dict)
             or summary.get("schema") != "zsentinel-portfolio-overview-v1"
             or summary.get("actions_performed") is not False
@@ -412,7 +413,9 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     raw = html_view(decision)
     if raw.count("<main>") != 1:
         raise ValueError("incompatible underlying offline operator view")
-    return raw.replace("<main>", "<main>" + table + branch_ownership_html(branch_inventory), 1)
+    return raw.replace("<main>", "<main>" +
+                       (problems_html(problem_inbox) if problem_inbox is not None else "") +
+                       table + branch_ownership_html(branch_inventory), 1)
 
 
 def main():
@@ -504,15 +507,17 @@ def main():
                 # This asserts only no overlap in one verified branch slice.
                 # Other claims and PR ownership remain independent gates.
                 raise ValueError("canonical un-PR branch slice overlap or incomplete; no task claim")
+        problem_inbox = next_problems(summary, decision, selected)
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
-                                      branch_inventory=branches)
+                                      branch_inventory=branches, problem_inbox=problem_inbox)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
                 "selection_mode": window_mode,
                 "window_count": len(windows), "selected_projects": selected,
                 "source_bound_decision": decision,
+                "next_problem_shortlist": problem_inbox,
                 "recent_unpr_branch_ownership": (
                     branches if branches is not None else
                     {"coverage": "not_requested", "owner_verified": False}),
@@ -521,6 +526,16 @@ def main():
             lines = ["zSentinel portfolio | venster %d/%d | GitHub: %s" % (
                 window_index + 1, len(windows), ", ".join(selected))]
             lines.append("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
+            lines.append("VOLGENDE PROBLEMEN (advies; eigendom en scope NIET geverifieerd):")
+            for item in problem_inbox["items"]:
+                lines.append("  %s %s %s | %s | %s" % (
+                    item["priority"], item["project_id"], item["issue_url"],
+                    item["next_step"], item["action"]))
+            if not problem_inbox["items"]:
+                lines.append("  Geen kandidaten in beperkte steekproef; GEEN bewijs van nul open issues.")
+            for item in problem_inbox["owner_only_incidents"]:
+                lines.append("  EIGENAAR NODIG %s %s: %s" % (
+                    item["severity"], item["project_id"], item["action"]))
             for row in summary["rows"]:
                 lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s | route=%s | action=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
