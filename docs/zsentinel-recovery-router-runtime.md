@@ -12,6 +12,16 @@ is. De bestaande exacte jobverificatie en self-hosted-**labelvereiste**
 blijven ongewijzigd. Zonder die labels is wachttijd nooit een bewezen
 VPS-listenerstoring.
 
+De collector onderzoekt beide wachtende vensters voordat hij kiest:
+een bevestigde `self-hosted`-job gaat vóór een job waarvan de runnerlabels
+onbekend zijn; die gaat weer vóór een expliciet hosted/custom wachtrij.
+Binnen de categorie telt de oudste brongebonden startdatum. Dat is een
+**leesadvies**, geen bewijs dat capaciteit opnieuw gealloceerd mag worden.
+Een bronfout in één venster wist reeds geobserveerde, onafhankelijke exacte
+jobidentiteiten niet; de gebruiker ziet `partial_window` en welke
+workflowstatussen niet konden worden onderzocht. Projectdekking wordt
+dan gedegradeerd, ook als een concrete job nog afzonderlijk verifieerbaar is.
+
 De operatorcockpit vermeldt het workflowvenster waarop de selectie berust:
 *Al lopende workflow, maar job nog wachtend* is niet hetzelfde als een
 mislukte workflow. Buiten de begrensde eerste twee runs per venster en de
