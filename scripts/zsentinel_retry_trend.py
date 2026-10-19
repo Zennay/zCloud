@@ -60,6 +60,91 @@ def project_counts(item: dict) -> dict[str, int]:
     return result
 
 
+
+def sample_changes(previous: dict, current: dict) -> tuple[dict, list[dict]]:
+    """Compare only records appearing in BOTH bounded samples, never imply disappearance.
+
+    queue_ref is a truncated hash, not a credential, row ownership token or proof
+    that a record is unchanged outside these two observed read transactions.
+    """
+    def extract(item: dict) -> dict[str, dict]:
+        coverage = item.get("coverage")
+        rows = item.get("high_attempt_samples")
+        if (not isinstance(coverage, dict)
+                or type(coverage.get("sample_limit")) is not int
+                or not 1 <= coverage["sample_limit"] <= 100
+                or type(coverage.get("sample_is_complete")) is not bool
+                or coverage.get("database_read_only") is not True
+                or coverage.get("safe_to_authorize_retry") is not False
+                or coverage.get("attempts_count_claims_not_failures") is not True
+                or not isinstance(rows, list)
+                or len(rows) > coverage["sample_limit"]):
+            raise ValueError("Incomplete or unsafe queue sample contract")
+        indexed: dict[str, dict] = {}
+        scope = item["scope"].get("project")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("Malformed queue sample")
+            ref = row.get("queue_ref")
+            name = row.get("project")
+            if (not isinstance(ref, str)
+                    or not re.fullmatch(r"[0-9a-f]{16}", ref)
+                    or ref in indexed
+                    or not isinstance(name, str) or not PROJECT.fullmatch(name)
+                    or scope != "all" and scope != name
+                    or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                    or row.get("status") not in ("queued", "claimed", "running", "verifying")
+                    or type(row.get("attempts")) is not int or row["attempts"] < 0
+                    or type(row.get("eligible")) is not bool):
+                raise ValueError("Malformed, duplicate or out-of-scope queue sample")
+            indexed[ref] = row
+        return indexed
+
+    before = extract(previous)
+    after = extract(current)
+    common = before.keys() & after.keys()
+    rows: list[dict] = []
+    for ref in common:
+        old, new = before[ref], after[ref]
+        if old["project"] != new["project"]:
+            raise ValueError("Queue reference changed project between snapshots")
+        delta = new["attempts"] - old["attempts"]
+        if delta > 0:
+            kind = "claim_cycles_increased"
+        elif delta < 0:
+            kind = "claim_counter_decreased_review"
+        elif old["status"] != new["status"]:
+            kind = "status_changed"
+        elif old["priority"] != new["priority"]:
+            kind = "priority_changed"
+        else:
+            continue
+        rows.append({
+            "queue_ref": ref, "project": new["project"],
+            "priority_before": old["priority"], "priority_after": new["priority"],
+            "status_before": old["status"], "status_after": new["status"],
+            "attempts_before": old["attempts"], "attempts_after": new["attempts"],
+            "claim_cycle_delta": delta, "observation": kind,
+        })
+    rows.sort(key=lambda r: (
+        {"P0": 0, "P1": 1, "P2": 2, "P3": 3}[r["priority_after"]],
+        -r["claim_cycle_delta"], r["project"], r["queue_ref"],
+    ))
+    coverage = {
+        "previous_sampled": len(before),
+        "current_sampled": len(after),
+        "matched_samples": len(common),
+        "only_previous_sample": len(before.keys() - after.keys()),
+        "only_current_sample": len(after.keys() - before.keys()),
+        "both_samples_complete": (
+            previous["coverage"]["sample_is_complete"]
+            and current["coverage"]["sample_is_complete"]),
+        "matched_rows_with_increased_claim_cycles": sum(r["claim_cycle_delta"] > 0 for r in rows),
+        "known_increase_in_claim_cycles": sum(max(0, r["claim_cycle_delta"]) for r in rows),
+        "not_in_both_samples_is_not_completion": True,
+    }
+    return coverage, rows
+
 def compare(previous: dict, current: dict) -> dict:
     if previous["scope"] != current["scope"]:
         raise ValueError("Snapshot project/threshold scopes differ")
@@ -80,6 +165,7 @@ def compare(previous: dict, current: dict) -> dict:
             "delta": current["totals"][key] - previous["totals"][key],
         } for key in METRICS
     }
+    observation_coverage, record_changes = sample_changes(previous, current)
     return {
         "schema": "zsentinel-retry-trend-v1",
         "before_utc": previous["observed_at_utc"],
@@ -87,11 +173,15 @@ def compare(previous: dict, current: dict) -> dict:
         "scope": current["scope"],
         "metrics": metrics,
         "projects": groups,
+        "sample_coverage": observation_coverage,
+        "record_changes": record_changes,
         "worsening_projects": sum(g["delta"] > 0 for g in groups),
         "non_authorizing": True,
         "notes": (
             "Claim attempts are claim cycles, not confirmed failures. Changes in totals "
             "may reflect arrivals, completions, priority changes or status transitions. "
+            "Record deltas are observed only when the same pseudonymous ref is in BOTH bounded "
+            "samples. Disappearing from a sample does not establish job completion. "
             "Do not infer worker ownership, retry permission or recovery from this comparison."
         ),
     }
@@ -120,6 +210,22 @@ def markdown(trend: dict) -> str:
                      + str(group["before_high_attempts"]) + " | "
                      + str(group["after_high_attempts"]) + " | "
                      + format(group["delta"], "+d") + " |")
+    cover = trend["sample_coverage"]
+    lines += ["", "## Matched queue-item movement (read-only)",
+              f"Matched {cover['matched_samples']} of {cover['previous_sampled']} earlier and "
+              f"{cover['current_sampled']} later sampled items; complete samples: "
+              f"{cover['both_samples_complete']}.",
+              f"Observed increased claim cycles: {cover['known_increase_in_claim_cycles']} "
+              f"across {cover['matched_rows_with_increased_claim_cycles']} matched items.",
+              f"Only in earlier sample: {cover['only_previous_sample']}; only in later "
+              f"sample: {cover['only_current_sample']} (neither proves completion or arrival).",
+              "", "| Opaque ref | Project | Priority | Status before → after | Claim cycles before → after | Change |",
+              "|---|---|---|---|---|---|"]
+    for row in trend["record_changes"][:100]:
+        lines.append(f"| \`{row['queue_ref']}\` | {row['project']} | {row['priority_after']} | "
+                     f"{row['status_before']} → {row['status_after']} | "
+                     f"{row['attempts_before']} → {row['attempts_after']} "
+                     f"({row['claim_cycle_delta']:+d}) | {row['observation']} |")
     lines += ["", trend["notes"], ""]
     return "\n".join(lines)
 
@@ -136,6 +242,22 @@ def html(trend: dict) -> str:
                        g["after_high_attempts"], g["delta"]) + "</tr>"
         for g in trend["projects"]
     )
+    coverage = trend["sample_coverage"]
+    record_rows = "".join(
+        "<tr>" + cells(r["queue_ref"], r["project"], r["priority_after"],
+                         r["status_before"] + " → " + r["status_after"],
+                         f"{r['attempts_before']} → {r['attempts_after']} ({r['claim_cycle_delta']:+d})",
+                         r["observation"]) + "</tr>"
+        for r in trend["record_changes"][:100]
+    )
+    summary = (
+        f"Matched {coverage['matched_samples']} sampled items. "
+        f"Observed {coverage['known_increase_in_claim_cycles']} additional claim cycles "
+        f"across {coverage['matched_rows_with_increased_claim_cycles']} matched items. "
+        f"Both samples complete: {coverage['both_samples_complete']}. "
+        f"Earlier-only {coverage['only_previous_sample']}; later-only "
+        f"{coverage['only_current_sample']}; neither means completed or new."
+    )
     return """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>zSentinel · Retry incident trend</title><style>
@@ -148,6 +270,9 @@ th,td{padding:.7rem;border-bottom:1px solid #41516a;text-align:left}th{color:#9f
 <div class="wrap"><table><tr><th>Metric</th><th>Earlier</th><th>Later</th><th>Delta</th></tr>""" + metric_rows + """</table></div>
 <h2>Project movement</h2><div class="wrap"><table><tr><th>Project</th>
 <th>Earlier high-attempt</th><th>Later</th><th>Delta</th></tr>""" + project_rows + """</table></div>
+<h2>Matched queue-item movement</h2><p>""" + escape(summary) + """</p>
+<div class="wrap"><table><tr><th>Opaque ref</th><th>Project</th><th>Priority</th>
+<th>Status before → after</th><th>Claim cycles before → after</th><th>Observation</th></tr>""" + record_rows + """</table></div>
 <footer>Offline, zero-network, no queue writes or authorization.</footer></body></html>"""
 
 
