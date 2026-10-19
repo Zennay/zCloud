@@ -82,6 +82,9 @@ def pr_rows(source):
             raise ValueError("ambiguous PR source identity")
         if type(row.get("observed_check_success")) is not bool:
             raise ValueError("invalid CI observation")
+        legacy = row.get("legacy_context_success")
+        if legacy is not None and type(legacy) is not bool:
+            raise ValueError("invalid legacy status observation")
         approvals = row.get("observed_approvals")
         if type(approvals) is not int or not 0 <= approvals <= 100:
             raise ValueError("invalid approval evidence")
@@ -141,10 +144,11 @@ def compare(previous, current):
                 "url": link,
                 "kind": "pr_not_sampled_in_one_snapshot_not_open_or_closed_proof",
                 "head_changed": None, "observed_check_changed": None,
-                "approval_count_changed": None,
+                "legacy_context_changed": None, "approval_count_changed": None,
             })
         elif (left["head_sha"] != right["head_sha"] or
               left["observed_check_success"] != right["observed_check_success"] or
+              left.get("legacy_context_success") != right.get("legacy_context_success") or
               left["observed_approvals"] != right["observed_approvals"]):
             pr_movements.append({
                 "url": link,
@@ -152,6 +156,8 @@ def compare(previous, current):
                 "head_changed": left["head_sha"] != right["head_sha"],
                 "observed_check_changed": (
                     left["observed_check_success"] != right["observed_check_success"]),
+                "legacy_context_changed": (
+                    left.get("legacy_context_success") != right.get("legacy_context_success")),
                 "approval_count_changed": (
                     right["observed_approvals"] - left["observed_approvals"]),
             })
