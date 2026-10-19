@@ -19,7 +19,7 @@ MAX_PRS = 3
 MAX_CHECKS = 30
 MAX_REVIEWS = 30
 MAX_CALLS = 3 * MAX_PRS
-PASS = {"success", "neutral", "skipped"}
+FAILURE = {"failure", "timed_out", "cancelled", "action_required"}
 
 
 def _number(value):
@@ -101,6 +101,7 @@ def observe_prs(registry, selections, token=None):
                 raise ValueError("untrusted exact-head check-run page")
             failing = []
             waiting = []
+            inconclusive = []
             for check in runs:
                 if not isinstance(check, dict) or type(check.get("name")) is not str:
                     raise ValueError("invalid check-run")
@@ -108,12 +109,17 @@ def observe_prs(registry, selections, token=None):
                 status, conclusion = check.get("status"), check.get("conclusion")
                 if status != "completed":
                     waiting.append(name)
-                elif conclusion not in PASS:
+                elif conclusion in FAILURE:
                     failing.append(name)
+                elif conclusion != "success":
+                    # neutral/skipped/stale/unknown are NOT successful proof.
+                    # Do not mislabel a skipped workflow as a failed build.
+                    inconclusive.append(name)
             item["ci"] = {
                 "head_sha": head_sha, "sampled": len(runs),
                 "total_reported": total, "all_checks_observed": total == len(runs),
                 "failed": failing[:8], "pending": waiting[:8],
+                "inconclusive": inconclusive[:8],
                 "branch_protection_verified": False,
                 "status_contexts_verified": False,
             }
@@ -155,7 +161,7 @@ def observe_prs(registry, selections, token=None):
                 next_step = "resolve_exact_head_review_with_owner"
             elif failing:
                 next_step = "fix_exact_head_ci_with_owner"
-            elif waiting or total != len(runs):
+            elif waiting or inconclusive or total != len(runs):
                 next_step = "wait_for_complete_exact_head_ci"
             elif approvals == 0:
                 next_step = "request_independent_review"
@@ -209,6 +215,7 @@ def pr_delivery_html(report):
                   " / " + str(ci.get("total_reported", "onbekend")) +
                   " · fouten ≥" + str(len(ci.get("failed", []))) +
                   " · bezig ≥" + str(len(ci.get("pending", []))) +
+                  " · niet-groen/onbeslist ≥" + str(len(ci.get("inconclusive", []))) +
                   " · head-approvals gezien: " +
                   str(reviews.get("same_head_approvals_seen", "onbekend")))
         sha = row.get("head_sha")
