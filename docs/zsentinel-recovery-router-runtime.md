@@ -3,8 +3,11 @@
 ## Privé-opvolgnotities en optioneel Notion actief werk (19 oktober)
 
 De offline HTML-bediening kan na een **bewuste voorvertoning** maximaal
-24 eigen opvolgkeuzes/notities (maximaal 300 tekens per issue) als privé-JSON
-exporteren. Via een apart gekozen importbestand kunnen dezelfde notities
+24 **bewust gewijzigde** opvolgkeuzes/notities (maximaal 300 tekens
+per issue) binnen de **huidige browserfilters** als privé-JSON exporteren.
+Bij een gecombineerd portfolio kan de operator per project filteren en
+zo meerdere kleine privébatches bewaren; ongewijzigde standaardwaarden
+worden niet onnodig gekopieerd. Via een apart gekozen importbestand kunnen dezelfde notities
 in een nieuw bronvenster teruggezet worden, **uitsluitend wanneer de
 canonieke GitHub-issue-URL en projectidentiteit overeenkomen**. De import
 vereist expliciete browserbevestiging, weigert dubbele/onbegrensde entries,
