@@ -108,8 +108,14 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
                     return verdict(pid, "stalled", "github_job_unassigned",
                                    "Check exact runner labels, runner group/repo access and listener via an independent route; never restart a runner from the queued job.",
                                    "github-unassigned", sha)
-                return verdict(pid, "unknown", "github_queue_route_unverified",
-                               "Inspect exact GitHub runner admission, labels and billing/concurrency. Do not diagnose a missing VPS runner without self-hosted job labels.")
+                # The *job* is demonstrably stuck unassigned for >=30m,
+                # even when the runner route is unknown or hosted. This is
+                # actionable as an operator incident, NOT proof that a VPS
+                # listener is missing. Keep it out of self-hosted incident
+                # dedup by using an independent unknown-route identity.
+                return verdict(pid, "stalled", "github_job_unassigned",
+                               "Inspect exact GitHub admission, billing, concurrency and job labels via an independent route; do not infer a VPS outage or restart any runner without explicit self-hosted evidence and owner approval.",
+                               "github-unassigned-route-unverified", sha)
             return verdict(pid, "in_progress", "github_queue_not_yet_actionable",
                            "Continue observing; queue delay alone does not prove a broken runner.")
         if status in COMPLETED:
