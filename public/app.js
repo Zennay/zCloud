@@ -915,7 +915,8 @@ function githubActivityImportPanel(){
   const visible=new Set((DATA?.projects||[]).map(p=>p.id));
   const rows=(snapshot?.events||[]).filter(a=>visible.has(a.project)&&(!filter||a.project===filter));
   const counts=snapshot?.coverage.filter(c=>visible.has(c.project)&&(!filter||c.project===filter))
-    .map(c=>c.project+': '+c.status).join(' · ')||'No GitHub receipt loaded';
+    .map(c=>c.project+': '+c.status+
+      (c.staleEvidence?' · STALE observation from '+c.observedAt:'')).join(' · ')||'No GitHub receipt loaded';
   const content=rows.slice(0,80).map(a=>'<div class="service-row"><div><small>'+esc(a.project)+' · '+esc(a.kind)+
     (a.firstSeen?' · absent in preceding bounded snapshot':'')+'</small><br><a target="_blank" rel="noopener noreferrer" href="'+
     esc(a.url)+'">'+esc(a.description)+'</a></div><small>'+esc(date(a.ts,true))+'</small></div>').join('');
@@ -1064,7 +1065,12 @@ async function refreshPublicProductIssues(selectedOverride=null,quiet=false){
     const issueCoverage=[...previousIssues.coverage.filter(row=>row.project!==projectId),
       currentCoverage].slice(-8);
     const coveredProjects=new Set(issueCoverage.map(row=>row.project));
-    const currentRows=[...issues.values()];
+    const currentRows=[...issues.values()].map(row=>{
+      const old=priorRows.find(item=>item.number===row.number);
+      // Missing provider pages are not evidence that referenced PRs vanished.
+      return outcomes[2].status!=='fulfilled'&&old?.prs?.length
+        ?{...row,prs:old.prs.slice(0,3)}:row;
+    });
     const safeRows=readable===3?currentRows:[...priorRows.filter(row=>
       !currentRows.some(fresh=>fresh.number===row.number)),...currentRows];
     const issueRows=[...previousIssues.issues.filter(row=>row.project!==projectId&&coveredProjects.has(row.project)),
@@ -1140,7 +1146,9 @@ function productIssueInboxPanel(){
   const hiddenLowerPriority=(snapshot?.issues||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter)
     &&item.priority!=='P0'&&item.priority!=='P1').length;
   const coverageText=(snapshot?.coverage||[]).filter(item=>visible.has(item.project)&&(!filter||item.project===filter))
-    .map(item=>item.project+' · '+item.status+' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
+    .map(item=>item.project+' · '+item.status+
+      (item.staleEvidence?' · STALE observation from '+item.observedAt:'')+
+      ' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
   const html=rows.slice(0,50).map(item=>'<div class="service-row"><div><strong>'+esc(item.priority)+
     ' · '+esc(item.project)+'</strong> <a target="_blank" rel="noopener noreferrer" href="'+esc(item.url)+'">'+
     esc(item.title)+'</a><small> · open issue #'+item.number+'</small>'+
@@ -1628,6 +1636,18 @@ function exportZSentinelHandoff(){
       (pr.draft?'draft, ':'')+clean(pr.relationship,32)+', active claim unverified): '+pr.url);
   }
   if(!issues.length)lines.push('No matching issues in currently loaded partial sample; sources may be missing.');
+  lines.push('', '## Source freshness and missing-data warnings', '');
+  for(const source of [
+    {name:'P0/P1 issue source',data:IMPORTED_PRODUCT_ISSUES},
+    {name:'PR/CI GitHub source',data:IMPORTED_GITHUB_ACTIVITY}
+  ]){
+    for(const row of (source.data?.coverage||[]).filter(r=>projects.has(r.project)&&(!filter||r.project===filter)).slice(0,8)){
+      lines.push('- '+source.name+' '+clean(row.project,56)+' · '+clean(row.status,32)+
+        ' · observed '+clean(row.observedAt||'unknown',48)+
+        (row.staleEvidence?' · STALE RETAINED EVIDENCE, NOT CURRENT STATUS':'')+
+        (row.lastAttemptAt?' · last attempt '+clean(row.lastAttemptAt,48):''));
+    }
+  }
   lines.push('', '## Product queue admission (provisional)', '');
   if(queue){
     lines.push('Total product candidates in observed global queue: '+queue.queued_product_candidates);
@@ -1698,6 +1718,8 @@ function zSentinelDeliveryBoard(){
     ids.has(item.project)&&(!focus||item.project===focus));
   const coveredGitHub=(github?.coverage||[]).filter(item=>
     ids.has(item.project)&&(!focus||item.project===focus));
+  const staleProjects=[...new Set([...coveredIssues,...coveredGitHub]
+    .filter(row=>row.staleEvidence===true).map(row=>row.project))];
   const formatted=relevant.slice(0,24).map(issue=>{
     const refs=issue.prs.slice(0,3).map(pr=>
       '<a target="_blank" rel="noopener noreferrer" href="'+esc(pr.url)+'">PR #'+pr.number+
@@ -1742,6 +1764,7 @@ function zSentinelDeliveryBoard(){
     '<p class="detail-note" role="status">Issue source '+esc(issueTime)+
     ' · GitHub activity '+esc(gitTime)+' · Queue '+esc(queueTime)+
     '. Reads are manual, separate, bounded and may be partial or stale.</p>'+
+    (staleProjects.length?'<p class="detail-note" role="alert">GitHub source unavailable/partial — last known issue/PR/CI evidence preserved, NOT current proof: '+esc(staleProjects.join(', '))+'.</p>':'')+
     '<p class="detail-note">'+
     (focus?'Project: '+esc(focus)+'.':'Select a single project to refresh the sources; current snapshots can be viewed across projects.')+
     ' Issues sampled: '+coveredIssues.length+' project sources; GitHub activity: '+
