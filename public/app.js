@@ -1836,7 +1836,7 @@ function zSentinelDeliveryBoard(){
  * The companion offline CLI is in PR #1555. */
 let ZSENTINEL_RETRY_SNAPSHOT=null,ZSENTINEL_RETRY_TREND=null,ZSENTINEL_RETRY_MESSAGE='';
 let ZSENTINEL_RETRY_BUSY=false;
-function retryKnownProjects(){return new Set((DATA?.projects||[]).map(p=>p.id))}
+function retryKnownProjects(){return new Set([...(DATA?.projects||[]),...(DATA?.archived_projects||[])].map(p=>p.id))}
 function retryTime(value){
   return typeof value==='string'&&value.length<=45&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/.test(value)
     &&/(?:Z|[+-]\d\d:\d\d)$/.test(value)&&Number.isFinite(Date.parse(value))
@@ -1995,8 +1995,10 @@ function zSentinelRetryPanel(){
   const changed=(trend?.projects||[]).filter(r=>known.has(r.project)&&(!project||r.project===project));
   const stale=snap&&Date.now()-Date.parse(snap.observedAt)>6*3600000;
   const trendStale=trend&&Date.now()-Date.parse(trend.after)>6*3600000;
+  const trendCovered=!project||(trend&&(trend.scope.project==='all'||trend.scope.project===project));
   const scopedCount=groups.reduce((n,g)=>n+g.high,0);
-  const totals=snap?(project?scopedCount:snap.totals.high_attempt_items):0;
+  const projectCovered=!project||(snap&&(snap.scope.project==='all'||snap.scope.project===project));
+  const totals=snap?(projectCovered?(project?scopedCount:snap.totals.high_attempt_items):'unknown'):'unknown';
   return '<section class="panel" id="zSentinelRetryPanel"><div class="panel-header"><div>'+
     '<h2>zSentinel · queue retry incidents</h2><p class="panel-subtitle">'+
     'Import local, read-only queue snapshots and trend evidence; never assign, retry or release from this view.</p></div>'+
@@ -2020,8 +2022,8 @@ function zSentinelRetryPanel(){
       '<p class="detail-note">Claims are NOT failures. Source '+esc(date(snap.observedAt,true))+
       (stale?' (stale)':'')+' · threshold '+snap.scope.minimum_claim_attempts+
       ' · bounded '+snap.rows.length+'/'+snap.sampleLimit+' sample. '+
-      (project&&snap.scope.project!=='all'&&snap.scope.project!==project?
-        'Imported snapshot covers another project.':'Owner and lease status are not independently verified.')+
+      (!projectCovered?'NO COVERAGE FOR SELECTED PROJECT — count unknown; import its source or select All projects.':
+        'Owner and lease status are not independently verified.')+
       '</p><div class="service-list">'+
       (samples.slice(0,12).map(item=>'<div class="service-row"><div><strong>'+
         esc(item.priority)+' · '+esc(item.project)+' · '+item.attempts+' claim cycles</strong><br>'+
@@ -2032,13 +2034,14 @@ function zSentinelRetryPanel(){
     (trend?'<h3>Retry movement (offline snapshots)</h3>'+
       '<p class="detail-note">'+esc(date(trend.before,true))+' → '+esc(date(trend.after,true))+
       (trendStale?' · STALE (>6h)':'')+
+      (trendCovered?' · scoped to '+esc(trend.scope.project):' · NO COVERAGE for selected project')+
       '. Counts describe observed queue state, not confirmed failures or recovery.</p>'+
       '<div class="service-list">'+(changed.slice(0,18).map(item=>
         '<div class="service-row"><div><strong>'+esc(item.project)+
         '</strong><br><small>High-attempt items '+item.before+' → '+item.after+
         '</small></div><strong>'+esc(item.delta>0?'+'+item.delta:String(item.delta))+
         '</strong></div>').join('')||
-        '<p class="detail-note">No movement in available project sample.</p>')+
+        '<p class="detail-note">'+(trendCovered?'No movement in available project sample.':'Project movement unknown: imported trend covers another scope.')+'</p>')+
       '</div>':'')+
     '<p class="detail-note">Local browser memory only. No upload, auto-polling, credential storage, queue write, claim takeover or retry dispatch. '+
     '<a href="https://github.com/Zennay/zCloud/issues/677" target="_blank" rel="noopener noreferrer">Queue retry issue #677</a>.</p></section>';
