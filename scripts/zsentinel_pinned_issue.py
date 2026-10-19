@@ -143,3 +143,64 @@ def read_pinned_issues(inbox, registry, selected, pins, token=None):
               "stopped_after_rate_or_auth_denial": denied,
               "fully_synchronized": False}
     return output
+
+
+PIN_STATUS = {
+    "observed_open_exact_issue": "EXACT OPEN: bronissue waargenomen; storing zelf niet bewezen",
+    "observed_open_qa_only": "EXACT OPEN QA-only: niet aanbieden als productwerk",
+    "observed_closed_not_a_current_blocker": "EXACT GESLOTEN: geen huidig open issue, runtimeherstel onbekend",
+    "unavailable_or_denied": "BRONTOEGANG GEWEIGERD: status onbekend, geen vervolg-GET",
+    "unavailable_not_a_closed_proof": "BRON ONBESCHIKBAAR: niet als gesloten tellen",
+    "not_queried_after_auth_or_rate_limit": "NIET GERAADPLEEGD na auth/rate-limit: status onbekend",
+}
+
+
+def pinned_receipts(source):
+    """Validate the optional UI source; never display untrusted API text."""
+    if not isinstance(source, dict):
+        return []
+    rows = source.get("pinned_issue_receipts")
+    if rows is None:
+        return []
+    if not isinstance(rows, list) or len(rows) > MAX_PIN_READS:
+        raise ValueError("untrusted bounded pinned issue receipts")
+    observed = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("invalid pinned issue receipt")
+        project = row.get("project_id")
+        issue = row.get("issue_number")
+        status = row.get("coverage")
+        if (type(project) is not str
+                or not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", project)
+                or type(issue) is not int or not 1 <= issue <= 100000000
+                or status not in PIN_STATUS
+                or row.get("owner_verified") is not False
+                or row.get("actions_authorized") is not False):
+            raise ValueError("invalid pinned issue source authority")
+        observed.append((project, issue, PIN_STATUS[status]))
+    return observed
+
+
+def pinned_receipts_text(source):
+    rows = pinned_receipts(source)
+    if not rows:
+        return ""
+    return "\n".join(
+        "GERICHT OPEN ISSUE " + pid + "#" + str(num) + ": " + status +
+        " · geen workerclaim/retry/mergebevoegdheid"
+        for pid, num, status in rows)
+
+
+def pinned_receipts_html(source):
+    rows = pinned_receipts(source)
+    if not rows:
+        return ""
+    from html import escape
+    return ('<section aria-label="Gerichte GitHub-bronissues">'
+            '<h2>Gerichte P0/P1-broncontroles (hoogstens drie)</h2>'
+            '<p>Dit zijn uitsluitend exacte GitHub-issuebronnen, nooit'
+            ' runnerherstel, workerlease, facturatie- of mergebevoegdheid.</p><ul>' +
+            ''.join('<li>' + escape(pid) + '#' + str(num) + ': ' +
+                    escape(status) + '</li>'
+                    for pid, num, status in rows) + '</ul></section>')
