@@ -2087,6 +2087,18 @@ function combinedActivityRows(){
   const visible=new Set((DATA?.projects||[]).map(project=>project.id));
   const groups=new Map([...visible].filter(id=>!filter||id===filter).map(id=>[id,[]]));
   const seen=new Set();
+  // Same immutable commit in both inventories is one code change, not two.
+  // Match only exact 40-hex SHA and canonical project; never conflate a
+  // branch PR with a main merge or dedupe by a fuzzy title/date.
+  const githubMainByCommit=new Map();
+  for(const item of IMPORTED_GITHUB_ACTIVITY?.events||[]){
+    if(item?.kind!=='main_commit'||!groups.has(item.project)
+        ||typeof item.id!=='string'||typeof item.url!=='string')continue;
+    const match=/^github:Zennay\/[A-Za-z0-9_.-]{1,100}:main_commit:([0-9a-f]{40})$/.exec(item.id);
+    if(match&&item.url.endsWith('/commit/'+match[1]))
+      githubMainByCommit.set(item.project+':'+match[1],item);
+  }
+  const pairedMainCommits=new Set();
   for(const row of ACTIVITY||[]){
     if(!row||!groups.has(row.project)||typeof row.id!=='string'
         ||typeof row.title!=='string'||typeof row.ts!=='string'
@@ -2094,9 +2106,19 @@ function combinedActivityRows(){
     const key='local:'+row.project+':'+row.id;
     if(seen.has(key))continue;
     seen.add(key);
-    groups.get(row.project).push({key,source:'local',project:row.project,
-      kind:row.kind,summary:row.title,detail:row.detail||'Local project event',
-      observedAt:row.ts,ts:row.ts,url:''});
+    const sha=row.kind==='commit'&&row.id.startsWith(row.project+':git:')
+      ?row.id.slice((row.project+':git:').length):'';
+    const matched=/^[0-9a-f]{40}$/.test(sha)
+      ?githubMainByCommit.get(row.project+':'+sha):null;
+    if(matched)pairedMainCommits.add(matched.id);
+    groups.get(row.project).push({key,source:matched?'both':'local',project:row.project,
+      kind:matched?'main_commit':row.kind,summary:row.title,
+      detail:matched?'Local checkout + independently observed GitHub main; not deployment proof':
+        row.detail||'Local project event',
+      observedAt:matched?
+        (IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||row.ts:
+        row.ts,
+      ts:row.ts,url:matched?matched.url:''});
   }
   for(const row of IMPORTED_GITHUB_ACTIVITY?.events||[]){
     if(!row||!groups.has(row.project)||!GITHUB_RECEIPT_KINDS.has(row.kind)
@@ -2105,7 +2127,7 @@ function combinedActivityRows(){
         ||!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(row.url)
         ||!Number.isFinite(Date.parse(row.ts)))continue;
     const key='github:'+row.project+':'+row.id;
-    if(seen.has(key))continue;
+    if(seen.has(key)||pairedMainCommits.has(row.id))continue;
     seen.add(key);
     groups.get(row.project).push({key,source:'github',project:row.project,
       kind:row.kind,summary:row.description,
@@ -2127,7 +2149,8 @@ function combinedActivityRows(){
       if(index<rows.length){
         const row=rows[index];
         cursor.set(project,index+1);
-        if(COMBINED_ACTIVITY_SOURCE==='all'||row.source===COMBINED_ACTIVITY_SOURCE){
+        if(COMBINED_ACTIVITY_SOURCE==='all'||row.source==='both'
+            ||row.source===COMBINED_ACTIVITY_SOURCE){
           output.push(row);
         }
         changed=true;
@@ -2163,7 +2186,9 @@ function combinedActivityPanel(){
     const main=row.url?
       '<a href="'+esc(row.url)+'" rel="noopener noreferrer" target="_blank">'+esc(row.summary)+'</a>':
       '<strong>'+esc(row.summary)+'</strong>';
-    const source=row.source==='github'?'GitHub '+row.kind.replaceAll('_',' '):'Local VPS '+(row.kind||'event');
+    const source=row.source==='both'?'Local VPS + GitHub main commit':
+      row.source==='github'?'GitHub '+row.kind.replaceAll('_',' '):
+      'Local VPS '+(row.kind||'event');
     const freshness=row.observedAt&&Date.now()-Date.parse(row.observedAt)>6*3600000?' · STALE OBSERVATION':'';
     return '<div class="service-row"><div>'+main+'<br><small>'+
       esc(project?.name||row.project)+' · '+esc(source)+
