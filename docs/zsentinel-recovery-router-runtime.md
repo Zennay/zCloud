@@ -122,6 +122,32 @@ python3 scripts/zsentinel_portfolio_workboard.py \
   --format html > /private/portfolio-werkbord.html
 ```
 
+De uitvoer kan bovendien expliciet veilig worden aangemaakt via
+`--output`, zonder shell-redirect en zonder bestaande bestanden te
+overschrijven. De doelmap **moet al bestaan**. De CLI maakt uitsluitend op
+verzoek een nieuw .html/.json/.md-bestand met permissie `0600`,
+`O_EXCL`/`O_NOFOLLOW` en maximaal 6 MiB; een bestaande naam of symlink
+wordt geweigerd. Dit is een **operatorrapport** en nooit een queue-,
+GitHub-, Notion- of workerwrite.
+
+```sh
+# Maak eerst één bestaande privédoelmap met jouw normale gebruikersrechten:
+mkdir -p "$HOME/zsentinel-privé"
+chmod 700 "$HOME/zsentinel-privé"
+
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --snapshot "$HOME/zsentinel-privé/venster-1.json" \
+  --snapshot "$HOME/zsentinel-privé/venster-2.json" \
+  --format html \
+  --output "$HOME/zsentinel-privé/portfolio-werkbord.html"
+```
+
+Dezelfde `--output`-mogelijkheid werkt bij de zelfstandige
+`zsentinel_issue_delivery.py`. Zonder deze vlag blijft de standaard
+stdout-weergave bestaan. Bij een gedegradeerde GitHub-bron kan het
+expliciete rapport worden aangemaakt, maar het proces houdt een
+niet-succesexitcode en vermeldt de onvolledige bron.
+
 De invoer moet uit unieke canonieke projecten bestaan (geen dubbel
 project, issue of vervalste repoidentiteit). Elk bestand maximaal 512 KiB,
 30 dagen bronhistorie en maximaal 24 issues; onvolledige of verlopen
