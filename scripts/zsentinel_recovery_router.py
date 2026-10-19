@@ -778,14 +778,17 @@ def main():
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
         output, state = plan(bundle, old)
-        if args.state:
-            write_json_atomic(args.state, state)
         output["private_ledger_written"] = bool(args.state)
         if args.format == "html":
             from zsentinel_recovery_view import html_view
-            print(html_view(output))
+            rendered = html_view(output)
         else:
-            print(json.dumps(output, sort_keys=True, indent=2) if args.format == "json" else operator_text(output))
+            rendered = (json.dumps(output, sort_keys=True, indent=2)
+                        if args.format == "json" else operator_text(output))
+        # Never consume deduplicated incidents before rendering succeeds.
+        if args.state:
+            write_json_atomic(args.state, state)
+        print(rendered)
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel routing refused: {exc}\n")
     return 0
