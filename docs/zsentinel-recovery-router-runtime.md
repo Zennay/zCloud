@@ -1174,3 +1174,58 @@ PR nog falen op historische asserties die onassigned jobs zonder geverifieerd
 self-hosted label als runnerincident verwachten. De veilige productclassificatie
 is bewust **niet** afgezwakt om oudere aannames passend te maken; onafhankelijke
 CI-/review-eigenaren moeten de vereiste exacte-head gate afhandelen.
+
+### 19 oktober 2026 — blocker-first werkbord, zonder claimovername
+
+De reeds bestaande complete portfolio-CLI heeft nu één extra, **eerste**
+operatorsectie boven de productissues: `1 · Eerst vastgelopen werk vrijmaken`.
+De bron is **dezelfde reeds gemaakte** read-only `summary`, incidentbeslissing
+en productissueshortlist; er zijn **nul aanvullende GitHub- of Notion-aanroepen**
+en geen tweede queue-transactie nodig.
+
+**Productgedrag:**
+
+- Nieuwe module `scripts/zsentinel_unblock_board.py` bouwt maximaal 12
+  herstelkaarten, apart voor een *actueel afgebakend P0/P1-incident*, een
+  *alleen historisch nog ongereconcilieerd* incident en *echte SQLite
+  claim-churn/verlopen-lease druk*. Historische en queueobservaties zijn
+  **nooit** voldoende bewijs voor een actuele outage.
+- Actieve P0's gaan voor P1's; historische ledgerhouders blijven zichtbaar
+  als **eerst te verifiëren**, inclusief een eerlijke telling wanneer de
+  30-historische-bronsteekproef of de canonieke registry niet alles toont.
+  Geen afwezig-van-het-venster-is-herstel-aanname.
+- Elke kaart heeft een expliciete volgende eigenaaractie,
+  `worker_resumed_verified=false`, `permission_to_recover=false` en
+  `owner_claim_verified=false`. De gehele uitvoer behoudt
+  `claims_taken=false`, `retries_performed=false`,
+  `deployment_authorized=false` en `writes_performed=false`.
+- **Daarna onafhankelijk werk** toont maximaal vijf strikt geadmitteerde
+  bestaand-taken-suggesties wanneer actuele owner-/pad- en resourcebronnen
+  werkelijk compleet zijn. Anders laat het alleen begrensde echte
+  open-GitHub-productissues voor **inspectie** zien, zonder dispatchrecht.
+- Bestaande `--format html`, `--format json` en `--format text` gebruiken
+  dezelfde bronvolgorde; JSON voegt `blocker_first_handoff` toe zonder
+  bestaande velden te wijzigen. ICS en menselijke incidentdesk zijn
+  ongewijzigd.
+
+Dit productoverzicht vervangt **niet** PR #1565, waarin een aparte eigenaar
+de echte `server.py` workerprompt voor blocker-first volgorde bouwt.
+De huidige code routeert noch start feitelijk een zCloud worker; voor de
+lopende portfolioherstelrol blijven exacte file-level claims,
+verplichte CI, onafhankelijke review, runner/billingrechten en serialized
+productie-release leidend. Zonder verse bron kan de kaart **geen** complete
+blockerinventaris claimen. Productbron en operatorhandleiding worden op de
+bestaande, niet-gemergede PR #1563 geleverd, zonder nieuwe QA-/regressiesuites.
+
+Directe operatorinvoer op geautoriseerd bestaand SQLite-pad:
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /path/to/existing/portfolio.sqlite \
+  --format html > /private/path/zsentinel-blocker-first.html
+```
+
+De CLI maakt de database niet aan en opent deze `mode=ro`. De optionele
+private `--state`-ledger gebruikt zijn bestaande exclusieve 0600 lock.
+Rapporteer apart bronfix, hoofdbranchmerge, runtimebewijs en echte
+workerhervatting; het ene volgt niet automatisch uit het andere.
