@@ -36,6 +36,7 @@ NEXT_ACTION_NL = {
     "request_independent_review": "Vraag onafhankelijke review; geen automatische merge.",
     "confirm_branch_protection_and_release_with_owner": "Laat eigenaar volledige branchebescherming en releasevoorwaarden controleren.",
     "verify_pr_source_with_owner": "PR-bron onvoldoende bereikbaar; eigenaar moet actuele GitHub-status controleren.",
+    "resolve_hosted_billing_with_account_owner": "GitHub weigert de hosted job te starten wegens facturatie of bestedingslimiet. Alleen de bevoegde accountbeheerder kan dit herstellen; geen codefix, retry of runneromweg.",
 }
 
 
@@ -387,6 +388,9 @@ def observe_prs(registry, selections, token=None):
                 next_step = "finish_existing_draft_with_owner"
             elif requested_changes:
                 next_step = "resolve_exact_head_review_with_owner"
+            elif (hosted_billing_start_denial and len(failing) == 1
+                  and total == len(runs) and not legacy_failed):
+                next_step = "resolve_hosted_billing_with_account_owner"
             elif failing or legacy_failed:
                 next_step = "fix_exact_head_ci_with_owner"
             elif combined in ("failure", "error"):
@@ -455,7 +459,9 @@ def pr_delivery_html(report):
                   " · klassieke statusfouten ≥" + str(len(legacy.get("failed", []))) +
                   " · klassieke statussen wachten ≥" + str(len(legacy.get("pending", []))) +
                   " · head-approvals gezien: " +
-                  str(reviews.get("same_head_approvals_seen", "onbekend")))
+                  str(reviews.get("same_head_approvals_seen", "onbekend")) +
+                  (" · GitHub-platformstart geweigerd (billing/limiet; eigenaar)"
+                   if ci.get("observed_hosted_billing_start_denial") is True else ""))
         sha = row.get("head_sha")
         ci_names = []
         for kind, name in (("Mislukt", "failed"), ("Nog bezig", "pending"),
@@ -646,6 +652,8 @@ def handoff_markdown(report):
             )
             lines.append("- **Genoemde issues (PR-tekst, open/opgelost NIET geverifieerd):** "
                          + issue_links)
+        if ci.get("observed_hosted_billing_start_denial") is True:
+            lines.append("- **Apart platformprobleem:** GitHub heeft een hosted job vóór code-uitvoering geweigerd wegens facturatie/limiet. Alleen accountbeheerder; geen automatische betaling, retry of omweg.")
         for source, bucket in (("check-run", ci), ("klassieke status", legacy)):
             for state in ("failed", "pending", "inconclusive"):
                 values = bucket.get(state, [])
@@ -738,6 +746,8 @@ def main(argv=None):
                     if item.get("ci", {}).get(name):
                         lines.append("  check-%s: %s" % (
                             name, ", ".join(item["ci"][name])))
+                if item.get("ci", {}).get("observed_hosted_billing_start_denial") is True:
+                    lines.append("  owner-only: hosted GitHub job start geweigerd (billing/limiet)")
                 if item.get("legacy_status_contexts"):
                     lines.append("  classic-status-combined: " +
                                  item["legacy_status_contexts"]["combined_observed"])
