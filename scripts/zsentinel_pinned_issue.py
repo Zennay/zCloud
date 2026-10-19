@@ -16,6 +16,29 @@ REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 MAX_PIN_READS = 3
 
 
+def validate_pin_specs(registry, selected, pins):
+    """Pure preflight: invalid operator input must fail before any GitHub GET."""
+    if (not isinstance(registry, dict) or not isinstance(selected, list)
+            or not 1 <= len(selected) <= 3
+            or len(selected) != len(set(selected))
+            or not isinstance(pins, list) or len(pins) > MAX_PIN_READS):
+        raise ValueError("invalid bounded issue pin selector")
+    numbered = []
+    seen = set()
+    for raw in pins:
+        match = PIN.fullmatch(raw) if type(raw) is str else None
+        if not match or match.group(1) not in selected:
+            raise ValueError("pin requires PROJECT:ISSUE in selected GitHub window")
+        pid, number = match.group(1), int(match.group(2))
+        repo = registry.get(pid)
+        if (type(repo) is not str or not REPO.fullmatch(repo)
+                or number > 100000000 or (pid, number) in seen):
+            raise ValueError("invalid or duplicate canonical issue pin")
+        seen.add((pid, number))
+        numbered.append((pid, number, repo))
+    return numbered
+
+
 def read_pinned_issues(inbox, registry, selected, pins, token=None):
     """Add up to three independently re-fetched open issues to one source inbox.
 
@@ -36,24 +59,9 @@ def read_pinned_issues(inbox, registry, selected, pins, token=None):
             or not isinstance(selected, list) or len(selected) > 3
             or not isinstance(pins, list) or len(pins) > MAX_PIN_READS):
         raise ValueError("untrusted bounded exact-issue source")
-    if not pins:
+    numbered = validate_pin_specs(registry, selected, pins)
+    if not numbered:
         return inbox
-    selected_set = set(selected)
-    if len(selected_set) != len(selected):
-        raise ValueError("duplicate project selection")
-    numbered = []
-    seen = set()
-    for raw in pins:
-        match = PIN.fullmatch(raw) if type(raw) is str else None
-        if not match or match.group(1) not in selected_set:
-            raise ValueError("pin requires PROJECT:ISSUE in selected GitHub window")
-        pid, number = match.group(1), int(match.group(2))
-        repo = registry.get(pid)
-        if (type(repo) is not str or not REPO.fullmatch(repo)
-                or number > 100000000 or (pid, number) in seen):
-            raise ValueError("invalid or duplicate canonical issue pin")
-        seen.add((pid, number))
-        numbered.append((pid, number, repo))
     existing = {
         (row.get("project"), row.get("number")): row
         for row in inbox["items"] if isinstance(row, dict)
