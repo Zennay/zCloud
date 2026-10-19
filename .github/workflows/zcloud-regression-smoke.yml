@@ -22,7 +22,8 @@ jobs:
     # regression job (GitHub treats skipped required jobs as successful).
     # This admission step NEVER checks out or executes contributor code.
     name: Reject untrusted regression events before checkout
-    runs-on: ubuntu-latest
+    # Trusted admission executes only static shell checks. It never checks out PR code.
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 3
     steps:
       - name: Assert trusted event and repository provenance
@@ -55,7 +56,10 @@ jobs:
           esac
   critical-runner-flows:
     needs: trusted-event
-    # Run untrusted PR code only in hosted CI and only for this repository.
+    # Main and operator dispatch use the permanent zCloud runner.
+    # PR and worker-branch code must run on a separately isolated, dedicated
+    # self-hosted CI runner. If that runner is absent, stay QUEUED: never
+    # fall back to the production VPS or a GitHub-hosted runner.
     # Explicit operator dispatch always targets exact current canonical main.
     if: >-
       github.repository == 'Zennay/zCloud' &&
@@ -69,7 +73,7 @@ jobs:
         github.actor == 'Zennay' &&
         github.triggering_actor == 'Zennay' &&
         github.run_attempt == 1))
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && fromJSON('["self-hosted","zcloud","vps"]') || fromJSON('["self-hosted","zcloud-ci","isolated"]') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
