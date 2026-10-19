@@ -36,10 +36,10 @@ Notion-claim, on-gePR'de branches, bestandspad-overlap, required checks,
 review-/releasebeleid en echte productiestatus worden niet als vrij
 afgeleid uit deze beperkte API-steekproef.
 
-Maximaal 3 projecten × 1 nieuwe discovery-GET en 3 PR's × 4
-exact-head GETs: **15 aanvullende GETs** voor standalone.
+Maximaal 3 projecten × 1 nieuwe discovery-GET en 3 PR's × 5
+exact-head GETs: **18 aanvullende GETs** voor standalone.
 Het opt-in portfolio heeft daarnaast maximaal 42 bestaande GETs,
-dus **57 per operatorrun** in de grootste combinatie. Zonder
+dus **60 per operatorrun** in de grootste combinatie. Zonder
 `--discover-open`/`--discover-open-prs` blijft het extra
 discovery-verbruik nul. Geen scheduler, claim, review, dispatch,
 merge, release of muterende HTTP-actie is toegevoegd.
@@ -54,7 +54,7 @@ read-only GitHub-toegang zijn vereist. Zo kan een operator buiten het
 geblokkeerde self-hosted runnerpad toch bestaande PR's beoordelen:
 
 ```sh
-# Zelfstandige offline HTML-weergave na maximaal vier GETs per PR:
+# Zelfstandige offline HTML-weergave na maximaal vijf GETs per PR:
 python3 scripts/zsentinel_pr_delivery.py --pr cloud:1563 --format html > zsentinel-pr-1563.html
 
 # Eén tot drie bestaande PR's met bronbewijs en eigenaaradvies als JSON:
@@ -84,14 +84,15 @@ python3 scripts/zsentinel_portfolio_overview.py \
   --inspect-referenced-prs --format json
 ```
 
-Maximaal drie PR's per operatoractie en **vier extra GitHub-GETs per PR**:
+Maximaal drie PR's per operatoractie en **vijf extra GitHub-GETs per PR**:
 exacte PR-metadata met `head.sha` en `base.sha`, de eerste 30
-check-runs **op die HEAD**, de eerste 30 review-ontvangsten, en een
+check-runs **op die HEAD**, maximaal 30 klassieke commit-statuscontexten
+**op dezelfde SHA**, de eerste 30 review-ontvangsten, en een
 hernieuwde PR-metadataread die een tussentijdse head/base-wijziging afwijst.
 Zonder expliciete PR-inspectie of discovery zijn dit **nul** extra GETs.
-Met inspectie zonder open-PR-discovery maximaal 12 extra GETs bovenop
-42, dus maximaal **54** bij drie projecten. Met open-PR-discovery
-komt maximaal één extra GET per geselecteerd project bij: **57** totaal.
+Met inspectie zonder open-PR-discovery maximaal 15 extra GETs bovenop
+42, dus maximaal **57** bij drie projecten. Met open-PR-discovery
+komt maximaal één extra GET per geselecteerd project bij: **60** totaal.
 
 De Nederlandse operatorweergave laat per PR zien wat de eerstvolgende
 **menselijke** stap is: concept afronden; reviewverzoeken verwerken;
@@ -103,11 +104,18 @@ Afgeronde GitHub-checks met status `neutral`, `skipped` of onbekende conclusie
 blijven apart *onbeslist*; ze worden noch als geslaagde build noch als echte
 gefaalde bronbuild gepresenteerd.
 De cockpit toont bovendien namen van falende, wachtende en onbesliste
-checks, naast een directe link naar de actuele GitHub-PR-checkpagina.
+checks **én de afzonderlijk opgehaalde klassieke statuscontexten** op
+exact dezelfde HEAD. Een klassieke status `failure`/`error` verschijnt als
+concreet herstelwerk; `pending` blijft wachten. Als de statuspagina vol is
+(30 regels) blijft de dekking expliciet onvolledig. Beide bronnen blijven
+alleen bewijsmomentopnames, nooit een `required checks`-inventaris.
+Er staat een directe link naar de actuele GitHub-PR-checkpagina.
 Als een PR tijdens het ophalen wijzigt, worden de gedeeltelijk
 verzamelde checks/reviews niet als huidige head-resultaten weergegeven.
-Check-runs zijn nooit gelijk aan alle beschermde branch-statuscontexten;
-review-paginering is niet compleet als de eerste pagina vol is.
+Check-runs plus maximaal 30 klassieke statuscontexten zijn nog steeds
+niet gelijk aan alle door branch-protection vereiste checks; historische
+contexten en een afgekapt statusvenster geven nooit zekerheid.
+Review-paginering is niet compleet als de eerste pagina vol is.
 Daarom verklaren zelfs groene checks en één approval **nooit**
 `merge_authorized`, `deploy_authorized` of `owner_verified` waar.
 De bevoegde PR-/runtime-eigenaar moet de huidige GitHub branch-protection,
