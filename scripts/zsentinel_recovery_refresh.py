@@ -113,6 +113,7 @@ def refresh(bundle, registry, token=None):
                 "queued_at": utc_string(queued_at),
                 "observed_at": utc_string(observed),
                 "runner_assigned": bool(runner_id),
+                "verified_receipt": "github_exact_run_job",
             }
             if status == "completed":
                 updated["conclusion"] = conclusion
