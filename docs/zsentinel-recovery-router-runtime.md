@@ -1207,6 +1207,12 @@ en geen tweede queue-transactie nodig.
   dezelfde bronvolgorde; JSON voegt `blocker_first_handoff` toe zonder
   bestaande velden te wijzigen. ICS en menselijke incidentdesk zijn
   ongewijzigd.
+- Exact gebonden historische GitHub run-/job-/commitreceipts krijgen een
+  **directe maar nadrukkelijk historische** GitHub-joblink voor bevoegde
+  bronreconciliatie. De kaart beweert niet dat die job nog vastloopt.
+  Onafhankelijke open productissue-kandidaten linken alleen naar het
+  canonieke GitHub-repository van hun project; cross-repo verwisseling
+  wordt geweigerd. De offline HTML-oplossing doet zelf geen netwerkverzoek.
 
 Dit productoverzicht vervangt **niet** PR #1565, waarin een aparte eigenaar
 de echte `server.py` workerprompt voor blocker-first volgorde bouwt.
