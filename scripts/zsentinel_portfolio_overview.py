@@ -498,6 +498,8 @@ def main():
                         help="sample up to three existing PRs linked in the current P0/P1 product issue shortlist")
     parser.add_argument("--discover-open-prs", action="store_true",
                         help="read first 20 recently updated open PRs per selected project and prioritize existing work")
+    parser.add_argument("--inspect-hosted-no-start", action="store_true",
+                        help="opt-in: read at most one failed exact-head check annotation per selected PR; no actions")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk"), default="html")
     parser.add_argument("--desk-output", type=Path,
@@ -506,6 +508,9 @@ def main():
     window_lock = None
     ledger_lock = None
     try:
+        if args.inspect_hosted_no_start and not (
+                args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs):
+            raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
@@ -653,7 +658,9 @@ def main():
                 "calls": 0, "all_open_prs_observed": False,
                 "owner_verified": False, "writes_performed": False,
                 "merge_authorized": False}
-        pr_desk = (observe_prs(registry, pr_selection, token=os.environ.get("GITHUB_TOKEN"))
+        pr_desk = (observe_prs(
+            registry, pr_selection, token=os.environ.get("GITHUB_TOKEN"),
+            inspect_no_start_annotations=args.inspect_hosted_no_start)
                    if args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs
                    else None)
         if pr_desk is not None:
