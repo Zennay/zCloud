@@ -314,7 +314,7 @@ def observe_prs(registry, selections, token=None):
                 rate_limited = True
             # Partially observed checks or a moved source HEAD cannot be
             # displayed as current readiness. Keep only the safe PR link.
-            for field in ("ci", "reviews", "head_sha", "base_sha"):
+            for field in ("ci", "reviews", "head_sha", "base_sha", "mentioned_issues_unverified"):
                 item.pop(field, None)
             item["coverage"] = "source_incomplete_or_changed"
             item["source_gap"] = str(exc)[:120]
