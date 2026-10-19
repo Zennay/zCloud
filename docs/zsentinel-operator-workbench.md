@@ -85,3 +85,38 @@ Neither action calls external APIs or modifies Notion, GitHub, SQLite, an
 active lease, a runner, or production. The user must still independently check
 real ownership, exact-head required CI, review, permissions and serialized
 release approval. The source changes do not create or run QA test suites.
+
+## Offline two-observation change detection (19 October)
+
+After generating a **new** workbench from a real current board, load an
+**earlier JSON delivery-board** with *Earlier source snapshot*. The HTML
+reads the file locally (maximum 2 MiB), validates the expected read-only
+schema, per-card GitHub issue/PR identities, bounded paths and the earlier
+timestamp, then pins its exact bytes with SHA-256. It refuses the same SHA,
+future/tied/later observation, changed authorizing flags, duplicate issue IDs,
+oversized cards, malformed IDs and unsupported evidence. There is no network,
+GitHub poll or persistent storage. Use **Clear comparison** to forget it.
+
+The comparison distinguishes **newly observed** issue cards, cards with a
+changed priority/observed PR set/evidence-gap count, cards still observed,
+and cards **no longer in the new bounded sample**. The last category is
+explicitly *not resolved*: a changed collector scope, pagination, GitHub
+permissions, rate limit, project selection or stale observation could all
+cause disappearance. No historical branch, issue or worker is automatically
+considered available, integrated or recovered. Newly observed P0/P1 cards
+are surfaced first *within their priority* in the human action queue. With
+no earlier board, the original static triage order is preserved.
+
+When a previous board is loaded, the reviewed **private Markdown briefing**
+includes both source identities and a separate portfolio-wide comparison.
+This historical section is intentionally portfolio-wide even if the visible
+issue list has a narrower human disposition/project filter; its scope is
+named explicitly, and it contains only bounded canonical GitHub issue IDs.
+Inspect the complete preview before downloading, especially before sharing
+a private portfolio snapshot outside the operator's environment. Importing
+or clearing a comparison invalidates an earlier preview.
+
+This feature is a source-observation comparison, **not** a current-state
+monitor. There are still no background updates, recovery decisions,
+CI dispatches, privileged queue operations, new test suites or runtime
+deploys. Existing source/CI/independent owner/release gates remain in force.
