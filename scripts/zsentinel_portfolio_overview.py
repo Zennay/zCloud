@@ -505,6 +505,8 @@ def main():
     parser.add_argument("--window-state", type=Path,
                         help="optional private local round-robin cursor; only with --window auto")
     parser.add_argument("--skip-github-issues", action="store_true")
+    parser.add_argument("--pin-issue", action="append", default=[],
+                        help="bounded extra exact GitHub issue source PROJECT:NUMBER, max 3 in selected window")
     parser.add_argument("--skip-ci-discovery", action="store_true")
     parser.add_argument("--read-notion-claims", action="store_true")
     parser.add_argument("--notion-data-source")
@@ -539,6 +541,8 @@ def main():
                 raise ValueError("--github-only cannot infer database-mounted VPS capacity")
         elif args.database is None:
             raise ValueError("--database is required unless --github-only was chosen")
+        if args.pin_issue and args.skip_github_issues:
+            raise ValueError("--pin-issue requires actual GitHub issues source")
         if args.inspect_hosted_no_start and not (
                 args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs):
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
@@ -602,6 +606,7 @@ def main():
             notion_registry=args.registry,
             observe_vps=args.observe_vps_capacity,
             queue_snapshot=queue,
+            pinned_issues=args.pin_issue,
         )
         old = read_json(args.state, MAX_STATE_BYTES, "state") if (
             args.state and args.state.exists()) else None
