@@ -597,6 +597,18 @@ def handoff_markdown(report):
             + "; klassieke gecombineerd " + _markdown_literal(legacy.get("combined_observed", "onbekend"), 30)
             + "; head-approvals gezien " + str(reviews.get("same_head_approvals_seen", "onbekend")) + ".",
         ])
+        references = item.get("mentioned_issues_unverified", [])
+        if (not isinstance(references, list) or len(references) > 5
+                or any(type(n) is not int or not 1 <= n <= 99999999
+                       for n in references)):
+            raise ValueError("invalid PR issue reference handoff")
+        if references:
+            issue_links = ", ".join(
+                "[#" + str(n) + "](https://github.com/" + repo +
+                "/issues/" + str(n) + ")" for n in references
+            )
+            lines.append("- **Genoemde issues (PR-tekst, open/opgelost NIET geverifieerd):** "
+                         + issue_links)
         for source, bucket in (("check-run", ci), ("klassieke status", legacy)):
             for state in ("failed", "pending", "inconclusive"):
                 values = bucket.get(state, [])
