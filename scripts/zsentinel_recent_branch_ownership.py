@@ -88,8 +88,13 @@ def inventory(repo, token=None, prefix=None, current_paths=None, now=None):
         rows.append({
             "branch": item["ref"], "head_sha": sha, "main_sha": pinned,
             "commit_age_hours": age, "ahead_by": item["ahead_commits"],
-            "paths": paths, "path_count": len(paths),
-            "overlapping_paths": conflicts,
+            # The canonical collector validated all paths. This offline
+            # visualization intentionally prints at most 100 of them while
+            # retaining the full count/overlap conclusion from its source.
+            "paths": paths[:100], "path_count": len(paths),
+            "paths_truncated_for_view": len(paths) > 100,
+            "overlapping_paths": conflicts[:100],
+            "overlap_count": len(conflicts),
             "potential_overlap": bool(conflicts),
             "owner_verified": False, "claim_authorized": False,
         })
