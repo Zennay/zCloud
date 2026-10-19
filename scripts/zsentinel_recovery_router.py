@@ -816,7 +816,7 @@ def operator_text(result):
     lines.append("VPS resource admission: " + result["vps_resource_admission"]["state"] +
                  " / " + result["vps_resource_admission"]["reason"])
     triage = result["open_product_issue_triage"]
-    lines.append("P0/P1 issue inbox: " + triage["coverage"] + " (inspection only)")
+    lines.append("Productissue-steekproef P0/P1 → P2 → zonder prioriteit: " + triage["coverage"] + " (inspection only)")
     for issue in triage["issues"]:
         lines.append(f"- {issue['priority']} {issue['project_id']}: {issue['title']} — {issue['issue_url']}")
     for item in result["independent_task_suggestions"]:
