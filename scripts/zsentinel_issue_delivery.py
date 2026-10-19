@@ -293,9 +293,26 @@ def render_html(board):
                         ' in beperkte bron · <small data-visible-group-count></small></h2>' + ("".join(cards) or
                         '<p class="muted">Geen kandidaat in deze steekproef; niet bewezen leeg.</p>') +
                         "</section>")
-    coverage = "".join("<li>" + escape(str(row["project"])) +
-                       ": " + escape(str(row["status"])) + "</li>"
-                       for row in board["coverage"])
+    coverage = "".join(
+        "<li>" + escape(str(row["project"])) + " · " +
+        escape(str(row["status"])) +
+        " · oudste=" + escape(str(row.get("oldest_window", "unknown"))[:90]) +
+        " · recent=" + escape(str(row.get("recent_window", "unknown"))[:90]) +
+        " · bestaande PR's=" +
+        escape(str(row.get("open_pr_window", "unknown"))[:90]) + "</li>"
+        for row in board["coverage"])
+    missing_source = [
+        row["project"] for row in board["coverage"]
+        if row["status"] != "partial"
+    ]
+    source_warning = (
+        '<p class="notice" role="alert"><strong>GitHub-bron onvolledig.</strong> '
+        'Voor ' + escape(", ".join(missing_source)) +
+        ' zijn actuele issues/PR’s NIET volledig waargenomen. '
+        'Historische observaties betekenen geen sluiting of herstel.</p>'
+        if missing_source else
+        '<p class="muted">Alle gekozen projecten hebben gedeeltelijke '
+        'GitHub-bronobservaties; geen compleet backlogbewijs.</p>')
     return (
         '<!doctype html><html lang="nl"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -315,7 +332,8 @@ def render_html(board):
         'Geen claim, QA-ronde, runneractie, review, merge of deploy vanuit dit bord.</p>'
         '<p class="muted">Bronmoment UTC: ' + escape(board["observed_at"]) +
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
-        ' · productissues: ' + str(board["issue_count"]) + '</p></header><main>' +
+        ' · productissues: ' + str(board["issue_count"]) + '</p>' +
+        source_warning + '</header><main>' +
         controls(board["projects"]) + progress_panel + "".join(sections) + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
@@ -345,6 +363,12 @@ def render_markdown(board):
             str(progress["previously_sampled_unverifiable_count"]),
             "- Geen totale backlog of actuele sluitingsstatus bewezen."
         ])
+    for source in board["coverage"]:
+        if source["status"] != "partial":
+            lines.append("- ACTUELE BRON ONBESCHIKBAAR/ONVOLLEDIG: " +
+                         _markdown_literal(source["project"]) +
+                         " (" + _markdown_literal(source["status"]) +
+                         "); geen nul-issues of herstelbewijs.")
     for item in board["items"]:
         lines += ["", "## " + item["priority"] + " · [" +
                   _markdown_literal(item["title"]) + "](" + item["issue_url"] + ")",
