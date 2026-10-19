@@ -199,6 +199,9 @@ def inventory(repo, token=None, prefix=None, current_paths=None, now=None):
         "incomplete_path_samples": incomplete_paths,
         "current_paths_known": bool(current_paths),
         "current_slice_safe_to_claim": False,
+        "recent_branch_slice_no_overlap_observed": (
+            coverage_complete and bool(current_paths)
+            and not any(x["potential_overlap"] for x in recent)),
         "recent_candidate_count": len(recent),
         "recent_candidates": recent,
         "potential_overlap_observed": any(x["potential_overlap"] for x in recent),
@@ -214,14 +217,18 @@ def main():
     parser.add_argument("--branch-prefix", help="optional bounded branch ref prefix")
     parser.add_argument("--current-path", action="append", default=[],
                         help="current proposed project-relative scope, repeat up to 25")
+    parser.add_argument("--require-clear-slice", action="store_true",
+                        help="exit nonzero on candidate overlap, incomplete source or missing scope; never authorize a claim")
     args = parser.parse_args()
     try:
         projects = canonical_projects(args.registry)
         if args.project not in projects:
             raise ValueError("project absent from canonical registry")
-        print(json.dumps(inventory(projects[args.project], os.environ.get("GITHUB_TOKEN"),
-                                   args.branch_prefix, args.current_path),
-                         sort_keys=True, indent=2))
+        observation = inventory(projects[args.project], os.environ.get("GITHUB_TOKEN"),
+                                args.branch_prefix, args.current_path)
+        if args.require_clear_slice and not observation["recent_branch_slice_no_overlap_observed"]:
+            raise ValueError("recent un-PR branch slice not clear or source incomplete; no work claim")
+        print(json.dumps(observation, sort_keys=True, indent=2))
     except (ValueError, OSError) as exc:
         parser.exit(2, "zSentinel branch ownership evidence unavailable: " +
                     str(exc)[:140] + "\n")
