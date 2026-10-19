@@ -20,20 +20,20 @@ The new `scripts/zsentinel_live_cockpit.py` is a complete, **one-shot** CLI prod
 ```bash
 python3 scripts/zsentinel_live_cockpit.py \
   --database /path/to/existing/zcloud.sqlite3 \
-  --project zcloud --project supa \
+  --project cloud --project supa \
   --format html > /private/operator-only/zsentinel.html
 
 # Optional exact existing workflow job to diagnose (not dispatch):
 python3 scripts/zsentinel_live_cockpit.py \
   --database /path/to/existing/zcloud.sqlite3 \
-  --project zcloud \
-  --job zcloud:39000012345:117000123456:0123456789abcdef0123456789abcdef01234567 \
+  --project cloud \
+  --job cloud:39000012345:117000123456:0123456789abcdef0123456789abcdef01234567 \
   --format json
 
 # Skip external GitHub API calls entirely:
 python3 scripts/zsentinel_live_cockpit.py \
   --database /path/to/existing/zcloud.sqlite3 \
-  --project zcloud --skip-github-issues --format text
+  --project cloud --skip-github-issues --format text
 ```
 
 **These are examples, not claims that the example IDs/database exist.** Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The job collector uses up to two additional GETs per pinned job. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
@@ -55,7 +55,7 @@ A second executable entrypoint now refreshes the **exact already-known GitHub ru
 ```bash
 python3 scripts/zsentinel_recovery_refresh.py /secure/operator-observations.json \
   --registry projects.json --state /secure/zsentinel-ledger.json \
-  --read-product-issues --issue-project zcloud --format html \
+  --read-product-issues --issue-project cloud --format html \
   > /secure/zsentinel-status.html
 ```
 
