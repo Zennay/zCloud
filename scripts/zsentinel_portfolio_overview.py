@@ -461,7 +461,7 @@ def main():
     parser.add_argument("--current-path", action="append", default=[],
                         help="proposed unclaimed repository-relative scope (only for --inspect-unpr-branches)")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
-    parser.add_argument("--format", choices=("html", "json", "text", "ics"), default="html")
+    parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk"), default="html")
     args = parser.parse_args()
     window_lock = None
     try:
@@ -562,6 +562,9 @@ def main():
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(decision)
+        elif args.format == "desk":
+            from zsentinel_incident_desk import review_html
+            rendered = review_html(decision)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
