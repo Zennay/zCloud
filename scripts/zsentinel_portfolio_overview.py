@@ -24,7 +24,7 @@ from zsentinel_queue_observer import observe
 from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic, acquire_private_ledger_lock
 from zsentinel_recovery_view import html_view
-from zsentinel_problem_picker import next_problems, problems_html
+from zsentinel_problem_picker import next_problems, problems_html, link_existing_pr_actions
 from zsentinel_pr_delivery import discover_open_prs, observe_prs, pr_delivery_html
 from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
 
@@ -466,7 +466,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     if raw.count("<main>") != 1:
         raise ValueError("incompatible underlying offline operator view")
     return raw.replace("<main>", "<main>" +
-                       (problems_html(problem_inbox, pr_desk=pr_desk) if problem_inbox is not None else "") +
+                       (problems_html(problem_inbox) if problem_inbox is not None else "") +
                        (pr_delivery_html(pr_desk) if pr_desk is not None else "") +
                        table + branch_ownership_html(branch_inventory), 1)
 
@@ -660,6 +660,9 @@ def main():
             pr_desk["open_pr_discovery"] = (pr_discovery if pr_discovery is not None else {
                 "coverage": "not_requested", "all_open_prs_observed": False,
                 "merge_authorized": False})
+            # The same already-read exact-head PR advice is available in
+            # HTML, JSON and plain text; no extra GitHub calls or claims.
+            problem_inbox = link_existing_pr_actions(problem_inbox, pr_desk)
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
@@ -692,6 +695,14 @@ def main():
                 lines.append("  %s %s %s | %s | %s" % (
                     item["priority"], item["project_id"], item["issue_url"],
                     item["next_step"], item["action"]))
+                for linked in item.get("inspected_linked_prs", []):
+                    lines.append(
+                        "    bestaande PR %s | source=%s | head=%s | %s | "
+                        "issuefix NIET bewezen; merge/claim NIET toegestaan" % (
+                            linked["pr_url"], linked["coverage"],
+                            linked["observed_head_sha"][:12] if
+                            linked["observed_head_sha"] else "ONBEKEND",
+                            linked["next_action"]))
             if not problem_inbox["items"]:
                 lines.append("  Geen kandidaten in beperkte steekproef; GEEN bewijs van nul open issues.")
             if pr_desk is not None:
