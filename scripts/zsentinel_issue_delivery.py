@@ -12,7 +12,7 @@ import os
 from html import escape
 from pathlib import Path
 
-from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect
+from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect, observed_time
 from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs
 from zsentinel_issue_progress import load_private_prior, progress_since
 
@@ -187,6 +187,60 @@ def build_workboard(inbox, registry, token=None):
     }
 
 
+def attach_notion_work_visibility(board, observed):
+    """Show existing active Notion work without claiming file/lease ownership."""
+    if (not isinstance(board, dict)
+            or board.get("schema") != "zsentinel-issue-delivery-board-v1"
+            or board.get("ownership_verified") is not False
+            or board.get("claims_taken") is not False
+            or board.get("writes_performed") is not False
+            or not isinstance(observed, dict)
+            or observed.get("source") != "notion_readonly_data_source_pages"
+            or observed.get("coverage") not in ("incomplete", "current_pages_only")
+            or observed.get("claim_scope_verified") is not False
+            or observed.get("task_inventory_verified") is not False
+            or observed.get("can_dispatch") is not False
+            or observed.get("can_release_claim") is not False
+            or not isinstance(observed.get("active_project_counts"), dict)):
+        raise ValueError("unverified or invalid Notion active-work source")
+    from datetime import datetime, timedelta, timezone
+    stamp = observed_time(observed.get("observed_at"))
+    if stamp > datetime.now(timezone.utc) + timedelta(minutes=2):
+        raise ValueError("Notion active-work source clock invalid")
+    counts = observed["active_project_counts"]
+    if len(counts) > 50 or any(
+        type(project) is not str or len(project) > 100 or
+        type(amount) is not int or amount < 0 or amount > 400
+        for project, amount in counts.items()
+    ):
+        raise ValueError("untrusted Notion project active counters")
+    found = {}
+    for project in board["projects"]:
+        amount = counts.get(project)
+        # Zero Notion status hits is NOT a complete file-level claim read.
+        found[project] = amount if amount is not None and amount > 0 else None
+    board["notion_active_work_observation"] = {
+        "source": "notion_readonly_active_status_only",
+        "observed_at_utc": stamp.isoformat(),
+        "coverage": observed["coverage"],
+        "active_project_min": found,
+        "file_scope_verified": False,
+        "lease_owner_verified": False,
+        "can_dispatch": False, "writes_performed": False,
+    }
+    for item in board["items"]:
+        seen = found[item["project_id"]]
+        item["notion_active_work_min"] = seen
+        if seen is not None:
+            item["action"] = (
+                "Notion toont minstens " + str(seen) +
+                " actief werkpakket(ten) in dit project. Controleer actuele "
+                "worker/file-claim en bestaande PR vóór productwerk. " +
+                item["action"]
+            )
+    return board
+
+
 def render_html(board):
     if (board.get("schema") != "zsentinel-issue-delivery-board-v1"
             or board.get("writes_performed") is not False
@@ -197,6 +251,24 @@ def render_html(board):
         controls, script_tag, followup_controls, INTERACTIVE_CSS,
     )
     progress = board.get("progress_since_previous")
+    notion = board.get("notion_active_work_observation")
+    notion_panel = ""
+    if notion is not None:
+        if (not isinstance(notion, dict)
+                or notion.get("file_scope_verified") is not False
+                or notion.get("can_dispatch") is not False):
+            raise ValueError("untrusted Notion visibility")
+        notion_panel = (
+            '<section aria-label="Notion bestaand actief werk"><h2>'
+            'Notion: bestaand actief projectwerk</h2><p>'
+            'Actieve statussen zijn geen bestandseigendom of vrije claim. '
+            'De telling is een ondergrens, ook bij lege projecten.</p><ul>' +
+            "".join('<li>' + escape(pid) + ': ' +
+                    ('minstens ' + str(value) + ' actief'
+                     if value is not None else 'ONBEKEND') + '</li>'
+                    for pid, value in notion["active_project_min"].items()) +
+            '</ul></section>'
+        )
     comparison = {}
     progress_panel = ""
     if progress is not None:
@@ -334,7 +406,7 @@ def render_html(board):
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
         ' · productissues: ' + str(board["issue_count"]) + '</p>' +
         source_warning + '</header><main>' +
-        controls(board["projects"]) + progress_panel + "".join(sections) + '<section><details><summary>Brondekking en '
+        controls(board["projects"]) + notion_panel + progress_panel + "".join(sections) + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
         'niet geverifieerd.</p></details></section></main><footer>Alle links openen '
@@ -349,7 +421,15 @@ def render_markdown(board):
              "Bronmoment UTC: " + _markdown_literal(board["observed_at"], 40),
              "Beperkte issue-/PR-steekproef. Geen eigenaar, scope, fix of merge goedgekeurd."]
     progress = board.get("progress_since_previous")
+    notion = board.get("notion_active_work_observation")
     change_map = {}
+    if notion:
+        lines.extend(["", "## Notion actief werk (statuswaarneming, geen file-owner)",
+                      "Bron: " + _markdown_literal(notion["observed_at_utc"])])
+        for pid, amount in notion["active_project_min"].items():
+            lines.append("- " + _markdown_literal(pid) + ": " +
+                         ("minstens " + str(amount) + " actief" if amount
+                          else "ONBEKEND; geen vrijgavebewijs"))
     if progress is not None:
         change_map = {entry["issue_url"]: entry for entry in progress["observed_changes"]}
         lines.extend([
@@ -417,6 +497,10 @@ def main(argv=None):
     p.add_argument("--max-items", type=int, default=MAX_ISSUES)
     p.add_argument("--previous", type=Path,
                    help="optional earlier local JSON workboard snapshot; never a closure proof")
+    p.add_argument("--read-notion-claims", action="store_true",
+                   help="optional read-only Notion active statuses; never file/lease owner proof")
+    p.add_argument("--notion-data-source",
+                   help="canonical Notion queue data source UUID for explicit source read")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
     args = p.parse_args(argv)
     try:
@@ -427,6 +511,17 @@ def main(argv=None):
         registry = canonical_projects(args.registry)
         inbox = collect(registry, args.project, os.getenv("GITHUB_TOKEN"), args.max_items)
         board = build_workboard(inbox, registry, os.getenv("GITHUB_TOKEN"))
+        if args.read_notion_claims:
+            from zsentinel_notion_claim_observer import (
+                observe_claims, project_labels,
+            )
+            mapping = project_labels(args.registry, registry)
+            notion_source = observe_claims(
+                args.notion_data_source or os.getenv("NOTION_QUEUE_DATA_SOURCE_ID"),
+                os.getenv("NOTION_TOKEN"), known_projects=mapping)
+            attach_notion_work_visibility(board, notion_source)
+        elif args.notion_data_source:
+            raise ValueError("--notion-data-source requires --read-notion-claims")
         if args.previous:
             board["progress_since_previous"] = progress_since(
                 board, load_private_prior(args.previous))
