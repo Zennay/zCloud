@@ -758,7 +758,9 @@ function fairProductIssueHistory(rows,coverage,limit=150){
   for(const item of known.values())buckets.get(item.project).push(item);
   const rank={P0:0,P1:1,P2:2,Unspecified:3};
   for(const bucket of buckets.values())bucket.sort((a,b)=>
-    rank[a.priority]-rank[b.priority]||a.number-b.number);
+    rank[a.priority]-rank[b.priority]||
+    Number(a.staleUnverified===true)-Number(b.staleUnverified===true)||
+    a.number-b.number);
   const output=[],used=new Map(projects.map(id=>[id,0]));
   // Complete each global priority tier before lower priority, with fair
   // round-robin turns inside that tier. The cap remains 150 across all repos.
@@ -1333,7 +1335,9 @@ function productIssueInboxPanel(){
       ' (oldest '+item.oldest+', recent '+item.recent+', PRs '+item.prs+')').join(' · ');
   const html=rows.slice(0,50).map(item=>'<div class="service-row"><div><strong>'+esc(item.priority)+
     ' · '+esc(item.project)+'</strong> <a target="_blank" rel="noopener noreferrer" href="'+esc(item.url)+'">'+
-    esc(item.title)+'</a><small> · open issue #'+item.number+'</small>'+
+    esc(item.title)+'</a><small> · issue #'+item.number+
+    (item.staleUnverified?' · previously open, NOT REOBSERVED in latest issue pages':
+      ' · observed open in bounded source')+'</small>'+
     (item.prs.length?'<div class="detail-note">Referenced open PRs (not proven fixes or active claims): '+
       item.prs.map(pr=>'<a href="'+esc(pr.url)+'" target="_blank" rel="noopener noreferrer">#'+pr.number+
       (pr.draft?' draft':'')+(pr.relationship==='closing_keyword_only'?' closing keyword':' mention')+'</a>').join(' · ')+'</div>':'')+
