@@ -95,10 +95,21 @@ def classify(project: dict[str, Any], now: datetime) -> dict[str, str]:
             raise ValueError(f"{pid}.github.head_sha: canonical lowercase full SHA required")
         if status in {"queued", "waiting", "pending"}:
             queued = required_time(github, "queued_at", now, pid + ".github")
+            route = github.get("runner_route", "unknown")
+            if route not in ("self_hosted", "hosted_or_custom", "unknown"):
+                raise ValueError(f"{pid}.github.runner_route: untrusted job route")
+            if status in ("waiting", "pending"):
+                # These may be approval/concurrency pauses, NOT jobs that
+                # have failed to obtain a self-hosted runner.
+                return verdict(pid, "intentional_wait", "github_job_pending_or_waiting",
+                               "Read exact job approval and concurrency status; never restart a runner to resolve a human wait.")
             if github.get("runner_assigned") is False and now - queued >= timedelta(minutes=30):
-                return verdict(pid, "stalled", "github_job_unassigned",
-                               "Check exact labels, runner group/repo access and listener from an independent route. Do not restart the missing runner from its own queued job.",
-                               "github-unassigned", sha)
+                if route == "self_hosted":
+                    return verdict(pid, "stalled", "github_job_unassigned",
+                                   "Check exact runner labels, runner group/repo access and listener via an independent route; never restart a runner from the queued job.",
+                                   "github-unassigned", sha)
+                return verdict(pid, "unknown", "github_queue_route_unverified",
+                               "Inspect exact GitHub runner admission, labels and billing/concurrency. Do not diagnose a missing VPS runner without self-hosted job labels.")
             return verdict(pid, "in_progress", "github_queue_not_yet_actionable",
                            "Continue observing; queue delay alone does not prove a broken runner.")
         if status in COMPLETED:
