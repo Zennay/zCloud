@@ -99,12 +99,40 @@ def task_card(item):
             '<p>Alleen kandidaat. Herbeoordeel live claims en vereiste gates vóór wijzigingen.</p></article>')
 
 
+def queue_card(item):
+    """A source-bound queue observation is not a safe automatic retry."""
+    urgent = item["owner_lease_expired_observed"]
+    kind = "warn" if urgent else "read"
+    owner = ("Mogelijk verlopen owner-lease; beheerder moet status beoordelen."
+             if urgent else "Meerdere claimpogingen; niet hetzelfde als mislukte pogingen.")
+    return (
+        f'<article class="panel {kind}">'
+        f'<span class="tag">{phrase(item["priority"], 5)}</span>'
+        f'<span class="tag">{phrase(item["project_id"], 80)}</span>'
+        f'<h3 class="word">{phrase(item["title"], 180)}</h3>'
+        f'<p>{phrase(owner, 250)}</p>'
+        f'<p class="muted small">Status: {phrase(item["status"], 20)} · '
+        f'Claimpogingen: {item["claim_attempts"]} · '
+        f'Veilige referentie: {phrase(item["queue_ref"], 16)}</p>'
+        f'<p class="small">Actie: {phrase(item["action"], 250)}</p>'
+        '</article>'
+    )
+
+
 def html_view(decision):
     if not isinstance(decision, dict) or decision.get("schema_version") != 1:
         raise ValueError("not a canonical zSentinel decision")
     incidents = decision.get("incidents")
     tasks = decision.get("independent_task_suggestions")
     triage = decision.get("open_product_issue_triage")
+    queue = decision.get("live_queue_pressure")
+    if (not isinstance(queue, dict) or queue.get("coverage") not in
+            ("not_supplied", "current", "stale", "incomplete")
+            or not isinstance(queue.get("totals"), dict)
+            or not isinstance(queue.get("samples"), list)
+            or len(queue["samples"]) > 20
+            or queue.get("claim_ownership_verified") is not False):
+        raise ValueError("untrusted queue pressure evidence")
     if (not isinstance(incidents, list) or len(incidents) > MAX_INCIDENTS
             or not isinstance(tasks, list) or len(tasks) > MAX_TASKS
             or not isinstance(triage, dict) or not isinstance(triage.get("issues"), list)
@@ -123,6 +151,18 @@ def html_view(decision):
     coverage = phrase(coverage, 60)
     claims = decision.get("claim_inventory_complete") is True
     source_issues = phrase(triage.get("coverage"), 40)
+    queue_coverage = phrase(queue["coverage"], 30)
+    queue_totals = queue["totals"]
+    queue_cards = [queue_card(item) for item in queue["samples"]]
+    queue_summary = (
+        "Wachtend: " + str(queue_totals.get("queued_items", 0)) +
+        " · Actief: " + str(queue_totals.get("owned_items", 0)) +
+        " · Veel claims: " + str(queue_totals.get("high_claim_attempt_items", 0)) +
+        " · Mogelijk verlopen leases: " +
+        str(queue_totals.get("expired_owner_lease_rows", 0))
+        if queue_coverage == "current" else
+        "Bron ontbreekt, is onvolledig of verouderd: geen betrouwbare actuele wachtrijclaim."
+    )
     capacity = decision.get("vps_resource_admission")
     if (not isinstance(capacity, dict)
             or capacity.get("state") not in
@@ -182,6 +222,11 @@ def html_view(decision):
             + f'<section><h2>Open P0/P1-productissues ({len(triage["issues"])})</h2>'
             + section([issue_card(row) for row in triage["issues"]],
                       "Geen issuewaarnemingen beschikbaar. Raadpleeg de brondekking.")
+            + '</section>'
+            + '<section><h2>Werkelijke wachtrijdruk · ' + queue_coverage + '</h2>'
+            + '<p class="muted">' + phrase(queue_summary, 300) + '</p>'
+            + section(queue_cards if queue_coverage == "current" else [],
+                      "Geen actuele individuele wachtrijincidenten. Claimherstel blijft handmatig geautoriseerd.")
             + '</section>'
             + f'<section><h2>Onafhankelijke werkvoorstellen ({len(tasks)})</h2>'
             + section([task_card(row) for row in tasks],
