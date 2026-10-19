@@ -69,6 +69,23 @@ Issue [#1305](https://github.com/Zennay/zCloud/issues/1305) remains open
 until the complete versioning contract and current live served bytes can be
 reviewed by its owner.
 
+## GitHub outage: retain last successful P0/P1 and PR/CI evidence
+
+Manual public GitHub reads no longer delete a project's previously observed
+issues or PR/CI events when GitHub returns 403/429, times out, or only some
+bounded endpoints succeed. Each project retains its last source observation
+timestamp and a separate last-attempt timestamp. Partial reads may contribute
+new data but must not establish that an old issue closed or that a previously
+observed referenced PR vanished.
+
+Activity prominently labels **STALE retained evidence** by project, the issue
+and PR/CI panels state their historical source timestamps, and the existing
+Markdown handoff includes this source status and last attempt. A **complete**
+new bounded provider read replaces the project's older bounded sample; a
+partial failure never silently turns previous work into an empty project.
+No source result becomes a verified claim, merge or deployment. Reports are
+still limited to browser-memory retention and source counts as before.
+
 ## Fair GitHub history and read-only VPS pressure
 
 When Activity reads source PRs/CI/commits for multiple repositories, the
