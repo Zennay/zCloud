@@ -1576,3 +1576,47 @@ geclaimd, herstart, gemerged, gedispatcht of gedeployed.
 Bestaande historie-momentopnames blijven read-only. De zelfstandige CLI accepteert
 alleen nieuwe exclusieve outputbestanden (mode 0600). De hoofdopdracht blijft
 de bestaande private outputhelper en actieve ledger-/claimgrenzen respecteren.
+
+
+## Self-hosted VPS-uitvoering — alleen vertrouwde main-bron
+
+De workflow [`.github/workflows/zsentinel-vps-hourly-readonly.yml`](../.github/workflows/zsentinel-vps-hourly-readonly.yml)
+is een echte zSentinel **self-hosted job**; `runs-on: [self-hosted, zcloud, vps]`,
+**geen `ubuntu-latest` job**. Een uurtrigger (`23 * * * *`) of een expliciete
+door `Zennay` aangevraagde handmatige run start exact dezelfde begrensde
+read-only audit. Hij kan pas in de GitHub Actions UI uitgevoerd worden **nadat
+de PR langs bestaande exacte-HEAD CI, onafhankelijke review en branch
+protection naar `main` is gemerged**. Onbeoordeelde pull-requestbron draait
+nooit op de persistente VPS-runner.
+
+De job controleert runner `zcloud-vps-1`, host `vps-bb300bba`, aanwezigheid
+van echte SQLite-bron `/home/ubuntu/zennay-cloud/history.db`, geheugen/CPU-
+headroom, de uitgecheckte immutable `main`-SHA en de live remote `main`-SHA.
+Is het te druk (minder dan 1,5 GiB RAM beschikbaar of load > 2,5 × CPU's),
+dan verschijnt een expliciete **uitgestelde, niet-bevestigde audit**, geen
+verzonnen herstelbewijs of oneindige retrylus.
+
+De daadwerkelijke bronoproep gebruikt
+`scripts/zsentinel_portfolio_overview.py --database /home/ubuntu/zennay-cloud/history.db --worker-events-database /home/ubuntu/zennay-cloud/history.db --window auto --discover-open-prs --inspect-referenced-prs --format json`.
+De operator ziet een klein, niet-geheim GitHub Actions joboverzicht; het ruwe
+rapport blijft tijdelijk uitsluitend als privé `0600`-bestand in
+`RUNNER_TEMP` en wordt altijd na afloop opgeruimd. De job schrijft **niet**
+naar SQLite, workers, active claims, GitHub API, Notion, services, runner,
+productie-queue of releasepaden. Externe Notion-claimstatus zonder bron blijft
+onbekend; deze workflow is geen autonome autorisatiemotor of productie-deploy.
+
+**Om de workflow na reguliere merge handmatig te activeren:**
+`Zennay/zCloud → Actions → zSentinel VPS hourly read-only audit → Run workflow →
+main → window: auto`. Daarna moet in het daadwerkelijke jobbewijs de runner
+`zcloud-vps-1` met `runner_id > 0` voorkomen en moet de job de privé
+operator-samenvatting schrijven. Een lopende `Runner.Listener` of broncommit
+zonder toegekende GitHub-job bewijst **niet** dat deze specifieke audit draait.
+
+Op 19 oktober wees de verbonden zSSH-connector wel een levende zCloud
+`Runner.Listener` en later een echte `Runner.Worker` aan, maar geen
+autorisatie om de service te herstarten. De oorspronkelijke P0-issue #1326
+mag daarom niet automatisch als opgelost gelden en de private hosted billing
+P0 #1523 is een afzonderlijk account-eigenaarprobleem. Bestaande workflows
+die nog `ubuntu-latest` gebruiken zijn hierdoor **niet omgeschakeld**:
+zSentinel-bronuitvoering op self-hosted is een begrensde nieuwe lane, geen
+stille vervanging van vereiste PR-checks of hun bestaande security gates.
