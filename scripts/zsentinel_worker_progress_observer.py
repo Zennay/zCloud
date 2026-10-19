@@ -177,21 +177,35 @@ def observe_worker_progress(database, projects, *, now=None):
         indices = {r[1] for r in con.execute("PRAGMA index_list(runner_events)")}
         if not {"runner_events_project_worker_id", "runner_events_project_worker_event_id"}.issubset(indices):
             raise ValueError("indexed read-only worker source unavailable; refusing full-table scan")
+        worker_columns = {r[1] for r in con.execute("PRAGMA table_info(runner_workers)")}
+        if not {"project_id", "worker_slot", "desired_state"}.issubset(worker_columns):
+            raise ValueError("worker desired_state source missing; cannot classify paused workers")
         con.execute("BEGIN")
         for pid in projects:
-            slots = con.execute(
+            configured = con.execute(
+                "SELECT worker_slot,desired_state FROM runner_workers "
+                "WHERE project_id=? AND worker_slot BETWEEN 1 AND 16 "
+                "ORDER BY worker_slot LIMIT ?", (pid, MAX_SLOTS+1)).fetchall()
+            events = con.execute(
                 "SELECT DISTINCT worker_slot FROM runner_events "
                 "INDEXED BY runner_events_project_worker_id "
                 "WHERE project_id=? AND worker_slot BETWEEN 1 AND 16 "
                 "ORDER BY worker_slot LIMIT ?", (pid, MAX_SLOTS+1)).fetchall()
+            desired = {}
+            for slot, value in configured:
+                if type(slot) is int and 1 <= slot <= 16:
+                    desired[slot] = (value if value in ("running", "paused", "draining")
+                                     else "unknown")
+            slots = sorted(set(desired) | {
+                slot for (slot,) in events if type(slot) is int and 1 <= slot <= 16
+            })
             if not slots:
                 missing.append(pid)
-            if len(slots) > MAX_SLOTS:
+            if len(slots) > MAX_SLOTS or len(configured) > MAX_SLOTS or len(events) > MAX_SLOTS:
                 truncated.append(pid)
-            for (slot,) in slots[:MAX_SLOTS]:
-                entry = _observe_slot(con, pid, slot, observed)
-                if entry is not None:
-                    entries.append(entry)
+            for slot in slots[:MAX_SLOTS]:
+                entries.append(_observe_slot(
+                    con, pid, slot, observed, desired.get(slot, "unknown")))
         con.execute("COMMIT")
     finally:
         con.close()
