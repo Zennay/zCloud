@@ -164,8 +164,12 @@ def main():
     parser.add_argument("--issue-project", action="append",
                         help="canonical issue-source project ID (up to 3, repeatable)")
     parser.add_argument("--format", choices=("json", "text", "html", "ics", "desk"), default="text")
+    parser.add_argument("--desk-output", type=Path,
+                        help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
     try:
+        if (args.format == "desk") != (args.desk_output is not None):
+            raise ValueError("--format desk requires --desk-output; --desk-output requires desk format")
         registry = canonical_projects(args.registry)
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
@@ -217,10 +221,14 @@ def main():
             rendered = (json.dumps(routed, sort_keys=True, indent=2)
                         if args.format == "json" else
                         operator_text(routed) + "\\nGitHub coverage: " + source["github_coverage"])
+        if args.format == "desk":
+            from zsentinel_incident_desk import write_private_html
+            write_private_html(args.desk_output, rendered)
         # A broken HTML/source cannot silently acknowledge incident history.
         if args.state:
             write_json_atomic(args.state, updated)
-        print(rendered)
+        if args.format != "desk":
+            print(rendered)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel read-only refresh refused: {exc}\n")
     return 0
