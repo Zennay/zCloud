@@ -50,3 +50,20 @@ Choose an issue card with concrete product impact. A linked PR means **inspect a
 This board does not implement the native `FAILED_RETRYABLE / NEEDS_AI / FAILED_FINAL` retry state machine; [#677](https://github.com/Zennay/zCloud/issues/677) remains its serialized runtime writer. It does not supplant PR-less branch ownership proof [#870](https://github.com/Zennay/zCloud/issues/870), or issue/P0-P1 discovery. It is an operator view joining their **already-published read-only evidence** without taking active owners.
 
 All required protected-main exact-head CI, independent review, zSSH capability and release gates remain enforced outside this tool. Source-only commits do not prove VPS or production activation. No QA/test suite was written or manually run for this deliverable.
+
+## Compare two manual observations without continuous polling
+
+Save two independent JSON board reports from the command above. At a later operator-selected time, compare them **offline**, without reopening the GitHub account or live VPS queue:
+
+```sh
+python3 scripts/zsentinel_product_delivery_board.py --inbox ./issues-before.json \\
+  --retry ./retry-before.json --format json --output ./board-before.json
+# After a separate read-only observation and new saved input files:
+python3 scripts/zsentinel_product_delivery_board.py --inbox ./issues-after.json \\
+  --retry ./retry-after.json --format json --output ./board-after.json
+python3 scripts/zsentinel_product_delivery_delta.py \\
+  --previous ./board-before.json --current ./board-after.json \\
+  --format html --output ./board-delta.html
+```
+
+The delta command requires two distinct, monotonically timestamped snapshots no more than seven days apart with the **same project inventory scope**. It reports newly **observed** issues, issues **absent from a later bounded sample**, PR-reference changes, and per-project increases/decreases in active queue entries, claim-cycle pressure and expired leases. It never interprets a missing issue as closed, a new PR reference as merged, a lower claim count as success, a branch name as ownership or an empty operator claims list as a lease release. Missing queue data is explicitly `unknown`, not zero. Like the board, its HTML is fully offline and its report publication is create-only. It contains no automation, polling, GitHub requests, SQLite or production mutation.
