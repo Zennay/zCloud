@@ -480,7 +480,13 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
     raw = html_view(decision)
     if raw.count("<main>") != 1:
         raise ValueError("incompatible underlying offline operator view")
-    return raw.replace("<main>", "<main>" +
+    queue_warning = (
+        '<p class="banner">GITHUB-ONLY: lokale SQLite-wachtrij NIET waargenomen. '
+        'Alle wachtrij-, claim-, lease- en ownercijfers zijn ONBEKEND, niet nul. '
+        'Geen toestemming voor workerherstel of release.</p>'
+        if summary.get("queue_source") == "explicitly_unobserved_no_database"
+        else "")
+    return raw.replace("<main>", "<main>" + queue_warning +
                        (blocker_board_html(unblock) if unblock is not None else "") +
                        (problems_html(problem_inbox) if problem_inbox is not None else "") +
                        (pr_delivery_html(pr_desk) if pr_desk is not None else "") +
