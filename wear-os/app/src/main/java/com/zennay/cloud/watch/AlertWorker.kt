@@ -1,42 +1,84 @@
 package com.zennay.cloud.watch
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.zennay.cloud.watch.data.AlertItem
 import com.zennay.cloud.watch.data.ZennayCloudRepository
 
+/**
+ * Blocker-first watch notifications. Only urgent, newly observed alert IDs
+ * vibrate; normal milestones remain visible in the app without interrupting work.
+ * WorkManager is best effort, not real-time push.
+ */
 class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result = try {
         val snapshot = ZennayCloudRepository().loadHome()
+        // Do not broadcast stale historical alerts as if they were current.
+        if (snapshot.stale) return Result.success()
+
         val prefs = applicationContext.getSharedPreferences("zennay_alerts", Context.MODE_PRIVATE)
-        val previous = prefs.getStringSet("active_ids", emptySet()) ?: emptySet()
-        val current = snapshot.alerts.map { it.id }.toSet()
-        val fresh = snapshot.alerts.filter { it.id !in previous }
-        if (fresh.isNotEmpty()) {
-            val nm = applicationContext.getSystemService(NotificationManager::class.java)
-            if (Build.VERSION.SDK_INT >= 26) {
-                nm.createNotificationChannel(NotificationChannel(CHANNEL, "Important project alerts", NotificationManager.IMPORTANCE_DEFAULT))
-            }
-            fresh.take(3).forEachIndexed { index, alert ->
-                val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(applicationContext, CHANNEL) else Notification.Builder(applicationContext)
-                builder.setSmallIcon(R.drawable.ic_launcher)
-                    .setContentTitle(alert.title)
-                    .setContentText(alert.message)
-                    .setStyle(Notification.BigTextStyle().bigText(alert.message))
+        val previouslySeen = prefs.getStringSet("delivered_ids", null)
+            ?: prefs.getStringSet("active_ids", emptySet())
+            ?: emptySet()
+        val delivered = previouslySeen.toMutableSet()
+        val urgent = snapshot.alerts
+            .filter { it.id.isNotBlank() && it.isUrgent() }
+            .distinctBy { it.id }
+            .sortedWith(compareBy<AlertItem> {
+                if (it.severity.equals("critical", true)) 0 else 1
+            }.thenByDescending { it.occurredAt.orEmpty() })
+        val permissionGranted = Build.VERSION.SDK_INT < 33 ||
+            applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+
+        if (permissionGranted) {
+            val manager = applicationContext.getSystemService(NotificationManager::class.java)
+            // A dedicated user-controllable blocker channel; regular updates stay silent.
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL, "Critical project blockers", NotificationManager.IMPORTANCE_HIGH)
+            )
+            urgent.filter { it.id !in delivered }.take(3).forEach { alert ->
+                val intent = Intent(applicationContext, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                val pending = PendingIntent.getActivity(
+                    applicationContext, 0, intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val text = alert.message.ifBlank { "Open zCloud voor de oorzaak en vervolgstap." }
+                val notification = Notification.Builder(applicationContext, CHANNEL)
+                    .setSmallIcon(R.drawable.ic_launcher)
+                    .setContentTitle("${alert.project?.uppercase() ?: "zCloud"}: ${alert.title}")
+                    .setContentText(text)
+                    .setStyle(Notification.BigTextStyle().bigText(text))
+                    .setContentIntent(pending)
                     .setAutoCancel(true)
-                    .setCategory(if (alert.severity == "needs_attention") Notification.CATEGORY_ERROR else Notification.CATEGORY_STATUS)
-                nm.notify(alert.id.hashCode() + index, builder.build())
+                    .setCategory(Notification.CATEGORY_ERROR)
+                    .build()
+                manager.notify(alert.id.hashCode(), notification)
+                // Mark only successfully posted alerts. The fourth blocked item
+                // must still be eligible at the next scheduled poll.
+                delivered += alert.id
             }
+            prefs.edit().putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet()).apply()
         }
-        prefs.edit().putStringSet("active_ids", current).apply()
         Result.success()
     } catch (_: Exception) {
         Result.retry()
     }
 
-    companion object { const val CHANNEL = "zennay_important" }
+    private fun AlertItem.isUrgent() =
+        severity.equals("high", true) ||
+        severity.equals("critical", true) ||
+        severity.equals("needs_attention", true)
+
+    companion object { const val CHANNEL = "zennay_blockers_v2" }
 }
