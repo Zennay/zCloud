@@ -16,7 +16,9 @@ def controls(projects):
                       '">' + escape(pid) + '</option>' for pid in projects)
     return (
         '<section class="operator" aria-label="Persoonlijk productwerkoverzicht">'
-        '<h2>Filter & volg lokaal op</h2><p>Alle filters en eigen notities blijven '
+        '<h2>Filter & volg lokaal op</h2><p id="issue-freshness" '
+        'class="notice" role="status" aria-live="polite"></p>'
+        '<p>Alle filters en eigen notities blijven '
         'alleen in dit browsertabblad. Niets wordt opgeslagen of verzonden.</p>'
         '<div class="filters"><label>Zoeken <input id="issue-search" type="search" '
         'maxlength="80" placeholder="Titel of project"></label>'
@@ -71,6 +73,16 @@ const preview=input("issue-handoff");
 const download=input("export-issues");
 let previewVersion=0;
 let latestPreview=null;
+function freshness(){
+  const stamp=Date.parse(document.body.dataset.observedAt||"");
+  const difference=Date.now()-stamp;
+  const stale=!Number.isFinite(difference)||difference>10*60*1000||
+    difference<-(2*60*1000);
+  input("issue-freshness").textContent=stale?
+    "VEROUDERDE OF ONBETROUWBARE MOMENTOPNAME · Controleer GitHub/claims opnieuw voordat je actie onderneemt.":
+    "RECENT BRONMOMENT · Nog altijd slechts een steekproef, geen eigendoms- of herstelbewijs.";
+  return stale;
+}
 function visibleItems(){
   const q=input("issue-search").value.trim().toLowerCase();
   const project=input("issue-project").value;
@@ -112,7 +124,9 @@ function markdownSafe(text){
 }
 input("preview-issues").addEventListener("click",()=>{
   const version=previewVersion;
+  const stale=freshness();
   const lines=["# zSentinel · bewuste privé productoverdracht","",
+    stale?"LET OP: HISTORISCH BRONMOMENT; huidige claims, PR-head en CI opnieuw verifiëren.":"Momentopname was recent bij voorvertoning; kan na export verouderen.",
     "Alleen huidig gefilterde items; bronbewijs, eigendom en release NIET geverifieerd.",
     "Geen claim, retry, merge of deploy uitgevoerd.",""];
   for(const item of visibleItems()){
@@ -143,6 +157,8 @@ download.addEventListener("click",()=>{
   }finally{URL.revokeObjectURL(url);}
 });
 refresh();
+freshness();
+setInterval(freshness,60*1000);
 """
 
 
