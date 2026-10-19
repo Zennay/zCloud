@@ -172,7 +172,7 @@ def load_state(data):
         last = timestamp(entry.get("last_seen"), "last_seen")
         if first > last:
             raise ValueError("incident state first_seen after last_seen")
-        if entry.get("status") not in ("human_action_required", "read_only_diagnosis_required", "not_observed_needs_reconciliation", "exact_job_completed_source_reconciled"):
+        if entry.get("status") not in ("human_action_required", "read_only_diagnosis_required", "not_observed_needs_reconciliation", "exact_job_completed_source_reconciled", "exact_job_route_reclassified_not_runner_recovered"):
             raise ValueError("unsupported incident state")
         identity = entry.get("source_identity")
         if identity is not None:
@@ -642,15 +642,40 @@ def plan(bundle, previous=None, now=None):
     # ONLY when a later canonical live GET proves that SAME run/job/head actually
     # executed and completed successfully. This is not a service or repo recovery.
     reconciled_jobs = []
+    reclassified_jobs = []
     for key, entry in prior.items():
         if key in next_state:
             continue
-        if entry["status"] == "exact_job_completed_source_reconciled":
+        if entry["status"] in ("exact_job_completed_source_reconciled",
+                               "exact_job_route_reclassified_not_runner_recovered"):
             next_state[key] = entry
             continue
         identity = entry.get("source_identity")
         observed = by_project.get(identity["project_id"]) if identity else None
         gh = observed.get("github", {}) if observed else {}
+        exact_live = bool(identity and
+            gh.get("verified_receipt") == "github_exact_run_job"
+            and gh.get("run_id") == identity["run_id"]
+            and gh.get("job_id") == identity["job_id"]
+            and gh.get("head_sha") == identity["head_sha"]
+            and now - timestamp(gh.get("observed_at"), "route_reclassified_observed_at") <= timedelta(minutes=30))
+        route_refuted = bool(exact_live
+            and identity["reason"] == "github_job_unassigned"
+            and (gh.get("job_status") in ("waiting", "pending")
+                 or (gh.get("job_status") == "queued"
+                     and gh.get("runner_route") == "hosted_or_custom"
+                     and gh.get("runner_assigned") is False)))
+        if route_refuted:
+            # Correct the specific old false-positive runner gate, NOT the
+            # listener's health, worker claim or other incidents.
+            next_state[key] = {**entry, "last_seen": utc_string(now),
+                               "status": "exact_job_route_reclassified_not_runner_recovered",
+                               "blocked_gates": []}
+            reclassified_jobs.append({
+                "incident_id": key, "project_id": identity["project_id"],
+                "status": "exact_job_route_refuted_no_runtime_recovery_claim",
+            })
+            continue
         matches = bool(identity and
             gh.get("verified_receipt") == "github_exact_run_job"
             and gh.get("run_id") == identity["run_id"]
@@ -715,6 +740,7 @@ def plan(bundle, previous=None, now=None):
         "incidents": incidents,
         "unattributed_progress_or_jobs": unattributed,
         "reconciled_exact_jobs": reconciled_jobs,
+        "reclassified_exact_jobs": reclassified_jobs,
         "watch_alert_candidates": watch_candidates,
         "watch_delivery_performed": False,
         "unresolved_not_observed": sum(1 for v in next_state.values()
@@ -749,6 +775,9 @@ def operator_text(result):
     if result.get("reconciled_exact_jobs"):
         lines.append("Exact GitHub jobs source-reconciled (no runtime proof): " +
                      str(len(result["reconciled_exact_jobs"])))
+    if result.get("reclassified_exact_jobs"):
+        lines.append("Old incorrect runner incidents reclassified by exact job proof (not recovered): " +
+                     str(len(result["reclassified_exact_jobs"])))
     queue_report = result["live_queue_pressure"]
     lines.append("Read-only queue pressure: " + queue_report["coverage"])
     if queue_report["totals"]:
