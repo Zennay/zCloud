@@ -278,8 +278,8 @@ def triage_issue_inbox(inbox, now):
             status = "degraded" if status != "stale" else "stale"
     if inbox["truncated"] or inbox["stopped_after_rate_or_auth_denial"]:
         status = "degraded" if status != "stale" else "stale"
-    issue_url = re.compile(r"^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
-    pr_url = re.compile(r"^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
+    issue_url = re.compile(r"^https://github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
+    pr_url = re.compile(r"^https://github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
     candidates = []
     seen = set()
     for entry in items:
@@ -307,7 +307,8 @@ def triage_issue_inbox(inbox, now):
                 raise ValueError("invalid or cross-repo PR link")
             linked.append(link)
         title = entry.get("title")
-        if not isinstance(title, str) or not 1 <= len(title) <= 180:
+        if (not isinstance(title, str) or not 1 <= len(title) <= 180
+                or any(ord(ch) < 32 for ch in title)):
             raise ValueError("invalid issue title")
         if entry["priority"] not in ("P0", "P1") or entry["qa_only"]:
             continue
