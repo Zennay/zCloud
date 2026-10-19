@@ -43,6 +43,31 @@ Use `--include-titles` only for an explicitly approved **local** JSON/Markdown r
 
 If the DB schema is missing required columns, the path does not exist, or SQLite cannot establish a read-only consistent snapshot, the command exits non-zero and produces no fake empty success report. Maximum sample size is 100; threshold and project arguments are validated; it does not scan external providers or fetch GitHub API.
 
+## Show change over time (independent offline trend console)
+
+Two operator-saved JSON snapshots with **exactly the same project and threshold**
+can be compared without opening the running database:
+
+```sh
+python3 scripts/zsentinel_retry_incident_console.py \
+  --database /path/to/existing/zcloud.sqlite3 --format json \
+  --output ./retry-before.json
+# At a later explicitly operator-chosen time, run the same command with
+# --output ./retry-after.json; there is NO implicit scheduler or poller.
+python3 scripts/zsentinel_retry_trend.py \
+  --previous ./retry-before.json --current ./retry-after.json \
+  --format html --output ./retry-trend.html
+```
+
+The trend console in [scripts/zsentinel_retry_trend.py](../scripts/zsentinel_retry_trend.py)
+provides current-vs-previous active-item counts, high attempts, expired leases,
+and a per-project rise/fall ranking. It also exports Markdown and JSON.
+It rejects incomplete/noncanonical schema, unbounded >1 MB snapshots, missing or
+unordered timestamps, and mismatched scope/threshold instead of displaying an
+invented trend. Local JSON inputs and a selected output path are the only file
+operations. No network, worker/queue, claim, sqlite or production mutations.
+Two observations do **not** establish why counts changed or grant retry authority.
+
 ## Operational interpretation
 
 1. Review **P0/P1 high-attempt queued** rows first. A large attempts count suggests potential churn, not necessarily a failed job. Compare with exact queue status and worker/claim evidence before proposing a change.
