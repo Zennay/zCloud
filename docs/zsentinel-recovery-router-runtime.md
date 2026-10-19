@@ -46,8 +46,8 @@ merge, release of muterende HTTP-actie is toegevoegd.
 
 ## Bestaande PR's afronden: actuele exacte-head beslisdesk (19 oktober)
 
-De nieuwe `scripts/zsentinel_pr_delivery.py` leest alleen **bestaande,
-expliciet gekozen** pull requests uit de canonieke projectregistratie.
+De nieuwe `scripts/zsentinel_pr_delivery.py` leest uitsluitend **bestaande,
+expliciet gekozen of beperkt ontdekte** pull requests uit de canonieke projectregistratie.
 Dezelfde functie heeft nu ook een **zelfstandige CLI**, zonder een
 SQLite-productiewachtrij of VPS. Alleen `projects.json` en geautoriseerde
 read-only GitHub-toegang zijn vereist. Zo kan een operator buiten het
@@ -88,9 +88,10 @@ Maximaal drie PR's per operatoractie en **vier extra GitHub-GETs per PR**:
 exacte PR-metadata met `head.sha` en `base.sha`, de eerste 30
 check-runs **op die HEAD**, de eerste 30 review-ontvangsten, en een
 hernieuwde PR-metadataread die een tussentijdse head/base-wijziging afwijst.
-Zonder `--inspect-pr` of `--inspect-referenced-prs` zijn dit **nul**
-aanvullende verzoeken; bovenop de normale 42 maximaal 12 opt-in-GETs,
-dus samen maximaal **54** bij drie geselecteerde projecten.
+Zonder expliciete PR-inspectie of discovery zijn dit **nul** extra GETs.
+Met inspectie zonder open-PR-discovery maximaal 12 extra GETs bovenop
+42, dus maximaal **54** bij drie projecten. Met open-PR-discovery
+komt maximaal één extra GET per geselecteerd project bij: **57** totaal.
 
 De Nederlandse operatorweergave laat per PR zien wat de eerstvolgende
 **menselijke** stap is: concept afronden; reviewverzoeken verwerken;
