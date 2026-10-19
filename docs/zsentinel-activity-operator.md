@@ -501,6 +501,45 @@ operator documentation were changed. Integration and release gates are still
 the normal exact-head required CI, independent review and owner-approved
 serialized deployment, not a source-only green claim.
 
+## Product triage and source-bound delivery pulse (19 October, continued)
+
+The existing zSentinel **product delivery board** offers one-click views of
+all currently sampled P0/P1 issues, issues with **no open PR reference in the
+bounded evidence**, issues with **draft-only PR references**, issues with
+**non-draft PR references**, and issues backed by a **stale, failed or not-yet
+observed source**. Counters are scoped to the current canonical project or
+All projects selection and refer only to the bounded, operator-read sample.
+Each issue links to its existing GitHub issue and at most three referenced
+open PRs. A PR body mention is **not** a verified fix, current worker claim,
+review approval or permission to merge; an absent PR in the sample is
+**not** evidence the issue is free. Operator expansion reveals up to 100
+fairly distributed P0/P1 issue cards while preserving project boundaries.
+
+**Export handoff .md** uses the same issue triage selection and fair
+priority/project admission order (up to 100 sampled items). It records the
+number of included and matching issues, source observation, links and PR
+reference type. It never exposes raw worker queue IDs, claims, prompts,
+passwords, runner tokens, unredacted SQLite rows or private receipts.
+
+The board now also includes a **GitHub delivery pulse**, with observed
+source-time events from the **preceding 24 hours** separated into PR created,
+updated, merged, closed without merge, Actions run, and main-branch commit
+categories. Counts are **bounded sample observations, not live portfolio
+totals** and remain UNKNOWN when GitHub evidence has never been read. A
+five-row read-only disclosure links to the most recent GitHub-reported PR
+merges; the merge is never treated as proof of a production deployment. The
+same source-backed pulse (timestamps, categories, sampled merges, and
+coverage limitations) is exported to Markdown. Every component continues
+to use the existing manually requested, rate-budgeted public GitHub source,
+without enabling background polling or worker claims.
+
+This triage + delivery pulse composes into the established dashboard
+[PR #1550](https://github.com/Zennay/zCloud/pull/1550) and fixes the earlier
+source-only #1518 data gap. Both the UI and its operator handoff are complete
+in the branch; protected-main merge, exact-head CI/review and authorized
+VPS release **have not** been bypassed. No QA or regression suites were
+authored or manually run.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
