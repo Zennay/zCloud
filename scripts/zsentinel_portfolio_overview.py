@@ -467,8 +467,10 @@ def main():
     args = parser.parse_args()
     window_lock = None
     try:
-        if (args.format == "desk") != (args.desk_output is not None):
-            raise ValueError("--format desk requires --desk-output; --desk-output requires desk format")
+        if args.format == "desk" and args.desk_output is None:
+            raise ValueError("--format desk requires --desk-output")
+        if args.desk_output is not None and args.format not in ("desk", "html"):
+            raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
             # Do not create a private HTML report on top of a pending
             # cursor or dedup ledger: a subsequent atomic JSON write could
@@ -629,9 +631,10 @@ def main():
                         str(entry["potential_overlap"])))
             lines.append("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
             rendered = "\n".join(lines)
-        if args.format == "desk":
-            from zsentinel_incident_desk import write_private_html
-            write_private_html(args.desk_output, rendered)
+        if args.desk_output is not None:
+            from zsentinel_incident_desk import write_private_html, review_html
+            private_desk = rendered if args.format == "desk" else review_html(decision)
+            write_private_html(args.desk_output, private_desk)
         if args.window_state:
             # A concurrent run must never overwrite a completed scan cursor.
             advance(args.window_state, windows, registry, previous_window_state,
