@@ -54,7 +54,8 @@ def parse_jobs(raw, names):
 
 
 def assemble(registry, selected, jobs, queue_path, token=None,
-             include_issues=True, include_ci_discovery=True, observe_vps=False):
+             include_issues=True, include_ci_discovery=True, observe_vps=False,
+             include_notion=False, notion_data_source=None, notion_token=None):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
             or any(name not in registry for name in selected)):
@@ -103,6 +104,18 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         "ci_discovery":discovery,
         "github_budget_is_per_invocation_not_global": True,
     }
+    if include_notion:
+        # Status visibility only: Notion rows contain no current file-scope
+        # leases and MUST NOT enable the independent task router.
+        try:
+            from zsentinel_notion_claim_observer import observe_claims
+            claims = observe_claims(notion_data_source, notion_token)
+            bundle["notion_claims_observation"] = claims
+            source["notion"] = "claim_status_observed_no_file_ownership"
+            source["notion_claim_coverage"] = claims["coverage"]
+        except (ValueError, OSError):
+            source["notion"] = "degraded_unavailable_no_claim_authority"
+            source["notion_claim_coverage"] = "unavailable"
     if pins:
         bundle, github = refresh(bundle, registry, token)
         source["github_jobs"] = github
@@ -131,6 +144,10 @@ def main():
                         help="canonical project ID, repeat up to three times")
     parser.add_argument("--job", action="append", default=[],
                         help="optional PROJECT:RUN_ID:JOB_ID:EXACT_HEAD_SHA")
+    parser.add_argument("--read-notion-claims", action="store_true",
+                        help="read only active Notion work statuses; never prove path ownership")
+    parser.add_argument("--notion-data-source",
+                        help="Notion queue data source UUID, or NOTION_QUEUE_DATA_SOURCE_ID environment variable")
     parser.add_argument("--observe-vps-capacity", action="store_true",
                         help="read current Linux host CPU/load/memory and database-mount disk; use ONLY on the intended VPS")
     parser.add_argument("--skip-ci-discovery", action="store_true",
@@ -149,11 +166,17 @@ def main():
             include_issues=not args.skip_github_issues,
             include_ci_discovery=not args.skip_ci_discovery,
             observe_vps=args.observe_vps_capacity,
+            include_notion=args.read_notion_claims,
+            notion_data_source=(args.notion_data_source or
+                                os.environ.get("NOTION_QUEUE_DATA_SOURCE_ID")),
+            notion_token=os.environ.get("NOTION_TOKEN"),
         )
         previous = (read_json(args.state, MAX_STATE_BYTES, "state")
                     if args.state and args.state.exists() else None)
         decision, ledger = plan(bundle, previous)
         decision["live_sources"] = provenance
+        if "notion_claims_observation" in bundle:
+            decision["notion_claims_observation"] = bundle["notion_claims_observation"]
         if args.state:
             write_json_atomic(args.state, ledger)
         decision["private_ledger_written"] = bool(args.state)
@@ -164,7 +187,16 @@ def main():
             print(json.dumps(decision, ensure_ascii=True, sort_keys=True, indent=2))
         else:
             print(operator_text(decision))
-            print("NOTION / WORKER CLAIMS: UNOBSERVED. No routing or recovery authorized.")
+            if provenance["notion"] == "claim_status_observed_no_file_ownership":
+                observed = bundle["notion_claims_observation"]
+                print("NOTION: " + str(observed["active_count"]) +
+                      " observed Claimed/Running work items; coverage " +
+                      observed["coverage"] + ".")
+            elif provenance["notion"] == "degraded_unavailable_no_claim_authority":
+                print("NOTION: unavailable. No zero-claim assertion.")
+            else:
+                print("NOTION: not requested.")
+            print("WORKER FILE-LEVEL CLAIMS: UNKNOWN. No routing or recovery authorized.")
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel live cockpit unavailable: {exc}\n")
     return 0
