@@ -29,3 +29,33 @@ The output HTML is create-only, mode 0600, using the existing board's atomic no-
 Most importantly: **no claim, merge, release, queue retry or deployment can be performed or authorized through this page.** A visible candidate PR is not proof of ownership, passed mandatory CI, adequate review or release consent; an empty claims snapshot is not a lease release. zSentinel's Notion status stays Verifying until actual required runtime and worker evidence exists. Do not publicize private handoff exports or invent recovery claims from this source-only UI.
 
 No QA, regression or test suites were authored or manually run as part of this feature. The existing repository/owner/production gates stay independent.
+
+## Portable offline project briefing (19 October product extension)
+
+The Workbench now shows a **portfolio observation panel** calculated solely from the
+already loaded, bounded JSON snapshot: observed P0/P1 issue totals, projects with
+observed issues, referenced PR candidates, explicit evidence gaps, original
+observation time and a warning when the saved observation is older than six
+hours or its time is unreliable. A zero count is zero **within that captured
+snapshot**, never proof that the live portfolio is clear.
+
+Use the existing search, priority and project filters to select the exact issue
+set for a handoff. After entering optional **human-only** disposition notes,
+select **Preview current filtered briefing**. The complete Markdown preview
+includes the original board SHA256, observation UTC time, canonical GitHub
+issue and bounded PR links, issue-specific missing gates, next investigation
+and any personal notes. Nothing is submitted to Notion/GitHub. The recipient
+and the download directory are under the operator's control.
+
+**Download exactly this private briefing** is offered only after previewing it.
+Editing a note, switching the selected issue or changing any filters invalidates
+the preview; export recreates the content from the current source/notes and
+refuses a drifted document. A previously downloaded handoff can still be
+restored through the original exact-board-hash-bound JSON path. The Markdown
+is human-readable **not evidence of a live claim, security clearance, merge
+authorization, valid runner or deployment**. Sensitive human notes may appear
+in the file, so do not put it on a public issue or share it without review.
+
+The extension uses only inline static UI code in the existing HTML output.
+No live web browser automation, service route, SQLite, git action, worker
+dispatcher, queue, new dependencies, QA suites or test runs were added.

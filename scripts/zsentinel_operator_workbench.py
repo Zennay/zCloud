@@ -150,6 +150,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .notice{border-left:4px solid #f4d68c;background:#292d34;padding:12px 18px;border-radius:8px;margin:19px 0}
 .filters{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding:14px 0}
 .filters label{margin:0}.filters select{display:block;min-width:170px}
+.portfolio{border:1px solid #445e7d;background:#142238;border-radius:12px;padding:12px 18px;margin:14px 0 20px}
+.portfolio dl{display:flex;flex-wrap:wrap;gap:15px;margin:6px 0}.portfolio dt{font-size:12px;color:#b9cce6}.portfolio dd{font-size:19px;font-weight:750;margin:0}
+.portfolio ul{columns:2;list-style:none;padding:0;margin:10px 0}.portfolio li{break-inside:avoid;margin:5px 0}
+.portfolio small{color:#d5dfed}.brief{border:1px solid #53738e;border-radius:12px;padding:15px;margin:12px 0}
+.brief pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:330px;overflow:auto;background:#091627;padding:12px}
 .stack{display:grid;grid-template-columns:minmax(210px,40%) 1fr;gap:16px}
 .list{list-style:none;padding:0;margin:0;max-height:68vh;overflow:auto}
 .list li{margin:0 0 8px}.list button{display:block;width:100%;text-align:left;background:#1b2b40;border:1px solid #445e7d;color:#f3f7ff}
@@ -159,7 +164,7 @@ article{padding:18px;border:1px solid #465e7b;border-radius:14px;background:#1a2
 details{margin-top:14px}.code{font:12px ui-monospace,monospace;word-break:break-all}
 .toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}
 small{color:#c0cede}.action{font-weight:700}
-@media(max-width:690px){.stack{grid-template-columns:1fr}.list{max-height:230px}}
+@media(max-width:690px){.stack{grid-template-columns:1fr}.list{max-height:230px}.portfolio ul{columns:1}}
 @media print{body{background:white;color:black}.filters,.toolbar,.list{display:none}article{color:black;background:white}.stack{display:block}.notice{color:black;background:white}}
 </style>
 <header><small>ZCLOUD / zSENTINEL / HUMAN-OPERATED</small>
@@ -176,6 +181,13 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <option>P0</option><option>P1</option><option>P2</option><option>Unspecified</option></select></label>
 <label>Project<select id="project"><option value="">All projects</option>""" + choices + """</select></label>
 </div>
+<section class="portfolio" aria-label="Snapshot portfolio triage">
+<h2>Observed product workload</h2>
+<p id="portfolioFreshness">Source freshness is not live-worker availability.</p>
+<dl id="portfolioStats"></dl>
+<ul id="projectCounts"></ul>
+<small>Counts describe only this saved, bounded source snapshot. No checked claim, available worker or release-ready status is inferred.</small>
+</section>
 <div class="stack">
 <nav aria-label="Observed product issues"><ol class="list" id="issues"></ol></nav>
 <article id="detail" aria-label="Selected product issue">
@@ -186,7 +198,19 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <button id="export" type="button">Download private human handoff</button>
 <label>Reopen own handoff<input id="restore" type="file" accept=".json,application/json"></label>
 <button id="print" type="button">Print selected issue</button>
-</div><p id="status" role="status" aria-live="polite"></p>
+</div>
+<section class="brief" aria-label="Private project handoff brief">
+<h2>Source-bound, human-only project briefing</h2>
+<p>Review all visible cards, owner gaps and your human dispositions before exporting
+a private Markdown briefing. It includes any private notes you entered: check the
+recipient and download destination. It cannot claim, merge, release or contact a project.</p>
+<button type="button" id="previewBrief">Preview current filtered briefing</button>
+<div id="briefPanel" hidden>
+<pre id="briefContent"></pre>
+<button type="button" id="downloadBrief" disabled>Download exactly this private briefing (.md)</button>
+</div>
+</section>
+<p id="status" role="status" aria-live="polite"></p>
 <footer><small>Offline. No localStorage, analytics, network requests, GitHub writes, or quiet persistence.
 Downloaded notes belong to the operator and are not authorization to act on queues.</small></footer>
 <script>
@@ -197,6 +221,13 @@ const status=document.getElementById('status');
 const entries=new Map(board.cards.map(c=>[c.issue,c]));
 const permitted=new Set(['investigate','integrate-existing-pr','coordinate-owner','park-blocker','ready-for-new-product-work']);
 let selected=null;const handoffs=new Map();
+let viewedBrief=null;
+function invalidateBrief(){
+ viewedBrief=null;
+ document.getElementById('briefPanel').hidden=true;
+ document.getElementById('briefContent').textContent='';
+ document.getElementById('downloadBrief').disabled=true;
+}
 function elem(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
 function link(text,url){const a=elem('a',text);a.href=url;a.rel='noopener noreferrer';a.target='_blank';return a}
 function saveSelection(){
@@ -211,13 +242,83 @@ function filtered(){
  return board.cards.filter(c=>(!p||p===c.priority)&&(!project||project===c.project)&&
    (!q||(c.issue+' '+c.project+' '+c.recommended_next_step).toLowerCase().includes(q)));
 }
+function refreshPortfolio(){
+ const cards=board.cards;
+ const stats=document.getElementById('portfolioStats');
+ const projects=document.getElementById('projectCounts');
+ stats.replaceChildren();projects.replaceChildren();
+ const counts=[
+  ['P0 observed',cards.filter(c=>c.priority==='P0').length],
+  ['P1 observed',cards.filter(c=>c.priority==='P1').length],
+  ['Existing PR references',cards.filter(c=>c.open_pr_candidates.length>0).length],
+  ['Evidence gaps',cards.filter(c=>c.evidence_gaps.length>0).length]
+ ];
+ counts.forEach(([label,count])=>{
+  stats.append(elem('dt',label),elem('dd',String(count)));
+ });
+ board.projects.forEach(project=>{
+  const rows=cards.filter(c=>c.project===project);
+  if(!rows.length)return;
+  const item=elem('li');
+  const p0=rows.filter(c=>c.priority==='P0').length;
+  const p1=rows.filter(c=>c.priority==='P1').length;
+  item.append(elem('strong',project+': '),elem('span',
+   rows.length+' observed · '+p0+' P0 · '+p1+' P1'));
+  projects.append(item);
+ });
+ const age=Date.now()-Date.parse(board.observed_at_utc);
+ const stale=!Number.isFinite(age)||age<0||age>6*3600*1000;
+ document.getElementById('portfolioFreshness').textContent=
+  (stale?'Stale or unverifiable saved observation; refresh source externally.':
+   'Saved observation within six hours (not a live status).')+
+   ' Recorded '+board.observed_at_utc+'.';
+}
+function line(value,limit=500){
+ return String(value??'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/[<>\x60]/g,'').slice(0,limit).trim();
+}
+function currentBrief(){
+ const rows=filtered().slice().sort((a,b)=>{
+  const ranks={'P0':0,'P1':1,'P2':2,'Unspecified':3};
+  return ranks[a.priority]-ranks[b.priority] ||
+    a.project.localeCompare(b.project) || a.issue.localeCompare(b.issue);
+ });
+ if(!rows.length)return null;
+ const lines=[
+  '# zSentinel · PRIVATE human product handoff',
+  '',
+  'Source SHA256: '+boardSha,
+  'Observed at UTC: '+board.observed_at_utc,
+  'Issues selected: '+rows.length+' of '+board.cards.length,
+  'Status: observational, claims and releases NOT AUTHORIZED.',
+  'MANDATORY: verify active owner/claim, exact-head required CI, security, review and release consent before action.',
+  ''
+ ];
+ let group=null;
+ rows.forEach(card=>{
+  if(card.project!==group){group=card.project;lines.push('## Project '+line(group,80),'');}
+  const human=handoffs.get(card.issue);
+  lines.push('### '+line(card.issue,110)+' · '+line(card.priority,20),
+    'Original: '+card.url,
+    'Human disposition: '+line(human?.decision||'investigate',40)+' (not an owner claim)',
+    'Claim context: '+line(card.claim_context,100),
+    'Observed PRs: '+(card.open_pr_candidates.length?
+      card.open_pr_candidates.join(' | '):'none in bounded snapshot'),
+    'Missing evidence: '+(card.evidence_gaps.length?
+      card.evidence_gaps.map(g=>line(g,300)).join('; '):'live owner, exact CI and release gates remain unverified'),
+    'Recommended investigation: '+line(card.recommended_next_step,650));
+  if(human?.note)lines.push('Private human note: '+line(human.note,1000));
+  lines.push('');
+ });
+ lines.push('No live reassignment, dispatch, queue mutation or production readiness is asserted.','');
+ return lines.join('\n');
+}
 function drawList(){
  const view=filtered();issueList.replaceChildren();
  view.forEach(c=>{
    const li=elem('li'),b=elem('button');b.type='button';
    b.setAttribute('aria-current',c.issue===selected?'true':'false');
    b.append(elem('span',c.issue,'issue-id'),elem('span',c.priority+' · '+c.project,'meta'));
-   b.onclick=()=>{saveSelection();selected=c.issue;drawList();drawDetail()};li.append(b);issueList.append(li);
+   b.onclick=()=>{saveSelection();invalidateBrief();selected=c.issue;drawList();drawDetail()};li.append(b);issueList.append(li);
  });
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
    ' shown · observed '+board.observed_at_utc+' · no active-claim authorization';
@@ -253,9 +354,11 @@ function drawDetail(){
  const note=elem('textarea');note.id='note';note.maxLength=1000;note.rows=5;
  const saved=handoffs.get(selected);sel.value=saved?.decision||'investigate';note.value=saved?.note||'';
  detail.append(label,sel,nlabel,note);
+ sel.addEventListener('change',invalidateBrief);
+ note.addEventListener('input',invalidateBrief);
 }
 ['search','priority','project'].forEach(id=>document.getElementById(id).addEventListener(
- 'input',()=>{saveSelection();drawList();drawDetail()}));
+ 'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
 document.getElementById('export').onclick=()=>{
  saveSelection();
  const rows=[...handoffs].filter(([id,v])=>entries.has(id)&&permitted.has(v.decision))
@@ -289,14 +392,43 @@ document.getElementById('restore').addEventListener('change',async event=>{
          [...v.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t'))throw Error('malformed note');
      next.set(v.issue,{decision:v.decision,note:v.note});
    }
-   handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));drawDetail();
+   handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
+   invalidateBrief();drawDetail();
    status.textContent='Own human handoff restored from this exact original board.';
  }catch{
    status.textContent='Handoff not restored: invalid, foreign or from another board snapshot.';
  }finally{event.currentTarget.value=''}
 });
+document.getElementById('previewBrief').onclick=()=>{
+ saveSelection();
+ viewedBrief=currentBrief();
+ const panel=document.getElementById('briefPanel');
+ panel.hidden=!viewedBrief;
+ document.getElementById('briefContent').textContent=viewedBrief||'';
+ document.getElementById('downloadBrief').disabled=!viewedBrief;
+ status.textContent=viewedBrief?
+  'Read the complete private briefing and choose your own destination. No action was sent.':
+  'No currently visible issue cards; no briefing produced.';
+};
+document.getElementById('downloadBrief').onclick=()=>{
+ if(!viewedBrief)return;
+ saveSelection();
+ const refreshed=currentBrief();
+ if(refreshed!==viewedBrief){
+  invalidateBrief();
+  status.textContent='Briefing changed. Preview again before downloading.';
+  return;
+ }
+ const project=document.getElementById('project').value.replace(/[^a-z0-9-]/gi,'-').slice(0,50);
+ const uri=URL.createObjectURL(new Blob([viewedBrief],{type:'text/markdown;charset=utf-8'}));
+ const a=elem('a');a.href=uri;
+ a.download='zsentinel-private-'+(project||'portfolio')+'-handoff.md';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ status.textContent='Private Markdown saved locally. It does not authorize any worker action.';
+ invalidateBrief();
+};
 document.getElementById('print').onclick=()=>window.print();
-drawList();drawDetail();
+refreshPortfolio();drawList();drawDetail();
 </script></html>
 """
 
