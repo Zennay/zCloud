@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""zSentinel read-only source discovery: queued jobs first, then recent failures.
+"""zSentinel read-only source discovery: queued jobs within queued/running workflows, then failures.
 
 The caller gets one verified (project/run/job/SHA) candidate per repository.
 All requests are canonical GitHub GETs, bounded, without redirect replay.
@@ -21,7 +21,7 @@ MAX_PROJECTS = 3
 MAX_RUNS = 5
 MAX_JOBS = 10
 RUN_PAGES_PER_WINDOW = 2
-RUN_WINDOWS = ("queued", "failure")
+RUN_WINDOWS = ("queued", "in_progress", "failure")
 MAX_GETS_PER_PROJECT = len(RUN_WINDOWS) * (1 + RUN_PAGES_PER_WINDOW)
 RESULTS = {"failure", "timed_out", "action_required"}
 
@@ -82,7 +82,7 @@ def run_job_candidates(root, run_id, sha, token, kind):
         now = datetime.now(UTC)
         if created > now + timedelta(minutes=2):
             continue
-        if kind == "queued":
+        if kind in ("queued", "in_progress"):
             if status != "queued" or bool(runner) or now-created < timedelta(minutes=30):
                 continue
             rank = 0
@@ -96,7 +96,7 @@ def run_job_candidates(root, run_id, sha, token, kind):
 
 
 def discover(registry, selected, token=None):
-    """At most six GitHub GETs per project and one actionable sampled job."""
+    """At most nine GitHub GETs per project and one actionable sampled job."""
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(set(selected)) != len(selected)
             or any(pid not in registry for pid in selected)):
@@ -110,8 +110,9 @@ def discover(registry, selected, token=None):
         candidates = []
         checked = 0
         try:
-            # Always search unassigned QUEUED runs (including dispatch/schedule)
-            # before old CI failures. This avoids drowning P0 in green PR runs.
+            # Jobs can remain queued even after other jobs make the *workflow*
+            # in_progress. Inspect both workflow windows before old failures;
+            # otherwise a stuck self-hosted job can disappear from P0 view.
             for status in RUN_WINDOWS:
                 request_count += 1
                 run_ids = recent_runs(root, canonical_repository, token, status)
