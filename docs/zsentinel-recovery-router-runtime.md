@@ -13,6 +13,41 @@ For a browser-ready view without contacting a server, choose `--format html` and
 
 The optional `--state` ledger stores incident fingerprints and observed timestamps locally with permissions `0600`, atomic replacement and strict size/schema limits. Use a **trusted private directory**, never a live queue/SQLite, checked-in repo path, shared mount or an untrusted symlink. It does not call GitHub, Notion or the VPS, start any timer, enqueue work, acquire a task, rerun CI, alter any worker, or deploy. Feed it new complete observations only after upstream independent collectors/owners have gathered them. One invocation provides one decision snapshot. Actual activation as a production service awaits the serialized runtime owner.
 
+## Direct live cockpit: no hand-created evidence bundle
+
+The new `scripts/zsentinel_live_cockpit.py` is a complete, **one-shot** CLI product. It reads the real existing SQLite `portfolio_queue` using `mode=ro` / `PRAGMA query_only=ON`, merges a bounded public GitHub issue/PR inbox and optional pinned GitHub jobs, then renders a responsive **Dutch offline dashboard** in one command:
+
+```bash
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --project zcloud --project supa \
+  --format html > /private/operator-only/zsentinel.html
+
+# Optional exact existing workflow job to diagnose (not dispatch):
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --project zcloud \
+  --job zcloud:39000012345:117000123456:0123456789abcdef0123456789abcdef01234567 \
+  --format json
+
+# Skip external GitHub API calls entirely:
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/zcloud.sqlite3 \
+  --project zcloud --skip-github-issues --format text
+```
+
+**These are examples, not claims that the example IDs/database exist.** Use a private, existing operator-owned output directory and existing readable DB file, without changing VPS services. `--project` is repeated up to three times, must exist in canonical `projects.json`. Optional `--job` is limited to one pinned existing run/job/commit per project; GitHub details must match exactly. The issue collector is read-only, credential-safe, no-redirect, capped at three API calls per selected project. The job collector uses up to two additional GETs per pinned job. Credentials are never printed. The command does **not poll, daemonize, create a watch notification, or dispatch GitHub Actions**.
+
+The queue observer in `scripts/zsentinel_queue_observer.py` also runs standalone:
+
+```bash
+python3 scripts/zsentinel_queue_observer.py --database /path/to/existing/zcloud.sqlite3
+```
+
+It reads one bounded SQLite transaction (up to 2,500 active rows), groups queued/claimed/running/verifying items by project and priority, and surfaces up to 20 of the worst claim-churn/possibly expired owner-lease observations with opaque hashed references. It never returns raw queue identifiers, credentials, lease tokens or task criteria, and it never changes `attempts` or an active lease. **Claim attempts count claims, not failures.** Any malformed or oversized active inventory is incomplete, never an all-clear or retry permit. The HTML cockpit shows queue pressure as a separate section; **stale (>5 minutes) or incomplete coverage suppresses individual queue risk cards**. The source is not sufficient to prove which repository paths a current worker owns.
+
+The direct command deliberately leaves Notion, live worker heartbeats, complete file-level claims, and actionable queue eligibility as **unknown** rather than inventing them. Therefore it can display real GitHub and queue evidence but it cannot propose new owned work or assert worker/service recovery. Add independently obtained canonical fresh observations via `zsentinel_recovery_router.py` when a privileged scheduler owner has approved the reader and supplied complete reliable provenance. The offline output is not a deployment.
+
 ## Optional automatic GitHub read-only refresh
 
 A second executable entrypoint now refreshes the **exact already-known GitHub run/job IDs** before generating the same recovery decisions:
@@ -95,6 +130,7 @@ A task suggestion requires **separate fresh (within 5 minutes)** `claim_observed
 - **Runtime claim integrity:** Missing runtime heartbeat incidents require both `runtime.claim_identity_verified=true`, a bounded `runtime.claim_id` and an integer `runtime.claim_epoch`. Without them, the incident is counted as unattributed; no cross-claim dedup, worker ownership assumption or automated recovery is permitted.
 - **Incident identity:** Stable local SHA-256 key over project, kind, exact commit and GitHub run/job identity when present. A job that disappears from a later snapshot is marked `not_observed_needs_reconciliation`, **never automatically resolved**. Incoming optional prior state is schema-checked; ledger saturation refuses truncation.
 - **Prioritization:** Verified GitHub-hosted billing admission (including explicit no-steps evidence) is separately P0/human-only and blocks suggestions requiring `github_hosted`. Verified PR owner-approval waits are human-only, never retried. Explicit `github.verified_approval_wait=true` on a fresh `waiting` or `pending` job creates a distinct human-approval card **without** misclassifying it as an unassigned runner; absent independent verification, a waiting/pending job remains a normal wait. P0 unassigned GitHub queued runner jobs receive a *human-action-required* review target 2 hours from initial observation, not an unapproved runner restart. P1 workflow failure or missing runtime progress receives a read-only diagnosis target 12 hours from first observation. Targets are advisory, not Notion deadlines or automatic claims.
+- **Real SQLite pressure observation:** Existing database schema and active work are read in one read-only query transaction. The result explicitly separates claim counters from failures, possibly expired leases from authorized cleanup, and partial/stale source coverage from a zero count. This includes operational evidence for open [zCloud issue #677](https://github.com/Zennay/zCloud/issues/677) without taking its writer scope.
 - **Issue-first inspection:** Pass a complete JSON result from the existing `scripts/zsentinel_product_issue_inbox.py` collector as optional `issue_inbox` (or omit/null to disable). Up to eight P0/P1 non-QA issues appear with canonical GitHub links and existing PR candidates to inspect *first*. The original collector's partial/degraded/unavailable/truncation/denial flags and observation age remain visible; no GitHub assignee/PR is treated as a live claim. This is an inspection list, not an automatic eligible queue.
 - **Capacity governance:** Every self-hosted/VPS-dependent candidate requires a trusted **at most 3 minutes old** read-only VPS snapshot including cores, 5-minute load, available memory, swap and disk. It is withheld when 5-minute load exceeds 1.5× cores, available memory falls below 1 GiB, swap below 256 MiB, free disk below 2 GiB, or evidence is missing/stale. `vps_resource_admission` explicitly distinguishes unknown, stale, overloaded and *advisory* headroom. Suggestions not requiring self-hosted compute must explicitly set `requires_vps=false` instead of relying on unknown destination. Resource headroom never authorizes a worker claim, runner restart or deploy.
 - **Independent delivery:** At most five P0 → P3 file-disjoint candidate tasks are proposed, without modifying queue ownership. Required CI/review/merge/privacy/device/security/finance gates remain independent. A recommendation is **never** an authorization to edit an owner's files or dispatch a job.
