@@ -12,6 +12,42 @@ const ACTIVITY_CACHE_INTERVAL_MS=120000,ACTIVITY_MAX_PROJECTS=24,ACTIVITY_MAX_VI
 let ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:0,projectsTotal:0,projectsRead:0,failed:0,limited:false,pending:false,scope:'',lastError:''};
 let ACTIVITY_PROJECT_FETCH=null;
 let ACTIVITY_PROJECT_FETCH_TIME=0;
+// One bounded, ephemeral local-event cache per canonical project. The selected
+// Activity project is only a VIEW: refreshing it must never evict another
+// project's previously observed events or promote /api/status to feed proof.
+const ACTIVITY_LOCAL_PROJECT_CACHE=new Map(),ACTIVITY_LOCAL_CACHE_LIMIT=24;
+function mergeLocalProjectActivity(fallback=ACTIVITY){
+  const projects=(DATA?.projects||[]).filter(p=>p&&typeof p.id==='string'
+    &&/^[a-z][a-z0-9_-]{0,55}$/.test(p.id)).slice(0,ACTIVITY_LOCAL_CACHE_LIMIT);
+  const ids=projects.map(p=>p.id),known=new Set(ids);
+  // If no per-project read has happened, preserve the existing local feed.
+  if(!ACTIVITY_LOCAL_PROJECT_CACHE.size)
+    return (Array.isArray(fallback)?fallback:[]).filter(row=>row&&known.has(row.project))
+      .slice(0,ACTIVITY_MAX_VISIBLE);
+  const streams=new Map();
+  for(const id of ids){
+    const cache=ACTIVITY_LOCAL_PROJECT_CACHE.get(id);
+    // A successfully read empty project is *empty* rather than a reason
+    // to reuse the stale global 80-row list for that specific project.
+    const rows=cache?cache.rows:(Array.isArray(fallback)?fallback:[])
+      .filter(row=>row&&row.project===id).slice(0,80);
+    streams.set(id,rows);
+  }
+  const merged=[],seen=new Set(),offsets=new Map(ids.map(id=>[id,0]));
+  while(merged.length<ACTIVITY_MAX_VISIBLE){
+    let advanced=false;
+    for(const id of ids){
+      const rows=streams.get(id),index=offsets.get(id);
+      if(index>=rows.length)continue;
+      offsets.set(id,index+1);advanced=true;
+      const row=rows[index],key=id+'\u0000'+row.id;
+      if(!seen.has(key)){seen.add(key);merged.push(row);}
+      if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
+    }
+    if(!advanced)break;
+  }
+  return merged;
+}
 function activityCoverageText(){
   const c=ACTIVITY_COVERAGE;
   const prefix='Local VPS events only · GitHub PRs, branches and CI are not synchronized.';
@@ -20,7 +56,10 @@ function activityCoverageText(){
   const partial=c.failed||c.projectsRead<c.projectsTotal;
   const status=partial?'Partial coverage — some project histories are unavailable or not included.':'Project history read completed.';
   const limit=c.limited?' Some projects have reached the last-80-events API limit.':'';
-  return prefix+' '+status+' '+c.projectsRead+'/'+c.projectsTotal+' project sources checked · last read '+date(c.lastSuccess,true)+'.'+limit;
+  const retained=ACTIVITY_LOCAL_PROJECT_CACHE.size?
+    ' · '+ACTIVITY_LOCAL_PROJECT_CACHE.size+' per-project local sources retained in tab memory'+
+    (c.staleCachedProjects?' ('+c.staleCachedProjects+' failed refreshes retained as STALE)':''):'';
+  return prefix+' '+status+' '+c.projectsRead+'/'+c.projectsTotal+' project sources checked · last read '+date(c.lastSuccess,true)+retained+'.'+limit;
 }
 /**
  * The existing read-only API accepts ?project=<allowlisted id>, but its global
@@ -72,34 +111,26 @@ async function refreshProjectActivity(version,force=false){
       });
     }
     if(version!==routeVersion||route!=='activity'||filter!==((ids.length===1&&scope===filter)?filter:''))return;
-    const merged=[],seen=new Set(),indices=new Map(ids.map(id=>[id,0]));
-    while(merged.length<ACTIVITY_MAX_VISIBLE){
-      let advanced=false;
-      for(const id of ids){
-        const items=streams.get(id)||[];
-        let i=indices.get(id);
-        if(i>=items.length)continue;
-        const item=items[i];indices.set(id,i+1);
-        if(!seen.has(item.id)){merged.push(item);seen.add(item.id);}
-        advanced=true;
-        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
-      }
-      if(!advanced)break;
+    const observedAt=Date.now();
+    // Only successful, project-bound source rows replace that project's cache.
+    // Failed reads retain their previous observation and stay explicitly stale.
+    const canonical=new Set(visible.map(p=>p.id));
+    for(const existing of ACTIVITY_LOCAL_PROJECT_CACHE.keys()){
+      if(!canonical.has(existing))ACTIVITY_LOCAL_PROJECT_CACHE.delete(existing);
     }
-    // A partial API outage must not silently delete the last-known local feed.
-    // Successful reads are merged with the previous global result when needed.
-    if(errors.length){
-      for(const item of ACTIVITY){
-        if(merged.length>=ACTIVITY_MAX_VISIBLE)break;
-        if(item&&typeof item.id==='string'&&!seen.has(item.id)){
-          merged.push(item);seen.add(item.id);
-        }
-      }
+    for(const [id,rows] of streams){
+      ACTIVITY_LOCAL_PROJECT_CACHE.set(id,{rows:rows.slice(0,80),observedAt,
+        limited:rows.length===80});
     }
-    if(streams.size)ACTIVITY=merged;
-    ACTIVITY_PROJECT_FETCH_TIME=Date.now();
-    ACTIVITY_COVERAGE={kind:'local-only',lastSuccess:streams.size?ACTIVITY_PROJECT_FETCH_TIME:ACTIVITY_COVERAGE.lastSuccess,
+    // Reassemble ALL canonical projects fairly, even after a filtered refresh.
+    // The existing global feed is a bounded fallback only for never-read projects.
+    if(streams.size)ACTIVITY=mergeLocalProjectActivity(ACTIVITY);
+    ACTIVITY_PROJECT_FETCH_TIME=observedAt;
+    ACTIVITY_COVERAGE={kind:'local-only',
+      lastSuccess:streams.size?observedAt:ACTIVITY_COVERAGE.lastSuccess,
       projectsTotal:scoped.length,projectsRead:streams.size,failed:errors.length+omitted,
+      cachedProjects:ACTIVITY_LOCAL_PROJECT_CACHE.size,
+      staleCachedProjects:errors.filter(id=>ACTIVITY_LOCAL_PROJECT_CACHE.has(id)).length,
       limited:[...streams.values()].some(rows=>rows.length===80),
       pending:false,scope,lastError:errors.length?'partial-local-reads':''};
     render();
@@ -2665,7 +2696,8 @@ svg+='</svg>';el.innerHTML=svg;const countTimes=new Set(points.map(p=>p.date)).s
 function paintCharts(){if(route==='overview')chart('progressChart',DATA.projects.map(p=>({name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))})));else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p)chart('progressChart',[{name:p.name,color:p.accent,data:(HISTORY[p.id]||[]).map(r=>({date:r.date,value:r.progress}))}])}else if(route==='infrastructure')chart('hostChart',[['cpu','CPU','#c2f970'],['memory','Memory','#82b8ff'],['disk','Storage','#a899ff']].map(([key,name,color])=>({name,color,data:HOST.map(r=>({date:r.ts,value:r[key]}))}))) }
 function render(){if(!DATA)return;const focused=document.activeElement;const restore=focused?.dataset.range?'[data-range="'+focused.dataset.range+'"]':focused?.id==='activityFilter'?'#activityFilter':null;const openDisclosures=[...document.querySelectorAll('details[data-disclosure][open]')].map(el=>el.dataset.disclosure);const selectedProject=document.activeElement?.dataset.globalWorkerProject;syncNav();let title='Overview',html;if(route==='activity'){html=activityPage();title='Activity'}else if(route==='infrastructure'){html=infrastructure();title='Infrastructure'}else if(route.startsWith('project/')){const p=DATA.projects.find(p=>route==='project/'+p.id);if(p){html=detail(p);title=p.name}else{html='<div class="empty">This project was not found. <a href="#overview">Back to overview</a></div>';title='Unknown project'}}else html=overview();$('crumb').textContent=title;document.title='zCloud — '+title;$('view').innerHTML=html;[...document.querySelectorAll('details[data-disclosure]')].forEach(el=>{if(openDisclosures.includes(el.dataset.disclosure))el.open=true});paintCharts();hydrate();document.querySelectorAll('[data-global-worker-project]').forEach(el=>{const slot=Number(el.dataset.globalWorkerProject);const w=(WORKER_DEBUG?.workers||[]).find(x=>Number(x.global_slot)===slot);el.value=Object.prototype.hasOwnProperty.call(GLOBAL_WORKER_PROJECT_REQUESTS,slot)?GLOBAL_WORKER_PROJECT_REQUESTS[slot]:(w?.project||'')});if(selectedProject)document.querySelector('[data-global-worker-project="'+selectedProject+'"]')?.focus({preventScroll:true});if(restore)document.querySelector(restore)?.focus({preventScroll:true})}
 async function loadExtras(){const version=++routeVersion;const results=await Promise.allSettled([api('/api/activity'),api('/api/host-history'),...DATA.projects.map(p=>api('/api/history?project='+p.id+'&range='+range))]);if(version!==routeVersion)return;const fails=results.filter(r=>r.status==='rejected').length;if(results[0].status==='fulfilled'&&Array.isArray(results[0].value)&&
-    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))ACTIVITY=results[0].value;if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render();if(route==='activity')void refreshProjectActivity(version)}
+    (route!=='activity'||ACTIVITY_COVERAGE.projectsRead===0))
+    ACTIVITY=mergeLocalProjectActivity(results[0].value);if(results[1].status==='fulfilled')HOST=results[1].value;DATA.projects.forEach((p,i)=>{if(results[i+2].status==='fulfilled')HISTORY[p.id]=results[i+2].value;else HISTORY[p.id]=[]});if(fails){$('notice').hidden=false;$('notice').textContent='Part of the history is temporarily unavailable. Live measurements remain visible.'}render();if(route==='activity')void refreshProjectActivity(version)}
 function setConnection(ok){$('connection').classList.toggle('offline',!ok);$('connection').innerHTML='<span class="status-dot"></span>'+(ok?'Live connected':'Connection lost')}
 async function refresh(initial=false){if(busy)return false;busy=true;$('refresh').disabled=true;try{DATA=await api('/api/status',STATUS_TIMEOUT_MS);saveCachedStatus(DATA);const stale=DATA.stale||Date.now()-Date.parse(DATA.time)>90000;setConnection(!stale);$('notice').hidden=!stale&&!DATA.errors.length;$('notice').textContent=stale?'The latest measurement is stale. Showing the most recent available data.':DATA.errors.join(' · ');$('syncTime').textContent='Latest measurement '+clock(DATA.time)+' · every 15 sec';if(initial||!$('view').children.length)render();await loadExtras();if(route==='overview')loadWorkerDebug();if(route==='overview')loadWorkerScaling();return true}catch(e){setConnection(false);$('notice').hidden=false;$('notice').textContent=DATA?'Connection lost. The last loaded data remains visible; we will retry automatically.':'The VPS is temporarily unreachable. Try again or wait for the next refresh.';if(!DATA)$('view').innerHTML='<div class="loading">Not connected to zCloud yet.<button class="error-action" data-retry>Try again</button></div>';return false}finally{busy=false;$('refresh').disabled=false}}
 function navigate(){const hash=location.hash.slice(1)||'overview';const [path,query]=hash.split('?');route=path;if(route!=='overview')mobileWorkersActive=false;if(scrollToWorkersOnOverview)mobileWorkersActive=true;filter=new URLSearchParams(query||'').get('project')||'';routeVersion++;if(DATA){render();loadExtras()}window.scrollTo({top:0,behavior:'instant'});if(route==='overview'&&scrollToWorkersOnOverview){scrollToWorkersOnOverview=false;window.requestAnimationFrame(()=>{const panel=$('workers');if(panel){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true})}})}}
