@@ -182,7 +182,19 @@ def admit_paths(task):
 def eligible_tasks(bundle, blocked, now):
     tasks = bundle.get("tasks", [])
     claims = bundle.get("active_claims", [])
-    complete = bundle.get("claim_inventory_complete") is True
+    complete = (bundle.get("claim_inventory_complete") is True
+                and bundle.get("task_inventory_complete") is True)
+    # A historically complete claim/queue snapshot is NOT proof the same
+    # files are still available for writing. Source timestamps are separate
+    # from GitHub/Notion issue observation and must be no older than 5 min.
+    for clock in ("claim_observed_at", "task_observed_at"):
+        value = bundle.get(clock)
+        if value is None:
+            complete = False
+            continue
+        stamp = timestamp(value, clock)
+        if stamp > now + timedelta(minutes=2) or now - stamp > timedelta(minutes=5):
+            complete = False
     if not isinstance(tasks, list) or len(tasks) > MAX_TASKS:
         raise ValueError("tasks must be a bounded array")
     if not isinstance(claims, list) or len(claims) > MAX_CLAIMS:
