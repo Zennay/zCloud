@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import sys
 
-from zsentinel_product_delivery_board import read, when, write_create_only
+from zsentinel_product_delivery_board import read, when, write_create_only, ISSUE, PROJECT, URL
 
 
 def keyed_cards(source):
@@ -20,14 +20,20 @@ def keyed_cards(source):
         if type(card) is not dict or card.get("claim_authorized") is not False:
             raise ValueError("board card unexpectedly grants work authority")
         issue = card.get("issue")
-        if type(issue) is not str or not issue or issue in result:
+        if type(issue) is not str or not ISSUE.fullmatch(issue) or issue in result:
             raise ValueError("ambiguous issue identity in board")
+        project = card.get("project")
+        if type(project) is not str or not PROJECT.fullmatch(project):
+            raise ValueError("invalid board issue project")
         priority = card.get("priority")
         if priority not in ("P0", "P1", "P2", "Unspecified"):
             raise ValueError("invalid issue priority")
         references = card.get("open_pr_candidates")
         if type(references) is not list or len(references) > 3:
             raise ValueError("unbounded open PR candidates")
+        if any(type(ref) is not str or not URL.fullmatch(ref) or "/pull/" not in ref
+               for ref in references):
+            raise ValueError("untrusted PR candidate URL")
         result[issue] = card
     return result
 
@@ -41,7 +47,7 @@ def project_rows(source):
         if type(row) is not dict or row.get("action_authorized") is not False:
             raise ValueError("invalid operator project entry")
         name = row.get("project")
-        if type(name) is not str or not name or name in items:
+        if type(name) is not str or not PROJECT.fullmatch(name) or name in items:
             raise ValueError("ambiguous project entry")
         items[name] = row
     return items
