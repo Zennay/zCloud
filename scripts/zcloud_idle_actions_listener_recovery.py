@@ -121,41 +121,43 @@ def runner_process_count(lane: str) -> int:
     return count
 
 
-def service_unit_matches(unit: str, lane: str, expected_owner: str) -> bool:
-    """Bind systemd User and ExecStart to the known installed service root."""
-    output = call("systemctl", "show", unit, "--property=ExecStart",
+def service_state(unit: str) -> tuple[str, str]:
+    """One kernel/systemd observation that also pins the installed identity.
+
+    Callers cannot accidentally act on another service with the same runner
+    username. A changed unit owner or ExecStart is an error, not permission.
+    """
+    lane = next((key for key, value in UNITS.items() if value[0] == unit), None)
+    if lane is None:
+        raise ValueError("unknown_runner_unit")
+    output = call("systemctl", "show", unit, "--property=LoadState",
+                  "--property=ActiveState", "--property=ExecStart",
                   "--property=User", "--no-pager")
     props = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
     starts = re.findall(r"(?:^|\s)path=([^\s;]+)", props.get("ExecStart", ""))
-    return props.get("User") == expected_owner and starts == [RUNNER_ROOTS[lane] + "runsvc.sh"]
-
-def service_state(unit: str) -> tuple[str, str]:
-    output = call("systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--no-pager")
-    data = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-    return data.get("LoadState", ""), data.get("ActiveState", "")
-
+    if (props.get("User") != UNITS[lane][1]
+            or starts != [RUNNER_ROOTS[lane] + "runsvc.sh"]):
+        raise ValueError("runner_unit_identity_mismatch")
+    return props.get("LoadState", ""), props.get("ActiveState", "")
 
 def rescue(lane: str, apply: bool) -> dict:
     unit, owner = UNITS[lane]
     load, active = service_state(unit)
     processes = runner_process_count(lane)
-    identity_ok = service_unit_matches(unit, lane, owner)
     decision = decide(load, active, processes)
-    if not identity_ok:
-        decision = "deny_runner_unit_identity_mismatch"
     memory = memory_headroom()
     if decision == "eligible_start_inactive_listener" and memory["decision"] != "eligible_memory_headroom":
         decision = memory["decision"]
     evidence = {
         "lane": lane, "unit": unit, "load_state": load,
         "active_state_before": active, "process_count_for_target_root": processes,
-        "exact_system_unit_identity": identity_ok,
+        "exact_system_unit_identity": True,
         "decision": decision, "mutation_performed": False,
         "mutation_attempted": False, "memory": memory,
     }
     if apply and decision == "eligible_start_inactive_listener":
         # A second independent admission read guards slow command/service races.
-        if service_state(unit) != (load, active) or not service_unit_matches(unit, lane, owner) or runner_process_count(lane):
+        if service_state(unit) != (load, active) or runner_process_count(lane):
             evidence["decision"] = "deny_state_changed"
             return evidence
         latest = memory_headroom()
@@ -178,7 +180,7 @@ def rescue(lane: str, apply: bool) -> dict:
         if latest["decision"] != "eligible_memory_headroom":
             evidence["decision"] = "deny_memory_headroom_changed"
             return evidence
-        if runner_process_count(lane) or not service_unit_matches(unit, lane, owner):
+        if runner_process_count(lane):
             evidence["decision"] = "deny_residual_processes_or_changed_unit"
             return evidence
         evidence["mutation_attempted"] = True
