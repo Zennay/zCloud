@@ -2,7 +2,7 @@
 """Read-only exact-head GitHub PR delivery desk for already-open product work.
 
 This is operator advice, NEVER a merge/release admission check. Each explicit
-PR costs <=4 canonical GETs. Existing GitHub status, branch protection, owner
+PR costs <=5 canonical GETs. Existing GitHub status, branch protection, owner
 leases and required review policy must still be checked at the actual merge.
 """
 from __future__ import annotations
@@ -23,7 +23,8 @@ OWNER_REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 MAX_PRS = 3
 MAX_CHECKS = 30
 MAX_REVIEWS = 30
-MAX_CALLS = 4 * MAX_PRS
+MAX_STATUSES = 30
+MAX_CALLS = 5 * MAX_PRS
 FAILURE = {"failure", "timed_out", "cancelled", "action_required"}
 
 
@@ -249,6 +250,45 @@ def observe_prs(registry, selections, token=None):
                 "status_contexts_verified": False,
             }
             item["coverage"] = "exact_head_checks_observed"
+            # The GitHub check-runs API does not include legacy commit status
+            # contexts. Read the exact same SHA separately; still never treat
+            # this bounded page as proof that branch protection has passed.
+            calls += 1
+            legacy = bounded_get(base_url + "/commits/" + head_sha +
+                                 "/status?per_page=" + str(MAX_STATUSES), token)
+            statuses = legacy.get("statuses") if isinstance(legacy, dict) else None
+            combined = legacy.get("state") if isinstance(legacy, dict) else None
+            if (not isinstance(statuses, list) or len(statuses) > MAX_STATUSES
+                    or combined not in ("pending", "success", "failure", "error")):
+                raise ValueError("untrusted exact-head legacy status page")
+            latest_context = {}
+            for status_row in statuses:
+                if not isinstance(status_row, dict):
+                    raise ValueError("untrusted commit status context")
+                context = status_row.get("context")
+                state = status_row.get("state")
+                if (type(context) is not str or not 1 <= len(context) <= 180
+                        or any(ord(ch) < 32 or ord(ch) == 127 for ch in context)
+                        or state not in ("pending", "success", "failure", "error")):
+                    raise ValueError("untrusted commit status state")
+                # Combined status listings are newest-first. Only the first
+                # observation for a context is its current visible state.
+                latest_context.setdefault(context, state)
+            legacy_failed = [n for n, s in latest_context.items()
+                             if s in ("failure", "error")]
+            legacy_pending = [n for n, s in latest_context.items()
+                              if s == "pending"]
+            item["legacy_status_contexts"] = {
+                "head_sha": head_sha,
+                "combined_observed": combined,
+                "sampled": len(statuses),
+                "unique_contexts_seen": len(latest_context),
+                "page_truncated_or_unknown": len(statuses) == MAX_STATUSES,
+                "failed": legacy_failed[:8],
+                "pending": legacy_pending[:8],
+                "branch_protection_verified": False,
+                "required_contexts_verified": False,
+            }
             calls += 1
             reviews = bounded_get(base_url + "/pulls/" + str(number) +
                                   "/reviews?per_page=" + str(MAX_REVIEWS), token)
@@ -299,9 +339,10 @@ def observe_prs(registry, selections, token=None):
                 next_step = "finish_existing_draft_with_owner"
             elif requested_changes:
                 next_step = "resolve_exact_head_review_with_owner"
-            elif failing:
+            elif failing or legacy_failed:
                 next_step = "fix_exact_head_ci_with_owner"
-            elif waiting or inconclusive or total != len(runs):
+            elif (waiting or inconclusive or legacy_pending
+                  or len(statuses) == MAX_STATUSES or total != len(runs)):
                 next_step = "wait_for_complete_exact_head_ci"
             elif approvals == 0:
                 next_step = "request_independent_review"
@@ -314,7 +355,7 @@ def observe_prs(registry, selections, token=None):
                 rate_limited = True
             # Partially observed checks or a moved source HEAD cannot be
             # displayed as current readiness. Keep only the safe PR link.
-            for field in ("ci", "reviews", "head_sha", "base_sha", "mentioned_issues_unverified"):
+            for field in ("ci", "legacy_status_contexts", "reviews", "head_sha", "base_sha", "mentioned_issues_unverified"):
                 item.pop(field, None)
             item["coverage"] = "source_incomplete_or_changed"
             item["source_gap"] = str(exc)[:120]
@@ -359,11 +400,14 @@ def pr_delivery_html(report):
         link = escape(row["url"], quote=True)
         ci = row.get("ci", {})
         reviews = row.get("reviews", {})
+        legacy = row.get("legacy_status_contexts", {})
         detail = ("Geobserveerde checks: " + str(ci.get("sampled", "onbekend")) +
                   " / " + str(ci.get("total_reported", "onbekend")) +
                   " · fouten ≥" + str(len(ci.get("failed", []))) +
                   " · bezig ≥" + str(len(ci.get("pending", []))) +
                   " · niet-groen/onbeslist ≥" + str(len(ci.get("inconclusive", []))) +
+                  " · klassieke statusfouten ≥" + str(len(legacy.get("failed", []))) +
+                  " · klassieke statussen wachten ≥" + str(len(legacy.get("pending", []))) +
                   " · head-approvals gezien: " +
                   str(reviews.get("same_head_approvals_seen", "onbekend")))
         sha = row.get("head_sha")
@@ -372,12 +416,21 @@ def pr_delivery_html(report):
                            ("Onbeslist", "inconclusive")):
             for check_name in ci.get(name, [])[:6]:
                 ci_names.append("<li>" + escape(kind + ": " + str(check_name)[:100]) + "</li>")
+        for kind, name in (("Klassieke status mislukt", "failed"),
+                           ("Klassieke status wacht", "pending")):
+            for context_name in legacy.get(name, [])[:6]:
+                ci_names.append("<li>" + escape(kind + ": " +
+                                                str(context_name)[:180]) + "</li>")
         observed_checks = (
             '<details><summary>Welke head-checks vragen aandacht?</summary><ul>' +
             "".join(ci_names) + '</ul><p class="small"><a href="' + link +
             '/checks" target="_blank" rel="noopener noreferrer">Bekijk actuele GitHub PR-checks</a>'
             ' · lijst is een beperkte momentopname.</p></details>'
             if ci_names else "")
+        legacy_gap = ('<p class="muted">Klassieke statuscontexts zijn slechts '
+                      'gedeeltelijk waargenomen: de eerste 30 kunnen ouder '
+                      'of onvolledig zijn.</p>' if
+                      legacy.get("page_truncated_or_unknown") else "")
         source_gap = (('<p class="muted">Bron onvolledig of gewijzigd: ' +
                        escape(str(row["source_gap"])[:120]) + '</p>')
                       if row.get("source_gap") else "")
@@ -401,7 +454,7 @@ def pr_delivery_html(report):
             " · " + title + '</a></h3><p>' +
             escape(labels[row["next_step"]]) +
             '</p><p class="muted">' + escape(detail) + '</p>' + observed_checks +
-            mention_links + source_gap + '<p class="small">Exacte head: ' +
+            mention_links + legacy_gap + source_gap + '<p class="small">Exacte head: ' +
             escape(sha[:12] if isinstance(sha, str) else "onbekend") +
             ' · bron: beperkte GitHub-steekproef; eigenaar, required checks, branch protection, merge/deploy NIET geautoriseerd.</p></article>'
         )
@@ -542,7 +595,12 @@ def main(argv=None):
                 )
                 for name in ("failed", "pending", "inconclusive"):
                     if item.get("ci", {}).get(name):
-                        lines.append("  %s: %s" % (name, ", ".join(item["ci"][name])))
+                        lines.append("  check-%s: %s" % (
+                            name, ", ".join(item["ci"][name])))
+                for name in ("failed", "pending"):
+                    if item.get("legacy_status_contexts", {}).get(name):
+                        lines.append("  status-%s: %s" % (
+                            name, ", ".join(item["legacy_status_contexts"][name])))
             lines.append("Geen eigenaar/required CI/review/merge/deploy geautoriseerd.")
             output = "\n".join(lines)
         print(output)
