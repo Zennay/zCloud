@@ -249,6 +249,8 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
         else:
             next_step = "Verify current claims and file ownership before implementation."
         gaps = []
+        if fresh.get("inbox") is not True:
+            gaps.append("Issue evidence is stale; verify GitHub before deciding.")
         if coverage[pid] != "partial" or inbox["truncated"]:
             gaps.append("The GitHub issue window is bounded/incomplete.")
         if claim_ids is None:
@@ -266,6 +268,46 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
                       "recommended_next_step": next_step, "evidence_gaps": gaps,
                       "claim_authorized": False, "merge_authorized": False,
                       "deploy_authorized": False})
+    # Independent project-level incident work is visible even without any
+    # issue card; a queue with no recent GitHub issue must not vanish.
+    issue_totals = {}
+    for row in issues:
+        counts = issue_totals.setdefault(row["project"], {"P0": 0, "P1": 0, "P2": 0, "Unspecified": 0})
+        counts[row["priority"]] += 1
+    names = sorted(set(coverage) | set(retry_by_project) |
+                   set(claims_by_project or ()))
+    project_operations = []
+    for pid in names:
+        queue = retry_by_project.get(pid) if fresh.get("retry") and (
+            retry_meta["scope"] in ("all", pid)) else None
+        active = (claims_by_project.get(pid, []) if claims_by_project is not None
+                  and fresh.get("claims") else None)
+        if active:
+            action = "Preserve active owner; review claim-specific next steps."
+        elif queue and queue["expired_active_leases"]:
+            action = "Escalate expired leases to the authorized queue owner."
+        elif queue and queue["high_claim_attempts"]:
+            action = "Inspect recurring claim cycles; do not auto-retry."
+        elif issue_totals.get(pid, {}).get("P0", 0):
+            action = "Review P0 issue and current owner/PR state."
+        else:
+            action = "Review live claims and existing PRs before action."
+        project_operations.append({
+            "project": pid, "issue_counts_in_sample": issue_totals.get(pid, {
+                "P0": 0, "P1": 0, "P2": 0, "Unspecified": 0}),
+            "queue_observation": queue,
+            "observed_claim_ids": active,
+            "issue_coverage": coverage.get(pid, "unavailable"),
+            "recommended_next_step": action,
+            "is_complete_inventory": False,
+            "action_authorized": False,
+        })
+    project_operations.sort(key=lambda item: (
+        -item["issue_counts_in_sample"]["P0"],
+        -(item["queue_observation"] or {}).get("high_claim_attempts", 0),
+        -item["issue_counts_in_sample"]["P1"], item["project"],
+    ))
+
     return {
         "schema": "zsentinel-product-delivery-triage-v1",
         "observed_at_utc": now.isoformat(),
@@ -277,6 +319,7 @@ def prepare(inbox, retry=None, branches=None, claims=None, hours=24, limit=40):
                      "claims_supplied": claims is not None,
                      "cards_truncated": len(issues) > limit},
         "items_available": len(issues), "cards": cards,
+        "project_operations": project_operations,
         "authorizes_claim": False, "authorizes_merge": False,
         "authorizes_deploy": False, "automatic_dispatch_enabled": False,
         "operator_note": "Bounded evidence only. Assignees, PR mentions, branch age and "
@@ -300,10 +343,31 @@ def markdown(data):
             row["issue"], links, row["recommended_next_step"]))) + " |")
         lines.extend("- " + safe(row["issue"]) + ": " + safe(g)
                      for g in row["evidence_gaps"])
+    lines.extend(["", "## Project-wide queue and ownership context",
+                  "| Project | P0 | P1 | High claim cycles | Expired leases | Operator next step |",
+                  "|---|---:|---:|---:|---:|---|"])
+    for row in data["project_operations"]:
+        queue = row["queue_observation"] or {}
+        lines.append("| " + " | ".join(map(safe, (
+            row["project"], row["issue_counts_in_sample"]["P0"],
+            row["issue_counts_in_sample"]["P1"],
+            queue.get("high_claim_attempts", "unknown"),
+            queue.get("expired_active_leases", "unknown"),
+            row["recommended_next_step"],
+        ))) + " |")
     return "\n".join(lines + ["", data["operator_note"], ""])
 
 
 def html(data):
+    projects = []
+    for entry in data["project_operations"]:
+        queue = entry["queue_observation"] or {}
+        projects.append("<tr><td>" + escape(entry["project"]) + "</td><td>" +
+            str(entry["issue_counts_in_sample"]["P0"]) + "</td><td>" +
+            str(entry["issue_counts_in_sample"]["P1"]) + "</td><td>" +
+            escape(str(queue.get("high_claim_attempts", "unknown"))) + "</td><td>" +
+            escape(str(queue.get("expired_active_leases", "unknown"))) + "</td><td>" +
+            escape(entry["recommended_next_step"]) + "</td></tr>")
     rows = []
     for row in data["cards"]:
         links = "".join('<a target="_blank" rel="noopener noreferrer" href="' +
@@ -327,6 +391,8 @@ a{color:#bddfff}a:focus-visible,summary:focus-visible{outline:3px solid #ffd98b}
 article{padding:18px;background:#1d2b3c;border:1px solid #3b5268;border-radius:12px}
 small{color:#cad8e8}.notice{border-left:4px solid #ffcf77;padding:14px;background:#302921}
 summary{cursor:pointer}
+table{border-collapse:collapse;width:100%;margin:20px 0}th,td{text-align:left;padding:8px;border-bottom:1px solid #395165}
+.scroll{overflow-x:auto}
 """
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -335,7 +401,11 @@ summary{cursor:pointer}
             '<p class="notice">' + escape(data["operator_note"]) + '</p>'
             '<p>Issues observed: ' + str(data["items_available"]) +
             ' · Source truncated: ' + str(data["coverage"]["inbox_truncated"]).lower() +
-            '</p><section class="board">' + "".join(rows) +
+            '</p><h2>Project-wide operations</h2><div class="scroll"><table>'
+            '<thead><tr><th>Project</th><th>P0</th><th>P1</th>'
+            '<th>Claim cycles</th><th>Expired leases</th><th>Next step</th>'
+            '</tr></thead><tbody>' + "".join(projects) + '</tbody></table></div>'
+            '<section class="board">' + "".join(rows) +
             '</section><footer>Offline: no scripts, fetches, queue or lease writes.</footer>'
             '</body></html>')
 
