@@ -495,6 +495,7 @@ def main():
         output, state = plan(bundle, old)
         if args.state:
             write_json_atomic(args.state, state)
+        output["private_ledger_written"] = bool(args.state)
         print(json.dumps(output, sort_keys=True, indent=2) if args.format == "json" else operator_text(output))
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f"zSentinel routing refused: {exc}\n")
