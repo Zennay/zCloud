@@ -17,7 +17,7 @@ from pathlib import Path
 
 SCHEMA = "zsentinel-blocker-first-board-v1"
 OUTPUT_SCHEMA = "zsentinel-blocker-continuity-v1"
-MAX_BYTES = 512 * 1024
+MAX_BYTES = 6 * 1024 * 1024
 MAX_CARDS = 12
 KINDS = {
     "verified_source_incident_not_runtime_recovery",
@@ -384,6 +384,10 @@ def as_html(result):
     if result.get("schema") == "zsentinel-blocker-continuity-history-v1":
         recurring = []
         for item in result["history_items"][:48]:
+            source_links = ' '.join(
+                '<a href="' + escape(url, quote=True) +
+                '" target="_blank" rel="noopener noreferrer">Bekijk GitHub-bron</a>'
+                for url in item["links"][:3])
             recurring.append(
                 '<article><strong>' + escape(item["priority"]) + ' · ' +
                 escape(item["project_id"]) + '</strong><p>' +
@@ -393,7 +397,10 @@ def as_html(result):
                 'reeks: ' + str(item["consecutive_recent_samples"]) + ' · ' +
                 ('actueel gezien' if item["current_sample_observed"] else
                  'huidige bron ONBEKEND / niet opgelost') +
-                ' · actie: ' + escape(item["next_gate"]) + '</small></article>')
+                (' · na eerdere ontbrekende bron opnieuw gezien'
+                 if item["reappeared_after_gap"] else '') +
+                ' · actie: ' + escape(item["next_gate"]) + '</small><p>' +
+                source_links + '</p></article>')
         cards.insert(0, '<section><h2>Herhaald herstelwerk · ' +
                      str(result["history_sample_count"]) + ' bronmomenten</h2>' +
                      ('<p class="alert">Verschillende projectvensters: verdwenen is'
