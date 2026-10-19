@@ -73,6 +73,12 @@ def read_pinned_issues(inbox, registry, selected, pins, token=None):
     now = datetime.now(timezone.utc)
     for pid, number, repo in numbered:
         original = existing.get((pid, number))
+        # An exact targeted observation supersedes an earlier partial list
+        # entry. If the target is closed/denied/unavailable, an older sampled
+        # "open" row must NOT survive as a fresh pinned blocker.
+        items = [row for row in items if not (
+            isinstance(row, dict) and row.get("project") == pid
+            and row.get("number") == number)]
         if denied:
             receipts.append({"project_id": pid, "issue_number": number,
                              "coverage": "not_queried_after_auth_or_rate_limit",
@@ -115,9 +121,6 @@ def read_pinned_issues(inbox, registry, selected, pins, token=None):
                 "url": canonical_url, "state": "open",
                 "pinned_exact_issue_read": True,
             }
-            items = [row for row in items if not (
-                isinstance(row, dict) and row.get("project") == pid
-                and row.get("number") == number)]
             items.append(replacement)
             receipts.append({"project_id": pid, "issue_number": number,
                              "coverage": ("observed_open_qa_only" if qa_only
