@@ -433,6 +433,34 @@ Issue: [#1518](https://github.com/Zennay/zCloud/issues/1518). Still subject to
 independent exact-head CI, review, protected main and serialized release.
 No regression or QA suites were authored or manually run.
 
+## Issue-first triage for missing PR references (19 October 2026)
+
+The existing **zSentinel product delivery board** now places a bounded
+**High-impact issues with no linked PR in sampled evidence** group above the
+complete P0/P1 issue list. It highlights at most eight fair examples from
+canonical project issue receipts, preferring P0 before P1. Each row links to
+the *existing* GitHub issue and labels the finding accurately: **no open PR
+relationship in bounded sampled metadata, ownership unknown, review only**.
+A missing PR link is **never** interpreted as an unclaimed lane or permission
+to create a competing branch. A matching PR mention is likewise not a merge
+or code-ownership attestation.
+
+The board also explicitly lists canonical project issue sources that have
+**not been observed** in this browser session, rather than silently treating
+the partial 13-project issue sample as a complete portfolio inventory.
+When no sampled unlinked issues exist, the UI warns that this is not proof all
+issues are owned. Project-source collection remains operator initiated and
+bounded; there is no autonomous claim, PR merge, GitHub write or new polling.
+The first screen is prioritized by product blocker rather than Activity
+history, while exact source freshness and the existing admission boundaries
+remain visible.
+
+This implementation is part of the same current-main Activity product
+integration [PR #1550](https://github.com/Zennay/zCloud/pull/1550), not a
+separate ownership takeover or a production deployment. Source pin updated,
+normal exact-head CI/review and serialized deployment gates unchanged.
+No standalone QA or regression suite authored or invoked.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
