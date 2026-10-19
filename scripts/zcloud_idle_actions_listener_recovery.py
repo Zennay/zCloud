@@ -174,7 +174,8 @@ def rescue(lane: str, apply: bool) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lane", choices=[*UNITS, "both"], default="both")
+    parser.add_argument("--lane", choices=[*UNITS, "both"], default="zcloud",
+                        help="Explicit target; defaults to zcloud, never starts FTMO implicitly")
     parser.add_argument("--apply", action="store_true", help="Start only verifiably inactive runners")
     args = parser.parse_args()
     if socket.gethostname() != "vps-bb300bba" or call("id", "-un") != "ubuntu":
