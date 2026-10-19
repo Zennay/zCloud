@@ -397,7 +397,7 @@ function drawDetail(){
  const note=elem('textarea');note.id='note';note.maxLength=1000;note.rows=5;
  const saved=handoffs.get(selected);sel.value=saved?.decision||'investigate';note.value=saved?.note||'';
  detail.append(label,sel,nlabel,note);
- sel.addEventListener('change',()=>{saveSelection();invalidateBrief();refreshTriage()});
+ sel.addEventListener('change',()=>{saveSelection();invalidateBrief();drawList()});
  note.addEventListener('input',()=>{saveSelection();invalidateBrief();refreshTriage()});
 }
 ['search','priority','project','disposition'].forEach(id=>document.getElementById(id).addEventListener(
