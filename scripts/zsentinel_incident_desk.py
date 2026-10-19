@@ -179,6 +179,7 @@ Geen workflow, GitHub-write, calendar push, Notion-write, lease of deploy.</p>
 <p class="meta" id="freshness"></p></header>
 <div class="controls row">
 <label>Project<select id="project"><option value="">Alle projecten</option></select></label>
+<label>Eigenaar<select id="owner"><option value="">Alle eigenaren</option></select></label>
 <label>Ernst<select id="priority"><option value="">Alle prioriteiten</option>
 <option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label>
 <label>Soort<select id="human"><option value="">Alle blokkades</option>
@@ -186,6 +187,9 @@ Geen workflow, GitHub-write, calendar push, Notion-write, lease of deploy.</p>
 <label>Zoeken<input id="query" type="search" maxlength="80" placeholder="Project of probleem"></label>
 </div>
 <p id="count" aria-live="polite"></p>
+<section class="panel" aria-label="Human escalation overview"><h2>Wie heeft actie nodig?</h2>
+<p class="meta">Alleen huidige gedeeltelijke bron: eigenaarverdeling is geen eigenaarsbewijs of werktoewijzing.</p>
+<div id="ownerSummary"></div></section>
 <div class="grid"><div><h2>Actuele bronincidenten</h2><div class="scroll" id="items"></div></div>
 <div><h2>Menselijke opvolging</h2><section id="detail" class="panel">
 <p>Selecteer een incident. Geen incident geselecteerd betekent niet dat het portfolio gezond is.</p></section>
@@ -195,7 +199,13 @@ Import van een ander bronmoment verandert niets.</p>
 <div class="row"><button id="export" type="button">Download overdracht</button>
 <label>Heropen exact dezelfde bron <input id="import" type="file" accept=".json,application/json"></label>
 <label>Herbruik oude notities (opnieuw beoordelen) <input id="carry" type="file" accept=".json,application/json"></label></div>
-<p id="feedback" aria-live="polite"></p></section></div></div>
+<p id="feedback" aria-live="polite"></p></section>
+<section class="panel controls" aria-label="Source-bound human briefing"><h2>Privé briefing per eigenaar</h2>
+<p>Alleen gefilterde incidenten die menselijke actie nodig hebben. Voorvertoning bevat mogelijk privénotities; deel uitsluitend bewust.</p>
+<div class="row"><button id="previewBrief" type="button">Voorvertoning maken</button>
+<button id="downloadBrief" type="button" disabled>Download deze briefing (.md)</button></div>
+<pre id="briefText" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto"></pre>
+<p id="briefStatus" class="meta" aria-live="polite">Geen briefing voorbereid.</p></section></div></div>
 <footer><p class="meta">Een ontbrekend incident kan door incomplete GitHub-bron, rate-limit,
 scope of tijdvenster komen. Een lokale opvolgstatus bewijst geen eigenaargoedkeuring
 of systeemherstel. Bronstatus blijft ongewijzigd.</p></footer>
@@ -214,17 +224,36 @@ function isFresh(){
  const msg=(delta<0?"Systeemklok wijkt af;":delta>600000?"OUDER DAN 10 MINUTEN;":"Momentopname;");
  $("freshness").textContent=msg+" bron "+source.observed_at+"; dekking altijd gedeeltelijk. Bron-ID "+source.fingerprint.slice(0,12)+".";
 }
+for(const owner of [...new Set(source.incidents.map(i=>i.owner))].sort()){
+ const opt=el("option",owner);opt.value=owner;$("owner").append(opt);
+}
 for(const p of [...new Set(source.incidents.map(i=>i.project))].sort()){
  const opt=el("option",p);opt.value=p;$("project").append(opt);
 }
 function filtered(){const q=$("query").value.trim().toLowerCase();return source.incidents.filter(x=>
  (!$("project").value||x.project===$("project").value)&&
+ (!$("owner").value||x.owner===$("owner").value)&&
  (!$("priority").value||x.priority===$("priority").value)&&
  (!$("human").value||(x.human?"yes":"no")===$("human").value)&&
  (!q||(x.project+" "+x.problem+" "+x.owner).toLowerCase().includes(q)));
 }
 function render(){
+ invalidateBrief();
  $("items").replaceChildren();
+ $("ownerSummary").replaceChildren();
+ const assigned=new Map();
+ for(const x of filtered().filter(x=>x.human)){
+  const counts=assigned.get(x.owner)||{p0:0,p1:0,other:0};
+  if(x.priority==="P0")counts.p0++;
+  else if(x.priority==="P1")counts.p1++;
+  else counts.other++;
+  assigned.set(x.owner,counts);
+ }
+ if(!assigned.size)$("ownerSummary").append(el("p","Geen geobserveerde mens-afhankelijke incidenten in dit filter. Dekking blijft onvolledig."));
+ for(const [owner,counts] of [...assigned.entries()].sort((a,b)=>b[1].p0-a[1].p0||b[1].p1-a[1].p1||a[0].localeCompare(b[0]))){
+  const p=el("p",owner+" · P0: "+counts.p0+" · P1: "+counts.p1+" · overige: "+counts.other);
+  $("ownerSummary").append(p);
+ }
  const rows=filtered();$("count").textContent=rows.length+" incidenten binnen huidig filter (bronmaximaal "+source.incidents.length+").";
  if(!rows.length)$("items").append(el("p","Geen bronincidenten in dit filter. Geen all-clear."));
  for(const x of rows){
@@ -247,15 +276,15 @@ function render(){
  const sl=el("label","Mijn opvolgstatus (alleen privé)");const sel=el("select");
  for(const c of choices){const o=el("option",c.replaceAll("-"," "));o.value=c;sel.append(o)}
  sel.value=notes[x.id]?.status||choices[0];
- sel.onchange=()=>{if(!notes[x.id])notes[x.id]={status:choices[0],note:""};notes[x.id].status=sel.value;$("feedback").textContent="Lokale status aangepast, niet doorgestuurd."};
+ sel.onchange=()=>{if(!notes[x.id])notes[x.id]={status:choices[0],note:""};notes[x.id].status=sel.value;invalidateBrief();$("feedback").textContent="Lokale status aangepast, niet doorgestuurd."};
  sl.append(sel);box.append(sl);
  const nl=el("label","Mijn privénotitie (maximaal 800 tekens)");
  const ta=el("textarea");ta.maxLength=800;ta.value=notes[x.id]?.note||"";
- ta.oninput=()=>{if(!notes[x.id])notes[x.id]={status:choices[0],note:""};notes[x.id].note=ta.value;$("feedback").textContent="Notitie alleen in dit tabblad."};
+ ta.oninput=()=>{if(!notes[x.id])notes[x.id]={status:choices[0],note:""};notes[x.id].note=ta.value;invalidateBrief();$("feedback").textContent="Notitie alleen in dit tabblad."};
  nl.append(ta);box.append(nl);
  box.append(el("small","Dit verandert NIET de incidentstatus, CI, PR, eigenaar of queue."));
 }
-for(const id of ["project","priority","human","query"])$(id).addEventListener(id==="query"?"input":"change",render);
+for(const id of ["project","owner","priority","human","query"])$(id).addEventListener(id==="query"?"input":"change",render);
 function download(obj){
  const str=JSON.stringify(obj,null,2);if(new TextEncoder().encode(str).byteLength>1000000)throw Error("Overdracht te groot");
  const url=URL.createObjectURL(new Blob([str+"\n"],{type:"application/json"}));
@@ -334,6 +363,85 @@ $("carry").onchange=async event=>{
   render();
  }catch(_){$("feedback").textContent="Oude overdracht geweigerd: bron, tijd, incident-ID of notities niet bruikbaar.";}
  finally{event.target.value="";}
+};
+let lastBrief=null;
+function invalidateBrief(){
+ lastBrief=null;
+ if($("downloadBrief"))$("downloadBrief").disabled=true;
+ if($("briefStatus"))$("briefStatus").textContent="Bron, filter of notities gewijzigd: maak een nieuwe voorvertoning.";
+ if($("briefText"))$("briefText").textContent="";
+}
+function mdText(text){
+ // GitHub/Notion are NOT sent these values. Treat both source text and
+ // private notes as plain Markdown text without active links/formatting.
+ return String(text).replace(/[\\<>{}[\]#*_|`!]/g,"\\isFresh();render();
+</script></html>"""")
+                    .replace(/\r/g,"").replace(/\n/g,"\n> ");
+}
+function briefScope(){
+ const rows=filtered().filter(x=>x.human);
+ // Include source identity, each selected human incident and complete
+ // local follow-up state in the preview binding. Never imply current claims.
+ return JSON.stringify({source:source.fingerprint,time:source.observed_at,
+  rows:rows.map(x=>({id:x.id,notes:notes[x.id]||null})),
+  filter:[$("owner").value,$("project").value,$("priority").value,$("human").value,$("query").value]});
+}
+function makeBrief(){
+ const selectedRows=filtered().filter(x=>x.human);
+ if(!selectedRows.length)throw Error("Geen menselijke incidenten in het filter");
+ const head=[
+ "# zSentinel · privé overdracht voor menselijke opvolging",
+ "",
+ "> Niet geautoriseerd voor claims, merges, betaling, CI-retries of productieherstel.",
+ "> Bron is een gedeeltelijke momentopname; verdwenen/ontbrekende issues zijn niet opgelost.",
+ "",
+ "- Bron SHA-256: "+source.fingerprint,
+ "- Bronmoment UTC: "+source.observed_at,
+ "- Huidige filterselectie: "+selectedRows.length+" menselijke incidenten",
+ "- Eigenaarfilter: "+mdText($("owner").value||"alle"),
+ "- Projectfilter: "+mdText($("project").value||"alle"),
+ "- Prioriteitfilter: "+mdText($("priority").value||"alle"),
+ "",
+ ];
+ for(const x of selectedRows){
+  const user=notes[x.id]||{status:choices[0],note:""};
+  if(!choices.includes(user.status)||typeof user.note!=="string"||
+      user.note.length>800||/[\u0000-\u0009\u000B-\u001F\u007F]/u.test(user.note))
+    throw Error("Ongeldige privénotitie");
+  head.push("## "+mdText(x.priority+" · "+x.project+" · "+x.problem),
+    "- Bronincident: "+x.id,
+    "- Eigenaar (bronlabel, niet geverifieerd): "+mdText(x.owner),
+    "- Actie (bronadvies): "+mdText(x.action),
+    "- Feitelijke bronstatus: "+mdText(x.status),
+    "- Laatste bronwaarneming: "+x.last,
+    "- Beoordelingsdoel (geen agenda): "+x.review_by,
+    "- Lokale opvolgstatus (geen eigenaarsbewijs): "+mdText(user.status),
+    "- Privénotitie: "+(user.note.trim()?"> "+mdText(user.note):"geen"),"");
+ }
+ head.push("---","Geen verzending, geautomatiseerde dispatch, autorisatie, ACK of herstelstatuswijziging.","");
+ const result=head.join("\n");
+ if(new TextEncoder().encode(result).byteLength>500000)throw Error("Briefing groter dan 500 KiB");
+ return result;
+}
+$("previewBrief").onclick=()=>{
+ try{
+  const md=makeBrief();lastBrief={signature:briefScope(),content:md};
+  $("briefText").textContent=md;
+  $("briefStatus").textContent="Voorvertoning: "+filtered().filter(x=>x.human).length+
+     " bronincidenten. Beoordeel de privé-inhoud voordat je downloadt.";
+  $("downloadBrief").disabled=false;
+ }catch(_){invalidateBrief();$("briefStatus").textContent="Briefing niet beschikbaar voor dit filter of ongeldige notities.";}
+};
+$("downloadBrief").onclick=()=>{
+ try{
+  if(!lastBrief||lastBrief.signature!==briefScope()||lastBrief.content!==makeBrief())
+    throw Error("Preview is verouderd");
+  const url=URL.createObjectURL(new Blob([lastBrief.content],{type:"text/markdown;charset=utf-8"}));
+  const a=el("a");a.href=url;a.download="zsentinel-private-human-briefing.md";
+  document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  $("briefStatus").textContent="Privébriefing aangeboden. Niets verstuurd of goedgekeurd.";
+ }catch(_){invalidateBrief();$("briefStatus").textContent="Voorvertoning verlopen. Controleer filters en maak opnieuw.";}
 };
 isFresh();render();
 </script></html>"""
