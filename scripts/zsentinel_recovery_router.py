@@ -634,7 +634,11 @@ def plan(bundle, previous=None, now=None):
 
 def operator_text(result):
     lines = ["zSentinel recovery routing — source observations, NOT live authority"]
-    for item in result["incidents"]:
+    ordered = sorted(result["incidents"], key=lambda row: (
+        0 if row["severity"] == "P0" else 1,
+        row["target_review_by"], row["incident_id"],
+    ))
+    for item in ordered:
         lines.extend((
             f"{item['severity']} {item['project_id']} · {item['problem']}",
             f"Action ({item['owner']}): {item['action']}",
