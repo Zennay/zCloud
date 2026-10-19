@@ -27,6 +27,17 @@ MAX_STATUSES = 30
 MAX_CALLS = 5 * MAX_PRS
 FAILURE = {"failure", "timed_out", "cancelled", "action_required"}
 
+NEXT_ACTION_NL = {
+    "finish_existing_draft_with_owner": "Rond bestaande concept-PR af met eigenaar.",
+    "resolve_exact_head_review_with_owner": "Verwerk wijzigingsverzoeken van huidige source head met eigenaar.",
+    "fix_exact_head_ci_with_owner": "Los de daadwerkelijk falende head-checks op met eigenaar.",
+    "inspect_unlisted_status_contexts_with_owner": "Gecombineerde GitHub-status meldt fout; open actuele PR-checks met eigenaar, want context staat niet in de beperkte steekproef.",
+    "wait_for_complete_exact_head_ci": "Wacht op ontbrekende of lopende exact-head CI; blijf aan ander werk bouwen.",
+    "request_independent_review": "Vraag onafhankelijke review; geen automatische merge.",
+    "confirm_branch_protection_and_release_with_owner": "Laat eigenaar volledige branchebescherming en releasevoorwaarden controleren.",
+    "verify_pr_source_with_owner": "PR-bron onvoldoende bereikbaar; eigenaar moet actuele GitHub-status controleren.",
+}
+
 
 def _number(value):
     if type(value) is not int or not 1 <= value <= 100000000:
@@ -385,16 +396,7 @@ def pr_delivery_html(report):
             or type(report.get("items")) is not list
             or len(report["items"]) > MAX_PRS):
         raise ValueError("invalid PR desk receipt")
-    labels = {
-        "finish_existing_draft_with_owner": "Rond bestaande concept-PR af met eigenaar.",
-        "resolve_exact_head_review_with_owner": "Verwerk wijzigingsverzoeken van huidige source head met eigenaar.",
-        "fix_exact_head_ci_with_owner": "Los de daadwerkelijk falende head-checks op met eigenaar.",
-        "inspect_unlisted_status_contexts_with_owner": "Gecombineerde GitHub-status meldt fout; open actuele PR-checks met eigenaar, want context staat niet in de beperkte steekproef.",
-        "wait_for_complete_exact_head_ci": "Wacht op ontbrekende of lopende exact-head CI; blijf aan ander werk bouwen.",
-        "request_independent_review": "Vraag onafhankelijke review; geen automatische merge.",
-        "confirm_branch_protection_and_release_with_owner": "Laat eigenaar volledige branchebescherming en releasevoorwaarden controleren.",
-        "verify_pr_source_with_owner": "PR-bron onvoldoende bereikbaar; eigenaar moet actuele GitHub-status controleren.",
-    }
+    labels = NEXT_ACTION_NL
     cards = []
     for row in report["items"]:
         if (not isinstance(row, dict) or row.get("source") != "github_exact_pr_readonly"
@@ -533,6 +535,84 @@ def standalone_html(report):
     )
 
 
+def _markdown_literal(value, limit=180):
+    """Escape source text so PR titles/context names are not Markdown markup."""
+    safe = str(value or "")[:limit].replace("\\r", " ").replace("\\n", " ")
+    return re.sub(r"([\\\\\\`*_{}\\[\\]()#+\\-.!|>])", r"\\\\\\1", safe)
+
+
+def handoff_markdown(report):
+    """Explicit offline human handoff; no claims, review requests or writes."""
+    if (not isinstance(report, dict)
+            or report.get("schema") != "zsentinel-pr-delivery-desk-v1"
+            or report.get("merge_authorized") is not False
+            or report.get("writes_performed") is not False
+            or not isinstance(report.get("items"), list)
+            or len(report["items"]) > MAX_PRS):
+        raise ValueError("invalid PR handoff source")
+    stamp = report.get("observed_at_utc")
+    if not isinstance(stamp, str) or len(stamp) > 40:
+        raise ValueError("invalid PR source time")
+    lines = [
+        "# zSentinel · Bestaande PR's: menselijke overdracht",
+        "",
+        "Bronmoment UTC: " + _markdown_literal(stamp, 40) + ". Alleen een beperkte GitHub-momentopname.",
+        "**Geen toestemming voor merge, claim, CI-retry, release of deploy.**",
+        "Controleer de actuele eigenaar, complete required checks, onafhankelijke review en branch protection bij uitvoering.",
+    ]
+    for item in report["items"]:
+        if (not isinstance(item, dict)
+                or item.get("source") != "github_exact_pr_readonly"
+                or item.get("merge_authorized") is not False
+                or item.get("next_step") not in NEXT_ACTION_NL
+                or not isinstance(item.get("repository"), str)
+                or not OWNER_REPO.fullmatch(item["repository"])):
+            raise ValueError("invalid PR handoff item")
+        repo = item["repository"]
+        number = _number(item.get("pr_number"))
+        url = "https://github.com/" + repo + "/pull/" + str(number)
+        if item.get("url") != url:
+            raise ValueError("PR handoff URL not canonical")
+        sha = item.get("head_sha")
+        sha_label = _sha(sha) if sha is not None else "ONBEKEND"
+        title = _markdown_literal(item.get("title") or "Bronmetadata onbekend")
+        ci = item.get("ci") or {}
+        legacy = item.get("legacy_status_contexts") or {}
+        reviews = item.get("reviews") or {}
+        if not all(isinstance(section, dict) for section in (ci, legacy, reviews)):
+            raise ValueError("invalid PR handoff details")
+        lines.extend([
+            "",
+            "## [" + title + " · #" + str(number) + "](" + url + ")",
+            "",
+            "- **Probleem:** bestaande PR nog niet bewezen release-klaar; "
+            + _markdown_literal(item.get("coverage"), 80) + ".",
+            "- **Actie:** " + _markdown_literal(NEXT_ACTION_NL[item["next_step"]]),
+            "- **Status:** head \`" + sha_label + "\`; onafhankelijke review/release niet geautoriseerd.",
+            "- **Checks:** waargenomen " + str(ci.get("sampled", "onbekend"))
+            + " / " + str(ci.get("total_reported", "onbekend"))
+            + "; klassieke gecombineerd " + _markdown_literal(legacy.get("combined_observed", "onbekend"), 30)
+            + "; head-approvals gezien " + str(reviews.get("same_head_approvals_seen", "onbekend")) + ".",
+        ])
+        for source, bucket in (("check-run", ci), ("klassieke status", legacy)):
+            for state in ("failed", "pending", "inconclusive"):
+                values = bucket.get(state, [])
+                if not isinstance(values, list) or len(values) > 8:
+                    raise ValueError("invalid bounded PR handoff evidence")
+                for name in values:
+                    lines.append("  - " + source + " " + state + ": "
+                                 + _markdown_literal(name))
+        if legacy.get("page_truncated_or_unknown"):
+            lines.append("  - Klassieke statuspagina afgekapt: onbekende contexts kunnen ontbreken.")
+        if item.get("source_gap"):
+            lines.append("  - Bronprobleem: " + _markdown_literal(item["source_gap"], 120))
+        lines.append("- **Bron:** [Open actuele PR en checks](" + url + "/checks).")
+    if not report["items"]:
+        lines.extend(["", "Geen geselecteerde PR's; dit bewijst niet dat er geen open PR's zijn."])
+    lines.extend(["", "_Alle acties zijn menselijk en brongebonden; dit document voert niets uit._", ""])
+    return "\\n".join(lines)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Offline operator output for bounded, live-read GitHub PR metadata")
@@ -543,7 +623,7 @@ def main(argv=None):
                         help="canonical project to sample for existing open PRs")
     parser.add_argument("--discover-open", action="store_true",
                         help="read one bounded open-PR window per project before further source work")
-    parser.add_argument("--format", choices=("html", "json", "text"), default="html")
+    parser.add_argument("--format", choices=("html", "json", "text", "md"), default="html")
     args = parser.parse_args(argv)
     try:
         if len(args.pr) > MAX_PRS:
@@ -588,6 +668,8 @@ def main(argv=None):
             output = standalone_html(report)
         elif args.format == "json":
             output = json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2)
+        elif args.format == "md":
+            output = handoff_markdown(report)
         else:
             lines = ["zSentinel · bestaande PR-afronding; maximaal 3 read-only bronnen"]
             if discovery is not None:
