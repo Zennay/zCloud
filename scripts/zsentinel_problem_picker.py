@@ -171,42 +171,81 @@ def next_problems(summary, decision, selected):
     }
 
 
+def link_existing_pr_actions(result, pr_desk):
+    """Enrich sampled issues only with already observed exact-head PR receipts.
+
+    This is evidence for the operator, not issue resolution or permission to
+    merge, take a claim, or start work. The original decision is not mutated.
+    """
+    if (not isinstance(result, dict)
+            or result.get("schema") != "zsentinel-next-problems-v1"
+            or result.get("dispatch_authorized") is not False
+            or result.get("writes_performed") is not False
+            or not isinstance(result.get("items"), list)
+            or len(result["items"]) > MAX_NEXT):
+        raise ValueError("untrusted issue shortlist")
+    if pr_desk is None:
+        return result
+    if (not isinstance(pr_desk, dict)
+            or pr_desk.get("schema") != "zsentinel-pr-delivery-desk-v1"
+            or pr_desk.get("merge_authorized") is not False
+            or pr_desk.get("writes_performed") is not False
+            or not isinstance(pr_desk.get("items"), list)
+            or len(pr_desk["items"]) > 3):
+        raise ValueError("untrusted exact-head PR receipts")
+    from zsentinel_pr_delivery import NEXT_ACTION_NL
+    guidance = {}
+    for pr in pr_desk["items"]:
+        if (not isinstance(pr, dict)
+                or pr.get("source") != "github_exact_pr_readonly"
+                or pr.get("merge_authorized") is not False
+                or pr.get("next_step") not in NEXT_ACTION_NL
+                or not isinstance(pr.get("url"), str)
+                or not PR_URL.fullmatch(pr["url"])
+                or pr["url"] in guidance):
+            raise ValueError("invalid or duplicate PR receipt")
+        sha = pr.get("head_sha")
+        if sha is not None and (not isinstance(sha, str)
+                                or not re.fullmatch(r"[a-f0-9]{40}", sha)):
+            raise ValueError("untrusted observed PR SHA")
+        current = pr.get("coverage") == "bounded_exact_head_review_and_checks"
+        guidance[pr["url"]] = {
+            "pr_url": pr["url"],
+            "observed_head_sha": sha if current else None,
+            "coverage": pr.get("coverage") if current else "source_incomplete",
+            "next_step": pr["next_step"] if current else "verify_pr_source_with_owner",
+            "next_action": (NEXT_ACTION_NL[pr["next_step"]] if current else
+                            "PR-bron onvolledig; laat huidige head met eigenaar controleren."),
+            "issue_fix_verified": False,
+            "owner_verified": False,
+            "merge_authorized": False,
+        }
+    items = []
+    for issue in result["items"]:
+        if (not isinstance(issue, dict)
+                or not isinstance(issue.get("issue_url"), str)
+                or not ISSUE_URL.fullmatch(issue["issue_url"])
+                or not isinstance(issue.get("related_open_prs"), list)
+                or len(issue["related_open_prs"]) > 3):
+            raise ValueError("invalid sampled product issue")
+        repo_prefix = issue["issue_url"].split("/issues/")[0] + "/pull/"
+        linked = []
+        for url in issue["related_open_prs"]:
+            if (not isinstance(url, str) or not PR_URL.fullmatch(url)
+                    or not url.startswith(repo_prefix)):
+                raise ValueError("invalid cross-repository PR reference")
+            if url in guidance and all(x["pr_url"] != url for x in linked):
+                linked.append(dict(guidance[url]))
+        items.append({**issue, "inspected_linked_prs": linked})
+    return {**result, "items": items}
+
+
 def problems_html(result, pr_desk=None):
+    result = link_existing_pr_actions(result, pr_desk)
     if (result.get("schema") != "zsentinel-next-problems-v1"
             or result.get("dispatch_authorized") is not False
             or result.get("writes_performed") is not False):
         raise ValueError("untrusted problem picker output")
-    pr_guidance = {}
-    if pr_desk is not None:
-        # Optional exact-head PR receipts already collected by the portfolio.
-        # Never infer that a referenced PR fixes the issue, or that a check is
-        # required/green from these bounded observations.
-        if (not isinstance(pr_desk, dict)
-                or pr_desk.get("schema") != "zsentinel-pr-delivery-desk-v1"
-                or pr_desk.get("merge_authorized") is not False
-                or pr_desk.get("writes_performed") is not False
-                or not isinstance(pr_desk.get("items"), list)
-                or len(pr_desk["items"]) > 3):
-            raise ValueError("untrusted optional PR delivery source")
-        from zsentinel_pr_delivery import NEXT_ACTION_NL
-        for pr in pr_desk["items"]:
-            if (not isinstance(pr, dict)
-                    or pr.get("source") != "github_exact_pr_readonly"
-                    or pr.get("merge_authorized") is not False
-                    or pr.get("next_step") not in NEXT_ACTION_NL
-                    or not isinstance(pr.get("url"), str)
-                    or not PR_URL.fullmatch(pr["url"])
-                    or pr["url"] in pr_guidance):
-                raise ValueError("invalid or duplicate exact-head PR receipt")
-            sha = pr.get("head_sha")
-            if sha is not None and (not isinstance(sha, str)
-                                    or not re.fullmatch(r"[a-f0-9]{40}", sha)):
-                raise ValueError("invalid observed PR source SHA")
-            pr_guidance[pr["url"]] = {
-                "coverage": pr.get("coverage"),
-                "next_action": NEXT_ACTION_NL[pr["next_step"]],
-                "head": sha[:12] if sha else "ONBEKEND",
-            }
     rows = []
     for issue in result["items"]:
         url = escape(issue["issue_url"], quote=True)
@@ -217,14 +256,15 @@ def problems_html(result, pr_desk=None):
             for link in issue["related_open_prs"]
         )
         observed = []
-        for linked in issue["related_open_prs"]:
-            pr = pr_guidance.get(linked)
-            if pr is None:
-                continue
-            current = pr["coverage"] == "bounded_exact_head_review_and_checks"
-            observed.append('<li><strong>' + escape(pr["head"]) + '</strong> · ' +
-                            escape(pr["next_action"] if current else
-                                   "PR-bron onvolledig; laat huidige head met eigenaar controleren.") +
+        for receipt in issue.get("inspected_linked_prs", []):
+            if (not isinstance(receipt, dict)
+                    or receipt.get("issue_fix_verified") is not False
+                    or receipt.get("merge_authorized") is not False):
+                raise ValueError("unauthorized linked PR evidence")
+            sha = receipt.get("observed_head_sha")
+            observed.append('<li><strong>' +
+                            escape(sha[:12] if sha else "ONBEKEND") +
+                            '</strong> · ' + escape(receipt["next_action"]) +
                             ' · Alleen PR-inspectie, geen issuefix of merge bewezen.</li>')
         evidence = (('<details><summary>Bestaande PR · actuele bronactie (' +
                      str(len(observed)) + ')</summary><ul>' +
