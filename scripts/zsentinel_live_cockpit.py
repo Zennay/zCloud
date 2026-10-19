@@ -137,6 +137,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
                            + discovery["request_count"] + len(validated_pins),
         "ci_discovery":discovery,
         "github_budget_is_per_invocation_not_global": True,
+        "pinned_requested": len(validated_pins),
     }
     if include_notion:
         # Status visibility only: Notion rows contain no current file-scope
@@ -256,7 +257,13 @@ def main():
         decision["private_ledger_written"] = bool(args.state)
         if args.format == "html":
             from zsentinel_recovery_view import html_view
+            from zsentinel_pinned_issue import pinned_receipts_html
             rendered = html_view(decision)
+            if args.pin_issue:
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible pinned-source cockpit HTML")
+                rendered = rendered.replace("<main>",
+                                            "<main>" + pinned_receipts_html(provenance), 1)
             if args.github_only:
                 if rendered.count("<main>") != 1:
                     raise ValueError("incompatible offline cockpit HTML")
@@ -275,6 +282,9 @@ def main():
             rendered = review_html(decision)
         else:
             lines = [operator_text(decision)]
+            if args.pin_issue:
+                from zsentinel_pinned_issue import pinned_receipts_text
+                lines.insert(0, pinned_receipts_text(provenance))
             if args.github_only:
                 lines.insert(0, "QUEUE: NIET WAARGENOMEN (--github-only); claims en werkhervatting ONBEKEND.")
             if provenance["notion"] == "claim_status_observed_no_file_ownership":
