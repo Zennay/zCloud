@@ -243,6 +243,21 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             "worker_resumed_verified": False, "permission_to_recover": False,
             "owner_claim_verified": False,
         })
+    # Fresh incident and queue/PR evidence must not be starved by dozens
+    # of historical, possibly obsolete cards. This is a triage order, NOT
+    # any evidence that a source is resolved, owned or safe to mutate.
+    order = {
+        "verified_source_incident_not_runtime_recovery": 0,
+        "queue_pressure_not_proven_outage": 1,
+        "existing_product_pr_gate_inspection_only": 2,
+        "historical_not_reconciled": 3,
+    }
+    cards.sort(key=lambda c: (
+        order[c["kind"]],
+        PRIORITY[c["priority"]],
+        c["project_id"],
+        c["id"],
+    ))
     # No unbounded operator page; the *counts* retain the truth of truncation.
     shown = cards[:12]
     fallback = []
