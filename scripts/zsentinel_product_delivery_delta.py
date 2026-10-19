@@ -65,6 +65,30 @@ def metric(row, name):
     return value
 
 
+def pr_rows(source):
+    rows = source.get("pr_delivery_observations", [])
+    if type(rows) is not list or len(rows) > 5:
+        raise ValueError("invalid bounded PR gate evidence")
+    result = {}
+    for row in rows:
+        if type(row) is not dict or row.get("merge_authorized") is not False:
+            raise ValueError("PR evidence attempted release authority")
+        url, sha = row.get("url"), row.get("head_sha")
+        if (type(url) is not str or not URL.fullmatch(url)
+                or "/pull/" not in url
+                or type(sha) is not str or len(sha) != 40
+                or any(char not in "0123456789abcdef" for char in sha)
+                or url in result):
+            raise ValueError("ambiguous PR source identity")
+        if type(row.get("observed_check_success")) is not bool:
+            raise ValueError("invalid CI observation")
+        approvals = row.get("observed_approvals")
+        if type(approvals) is not int or not 0 <= approvals <= 100:
+            raise ValueError("invalid approval evidence")
+        result[url] = row
+    return result
+
+
 def compare(previous, current):
     if (previous.get("authorizes_claim") is not False or
         current.get("authorizes_claim") is not False or
@@ -108,6 +132,29 @@ def compare(previous, current):
                 "candidate_prs_after": right["open_pr_candidates"],
                 "interpretation": "issue_or_pr_reference_changed_not_integrated_or_reviewed",
             })
+    previous_prs, current_prs = pr_rows(previous), pr_rows(current)
+    pr_movements = []
+    for link in sorted(set(previous_prs) | set(current_prs)):
+        left, right = previous_prs.get(link), current_prs.get(link)
+        if left is None or right is None:
+            pr_movements.append({
+                "url": link,
+                "kind": "pr_not_sampled_in_one_snapshot_not_open_or_closed_proof",
+                "head_changed": None, "observed_check_changed": None,
+                "approval_count_changed": None,
+            })
+        elif (left["head_sha"] != right["head_sha"] or
+              left["observed_check_success"] != right["observed_check_success"] or
+              left["observed_approvals"] != right["observed_approvals"]):
+            pr_movements.append({
+                "url": link,
+                "kind": "exact_head_or_check_or_review_observation_changed",
+                "head_changed": left["head_sha"] != right["head_sha"],
+                "observed_check_changed": (
+                    left["observed_check_success"] != right["observed_check_success"]),
+                "approval_count_changed": (
+                    right["observed_approvals"] - left["observed_approvals"]),
+            })
     project_deltas = []
     for project in sorted(before_projects):
         left, right = before_projects[project], after_projects[project]
@@ -132,6 +179,8 @@ def compare(previous, current):
         "not_seen_in_current_sample": absent,
         "changed_issue_or_pr_references": changed,
         "project_queue_deltas": project_deltas,
+        "pr_gate_observation_changes": pr_movements,
+        "prs_integrated_inferred": False,
         "issues_resolved_inferred": False,
         "claims_released_inferred": False,
         "workflow_restarted": False,
@@ -162,6 +211,9 @@ def md(data):
                    " → " + row["priority_after"] +
                    " · PR candidates " + str(len(row["candidate_prs_before"])) +
                    " → " + str(len(row["candidate_prs_after"])))
+    out.extend(["", "## Exact-head PR/approval changes (NOT merge proof)"])
+    for item in data["pr_gate_observation_changes"]:
+        out.append("- " + item["url"] + " · " + item["kind"])
     out.extend(["", "## Project queue changes",
                 "| Project | Active Δ | High claim cycles Δ | Expired lease Δ |",
                 "|---|---:|---:|---:|"])
@@ -178,6 +230,10 @@ def html(data):
     def listing(items, message):
         return ("".join("<li>" + escape(row["issue"]) + "</li>" for row in items)
                 or "<li>" + escape(message) + "</li>")
+    pr_changes = "".join(
+        "<li>" + escape(row["url"]) + " · " + escape(row["kind"]) +
+        "</li>" for row in data["pr_gate_observation_changes"]
+    ) or "<li>No observed change</li>"
     deltas = "".join(
         "<tr><td>" + escape(row["project"]) + "</td>" +
         "".join("<td>" + escape("unknown" if row["queue_deltas"][key] is None else
@@ -201,6 +257,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:8px;text-align:left;bord
             listing(data["not_seen_in_current_sample"], "None in bounded sample") +
             '</ul></section><section><h2>PR / issue references changed</h2><ul>' +
             listing(data["changed_issue_or_pr_references"], "None observed") +
+            '</ul></section><section><h2>PR exact-head/review observation movement</h2><ul>' +
+            pr_changes +
             '</ul></section><section><h2>Queue movement</h2><div class="scroll">'
             '<table><tr><th>Project</th><th>Active Δ</th><th>High claim cycles Δ</th>'
             '<th>Expired leases Δ</th></tr>' + deltas +
