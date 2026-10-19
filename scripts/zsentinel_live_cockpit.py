@@ -172,7 +172,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
     if include_issues:
         try:
             inbox = collect(registry, selected, token, max_items=40)
-            if pinned_issues:
+            if effective_pins:
                 from zsentinel_pinned_issue import read_pinned_issues
                 inbox = read_pinned_issues(inbox, registry, selected,
                                            effective_pins, token)
