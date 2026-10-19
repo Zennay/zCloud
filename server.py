@@ -7,7 +7,7 @@ import json, os, sqlite3, subprocess, shutil, threading, time, mimetypes, loggin
 from contextlib import contextmanager, closing
 import enhancements
 import project_runtime
-from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page, zcloud_github_activity_live
+from scripts import worker_scaling_report, zcloud_worker_progress_history, zcloud_activity_fair_page, zcloud_github_activity_live, zcloud_queue_retry_live
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
 from scripts.zcloud_product_delivery_policy import is_new_product_delivery, product_queue_snapshot
 
@@ -4950,6 +4950,24 @@ class Handler(BaseHTTPRequestHandler):
         if u.path=='/api/dynamic-workers':
             if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):return self.reply({'error':'Niet toegestaan'},403)
             return self.reply({'dynamic_workers':dynamic_worker_settings(),'time':now()})
+        if u.path=='/api/queue-retry-incidents':
+            # Explicit operator read, not an admission, lease or recovery action.
+            # Apply the existing trusted management peer gate before DB access.
+            if self.client_address[0] not in ('127.0.0.1','::1') and not action_request_allowed(self):
+                return self.reply({'error':'Niet toegestaan'},403)
+            names=q.get('project',[])
+            if len(names)!=1:return self.reply({'error':'Selecteer exact een project of all'},400)
+            project_id=names[0]
+            if project_id!='all' and project_id not in PORTFOLIO_PROJECT_INDEX:
+                return self.reply({'error':'Onbekend project'},404)
+            try:
+                result=zcloud_queue_retry_live.snapshot(
+                    DB,set(PORTFOLIO_PROJECT_INDEX),project_id,threshold=3,limit=40
+                )
+            except zcloud_queue_retry_live.ObservationUnavailable:
+                # Never convert a denied/partial DB read into a false zero count.
+                return self.reply({'error':'Queue bron tijdelijk niet betrouwbaar'},503)
+            return self.reply(result)
         if u.path in ('/api/github-activity-live','/api/product-issues-live'):
             # On-demand only, never a queue/worker action. Private or remote
             # API reads require the existing trusted management peer admission.
