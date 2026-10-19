@@ -1,0 +1,164 @@
+name: zSentinel VPS hourly read-only audit
+
+on:
+  schedule:
+    # One passive audit per hour. Do not add a second watchdog/polling loop.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      window:
+        description: "Portfolio source window (auto rotates across canonical projects)"
+        required: false
+        type: choice
+        default: auto
+        options:
+          - auto
+          - "0"
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+
+# Never run unmerged PR code on a persistent VPS runner; main only.
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: zsentinel-readonly-vps
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: >-
+      github.repository == 'Zennay/zCloud' &&
+      github.ref == 'refs/heads/main' &&
+      (
+        github.event_name == 'schedule' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          github.actor == 'Zennay' &&
+          github.triggering_actor == 'Zennay' &&
+          github.run_attempt == 1
+        )
+      )
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 8
+    env:
+      QUEUE_DB: /home/ubuntu/zennay-cloud/history.db
+      WORKER_EVENTS_DB: /home/ubuntu/zennay-cloud/history.db
+      REPORT_PATH: ${{ runner.temp }}/zsentinel-audit-${{ github.run_id }}-${{ github.run_attempt }}.json
+      SOURCE_WINDOW: ${{ inputs.window || 'auto' }}
+    steps:
+      - name: Require actual zCloud VPS and sufficient idle headroom
+        id: capacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, pathlib, socket, stat
+          if os.environ.get("RUNNER_NAME") != "zcloud-vps-1":
+              raise SystemExit("DENY_WRONG_RUNNER")
+          if socket.gethostname().split(".")[0] != "vps-bb300bba":
+              raise SystemExit("DENY_WRONG_HOST")
+          path = pathlib.Path(os.environ["QUEUE_DB"])
+          info = path.lstat()
+          if not stat.S_ISREG(info.st_mode) or info.st_size < 4096:
+              raise SystemExit("DENY_MISSING_CANONICAL_QUEUE_SOURCE")
+          if os.environ.get("SOURCE_WINDOW") not in {"auto", "0", "1", "2", "3", "4", "5"}:
+              raise SystemExit("DENY_INVALID_SOURCE_WINDOW")
+          available = 0
+          for line in pathlib.Path("/proc/meminfo").read_text().splitlines():
+              if line.startswith("MemAvailable:"):
+                  available = int(line.split()[1]) * 1024
+                  break
+          load = os.getloadavg()[0]
+          cores = os.cpu_count() or 1
+          eligible = available >= 1536 * 1024**2 and load <= cores * 2.5
+          print("run=" + str(eligible).lower())
+          if eligible:
+              print("capacity=admitted")
+          else:
+              print("capacity=deferred_high_load_or_low_memory")
+          PY
+
+      - name: Explain safe load deferral (no queue or runner mutation)
+        if: steps.capacity.outputs.run != 'true'
+        shell: bash
+        run: |
+          echo 'zSentinel deferred: VPS headroom too low. No jobs retried, worker claims changed or incident resolved.'
+          echo 'zSentinel deferred: VPS resources below read-only audit admission. No remediation authorized.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout trusted exact main (no persisted credentials)
+        if: steps.capacity.outputs.run == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          clean: true
+          fetch-depth: 1
+
+      - name: Verify immutable main source and deny stale main
+        if: steps.capacity.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "Zennay/zCloud"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$RUNNER_NAME" = "zcloud-vps-1"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          remote_main="$(git ls-remote --exit-code https://github.com/Zennay/zCloud.git refs/heads/main | cut -f1)"
+          test "$remote_main" = "$GITHUB_SHA"
+
+      - name: Read actual VPS queue, worker progress and GitHub issues (no writes)
+        if: steps.capacity.outputs.run == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/zsentinel_portfolio_overview.py \
+            --database "$QUEUE_DB" \
+            --worker-events-database "$WORKER_EVENTS_DB" \
+            --window "$SOURCE_WINDOW" \
+            --discover-open-prs \
+            --inspect-referenced-prs \
+            --format json \
+            --output "$REPORT_PATH"
+
+      - name: Publish privacy-minimal operator recap
+        if: steps.capacity.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os
+          with open(os.environ["REPORT_PATH"], "r", encoding="utf-8") as source:
+              report = json.load(source)
+          portfolio = report["portfolio"]
+          board = report["blocker_first_handoff"]
+          print("## zSentinel · self-hosted VPS broncontrole")
+          print("Exact main SHA: " + os.environ["GITHUB_SHA"][:12])
+          print("Geobserveerde incidentkaarten: " + str(board["live_incident_observations"]))
+          print("Owner-only P0/P1 issues: " + str(board["owner_only_open_issue_observations"]))
+          print("Worker-voortgangshiaten: " + str(board["worker_event_gap_observations"]))
+          print("Bestaande PR-gates: " + str(board["existing_pr_gate_observations"]))
+          print("Historische incidenten: " + str(board["historical_not_reconciled"]))
+          print("Projecten canoniek geregistreerd: " + str(portfolio["canonical_projects"]))
+          print("**Geen worker hervat, claim aangepast, CI opnieuw gestart of release geautoriseerd.**")
+          print("Het venster en externe bronnen zijn beperkt; geen all-clear bewezen.")
+          PY
+
+      - name: Always remove private working report
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          report = pathlib.Path(os.environ["REPORT_PATH"])
+          if report.is_file() and not report.is_symlink():
+              report.unlink()
+          PY
