@@ -158,7 +158,8 @@ Geen workflow, GitHub-write, calendar push, Notion-write, lease of deploy.</p>
 <p>Download alleen je eigen statuskeuzes en notities, exact gekoppeld aan deze momentopname.
 Import van een ander bronmoment verandert niets.</p>
 <div class="row"><button id="export" type="button">Download overdracht</button>
-<label>Heropen eigen overdracht <input id="import" type="file" accept=".json,application/json"></label></div>
+<label>Heropen exact dezelfde bron <input id="import" type="file" accept=".json,application/json"></label>
+<label>Herbruik oude notities (opnieuw beoordelen) <input id="carry" type="file" accept=".json,application/json"></label></div>
 <p id="feedback" aria-live="polite"></p></section></div></div>
 <footer><p class="meta">Een ontbrekend incident kan door incomplete GitHub-bron, rate-limit,
 scope of tijdvenster komen. Een lokale opvolgstatus bewijst geen eigenaargoedkeuring
@@ -254,6 +255,50 @@ $("import").onchange=async event=>{
   render();
  }catch(_){$("feedback").textContent="Import geweigerd: geen exacte betrouwbare overdracht voor deze bron."}
  finally{event.target.value=""}
+};
+// Import notes from an older saved source ONLY with explicit user confirmation.
+// Prior local statuses must never become current owner/recovery evidence.
+$("carry").onchange=async event=>{
+ try{
+  const file=event.target.files?.[0];
+  if(!file||file.size>100000)throw Error("size");
+  const data=JSON.parse(await file.text());
+  const older=Date.parse(data?.source_at);
+  const current=Date.parse(source.observed_at);
+  if(!data||data.schema!=="zsentinel-human-followup-v1"||
+     typeof data.source_sha256!=="string"||!/^[0-9a-f]{64}$/.test(data.source_sha256)||
+     data.source_sha256===source.fingerprint||!Number.isFinite(older)||
+     older>=current||!Array.isArray(data.entries)||data.entries.length>200||
+     data.read_only!==true||data.action_authorized!==false||
+     !Number.isSafeInteger(data.incident_count)||data.incident_count<0||data.incident_count>200)
+    throw Error("source");
+  const prior=Object.create(null),matching=[];
+  for(const row of data.entries){
+    if(!row||typeof row.id!=="string"||!/^[a-f0-9]{32}$/.test(row.id)||
+       row.id in prior||!choices.includes(row.status)||
+       typeof row.note!=="string"||row.note.length>800||
+       /[\u0000-\u0009\u000B-\u001F\u007F]/u.test(row.note))throw Error("entry");
+    prior[row.id]=row;
+    if(row.note.trim()&&source.incidents.some(x=>x.id===row.id))
+      matching.push(row);
+  }
+  if(!matching.length)throw Error("no-match");
+  const message="Er zijn "+matching.length+" oude notities bij identieke incident-ID's. "+
+   "Alleen de notities worden overgenomen, nooit eerdere eigenaar-/herstelstatus. "+
+   "Iedere overgenomen status wordt 'bron opnieuw verifiëren'. Wil je dit bewust doen?";
+  if(!window.confirm(message)){
+    $("feedback").textContent="Oude notities niet overgenomen.";
+    return;
+  }
+  const prefix="HISTORISCHE NOTITIE "+data.source_at+"\n";
+  for(const row of matching){
+    const note=(prefix+row.note).slice(0,800);
+    notes[row.id]={status:"bron-opnieuw-verifieren",note};
+  }
+  $("feedback").textContent=matching.length+" historische notities overgenomen als opnieuw te verifiëren. Geen externe status gewijzigd.";
+  render();
+ }catch(_){$("feedback").textContent="Oude overdracht geweigerd: bron, tijd, incident-ID of notities niet bruikbaar.";}
+ finally{event.target.value="";}
 };
 isFresh();render();
 </script></html>"""
