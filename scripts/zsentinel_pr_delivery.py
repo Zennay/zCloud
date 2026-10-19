@@ -369,11 +369,44 @@ def pr_delivery_html(report):
             escape(sha[:12] if isinstance(sha, str) else "onbekend") +
             ' · bron: beperkte GitHub-steekproef; eigenaar, required checks, branch protection, merge/deploy NIET geautoriseerd.</p></article>'
         )
+    discovery = report.get("open_pr_discovery")
+    discovery_panel = ""
+    if discovery is not None:
+        if (not isinstance(discovery, dict) or discovery.get("merge_authorized") is not False
+                or discovery.get("all_open_prs_observed") is not False):
+            raise ValueError("untrusted open PR discovery source")
+        coverage = discovery.get("coverage")
+        if isinstance(coverage, list):
+            if len(coverage) > 3:
+                raise ValueError("unbounded open PR coverage")
+            details = []
+            for observed in coverage:
+                if (not isinstance(observed, dict)
+                        or observed.get("status") not in (
+                            "bounded_sample", "bounded_truncated", "degraded",
+                            "not_queried_after_auth_or_rate_limit")):
+                    raise ValueError("invalid open PR coverage")
+                pid = escape(str(observed.get("project_id", ""))[:40])
+                status = observed["status"]
+                message = {
+                    "bounded_sample": "Laatste open PR’s in beperkte steekproef",
+                    "bounded_truncated": "Meer PR’s dan de eerste 20 mogelijk; lijst ONVOLLEDIG",
+                    "degraded": "GitHub bronfout: overige PR’s ONBEKEND",
+                    "not_queried_after_auth_or_rate_limit": "Niet bekeken door rechten/rate limit",
+                }[status]
+                details.append("<li>" + pid + " · " + message + "</li>")
+            discovery_panel = ('<details><summary>Open PR-brondekking</summary><ul>' +
+                               "".join(details) + '</ul><p class="muted">Geen eigendom, '
+                               'volledige backlog of herstel bewezen.</p></details>')
+        elif coverage not in ("not_requested", "not_requested_capacity_full"):
+            raise ValueError("invalid open PR discovery status")
     return ('<section><h2>Bestaande PR’s afronden · exacte bronstatus</h2>'
-            '<p class="banner">Eerst bestaande code integreren. Alleen-lezen bronstatus voor maximaal 3 expliciet geselecteerde PR’s; '
-            'geen compleet check-/review-overzicht, geen toestemmings- of eigendomsbewijs.</p>'
+            '<p class="banner">Eerst bestaande code integreren. Alleen-lezen bronstatus voor maximaal 3 '
+            'expliciet gekozen of beperkt ontdekte PR’s; geen compleet check-/review-overzicht, '
+            'geen toestemmings- of eigendomsbewijs.</p>' + discovery_panel +
             '<div class="grid">' + ("".join(cards) if cards else
-                '<p class="empty">Geen bestaande PR’s geselecteerd; dit bewijst niet dat er geen open PR’s zijn.</p>') +
+                '<p class="empty">Geen bestaande PR’s geselecteerd of waargenomen; '
+                'dit bewijst niet dat er geen open PR’s zijn.</p>') +
             '</div></section>')
 
 
