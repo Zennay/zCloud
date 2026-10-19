@@ -21,6 +21,7 @@ from zsentinel_github_discovery import discover
 from zsentinel_recovery_refresh import refresh
 from zsentinel_recovery_router import (
     MAX_STATE_BYTES, operator_text, plan, read_json, write_json_atomic, utc_string,
+    acquire_private_ledger_lock,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -169,6 +170,7 @@ def main():
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     args = parser.parse_args()
+    ledger_lock = None
     try:
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
@@ -182,6 +184,8 @@ def main():
             if any(item is not None and args.desk_output.resolve() == item.resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
+        if args.state is not None:
+            ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
         bundle, provenance = assemble(
             registry, args.project, args.job, args.database,
@@ -238,6 +242,9 @@ def main():
             print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel live cockpit unavailable: {exc}\n")
+    finally:
+        if ledger_lock is not None:
+            ledger_lock.close()
     return 0
 
 
