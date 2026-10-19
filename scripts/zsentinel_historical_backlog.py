@@ -119,6 +119,18 @@ def pin_historical_jobs(bundle, prior, registry, *, limit=3):
         current[pid] = item
     if not isinstance(prior, dict):
         raise ValueError("historical recheck requires private prior ledger")
+    # Existing explicit current job pins take precedence and consume the
+    # eight-job ceiling of the underlying provider refresh. Do not steal one.
+    occupied = 0
+    for item in projects:
+        gh = item.get("github", {})
+        if type(gh) is not dict:
+            raise ValueError("malformed current job receipt")
+        if "run_id" in gh or "job_id" in gh:
+            occupied += 1
+    available = min(limit, 8 - occupied)
+    if available < 1:
+        raise ValueError("no free exact-job refresh slots; current pinned jobs preserved")
     # The caller must use load_state() first; fail closed on malformed
     # entries and never read tokens, ownership or arbitrary GitHub URLs here.
     output = copy.deepcopy(bundle)
@@ -149,7 +161,7 @@ def pin_historical_jobs(bundle, prior, registry, *, limit=3):
             "job_id": pin["job_id"], "head_sha": pin["head_sha"],
             "historical_incident_id": row["incident_id"],
         })
-        if len(picked) >= limit:
+        if len(picked) >= available:
             break
     if not picked:
         raise ValueError("no historical exact jobs fit free project slots; current source pins untouched")
