@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""Source-bound blocker-first zSentinel operator handoff.
+
+The flying fixer must deal with blocked existing workers first, without
+mistaking a queued job, lease expiration or a green PR for runtime recovery.
+This deliberately never executes a recovery action or authorizes a claim.
+"""
+from __future__ import annotations
+
+import re
+from html import escape
+
+PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+INCIDENT = re.compile(r"^[a-f0-9]{32}$")
+PRIORITY = {"P0": 0, "P1": 1}
+
+
+def _non_authorizing(summary, decision, issues):
+    if (not isinstance(summary, dict)
+            or summary.get("schema") != "zsentinel-portfolio-overview-v1"
+            or summary.get("actions_performed") is not False
+            or summary.get("queue_owner_authorized") is not False
+            or not isinstance(decision, dict)
+            or decision.get("schema_version") != 1
+            or decision.get("mutations_performed") is not False
+            or decision.get("deployment_authorized") is not False
+            or decision.get("queue_claims_changed") is not False
+            or decision.get("watch_delivery_performed") is not False
+            or not isinstance(issues, dict)
+            or issues.get("schema") != "zsentinel-next-problems-v1"
+            or issues.get("dispatch_authorized") is not False
+            or issues.get("writes_performed") is not False):
+        raise ValueError("untrusted or authorizing zSentinel source")
+    rows = summary.get("rows")
+    if not isinstance(rows, list) or len(rows) > 18:
+        raise ValueError("unbounded canonical portfolio rows")
+    known = set()
+    for row in rows:
+        pid = row.get("project_id") if isinstance(row, dict) else None
+        if (not isinstance(pid, str) or not PROJECT.fullmatch(pid)
+                or pid in known):
+            raise ValueError("invalid or duplicate registered project")
+        known.add(pid)
+    return known
+
+
+def blocker_first_board(summary, decision, issues):
+    """Produce a bounded *operator* sequence, not a dispatch/release plan.
+
+    Stalled incident cards are source observations. Missing incident coverage,
+    historical ledger entries and queue churn never count as worker-resume proof.
+    Product fallback candidates are advisory until independent owner/paths/gates
+    are reconfirmed by the runtime owner at the moment of action.
+    """
+    known = _non_authorizing(summary, decision, issues)
+    incidents = decision.get("incidents")
+    backlog = decision.get("historical_unresolved")
+    suggestions = decision.get("independent_task_suggestions")
+    problem_items = issues.get("items")
+    if (not isinstance(incidents, list) or len(incidents) > 200
+            or not isinstance(backlog, dict)
+            or backlog.get("schema") != "zsentinel-historical-backlog-v1"
+            or backlog.get("action_authorized") is not False
+            or not isinstance(backlog.get("shown"), list)
+            or len(backlog["shown"]) > 30
+            or type(backlog.get("total_unresolved")) is not int
+            or not isinstance(suggestions, list) or len(suggestions) > 5
+            or not isinstance(problem_items, list) or len(problem_items) > 5):
+        raise ValueError("untrusted bounded blockers or fallback source")
+    cards = []
+    seen = set()
+    for incident in incidents:
+        if not isinstance(incident, dict):
+            raise ValueError("invalid incident")
+        pid, ident, severity = (incident.get("project_id"),
+                                incident.get("incident_id"),
+                                incident.get("severity"))
+        if (pid not in known or not isinstance(ident, str)
+                or not INCIDENT.fullmatch(ident) or ident in seen
+                or severity not in PRIORITY
+                or incident.get("status") not in (
+                    "human_action_required", "read_only_diagnosis_required")
+                or type(incident.get("human_escalation")) is not bool):
+            raise ValueError("invalid or duplicate active blocker")
+        seen.add(ident)
+        action, owner, problem = (incident.get("action"), incident.get("owner"),
+                                  incident.get("problem"))
+        if not all(isinstance(value, str) and 1 <= len(value) <= 600
+                   and all(ord(ch) >= 32 for ch in value)
+                   for value in (action, owner, problem)):
+            raise ValueError("untrusted incident action or owner")
+        cards.append({
+            "kind": "verified_source_incident_not_runtime_recovery",
+            "id": ident, "project_id": pid, "priority": severity,
+            "problem": problem, "owner": owner, "action": action,
+            "observed_from": "bounded_fresh_decision",
+            "requires_human": incident["human_escalation"],
+            "next_gate": ("authorized_owner_action"
+                          if incident["human_escalation"]
+                          else "read_only_diagnosis_in_free_scope"),
+            "worker_resumed_verified": False, "permission_to_recover": False,
+            "owner_claim_verified": False,
+        })
+    cards.sort(key=lambda item: (PRIORITY[item["priority"]], item["project_id"], item["id"]))
+    live_observed_count = len(cards)
+    # A private old incident is not a currently active outage, but still must
+    # remain visible before ordinary work; missing from a window != resolved.
+    for row in backlog["shown"]:
+        if not isinstance(row, dict):
+            raise ValueError("invalid historical incident")
+        pid, ident = row.get("project_id"), row.get("incident_id")
+        if (pid not in known or not isinstance(ident, str)
+                or not INCIDENT.fullmatch(ident)):
+            raise ValueError("untrusted historical identity")
+        if ident in seen:
+            continue
+        seen.add(ident)
+        cards.append({
+            "kind": "historical_not_reconciled", "id": ident,
+            "project_id": pid,
+            "priority": row.get("severity") if row.get("severity") in PRIORITY else "P1",
+            "problem": "Historisch probleem, huidige bron niet geverifieerd",
+            "owner": "authorized_source_owner",
+            "action": "Hercontroleer exact oude job/claim-bron met eigenaar. Niet herstarten of vrijgeven op afwezigheid.",
+            "observed_from": "private_historical_ledger_only",
+            "requires_human": True,
+            "next_gate": "source_reconciliation",
+            "worker_resumed_verified": False, "permission_to_recover": False,
+            "owner_claim_verified": False,
+        })
+    historical_count = len(cards) - live_observed_count
+    # A useful dashboard must distinguish an unobserved queue from zero.
+    # Churn/expired leases are only potential blockers, not incident proof.
+    for row in summary["rows"]:
+        if not isinstance(row, dict):
+            raise ValueError("invalid portfolio row")
+        churn = row.get("high_claim_attempts")
+        leases = row.get("expired_owner_leases")
+        if churn is None or leases is None:
+            continue
+        if (type(churn) is not int or type(leases) is not int
+                or churn < 0 or leases < 0):
+            raise ValueError("invalid queue observation counters")
+        if churn + leases <= 0:
+            continue
+        if row.get("queue_observation") != "complete_active_rows":
+            continue
+        pid = row["project_id"]
+        cards.append({
+            "kind": "queue_pressure_not_proven_outage",
+            "id": "queue:" + pid, "project_id": pid, "priority": "P1",
+            "problem": ("Hoge claimpogingen ≥" + str(churn) +
+                        "; mogelijk verlopen lease-rijen ≥" + str(leases)),
+            "owner": "authorized_queue_owner",
+            "action": "Inspecteer huidige queue- en leasehouder voordat bestaande retries worden hervat; geen automatische release, reset of claim.",
+            "observed_from": "read_only_complete_active_queue_aggregate",
+            "requires_human": True, "next_gate": "verify_exact_lease_and_owner",
+            "worker_resumed_verified": False, "permission_to_recover": False,
+            "owner_claim_verified": False,
+        })
+    # No unbounded operator page; the *counts* retain the truth of truncation.
+    shown = cards[:12]
+    fallback = []
+    for row in suggestions:
+        if (not isinstance(row, dict) or row.get("project_id") not in known
+                or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                or type(row.get("id")) is not str
+                or len(row["id"]) > 100):
+            raise ValueError("untrusted independent work suggestion")
+        fallback.append({
+            "kind": "potential_independent_task_requires_current_claim_recheck",
+            "project_id": row["project_id"], "priority": row["priority"],
+            "source_task_id": row["id"],
+            "next_gate": "recheck_exact_owner_files_and_required_ci",
+            "claim_taken": False, "dispatch_authorized": False,
+        })
+    if not fallback:
+        for row in problem_items:
+            if (not isinstance(row, dict) or row.get("project_id") not in known
+                    or row.get("priority") not in ("P0", "P1", "P2", "Unspecified")
+                    or row.get("dispatch_authorized") is not False):
+                raise ValueError("untrusted fallback product issue")
+            url = row.get("issue_url")
+            if (type(url) is not str or
+                    not url.startswith("https://github.com/") or len(url) > 230):
+                raise ValueError("untrusted product issue URL")
+            fallback.append({
+                "kind": "product_issue_inspection_only",
+                "project_id": row["project_id"], "priority": row["priority"],
+                "issue_url": url,
+                "next_gate": "recheck_existing_pr_owner_files_and_required_ci",
+                "claim_taken": False, "dispatch_authorized": False,
+            })
+    return {
+        "schema": "zsentinel-blocker-first-board-v1",
+        "first_action": ("unblock_or_reconcile_existing_work" if cards
+                         else "refresh_missing_blocker_sources_before_all_clear"),
+        "live_incident_observations": live_observed_count,
+        "historical_not_reconciled": historical_count,
+        "queue_pressure_observations": len(cards) - live_observed_count - historical_count,
+        "shown_blocker_cards": shown,
+        "blocker_cards_truncated": len(cards) > len(shown),
+        "independent_fallback_inspection": fallback[:5],
+        "known_complete_blocker_inventory": False,
+        "worker_resumed_verified": False,
+        "claims_taken": False, "retries_performed": False,
+        "deployment_authorized": False, "writes_performed": False,
+    }
+
+
+def blocker_board_html(board):
+    """Insert before backlog cards in the existing offline, network-free page."""
+    if (not isinstance(board, dict)
+            or board.get("schema") != "zsentinel-blocker-first-board-v1"
+            or board.get("worker_resumed_verified") is not False
+            or board.get("writes_performed") is not False
+            or board.get("claims_taken") is not False
+            or board.get("deployment_authorized") is not False):
+        raise ValueError("untrusted blocker-first board")
+    cards = []
+    for row in board["shown_blocker_cards"]:
+        name = escape(str(row["project_id"])[:45])
+        tag = escape(str(row["priority"])[:8])
+        what = escape(str(row["problem"])[:320])
+        action = escape(str(row["action"])[:550])
+        owner = escape(str(row["owner"])[:100])
+        basis = escape(str(row["observed_from"])[:90])
+        cards.append(
+            '<article class="panel warn"><h3>' + tag + ' · ' + name +
+            '</h3><p><strong>' + what + '</strong></p><p>Actie: ' +
+            action + '</p><p class="muted">Eigenaar: ' + owner +
+            ' · bron: ' + basis +
+            ' · werknemer/runner hervat: NIET bewezen.</p></article>')
+    if not cards:
+        cards = ['<p class="empty">Geen actuele blockerkaart in deze begrensde'
+                 ' bron. Dat bewijst GEEN gezonde werknemers of complete backlog.</p>']
+    fallbacks = []
+    for row in board["independent_fallback_inspection"]:
+        fallbacks.append('<li>' + escape(str(row["project_id"])[:45]) +
+                         ' · ' + escape(str(row["priority"])[:12]) +
+                         ' · ' + escape(str(row["next_gate"])[:90]) +
+                         ' · GEEN claim of dispatch</li>')
+    return (
+        '<section aria-label="Eerst blokkades opheffen">'
+        '<h2>1 · Eerst vastgelopen werk vrijmaken</h2>'
+        '<p class="banner">Bestaande workers en P0/P1-gates gaan voor de backlog.'
+        ' Een bronmoment, verlopen lease of groen CI-signaal is nooit herstelbewijs.'
+        ' Alleen geautoriseerde eigenaaracties; geen automatische herstart.</p>'
+        '<p class="muted">Nu waargenomen incidenten: ' +
+        str(board["live_incident_observations"]) +
+        ' · historisch te hercontroleren: ' +
+        str(board["historical_not_reconciled"]) +
+        ' · wachtrijdruk: ' + str(board["queue_pressure_observations"]) +
+        (' · meer kaarten niet getoond' if board["blocker_cards_truncated"] else '') +
+        '</p><div class="grid">' + ''.join(cards) + '</div>'
+        '<h2>2 · Ondertussen onafhankelijk productwerk</h2>'
+        '<p>Alleen na actuele PR-, bestandspad-, eigenaar- en vereiste CI-controle.'
+        ' Geen claims of achtergrondtaken uitgezet.</p><ul>' +
+        (''.join(fallbacks) if fallbacks else
+         '<li>Geen vrij productwerk bewezen binnen deze bronsteekproef.</li>') +
+        '</ul></section>'
+    )
+
+
+def blocker_board_text(board):
+    if (not isinstance(board, dict)
+            or board.get("schema") != "zsentinel-blocker-first-board-v1"
+            or board.get("writes_performed") is not False):
+        raise ValueError("untrusted blocker board")
+    lines = ["EERST BLOKKADES (geen claim/herstel bewezen):"]
+    for item in board["shown_blocker_cards"]:
+        lines.append("  " + item["priority"] + " " + item["project_id"] +
+                     " · " + item["problem"] + " | " + item["next_gate"])
+    if not board["shown_blocker_cards"]:
+        lines.append("  Bron is begrensd; afwezigheid != hersteld.")
+    if board["blocker_cards_truncated"]:
+        lines.append("  Meer blockers dan de zichtbare 12; GEEN all-clear.")
+    lines.append("DAARNA VRIJ PRODUCTWERK (alleen bronvoorstel):")
+    for item in board["independent_fallback_inspection"]:
+        lines.append("  " + item["priority"] + " " + item["project_id"] +
+                     " | " + item["next_gate"] + " | geen claim")
+    if not board["independent_fallback_inspection"]:
+        lines.append("  Geen vrij werk bewezen.")
+    return "\n".join(lines)
