@@ -4259,7 +4259,25 @@ def watch_summary(data):
         },
         'warnings':warnings,
         'chatgpt_runner':runner,
+        # Keep the historical alert feed for old clients, but expose a separate
+        # current, actionable incident feed for blocker-first watch notifications.
+        # Incident Center applies TTL and claim-resolution filtering; raw alert
+        # history must never be described as a currently open blocker.
         'alerts':enhancements.list_alerts(DB,5,True),
+        'active_blockers':[
+            {
+                'id':str(item.get('id') or ''),
+                'project':str(item.get('project') or 'cloud'),
+                'severity':str(item.get('severity') or 'high'),
+                'title':str(item.get('title') or 'Aandacht nodig')[:140],
+                'detail':('Oorzaak: '+str(item.get('cause') or 'Nog onbekend')+
+                          ' · Actie: '+str(item.get('action') or 'Controleer zCloud'))[:420],
+                'ts':item.get('detected_at'),
+            }
+            for item in enhancements.incident_center(DB,data=data,limit=30).get('items',[])
+            if str(item.get('severity') or '').lower() in ('critical','high','error')
+            and str(item.get('type') or '').lower() not in ('breakthrough','milestone')
+        ][:8],
         'projects':projects
     }
 
