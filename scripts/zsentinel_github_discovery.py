@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 from zsentinel_product_issue_inbox import bounded_get
 from zsentinel_recovery_router import utc_string
+from zsentinel_runner_route import runner_route
 
 UTC = timezone.utc
 SHA = re.compile(r"^[a-f0-9]{40}$")
@@ -89,7 +90,8 @@ def run_job_candidates(root, run_id, sha, token, kind):
             if status != "completed" or conclusion not in RESULTS:
                 continue
             rank = 1
-        candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner))
+        route = runner_route(job)
+        candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner, route))
     return candidates
 
 
@@ -126,13 +128,15 @@ def discover(registry, selected, token=None):
                 })
                 continue
             candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
-            _, created, run_id, job_id, sha, status, conclusion, runner = candidates[0]
+            _, created, run_id, job_id, sha, status, conclusion, runner, route = candidates[0]
             receipt = {
                 "run_id": run_id, "job_id": job_id, "head_sha": sha,
                 "job_status": status, "queued_at": utc_string(created),
                 "observed_at": utc_string(datetime.now(UTC)),
                 "runner_assigned": bool(runner),
                 "verified_receipt": "github_bounded_run_jobs_discovery",
+                "runner_route": route["runner_route"],
+                "route_labels": route["route_labels"],
             }
             if status == "completed":
                 receipt["conclusion"] = conclusion
