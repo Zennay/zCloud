@@ -542,6 +542,10 @@ def main():
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk"), default="html")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
+    parser.add_argument("--output", type=Path,
+                        help="new 0600 report: .html, .json or .md (text); never overwrites")
+    parser.add_argument("--compare-with", type=Path,
+                        help="optional previous canonical --format json output; never treated as proof of recovery")
     args = parser.parse_args()
     window_lock = None
     ledger_lock = None
@@ -560,6 +564,22 @@ def main():
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
+        if args.output is not None and args.format not in ("html", "json", "text"):
+            raise ValueError("--output supports only html, json or text")
+        if args.compare_with is not None and args.format not in ("html", "json", "text"):
+            raise ValueError("--compare-with supports only html, json or text")
+        if args.output is not None:
+            destinations = [args.state, args.window_state, args.desk_output,
+                            args.compare_with, args.database, args.worker_events_database]
+            if any(v is not None and args.output.resolve() == v.resolve()
+                   for v in destinations):
+                raise ValueError("--output must not replace any input, state or ledger")
+        if args.compare_with is not None:
+            sources = [args.state, args.window_state, args.database,
+                       args.worker_events_database]
+            if any(v is not None and args.compare_with.resolve() == v.resolve()
+                   for v in sources):
+                raise ValueError("--compare-with needs a prior portfolio report, not live state")
         if args.desk_output is not None and args.format not in ("desk", "html"):
             raise ValueError("--desk-output accepts only desk or html operator formats")
         if args.desk_output is not None:
@@ -723,10 +743,24 @@ def main():
             # HTML, JSON and plain text; no extra GitHub calls or claims.
             problem_inbox = link_existing_pr_actions(problem_inbox, pr_desk)
         unblock = blocker_first_board(summary, decision, problem_inbox, pr_desk=pr_desk)
+        continuity = None
+        if args.compare_with is not None:
+            from zsentinel_blocker_continuity import _read, compare
+            continuity = compare(
+                _read(args.compare_with),
+                {"portfolio": summary, "blocker_first_handoff": unblock},
+            )
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
                                       pr_desk=pr_desk, unblock=unblock)
+            if continuity is not None:
+                from zsentinel_blocker_continuity import as_html
+                fragment = as_html(continuity).split("<main>", 1)[1].split("</main>", 1)[0]
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible portfolio HTML")
+                rendered = rendered.replace("<main>", "<main><section aria-label=\"Broncontinuïteit\">" +
+                                            fragment + "</section>", 1)
         elif args.format == "ics":
             from zsentinel_human_agenda import human_calendar
             rendered = human_calendar(decision)
@@ -741,6 +775,7 @@ def main():
                 "source_bound_decision": decision,
                 "next_problem_shortlist": problem_inbox,
                 "blocker_first_handoff": unblock,
+                "blocker_continuity": continuity,
                 "existing_pr_delivery": (pr_desk if pr_desk is not None else
                     {"coverage": "not_requested", "merge_authorized": False}),
                 "recent_unpr_branch_ownership": (
@@ -825,6 +860,14 @@ def main():
                         str(entry["potential_overlap"])))
             lines.append("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
             rendered = "\n".join(lines)
+            if continuity is not None:
+                from zsentinel_blocker_continuity import as_text
+                rendered = as_text(continuity) + "\n" + rendered
+        if args.output is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(
+                args.output, rendered,
+                "md" if args.format == "text" else args.format)
         if args.desk_output is not None:
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(decision)
@@ -835,7 +878,7 @@ def main():
                     window_index, github_coverage)
         if args.state:
             write_json_atomic(args.state, state)
-        if args.format != "desk":
+        if args.format != "desk" and args.output is None:
             print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel portfolio overview unavailable: {exc}\n")
