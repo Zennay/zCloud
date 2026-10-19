@@ -334,8 +334,10 @@ def html_view(decision):
     if type(unattributed) is not int or unattributed < 0:
         raise ValueError("invalid unattributed evidence count")
     reconciled = decision.get("reconciled_exact_jobs", [])
-    if not isinstance(reconciled, list) or len(reconciled) > MAX_INCIDENTS:
-        raise ValueError("invalid exact-job reconciliations")
+    reclassified = decision.get("reclassified_exact_jobs", [])
+    if (not isinstance(reconciled, list) or len(reconciled) > MAX_INCIDENTS
+            or not isinstance(reclassified, list) or len(reclassified) > MAX_INCIDENTS):
+        raise ValueError("invalid exact-job reconciliation")
     if type(missing) is not int or missing < 0:
         raise ValueError("invalid unresolved incident count")
     def section(cards, empty):
@@ -394,7 +396,8 @@ def html_view(decision):
             + '</section>'
             + f'<p class="muted">Niet meer waargenomen, nog te reconciliëren incidenten: {missing}. '
               f'Exact succesvol afgeronde GitHub-jobs (geen bewijs van algeheel herstel): '
-              f'{len(reconciled)}. Zonder geverifieerde claim/job-identiteit: '
+              f'{len(reconciled)}. Exact heringedeelde oude runnerincidenten (GEEN herstelbewijs): '
+              f'{len(reclassified)}. Zonder geverifieerde claim/job-identiteit: '
               f'{unattributed}.</p>'
             + '</main><footer class="muted">Offline HTML, geen netwerk, geen scripts, '
             'geen worker-, runner-, queue-, claim-, CI-, of VPS-mutaties. '
