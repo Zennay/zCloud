@@ -314,6 +314,11 @@ def main():
     parser.add_argument("--read-notion-claims", action="store_true")
     parser.add_argument("--notion-data-source")
     parser.add_argument("--observe-vps-capacity", action="store_true")
+    parser.add_argument("--inspect-unpr-branches",
+                        help="canonical project ID in selected GitHub window for a bounded read-only branch ownership sample")
+    parser.add_argument("--branch-prefix", help="optional exact branch prefix for source-limited branch inspection")
+    parser.add_argument("--current-path", action="append", default=[],
+                        help="proposed unclaimed repository-relative scope (only for --inspect-unpr-branches)")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text"), default="html")
     args = parser.parse_args()
@@ -334,6 +339,10 @@ def main():
         if not 0 <= window_index < len(windows):
             raise ValueError("window out of range for canonical projects")
         selected = windows[window_index]
+        if (args.inspect_unpr_branches and args.inspect_unpr_branches not in selected):
+            raise ValueError("branch inspection must target a project in the selected window")
+        if (args.branch_prefix or args.current_path) and not args.inspect_unpr_branches:
+            raise ValueError("branch filter/current paths require an explicit project inspection")
         queue = observe(args.database)
         bundle, provenance = assemble(
             registry, selected, [], args.database,
@@ -360,14 +369,24 @@ def main():
         decision["private_ledger_written"] = bool(args.state)
         github_coverage = verified_source_coverage(selected, provenance, bundle)
         summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
+        branches = None
+        if args.inspect_unpr_branches:
+            from zsentinel_recent_branch_ownership import inventory
+            branches = inventory(
+                registry[args.inspect_unpr_branches], token=os.environ.get("GITHUB_TOKEN"),
+                prefix=args.branch_prefix, current_paths=args.current_path)
         if args.format == "html":
-            rendered = portfolio_html(summary, decision, window_index, windows)
+            rendered = portfolio_html(summary, decision, window_index, windows,
+                                      branch_inventory=branches)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
                 "selection_mode": window_mode,
                 "window_count": len(windows), "selected_projects": selected,
                 "source_bound_decision": decision,
+                "recent_unpr_branch_ownership": (
+                    branches if branches is not None else
+                    {"coverage": "not_requested", "owner_verified": False}),
             }, ensure_ascii=True, sort_keys=True, indent=2)
         else:
             lines = ["zSentinel portfolio | venster %d/%d | GitHub: %s" % (
@@ -380,6 +399,17 @@ def main():
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
                     _count(row["p0_p1_issue_sample_hits"]), _count(row["incident_sample_hits"]),
                     row["github_observation"]))
+            if branches is not None:
+                lines.append("BRANCH EIGENDOM (%s): %s; recente kandidaten=%s; "
+                             "mogelijke pad-overlap=%s; GEEN eigendomsbevestiging." % (
+                                 branches["repository"], branches["coverage"],
+                                 branches["recent_candidate_count"],
+                                 str(branches["potential_overlap_observed"])))
+                for entry in branches["recent_candidates"]:
+                    lines.append("  %s @ %s age=%sh files=%s overlap=%s" % (
+                        entry["branch"], entry["head_sha"][:12],
+                        entry["commit_age_hours"], entry["path_count"],
+                        str(entry["potential_overlap"])))
             lines.append("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
             rendered = "\n".join(lines)
         if args.state:
