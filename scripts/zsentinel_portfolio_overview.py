@@ -79,7 +79,7 @@ def verified_source_coverage(selected, provenance, bundle):
     return result
 
 
-def portfolio_summary(registry, queue, selected, github_coverage):
+def portfolio_summary(registry, queue, selected, github_coverage, decision):
     """Coverage-aware project rows; zero is never emitted for absent evidence."""
     if (not isinstance(queue, dict)
             or queue.get("schema") != "zsentinel-queue-pressure-v1"
@@ -93,6 +93,11 @@ def portfolio_summary(registry, queue, selected, github_coverage):
     complete = queue.get("queue_inventory_complete") is True
     if (not isinstance(github_coverage, dict) or set(github_coverage) != set(selected)):
         raise ValueError("GitHub source coverage missing for selected window")
+    triage = decision.get("open_product_issue_triage", {})
+    incidents = decision.get("incidents", [])
+    issue_items = triage.get("issues", []) if isinstance(triage, dict) else []
+    if not isinstance(issue_items, list) or not isinstance(incidents, list):
+        raise ValueError("malformed source-bound incident and issue observations")
     summary = {}
     for key, repository in registry.items():
         if not isinstance(key, str) or not isinstance(repository, str):
@@ -107,6 +112,7 @@ def portfolio_summary(registry, queue, selected, github_coverage):
             "expired_owner_leases": 0 if complete else None,
             "worker_ownership_verified": False,
             "recovery_proven": False, "next_action": "read_only_inspect_current_source",
+            "p0_p1_issue_sample_hits": None, "incident_sample_hits": None,
         }
     for entry in groups:
         if not isinstance(entry, dict):
@@ -131,6 +137,19 @@ def portfolio_summary(registry, queue, selected, github_coverage):
                 if type(value) is not int or value < 0:
                     raise ValueError("invalid owned queue counter")
                 row["owned"] += value
+    # Counts below are lower bounds in the bounded source window,
+    # NEVER total open portfolio issue/incident inventory.
+    for pid in selected:
+        if github_coverage[pid] in ("partial_both_sources", "issue_sample_only"):
+            summary[pid]["p0_p1_issue_sample_hits"] = sum(
+                isinstance(item, dict) and item.get("project_id") == pid
+                for item in issue_items
+            )
+        if github_coverage[pid] in ("partial_both_sources", "ci_sample_only"):
+            summary[pid]["incident_sample_hits"] = sum(
+                isinstance(item, dict) and item.get("project_id") == pid
+                for item in incidents
+            )
     for row in summary.values():
         if not complete:
             row["next_action"] = "queue_source_incomplete_owner_must_review"
@@ -216,6 +235,10 @@ def portfolio_html(summary, decision, window_index, windows):
             '<td>' + _count(row["high_claim_attempts"]) + '</td>'
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
             '<td>' + escape(github) + '</td>'
+            '<td>' + ('ONBEKEND' if row["p0_p1_issue_sample_hits"] is None
+                      else '≥' + str(row["p0_p1_issue_sample_hits"])) + '</td>'
+            '<td>' + ('ONBEKEND' if row["incident_sample_hits"] is None
+                      else '≥' + str(row["incident_sample_hits"])) + '</td>'
             '<td>' + escape(action_text) + '</td></tr>'
         )
     selected = ", ".join(escape(x) for x in windows[window_index])
@@ -240,12 +263,15 @@ def portfolio_html(summary, decision, window_index, windows):
         '<div class="wrap"><table><thead><tr><th scope="col">Project</th>'
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
-        '<th scope="col">GitHub-bereik</th><th scope="col">Veilige vervolgstap</th>'
+        '<th scope="col">GitHub-bereik</th><th scope="col">P0/P1-issues (min.)</th>'
+        '<th scope="col">Incidenten (min.)</th><th scope="col">Veilige vervolgstap</th>'
         '</tr></thead><tbody>' +
         "".join(cells) + '</tbody></table></div>'
         '<p class="muted small">Standaard kiest <code>--window auto</code> '
         'elk UTC-uur een ander bronvenster, alleen bij een nieuwe '
         'handmatig of geautoriseerd geplande uitvoering. '
+        'Een getal ≥0 is alleen een ondergrens van de steekproef, '
+        'nooit het totale issue- of incidentenaantal. '
         'Handmatig kiezen: <code>--window 0</code> tot <code>--window ' +
         str(len(windows)-1) +
         '</code>. Eén run scant nooit stiekem alle repositories via GitHub.</p>'
@@ -313,7 +339,7 @@ def main():
             write_json_atomic(args.state, state)
         decision["private_ledger_written"] = bool(args.state)
         github_coverage = verified_source_coverage(selected, provenance, bundle)
-        summary = portfolio_summary(registry, queue, selected, github_coverage)
+        summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
         if args.format == "html":
             print(portfolio_html(summary, decision, window_index, windows))
         elif args.format == "json":
@@ -328,9 +354,10 @@ def main():
                 window_index + 1, len(windows), ", ".join(selected)))
             print("Portfoliobreed: GitHub buiten dit venster NIET GESCAND. Geen herstelbewijs.")
             for row in summary["rows"]:
-                print("%s | queued=%s | owned=%s | churn=%s | lease=%s | Github=%s" % (
+                print("%s | queued=%s | owned=%s | churn=%s | lease=%s | issues>=%s | incidents>=%s | Github=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
+                    _count(row["p0_p1_issue_sample_hits"]), _count(row["incident_sample_hits"]),
                     row["github_observation"]))
             print("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
