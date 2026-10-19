@@ -25,7 +25,7 @@ from zsentinel_live_cockpit import assemble, ROOT, MAX_PROJECTS
 from zsentinel_recovery_router import MAX_STATE_BYTES, plan, read_json, write_json_atomic, acquire_private_ledger_lock
 from zsentinel_recovery_view import html_view
 from zsentinel_problem_picker import next_problems, problems_html
-from zsentinel_pr_delivery import observe_prs, pr_delivery_html
+from zsentinel_pr_delivery import discover_open_prs, observe_prs, pr_delivery_html
 from zsentinel_portfolio_windows import select_next, advance, coverage_history, acquire_window_lock
 
 
@@ -496,6 +496,8 @@ def main():
                         help="read-only exact-head PR review/CI: PROJECT:NUMBER; at most three in selected window")
     parser.add_argument("--inspect-referenced-prs", action="store_true",
                         help="sample up to three existing PRs linked in the current P0/P1 product issue shortlist")
+    parser.add_argument("--discover-open-prs", action="store_true",
+                        help="read first 20 recently updated open PRs per selected project and prioritize existing work")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk"), default="html")
     parser.add_argument("--desk-output", type=Path,
@@ -611,7 +613,7 @@ def main():
         problem_inbox = next_problems(summary, decision, selected)
         # PR observation is explicitly opt-in. Never treat GitHub metadata
         # as an owner claim, required-check inventory or merge permission.
-        if (args.inspect_pr or args.inspect_referenced_prs) and args.format in ("ics", "desk"):
+        if (args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs) and args.format in ("ics", "desk"):
             raise ValueError("existing PR desk supports only html, json or text")
         pr_selection = []
         for raw in args.inspect_pr:
@@ -638,8 +640,26 @@ def main():
                         pr_selection.append(candidate)
                         if len(pr_selection) >= 3:
                             break
+        pr_discovery = None
+        if args.discover_open_prs and len(pr_selection) < 3:
+            pr_discovery = discover_open_prs(
+                registry, selected, token=os.environ.get("GITHUB_TOKEN"),
+                limit=3-len(pr_selection), exclude=pr_selection)
+            pr_selection.extend(pr_discovery["selection"])
+        elif args.discover_open_prs:
+            pr_discovery = {
+                "schema": "zsentinel-open-pr-discovery-v1",
+                "coverage": "not_requested_capacity_full", "selection": [],
+                "calls": 0, "all_open_prs_observed": False,
+                "owner_verified": False, "writes_performed": False,
+                "merge_authorized": False}
         pr_desk = (observe_prs(registry, pr_selection, token=os.environ.get("GITHUB_TOKEN"))
-                   if args.inspect_pr or args.inspect_referenced_prs else None)
+                   if args.inspect_pr or args.inspect_referenced_prs or args.discover_open_prs
+                   else None)
+        if pr_desk is not None:
+            pr_desk["open_pr_discovery"] = (pr_discovery if pr_discovery is not None else {
+                "coverage": "not_requested", "all_open_prs_observed": False,
+                "merge_authorized": False})
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
@@ -676,6 +696,8 @@ def main():
                 lines.append("  Geen kandidaten in beperkte steekproef; GEEN bewijs van nul open issues.")
             if pr_desk is not None:
                 lines.append("BESTAANDE PR'S (exact-head steekproef, GEEN mergetoestemming):")
+                if pr_discovery is not None:
+                    lines.append("  Open PR bron: maximaal 20 recent bijgewerkte PRs/project; eigenaar en compleetheid ONBEKEND.")
                 for item in pr_desk["items"]:
                     lines.append("  %s PR #%s head=%s | bron=%s | vervolg=%s | %s" % (
                         item["project_id"], item["pr_number"],
