@@ -910,7 +910,7 @@ def main():
         owner_handoff = None
         if args.show_owner_handoff:
             from zsentinel_runtime_handoff import build_handoff
-            owner_handoff = build_handoff(decision)
+            owner_handoff = build_handoff(decision, registry=registry)
         local_runner = None
         if args.observe_local_runner:
             from zsentinel_local_runner_observer import observe_local_runner
