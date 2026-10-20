@@ -239,6 +239,9 @@ def markdown(report):
         "Deze tool kan geen veilige verwijdering, vrije ruimte of herstel bewijzen.",
         "",
     ]
+    if "disk_growth_comparison" in report:
+        from zsentinel_disk_trend import as_markdown
+        lines.extend(["", as_markdown(report["disk_growth_comparison"])])
     return "\n".join(lines)
 
 
@@ -277,8 +280,10 @@ def html(report):
                      escape(row["last_modified_utc"][:10]) + "</small></article>")
     if not report["top_files"]:
         lines.append("<p>Geen kandidaten in deze begrensde bron, niet per se geen ruimteproblemen.</p>")
-    lines.append("<p><strong>Vereist:</strong> eigenaar verifieert actieve writers, "
-                 "bewaartermijn en back-up vóór afzonderlijk geautoriseerd opruimen.</p></main></html>")
+    if "disk_growth_comparison" in report:
+        from zsentinel_disk_trend import as_html
+        lines.append(as_html(report["disk_growth_comparison"]))
+    lines.append("<p><strong>Vereist:</strong> eigenaar verifieert actieve writers, "                 "bewaartermijn en back-up vóór afzonderlijk geautoriseerd opruimen.</p></main></html>")
     return "".join(lines)
 
 
@@ -295,8 +300,20 @@ def public_summary(report):
             or report.get("coverage") not in (
                 "bounded_complete_with_no_private_exclusions", "partial")):
         raise ValueError("untrusted disk hotspot observation")
+    compare = report.get("disk_growth_comparison")
+    if compare is not None:
+        from zsentinel_disk_trend import TREND
+        if (type(compare) is not dict or compare.get("schema") != TREND
+                or compare.get("disk_freed_verified") is not False
+                or compare.get("cleanup_authorized") is not False):
+            raise ValueError("untrusted private disk change comparison")
     return {
         "schema": "zsentinel-disk-workbench-summary-v1",
+        "observed_change_mib_not_growth": (
+            round(compare["observed_allocated_difference_bytes_not_disk_growth"] / 1048576, 1)
+            if compare is not None else None),
+        "matched_previous_groups": compare["shared_groups"] if compare is not None else None,
+        "comparison_partial": compare["any_partial_snapshot"] if compare is not None else None,
         "observed_at_utc": report["observed_at_utc"],
         "coverage": report["coverage"],
         "truncation_reason": report["truncation_reason"],
@@ -328,7 +345,15 @@ def public_summary_html(summary):
         '; aanvullende niet-bezochte mappen: ' +
         str(summary["directories_unscanned"]) +
         '. Bestandsnamen staan uitsluitend in het afzonderlijke'
-        ' aangemaakte privérapport (0600), NIET in deze cockpit.</p>'
+        ' aangemaakte privérapport (0600), NIET in deze cockpit.</p>' +
+        ('<p>Vergelijking met vorige privé-scan: ' +
+         str(summary["observed_change_mib_not_growth"]) +
+         ' MiB verschil in waargenomen toegewezen data (GEEN bewijs van'
+         ' werkelijk gegroeide of vrijgemaakte schijfruimte).'
+         ' Overlappende groepen: ' + str(summary["matched_previous_groups"]) +
+         '; minstens één bron gedeeltelijk: ' +
+         str(summary["comparison_partial"]) + '.</p>'
+         if summary.get("observed_change_mib_not_growth") is not None else '')
         '<p>Actie: eigenaar controleert actieve schrijvers, bewaartermijnen en'
         ' backups vóór een afzonderlijk geautoriseerde opruimactie.'
         ' Geen bestand verwijderd, worker herstart of claim vrijgegeven.</p>'
@@ -344,12 +369,19 @@ def main():
     parser.add_argument("--max-depth", type=int, default=MAX_DEPTH)
     parser.add_argument("--max-seconds", type=int, default=MAX_SECONDS)
     parser.add_argument("--format", choices=("json", "md", "html"), default="md")
+    parser.add_argument("--previous", type=Path,
+                        help="private preceding .json disk snapshot of SAME workspace, max 72h ago")
     parser.add_argument("--output", type=Path, required=True,
                         help="REQUIRED private create-only .json/.md/.html; no filename stdout")
     args = parser.parse_args()
     try:
+        if args.previous is not None and args.previous.resolve() == args.output.resolve():
+            raise ValueError("previous and new private output cannot overlap")
         report = observe(args.root, min_mib=args.min_mib, max_entries=args.max_entries,
                          max_depth=args.max_depth, max_seconds=args.max_seconds)
+        if args.previous is not None:
+            from zsentinel_disk_trend import load_previous, compare
+            report["disk_growth_comparison"] = compare(load_previous(args.previous), report)
         content = (json.dumps(report, ensure_ascii=True, indent=2) if args.format == "json"
                    else html(report) if args.format == "html" else markdown(report))
         from zsentinel_private_output import write_private_output
