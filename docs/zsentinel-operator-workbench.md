@@ -1339,3 +1339,60 @@ bewijst geen volledige verplicht-checklijst, eigenaar, fix,
 code-eigenaar-, CI-, security-, release- en Notion-claimgates
 blijven ongewijzigd; er is geen automatische actielus,
 workerclaim of test/QA-run toegevoegd.
+
+
+## 20 oktober · Portfolio-brede merge-first voortgang uit bestaande PR-bronnen
+
+De zelfstandige, reeds brongebonden **saved-gate batch bridge** heeft nu
+één canonieke **projectwerkbak** boven de individuele PR-kaarten.
+Vervolgens blijft de gehele oorspronkelijke bestaande PR-inventaris
+beschikbaar, zonder een tweede crawler, extra GitHub-opvraag of
+runtime-schrijfbevoegdheid.
+
+```sh
+# Self-contained offline HTML: P0-eerst per project met bron-PR-links.
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./gate-batch-1.json \
+  --receipt ./gate-batch-2.json \
+  --format html --output ./private-portfoliobord.html
+
+# Semikolon-CSV met één menselijke vervolgactie per waargenomen project.
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./gate-batch-1.json \
+  --receipt ./gate-batch-2.json \
+  --format portfolio-csv --output ./private-projectoverzicht.csv
+
+# De bestaande volledige tekstoverdracht bevat dezelfde projectsamenvatting.
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./gate-batch-1.json \
+  --receipt ./gate-batch-2.json \
+  --format markdown --output ./private-merge-eerst.md
+```
+
+**Concreet operatorgedrag:** per waargenomen repository toont het
+HTML-projectpaneel en de CSV de hoeveelheid PR-kandidaten, P0/P1-aandeel,
+onbekende gatebronnen, de verdeling van hoofdblokkades en alle gelijktijdig
+waargenomen CI-, bron- en reviewhindernissen. De eerste bestaande
+PR-kandidaat krijgt een link en expliciete menselijke vervolgactie.
+De vollediger Markdown-overdracht begint nu eveneens met een projectgewijs
+overzicht en behoudt alle afzonderlijke oorspronkelijke PR-kaarten.
+
+De prioriteit is gebaseerd op de opgeslagen **hoogste gekoppelde
+issueprioriteit**, met P0 boven P1 en meerdere kandidaat-PRs zichtbaar.
+Dit is een **operatorvolgorde, geen claim, lease of releasebesluit**.
+Als een project niet in het bronvenster voorkwam, wordt er geen
+nulkandidaat, herstel of vrijgevallen werk uit afgeleid.
+Ontbrekende batches blijven **ONBEKEND**. De bronmomenten, originele
+reviewmanifest-/board-hashes en brongebonden privacygrenzen blijven
+ongewijzigd; bestanden blijven create-only privé (`0600`,
+`O_EXCL`, maximaal 1 MiB).
+
+Dit is een concrete productfunctie voor handmatige portfolio-doorlevering.
+Het start geen QA-/regressiesuite, GitHub workflow, CI-rerun,
+agentclaim, VPS-commandoreeks, automatische broker-/herstelactie of
+deploy. Alle exacte-head verplichte CI, onafhankelijke review,
+branch protection en productie-eigenaarschap moeten nog afzonderlijk
+worden gecontroleerd voordat een echte GitHub-mainmerge kan plaatsvinden.
