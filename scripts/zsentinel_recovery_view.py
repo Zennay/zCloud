@@ -877,6 +877,14 @@ def html_view(decision):
             + section(primary_incidents,
                       "Geen vers geverifieerde blokkades. Dat bewijst geen herstel.")
             + extra_incidents + '</section>'
+            + '<section><h2>Menselijke bronherbeoordeling · historisch (' +
+              str(len(historical_owner_cards)) +
+              ')</h2><p class="muted">Afzonderlijke opvolging van eerdere menselijke blokkades. '
+              'GEEN actuele incident- of notificatiefeed en geen claim-/merge-/herstartrecht.</p>'
+            + section(historical_owner_cards,
+                      "Geen historische menselijke blokkades om afzonderlijk te herbeoordelen.")
+            + ('<p class="muted">Er zijn meer historische eigenaarrechecks dan de zichtbare shortlist.</p>'
+               if historical_owner_partial else '') + '</section>'
             + f'<section><h2>Historisch niet meer waargenomen · nog te reconciliëren ({missing})</h2>'
             + '<p class="muted">Deze incidenten zijn uitsluitend uit het lokale incidentledger bekend. '
               'Een niet-bekeken projectvenster of ontbrekende GitHub-bron is GEEN herstelbewijs. '
