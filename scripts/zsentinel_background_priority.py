@@ -105,17 +105,47 @@ def admission(s):
     return 175, 70, "idle-capacity"
 
 
-def read_previous():
+def _cpu_period_seconds(raw):
+    """Convert systemd's one-second quota to seconds without shell parsing."""
+    raw = raw.strip()
+    for suffix, scale in (("min", 60.0), ("ms", 0.001),
+                          ("us", 0.000001), ("s", 1.0)):
+        if raw.endswith(suffix):
+            try:
+                number = float(raw[:-len(suffix)])
+                if number >= 0 and number < 3600:
+                    return number * scale
+            except ValueError:
+                return None
+    return None
+
+
+def installed_cgroup():
+    """Check real service state, not an old JSON guess about applied values."""
+    result = subprocess.run(
+        ["systemctl", "--user", "show", UNIT,
+         "-p", "ActiveState", "-p", "CPUQuotaPerSecUSec", "-p", "CPUWeight"],
+        check=True, timeout=8, capture_output=True, text=True,
+    )
+    fields = dict(
+        line.split("=", 1) for line in result.stdout.splitlines()
+        if "=" in line
+    )
     try:
-        # Do not follow an attacker-created state symlink.
-        if STATE.is_symlink():
-            return {}
-        data = json.loads(STATE.read_text())
-        if isinstance(data, dict):
-            return data
-    except (OSError, ValueError):
-        pass
-    return {}
+        weight = int(fields["CPUWeight"])
+    except (KeyError, ValueError):
+        weight = None
+    return {
+        "active": fields.get("ActiveState") == "active",
+        "weight": weight,
+        "quota_seconds": _cpu_period_seconds(fields.get("CPUQuotaPerSecUSec", "")),
+    }
+
+
+def matches_cgroup(observed, quota, weight):
+    seconds = observed["quota_seconds"]
+    return (observed["active"] and observed["weight"] == weight and
+            seconds is not None and abs(seconds - quota / 100) < 0.002)
 
 
 def write_private_state(data):
@@ -150,15 +180,21 @@ def main():
         print(json.dumps({**s, "mode": mode, "quota": quota, "weight": weight,
                           "applied": False}, sort_keys=True))
         return
-    previous = read_previous()
-    if previous.get("quota") != quota or previous.get("weight") != weight:
+    actual = installed_cgroup()
+    if not actual["active"]:
+        raise SystemExit("Coach unit not active: no CPU adjustment or applied-state assertion")
+    if not matches_cgroup(actual, quota, weight):
         # No command shell, no privileged unit and no service restart.
         subprocess.run(
             ["systemctl", "--user", "set-property", "--runtime",
              UNIT, f"CPUQuota={quota}%", f"CPUWeight={weight}"],
             check=True, timeout=12, stdout=subprocess.DEVNULL,
         )
-    write_private_state({**s, "quota": quota, "weight": weight, "mode": mode})
+        actual = installed_cgroup()
+        if not matches_cgroup(actual, quota, weight):
+            raise SystemExit("Coach policy not verified after systemd update")
+    write_private_state({**s, "quota": quota, "weight": weight,
+                         "mode": mode, "applied_verified": True})
     print(f"{mode}: Fuckball CPUQuota={quota}%; CPUWeight={weight}; "
           f"active runner={s['runner_active']}; sources complete={s['source_complete']}")
 
