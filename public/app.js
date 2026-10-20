@@ -1189,6 +1189,7 @@ function githubActivityImportPanel(){
       ' · observed '+esc(date(c.observedAt,true))+
       ' · missing events remain UNKNOWN</div>').join('');
   const content=rows.slice(0,80).map(a=>'<div class="service-row"><div><small>'+esc(a.project)+' · '+esc(a.kind)+
+    (a.staleUnverified?' · HISTORICAL: NOT REOBSERVED':'')+
     (a.firstSeen?' · absent in preceding bounded snapshot':'')+'</small><br><a target="_blank" rel="noopener noreferrer" href="'+
     esc(a.url)+'">'+esc(a.description)+'</a></div><small>'+esc(date(a.ts,true))+'</small></div>').join('');
   return '<div class="panel"><div class="panel-header"><div><h2>GitHub evidence · optional local import</h2>'+
@@ -2025,6 +2026,7 @@ function exportZSentinelHandoff(){
   for(const item of recent){
     if(!/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(item.url))continue;
     lines.push('- '+clean(item.project,56)+' · '+clean(item.kind,32)+' · '+clean(item.ts,40)+
+      (item.staleUnverified?' · HISTORICAL ONLY: NOT REOBSERVED':'')+
       ' · '+clean(item.description,160)+' — '+item.url);
   }
   if(!recent.length)lines.push('No valid GitHub events in currently loaded source window.');
@@ -2065,7 +2067,10 @@ function zSentinelDeliveryPulseSummary(github,visible,focus){
     &&typeof row.url==='string'
     &&/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/(?:pull|commit|actions\/runs)\/[A-Za-z0-9]+$/.test(row.url)
     &&Number.isFinite(Date.parse(row.ts))&&Date.parse(row.ts)<=Date.now()+120000);
-  const recent=events.filter(row=>Date.now()-Date.parse(row.ts)<=86400000);
+  // Historical events preserved after incomplete reads do not count as
+  // current 24h delivery pulse evidence even when their source time is recent.
+  const recent=events.filter(row=>row.staleUnverified!==true
+    &&Date.now()-Date.parse(row.ts)<=86400000);
   const counts=Object.fromEntries([...validKinds].map(key=>[
     key,recent.filter(event=>event.kind===key).length]));
   const covered=(github?.coverage||[]).filter(row=>visible.has(row.project)
@@ -2075,7 +2080,8 @@ function zSentinelDeliveryPulseSummary(github,visible,focus){
     &&(!row.providerAdmission||row.providerAdmission==='none')
     &&Number.isFinite(Date.parse(row.observedAt))
     &&Date.now()-Date.parse(row.observedAt)<=6*3600000);
-  const reportedMerges=events.filter(row=>row.kind==='pr_merged')
+  const reportedMerges=events.filter(row=>row.kind==='pr_merged'
+    &&row.staleUnverified!==true)
     .sort((a,b)=>Date.parse(b.ts)-Date.parse(a.ts)).slice(0,5);
   return {events,recent,counts,covered,completeSample:!!completeSample,reportedMerges};
 }
@@ -2811,7 +2817,9 @@ function combinedActivityRows(){
     seen.add(key);
     groups.get(row.project).push({key,source:'github',project:row.project,
       kind:row.kind,summary:row.description,
-      detail:row.firstSeen?'First observed in this bounded sample; not proof of new work':'GitHub observation',
+      detail:row.staleUnverified
+        ?'HISTORICAL GITHUB EVENT: NOT REOBSERVED after incomplete provider refresh'
+        :row.firstSeen?'First observed in this bounded sample; not proof of new work':'GitHub observation',
       observedAt:(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).find(c=>c.project===row.project)?.observedAt||null,
       ts:row.ts,url:row.url});
   }
@@ -3011,6 +3019,7 @@ function exportCombinedActivityTimeline(){
   for(const row of rows){
     lines.push('- '+clean(row.ts)+' · '+clean(row.project)+' · '+clean(row.source)+
       '/'+clean(row.kind)+' · '+clean(row.summary)+
+      ' · '+clean(row.detail)+
       (row.url?' · '+row.url:''));
   }
   lines.push('','## Scoped local VPS source coverage','',
