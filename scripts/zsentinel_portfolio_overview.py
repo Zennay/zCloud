@@ -1038,7 +1038,8 @@ def main():
         disk_private_html = None
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
-            disk_report = disk_observe(args.disk_hotspots_root)
+            disk_report = disk_observe(args.disk_hotspots_root,
+                min_mib=1 if args.archive_target is not None else 64)
             if args.archive_target is not None:
                 from zsentinel_archive_readiness import observe as archive_observe
                 disk_report["archive_readiness"] = archive_observe(
