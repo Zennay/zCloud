@@ -943,7 +943,7 @@ def dynamic_worker_settings():
     return {
         'count':int(total),
         'enabled':bool(total > 0),
-        'max_workers':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER*2),
+        'max_workers':int(MAX_CHATGPT_WORKERS),
         'max_workers_per_provider':int(MAX_DYNAMIC_WORKERS_PER_PROVIDER),
         'cooldown_seconds':int(DYNAMIC_CHATGPT_COOLDOWN_SECONDS),
         'chatgpt_count':counts['chatgpt'],
@@ -1051,8 +1051,8 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
             },
             'succeeded',connection=c,
         )
-        if chatgpt_count + claude_count == 0:
-            c.execute('DELETE FROM ai_global_slots')
+        # Do not delete owner mappings here. The subsequent bounded
+        # reconciliation prunes only unoccupied out-of-range slots.
     DYNAMIC_CHATGPT_WORKERS=chatgpt_count
     DYNAMIC_CLAUDE_WORKERS=claude_count
     GLOBAL_CHATGPT_WORKER_LIMIT=chatgpt_count+claude_count
