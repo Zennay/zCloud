@@ -168,7 +168,16 @@ def combine_workboards(snapshots, registry, now=None):
         "inspected_pr_count": sum(s["inspected_pr_count"] for s in snapshots),
         "issue_sample_truncated": any(s.get("issue_sample_truncated") is True
                                       for s in snapshots),
-        "all_projects_currently_read": all(w["age_seconds"] <= 600 for w in windows),
+        # Recent timestamp != successfully read GitHub source. Degraded or
+        # unavailable windows must never advertise current source coverage.
+        "all_projects_currently_read": all(
+            w["age_seconds"] <= 600 and
+            all(status == "partial" for status in w["source_coverage"].values())
+            for w in windows),
+        "project_sources_degraded_or_unavailable": [
+            pid for w in windows for pid, status in w["source_coverage"].items()
+            if status != "partial"
+        ],
         "full_portfolio_observed": False,
         "full_issue_inventory_known": False,
         "ownership_verified": False,
