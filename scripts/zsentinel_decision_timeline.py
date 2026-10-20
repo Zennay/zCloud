@@ -50,6 +50,9 @@ def collect_history(paths, now: datetime | None = None):
             "index": index, "observed_at_utc": moment.isoformat(),
             "normalized_source_sha256": digest,
             "observed_incident_count": len(incidents),
+            "observed_p0_count": sum(i["priority"] == "P0" for i in incidents),
+            "observed_p1_count": sum(i["priority"] == "P1" for i in incidents),
+            "observed_human_only_count": sum(i["human"] for i in incidents),
             "source_partial": True, "ownership_verified": False,
         })
         for item in incidents:
@@ -73,15 +76,24 @@ def collect_history(paths, now: datetime | None = None):
     for item in by_key.values():
         events = item["events"]
         last = events[-1]
-        prior = events[-2] if len(events) > 1 else None
+        first = events[0]
         seen_final = last["window"] == len(windows)
-        changed = bool(prior and any(
-            prior[field] != last[field] for field in (
-                "priority", "owner_label", "action", "status", "human", "review_by")))
+        highest = min(
+            (e["priority"] for e in events),
+            key=lambda priority: SEVERITIES.index(priority))
+        changed = any(
+            any(e[field] != first[field] for field in (
+                "priority", "owner_label", "action", "status", "human", "review_by"))
+            for e in events[1:])
+        gaps = sum(
+            current["window"] > before["window"] + 1
+            for before, current in zip(events, events[1:]))
         rows.append({
             "id": item["id"], "project": item["project"],
             "problem": item["problem"], "observed_windows": len(events),
+            "first_window": first["window"],
             "last_window": last["window"],
+            "highest_observed_priority": highest,
             "last_priority": last["priority"],
             "last_owner_label_unverified": last["owner_label"],
             "last_action_advisory": last["action"],
@@ -93,11 +105,12 @@ def collect_history(paths, now: datetime | None = None):
                 "observed_in_last_partial_source" if seen_final
                 else "not_in_final_sample_reconciliation_required"),
             "observed_field_changes": changed,
+            "disappeared_and_reappeared_sample_gaps": gaps,
             "no_owner_recovery_or_merge_inference": True,
             "events": events,
         })
     rows.sort(key=lambda row: (
-        SEVERITIES.index(row["last_priority"]),
+        SEVERITIES.index(row["highest_observed_priority"]),
         not row["human_last_observed"], not row["observed_in_final_sample"],
         -row["observed_windows"], row["project"], row["id"],
     ))
@@ -115,6 +128,8 @@ def collect_history(paths, now: datetime | None = None):
             not row["observed_in_final_sample"] for row in rows),
         "multi_window_observed": sum(
             row["observed_windows"] >= 2 for row in rows),
+        "disappeared_then_reobserved": sum(
+            row["disappeared_and_reappeared_sample_gaps"] > 0 for row in rows),
         "source_coverage_partial": True,
         "owner_claim_verified": False, "recovery_verified": False,
         "merge_authorized": False, "writes_performed": False,
@@ -138,9 +153,11 @@ def render_text(report):
         lines.extend([
             "%s %s %s · %s" % (
                 row["last_priority"], row["project"], row["problem"], row["id"]),
-            "Waargenomen in %d/%d vensters · %s" % (
+            "Waargenomen in %d/%d vensters · %s · hoogste historische urgentie %s" % (
                 row["observed_windows"], report["source_count"],
-                row["classification"]),
+                row["classification"], row["highest_observed_priority"]),
+            "Verdween en verscheen opnieuw in steekproeven %d keer: GEEN bewijs van tussentijds herstel" %
+            row["disappeared_and_reappeared_sample_gaps"],
             "Actieadvies: %s" % row["last_action_advisory"],
             "Eigenaarlabel (onbevestigd) %s · status %s · beoordeling %s" % (
                 row["last_owner_label_unverified"], row["last_status"],
