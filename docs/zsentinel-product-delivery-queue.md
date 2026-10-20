@@ -802,3 +802,26 @@ Een `BLOCKED` zonder menselijke actie kan nog steeds zelfstandig
 uitvoerbaar vervolgwerk genereren binnen de bestaande productpolicy.
 Andere reeds bestaande producttaken blijven op hun eigen lanes en
 onder de eigen worker-/CI-/reviewgates lopen.
+
+
+## 20 oktober · Ook automatisch gegenereerde vervolgopdrachten blijven product-only
+
+De rechtstreeks door `portfolio_queue_finish(..., next_task=...)`
+gecreëerde vervolgopdrachten gebruikten nog een oudere afsluitzin
+met `automated test/build/run evidence`. Die kon een nieuwe worker ten
+onrechte richting test- of QA-rondes sturen ondanks het geldende
+bouwgerichte productbeleid. De nieuwe doorlopende opdracht verlangt nu
+meerdere materiaalwijzigingen of één grote end-to-end oplevering en alleen
+een build of directe functionele inspectie als aanvullende broncontrole.
+De tekst verbiedt expliciet schrijven, uitbreiden of draaien van QA-,
+regressie- en testsuites. Verplichte bestaande CI, onafhankelijke review
+en geautoriseerde releasevoorwaarden blijven intact. De foutmelding bij
+een niet-uitvoerbaar queuevoorstel gebruikt voortaan eveneens
+productbouw, integratie en herstel in plaats van 'test' als toegestane
+werkcategorie. Dit geldt alleen voor nieuw gegenereerde vervolgstappen;
+actieve queueclaims en historische receipts zijn niet herschreven.
+
+Het brede inventarisverzoek van andere open GitHub-product-PRs kreeg
+een externe HTTP 504; er is geen merge, branch-protection-bypass,
+retrigger of aanname over review-gereedheid uitgevoerd op basis van
+dat incomplete resultaat.
