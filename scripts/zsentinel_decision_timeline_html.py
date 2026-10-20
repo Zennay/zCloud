@@ -65,6 +65,11 @@ Geen claims vrijgeven, jobs herstarten of automatische retries uitvoeren.</p>
 <div id="queueStats" class="statgrid"></div>
 <div id="queueWindows"></div>
 <div id="queueDeltas"></div>
+<p>Voor menselijke beoordeling zonder runner- of queueacties:</p>
+<button id="queuePreview">Bekijk privé wachtrijoverdracht</button>
+<button id="queueDownload" disabled>Download wachtrijoverdracht als Markdown</button>
+<p id="queueFeedback" aria-live="polite">Geen overdracht gemaakt.</p>
+<pre id="queueBrief" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto"></pre>
 </section>
 <section class="filters" aria-label="Filters">
 <label>Zoeken<input id="search" type="search" placeholder="Incident, project, eigenaar of advies"></label>
@@ -157,6 +162,81 @@ for(const delta of queue.adjacent_comparisons){
  }
  $("queueDeltas").append(details);
 }
+let queuePreview=null;
+function queueMarkdown(){
+ const history=data.queue_pressure_history;
+ if(!history||!Array.isArray(history.adjacent_comparisons))throw Error("source");
+ const out=[
+  "# zSentinel · historische eigenaarsoverdracht wachtrijdruk","",
+  "> Alle wachtrijdata komen uit oude, gedeeltelijke bronvensters.",
+  "> Pogingen om taken te claimen zijn geen mislukte jobs, geen retrytoestemming.",
+  "> Afwezige data, lagere aantallen of verlopen leases betekenen geen herstel.",
+  "> Geen mutaties, merges, leases of productierechten.","",
+  "- Eerste routerbron: "+data.first_source_observed_at_utc,
+  "- Laatste routerbron: "+data.last_source_observed_at_utc,
+  "- Bron SHA256: "+data.sources.map(x=>x.normalized_source_sha256).join(", "),
+  "- Vergelijkbare vensters: "+history.compared_pairs,
+  "- Niet-vergelijkbare vensters: "+history.unknown_pairs,"",
+ ];
+ for(const row of history.adjacent_comparisons){
+  const title="## Vensters "+row.from_window+" → "+row.to_window;
+  out.push(title);
+  if(row.deltas===null){
+   out.push("- Status: BRON ONBEKEND. Eigenaar verifieert originele queue/claims opnieuw.","");
+   continue;
+  }
+  const deltas=row.deltas;
+  out.push("- Wachtenden: "+deltas.queued_items,
+   "- Hoge claimpogingen: "+deltas.high_claim_attempt_items,
+   "- Verlopen lease-rijen: "+deltas.expired_owner_lease_rows,
+   "- Status: geobserveerd AGGREGAAT; geen jobherstel of leasevrijgave.");
+  if(row.project_deltas===null){
+   out.push("- Projectbron onvolledig; geen fictieve projectnullen.");
+  }else{
+   for(const g of row.project_deltas){
+    if(g.queued_delta===0&&g.high_claim_attempts_delta===0&&
+       g.expired_owner_lease_rows_delta===0)continue;
+    out.push("- "+g.priority+" "+g.project_id+
+     " · wachtenden "+g.queued_delta+
+     " · hoge claimpogingen "+g.high_claim_attempts_delta+
+     " · verlopen lease-rijen "+g.expired_owner_lease_rows_delta+
+     " (eigenaar onderzoekt; GEEN automatische retry)");
+   }
+  }
+  out.push("");
+ }
+ const raw=out.join("\n");
+ if(new TextEncoder().encode(raw).byteLength>125000)throw Error("too large");
+ return raw;
+}
+$("queuePreview").onclick=()=>{
+ try{
+  const content=queueMarkdown();
+  queuePreview={source:data.sources.map(x=>x.normalized_source_sha256).join(","),content};
+  $("queueBrief").textContent=content;
+  $("queueDownload").disabled=false;
+  $("queueFeedback").textContent="Privé voorvertoning klaar. Controleer oorspronkelijke bronmomenten en claims.";
+ }catch(_){
+  queuePreview=null;$("queueDownload").disabled=true;
+  $("queueBrief").textContent="";
+  $("queueFeedback").textContent="Wachtrijoverdracht niet beschikbaar voor deze bron.";
+ }
+};
+$("queueDownload").onclick=()=>{
+ try{
+  if(!queuePreview||queuePreview.content!==queueMarkdown()||
+     queuePreview.source!==data.sources.map(x=>x.normalized_source_sha256).join(","))
+   throw Error("stale source");
+  const url=URL.createObjectURL(new Blob([queuePreview.content],{type:"text/markdown;charset=utf-8"}));
+  const link=el("a");link.href=url;link.download="zsentinel-historische-wachtrijdruk.md";
+  document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  $("queueFeedback").textContent="Privébronoverdracht aangeboden; niets verzonden of geautoriseerd.";
+ }catch(_){
+  queuePreview=null;$("queueDownload").disabled=true;
+  $("queueFeedback").textContent="Bron of inhoud niet actueel; maak een nieuwe voorvertoning.";
+ }
+};
 for(const source of data.sources){
  $("sources").append(line("Venster "+source.index,
  source.observed_at_utc+" · "+source.observed_incident_count+
