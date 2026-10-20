@@ -91,6 +91,51 @@ def approvals(repo, number, author, exact_head):
                for state, sha in latest.values())
 
 
+def summarize_required_workflows(workflow_runs, sha):
+    """Read-only relevant workflow status, without treating all events as gates.
+
+    A manual workflow_dispatch or historical scheduled run is not a mandatory
+    PR gate. Re-run/superseded attempts for the *same* workflow/event are not
+    independent blockers, either. GitHub branch protection remains authoritative.
+    """
+    if not isinstance(workflow_runs, list):
+        return "CI_SOURCE_UNKNOWN"
+    applicable = {}
+    for run in workflow_runs:
+        if not isinstance(run, dict) or run.get("head_sha") != sha:
+            return "CI_SOURCE_UNKNOWN"
+        event = run.get("event")
+        if event not in {
+            "pull_request", "pull_request_target", "push",
+            "merge_group", "workflow_run"
+        }:
+            continue
+        workflow = run.get("workflow_id")
+        run_number = run.get("run_number")
+        attempt = run.get("run_attempt", 1)
+        run_id = run.get("id")
+        if any(type(n) is not int or n < 1
+               for n in (workflow, run_number, attempt, run_id)):
+            return "CI_SOURCE_UNKNOWN"
+        key = (workflow, event, run.get("head_branch"))
+        sort_key = (run_number, attempt, run_id)
+        if key not in applicable or sort_key > applicable[key][0]:
+            applicable[key] = (sort_key, run)
+    if not applicable:
+        return "NO_PR_WORKFLOW_EVIDENCE"
+    current = [record for _, record in applicable.values()]
+    if any(r.get("status") != "completed" for r in current):
+        return "HEAD_WORKFLOWS_NOT_FINISHED"
+    # An entirely skipped workflow need not block a separately successful
+    # mandatory workflow, but skipped-only is not CI proof.
+    allowed = {"success", "skipped", "neutral"}
+    if any(r.get("conclusion") not in allowed for r in current):
+        return "HEAD_WORKFLOWS_NOT_GREEN"
+    if not any(r.get("conclusion") == "success" for r in current):
+        return "NO_POSITIVE_PR_WORKFLOW_EVIDENCE"
+    return "GREEN"
+
+
 def check_state(repo, sha):
     """Conservatively verify exact-head checks AND associated workflow receipts.
 
@@ -122,13 +167,13 @@ def check_state(repo, sha):
     # successful optional check is insufficient proof when workflows are absent.
     if not runs and not statuses and not workflow_runs:
         return "NO_CI"
-    if not workflow_runs:
-        return "NO_HEAD_WORKFLOW_RECEIPTS"
-    if any(w.get("status") != "completed" for w in workflow_runs):
-        return "HEAD_WORKFLOWS_NOT_FINISHED"
-    if any(w.get("conclusion") != "success" for w in workflow_runs):
-        return "HEAD_WORKFLOWS_NOT_GREEN"
-    if any(r.get("status") != "completed" or r.get("conclusion") != "success"
+    workflow_gate = summarize_required_workflows(workflow_runs, sha)
+    if workflow_gate != "GREEN":
+        return workflow_gate
+    # GitHub accepts skipped/neutral individual checks for optional jobs.
+    # One successful actual workflow has already been required above.
+    if any(r.get("status") != "completed"
+           or r.get("conclusion") not in {"success", "skipped", "neutral"}
            for r in runs):
         return "CHECKS_NOT_GREEN"
     if statuses and legacy.get("state") != "success":
