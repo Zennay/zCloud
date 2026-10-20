@@ -1497,7 +1497,7 @@ def main(argv=None):
     parser.add_argument("--inspect-current-pr-gates", action="store_true",
                         help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
                              "in bestaande PR-steekproef (max 20 extra GETs)")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv", "workorders"),
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv", "workorders", "workorders-json"),
                         default="text")
     args = parser.parse_args(argv)
     try:
@@ -1506,9 +1506,9 @@ def main(argv=None):
                                   os.environ.get("GITHUB_TOKEN"), args.max_prs)
         if args.gate_pr and not args.inspect_current_pr_gates:
             raise ValueError("--gate-pr requires --inspect-current-pr-gates")
-        if args.format == "workorders":
+        if args.format in ("workorders", "workorders-json"):
             if not args.inspect_current_pr_gates:
-                raise ValueError("workorders require --inspect-current-pr-gates")
+                raise ValueError("private workorders require --inspect-current-pr-gates")
             if args.output is None:
                 raise ValueError("private workorders require exclusive --output")
         if args.inspect_current_pr_gates:
@@ -1521,9 +1521,15 @@ def main(argv=None):
                 board["historical_gate_episodes"] = compare_gate_episodes(previous, board)
         if args.inspect_current_pr_gates:
             board["merge_first_attention"] = merge_first_attention(board)
-        if args.format == "workorders":
+        if args.format in ("workorders", "workorders-json"):
             from zsentinel_pr_workorders import collect_workorders, render_markdown
-            rendered = render_markdown(collect_workorders(board))
+            workorder_bundle = collect_workorders(board)
+            if args.format == "workorders":
+                rendered = render_markdown(workorder_bundle)
+            else:
+                rendered = json.dumps(workorder_bundle, ensure_ascii=False, indent=2) + "\n"
+                if len(rendered.encode("utf-8")) > 512 * 1024:
+                    raise ValueError("private workorder JSON exceeds 512 KiB")
         elif args.format == "csv":
             if args.output is None:
                 raise ValueError("private portfolio CSV requires --output")
