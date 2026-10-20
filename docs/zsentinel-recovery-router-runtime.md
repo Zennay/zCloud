@@ -2304,3 +2304,42 @@ inspectie kan een daadwerkelijke live-retentie- of schrijversituatie
 vaststellen. Bestaande exact-head CI, onafhankelijke review,
 protected-main, P0 #1326 en billing #1523 blijven bindend.
 Geen QA/regressiesuites geschreven of handmatig gestart.
+
+### 20 oktober · Portfolio en mapgerichte schijfanalyse afgerond
+
+De bestaande éénmalige portfolio-CLI ondersteunt dezelfde opt-in
+`--disk-hotspots-root` plus `--disk-hotspots-output` als de live cockpit.
+Het exacte bestandsoverzicht verschijnt alléén in het privé 0600 HTML-rapport;
+de HTML/JSON/tekstportfoliocockpit bevat uitsluitend een padvrije samenvatting.
+`--disk-hotspots-output` mag niet samenvallen met een bestaand rapport,
+de queue-DB, workerdata, status-ledger of rotatiecursor. Zonder beide
+flags wordt geen filesystemscan uitgevoerd. ICS/handoff/desk blijven
+hiervan uitgesloten.
+
+De scanner toont ook de vijftien zwaarste **waargenomen eerste-niveau
+projectonderdelen**. Dat maakt veel kleinere bestanden samen zichtbaar,
+naast de vijftien grote individuele bestanden. Waargenomen fileblokken
+zijn door begrensde diepte, tijd, privacyfiltering, hardlinks en mogelijke
+gedeelde filesystemblokken **niet** gelijk aan exacte vrij te maken ruimte.
+Geen automatische cleanup kandidaat wordt ooit als veilig verklaard.
+
+Gevoelige workspace roots en `.pem`, `.key`, `.p12`, `.pfx`, `.jks`
+of `.keystore` worden geweigerd/overgeslagen. Labels worden HTML-escaped.
+Zelfs een verouderd groot bestand of een lokale `history.db` is niet
+zonder bevoegde eigenaar en actuele schrijvercontrole te verwijderen.
+Concreet uitvoeren verandert geen services, queue, claim, Notion, runner,
+GitHub Actions of productiecode.
+
+Voorbeeld portfolio (expliciete besloten uitvoermap moet bestaan):
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window auto --skip-ci-discovery --skip-github-issues \
+  --disk-hotspots-root /home/ubuntu/zennay-cloud \
+  --disk-hotspots-output /home/ubuntu/zennay-cloud/.operator-private/disk-portfolio.html \
+  --format html
+```
+`--github-only` betekent dat actuele queueclaims en andere VPS-runtime
+statussen ONBEKEND blijven, **niet** dat de gekozen lokale schijfmeting
+recht geeft op een runner-, claim-, herstel- of deployactie. Geen QA-suites
+toegevoegd of gedraaid. Laat de bestaande CI/review/protected-main
+releasegates intact.
