@@ -4,6 +4,7 @@
 Only rebalances an existing ubuntu user-scoped coach cgroup. Never starts,
 stops, restarts, dispatches or modifies a portfolio queue or model.
 """
+import argparse
 import json
 import os
 from pathlib import Path
@@ -137,10 +138,18 @@ def write_private_state(data):
 
 
 def main():
-    if os.geteuid() != 1000:
+    parser = argparse.ArgumentParser(description="Bounded user training CPU priority")
+    parser.add_argument("--preview", action="store_true",
+                        help="Show policy decision in JSON without changing CPU controls or state")
+    args = parser.parse_args()
+    if not args.preview and os.geteuid() != 1000:
         raise SystemExit("Refusing to alter units outside ubuntu user scope")
     s = snapshot()
     quota, weight, mode = admission(s)
+    if args.preview:
+        print(json.dumps({**s, "mode": mode, "quota": quota, "weight": weight,
+                          "applied": False}, sort_keys=True))
+        return
     previous = read_previous()
     if previous.get("quota") != quota or previous.get("weight") != weight:
         # No command shell, no privileged unit and no service restart.
