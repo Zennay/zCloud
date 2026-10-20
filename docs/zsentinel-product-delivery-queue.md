@@ -60,3 +60,72 @@ A global P0 queue can be dominated by one project even while other projects have
 The source-protected `portfolio_queue_enqueue` path now checks the same `product_delivery_classification` before creating or updating a queue row. A new QA-only or invalid request is rejected with a fixed reason code. This prevents a manual/API enqueue, worker continuation or normal queue seeding from silently creating a fresh task that the worker allocator is already instructed not to run. No historical queue rows are deleted or migrated and no active lease is touched.
 
 The classifier also recognizes legacy imperative QA-only titles such as **Run full regression suite**, **Draai alle regressietests** and **Voer QA controle uit** even when a metadata lane is absent; those are intentionally excluded. A genuine source repair is still allowed if it is actually product work and passes every existing downstream claim/security/release gate. Human-only or external-gated work retains its existing stricter checks. This implementation creates no new worker, test suite, CI rerun or background service.
+
+
+## 20 oktober · Echte runtime-eigenaarschap- en productcontinuïteitsreparaties
+
+De bestaande product-admission PR is uitgebreid in het werkelijke
+`server.py`-pad. Dit zijn **functionele queue- en databasegrenzen**,
+geen extra QA- of offline rapportagesuites.
+
+**1. Queue-audit neemt actieve taken niet meer over.**
+`portfolio_queue_audit()` behandelt bij het opruimen uitsluitend
+`eligible=1 AND status='queued'`-items zonder worker-slot,
+`claimed_at` of `claim_expires`. Eerder werden óók
+`claimed`, `running` en `verifying` rijen onder gewijzigde
+human-gate-/titelregels op `dropped` gezet, waardoor een
+lopende worker zijn bronclaim kon kwijtraken. De daadwerkelijke
+`UPDATE` heeft nu opnieuw dezelfde voorwaarden, zodat een
+tussen SELECT en UPDATE geclaimde rij niet door de audit wordt
+ingetrokken. Voor zulke gewijzigde actieve scopes is beoordeling
+door de bevoegde huidige owner nodig; de audit voert géén
+force-unclaim, taakafbreking of reviewovername uit.
+
+**2. Producer-retries kunnen geen claims of historische resultaten
+meer overschrijven.** `portfolio_queue_enqueue()` gebruikt een
+atomaire SQLite UPSERT met `ON CONFLICT ... DO UPDATE ... WHERE`.
+Alleen een bestaand, nog ongeclaimd, niet-humangeblokkeerd
+`queued`-item met hetzelfde originele project is aanpasbaar.
+Bestaande `claimed/running/verifying/done/dropped`,
+`eligible=0`, occupied-slot en niet-lege claimvelden blijven
+ongewijzigd. Een onveilige collision geeft een gewone
+`ValueError`; de caller of eigenaar moet een daadwerkelijk
+nieuwe geautoriseerde vervolgidentiteit kiezen. De oorspronkelijke
+bestaande taak wordt niet gereset en er wordt geen actie op de
+live VPS/SQLite uitgevoerd vanuit deze bronwijziging.
+
+**3. Refill laat oude QA-only rijen geen productwerk maskeren.**
+De refill-inventaris past voor vrije `queued`-rijen nu dezelfde
+pure `is_new_product_delivery`-classificatie toe als de echte
+nieuwe-worker-admission. Daarmee geldt een QA-only backlog niet
+als voldoende productwerk voor dat project en mag de reeds
+bestaande continuation-producer een normale uitvoerbare taak
+aanbieden. Lopende eigenaren blijven **altijd vertegenwoordigd**,
+zelfs wanneer hun historische rij `eligible=0` is of niet
+door de nieuwe productpolicy komt. Geen bestaande lease wordt
+geherclassificeerd, ingetrokken of verplaatst.
+
+**4. Live queue-health telt feitelijk beschikbaar productwerk.**
+De historische ruwe velden `ready`, `queued` en `projects`
+blijven backward-compatible. `healthy` is nu gebaseerd op
+geobserveerd product-admissible queued werk plus de bestaande
+actief geclaimde/uitgevoerde taken, niet op vervuilde QA-only
+rijen. De uitlezing is begrensd tot 1000 rijen, met een
+1001e rij als volledigheidssignaal. Nieuwe read-only
+API-velden `product_delivery_ready_observed`,
+`queued_qa_only_excluded_observed`,
+`queued_invalid_excluded_observed`,
+`product_delivery_source_complete` en
+`product_delivery_missing_tail_may_exist` maken onbekende
+staartdekking expliciet. Bij onvolledige bron kan onvoldoende
+waargenomen productwerk geen bewijs zijn dat er nergens meer
+werk is. Er wordt geen onveilige automatische herstelactie
+aan een gezondheidslabel gekoppeld.
+
+De source changes zitten in de **bestaande product-PR #1536**
+en mogen niet als `main` of live beschouwd worden voordat
+alle exact-head CI-, reviewer-, protected-main- en bevoegde
+VPS-releasegates daadwerkelijk zijn gepasseerd. Er zijn
+geen QA-/regressiesuites geschreven of gestart, geen workflow
+herstart, geen Notion-/VPS-claim gewijzigd en geen producer
+op productie gedeployed.
