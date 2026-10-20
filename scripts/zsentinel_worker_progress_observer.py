@@ -789,28 +789,33 @@ def main():
         help="standalone offline HTML/Markdown operator handoff without GitHub or server GET"
     )
     parser.add_argument("--output", type=Path,
-                        help="create-only private .html/.md file; no existing report or state overwrite")
+                        help="create-only private .html/.md/.json report, never overwrite")
+    parser.add_argument("--previous", type=Path,
+                        help="optional earlier private --format json snapshot for before/after handoff")
     args = parser.parse_args()
-    if args.output is not None and args.format not in ("html", "markdown"):
-        parser.error("--output requires --format html or markdown")
+    if args.output is not None and args.format not in ("html", "markdown", "json"):
+        parser.error("--output requires --format html, markdown or json")
+    if args.previous is not None and args.format not in ("html", "markdown"):
+        parser.error("--previous requires --format html or markdown")
     try:
         receipt = observe_worker_progress(args.database, args.project)
+        from zsentinel_worker_handoff import write_private_handoff
         if args.format in ("html", "markdown"):
             from zsentinel_worker_handoff import (
-                render_html, render_markdown, write_private_handoff
+                render_html, render_markdown, load_private_previous
             )
-            content = (render_html(receipt) if args.format == "html"
-                       else render_markdown(receipt))
-            if args.output is not None:
-                # Only the explicitly selected private operator artifact may
-                # be created. Never print private source paths in logs.
-                write_private_handoff(args.output, content, format=args.format)
-                print("Privé worker-handoff veilig aangemaakt (create-only; niets overschreven).")
-            else:
-                print(content)
+            prior = load_private_previous(args.previous) if args.previous else None
+            content = (render_html(receipt, previous=prior) if args.format == "html"
+                       else render_markdown(receipt, previous=prior))
+        elif args.format == "json":
+            content = json.dumps(receipt, ensure_ascii=True, sort_keys=True)
         else:
-            print(operator_text(receipt) if args.format == "text"
-                  else json.dumps(receipt, ensure_ascii=True, sort_keys=True))
+            content = operator_text(receipt)
+        if args.output is not None:
+            write_private_handoff(args.output, content, format=args.format)
+            print("Privé worker-handoff veilig aangemaakt (create-only; niets overschreven).")
+        else:
+            print(content)
     except (OSError, ValueError, sqlite3.Error) as exc:
         parser.exit(2, "zSentinel worker source unavailable: " + str(exc)[:180] + "\n")
     return 0
