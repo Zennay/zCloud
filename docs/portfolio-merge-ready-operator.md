@@ -24,9 +24,27 @@ This **read-only discovery** prioritizes P0/fix-labelled product titles within e
 
 The output is a new, exclusive-create, private (0600) responsive standalone HTML file. Without `--output` there is no local write. JSON output is available using `--format json`. The HTML contains no JavaScript, network fetches, tokens, worker credentials or queue identifiers. Never point output at a shared web directory. Existing reports are never overwritten.
 
-The board is intentionally bounded: at most 12 selected PRs, 6 per canonical repository, 3 repositories and 64 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs and legacy statuses are checked separately. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
+The board is intentionally bounded: at most 12 selected PRs, 6 per canonical repository, 3 repositories and 72 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs and legacy statuses are checked separately. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
 
 Operators can quickly select an independent unblocked product PR while other PRs wait on reviewer, CI, claim or release rights. For any actual merge, the **separate** single-PR `portfolio_merge_ready.py --merge` owner-claim preconditions and GitHub server-side protection still apply. Nothing in the board's HTML or JSON is a merge permit; `main_merged=false` and `live_verified=false` remain conservative snapshot indicators, not assertions about the actual GitHub state.
+
+## Issue-first productrecovery (open issues → bestaande product-PR)
+
+`scripts/zsentinel_issue_first_board.py` is een tweede, zelfstandige operator-ingang die **echte open P0/P1 issues** aan bestaande open product-PR's koppelt voordat nieuw werk zou worden gestart. Hij hergebruikt de exacte-head checks en de private HTML-renderer van de merge-first werkbak, en opent geen claims of PRs.
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py --project cloud --project supa \
+  --format text --output /private/zsentinel-priority.html
+
+python3 scripts/zsentinel_issue_first_board.py --project cloud --format json
+```
+
+- Maximaal 3 canonieke projectrepositories, de 100 meest recente open PRs én 100 meest recente open GitHub issues per repo, en maximaal 4 geselecteerde bestaande niet-QA product-PRs per repo. Het gedeelde venster is maximaal **72 GitHub GETs / 120 seconden**. Geen web/browsercalls nadat de private HTML is opgeslagen.
+- Uit PR-bodytekst worden alleen expliciete `fixes #123`, `closes #123`, `resolves #123` of `refs #123`-achtige verwijzingen naar **daadwerkelijk geobserveerde open issues van dezelfde repository** afgeleid. Er worden geen rechtsgeldige fixes, goedkeuringen of GitHub issue-relaties aangemaakt. Een link is geen bewijs dat de code het issue oplost.
+- Bestaande PRs met een geobserveerde **P0**, daarna **P1** issueverwijzing worden eerst getoond; binnen zo'n groep geldt bronvolgorde/titelprioriteit. Actuele GitHub PR-HEAD wordt opnieuw opgevraagd vóór de issueverwijzing wordt getoond; gewijzigde of onbereikbare bron → geen issue-linkbewijs. Onbekende ownerclaims blijven `UNKNOWN_NOT_OWNED`.
+- De werkbak toont daarnaast (max. 24) urgente open issues zonder waargenomen PR-bodyverwijzing, met klikbare issue-URL. Dat is **geen** bewering dat het werk onbezet is, want oude PRs buiten de steekproef, forks, commits zonder PR en actieve Notion-claims kunnen buiten beeld zijn.
+- Een onbereikbare projectbron blokkeert alleen dat project en verschijnt als `SOURCE_UNAVAILABLE`; een volle bronpagina toont `SOURCE_WINDOW_100`. Prioritering volgt uitsluitend de beperkte waarneembare bronnen. Bij onzekerheid worden ontbrekende resultaten nooit stilzwijgend tot `DONE` omgezet.
+- Alle resultaten zijn read-only; export naar een **nieuw** HTML-bestand is exclusief 0600 met nofollow/fsync. Niets publiceert naar GitHub, Notion, SQLite, workerpool of productie. De verplichte onafhankelijke review, exact-head CI, owner/mainwriterclaim en bestaande releaseprocedure blijven separaat.
 
 ## Read-only inventory
 
