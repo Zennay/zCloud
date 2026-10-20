@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         zCloud Dynamic Worker
 // @namespace    https://zcloud.local/
-// @version      2.0.4
+// @version      2.0.5
 // @description  Browser-wide database-backed ChatGPT + Claude dynamic worker for zCloud.
 // @match        http://*/*
 // @match        https://*/*
@@ -35,7 +35,7 @@
   if (!/^[a-z0-9_-]+::w[1-9][0-9]*$/i.test(id) || window.__ZCLOUD_V2_ENGINE_ACTIVE) return;
   window.__ZCLOUD_V2_ENGINE_ACTIVE = true;
   sessionStorage.setItem("zcloud-v2-worker",id);
-  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.4");
+  document.documentElement?.setAttribute("data-zcloud-violentmonkey-ready","2.0.5");
   document.documentElement?.setAttribute("data-zcloud-v2-owner",id);
   const API="http://127.0.0.1:8765/api",POLL_MS=30000,MAX_AGE=3600000;
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -82,7 +82,7 @@
       target:location.href,targetConversation:conversation(),title:document.title,
       event,at,progressAt:at,generating:generating(),sending,
       assistantCharacters:reply().length,runner:"violentmonkey",
-      provider:"chatgpt",runnerVersion:"2.0.4",...extra
+      provider:"chatgpt",runnerVersion:"2.0.5",...extra
     })}catch(_){}
   }
   async function blocked(reason){if(lastBlock===reason)return;lastBlock=reason;await status("send-blocked",{reason})}
@@ -177,13 +177,17 @@
   // Repeated prompts in that SAME chat may be short, but never carry over to a
   // new conversation, different queue claim or another worker's assignment.
   const initialContextKey="zcloud-v2-full-context:"+id;
+  function fullContextPolicy(full){
+    return full.includes("LEVERBELEID 20-10-2026")?"merge-first-20261020":"legacy";
+  }
   function fullPromptVisible(full){
     const prefix=full.slice(0,Math.min(64,full.length));
     if(!prefix)return false;
     return [...document.querySelectorAll('[data-message-author-role="user"]')]
       .some(el=>{
         const t=String(el.innerText||el.textContent||"");
-        return t.includes(prefix)&&t.includes("Kijk in Notion");
+        return t.includes(prefix)&&t.includes("Kijk in Notion")&&
+          (fullContextPolicy(full)!=="merge-first-20261020" || t.includes("LEVERBELEID 20-10-2026"));
       });
   }
   function promptForThisTurn(full){
@@ -192,11 +196,12 @@
     let prior=null;
     try{prior=JSON.parse(sessionStorage.getItem(initialContextKey)||"null")}catch(_){}
     if(prior&&prior.queue!==queue)return full; // A new claim needs its own full context.
-    const saved=prior?.queue===queue&&prior?.conversation===cid;
+    const saved=prior?.queue===queue&&prior?.conversation===cid&&
+      prior?.policy===fullContextPolicy(full);
     const visibleFull=fullPromptVisible(full);
     if(!saved&&!visibleFull)return full;
     if(visibleFull&&!saved){
-      try{sessionStorage.setItem(initialContextKey,JSON.stringify({queue,conversation:cid}))}catch(_){}
+      try{sessionStorage.setItem(initialContextKey,JSON.stringify({queue,conversation:cid,policy:fullContextPolicy(full)}))}catch(_){}
     }
     const part=/^Werk verder aan ([^.\n]{2,80})\./.exec(full)?.[1]||"";
     const project=part.startsWith("het herstel van ")?"zSentinel":
@@ -207,6 +212,7 @@
     if(actual!==full)return;
     try{sessionStorage.setItem(initialContextKey,JSON.stringify({
       queue:String(target?.queue_item?.queue_id||""),
+      policy:fullContextPolicy(full),
       conversation:conversation()||"",
       pending:!conversation()
     }))}catch(_){}
@@ -408,7 +414,7 @@
   "use strict";
 
   const API = "http://127.0.0.1:8765/api";
-  const SCRIPT_VERSION = "2.0.4";
+  const SCRIPT_VERSION = "2.0.5";
   const REQUIRED_THINKING_EFFORT = "high";
   const MODEL_PICKER_SELECTOR = [
     'button[aria-label="Select ChatGPT model"]',
