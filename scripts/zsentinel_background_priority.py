@@ -206,11 +206,55 @@ def write_private_state(data):
             pass
 
 
+REASON_LABELS = {
+    "incomplete-capacity-source": "een benodigde systeemmeting ontbreekt",
+    "zcloud-github-job-running": "een zCloud GitHub-job is actief",
+    "other-github-job-running": "een andere GitHub-job is actief",
+    "high-system-load": "de systeemload is hoog",
+    "elevated-system-load": "de systeemload is verhoogd",
+    "low-available-memory": "er is weinig vrij beschikbaar RAM",
+    "limited-available-memory": "het beschikbare RAM is beperkt",
+    "high-swap-use": "het swapgebruik is hoog",
+    "elevated-swap-use": "het swapgebruik is verhoogd",
+    "low-root-disk-headroom": "de root-schijf heeft weinig vrije ruimte",
+    "limited-root-disk-headroom": "de vrije ruimte op de root-schijf is beperkt",
+}
+
+
+def human_preview(data):
+    """Readable operator explanation; only received numeric and enum fields."""
+    print("zSentinel | Capaciteitsadvies (alleen lezen)")
+    print(f"Advies voor Fuckball: CPU {data['quota']}%, gewicht {data['weight']}")
+    print("Oorzaken: " + ("; ".join(REASON_LABELS.get(x, x)
+                                    for x in data["reasons"]) or
+                         "geen kritieke druk of actieve job gemeten"))
+    print(f"VPS: load {data['host_load'] if data['host_load'] is not None else 'onbekend'}"
+          f" op {data['cores']} cores; swapgebruik "
+          f"{data['swap_used_percent'] if data['swap_used_percent'] is not None else 'onbekend'}%;"
+          f" root niet beschikbaar "
+          f"{data['disk_unavailable_percent'] if data['disk_unavailable_percent'] is not None else 'onbekend'}%")
+    if not data["unit_observed"]:
+        print("Bestaande trainerinstellingen: niet uitleesbaar via user-systemd")
+    elif not data["unit_active"]:
+        print("Trainer: inactief; geen automatische herstart")
+    else:
+        print(f"Bestaande trainer: CPU "
+              f"{data['current_quota_percent'] if data['current_quota_percent'] is not None else 'onbekend'}%,"
+              f" gewicht {data['current_weight'] if data['current_weight'] is not None else 'onbekend'}")
+        print("Advies al toegepast: " +
+              ("ja" if data["recommendation_currently_applied"] else "nee of niet verifieerbaar"))
+    print("Er zijn geen systeeminstellingen of taken gewijzigd.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Bounded user training CPU priority")
     parser.add_argument("--preview", action="store_true",
                         help="Show policy decision in JSON without changing CPU controls or state")
+    parser.add_argument("--human", action="store_true",
+                        help="Explain a read-only preview in Dutch")
     args = parser.parse_args()
+    if args.human and not args.preview:
+        parser.error("--human requires --preview")
     if not args.preview and os.geteuid() != 1000:
         raise SystemExit("Refusing to alter units outside ubuntu user scope")
     s = snapshot()
@@ -233,8 +277,12 @@ def main():
             observed = {"unit_observed": False, "unit_active": None,
                         "current_quota_percent": None, "current_weight": None,
                         "recommendation_currently_applied": None}
-        print(json.dumps({**s, **observed, "mode": mode, "quota": quota,
-                          "weight": weight, "reasons": reasons, "applied": False}, sort_keys=True))
+        result = {**s, **observed, "mode": mode, "quota": quota,
+                  "weight": weight, "reasons": reasons, "applied": False}
+        if args.human:
+            human_preview(result)
+        else:
+            print(json.dumps(result, sort_keys=True))
         return
     actual = installed_cgroup()
     if not actual["active"]:
