@@ -23,6 +23,7 @@ PRIVATE = frozenset({
     "secrets", "credentials", "tokens", "private_keys", ".private",
 })
 SENSITIVE_PARTS = ("secret", "credential", "token", "password", "api-key", "apikey", "keypair")
+SENSITIVE_EXT = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
 MAX_FILES = 20000
 MAX_DEPTH = 4
 MAX_SECONDS = 5
@@ -31,7 +32,8 @@ TOP = 15
 
 def _sensitive(name):
     lower = name.lower()
-    return lower in PRIVATE or any(word in lower for word in SENSITIVE_PARTS)
+    return (lower in PRIVATE or lower.endswith(SENSITIVE_EXT)
+            or any(word in lower for word in SENSITIVE_PARTS))
 
 
 def _root(path):
@@ -40,6 +42,8 @@ def _root(path):
     if path.is_symlink() or not path.is_dir():
         raise ValueError("existing non-symlink directory required")
     resolved = path.resolve(strict=True)
+    if any(_sensitive(part) for part in resolved.parts):
+        raise ValueError("private credential and secret workspaces cannot be inspected")
     # Never allow a blind scan of shared OS roots, devices or personal homes.
     if str(resolved) in ("/", "/home", "/home/ubuntu", "/tmp", "/var", "/root",
                          "/etc", "/proc", "/sys", "/dev", "/run") or len(resolved.parts) < 4:
