@@ -198,6 +198,8 @@ def project_runner_prompt(project_id, name):
             'Dit leest oude bestaande product-PRs gericht vóór nieuw dubbel werk; gebruik --candidate-page 2 of hoger '
             'om resterende kandidaten apart door te lopen als de bronpagina onvolledig is; '
             'of geef --auto-pages 2..3 voor één begrensde niet-atomaire bronopvraag, zonder claims of merge. '
+            'Stop als dezelfde pagina nog ongeziene PR-kandidaten bevat; hervat dan met --candidate-offset N '
+            'en de getoonde --expected-page-sha fingerprint voor diezelfde pagina, niet meteen met een volgende pagina. '
             'De issue-first werkbak toont enkel geanonimiseerde SQLite-claimtotalen; lege lokale claims bewijzen geen '
             'vrij Notion- of ander workereigenaarschap. Controleer de actuele externe claims zelfstandig. '
             'PR-body issue-links zijn geen bewijs van oplossing, vrije eigenaar of mergeautorisatie. '
