@@ -18,6 +18,11 @@ MAX_PROJECTS = 32
 MAX_PAGE = 80
 MAX_EVENT_ID = 256
 MAX_TS = 64
+# Only opaque, known producer kind identifiers may leave the local read model.
+# Unknown future/malformed kinds still retain their timestamp and cursor
+# position, but arbitrary database text is never rendered in the UI.
+EXPOSED_EVENT_KINDS = frozenset({"commit", "milestone", "firefox-recovery", "firefox-crash"})
+UNKNOWN_EVENT_KIND = "other_local_event"
 
 
 def _timestamp(value: object) -> datetime:
@@ -97,7 +102,8 @@ def fair_page(
             if pid != project:
                 raise ValueError("cross-project event row")
             clean.append({"id": eid, "ts": ts, "project": pid,
-                          "kind": kind})
+                          "kind": kind if type(kind) is str and kind in EXPOSED_EVENT_KINDS
+                          else UNKNOWN_EVENT_KIND})
         streams[project] = clean
 
     # Stable order across repeat reads, independent of caller registry order.
