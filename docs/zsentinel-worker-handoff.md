@@ -91,3 +91,40 @@ bestaande component `worker_progress_html` en dezelfde read-only
 databron. Er zijn geen QA-, regressie- of testsuites geschreven of
 gedraaid. Een compile-check bewijst alleen geldige broncode, geen
 werkende VPS-ingreep of vrijgegeven productie-integratie.
+
+## Vergelijk twee bronmomenten, zonder herstel te verzinnen
+
+Met `--format json --output` wordt een **nieuwe privé-snapshot**
+create-only opgeslagen. Die kan later als `--previous` worden aangeboden
+wanneer een verse read-only HTML/Markdown-handoff wordt gemaakt:
+
+```sh
+python3 scripts/zsentinel_worker_progress_observer.py \
+  --database /private/authorized/history.db \
+  --project cloud --format json \
+  --output /private/authorized/worker-20261020-01.json
+
+# Alleen nadat de bron werkelijk opnieuw gelezen kan worden:
+python3 scripts/zsentinel_worker_progress_observer.py \
+  --database /private/authorized/history.db \
+  --project cloud --format html \
+  --previous /private/authorized/worker-20261020-01.json \
+  --output /private/authorized/worker-20261020-02.html
+```
+
+De vergelijking weigert verschillende projectselecties, identieke of
+teruglopende observatietijdstippen, en vergelijking van meer dan 30 dagen.
+Vorige JSON wordt begrensd gelezen (≤512 KiB), met `O_NOFOLLOW` en
+weigering van dubbele JSON-keys, en door dezelfde bestaande
+read-only schema-admission gevoerd. De vergelijking raakt geen
+browser of productie-DB buiten de standaard huidige read-only scan.
+
+De actielijst onderscheidt: opnieuw waargenomen; verandering van
+bronclassificatie; nieuw *in de begrensde steekproef*; of verdwenen *uit
+de begrensde steekproef*. **Geen** van deze uitkomsten betekent
+dat een worker vrij, hersteld, door een nieuwe claim bezet, of als
+productdeliverable voltooid is. Er ontbreekt een geverifieerd
+claim-epoch-token en bewijs van echte GitHub/Notion-productoutput.
+Daarom blijft `recovery_verified=false` in de vergelijkingssamenvatting.
+De vorige JSON blijft ongewijzigd en de nieuwe uitvoer wordt nooit
+over een bestaande JSON of HTML heen geschreven.
