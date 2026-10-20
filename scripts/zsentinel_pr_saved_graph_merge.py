@@ -260,6 +260,38 @@ def combine_sources(sources, repository):
             "shared_paths_truncated": len(names) > MAX_SHARED_PATHS,
             "actual_git_merge_conflict_verified": False,
         })
+    # A compact operator worklist groups repeat offenders across observed
+    # windows, so an operator can inspect an existing PR instead of
+    # overlooking it in 200 pair cards. File overlaps outrank unverified
+    # '#N' references; both remain nonauthorizing observations.
+    by_pr = {}
+    for number, pr in all_prs.items():
+        by_pr[number] = {
+            "pr_number": number, "url": pr["url"],
+            "head_sha_observed": pr["head_sha"],
+            "snapshot": pr["snapshot"],
+            "cross_window_file_pair_count": 0,
+            "cross_window_shared_file_count": 0,
+            "cross_window_number_hint_count": 0,
+            "claim_authorized": False, "merge_authorized": False,
+        }
+    for (left, right), names in collisions:
+        for number in (left, right):
+            by_pr[number]["cross_window_file_pair_count"] += 1
+            by_pr[number]["cross_window_shared_file_count"] += len(names)
+    for _, references in cross_issue_groups:
+        for item in references:
+            number = int(item["url"].rsplit("/", 1)[-1])
+            by_pr[number]["cross_window_number_hint_count"] += 1
+    ranking = sorted(
+        (row for row in by_pr.values()
+         if row["cross_window_file_pair_count"]
+            or row["cross_window_number_hint_count"]),
+        key=lambda row: (-row["cross_window_file_pair_count"],
+                         -row["cross_window_shared_file_count"],
+                         -row["cross_window_number_hint_count"],
+                         row["pr_number"]))
+
     return {
         "schema": SCHEMA,
         "repository": repository,
@@ -273,6 +305,9 @@ def combine_sources(sources, repository):
             for t in (min(times), max(times))],
         "cross_snapshot_file_collision_pairs_observed": len(collisions),
         "shown_collision_pairs": rows,
+        "impacted_existing_prs_observed": len(ranking),
+        "prioritized_existing_prs": ranking[:40],
+        "prioritized_existing_prs_truncated": len(ranking) > 40,
         "cross_snapshot_issue_number_hints_observed": len(cross_issue_groups),
         "shown_issue_number_hints": issue_cards,
         "issue_hint_groups_truncated": len(cross_issue_groups) > MAX_CROSS_ISSUES,
@@ -350,6 +385,22 @@ def render(report, fmt):
         "Geen atomische live bron, geen eigenaarsclaim en geen mergevrijgave.",
         "",
     ]
+    lines.extend(["## Bestaande PR's om eerst te inspecteren", "",
+                  "Sortering: echte gedeelde bestanden, daarna tekstuele "
+                  "issue/PR-nummerhints; nooit merge- of claimvrijgave.", ""])
+    for item in report["prioritized_existing_prs"]:
+        lines.append("- [PR #" + str(item["pr_number"]) + "](" + item["url"] +
+                     ") · " + str(item["cross_window_file_pair_count"]) +
+                     " bestandspaar-botsingen / " +
+                     str(item["cross_window_shared_file_count"]) +
+                     " gedeelde bestanden · " +
+                     str(item["cross_window_number_hint_count"]) +
+                     " ongeverifieerde issue-/PR-nummerhints")
+    if not report["prioritized_existing_prs"]:
+        lines.append("Geen getroffen bestaande PRs in deze bronvensters gezien.")
+    if report["prioritized_existing_prs_truncated"]:
+        lines.append("Overige bestaande PRs buiten de verkorte werklijst.")
+    lines.extend(["", "## Cross-window bestandsparen", ""])
     for row in report["shown_collision_pairs"]:
         lines.append("- [PR](" + row["left_url"] + ") ↔ [PR](" +
                      row["right_url"] + ") · " +
@@ -408,6 +459,17 @@ def render(report, fmt):
         "<br>".join(escape(name) for name in item["shared_paths"]) +
         "</td></tr>"
         for item in report["shown_collision_pairs"])
+    shortlist_rows = "".join(
+        "<li><a rel='noopener noreferrer' href='" +
+        escape(item["url"], quote=True) + "'>PR #" +
+        str(item["pr_number"]) + "</a> · " +
+        str(item["cross_window_file_pair_count"]) +
+        " botsende PR-paren / " +
+        str(item["cross_window_shared_file_count"]) +
+        " gedeelde bestanden · " +
+        str(item["cross_window_number_hint_count"]) +
+        " onzekere issue-/PR-nummers</li>"
+        for item in report["prioritized_existing_prs"])
     issue_rows = "".join(
         "<li><a rel='noopener noreferrer' href='" +
         escape(group["unverified_reference_url"], quote=True) + "'>Nummer #" +
@@ -439,7 +501,11 @@ def render(report, fmt):
         " · onderzochte PRs: " + str(report["total_observed_prs"]) +
         " · bron: " + escape(report["collection_mode"]) +
         "</p><aside>Geen atomische live bron, eigenaars- of mergevrijgave. "
-        "Andere GitHub-pagina's blijven UNKNOWN.</aside><p>" +
+        "Andere GitHub-pagina's blijven UNKNOWN.</aside>"
+        "<h2>Bestaande PRs om eerst te inspecteren</h2><p>Bestandsbotsingen "
+        "eerst, onzekere nummerhints daarna. GEEN vrijgave.</p><ol>" +
+        (shortlist_rows or "<li>Geen botsing in de gelezen vensters.</li>") +
+        "</ol><p>" +
         ("WAARSCHUWING: sommige PR-bestandlijsten zijn gedeeltelijk."
          if report["prs_with_partial_file_scope"] else
          "Alle afzonderlijk getoonde PR-bestandlijsten zijn binnen hun "
