@@ -2039,3 +2039,15 @@ productvoortgang te inspecteren. Nergens wordt `repair_authorized`,
 Deze beperkte lijst is niet volledig en vervangt geen scheduler,
 automatische recovery, owner review of echte claimgebonden
 control-plane eventhistorie.
+
+### Achterwaartse compatibiliteit van eerder opgeslagen bronmomenten
+
+De nieuwe eventtijdlijn is een additieve uitbreiding van het bestaande
+`zsentinel-worker-progress-observation-v1` schema. Een historisch
+opgeslagen JSON-bronmoment zonder `timeline` of
+`owner_followup_candidates` blijft daarom **leesbaar** in dezelfde
+HTML-/tekstweergave, maar wordt zichtbaar als `HISTORISCHE BRON` getoond.
+Het scherm claimt dan nooit "nul blokkades", "lege actuele owner-inbox"
+of "werkhervatting bevestigd": voor de nieuwe velden blijft de status
+ONBEKEND totdat de gebruiker bewust een verse read-only SQLite-observatie
+maakt. Oude source-bestanden worden niet aangepast of herschreven.
