@@ -344,7 +344,7 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
             bucket = "onafhankelijke_review_niet_gezien"
         else:
             bucket = "verplichte_regels_en_eigenaarschap_onbekend"
-        groups[bucket].append((priority, url))
+        groups[bucket].append((priority, _repo, _number, url))
     source_time = datetime.fromisoformat(integrated["earliest_observed_at_utc"])
     hours_old = max(0, int((datetime.now(timezone.utc) - source_time).total_seconds() // 3600))
     lines = [
@@ -376,8 +376,8 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
         if entries:
             lines.append("  " + " · ".join(
                 "[" + priority_name[priority] + " " +
-                url.rsplit("/", 2)[-2] + "#" + url.rsplit("/", 1)[-1] +
-                "](" + url + ")" for priority, url in entries[:6]) +
+                repo + "#" + str(number) +
+                "](" + url + ")" for priority, repo, number, url in entries[:6]) +
                 (" · … resterend: " + str(len(entries) - 6) if len(entries) > 6 else ""))
     lines.extend([
         "",
