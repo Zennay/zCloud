@@ -14,6 +14,8 @@ import json
 from html import escape
 import os
 import subprocess
+from itertools import chain
+import time
 from pathlib import Path
 
 HOME = Path("/home/ubuntu")
@@ -22,6 +24,8 @@ TRAINING = Path("/opt/fuckball-training")
 ARCHIVE = "vpsarchive:zcloud-vps"
 MIN_AGE_DAYS = 3
 MAX_LIST = 100
+MAX_SCAN_CANDIDATES = 10000
+MAX_SCAN_SECONDS = 8
 TRAINING_MIN_FREE_GIB = 10
 
 
@@ -34,12 +38,18 @@ def candidate_file(path: Path, cutoff: float) -> bool:
         return False
 
 
-def runner_diagnostics(cutoff: float):
+def runner_diagnostics(cutoff: float, deadline: float | None = None):
     for runner in sorted(HOME.glob("actions-runner-*")):
+        if deadline is not None and time.monotonic() >= deadline:
+            return
+        if runner.is_symlink():
+            continue
         diagnostic = runner / "_diag"
         if not diagnostic.is_dir() or diagnostic.is_symlink():
             continue
         for path in diagnostic.iterdir():
+            if deadline is not None and time.monotonic() >= deadline:
+                return
             if not (path.name.startswith(("Worker_", "Runner_", "SelfUpdate_")) and path.suffix == ".log"):
                 continue
             if candidate_file(path, cutoff):
@@ -56,7 +66,7 @@ def runner_diagnostics(cutoff: float):
                 }
 
 
-def training_reports(cutoff: float):
+def training_reports(cutoff: float, deadline: float | None = None):
     try:
         status = json.loads((TRAINING / "status.json").read_text())
         cycles = status["cycles"]
@@ -65,6 +75,8 @@ def training_reports(cutoff: float):
     except (OSError, KeyError, TypeError, ValueError):
         return
     for path in TRAINING.glob("cycle-*-report.json"):
+        if deadline is not None and time.monotonic() >= deadline:
+            return
         try:
             cycle = int(path.name.removeprefix("cycle-").removesuffix("-report.json"))
         except ValueError:
@@ -85,7 +97,7 @@ def training_reports(cutoff: float):
 
 
 
-def old_app_release_review(cutoff: float):
+def old_app_release_review(cutoff: float, deadline: float | None = None):
     """Only named, old standalone APK exports; not live build directories.
 
     These are REVIEW candidates, never proven superseded, archived or removable.
@@ -98,6 +110,8 @@ def old_app_release_review(cutoff: float):
         if not folder.is_dir() or folder.is_symlink():
             continue
         for path in sorted(folder.glob(pattern)):
+            if deadline is not None and time.monotonic() >= deadline:
+                return
             if not candidate_file(path, old_enough):
                 continue
             stat = path.stat()
@@ -306,13 +320,18 @@ def render_html(report: dict) -> str:
         for kind, size in sorted(report["cold_candidate_bytes"].items())
     ) or "<tr><td colspan='4'>No aged file candidates observed.</td></tr>"
     omitted = report.get("examples_omitted", 0)
+    scan_warning = (
+        '<p class="warning">Inventory scan incomplete: counts and bytes are only lower bounds; '
+        'never authorize archive cleanup from this report.</p>'
+        if not report.get("inventory_complete", False) else ""
+    )
     archive_review_html = (
         '<section aria-labelledby="candidate-review"><h2 id="candidate-review">Aged file owner review</h2>'
         '<p class="muted">Age does not prove a log is closed, a release superseded,'
         ' an archive transfer verified or a file safe to delete.</p>'
         '<table><thead><tr><th>Owner review category</th><th>Count</th>'
         '<th>Size</th><th>Disposition</th></tr></thead><tbody>'
-        + review_rows + '</tbody></table>'
+        + scan_warning + review_rows + '</tbody></table>'
         '<p class="fine">Total observed: ' + esc(report.get("total_candidate_count", 0))
         + ' files. Item examples omitted beyond limit: ' + esc(omitted)
         + '. Automatically reclaimable: 0 bytes.</p></section>'
@@ -391,6 +410,9 @@ def operator_summary(report: dict) -> str:
         f"Assessed old files: {report['total_candidate_bytes'] / gb:.3f} GiB (NOT safe-to-delete proof)",
         f"Archive browse mount: {report['archive_mount']['state']} (upload NOT authorized)",
     ]
+    if not report.get("inventory_complete", False):
+        lines.append("WARNING: inventory scan incomplete (" + str(report.get("scan_limit_reason")) +
+                     "); all observed totals are lower bounds, never proof of complete archival scope.")
     lines.append(
         f"Old-file review rows: {report.get('total_candidate_count', 0)}; "
         f"examples omitted: {report.get('examples_omitted', 0)}; "
@@ -434,14 +456,24 @@ def main():
     cutoff = dt.datetime.now(dt.timezone.utc).timestamp() - args.older_than_days * 86400
     totals, count, examples = {}, {}, []
     total_count = 0
-    additional = tuple(old_app_release_review(cutoff)) if args.include_release_reviews else ()
-    for row in (*runner_diagnostics(cutoff), *training_reports(cutoff), *additional):
+    deadline = time.monotonic() + MAX_SCAN_SECONDS
+    additional = old_app_release_review(cutoff, deadline) if args.include_release_reviews else ()
+    scan_limit_reason = None
+    for row in chain(runner_diagnostics(cutoff, deadline), training_reports(cutoff, deadline), additional):
+        if time.monotonic() >= deadline:
+            scan_limit_reason = "scan_time_budget_exhausted"
+            break
+        if total_count >= MAX_SCAN_CANDIDATES:
+            scan_limit_reason = "max_candidate_limit_reached"
+            break
         total_count += 1
         kind = row["kind"]
         totals[kind] = totals.get(kind, 0) + row["bytes"]
         count[kind] = count.get(kind, 0) + 1
         if len(examples) < args.limit:
             examples.append(row)
+    if scan_limit_reason is None and time.monotonic() >= deadline:
+        scan_limit_reason = "scan_time_budget_exhausted"
     live_filesystem = filesystem()
     total_assessed = sum(totals.values())
     result = {
@@ -460,6 +492,10 @@ def main():
         "cold_candidate_bytes": totals,
         "total_candidate_bytes": total_assessed,
         "total_candidate_count": total_count,
+        "inventory_complete": scan_limit_reason is None,
+        "scan_limit_reason": scan_limit_reason,
+        "scan_seconds_budget": MAX_SCAN_SECONDS,
+        "scan_candidate_limit": MAX_SCAN_CANDIDATES,
         "examples_limit": args.limit,
         "examples_omitted": max(0, total_count - len(examples)),
         "archive_transfer_attempted": False,
