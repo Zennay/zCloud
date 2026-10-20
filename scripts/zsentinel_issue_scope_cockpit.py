@@ -643,6 +643,8 @@ def main(argv=None):
                     "focused issue absent from bounded source; NOT evidence it is resolved")
             view = {**view, "cards": matches}
         projects = _safe_projects(view, canonical, args.project)
+        if args.focus_issue and matches[0]["project"] not in projects:
+            raise ValueError("focused issue project is not included in the selected repositories")
         if not projects:
             raise ValueError("no canonical product-issue projects in the selected issue source")
         pr_scope = collect_portfolio(projects, canonical, os.environ.get("GITHUB_TOKEN"), args.max_prs)
