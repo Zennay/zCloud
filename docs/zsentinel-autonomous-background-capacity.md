@@ -413,6 +413,45 @@ of enige productieroute. Bij daadwerkelijk geautoriseerde installatie
 moet de runtime-eigenaar de drie modules in één Python-modulemap beheren,
 zonder bestaande timer of coach te dupliceren.
 
+## CPU-herstel zonder op-en-neer springen (5 minuten stabiel bewijs)
+
+De nieuwe branchversie van `zsentinel_background_priority.py` behoudt de
+bestaande **directe CPU-vermindering** zodra een zCloud/GitHub-job actief is,
+systeemmetingen ontbreken, of er hoge load/RAM-/swap-/schijfdruk is.
+Een moment met weinig druk mag echter niet meer direct van bijvoorbeeld
+60% naar 175% trainer-CPU opschalen. Opschalen van CPUQuota **of CPUWeight**
+vereist voortaan:
+
+- dezelfde Linux-opstartsessie, met ongewijzigde werkelijk uitgelezen
+  systemd CPU-instellingen (geen toestemming op basis van oude JSON);
+- minstens **300 seconden** aanhoudende lagere druk bij hetzelfde advies;
+- minimaal **drie observaties**, met ten minste **45 seconden** ertussen;
+- maximaal **240 seconden** tussen geldige opeenvolgende observaties.
+
+Bij een nieuw runnerproces, hoge systeemdruk of verminderde betrouwbaarheid
+wordt de effectieve CPU- of gewichtstoewijzing **zonder wachttijd verlaagd**.
+Als de coach inactief is start het script niets. Kan een *actieve* coach zijn
+actuele cgroup niet uitlezen, dan weigert het script de wijziging; het
+verzint geen veilige quota. Bij ontbrekende, niet-private, corrupte of
+oude status, reboot, of veranderde door de operator ingestelde CPU-grens,
+begint een nieuwe opschaalobservatie. Een onleesbare boot-ID verleent
+nooit een opschaaltoestemming.
+
+De timer schrijft pas in een toekomstige *geautoriseerde installatie* een
+atomair privé (0600) bronmoment met wachttijd en observatietelling. De
+`--preview`-optie leest dezelfde bronnen, toont de aanbevolen én werkelijk
+veilige effectieve toewijzing plus wachttijd, maar past niets toe en schrijft
+geen statusbestand. De privé HTML-herstelwerkbank en nieuwe JSON-bronmomenten
+bevatten deze gegevens eveneens; oudere bronmomenten blijven leesbaar,
+met onbekende opschaalstatus. Dat een aanbeveling voor opschalen bestaat,
+betekent nooit dat zij live is toegepast.
+
+**Huidige releasegrens:** dit staat op een open PR-branch en wijzigt geen
+lopende VPS timer, trainer of runner. Alleen de bevoegde runtime-eigenaar
+mag na exacte-head verplichte CI, onafhankelijke review, protected-main
+merge en release-autoriteit de bron installeren. Geen timer-restart of
+load-/claimmanipulatie om de wachttijd te verkorten.
+
 ## Operator installation and release boundaries
 
 Code files:
