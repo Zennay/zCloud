@@ -91,6 +91,12 @@ def digest(payload: dict) -> str:
                           if isinstance(event, dict) and event.get("project") == project]
         if len(project_events) > 200:
             raise ValueError("invalid_event_count")
+        visible_main_shas = {
+            event.get("sha") for event in project_events
+            if event.get("kind") == "main_commit"
+            and isinstance(event.get("sha"), str)
+            and re.fullmatch(r"[a-f0-9]{40}", event["sha"])
+        }
         validated: list[dict] = []
         for event in project_events:
             kind, event_id = event.get("kind"), event.get("id")
@@ -118,8 +124,19 @@ def digest(payload: dict) -> str:
                     event.get("merged") is True and target == "main"
                 ):
                     raise ValueError("invalid_reported_merge")
-                if event.get("main_merged") is not False:
-                    raise ValueError("main_merge_not_independently_verified")
+                main_evidence = event.get("main_merged")
+                if main_evidence is not False and main_evidence is not True:
+                    raise ValueError("invalid_main_merge_state")
+                if main_evidence is True:
+                    merge_sha = event.get("merge_commit_sha")
+                    if (event.get("merged") is not True
+                            or target != "main"
+                            or not isinstance(merge_sha, str)
+                            or not re.fullmatch(r"[a-f0-9]{40}", merge_sha)
+                            or merge_sha not in visible_main_shas
+                            or event.get("main_merge_evidence") !=
+                               "canonical_main_history_exact_sha"):
+                        raise ValueError("uncorroborated_main_history_in_receipt")
                 head_sha = event.get("pr_head_sha")
                 if not isinstance(head_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", head_sha):
                     raise ValueError("invalid_pr_head_sha")
@@ -141,6 +158,10 @@ def digest(payload: dict) -> str:
         merged = sum(e["kind"] == "pr_merged" for e in validated)
         merged_to_main_reported = sum(e["kind"] == "pr_merged" and
                                       e["reported_main_merge"] for e in validated)
+        source_matched_merges = sum(
+            e["kind"] == "pr_merged" and e.get("main_merged") is True
+            for e in validated
+        )
         ci_success = sum(e["kind"] == "ci_run" and e.get("conclusion") == "success"
                          for e in validated)
         main_commits = sum(e["kind"] == "main_commit" for e in validated)
@@ -148,7 +169,9 @@ def digest(payload: dict) -> str:
         lines.append("Observed event counts (bounded window, may be truncated): "
                      + str(created) + " PR-created; " + str(merged)
                      + " PR-merged-to-some-base (of which " +
-                     str(merged_to_main_reported) + " reported target=main); " + str(ci_success)
+                     str(merged_to_main_reported) + " reported target=main; " +
+                     str(source_matched_merges) + " with matching SHA in the same imported main history); " +
+                     str(ci_success)
                      + " workflow-success; " + str(main_commits)
                      + " canonical-main commits. **None proves a main deployment.**")
         if payload["previous_snapshot_compared"]:
@@ -175,7 +198,12 @@ def digest(payload: dict) -> str:
                     label += " (draft)"
                 if kind == "pr_merged":
                     target = event.get("reported_target") or "unknown"
-                    label += " (reported target: " + target + "; reachability unverified)"
+                    label += (
+                        " (target: " + target + "; " +
+                        ("exact main SHA found in imported receipt, not independent deploy proof"
+                         if event.get("main_merged") is True
+                         else "main reachability not proven in receipt") + ")"
+                    )
                 url = "https://github.com/" + repo + "/pull/" + str(number)
             lines.append("- [" + label + "](" + url + ")")
         lines.append("")
