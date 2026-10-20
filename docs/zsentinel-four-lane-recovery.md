@@ -248,3 +248,53 @@ Do not copy the scripts individually to a VPS production root: use a
 source-matched, reviewed checkout after existing branch/CI/release gates
 permit integration. Until then, exact-source read-only inspection is
 distinct from installed/live product behavior.
+
+## 20 October · Complete owner-aware write-admission boundary
+
+The lane generator protects **two different sources of active ownership**:
+in-flight `portfolio_queue` rows and current `task_claims` rows. A queue
+row with an absent/invalid `conflict_scope` can no longer be ignored, and a
+current task claim with no usable file/capability scope is no longer silently
+dropped from collision admission either. Both require the existing owner to
+reconcile scope before any *new* parallel writer can be selected.
+
+The **new queued-task boundary** is intentionally less disruptive than a
+total shutdown. A queued zSentinel task lacking a declared file/capability
+scope can be selected only as the **single serialized candidate** if the
+observed project has no other active task, no current scoped or unscoped
+claim, and no already selected writer. Subsequent candidates, whether
+scoped or unscoped, cannot share that wave of admission. Existing owners
+remain untouched. Explicitly scoped tasks may proceed on independent lanes
+when their overlap check is clear. The feature only changes the zSentinel
+`portfolio-recovery` lane profile; other 13 real projects are unchanged.
+
+This is a **routing limit**, not an authorization token. The existing
+server's queue eligibility, external Notion leases, writer reservations,
+resource pool admission, GitHub exact-head checks, independent reviews,
+branch protection and release/production gates remain authoritative.
+Do not infer a free owner from an `idle` lane card: the dashboard now
+separately exposes `new_write_admission_held`, and the action router
+suppresses independent-work suggestions whenever source completeness,
+scope declarations or ownership reconciliation are unresolved.
+
+On the latest direct read-only VPS observation (exact source
+[5cb008e](https://github.com/Zennay/zCloud/commit/5cb008e9ef6906299ef58d152fea0b20e14bfc31)),
+three zSentinel in-flight tasks lacked explicit write scopes, while the
+sampled local task_claims table had zero zSentinel leases. The CI/deploy
+lane remained blocked, and the product lane was explicitly shown as idle
+**with new writer admission held**. No task was restarted, stopped,
+claimed, dispatched or deployed. Source only, not live-installed.
+
+### Reconciliation and follow-on implementation
+
+The actual runtime owner should separately reconcile current queue and
+claim epochs against Notion before changing an existing scope. Do not
+silently edit ownership metadata to make warnings vanish. In particular,
+the current `server.py::_portfolio_lane_snapshot_locked` queries only
+`eligible=1` rows in its own lane input. If an in-flight row becomes
+`eligible=0` while still `claimed/running/verifying`, the planner could
+miss that active writer. The live read-only snapshot during this run had
+**zero** such active-but-ineligible rows, so this is a latent source
+integration risk, not a claimed live outage. This server path overlaps
+the separately owned runtime PR #1571 and has **not** been modified or
+taken over in this branch; reconcile with its current owner when ready.
