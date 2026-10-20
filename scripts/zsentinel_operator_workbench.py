@@ -88,9 +88,15 @@ def validated_view(source: dict) -> dict:
         refs = card.get("open_pr_candidates")
         gaps = card.get("evidence_gaps")
         if (type(refs) is not list or len(refs) > MAX_REFERENCES or
-            any(type(ref) is not str or not URL.fullmatch(ref) or
-                "/pull/" not in ref for ref in refs)):
-            raise ValueError("Untrusted or unbounded candidate PR references")
+            len(set(refs)) != len(refs) or any(
+                type(ref) is not str or not URL.fullmatch(ref) or
+                re.fullmatch(
+                    r"https://github[.]com/" +
+                    re.escape(issue.rsplit("#", 1)[0]) +
+                    r"/pull/[1-9][0-9]{0,8}", ref
+                ) is None for ref in refs
+            )):
+            raise ValueError("Untrusted, cross-repository or duplicate PR references")
         if (type(gaps) is not list or len(gaps) > MAX_GAPS or
             any(type(g) is not str or len(g) > 300 for g in gaps)):
             raise ValueError("Untrusted or unbounded evidence gaps")
@@ -1235,15 +1241,20 @@ function csvSource(){
  const columns=['source_board_sha256','source_observed_at_utc','priority','project',
   'issue','original_issue_url','issue_title','observed_pr_candidates',
   'observed_evidence_gaps','recommended_next_step','human_disposition',
-  'private_followup_status','human_review_date_utc','claim_authorized',
-  'merge_authorized','deploy_authorized',
+  'private_followup_status','human_review_date_utc','snapshot_project_coverage',
+  'snapshot_inbox_truncated','snapshot_cards_truncated','snapshot_github_denial',
+  'claim_authorized','merge_authorized','deploy_authorized',
   ...(privateFields?['private_contact_label','private_operator_note']:[])];
  const rows=filtered().map(c=>{
   const v=handoffs.get(c.issue);
   return [boardSha,board.observed_at_utc,c.priority,c.project,c.issue,c.url,
    c.title,c.open_pr_candidates.join(' | '),c.evidence_gaps.join(' | '),
    c.recommended_next_step,v?.decision||'investigate',
-   v?.followup_status||'open',v?.due||'',
+   manualGateDecisions.has(v?.decision)?v?.followup_status||'open':'not-configured',
+   manualGateDecisions.has(v?.decision)?v?.due||'':'',
+   board.coverage.projects[c.project]||'unavailable',
+   String(board.coverage.inbox_truncated),
+   String(board.coverage.cards_truncated),String(board.coverage.github_denial),
    'false','false','false',...(privateFields?[v?.owner||'',v?.note||'']:[])];
  });
  if(!rows.length)return null;
