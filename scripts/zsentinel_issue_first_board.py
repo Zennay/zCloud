@@ -326,7 +326,7 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
         "number": issue_number, "priority": "UNCLASSIFIED",
         "title": str(issue.get("title") or "")[:160]})
     target["url"] = f"https://github.com/{repo}/issues/{issue_number}"
-    rows, limitations, examined = [], [], 0
+    rows, limitations, examined, outcomes = [], [], 0, []
     for number in pr_numbers:
         # Each full detailed PR receipt takes up to 7 bounded GETs. Reserve
         # source budget for a final independent canonical issue observation.
@@ -337,12 +337,16 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
         try:
             pr = board.bounded_gh(f"repos/{repo}/pulls/{number}", budget)
             if eligible_pr(pr) is None:
+                outcomes.append({"number": number, "status": "NOT_ELIGIBLE",
+                                 "issue_reference_source": "NOT_VERIFIED"})
                 limitations.append({"project": project,
                                     "reason": f"EXPLICIT_PR_NOT_ELIGIBLE_{number}"})
                 continue
             body = pr.get("body") or ""
             title = pr["title"]
             if not isinstance(body, str) or len(body) > 128000:
+                outcomes.append({"number": number, "status": "INVALID_PR_BODY",
+                                 "issue_reference_source": "NOT_VERIFIED"})
                 limitations.append({"project": project,
                                     "reason": f"EXPLICIT_PR_BODY_UNAVAILABLE_{number}"})
                 continue
@@ -364,13 +368,22 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
             report["reference_proves_fix"] = False
             report["active_claim_status"] = "UNKNOWN_NOT_OWNED"
             rows.append(report)
+            outcomes.append({"number": number,
+                             "status": report.get("status", "SOURCE_UNAVAILABLE"),
+                             "head": report.get("head"),
+                             "issue_reference_source": report["issue_reference_source"]})
             if not has_ref:
                 limitations.append({"project": project,
                                     "reason": f"PR_{number}_ISSUE_LINK_NOT_OBSERVED"})
         except (RuntimeError, ValueError, KeyError, TypeError, OSError):
+            outcomes.append({"number": number, "status": "SOURCE_UNAVAILABLE",
+                             "issue_reference_source": "NOT_VERIFIED"})
             limitations.append({"project": project,
                                 "reason": f"EXPLICIT_PR_SOURCE_UNAVAILABLE_{number}"})
     remaining = pr_numbers[examined:]
+    outcomes.extend({"number": number, "status": "UNREAD",
+                     "issue_reference_source": "NOT_VERIFIED"}
+                    for number in remaining)
     if remaining:
         limitations.append({"project": project, "reason": "EXPLICIT_PR_SELECTION_UNREAD"})
     try:
@@ -393,12 +406,16 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
         for report in rows:
             report["observed_issue_refs"] = []
             report["issue_reference_source"] = "UNKNOWN_OR_MOVED"
+        for outcome in outcomes:
+            if outcome["issue_reference_source"] == "EXPLICIT_PR_VERIFIED_REFERENCE":
+                outcome["issue_reference_source"] = "UNKNOWN_OR_MOVED"
     limitations.append({"project": project, "reason": "EXPLICIT_PR_SELECTION_NOT_SEARCH"})
     coverage = {
         "source": "EXPLICIT_PR_CANONICAL_GET",
         "candidate_pr_numbers": pr_numbers[:examined],
         "requested_pr_numbers": pr_numbers,
         "remaining_pr_numbers": remaining,
+        "candidate_outcomes": outcomes,
         "search_examined": examined,
         "search_total": None,
         "candidate_page": None,
