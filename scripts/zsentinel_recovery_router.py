@@ -966,6 +966,31 @@ def plan(bundle, previous=None, now=None):
         ))
         if row["human_escalation"]
     ][:5]
+    # Previously verified human-only incidents must not disappear from the
+    # owner's reconciliation backlog just because the latest bounded GitHub/
+    # Notion sample omitted them. This is a DIFFERENT, historical-only feed:
+    # never pass it to a live alert sender or give it dispatch authority.
+    historical_owner_rechecks = []
+    for row in historical["shown"]:
+        if not row["human_escalation_historical"]:
+            continue
+        historical_owner_rechecks.append({
+            "incident_id": row["incident_id"],
+            "project_id": row["project_id"],
+            "severity_at_last_observation": row["severity"],
+            "problem_at_last_observation": row["problem"],
+            "source_last_seen": row["last_seen"],
+            "exact_github_job": row["exact_github_job"],
+            "source_status": "historical_not_observed_needs_owner_recheck",
+            "next_step": ("Authorized owner: verify the same original job/issue "
+                          "and current gates before taking any action."),
+            "current_source_observed": False,
+            "notifier_delivery_authorized": False,
+            "recovery_action_authorized": False,
+            "owner_confirmation_required": True,
+        })
+        if len(historical_owner_rechecks) >= 5:
+            break
     return {
         "schema_version": 1, "observed_at_utc": utc_string(now),
         "mutations_performed": False, "runner_restarted": False,
@@ -981,6 +1006,12 @@ def plan(bundle, previous=None, now=None):
         "watch_delivery_performed": False,
         "unresolved_not_observed": historical["total_unresolved"],
         "historical_unresolved": historical,
+        "historical_owner_recheck_candidates": historical_owner_rechecks,
+        "historical_recheck_source_truncated": (
+            historical["truncated"] or
+            sum(row["human_escalation_historical"]
+                for row in historical["shown"]) > len(historical_owner_rechecks)
+        ),
         "independent_task_suggestions": routes,
         "recent_branch_ownership": {
             "supplied": branches["supplied"],
