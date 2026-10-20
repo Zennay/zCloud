@@ -227,6 +227,8 @@ def main():
                         help="explicit workspace for bounded, read-only disk hotspot scan")
     parser.add_argument("--disk-hotspots-output", type=Path,
                         help="create-only PRIVATE .html containing filenames; never stdout")
+    parser.add_argument("--disk-sqlite", action="append", default=[],
+                        help="optional relative DB filenames; bounded SQLite header/WAL metadata only")
     parser.add_argument("--disk-inspect-unlinked-files", action="store_true",
                         help="opt-in private deleted-but-open files, bounded /proc, no cleanup")
     parser.add_argument("--disk-inspect-open-handles", action="store_true",
@@ -253,6 +255,8 @@ def main():
     try:
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk hotspot scan requires both root and private output")
+        if args.disk_sqlite and args.disk_hotspots_root is None:
+            raise ValueError("--disk-sqlite requires root and private disk output")
         if args.disk_inspect_unlinked_files and args.disk_hotspots_root is None:
             raise ValueError("--disk-inspect-unlinked-files requires a private disk scan")
         if args.disk_inspect_open_handles and args.disk_hotspots_root is None:
@@ -322,6 +326,10 @@ def main():
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
             disk_report = disk_observe(args.disk_hotspots_root)
+            if args.disk_sqlite:
+                from zsentinel_sqlite_footprint import observe_many as sqlite_observe
+                disk_report["sqlite_footprint"] = sqlite_observe(
+                    args.disk_hotspots_root, args.disk_sqlite)
             if args.disk_inspect_open_handles:
                 from zsentinel_disk_hotspots import attach_open_references
                 attach_open_references(disk_report, args.disk_hotspots_root)
