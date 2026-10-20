@@ -1940,3 +1940,31 @@ bronnen `false`, ook als de HEAD op het moment van de opname exact was:
 apart vastleggen. Een recente opname is nog steeds **geen** branch-protection-,
 eigenaar- of releasevrijgave. De inhoudsvingerafdruk blijft alleen een
 provenancebewijs van de waargenomen feiten.
+
+## 20 oktober · offline HTML-eigenaarwerkbak met directe bronlinks
+
+Naast Markdown en JSON is er nu een zelfstandige, mobiel leesbare en
+scriptvrije **HTML-eigenaarwerkbak** voor dezelfde bestaande
+`--inspect-current-pr-gates` handoff. De operator ziet per PR de bron-HEAD,
+doelbasis, echte niet-groene checklinks, links naar mogelijk gerelateerde PRs,
+gedeelde bestandspaden, issuevermeldingen als *ongeverifieerde hints* en
+concrete handmatige vervolgstappen. Een historische (>6 uur) waarneming wordt
+bovenaan als zodanig gemarkeerd; ontbrekende dekking blijft zichtbaar.
+Bestaande bron- en privacygrenzen blijven identiek aan de Markdown/JSON-route.
+
+Voorbeeld (maak een **nog niet bestaand** privébestand aan):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders-html --output /private/path/zsentinel-owner-werkbak.html
+```
+
+HTML is UTF-8, bevat geen JavaScript of externe stylesheets en stelt een
+restrictief Content-Security-Policy met `default-src 'none'` in. Alle
+bronlinks zijn geverifieerde canonieke GitHub PR-, bestandsdiff-, checkrun- of
+vastgepinde commit-links; labels en bestandspaden worden HTML-ge-escaped.
+Ook dit formaat vereist een exclusief aangemaakt `0600` bestand en maximaal
+512 KiB output. Het verricht **geen** taakclaim, GitHub mutatie, CI-rerun,
+automatische merge, release of VPS-actie.
