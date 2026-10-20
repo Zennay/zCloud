@@ -47,6 +47,7 @@ def project_worklist(selected, integrated):
             "primary_categories": {key: 0 for key in LABELS},
             "concurrent_categories": {key: 0 for key in LABELS},
             "first_candidate": None,
+            "candidates": [],
             "read_only": True,
             "ownership_verified": False,
             "merge_authorized": False,
@@ -68,19 +69,27 @@ def project_worklist(selected, integrated):
             "url": url,
             "primary_gate": category,
             "next_action": LABELS[category][1],
+            "batch_index": position // 4 + 1,
+            "gate_source": ("missing_batch" if position // 4 + 1 in missing
+                            else "source_unavailable_or_head_changed" if category == "source"
+                            else "observed_partial_gate_receipt"),
+            "linked_issue_urls": sorted(issue["url"] for issue in ref["observed_issue_refs"]),
+            "concurrent_gates": list(concurrent),
             "head_observed": (
                 gate["head_sha_observed"]
                 if gate is not None and category != "source" else None),
             "review_and_merge_authorized": False,
         }
-        current = item["first_candidate"]
-        order = lambda c: (
-            PRIORITIES.index(c["priority"]), list(LABELS).index(c["primary_gate"]),
-            c["pr_number"])
-        if current is None or order(candidate) < order(current):
-            item["first_candidate"] = candidate
+        item["candidates"].append(candidate)
     if sum(p["source_prs_observed"] for p in indexed.values()) != len(selected):
         raise ValueError("Incomplete portfolio PR aggregation")
+    for project in indexed.values():
+        project["candidates"].sort(key=lambda c: (
+            PRIORITIES.index(c["priority"]), list(LABELS).index(c["primary_gate"]),
+            c["pr_number"]))
+        project["first_candidate"] = project["candidates"][0]
+        if len(project["candidates"]) != project["source_prs_observed"]:
+            raise ValueError("Missing PR candidates in project worklist")
     return sorted(indexed.values(), key=lambda p: (
         PRIORITIES.index(p["first_candidate"]["priority"]),
         -p["p0_prs_in_sample"], -p["p1_prs_in_sample"], p["repository"]))
