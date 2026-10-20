@@ -77,6 +77,16 @@ def suggested_actions(packet):
             "Stem huidige PR/file-eigenaren af en reserveer bestaande scopes vóór nieuw werk.",
             "HOLD_SCOPE_OWNERSHIP",
         ))
+    if any(
+        lane.get("serialized_unscoped_queue_admitted") is True
+        for lane in packet.get("lanes", [])[:4]
+    ):
+        result.append(action(
+            "serialized-unscoped-writer", "review",
+            "Een wachtende herstelopdracht zonder schrijfscope heeft alleen seriële ruimte.",
+            "Laat de taak starten uitsluitend na externe claim-, eigenaar- en resourcecontrole; geen parallelle schrijver.",
+            "SERIAL_CANDIDATE_NOT_AUTHORIZED",
+        ))
     # Source-limited P0 discovery stays advisory. Eligible is NOT the same as
     # ownership-free and never licenses a dispatch, CI run or merge.
     portfolio = packet.get("portfolio_urgent_local", [])
