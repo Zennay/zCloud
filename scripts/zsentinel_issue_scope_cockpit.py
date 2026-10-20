@@ -729,7 +729,9 @@ def output_html(report):
                  else "ONVOLLEDIG") + " · PR-issueverwijzingen: " +
                 ("beperkte bron compleet" if item["issue_reference_sample_complete"]
                  else "ONVOLLEDIG") +
-                " · actuele claims niet geverifieerd</small></td></tr>")
+                " · actuele PR-gatebron: " +
+                escape(item["candidate_exact_head_gate_state"]) +
+                " · claims niet geverifieerd</small></td></tr>")
         work_panel = (
             "<section id='merge-first-inbox' aria-label='P0/P1 merge-eerst werkbak'>"
             "<h2>Merge-eerst · menselijke P0/P1 werkbak</h2><p>" +
