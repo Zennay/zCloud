@@ -13,6 +13,7 @@ import datetime as dt
 import json
 from html import escape
 import os
+import stat
 import subprocess
 from itertools import chain
 import time
@@ -61,7 +62,7 @@ def runner_diagnostics(cutoff: float, deadline: float | None = None):
                     "bytes": stat.st_size,
                     "modified_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
                     "can_remove_automatically": False,
-                    "no_open_handle_verified": True,
+                    "no_open_handle_verified": False,
                     "archive_transfer_approved": False,
                 }
 
@@ -126,6 +127,81 @@ def old_app_release_review(cutoff: float, deadline: float | None = None):
                 "no_open_handle_verified": True,
                 "archive_transfer_approved": False,
             }
+
+
+def observe_open_handle_hints(rows: list[dict], seconds: float = 2.0) -> dict:
+    """Read-only positive /proc FD hints for displayed candidates only.
+
+    An absence of matches is never proof that any file is closed. Proc access
+    may be restricted, processes race, other hosts may hold NFS handles, and
+    candidate inodes may be replaced between observations.
+    """
+    result = {
+        "mode": "bounded_proc_fd_positive_only",
+        "sampled_candidates": len(rows),
+        "observed_open_files": 0,
+        "files_open_unknown": len(rows),
+        "scanned_processes": 0,
+        "scanned_fds": 0,
+        "observation_incomplete": True,
+        "no_open_handles_proven": False,
+        "archive_transfer_authorized": False,
+        "source_deletion_authorized": False,
+    }
+    targets = {}
+    for row in rows[:100]:
+        row["open_handle_observed"] = False
+        row["open_handle_clear_verified"] = False
+        try:
+            p = Path(row["source"])
+            st = p.lstat()
+            if stat.S_ISREG(st.st_mode) and st.st_nlink == 1:
+                targets.setdefault((st.st_dev, st.st_ino), []).append(row)
+        except (OSError, ValueError):
+            continue
+    if not targets:
+        return result
+    end = time.monotonic() + max(0.1, min(seconds, 2.0))
+    scanned_procs = 0
+    scanned_fds = 0
+    partial = False
+    try:
+        processes = (item for item in Path("/proc").iterdir()
+                     if item.name.isdecimal() and item.is_dir())
+        for proc in processes:
+            if time.monotonic() >= end or scanned_procs >= 350 or scanned_fds >= 5000:
+                partial = True
+                break
+            scanned_procs += 1
+            try:
+                descriptors = list((proc / "fd").iterdir())
+            except (OSError, PermissionError):
+                partial = True
+                continue
+            for fd in descriptors:
+                if time.monotonic() >= end or scanned_fds >= 5000:
+                    partial = True
+                    break
+                scanned_fds += 1
+                try:
+                    st = fd.stat()
+                except (OSError, PermissionError):
+                    partial = True
+                    continue
+                for row in targets.get((st.st_dev, st.st_ino), ()):
+                    row["open_handle_observed"] = True
+    except (OSError, PermissionError):
+        partial = True
+    marked = sum(row.get("open_handle_observed", False) is True for row in rows[:100])
+    result.update({
+        "observed_open_files": marked,
+        "files_open_unknown": len(rows) - marked,
+        "scanned_processes": scanned_procs,
+        "scanned_fds": scanned_fds,
+        "observation_incomplete": partial,
+    })
+    return result
+
 
 def filesystem():
     root = os.statvfs("/")
@@ -337,6 +413,17 @@ def render_html(report: dict) -> str:
         + ' files. Item examples omitted beyond limit: ' + esc(omitted)
         + '. Automatically reclaimable: 0 bytes.</p></section>'
     )
+    hints = report.get("open_handle_hints")
+    hint_section = ""
+    if hints is not None:
+        hint_section = (
+            "<section aria-labelledby='handle'><h2 id='handle'>Open-file warning</h2>"
+            "<p>Open source-file handles actually observed: <strong>" +
+            esc(hints["observed_open_files"]) + "</strong> in " +
+            esc(hints["sampled_candidates"]) + " displayed review objects.</p>"
+            "<p class='muted'>Non-matches, partial /proc visibility and process exits never "
+            "prove the file is closed. Owner verification remains mandatory.</p></section>"
+        )
     change = report.get("storage_change")
     change_section = ""
     if change is not None:
@@ -388,7 +475,7 @@ def render_html(report: dict) -> str:
         '<p class="muted">These are live or owner-protected footprints. Size is NOT reclaimable storage.</p>'
         '<table><thead><tr><th>Category</th><th>Size</th><th>Responsible owner</th><th>Disposition</th></tr></thead>'
         '<tbody>' + "".join(rows) + '</tbody></table></section>'
-        + archive_review_html + change_section +
+        + archive_review_html + hint_section + change_section +
         '<section aria-labelledby="archive"><h2 id="archive">External archive</h2>'
         '<p>Browse mount status: <strong>' + esc(archive["state"]) + '</strong>.</p>'
         '<p class="muted">The existing crypt-backed remote uploader and independent checksum/restore '
@@ -422,6 +509,13 @@ def operator_summary(report: dict) -> str:
         lines.append(
             f"  {kind}: {report['cold_candidate_counts'][kind]} entries, "
             f"{report['cold_candidate_bytes'][kind]/gb:.4f} GiB (owner review)")
+    hints = report.get("open_handle_hints")
+    if hints is not None:
+        lines.append(
+            f"Open-handle hints (displayed candidates only): "
+            f"{hints['observed_open_files']} observed open / "
+            f"{hints['files_open_unknown']} unverified; "
+            "no closed-file proof or permission to move.")
     hotspots = report.get("hotspot_inventory")
     if hotspots is not None:
         lines.append("Large local hot paths: owner review required, NOT reclaimable-by-default")
@@ -446,6 +540,8 @@ def main():
     ap.add_argument("--limit", type=int, default=MAX_LIST)
     ap.add_argument("--previous-report", type=Path, default=None,
                     help="Read-only bounded comparison with a previous private JSON snapshot")
+    ap.add_argument("--open-handle-hints", action="store_true",
+                    help="Bounded read-only positive /proc FD hints on up to 100 shown old files; never proves idle")
     ap.add_argument("--hotspot-inventory", action="store_true",
                     help="Bounded size assessment of named hot directories, never cleanup permission")
     ap.add_argument("--format", choices=("json", "text", "html"), default="json")
@@ -475,6 +571,7 @@ def main():
             examples.append(row)
     if scan_limit_reason is None and time.monotonic() >= deadline:
         scan_limit_reason = "scan_time_budget_exhausted"
+    handle_hints = observe_open_handle_hints(examples[:100]) if args.open_handle_hints else None
     live_filesystem = filesystem()
     total_assessed = sum(totals.values())
     result = {
@@ -489,6 +586,7 @@ def main():
         "disk_pressure": disk_pressure(live_filesystem["free_bytes"], total_assessed),
         "archive_mount": archive_mount_status(),
         "hotspot_inventory": hotspot_inventory() if args.hotspot_inventory else None,
+        "open_handle_hints": handle_hints,
         "cold_candidate_counts": count,
         "cold_candidate_bytes": totals,
         "total_candidate_bytes": total_assessed,
