@@ -31,6 +31,31 @@ REPO = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 SEVERITY = re.compile(r"^\s*(?:\[(P[01])\]|(P[01])(?=\s|:|\-)|(?:[A-Za-z][A-Za-z -]{0,38}\s+)(P[01])\s*:)", re.I)
 QA = re.compile(r"^\s*(?:P[0-3](?=\s|:|\-)(?:\s*[:\-]?\s*)?)?(?:QA|test|regression|quality[ -]validation)\b", re.I)
 
+def explicit_qa_only_pr(pr):
+    """Exclude clearly QA-only PRs from *product* merge-first inventory.
+
+    This is never a merge admission or a judgment about required CI. Prefer
+    structured labels and branch naming in addition to title prefixes.
+    """
+    if not isinstance(pr, dict):
+        raise ValueError("invalid PR metadata")
+    title = pr.get("title")
+    labels = pr.get("labels")
+    head = pr.get("head")
+    head_ref = head.get("ref") if isinstance(head, dict) else None
+    marked = isinstance(labels, list) and any(
+        isinstance(label, dict)
+        and isinstance(label.get("name"), str)
+        and label["name"].lower() in (
+            "qa", "qa-only", "tests-only", "quality-validation",
+            "qa-validation", "regression")
+        for label in labels[:30])
+    branch_only = (isinstance(head_ref, str) and head_ref.lower().startswith(
+        ("qa/", "test/", "tests/", "quality-validation/")))
+    return bool((isinstance(title, str) and QA.match(title))
+                or marked or branch_only)
+
+
 def object_unique(pairs):
     result = {}
     for key, value in pairs:
@@ -288,7 +313,7 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                     base_name = base.get("ref") if isinstance(base, dict) else None
                     if (pr.get("state") == "open"
                             and type(title) is str and 0 < len(title) <= 256
-                            and not QA.match(title)
+                            and not explicit_qa_only_pr(pr)
                             and isinstance(head_sha, str)
                             and re.fullmatch(r"[a-f0-9]{40}", head_sha)
                             and isinstance(base_repo, dict)
