@@ -38,9 +38,13 @@ def issue_worklist(report):
         # one source snapshot and issue B in a later snapshot; attributing
         # the union of all snapshot numbers to both would be false evidence.
         issue_seen_at = {}
+        issue_priorities = {}
         for seen in candidate["observations"]:
+            if seen["priority"] not in RANK:
+                raise ValueError("Unrecognized historical PR priority")
             for url in seen["linked_issue_urls"]:
                 issue_seen_at.setdefault(url, set()).add(seen["snapshot_index"])
+                issue_priorities.setdefault(url, []).append(seen["priority"])
         if not issue_seen_at:
             unlinked.append({
                 "url": candidate["url"],
@@ -77,6 +81,9 @@ def issue_worklist(report):
                 "pr_url": candidate["url"],
                 "pr_number": candidate["number"],
                 "source_priority": candidate["latest_sample_priority"],
+                # Later PR priority can be unrelated after its issue link changed.
+                "issue_link_priority": min(
+                    issue_priorities[url], key=lambda value: RANK[value]),
                 "observed_head": candidate["latest_observed_head"],
                 "observed_primary_gate": candidate["latest_sample_primary_gate"],
                 "observed_head_changes": candidate["observed_head_changes"],
@@ -93,8 +100,8 @@ def issue_worklist(report):
     for issue in indexed.values():
         issue["observed_in_snapshots"] = sorted(issue["observed_in_snapshots"])
         issue["linked_existing_prs"].sort(
-            key=lambda x: (RANK[x["source_priority"]], x["pr_number"]))
-        issue["highest_source_priority"] = issue["linked_existing_prs"][0]["source_priority"]
+            key=lambda x: (RANK[x["issue_link_priority"]], x["pr_number"]))
+        issue["highest_source_priority"] = issue["linked_existing_prs"][0]["issue_link_priority"]
         last_snapshot = len(report["source_snapshots"])
         issue["last_link_observed_snapshot"] = max(issue["observed_in_snapshots"])
         issue["link_unobserved_in_final_sample"] = (
@@ -210,7 +217,8 @@ def html_content(result):
             prs.append(
                 '<li><a target="_blank" rel="noopener noreferrer" href="' +
                 e(p["pr_url"]) + '">PR #' + str(p["pr_number"]) +
-                '</a> — ' + e(p["source_priority"]) + ' · gate ' +
+                '</a> — issue-link ' + e(p["issue_link_priority"]) +
+                ' · laatste PR-bron ' + e(p["source_priority"]) + ' · gate ' +
                 e(p["observed_primary_gate"]) +
                 ' · HEAD ' + e(p["observed_head"] or "ONBEKEND") +
                 ' · issue-link bronmoment(en) ' +
@@ -326,8 +334,9 @@ def markdown_content(result):
         ])
         for p in issue["linked_existing_prs"]:
             lines.append("- [Bestaande PR #" + str(p["pr_number"]) + "](" +
-                         p["pr_url"] + ") — " + p["source_priority"] +
-                         " · oude bron-HEAD " +
+                         p["pr_url"] + ") — issue-link " +
+                         p["issue_link_priority"] + " · laatste PR-bron " +
+                         p["source_priority"] + " · oude bron-HEAD " +
                          (p["observed_head"] or "ONBEKEND") +
                          " · gate " + p["observed_primary_gate"] +
                          " · issue-link laatst gezien in bron " +
@@ -360,7 +369,8 @@ def csv_content(result):
         "Menselijke vervolgactie", "Huidige claim/CI/review",
         "Main merge", "Issue status live", "Historische issue triage",
         "Issuekoppeling ontbreekt eindbron", "Meerdere bron-PRs",
-        "Laatste bron mist batches", "Eerste bronmanifest SHA256",
+        "Laatste bron mist batches", "Issue-link bronprioriteit",
+        "Eerste bronmanifest SHA256",
         "Laatste bronmanifest SHA256",
     ])
     first_manifest = result["source_snapshots"][0]["original_review_manifest_sha256"]
@@ -381,7 +391,7 @@ def csv_content(result):
                 "JA, ONBEKEND" if issue["link_unobserved_in_final_sample"] else "NEE",
                 "JA, verifieer eigenaren" if issue["multiple_candidate_prs_need_owner_review"] else "NEE",
                 "JA, incompleet" if issue["last_snapshot_missing_batches"] else "niet gerapporteerd",
-                first_manifest, last_manifest,
+                p["issue_link_priority"], first_manifest, last_manifest,
             ])
     for p in result["unlinked_prs"]:
         writer.writerow([
@@ -391,7 +401,8 @@ def csv_content(result):
             "ONBEKEND", "Eerst oorspronkelijke PR/issue-scope live bekijken.",
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
             "Geen betrouwbaar bronissue; inspecteer actuele PR.", "ONBEKEND",
-            "ONBEKEND", "ONBEKEND", first_manifest, last_manifest,
+            "ONBEKEND", "ONBEKEND", "ONBEKEND",
+            first_manifest, last_manifest,
         ])
     return "\ufeff" + source.getvalue()
 
