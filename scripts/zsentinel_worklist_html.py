@@ -455,6 +455,15 @@ refresh();
     source_token = hashlib.sha256(json.dumps(
         source_identity, ensure_ascii=True, sort_keys=True,
         separators=(",", ":")).encode("utf-8")).hexdigest()
+    # Keep old issue-only private session notes importable exclusively when
+    # their exact original issue/PR/gate source token still matches.
+    legacy_identity = {
+        "issue_time": str(ts_issue), "pr_time": str(ts_pr),
+        "visible_rows": source_identity["visible_rows"],
+    }
+    legacy_token = hashlib.sha256(json.dumps(
+        legacy_identity, ensure_ascii=True, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
     project_names = sorted({r["project"] for r in cards[:max_rows]})
     p_opts = "".join("<option value='" + escape(name, quote=True) + "'>" +
                      escape(name) + "</option>" for name in project_names)
@@ -488,6 +497,7 @@ refresh();
         ".source,.warning{color:#ebce9b}.links a{margin-right:10px}"
         "@media(max-width:640px){.controls,.pr-controls{grid-template-columns:1fr}}"
         "</style></head><body data-source-token='" + source_token +
+        "' data-legacy-source-token='" + legacy_token +
         "'><h1>zSentinel · merge-eerst werkbak</h1>"
         "<p>Geobserveerde P0/P1-productissues, bestaande PRs en menselijke vervolgstappen. "
         "Geen automatische claim, issue-afhandeling, CI, review, merge, runnerherstel of deploy. "
