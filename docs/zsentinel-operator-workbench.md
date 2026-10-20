@@ -1741,3 +1741,69 @@ waarin **een project of individuele PR zichzelf bevoegd verklaart**
 `live_verified` of ontbrekende read-only metadata). Ook ongeoorloofde
 of onbeperkte `gate_observations`-velden worden geweigerd. Dit is een
 offline bronintegriteitsgrens, geen extra GitHub-releasegate.
+
+
+## 20 oktober · zSentinel meerdaags PR-volgscherm (bestaande PR #1560)
+
+De bestaande privé `portfolio-zip`-overdrachten kunnen nu per project
+over **2–12 chronologisch opgeslagen bronmomenten** heen één
+operatorwerkbak vormen. Dit is een concreet afhandeloverzicht van al
+bestaande PR's: het groepeert oorspronkelijke GitHub-links, geobserveerde
+HEAD-wijzigingen, eerder zichtbare gate-/issuewijzigingen,
+steekproefafwezigheid en menselijke vervolgstappen in plaats van opnieuw
+handmatig elke dag de opgeslagen dossiers te openen.
+
+```bash
+python3 scripts/zsentinel_saved_dossier_timeline.py \
+  --source ./private-project-dag1.zip \
+  --source ./private-project-dag2.zip \
+  --source ./private-project-dag3.zip \
+  --priority P0 \
+  --change changed_gate \
+  --page 1 --page-size 40 \
+  --format html \
+  --output ./private-project-historie-p0.html
+```
+
+**Gebruik:** herhaal `--source` twee tot maximaal twaalf keer, in
+oplopende, niet-overlappende UTC-bronvolgorde. Alle dossiers passeren eerst
+de bestaande strikte ZIP-bronadmissie; ze moeten dezelfde expliciete
+projectscope hebben. Maximum 600 verschillende waargenomen PR-adressen.
+De volledige bronhistorie wordt **eerst** gelezen; alleen het
+menselijke eindbeeld wordt op P0/P1/P2, bron-veranderingstype en
+pagina 1–100 (1–100 PR's per pagina, standaard 40) gefilterd.
+Het resultaat vermeldt hoeveel echte **bron**-PR's er totaal,
+gefilterd en op deze pagina getoond worden. PR's die niet op de huidige
+pagina of in een bronvenster staan zijn nooit automatisch afgehandeld.
+
+`--change` ondersteunt
+`changed_head`, `changed_gate`, `changed_issues`,
+`reappeared_in_sample`, `missing_between_samples` en
+`last_sample_missing`. Een verdwenen PR is **niet bewezen gemerged**;
+een PR die op opeenvolgende dagen hetzelfde gatebewijs toont, is
+**niet bewezen vastgelopen**. Alle observaties zijn expliciet historisch.
+Dit voorkomt dat een wisselende GitHub-zoekscope per ongeluk een
+succes of release suggereert.
+
+De output kan als één nieuw lokaal 0600-bestand (maximaal 1 MiB) worden
+gemaakt met `--format html`, `markdown`, `csv` of `json`.
+De HTML is responsief, Nederlandstalig, scriptvrij en CSP-afgeschermd.
+Per PR zijn alle werkelijk waargenomen momenten uitklapbaar, met de
+oorspronkelijke PR- en issue-links. De andere formaten geven dezelfde
+menselijke prioriteits- en bronverloopinformatie; JSON bevat ook het
+oorspronkelijke SHA256 voor **ieder** bronmoment.
+
+**Cruciaal voor CI en reviews:** bron-HANDLE/HEAD-verschillen zijn
+separaat van gatewijzigingen. Alleen wanneer beide steekproeven dezelfde,
+niet-lege exacte HEAD zien, telt een gewijzigd gate-check/reviewcijfer
+mee als een vergelijkbare bronwaarneming. Cijfers voor verschillende
+of onbekende HEADs worden **niet-vergelijkbare receipts** genoemd
+en vormen geen CI-voortgangsbewijs. Zelfs vergelijkbare cijfers geven
+geen vrijgave voor verplichte CI, onafhankelijke review, branchregels
+of worker-eigenaarschap.
+
+Het volgscherm doet **geen** extra GitHub GET, Notion- of claimwrite,
+queue claim, worker dispatch, CI-retry, Merge API call, zSSH mutatie
+of productiedeploy. Het is een operatorhulpmiddel, geen geautomatiseerde
+autorisatie. Verifieer merge of live herstel pas apart op actuele
+geautoriseerde bronnen.
