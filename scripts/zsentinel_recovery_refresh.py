@@ -171,6 +171,7 @@ def refresh(bundle, registry, token=None):
                            "job_assignment_stage": route["job_assignment_stage"],
                            "assignment_source_complete": route["assignment_source_complete"],
                            "no_job_steps": updated.get("no_job_steps"),
+                           "conclusion": updated.get("conclusion") if status == "completed" else None,
                            "job_start_evidence": (
                                "completed_without_steps" if status == "completed"
                                and updated.get("no_job_steps") is True
