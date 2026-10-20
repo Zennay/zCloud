@@ -135,7 +135,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                     raise ValueError("cross-repository collision data")
                 related.setdefault(link, set()).add(ref)
         mentions = {}
-        if item.get("issue_reference_source_covered") is True:
+        mentions_stable = (
+            item.get("issue_reference_snapshot_stable") is True
+            and item.get("source_status") != "unavailable")
+        if item.get("issue_reference_source_covered") is True and mentions_stable:
             recorded = item.get("observed_issue_to_pr_mentions_unverified", [])
             if type(recorded) is not list or len(recorded) > 512:
                 raise ValueError("unbounded cross-PR issue reference evidence")
@@ -163,6 +166,9 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                       "complete": item["sample_complete"],
                       "collisions": related,
                       "mentioned_issues": mentions,
+                      "mention_snapshot_stable": mentions_stable,
+                      "mention_sample_complete":
+                          item.get("issue_reference_sample_complete") is True,
                       "observed_open_prs": item.get("observed_open_prs"),
                       "observed_pairs": item.get("observed_collision_pairs"),
                       "known_disjoint": {
@@ -193,7 +199,7 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         original = list(card["open_pr_candidates"])
         additional = (sorted(state["mentioned_issues"].get(
             int(card["issue"].rsplit("#", 1)[-1]), set()) - set(original))
-            if coherent and state["complete"] else [])
+            if coherent and state["mention_snapshot_stable"] else [])
         references = (original + additional)[:MAX_LINKED_PRS_PER_ISSUE]
         refs = []
         for link in references:
@@ -215,7 +221,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                          "issue_link_source": (
                              "existing_product_issue_board_reference"
                              if link in original else
-                             "current_open_pr_text_mention_unverified"),
+                             "observed_current_open_pr_text_mention_partial_source"),
+                         "mention_inventory_complete":
+                             state["mention_sample_complete"] if link not in original
+                             else False,
                          "overlap_with_open_prs": rivals[:16],
                          "saved_exact_head_gates": gates,
                          "current_branch_required_checks_verified": False,
@@ -256,6 +265,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             "pr_sample_complete": exact[pid]["complete"],
             "observed_open_prs": exact[pid]["observed_open_prs"],
             "observed_overlap_pairs": exact[pid]["observed_pairs"],
+            "issue_mention_window_stable":
+                exact[pid]["mention_snapshot_stable"],
+            "issue_mention_inventory_complete":
+                exact[pid]["mention_sample_complete"],
         } for pid in selected],
         "issues": issue_rows,
         "claims_verified": False,
