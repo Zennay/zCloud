@@ -405,6 +405,72 @@ def attach_notion_work_visibility(board, observed):
     return board
 
 
+def portfolio_pr_delta_source(board):
+    """Validate bounded non-authorizing, source-only portfolio change cards."""
+    delta = board.get("pr_delta_since_previous_portfolio")
+    if delta is None:
+        return None
+    if (type(delta) is not dict or
+            delta.get("schema") != "zsentinel-private-portfolio-pr-delta-v1" or
+            delta.get("projects") != board.get("projects") or
+            delta.get("complete_pr_inventory_verified") is not False or
+            delta.get("merged_pr_count_verified") != 0 or
+            any(delta.get(k) is not False for k in
+                ("owner_verified", "merge_authorized", "dispatch_authorized",
+                 "writes_performed")) or
+            type(delta.get("changed_or_newly_observed")) is not list or
+            type(delta.get("prior_no_longer_observed_NOT_MERGED")) is not list or
+            len(delta["changed_or_newly_observed"]) > 162 or
+            len(delta["prior_no_longer_observed_NOT_MERGED"]) > 162):
+        raise ValueError("untrusted, authorizing or unbounded portfolio PR comparison")
+    return delta
+
+
+def render_pr_delta_html(board):
+    delta = portfolio_pr_delta_source(board)
+    if delta is None:
+        return ""
+    changed = delta["changed_or_newly_observed"]
+    older = delta["prior_no_longer_observed_NOT_MERGED"]
+    links = "".join(
+        '<li><a href="' + escape(row["url"], quote=True) +
+        '" target="_blank" rel="noopener noreferrer">' +
+        escape(row["url"]) + '</a> · ' +
+        escape(", ".join(row["changes"]) if row["changes"] else row["state"]) +
+        (' · vorige HEAD ' + escape(row["previous_listed_head_sha"][:12])
+         if row["previous_listed_head_sha"] else '') +
+        ' · huidige waargenomen HEAD ' + escape(row["listed_head_sha"][:12]) +
+        ' · GEEN mergebewijs</li>'
+        for row in changed[:60])
+    missing = "".join(
+        '<li><a href="' + escape(row["url"], quote=True) +
+        '" target="_blank" rel="noopener noreferrer">' +
+        escape(row["url"]) + '</a> · ' + escape(row["state"]) +
+        ' · GEEN bewijs van merge, sluiting of vrij eigenaarschap</li>'
+        for row in older[:40])
+    return ('<section aria-label="Historische PR-bronveranderingen">'
+            '<h2>PR-bronverschillen sinds vorige portfolio-opname</h2>'
+            '<p>Waargenomen HEAD-wijzigingen: ' +
+            str(delta["changed_listed_head_count"]) +
+            ' · Eerder gezien, nu niet gesampled: ' + str(len(older)) +
+            ' · Nieuw in beperkte steekproef: ' +
+            str(delta["newly_sampled_not_new_pr_count"]) + '.</p>'
+            '<p class="notice">Een verdwenen PR is NIET als gemerged of '
+            'gesloten bewezen. Uitgeschoven paginering en verminderde '
+            'GitHub-toegang kunnen dezelfde bronafwijking veroorzaken. '
+            'Geobserveerde HEAD-wijzigingen vereisen opnieuw exact-HEAD '
+            'CI, onafhankelijke review en eigenaarschap vóór integratie.</p>'
+            '<details><summary>Nieuw / gewijzigde PR-bronnen (' +
+            str(len(changed)) + ')</summary><ul>' + links + '</ul>' +
+            ('<p>Extra items niet getoond; zie privé JSON.</p>'
+             if len(changed) > 60 else '') + '</details>'
+            '<details><summary>Niet langer in beperkte steekproef (' +
+            str(len(older)) + ' — NIET GEMERGED)</summary><ul>' +
+            missing + '</ul>' +
+            ('<p>Extra items niet getoond; zie privé JSON.</p>'
+             if len(older) > 40 else '') + '</details></section>')
+
+
 def render_html(board):
     if (board.get("schema") not in
             ("zsentinel-issue-delivery-board-v1", "zsentinel-portfolio-workboard-v1")
@@ -771,7 +837,7 @@ def render_html(board):
          ' · Zelf opgeslagen bronvensters' if mode == "explicit_saved_private_sources"
          else '') + '</p>' +
         source_warning + '</header><main>' +
-        controls(board["projects"]) + overview_panel + existing_pr_panel + queue_panel +
+        controls(board["projects"]) + overview_panel + render_pr_delta_html(board) + existing_pr_panel + queue_panel +
         notion_panel + progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
         'onzekerheid</summary><ul>' + coverage + '</ul><p>Zelfs volledige '
         'steekproef bewijst geen complete backlog; lokale Notion-/fileclaims '
