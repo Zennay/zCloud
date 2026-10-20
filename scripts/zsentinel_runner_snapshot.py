@@ -170,6 +170,51 @@ def capacity_changes(previous, current):
     }
 
 
+def coach_changes(previous, current, same_boot):
+    """Compare actual read-back coach policy, never infer it from advice or JSON state."""
+    def policy(bundle):
+        src = bundle.get("coach_state")
+        unknown = {"observed": False, "active": None, "quota": None,
+                   "weight": None, "recommendation_matches": None}
+        if not isinstance(src, dict) or src.get("observed") is not True:
+            return unknown
+        active = src.get("active")
+        if type(active) is not bool:
+            return unknown
+        # Inactive units have no applicable CPU policy. Treat it as inactive,
+        # not as zero quota or an operator-authorized restart.
+        if not active:
+            return {**unknown, "observed": True, "active": False}
+        quota, weight = src.get("quota"), src.get("weight")
+        if (type(quota) not in (int, float) or not 0 < quota <= 10000
+                or type(weight) is not int or not 1 <= weight <= 10000):
+            return unknown
+        matched = src.get("recommendation_matches")
+        return {"observed": True, "active": True, "quota": quota,
+                "weight": weight, "recommendation_matches":
+                    matched if type(matched) is bool else None}
+
+    before, after = policy(previous), policy(current)
+    comparable = (same_boot and before["observed"] and after["observed"]
+                  and before["active"] and after["active"])
+    altered = (before["quota"] != after["quota"] or
+               before["weight"] != after["weight"]) if comparable else None
+    return {
+        "previous": before, "current": after,
+        "same_boot_policy_comparable": comparable,
+        "observed_settings_changed": altered,
+        "applied_recommendation_now": (
+            after["recommendation_matches"] if after["observed"] and
+            after["active"] else None
+        ),
+        "training_running_verified": False,
+        "github_job_recovered": None,
+        "action_authorized": False,
+        "interpretation": "Read-back user cgroup values only; no job, training, "
+                          "runner continuity, user consent or release proof.",
+    }
+
+
 def changes(previous, current):
     """Report only observed service state transitions; never infer global recovery."""
     if previous.get("schema") != SCHEMA or current.get("schema") != SCHEMA:
@@ -227,6 +272,7 @@ def changes(previous, current):
         "complete_service_coverage": coverage_a and coverage_b,
         "elapsed_seconds": int(elapsed),
         "capacity_comparison": capacity_changes(previous, current),
+        "coach_comparison": coach_changes(previous, current, same_boot),
         "transitions": result,
         "interpretation": (
             "Only bounded systemd observations. A boot change or unknown boot "
