@@ -27,6 +27,7 @@ from zsentinel_product_delivery_board import prepare as prepare_delivery_board
 from zsentinel_pr_scope_guard import ROOT, registry
 from zsentinel_pr_scope_portfolio import collect_portfolio
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
+from zsentinel_issue_pr_history import attach as attach_history
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -598,6 +599,11 @@ def output_text(report, markdown=False):
                      "; bron vers volgens originele board: " +
                      str(branches["historical_branch_source_fresh"]))
     for row in report["issues"]:
+        if report.get("historical_pr_delta") is not None:
+            lines.append("  PR-historie: " + str(row["historical_linked_prs_with_changes"]) +
+                         " gelinkte PR(s) met positieve bronwijziging; " +
+                         ("volledige" if row["historical_pr_inventory_comparable"] else
+                          "ONVOLLEDIGE") + " bron, geen fixbewijs.")
         ref = ("[" + row["issue"] + "](" + row["url"] + ")" if markdown
                else row["url"])
         lines.append(row["priority"] + " | " + row["project"] + " | " +
@@ -616,6 +622,10 @@ def output_text(report, markdown=False):
             link = ("[" + pr["url"] + "](" + pr["url"] + ")" if markdown else pr["url"])
             lines.append("  " + link + " · " + pr["file_scope_state"] +
                          " · " + pr["issue_link_source"])
+            for event in pr.get("historical_source_events", []):
+                lines.append("    HISTORISCH: " + event["text_nl"] +
+                             (" · " + event["related_pr_url"] if event["related_pr_url"] else "") +
+                             " · geen eigenaar of merge geverifieerd")
             live_gate = pr.get("live_exact_head_review_checks_observation")
             if live_gate is not None:
                 if live_gate.get("status") == "observed_current_head_partial_gate_evidence":
@@ -731,6 +741,13 @@ def output_html(report):
     for row in report["issues"]:
         prs = []
         for pr in row["existing_prs"]:
+            history_links = "".join(
+                "<li>" + escape(event["text_nl"]) +
+                (" · <a rel='noopener noreferrer' href='" +
+                 escape(event["related_pr_url"], quote=True) + "'>" +
+                 escape(event["related_pr_url"]) + "</a>" if
+                 event["related_pr_url"] else "") + "</li>"
+                for event in pr.get("historical_source_events", []))
             rivals = "".join(
                 "<li><a rel='noopener noreferrer' href='" + escape(other, quote=True) +
                 "'>" + escape(other) + "</a></li>"
@@ -789,16 +806,28 @@ def output_html(report):
                 "</a> · " + escape(pr["file_scope_state"]) +
                 " · " + escape(pr["issue_link_source"]) +
                 gate_note + batch_note + live_note +
+                ("<details><summary>Historische PR-verandering</summary><ul>" +
+                 history_links + "</ul><p>Geen fix of release geverifieerd.</p></details>"
+                 if history_links else "") +
                 ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
         cards.append(
             "<article data-priority='" + escape(row["priority"], quote=True) +
             "' data-project='" + escape(row["project"], quote=True) +
+            "' data-history='" + ("changed" if row.get("historical_linked_pr_activity_observed")
+                                   else "not-observed") +
             "'><small>" + escape(row["priority"]) + " · " +
             escape(row["project"]) + "</small><h2><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>" + escape(row["title"]) +
             "</a></h2><p class='meta'>" + escape(row["issue"]) +
             " · issuebron: " + escape(row["project_issue_coverage"]) +
-            "</p><p><strong>Volgende stap:</strong> " +
+            "</p>" +
+            ("<p><strong>PR-beweging:</strong> " +
+             str(row["historical_linked_prs_with_changes"]) +
+             " bestaande PR(s) gewijzigd in opgeslagen bron; " +
+             ("bron volledig." if row["historical_pr_inventory_comparable"] else
+              "bron ONVOLLEDIG.") + " Geen herstel- of mergegarantie.</p>"
+             if report.get("historical_pr_delta") is not None else "") +
+            "<p><strong>Volgende stap:</strong> " +
             escape(row["next_action_nl"]) +
             "</p>" +
             ("<p><strong>Bestaande PR's eerst:</strong> " +
@@ -824,7 +853,12 @@ def output_html(report):
         "<label>Project<select id='filter-project'><option value=''>Alle projecten</option>" +
         "".join("<option value='" + escape(p, quote=True) + "'>" +
                 escape(p) + "</option>" for p in report["chosen_projects"]) +
-        "</select></label><output id='filter-count' aria-live='polite'></output></div>"
+        "</select></label>" +
+        ("<label>PR-historie<select id='filter-history'>" +
+         "<option value=''>Alle productissues</option>" +
+         "<option value='changed'>Met waargenomen PR-wijziging</option>" +
+         "</select></label>" if report.get("historical_pr_delta") else "") +
+        "<output id='filter-count' aria-live='polite'></output></div>"
     )
     # A purely local filter over already rendered text; no fetch, storage, or
     # executable content derived from issue titles, PR bodies or repo strings.
@@ -833,6 +867,7 @@ def output_html(report):
 const search=document.getElementById('filter-search');
 const priority=document.getElementById('filter-priority');
 const project=document.getElementById('filter-project');
+const history=document.getElementById('filter-history');
 const count=document.getElementById('filter-count');
 const cards=Array.from(document.querySelectorAll('article[data-project]'));
 function update(){
@@ -841,13 +876,14 @@ function update(){
   for(const card of cards){
     const ok=(!term || card.textContent.toLocaleLowerCase('nl').includes(term)) &&
       (!priority.value || card.dataset.priority===priority.value) &&
-      (!project.value || card.dataset.project===project.value);
+      (!project.value || card.dataset.project===project.value) &&
+      (!history || !history.value || card.dataset.history===history.value);
     card.hidden=!ok;
     if(ok) shown++;
   }
   count.textContent=shown+' van '+cards.length+' productissues zichtbaar';
 }
-for(const el of [search,priority,project])el.addEventListener('input',update);
+for(const el of [search,priority,project,history])if(el)el.addEventListener('input',update);
 update();
 })();</script>"""
     return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
@@ -981,7 +1017,7 @@ def main(argv=None):
                                       else "live_readonly_github_issues" if args.live_issues
                                       else "saved_local_snapshot"),
                          focus_issue=args.focus_issue, raw_board=source)
-        report["historical_pr_delta"] = historical
+        attach_history(report, historical)
         if saved_bundle is not None:
             saved_entries = {
                 row["url"]: row for batch in saved_bundle["batches"]
