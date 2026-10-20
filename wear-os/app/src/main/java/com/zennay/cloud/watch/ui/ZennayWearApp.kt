@@ -144,6 +144,7 @@ private fun HomeScreen(
                     alert.id == id && (
                         alert.severity.equals("high", true) ||
                         alert.severity.equals("critical", true) ||
+                        alert.severity.equals("error", true) ||
                         alert.severity.equals("needs_attention", true))
                 } == true
             }
@@ -202,10 +203,12 @@ private fun HomeScreen(
                           snapshot.currentBlockerFeedAvailable && it.id.isNotBlank() }
                 .filter { it.severity.equals("critical", true) ||
                           it.severity.equals("high", true) ||
+                          it.severity.equals("error", true) ||
                           it.severity.equals("needs_attention", true) }
                 .distinctBy { it.id }
                 .sortedWith(compareBy<com.zennay.cloud.watch.data.AlertItem> {
-                    if (it.severity.equals("critical", true)) 0 else 1
+                    if (it.severity.equals("critical", true) ||
+                        it.severity.equals("error", true)) 0 else 1
                 }.thenByDescending { it.occurredAt.orEmpty() })
             if (urgent.isNotEmpty()) {
                 item { SectionLabel("AANDACHT NODIG · ${urgent.size}") }
@@ -218,7 +221,8 @@ private fun HomeScreen(
                     }) {
                         Label(
                             "${alert.project?.uppercase() ?: "ZCLOUD"} · ${alert.severity.uppercase()}",
-                            if (alert.severity.equals("critical", true)) Danger else Warning
+                            if (alert.severity.equals("critical", true) ||
+                                alert.severity.equals("error", true)) Danger else Warning
                         )
                         Text(
                             alert.title, color = TextMain, fontSize = 12.sp,
