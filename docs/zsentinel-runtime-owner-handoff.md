@@ -161,3 +161,66 @@ de huidige exacte GitHub-job en eigenaar apart, vóór elke actie.
 Dit is **source-implementatie binnen open PR #1563**; nog geen main
 merge of productie-integratie. Verplichte exacte-head CI, onafhankelijke
 review, protected-main en eigenaar-/runtimegates blijven intact.
+
+## 20 oktober · queue #677: eigenaarcheck voor onbetrouwbare leasevensters
+
+De bestaande éénmalige portfolio- en queue-trend-CLI leest reeds echte
+zCloud-queuegegevens vanuit een SQLite read-only snapshot, zonder
+productiewrites. De bronobserver onderscheidt een verlopen lease,
+een onbekende vervaltijd en een **tegenstrijdig leasevenster**
+(ontbrekende/onmogelijke claimstart of claimstart niet vóór vervaltijd).
+De aparte eerdere claimtrend-vergelijking in
+`scripts/zsentinel_queue_churn.py` verloor die derde categorie.
+Een actuele onbetrouwbare lease kon daardoor ten onrechte ontbreken in
+de handmatige vergelijkingsweergave wanneer geen nieuwe claimpogingen
+hadden plaatsgevonden.
+
+Deze bestaande productbron is uitgebreid met drie samenhangende acties:
+
+1. **Bronopname weigert inconsistentie** tussen totalen, projectgroepen en
+   status-specifieke voorbeelden: de drie leaseflags zijn wederzijds
+   uitsluitend en mogen niet voorkomen op ongeclaimde `queued` taken.
+   Eerdere privé-snapshots zonder de nieuwe expliciete bronvelden zijn
+   niet automatisch vergelijkbaar en worden veilig afgewezen.
+2. **Vergelijking verliest conflicten niet**: de nieuwste huidige bron
+   rapporteert `current_inconsistent_lease_windows_owner_review`,
+   zichtbare veranderingen op groepsniveau en een afgekapt privéoverzicht
+   van getroffen project/prioriteit/status. Dit gebeurt ook wanneer de
+   claimpogingenteller niet steeg. De originele queue-ID, leaseklokken,
+   claimeigenaar en claimtoken blijven uit operatorbestanden.
+3. **Concreet operatorresultaat**: standaard portfolio-HTML,
+   tekst/Markdown en privéscherm vermelden het aantal onbetrouwbare
+   leasevensters. Het privéscherm toont afzonderlijke projectkaarten met
+   de opdracht aan de bevoegde eigenaar om claimstart en expiry in de
+   oorspronkelijke bron te verifiëren. Dat is géén automatische vrijgave,
+   retry of workerovername.
+
+Gebruik het bestaande commando om een eerste **privé, create-only**
+snapshot te maken, en vergelijk deze binnen 72 uur met een latere bron:
+
+```sh
+python3 scripts/zsentinel_queue_churn.py \
+  --database /pad/naar/bestaande/history.db \
+  --snapshot-output /eigenaar/prive/queue-eerst.json
+python3 scripts/zsentinel_queue_churn.py \
+  --database /pad/naar/bestaande/history.db \
+  --previous /eigenaar/prive/queue-eerst.json \
+  --output /eigenaar/prive/queue-verandering.html \
+  --format html
+```
+
+Gebruik alleen een door de eigenaar bestaande afgeschermde map.
+Eenmalige broninspectie op de verbonden zSSH-host zag acht toegewezen
+actieve queue-items, vijf met minstens drie claimpogingen, maar geen
+huidig tegenstrijdig of verlopen leasevenster op het waarnemingsmoment.
+Dat bewijst geen nul problemen buiten deze bronsteekproef.
+De zCloud-runnerlistener bleek daarnaast `active (running)`, terwijl
+exacte GitHub-jobs nog `queued` waren. Geen restart onder hoge swapdruk
+of met andere actieve projectworkers; het GitHub-runnerroute/registratie-
+onderzoek uit #1326 blijft een onafhankelijke eigenaarstaak.
+
+**Release:** dit is broncode uitsluitend op bestaande [PR #1563](https://github.com/Zennay/zCloud/pull/1563);
+geen native writer-migratie, geen nieuwe automatische retry/backoff policy
+uit [issue #677](https://github.com/Zennay/zCloud/issues/677), geen
+productiedeploy. Verplichte exacte-head CI en onafhankelijke review
+blijven vereist voor de merge naar main.
