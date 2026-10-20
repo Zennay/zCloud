@@ -1674,3 +1674,24 @@ die binnen het gevraagde beperkte schermvenster vallen; ontbrekende
 issues worden niet als afgerond behandeld. Alle veiligheids- en
 releasebevoegdheidsvlaggen blijven false. Er worden geen automatische
 claims, CI-acties, merges of deployments uitgevoerd.
+
+
+### Offline operatorwerkbak: interactieve kaarten blijven bruikbaar met PR-groepen
+
+De bestaande HTML kende ook een groepspaneel met CSS-klasse `ticket`.
+De browsercode selecteerde alle `.ticket`-elementen alsof het echte
+issueformulieren waren. Zodra er een PR-groep verscheen, had het
+groepspaneel geen lokale vervolgstatus of notitieveld; zoeken, filteren,
+sessie-export en -import konden daardoor op een ontbrekend element
+vastlopen. De JavaScript-selectie richt zich nu uitsluitend op
+`article.ticket[data-issue]`, de echte geobserveerde issuekaarten.
+Dit maakt de bestaande zoekfunctie, handmatige vervolgstatussen en
+brongebonden sessie-overdracht weer bruikbaar naast gegroepeerde PRs.
+
+Ook alternatieve bestaande PR-URLs uit de bron zijn voortaan vindbaar
+via de zoekbalk en verschijnen apart in de privé Markdown-download
+van handmatige operatoropvolging. De extra links worden gelezen uit
+dezelfde ge-escapete, maximaal vier kandidaat-PRs per issue; er worden
+geen nieuwe netwerkverzoeken gedaan en geen claims, PRs, jobs, CI of
+deploys aangestuurd. De groepssectie blijft gewoon zichtbaar en levert
+geen verborgen formulierrecord aan een gebruikerssessie.
