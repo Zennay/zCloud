@@ -52,3 +52,26 @@ The resulting report distinguishes `not_mounted`, `mount_declares_read_only`, `r
 Git subprocesses in the preflight now drop *all* inherited `GIT_*` variables (not just three common index/worktree overrides), while using `GIT_OPTIONAL_LOCKS=0`, so inherited Git namespace, configuration and alternate-object overrides cannot redirect its checkout inspection. This is local hardening, not an assertion that the production checkout has been reconciled.
 
 The preflight is deliberately **not** a deployment gate, an auto-cleanup script or a full runner-registration probe: the live listener process can exist without an assigned successful GitHub job. Exact-head protected-main CI, independent review and the serialized release owner remain mandatory.
+
+
+## Protect ongoing worker generations during a release decision
+
+The optional `--worker-safety` mode reads `history.db` with a **new SQLite `mode=ro` connection** and `PRAGMA query_only`. It never calls the mutating worker control-plane HTTP GET routes. This mode is strictly bounded to aggregate counters and recent (at most 301) browser events. It never extracts prompt text, conversation URLs, chat content, private claim owners, worker IDs or queue payloads.
+
+```bash
+python3 scripts/zcloud_vps_preflight.py \
+  --worker-safety --archive-readiness --expected-main-sha "$VERIFIED_MAIN_SHA" \
+  --format html > private-zcloud-release-preflight.html
+```
+
+The snapshot reports:
+- `queued_claims`: number of currently **claimed** queue rows, conservatively counting stale claims rather than assuming it is safe to interrupt them. This is not the total number of runnable workers.
+- `durable_claims`: outstanding entries in the separate `task_claims` table, again counted conservatively.
+- `fresh_generating_slots`: distinct project+slot keys whose latest event among a bounded read-only snapshot is no older than 300 seconds and whose browser-declared generating flag is true.
+- `events_sample_complete`: whether the bounded sample covers the recent observation window; when the source is unavailable, malformed, in the future, or sampling is incomplete, the report **blocks instead of guessing idle**.
+
+When live claims or recently reported generation exist, the preflight returns `ACTIVE_WORK_REQUIRES_DRAIN` and points the operator to the existing serialized worker/release owner. This does not touch the queue or request a drain. The initial direct connected zSSH inspection on 20 October observed `queued_claims=5`, `fresh_generating_slots=5`, `safe_idle_verified=false`. These are browser/queue observations; they do not prove generated text, agent billing, actual tab visibility or whether individual threads should continue.
+
+**No observation can grant safe-idle:** even zero claims and zero generating events returns `no_active_evidence_unverified` and `safe_idle_verified=false`. The original production safe-idle gate, claim ownership, exact-main provenance, review, CI, device/security gates and serialized human release authorization remain mandatory. An operator must not kill workers, reset queue claims, restart runners, unmount archives, or promote source using this read-only report.
+
+Current production `history.db` can be large and active; each invocation uses a bounded read-only transaction, a short SQLite busy timeout, and only recent event identities. Do not run it in a high-frequency polling loop or infer the absence of activity when SQLite access fails.
