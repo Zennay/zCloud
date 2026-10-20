@@ -213,6 +213,7 @@ def html_view(decision):
             or live.get("notion") not in (
                     "not_observed_no_ownership_claim",
                     "claim_status_observed_no_file_ownership",
+                    "private_connector_snapshot_unverified_origin",
                     "degraded_unavailable_no_claim_authority")
             or live.get("runtime") != "not_observed_no_worker_recovery_claim"
             or live.get("current_claim_inventory") != "unknown_and_not_used_for_routing"):
@@ -556,6 +557,9 @@ def html_view(decision):
     if notion_mode == "claim_status_observed_no_file_ownership":
         provenance = ("Notion actieve werkstatus is alleen read-only geobserveerd. "
                       "Bestandsscope, lease en worker zijn NIET geverifieerd; geen automatische taakclaim.")
+    elif notion_mode == "private_connector_snapshot_unverified_origin":
+        provenance = ("Bewust opgeslagen Notion-query, NIET live: herkomst niet geauthenticeerd. "
+                      "Alleen positieve statusaanwijzingen; claim, lease, bestandsscope en eigenaar ONBEKEND.")
     elif notion_mode == "degraded_unavailable_no_claim_authority":
         provenance = ("Notion claimstatus kon niet worden gelezen; nul actieve claims "
                       "mag hier niet uit worden afgeleid. Geen automatische taakclaim.")
@@ -568,8 +572,17 @@ def html_view(decision):
     notion = decision.get("notion_claims_observation")
     notion_panel = '<p class="empty">Niet opgevraagd; actuele eigendom onbekend.</p>'
     if notion is not None:
-        if (not isinstance(notion, dict) or notion.get("source") != "notion_readonly_data_source_pages"
-                or notion.get("coverage") not in ("current_pages_only", "incomplete")
+        if (not isinstance(notion, dict)
+                or notion.get("source") not in (
+                    "notion_readonly_data_source_pages",
+                    "user_supplied_notion_connector_export_unverified_origin")
+                or notion.get("coverage") not in (
+                    "current_pages_only", "incomplete",
+                    "saved_single_page_not_live_current_claims_unknown")
+                or (notion.get("source") ==
+                    "user_supplied_notion_connector_export_unverified_origin" and
+                    (notion.get("origin_authenticity_verified") is not False or
+                     notion.get("live_claim_ownership_verified") is not False))
                 or notion.get("claim_scope_verified") is not False
                 or notion.get("task_inventory_verified") is not False
                 or notion.get("can_dispatch") is not False
@@ -587,9 +600,14 @@ def html_view(decision):
             rows.append('<li class="word"><strong>' + phrase(item.get("work"), 35) +
                         ' · ' + phrase(item.get("status"), 12) +
                         ' · ' + phrase(item.get("project"), 80) +
-                        '</strong>: ' + phrase(item.get("title"), 120) + '</li>')
-        caveat = ("Onvolledige Notion-paginering" if notion["coverage"] == "incomplete"
-                  else "Notion werkstatuspagina's opgevraagd")
+                        '</strong>' +
+                        (': ' + phrase(item.get("title"), 120) if item.get("title") else
+                         ' · titel bewust weggelaten') + '</li>')
+        caveat = ("Handmatig opgeslagen query, NIET live; huidige eigenaar en herkomst ONBEKEND"
+                  if notion["source"] ==
+                  "user_supplied_notion_connector_export_unverified_origin" else
+                  ("Onvolledige Notion-paginering" if notion["coverage"] == "incomplete"
+                   else "Notion werkstatuspagina's opgevraagd"))
         notion_panel = (
             '<p>' + phrase(caveat, 80) + ' · actieve regels: ' +
             str(notion["active_count"]) + ' · geen bestandsscope, claimvrijgave of dispatch.</p>' +
