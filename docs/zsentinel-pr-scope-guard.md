@@ -1044,3 +1044,20 @@ PR-beweging tussen twee bronmomenten, maar zelfs een gewijzigde HEAD
 geeft geen automatische eigenaar- of mergevrijgave. Verplichte exact-head
 CI, onafhankelijke review, eigenaarsclaims en branchregels blijven externe
 verplichtingen.
+
+
+### Operatorwerkbak: betrouwbare dekking en directe navigatie
+
+Elke kaart scheidt nu **dekking van PR-bestandspaden** van
+**dekking van PR→issue-tekstverwijzingen**. De twee onafhankelijke
+bronnen worden niet tot één misleidend 'compleet' samengevoegd. Bij
+onvolledige vensters staat expliciet `ONVOLLEDIG`; geen enkele bron
+bewijst afwezige PRs, een vrije eigenaar of veilig mergerecht.
+
+In de offline HTML staat bij ieder item in de merge-eerst werkbak
+**Bekijk kaart**: dit brengt de operator naar dezelfde issuekaart met
+de bestaande PR-links, bronhiaten, optionele historische wijzigingen
+en, als die expliciet gelezen zijn, exacte-HEAD checkinformatie.
+Als de operator een filter actief had, worden de lokale filters voor
+die navigatie gereset. Er worden hierbij geen requests verzonden,
+geen remote state gewijzigd en geen workflowacties gestart.
