@@ -16,7 +16,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from zsentinel_product_issue_inbox import ROOT, bounded_get, canonical_projects
+from zsentinel_product_issue_inbox import ROOT, bounded_get, canonical_projects, GithubAdmissionError
 
 SHA = re.compile(r"^[a-f0-9]{40}$")
 OWNER_REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
@@ -150,7 +150,11 @@ def discover_open_prs(registry, selected_projects, token=None, limit=MAX_PRS,
         except (OSError, ValueError) as exc:
             reason = str(exc)
             coverage.append({"project_id": pid, "status": "degraded",
-                             "reason": reason[:90], "all_open_prs_observed": False})
+                             "reason": reason[:90],
+                             "provider_admission": (
+                                 exc.category if isinstance(exc, GithubAdmissionError)
+                                 else None),
+                             "all_open_prs_observed": False})
             if reason == "github_permission_or_rate_limit":
                 rate_limited = True
     picked = []
@@ -460,6 +464,8 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                 item.pop(field, None)
             item["coverage"] = "source_incomplete_or_changed"
             item["source_gap"] = str(exc)[:120]
+            if isinstance(exc, GithubAdmissionError):
+                item["provider_admission"] = exc.category
             item["next_step"] = "verify_pr_source_with_owner"
         items.append(item)
     return {
@@ -530,8 +536,17 @@ def pr_delivery_html(report):
                       'gedeeltelijk waargenomen: de eerste 30 kunnen ouder '
                       'of onvolledig zijn.</p>' if
                       legacy.get("page_truncated_or_unknown") else "")
+        provider_descriptions = {
+            "authentication_required": "Authenticatie nodig; bevoegd eigenaar controleert GitHub-toegang.",
+            "rate_limit_confirmed": "GitHub-rate-limit bevestigd; geen CI-retries of extra verzoeken starten.",
+            "forbidden_or_rate_limit_unknown": "GitHub 403: repo-permissie of rate-limit ONBEKEND; eigenaar moet controleren.",
+        }
+        denial = row.get("provider_admission")
+        if denial is not None and denial not in provider_descriptions:
+            raise ValueError("invalid GitHub provider admission category")
         source_gap = (('<p class="muted">Bron onvolledig of gewijzigd: ' +
-                       escape(str(row["source_gap"])[:120]) + '</p>')
+                       escape(provider_descriptions[denial] if denial else
+                              str(row["source_gap"])[:120]) + '</p>')
                       if row.get("source_gap") else "")
         issue_refs = row.get("mentioned_issues_unverified", [])
         if (not isinstance(issue_refs, list) or len(issue_refs) > 5
@@ -582,6 +597,17 @@ def pr_delivery_html(report):
                     "degraded": "GitHub bronfout: overige PR’s ONBEKEND",
                     "not_queried_after_auth_or_rate_limit": "Niet bekeken door rechten/rate limit",
                 }[status]
+                denial = observed.get("provider_admission")
+                if denial is not None and denial not in (
+                        "authentication_required", "rate_limit_confirmed",
+                        "forbidden_or_rate_limit_unknown"):
+                    raise ValueError("untrusted GitHub denial category")
+                if denial == "rate_limit_confirmed":
+                    message = "GitHub-rate-limit bevestigd; overige PR-bronnen uitgesteld"
+                elif denial == "authentication_required":
+                    message = "GitHub-authenticatie vereist; bevoegd eigenaar nodig"
+                elif denial == "forbidden_or_rate_limit_unknown":
+                    message = "GitHub 403; eigenaar controleert toegangsrechten/rate-limit"
                 qa_count = observed.get("excluded_explicit_qa_only", 0)
                 if type(qa_count) is not int or not 0 <= qa_count <= 20:
                     raise ValueError("invalid excluded QA source count")
