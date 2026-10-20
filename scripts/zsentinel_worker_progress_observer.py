@@ -788,15 +788,26 @@ def main():
         "--format", choices=("text", "json", "html", "markdown"), default="text",
         help="standalone offline HTML/Markdown operator handoff without GitHub or server GET"
     )
+    parser.add_argument("--output", type=Path,
+                        help="create-only private .html/.md file; no existing report or state overwrite")
     args = parser.parse_args()
+    if args.output is not None and args.format not in ("html", "markdown"):
+        parser.error("--output requires --format html or markdown")
     try:
         receipt = observe_worker_progress(args.database, args.project)
         if args.format in ("html", "markdown"):
-            # Imported only for explicitly selected report output. The
-            # handoff only processes this immutable read-only receipt.
-            from zsentinel_worker_handoff import render_html, render_markdown
-            print(render_html(receipt) if args.format == "html"
-                  else render_markdown(receipt))
+            from zsentinel_worker_handoff import (
+                render_html, render_markdown, write_private_handoff
+            )
+            content = (render_html(receipt) if args.format == "html"
+                       else render_markdown(receipt))
+            if args.output is not None:
+                # Only the explicitly selected private operator artifact may
+                # be created. Never print private source paths in logs.
+                write_private_handoff(args.output, content, format=args.format)
+                print("Privé worker-handoff veilig aangemaakt (create-only; niets overschreven).")
+            else:
+                print(content)
         else:
             print(operator_text(receipt) if args.format == "text"
                   else json.dumps(receipt, ensure_ascii=True, sort_keys=True))
