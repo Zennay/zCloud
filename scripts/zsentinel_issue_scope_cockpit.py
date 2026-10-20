@@ -25,6 +25,7 @@ from zsentinel_pr_scope_portfolio import collect_portfolio
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
 MAX_PRS_PER_PROJECT = 16
+MAX_LINKED_PRS_PER_ISSUE = 5
 P = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
 PR = re.compile(r"^https://github\.com/Zennay/([A-Za-z0-9_.-]+)/pull/([1-9][0-9]{0,8})$")
 OWNER_ONLY = frozenset({
@@ -133,6 +134,26 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                         or ref != "https://github.com/" + repo + "/pull/" + str(other["number"])):
                     raise ValueError("cross-repository collision data")
                 related.setdefault(link, set()).add(ref)
+        mentions = {}
+        if item.get("issue_reference_source_covered") is True:
+            recorded = item.get("observed_issue_to_pr_mentions_unverified", [])
+            if type(recorded) is not list or len(recorded) > 512:
+                raise ValueError("unbounded cross-PR issue reference evidence")
+            for ref in recorded:
+                if type(ref) is not dict:
+                    raise ValueError("invalid observed issue PR reference")
+                number, link = ref.get("issue_number"), ref.get("pr_url")
+                if (type(number) is not int or not 1 <= number <= 99999999
+                        or type(link) is not str
+                        or PR.fullmatch(link) is None
+                        or not link.startswith("https://github.com/" + repo + "/pull/")
+                        or type(ref.get("pr_head_sha")) is not str
+                        or not re.fullmatch(r"[a-f0-9]{40}", ref["pr_head_sha"])
+                        or ref.get("relation") != "unverified_text_mention_only"
+                        or ref.get("owner_verified") is not False
+                        or ref.get("fix_verified") is not False):
+                    raise ValueError("ambiguous issue reference or source PR identity")
+                mentions.setdefault(number, set()).add(link)
         heads = item.get("inspected_pr_heads", [])
         # Current portfolio producer does not export these head receipts;
         # never infer a PR is conflict-free just because it has no pair.
@@ -141,6 +162,7 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         exact[pid] = {"source": item["source_status"],
                       "complete": item["sample_complete"],
                       "collisions": related,
+                      "mentioned_issues": mentions,
                       "observed_open_prs": item.get("observed_open_prs"),
                       "observed_pairs": item.get("observed_collision_pairs"),
                       "known_disjoint": {
@@ -168,8 +190,13 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         repo = canonical[pid]
         if not card["url"].startswith("https://github.com/" + repo + "/issues/"):
             raise ValueError("source issue not from canonical project repository")
+        original = list(card["open_pr_candidates"])
+        additional = (sorted(state["mentioned_issues"].get(
+            int(card["issue"].rsplit("#", 1)[-1]), set()) - set(original))
+            if coherent and state["complete"] else [])
+        references = (original + additional)[:MAX_LINKED_PRS_PER_ISSUE]
         refs = []
-        for link in card["open_pr_candidates"]:
+        for link in references:
             m = PR.fullmatch(link)
             if m is None or link.rsplit("/pull/", 1)[0] != "https://github.com/" + repo:
                 raise ValueError("untrusted cross-project PR candidate")
@@ -185,6 +212,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
                     gates.get("merge_authorized") is not False):
                 gates = None
             refs.append({"url": link, "file_scope_state": status,
+                         "issue_link_source": (
+                             "existing_product_issue_board_reference"
+                             if link in original else
+                             "current_open_pr_text_mention_unverified"),
                          "overlap_with_open_prs": rivals[:16],
                          "saved_exact_head_gates": gates,
                          "current_branch_required_checks_verified": False,
@@ -204,6 +235,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             "priority": card["priority"], "project": pid,
             "issue": card["issue"], "url": card["url"],
             "existing_prs": refs, "next_action": route,
+            "additional_current_pr_mentions_truncated":
+                len(original) + len(additional) > MAX_LINKED_PRS_PER_ISSUE,
             "issue_evidence_stale": not coherent,
             "observed_claim_context": card["claim_context"],
             "owner_verified": False, "claim_authorized": False,
@@ -251,7 +284,8 @@ def output_text(report, markdown=False):
                      ref + " | " + row["next_action"])
         for pr in row["existing_prs"]:
             link = ("[" + pr["url"] + "](" + pr["url"] + ")" if markdown else pr["url"])
-            lines.append("  " + link + " · " + pr["file_scope_state"])
+            lines.append("  " + link + " · " + pr["file_scope_state"] +
+                         " · " + pr["issue_link_source"])
             gates = pr["saved_exact_head_gates"]
             if gates is not None:
                 lines.append("    Historische exacte HEAD " + gates["observed_exact_head_sha"] +
@@ -290,6 +324,7 @@ def output_html(report):
                 "<li><a rel='noopener noreferrer' href='" +
                 escape(pr["url"], quote=True) + "'>" + escape(pr["url"]) +
                 "</a> · " + escape(pr["file_scope_state"]) +
+                " · " + escape(pr["issue_link_source"]) +
                 gate_note +
                 ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
         cards.append(
