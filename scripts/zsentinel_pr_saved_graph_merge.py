@@ -180,6 +180,88 @@ def inspect_source(data, repository):
     return observed, pages, found, incomplete, refs
 
 
+MAX_CROSS_WINDOW_CLUSTERS = 40
+MAX_CLUSTER_EXAMPLE_PATHS = 18
+
+
+def connected_cross_window_groups(all_prs, owners):
+    """Join observed filename edges even inside one window, then show
+    components spanning at least two source windows. Not merge clearance.
+    """
+    parent = {number: number for number in all_prs}
+
+    def root(number):
+        while parent[number] != number:
+            parent[number] = parent[parent[number]]
+            number = parent[number]
+        return number
+
+    edge_paths = {}
+    for path, numbers in owners.items():
+        ordered = sorted(numbers)
+        for index, left in enumerate(ordered):
+            for right in ordered[index + 1:]:
+                left_root, right_root = root(left), root(right)
+                if left_root != right_root:
+                    parent[max(left_root, right_root)] = min(left_root, right_root)
+                edge_paths.setdefault((left, right), set()).add(path)
+
+    all_groups = {}
+    for number in all_prs:
+        all_groups.setdefault(root(number), []).append(number)
+    cards = []
+    for members in all_groups.values():
+        member_ids = sorted(members)
+        windows = sorted({all_prs[number]["snapshot"] for number in member_ids})
+        if len(windows) < 2:
+            continue
+        member_set = set(member_ids)
+        all_paths = set()
+        within_edges = 0
+        crossing_edges = 0
+        degree = {number: 0 for number in member_ids}
+        for (left, right), paths in edge_paths.items():
+            if left not in member_set or right not in member_set:
+                continue
+            all_paths.update(paths)
+            degree[left] += 1
+            degree[right] += 1
+            if all_prs[left]["snapshot"] == all_prs[right]["snapshot"]:
+                within_edges += 1
+            else:
+                crossing_edges += 1
+        ranked = sorted(member_ids, key=lambda number: (-degree[number], number))
+        files = sorted(all_paths)
+        cards.append({
+            "source_windows_observed": windows,
+            "pr_count_observed": len(member_ids),
+            "within_window_filename_edges_observed": within_edges,
+            "cross_window_filename_edges_observed": crossing_edges,
+            "distinct_shared_files_observed": len(files),
+            "shared_file_samples": files[:MAX_CLUSTER_EXAMPLE_PATHS],
+            "shared_file_samples_truncated": len(files) > MAX_CLUSTER_EXAMPLE_PATHS,
+            "participating_prs": [
+                {"number": number, "url": all_prs[number]["url"],
+                 "head_sha": all_prs[number]["head_sha"],
+                 "base_sha": all_prs[number]["base_sha"],
+                 "source_window": all_prs[number]["snapshot"],
+                 "direct_filename_neighbors_observed": degree[number]}
+                for number in ranked
+            ],
+            "source_complete_for_all_open_prs": False,
+            "owner_verified": False,
+            "merge_conflict_verified": False,
+            "merge_authorized": False,
+        })
+    cards.sort(key=lambda row: (-row["cross_window_filename_edges_observed"],
+                                -row["distinct_shared_files_observed"],
+                                -row["pr_count_observed"],
+                                min(p["number"] for p in row["participating_prs"])))
+    for index, row in enumerate(cards, 1):
+        row["group_number_in_this_observation"] = index
+    return cards
+
+
 def combine_sources(sources, repository):
     """One bounded source-reconciliation path for private files or live GETs."""
     if not REPO.fullmatch(repository) or not 2 <= len(sources) <= MAX_INPUTS:
@@ -248,6 +330,9 @@ def combine_sources(sources, repository):
                     continue
                 paired.setdefault((left, right), []).append(name)
     collisions = sorted(paired.items(), key=lambda item: (-len(item[1]), item[0]))
+    # Include within-window filename edges when forming a connected graph.
+    # A-B within page 1 and B-C on page 2 is ONE product integration group.
+    clusters = connected_cross_window_groups(all_prs, owners)
     rows = []
     for (left, right), names in collisions[:MAX_PAIRS]:
         a, b = all_prs[left], all_prs[right]
@@ -305,6 +390,11 @@ def combine_sources(sources, repository):
             for t in (min(times), max(times))],
         "cross_snapshot_file_collision_pairs_observed": len(collisions),
         "shown_collision_pairs": rows,
+        "connected_cross_window_groups_observed": len(clusters),
+        "shown_connected_cross_window_groups": clusters[:MAX_CROSS_WINDOW_CLUSTERS],
+        "connected_cross_window_groups_truncated":
+            len(clusters) > MAX_CROSS_WINDOW_CLUSTERS,
+        "groups_are_source_observations_not_ownership_or_merge_authority": True,
         "impacted_existing_prs_observed": len(ranking),
         "prioritized_existing_prs": ranking[:40],
         "prioritized_existing_prs_truncated": len(ranking) > 40,
