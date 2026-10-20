@@ -16,6 +16,7 @@ MAX_ITEMS = 24
 MAX_TEXT = 220
 SAFE_PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 SAFE_ISSUE = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
+SAFE_PR = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$")
 
 
 def _short(value, limit=MAX_TEXT):
@@ -135,13 +136,24 @@ def build_handoff(decision):
             if url in seen_urls or not SAFE_ISSUE.fullmatch(url):
                 continue
             seen_urls.add(url)
-            cards.append(_card(priority, row.get("project_id"), "open_product_issue",
-                               row.get("action") or "Controleer bestaande open PR en eigenaar",
-                               source="bounded_open_issue_sample", ref=url))
+            card = _card(priority, row.get("project_id"), "open_product_issue",
+                         row.get("action") or "Controleer bestaande open PR en eigenaar",
+                         source="bounded_open_issue_sample", ref=url)
+            related = row.get("open_pr_candidates", [])
+            if not isinstance(related, list) or len(related) > 3:
+                raise ValueError("invalid related product pull request inventory")
+            origin = url.rsplit("/issues/", 1)[0] + "/pull/"
+            if any(not isinstance(pr, str) or not SAFE_PR.fullmatch(pr)
+                   or not pr.startswith(origin) for pr in related):
+                raise ValueError("untrusted cross-repo product PR link")
+            card["existing_pr_urls"] = sorted(set(related))
+            card["review_existing_pr_first"] = bool(related)
+            cards.append(card)
     # Priority before kind: make owner/incident work visible before new intake.
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1, "open_product_issue": 2}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
+                              0 if c.get("existing_pr_urls") else 1,
                               c["project"], c.get("issue_url", ""), c["next_step"]))
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     return {
@@ -193,9 +205,16 @@ def handoff_html(report):
         link = (' <a href="' + escape(url, quote=True) +
                 '" target="_blank" rel="noopener noreferrer">Bestaand issue</a>'
                 if isinstance(url, str) and SAFE_ISSUE.fullmatch(url) else '')
+        prs = item.get("existing_pr_urls", [])
+        if not isinstance(prs, list) or len(prs) > 3 or any(
+                not isinstance(p, str) or not SAFE_PR.fullmatch(p) for p in prs):
+            raise ValueError("invalid issue-linked PR handoff")
+        pr_links = "".join(' <a href="' + escape(p, quote=True) +
+                           '" target="_blank" rel="noopener noreferrer">Bestaande PR</a>'
+                           for p in prs)
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
-                     escape(_short(item.get("next_step"))) + link + '</li>')
+                     escape(_short(item.get("next_step"))) + link + pr_links + '</li>')
     coverage = report.get("coverage", {})
     if not isinstance(coverage, dict) or len(coverage) > 8:
         raise ValueError("invalid handoff source coverage")
@@ -235,6 +254,8 @@ def markdown(report):
                      " · " + _md(card["next_step"]))
         if card.get("issue_url"):
             lines.append("   Bestaand issue: " + card["issue_url"])
+        for pr in card.get("existing_pr_urls", []):
+            lines.append("   Eerst bestaande PR beoordelen: " + pr)
     if not report["priority_items"]:
         lines.append("Geen actie in de beperkte steekproef; brongebrek is geen groen licht.")
     if report["items_truncated"]:
