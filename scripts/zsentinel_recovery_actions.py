@@ -32,6 +32,14 @@ def suggested_actions(packet):
             "Herlees de begrensde bron en herstel ontbrekende/ongeldige metadata met de eigenaar.",
             "HOLD_SOURCE_INCOMPLETE",
         ))
+    shadowed = _number(packet.get("runtime_active_filtered_by_eligibility"))
+    if shadowed:
+        result.append(action(
+            "runtime-eligibility-source-gap", "urgent",
+            f"{shadowed} lopende taak/taken hebben eligible!=1 en zijn mogelijk onzichtbaar voor de serverplanner.",
+            "Laat de bestaande servereigenaar de live in-flight scopebron en de huidige claimhouder vergelijken.",
+            "HOLD_RUNTIME_SOURCE_GAP",
+        ))
     missing_scope = _number(packet.get("active_write_scopes_not_declared"))
     if missing_scope:
         result.append(action(
