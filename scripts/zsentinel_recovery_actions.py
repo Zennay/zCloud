@@ -46,6 +46,17 @@ def suggested_actions(packet):
             "Herlees de begrensde bron en herstel ontbrekende/ongeldige metadata met de eigenaar.",
             "HOLD_SOURCE_INCOMPLETE",
         ))
+    contract = packet.get("local_contract_evidence")
+    if isinstance(contract, dict) and (
+        contract.get("matches_proposed_profile") == "MISMATCH_LOCAL_FILE"
+    ):
+        result.append(action(
+            "local-contract-profile-owner-review", "urgent",
+            "Het read-only lokale projectcontract gebruikt een ander herstelbaanprofiel.",
+            "Laat de runtime-eigenaar het actuele contract, de werkelijk geladen service "
+            "en bestaande claims vergelijken; geen automatische opschaling of overname.",
+            "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
+        ))
     migrated = _number(packet.get("active_legacy_profile_claims_observed"))
     if migrated:
         result.append(action(
@@ -254,6 +265,7 @@ def suggested_actions(packet):
         "runner-worker-in-progress",
         "zcloud-worker-without-listener-observation",
         "legacy-profile-owner-migration",
+        "local-contract-profile-owner-review",
     }
     def display_rank(item):
         identifier = item["id"]
