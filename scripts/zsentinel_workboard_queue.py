@@ -16,7 +16,8 @@ from zsentinel_product_issue_inbox import object_unique, observed_time
 MAX_BYTES = 1024 * 1024
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 ROUTE = re.compile(r"^[a-z][a-z0-9_]{0,99}$")
-COUNTS = ("queued", "owned", "high_claim_attempts", "expired_owner_leases")
+COUNTS = ("queued", "owned", "high_claim_attempts", "expired_owner_leases",
+          "unverifiable_owner_leases")
 COVERAGE = ("complete_active_rows", "partial_unreliable")
 EXPECTED_UNKNOWN = (None,)
 
@@ -124,6 +125,7 @@ def attach_queue_pressure(board, source, canonical, now=None):
             "observed_owned_min": info["owned"],
             "observed_queued": info["queued"],
             "observed_expired_lease_rows": info["expired_owner_leases"],
+            "observed_unverifiable_lease_rows": info["unverifiable_owner_leases"],
             "observed_high_claim_attempt_rows": info["high_claim_attempts"],
             "source_stale": age > 600,
             "source_complete": complete,
