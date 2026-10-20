@@ -130,6 +130,18 @@ def render_comparison(comparison):
     if comparison is None:
         return ""
     observed_complete = comparison.get("complete_service_coverage") is True
+    reboot = comparison.get("host_reboot_observed")
+    if reboot is True:
+        boot_note = ('<p class="warning"><strong>VPS opnieuw opgestart tussen T0 en T1.</strong> '
+                     'Een service die nu actief is, bewijst geen doorlopende worker of '
+                     'geslaagde GitHub-job. Laat de eigenaar opdrachten en claims afzonderlijk bevestigen.</p>')
+    elif comparison.get("same_boot_verified") is True:
+        boot_note = ('<p class="muted">Dezelfde Linux-opstartsessie bevestigd '
+                     'voor beide bronmomenten. Dit is geen job- of CI-bewijs.</p>')
+    else:
+        boot_note = ('<p class="warning">Opstartsessie niet op beide bronmomenten '
+                     'geverifieerd (bijvoorbeeld oud T0 zonder bootvingerafdruk). '
+                     'Continuïteit van runners blijft onbekend.</p>')
     heading = "Beide servicelijsten volledig binnen de bronlimiet" if observed_complete else (
         "Onvolledige bron: ontbrekende runner mag niet als hersteld tellen"
     )
@@ -192,6 +204,7 @@ def render_comparison(comparison):
         + ' · <strong>Tot:</strong> ' + escape(comparison["current_utc"])
         + '</p><p><strong>Brontoestand:</strong> ' + escape(heading)
         + ' · ' + escape(str(comparison["elapsed_seconds"])) + ' seconden</p>'
+        + boot_note
         '<ul class="transitions">' + items + '</ul>' + capacity_html +
         '<p class="warning">Dit toont alleen waargenomen systemd-statusverschillen. '
         'Ook failed→active bewijst geen toegewezen GitHub-job, geslaagde CI, merge '
