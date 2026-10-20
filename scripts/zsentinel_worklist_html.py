@@ -191,6 +191,18 @@ def render_html(board, max_rows=20):
                 or type(group.get("primary_issue_count_observed")) is not int
                 or group["primary_issue_count_observed"] != len(primary_urls)):
             raise ValueError("invalid primary vs secondary PR issue mapping")
+        observed_gate = group.get("group_gate_source_state")
+        permitted_gate = {
+            "observed_failed", "observed_pending", "not_observed",
+            "observed_partial_no_release_permission",
+            "inconsistent_existing_pr_gate_sources",
+        }
+        human_gate = group.get("human_next_gate_step")
+        if (observed_gate not in permitted_gate
+                or type(human_gate) is not str or not 1 <= len(human_gate) <= 220
+                or type(group.get("any_file_overlap_observed")) is not bool
+                or type(group.get("any_historical_movement_observed")) is not bool):
+            raise ValueError("untrusted existing PR group gate observation")
         shown_links = [url for url in linked if url in visible_issues]
         if not shown_links:
             continue
@@ -200,7 +212,10 @@ def render_html(board, max_rows=20):
             raise ValueError("PR issue group spans inconsistent local projects")
         group_project = next(iter(source_projects))
         group_source.append((
-            pr, group["highest_priority"], tuple(linked), tuple(primary_urls)))
+            pr, group["highest_priority"], tuple(linked), tuple(primary_urls),
+            observed_gate, human_gate,
+            group["any_file_overlap_observed"],
+            group["any_historical_movement_observed"]))
         refs = "".join("<li><a rel='noopener noreferrer' target='_blank' href='" +
                        escape(url, quote=True) + "'>Issue " +
                        escape(url.rsplit("/", 1)[-1]) + "</a></li>"
@@ -210,6 +225,7 @@ def render_html(board, max_rows=20):
             "' data-project='" + escape(group_project, quote=True) +
             "' data-priority='" + escape(group["highest_priority"], quote=True) +
             "' data-issues='" + escape(" ".join(shown_links), quote=True) +
+            "' data-gate='" + escape(observed_gate, quote=True) +
             "'><strong>" + escape(group["highest_priority"]) + "</strong> · "
             "<a rel='noopener noreferrer' target='_blank' href='" +
             escape(pr, quote=True) + "'>PR " +
@@ -217,6 +233,13 @@ def render_html(board, max_rows=20):
             str(len(shown_links)) +
             " gekoppelde issuevermelding(en) in deze beperkte overdracht; " +
             str(primary_visible) + " als primaire reviewkandidaat"
+            "<p class='source'>Exacte-HEAD bron: " + escape(observed_gate) +
+            " · " + escape(human_gate) +
+            (" · Bestandsoverlap waargenomen" if
+             group["any_file_overlap_observed"] else "") +
+            (" · Historische bronbeweging" if
+             group["any_historical_movement_observed"] else "") +
+            " · actuele owner/merge: ONBEKEND</p>"
             "<details><summary>Bekijk bronissues (geen fixbewijs)</summary><ul>" +
             refs + "</ul></details>"
             "<div class='pr-controls'><label>Privé PR-opvolging"
@@ -275,7 +298,8 @@ function refresh(){
  }
  let prCount=0;
  for(const p of prs){
-  const content=[p.dataset.pr,p.dataset.issues,p.dataset.project].join(' ').toLocaleLowerCase('nl');
+  const content=[p.dataset.pr,p.dataset.issues,p.dataset.project,
+    p.dataset.gate].join(' ').toLocaleLowerCase('nl');
   const show=(!q||content.includes(q))&&
     (!priority.value||priority.value===p.dataset.priority)&&
     (!project.value||project.value===p.dataset.project)&&
@@ -324,6 +348,8 @@ document.getElementById('export').addEventListener('click',function(){
    ' · '+safeText(p.dataset.project));
   const issues=p.dataset.issues.trim()?p.dataset.issues.trim().split(' '):[];
   for(const issue of issues)parts.push('  - [Bronissue]('+issue+')');
+  parts.push('  - Waargenomen gatebron: '+safeText(p.dataset.gate)+
+   ' (geen autorisatie)');
   parts.push('  - Handmatige PR-status: '+prLabels[p.querySelector('.pr-local-state').value]);
   const note=p.querySelector('.pr-note').value.trim();
   if(note)parts.push('  - Privé PR-opvolging: '+safeText(note));
