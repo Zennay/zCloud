@@ -466,8 +466,11 @@ De bestaande runtime-PR herstelt nu het samenhangende gedrag via
   leasevrije bronrijen; QA-only en corrupte metadata blijven uitgesloten.
 - Als die globale bronvensters een geregistreerd project helemaal niet bevatten,
   bekijkt de allocator maximaal 128 vrije rijen voor elk nog niet waargenomen
-  project (maximaal 24 registerprojecten), en neemt maximaal acht geldige
-  kandidaten daarvan mee. Daardoor kan een project achter meer dan 960 rijen
+  project (maximaal 24 projecten met daadwerkelijk ongeclaimde queue-items),
+  en neemt maximaal acht geldige kandidaten daarvan mee. Een enkele extra
+  read-only DISTINCT-bronquery beperkt het aantal projectgerichte vervolglezingen;
+  lege of uitsluitend bezette projecten worden niet onnodig opnieuw bevraagd.
+  Daardoor kan een project achter meer dan 960 rijen
   van een ander project toch kandidaat worden zonder extra worker te claimen.
   Ook deze projectvensters kunnen onvolledig zijn; lange oude QA-backlogs blijven
   zichtbaar als een eigenaarshandeling, niet als bewijs dat er geen werk is.
