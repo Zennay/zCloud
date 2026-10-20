@@ -185,10 +185,13 @@ MAX_CLUSTER_EXAMPLE_PATHS = 18
 
 
 def connected_cross_window_groups(all_prs, owners):
-    """Join observed filename edges even inside one window, then show
-    components spanning at least two source windows. Not merge clearance.
+    """Bound memory by distinct PR edges; filenames are indexed just once.
+
+    Includes within-window edges when joining a component spanning windows.
+    Historical overlap is not merge/ownership evidence.
     """
     parent = {number: number for number in all_prs}
+    edges = set()
 
     def root(number):
         while parent[number] != number:
@@ -196,42 +199,51 @@ def connected_cross_window_groups(all_prs, owners):
             number = parent[number]
         return number
 
-    edge_paths = {}
-    for path, numbers in owners.items():
+    for numbers in owners.values():
         ordered = sorted(numbers)
+        if len(ordered) < 2:
+            continue
+        first = ordered[0]
+        for number in ordered[1:]:
+            x, y = root(first), root(number)
+            if x != y:
+                parent[max(x, y)] = min(x, y)
+        # At worst 288 distinct PRs => 41,328 unique edges. Never create
+        # a list of every filename for every edge, which multiplies memory.
         for index, left in enumerate(ordered):
             for right in ordered[index + 1:]:
-                left_root, right_root = root(left), root(right)
-                if left_root != right_root:
-                    parent[max(left_root, right_root)] = min(left_root, right_root)
-                edge_paths.setdefault((left, right), set()).add(path)
+                edges.add((left, right))
 
     all_groups = {}
     for number in all_prs:
         all_groups.setdefault(root(number), []).append(number)
+    group_edges = {}
+    for left, right in edges:
+        group_edges.setdefault(root(left), []).append((left, right))
     cards = []
-    for members in all_groups.values():
+    for leader, members in all_groups.items():
         member_ids = sorted(members)
         windows = sorted({all_prs[number]["snapshot"] for number in member_ids})
         if len(windows) < 2:
             continue
         member_set = set(member_ids)
-        all_paths = set()
+        degree = {number: 0 for number in member_ids}
         within_edges = 0
         crossing_edges = 0
-        degree = {number: 0 for number in member_ids}
-        for (left, right), paths in edge_paths.items():
-            if left not in member_set or right not in member_set:
-                continue
-            all_paths.update(paths)
+        for left, right in group_edges.get(leader, []):
             degree[left] += 1
             degree[right] += 1
             if all_prs[left]["snapshot"] == all_prs[right]["snapshot"]:
                 within_edges += 1
             else:
                 crossing_edges += 1
+        # File ownership comes from the existing per-path index. We only
+        # materialize the capped operator matrix, not per-pair path copies.
+        candidates = {name for number in member_ids
+                      for name in all_prs[number]["files"]}
+        files = sorted(name for name in candidates
+                       if len(owners[name] & member_set) > 1)
         ranked = sorted(member_ids, key=lambda number: (-degree[number], number))
-        files = sorted(all_paths)
         file_ownership_rows = []
         for path in files[:MAX_CLUSTER_EXAMPLE_PATHS]:
             touching = sorted(owners[path] & member_set)
