@@ -316,9 +316,11 @@ def main():
                         help="Explain a read-only preview in Dutch")
     parser.add_argument("--runners", action="store_true",
                         help="Include read-only GitHub runner service states in preview")
+    parser.add_argument("--report", metavar="NEW_PRIVATE_HTML",
+                        help="Create a private offline runner recovery report; implies --runners and --preview")
     args = parser.parse_args()
-    if (args.human or args.runners) and not args.preview:
-        parser.error("--human and --runners require --preview")
+    if (args.human or args.runners or args.report) and not args.preview:
+        parser.error("--human, --runners and --report require --preview")
     if not args.preview and os.geteuid() != 1000:
         raise SystemExit("Refusing to alter units outside ubuntu user scope")
     s = snapshot()
@@ -343,12 +345,36 @@ def main():
                         "recommendation_currently_applied": None}
         result = {**s, **observed, "mode": mode, "quota": quota,
                   "weight": weight, "reasons": reasons, "applied": False}
-        if args.runners:
+        if args.runners or args.report:
             result.update(runner_inventory())
+        if args.report:
+            # Import only for the explicit report action; never in the timer.
+            from zsentinel_runner_report import render, save_private
+            from datetime import datetime, timezone
+            report_data = {
+                "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                "host": s,
+                "units": {key: result[key] for key in
+                          ("runner_units_observed", "runner_units", "runner_units_truncated")},
+                "coach": {
+                    "observed": result["unit_observed"],
+                    "active": result["unit_active"],
+                    "quota": result["current_quota_percent"],
+                    "weight": result["current_weight"],
+                    "recommendation_matches": result["recommendation_currently_applied"],
+                },
+                "quota": quota, "weight": weight, "mode": mode, "reasons": reasons,
+            }
+            try:
+                save_private(args.report, render(report_data))
+            except (OSError, ValueError):
+                parser.exit(1, "Privé rapport niet gemaakt; controleer nieuw .html-doel en rechten.\n")
         if args.human:
             human_preview(result)
         else:
             print(json.dumps(result, sort_keys=True))
+        if args.report:
+            print("Privé offline herstelrapport gemaakt (0600, geen systeemwijziging).")
         return
     actual = installed_cgroup()
     if not actual["active"]:
