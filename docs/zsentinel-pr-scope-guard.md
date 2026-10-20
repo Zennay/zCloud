@@ -1185,3 +1185,52 @@ blijven bruikbaar voor handmatige review, maar géén botsing in zo'n
 venster heeft exitcode 3 (nooit claimvrijgave). De twee requests voor de
 gekozen PR-pagina worden niet vermenigvuldigd en er is geen automatische
 volledige paginacrawl, merge, claim, workflow of deploy.
+
+
+## Samenhangende PR-conflicten tussen oudere en nieuwere GitHub-pagina's
+
+De aparte oudere-pagina-inspectie was onvoldoende zodra PR #A op pagina 1
+een bestand wijzigt dat ook door PR #B op pagina 2 wordt gewijzigd:
+een los rapport voor iedere pagina kan dat gedeelde bestand **niet**
+herkennen. De bestaande CLI ondersteunt daarom nu een aaneengesloten,
+begrensd venster met `--page-count`:
+
+```bash
+# Ontdek gedeelde bestandspaden tussen de eerste drie pagina's
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --open-page 1 --page-count 3 --max-prs 16 \
+  --format html > ./private-cross-page-conflicts.html
+
+# Vergelijk één al bestaande product-PR tegen diezelfde 48 kandidaten
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 \
+  --open-page 1 --page-count 3 --max-prs 16 \
+  --format markdown > ./private-existing-pr-scope.md
+```
+
+Ook handmatig geplande bestandspaden ondersteunen deze gebonden
+cross-page-opvraag. De bron verzamelt per geselecteerde pagina de exact
+aaneensluitende `updated desc` resultaten en vergelijkt **over alle
+gelezen pagina's samen** de PR-bestanden en mogelijke gedeelde
+issuevermeldingen. Hierdoor zijn ook botsingen tussen twee verschillende
+pagina's zichtbaar, in plaats van alleen binnen één pagina.
+
+Veiligheidsgrenzen: 1–3 aaneengesloten pagina's, maximaal 48
+PR-bestandsinventarissen samen, plus hoogstens zes dubbele
+open-PR-lijstlezingen. Bij `--page-count 2/3` gebruikt GitHub
+`per_page = --max-prs` zonder de extra single-page lookahead die anders
+stilzwijgend elke paginagrens één PR zou overslaan. Op alle pagina's wordt
+dezelfde geordende bron **vóór en ná** de bestandinspectie gelezen. Dubbele
+PR-identiteiten tussen pagina's of verschoven bronvolgordes zijn expliciet
+onstabiele bronwaarnemingen. Een geselecteerde bron-PR wordt apart opnieuw
+aan exacte HEAD en base-SHA gebonden.
+
+HTML, tekst, JSON en Markdown tonen de echte pagina's en posities.
+Botsingen zijn bestaande PR's met dezelfde bestandspaden, nooit bewezen
+Git-mergeconflicten. **Meerdere pagina's worden altijd als gedeeltelijk
+behandeld:** een korte laatste pagina of geen botsingen betekent geen
+volledige inventaris, geen vrij eigenaarschap, geen werkovername en
+geen automatische mergebeslissing. De bestaande Notion-claim-,
+review-, beveiligings- en productie-releasegates blijven vereist.
+Er wordt geen CI-rerun, QA, queue-update of VPS-mutatie uitgevoerd.
