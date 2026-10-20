@@ -198,6 +198,86 @@ def portfolio_csv(selected, integrated):
     return result
 
 
+
+def portfolio_markdown(selected, integrated):
+    """Compact private project-by-project PR queue, without granting ownership.
+
+    Unlike the full saved-gate review, this handoff keeps every observed PR
+    next to its own project and original linked issues. A missing source is an
+    explicit follow-up, never a successful or free PR.
+    """
+    projects = project_worklist(selected, integrated)
+    lines = [
+        "# zSentinel — projecten en bestaande PR-opvolging",
+        "",
+        "> Privé, offline momentopname. Niet live; geen vrijgave, eigenaar, "
+        "verplichte CI, review, merge of deploy geverifieerd.",
+        "",
+        "- Reviewmanifest SHA256: `" +
+        integrated["original_review_manifest_sha256"] + "`",
+        "- Bronboard SHA256: `" + integrated["original_board_sha256"] + "`",
+        "- Oudste bron UTC: " + integrated["earliest_observed_at_utc"],
+        "- Nieuwste bron UTC: " + integrated["latest_observed_at_utc"],
+        "- Waargenomen batches: " + str(integrated["observed_batch_count"]) +
+        "/" + str(integrated["expected_batch_count"]),
+        "- Ontbrekende batches (UNKNOWN): " +
+        (", ".join(map(str, sorted(integrated["missing_batch_indexes"]))) or "geen"),
+        "- Projecten met bronkandidaten: " + str(len(projects)) +
+        "; totaal: " + str(len(selected)),
+        "",
+    ]
+    status_labels = {
+        "missing_batch": "batch ontbreekt",
+        "source_unavailable_or_head_changed": "bron/HEAD onbekend",
+        "observed_partial_gate_receipt": "gedeeltelijke gatebron",
+    }
+    for project in projects:
+        lines.extend([
+            "## " + project["repository"] + " — " +
+            str(project["source_prs_observed"]) + " PR-kandidaten",
+            "",
+            "Bron P0: " + str(project["p0_prs_in_sample"]) +
+            " · P1: " + str(project["p1_prs_in_sample"]) +
+            " · onbekende gatebron: " +
+            str(project["unknown_gate_source_prs"]),
+            "",
+        ])
+        for candidate in project["candidates"]:
+            refs = ", ".join(
+                "[#" + url.rsplit("/", 1)[-1] + "](" + url + ")"
+                for url in candidate["linked_issue_urls"])
+            blockers = ", ".join(LABELS[key][0]
+                                  for key in candidate["concurrent_gates"])
+            lines.extend([
+                "- **" + candidate["priority"] + "** " +
+                "[PR #" + str(candidate["pr_number"]) + "](" +
+                candidate["url"] + ") — " +
+                LABELS[candidate["primary_gate"]][0],
+                "  - Menselijke stap: " + candidate["next_action"],
+                "  - Gelijktijdige signalen: " + blockers,
+                "  - Batch " + str(candidate["batch_index"]) +
+                ": " + status_labels[candidate["gate_source"]],
+                "  - Gekoppelde bronissues: " + (refs or "geen in bron"),
+                "  - Huidige HEAD/reviews/main/live: opnieuw live verifiëren; "
+                "geen vrijgave uit deze momentopname.",
+            ])
+        lines.append("")
+    lines.extend([
+        "## Verplichte menselijke vervolgstap",
+        "",
+        "Controleer oorspronkelijke GitHub issues en exacte huidige PR HEAD, "
+        "actieve claims en bestandscope, verplichte CI, onafhankelijke "
+        "review en beschermde mainregels. Alleen echte geautoriseerde "
+        "GitHub main-merge en afzonderlijke live-verificatie zijn levering.",
+        "Onzichtbare projecten/PR's in de bron zijn UNKNOWN, nooit vrij of afgerond.",
+        "",
+    ])
+    result = "\n".join(lines)
+    if len(result.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Private portfolio Markdown exceeds one MiB")
+    return result
+
+
 def portfolio_json(selected, integrated):
     """Offline source-bound owner suggestions, never a worker-dispatch contract.
 
