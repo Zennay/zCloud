@@ -322,6 +322,76 @@ def vps_capacity(bundle, now):
             "reason": "thresholds_met_not_release_authorization"}
 
 
+
+def observed_prless_branch_conflicts(bundle, now):
+    """Optional canonical branch evidence suppresses overlapping suggestions.
+
+    The existing owner inventory covers only Zennay/zCloud; it never claims
+    files as available, restarts a runner, or authorizes dispatch.
+    """
+    receipt = bundle.get("prless_branch_observation")
+    if receipt is None:
+        return {"supplied": False, "coverage": "not_supplied",
+                "paths": (), "suppress_all": False,
+                "reason": "optional_source_not_supplied", "observed_branches": 0}
+    if (type(receipt) is not dict
+            or receipt.get("schema") != "zsentinel-recent-unpr-branches-v1"
+            or receipt.get("source") != "canonical_zcloud_recent_prless_ownership_v1"
+            or receipt.get("repository") != "Zennay/zCloud"
+            or any(receipt.get(key) is not False for key in
+                   ("current_slice_safe_to_claim", "branches_deleted",
+                    "worker_claims_changed", "workflows_retried"))):
+        raise ValueError("invalid PR-less branch ownership observation")
+    observed = timestamp(receipt.get("observed_at"), "prless_branch_observed_at")
+    coverage = receipt.get("coverage")
+    if coverage not in ("bounded_complete", "incomplete_owner_review"):
+        raise ValueError("unknown PR-less ownership source coverage")
+    rows = receipt.get("recent_candidates")
+    count = receipt.get("recent_candidate_count")
+    if (type(rows) is not list or len(rows) > 100
+            or type(count) is not int or count != len(rows)):
+        raise ValueError("unbounded PR-less ownership source")
+    paths = set()
+    truncated = False
+    for row in rows:
+        if (type(row) is not dict or row.get("owner_verified") is not False
+                or row.get("claim_authorized") is not False
+                or type(row.get("paths")) is not list or len(row["paths"]) > 100
+                or type(row.get("path_count")) is not int
+                or row["path_count"] < len(row["paths"])
+                or type(row.get("paths_truncated_for_view")) is not bool
+                or row["paths_truncated_for_view"] != (row["path_count"] > 100)):
+            raise ValueError("invalid PR-less branch file scope")
+        truncated |= row["paths_truncated_for_view"]
+        for item in row["paths"]:
+            paths.add(bounded_path(item))
+    stale = observed > now + timedelta(minutes=2) or now - observed > timedelta(minutes=5)
+    uncertain = coverage != "bounded_complete" or stale or truncated
+    return {
+        "supplied": True,
+        "coverage": ("stale" if stale else
+                     "incomplete" if uncertain else "bounded_complete"),
+        "paths": tuple(sorted(paths)),
+        "suppress_all": uncertain,
+        "reason": ("source_stale" if stale else
+                   "source_incomplete_or_paths_truncated" if uncertain else
+                   "recent_prless_branch_paths_observed"),
+        "observed_branches": len(rows),
+    }
+
+
+def prless_branch_conflict(task, receipt):
+    if not receipt["supplied"] or task.get("project_id") != "cloud":
+        return False
+    if receipt["suppress_all"]:
+        return True
+    task_paths = admit_paths(task)
+    return task_paths is None or any(
+        paths_overlap(task_path, branch_path)
+        for task_path in task_paths for branch_path in receipt["paths"]
+    )
+
+
 def eligible_tasks(bundle, blocked, now, capacity):
     tasks = bundle.get("tasks", [])
     claims = bundle.get("active_claims", [])
@@ -354,8 +424,10 @@ def eligible_tasks(bundle, blocked, now, capacity):
             complete = False
         else:
             claim_scopes.append((pid, paths))
+    branch_ownership = observed_prless_branch_conflicts(bundle, now)
     recommendations = []
     seen = set()
+    branch_suppressed = []
     for task in tasks:
         if not isinstance(task, dict):
             raise ValueError("task must be an object")
@@ -381,6 +453,15 @@ def eligible_tasks(bundle, blocked, now, capacity):
         if any(pid == claimed_pid and
                any(paths_overlap(p, c) for p in scopes for c in claimed_paths)
                for claimed_pid, claimed_paths in claim_scopes):
+            continue
+        if prless_branch_conflict(task, branch_ownership):
+            branch_suppressed.append({
+                "id": ident, "project_id": pid, "priority": tier,
+                "reason": ("prless_branch_source_stale_or_incomplete"
+                           if branch_ownership["suppress_all"]
+                           else "overlaps_existing_recent_unpr_branch"),
+                "next_step": "Inspect existing branch and its current owner before any new work.",
+            })
             continue
         # Conservative: a portfolio-level runner outage or hosted billing failure
         # makes tasks requiring those gates non-routable, even across projects.
@@ -419,7 +500,7 @@ def eligible_tasks(bundle, blocked, now, capacity):
         disjoint.append(candidate)
         if len(disjoint) == MAX_RECOMMENDATIONS:
             break
-    return disjoint, complete
+    return disjoint, complete, branch_ownership, branch_suppressed
 
 
 def triage_issue_inbox(inbox, now):
@@ -833,7 +914,8 @@ def plan(bundle, previous=None, now=None):
     historical = unresolved_backlog(next_state, now)
     blocked = {"ids": blocking_ids, "gates": blocked_gates}
     capacity = vps_capacity(bundle, now)
-    routes, claims_verified = eligible_tasks(bundle, blocked, now, capacity)
+    routes, claims_verified, branches, branch_suppressed = eligible_tasks(
+        bundle, blocked, now, capacity)
     issue_triage = triage_issue_inbox(bundle.get("issue_inbox"), now)
     queue_triage = queue_pressure_summary(bundle.get("queue_pressure"), now)
     # Candidate feed for an authorized watch/notifier integrator, NOT a push.
@@ -873,6 +955,16 @@ def plan(bundle, previous=None, now=None):
         "unresolved_not_observed": historical["total_unresolved"],
         "historical_unresolved": historical,
         "independent_task_suggestions": routes,
+        "recent_branch_ownership": {
+            "supplied": branches["supplied"],
+            "project_id": "cloud", "coverage": branches["coverage"],
+            "reason": branches["reason"],
+            "observed_branches": branches["observed_branches"],
+            "suppressed_task_count": len(branch_suppressed),
+            "suppressed_task_examples": branch_suppressed[:8],
+            "samples_truncated": len(branch_suppressed) > 8,
+            "ownership_verified": False, "claim_authorized": False,
+        },
         "open_product_issue_triage": issue_triage,
         "live_queue_pressure": queue_triage,
     }, {"schema_version": 1, "incidents": next_state}
@@ -912,6 +1004,17 @@ def operator_text(result):
                      str(result["unattributed_progress_or_jobs"]))
     if not result["claim_inventory_complete"]:
         lines.append("Claim coverage incomplete: routing suppressed.")
+    branch = result.get("recent_branch_ownership", {})
+    if branch.get("supplied"):
+        lines.append("Recent zCloud branches without PR: " + branch["coverage"] +
+                     " · " + str(branch["suppressed_task_count"]) +
+                     " cloud tasks omitted from the independent-work suggestions.")
+        for row in branch["suppressed_task_examples"]:
+            lines.append("- " + row["priority"] + " " + row["project_id"] +
+                         "/" + row["id"] + ": " + row["reason"] +
+                         "; owner must review original branch.")
+        if branch["samples_truncated"]:
+            lines.append("Further suppressed branches/tasks omitted from bounded text view.")
     if result.get("reconciled_exact_jobs"):
         lines.append("Exact GitHub jobs source-reconciled (no runtime proof): " +
                      str(len(result["reconciled_exact_jobs"])))
