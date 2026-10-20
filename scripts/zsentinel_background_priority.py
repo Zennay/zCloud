@@ -67,7 +67,7 @@ def read_private_state():
 
 
 def promotion_policy(recommended_quota, recommended_weight, observed, previous,
-                     now, boot):
+                     now, boot, context=None):
     """Read-only policy decision; never trust JSON over actual systemd.
 
     A lower recommendation is applied immediately. An increase requires an
@@ -99,14 +99,17 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
             and recommended_weight <= actual_weight):
         return recommended_quota, recommended_weight, "no-promotion-needed", None
     candidate = {
-        "boot": boot, "target_quota": recommended_quota,
+        "boot": boot, "context": context, "target_quota": recommended_quota,
         "target_weight": recommended_weight,
         "current_quota": round(current_quota, 2),
         "current_weight": actual_weight,
         "started_mono": now, "last_mono": now, "observations": 1,
     }
     old = previous.get("promotion") if type(previous) is dict else None
-    if (boot is not None and type(old) is dict and old.get("boot") == boot
+    if (boot is not None and isinstance(context, str)
+            and re.fullmatch(r"[a-f0-9]{24}", context)
+            and type(old) is dict and old.get("boot") == boot
+            and old.get("context") == context
             and type(old.get("target_quota")) is int
             and old["target_quota"] == recommended_quota
             and type(old.get("target_weight")) is int
@@ -134,6 +137,32 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
     # Stay at the currently verified cgroup; never increase on a single sample.
     return current_quota, actual_weight, "promotion-waiting", candidate
 
+
+
+def _admission_context(s):
+    """Stable safety epoch for upward CPU decisions; no process arguments stored.
+
+    A newly active runner, a zCloud job or a changed pressure tier invalidates
+    a historical promotion window even if the numeric CPU advice is unchanged.
+    """
+    urgent, moderate = pressure_reasons(s)
+    safe = {"runner": s.get("runner_active") is True,
+            "zcloud": s.get("zcloud_runner_active") is True,
+            "pressure": sorted(urgent + moderate),
+            "complete": s.get("source_complete") is True}
+    return hashlib.sha256(json.dumps(safe, sort_keys=True).encode("ascii")).hexdigest()[:24]
+
+
+def _same_cgroup(before, after):
+    """Conservative readback guard against overlapping external CPU writers."""
+    if before.get("active") is not True or after.get("active") is not True:
+        return False
+    qa, qb = before.get("quota_seconds"), after.get("quota_seconds")
+    return (type(qa) in (int, float) and type(qb) in (int, float)
+            and math.isfinite(qa) and math.isfinite(qb)
+            and qa > 0 and qb > 0 and abs(qa - qb) < 0.002
+            and type(before.get("weight")) is int
+            and before["weight"] == after.get("weight"))
 
 def workers():
     """Observe running job processes, treating denied process reads as unknown."""
@@ -485,7 +514,8 @@ def main():
             current = installed_cgroup()
             clock = time.monotonic()
             effective_quota, effective_weight, promotion_status, candidate = promotion_policy(
-                quota, weight, current, read_private_state(), clock, _boot_token()
+                quota, weight, current, read_private_state(), clock, _boot_token(),
+                _admission_context(s)
             )
             observed = {
                 "effective_quota": effective_quota,
@@ -581,11 +611,36 @@ def main():
         print("coach-not-active: capacity observed, CPU controls left unchanged")
         return
     effective_quota, effective_weight, promotion_status, candidate = promotion_policy(
-        quota, weight, actual, read_private_state(), time.monotonic(), _boot_token()
+        quota, weight, actual, read_private_state(), time.monotonic(), _boot_token(),
+        _admission_context(s)
     )
     if effective_quota is None or effective_weight is None:
         raise SystemExit("Current active cgroup unreadable: refusing CPU change")
     if not matches_cgroup(actual, effective_quota, effective_weight):
+        # Two-phase read-only admission: avoid overwriting another operator's
+        # changed cgroup or boosting the coach after a runner appears.
+        newer_cgroup = installed_cgroup()
+        if not _same_cgroup(actual, newer_cgroup):
+            raise SystemExit("Concurrent cgroup change: not applying stale CPU advice")
+        newer_host = snapshot()
+        newer_quota, newer_weight, newer_mode = admission(newer_host)
+        if (_admission_context(newer_host) != _admission_context(s)
+                or newer_quota != quota or newer_weight != weight):
+            # A new pressure/runner epoch invalidates the old promotion clock.
+            # Applying fresh, lower quota is safe; never boost on stale data.
+            effective_quota, effective_weight, promotion_status, candidate = promotion_policy(
+                newer_quota, newer_weight, newer_cgroup, None,
+                time.monotonic(), _boot_token(), _admission_context(newer_host)
+            )
+            if effective_quota is None or effective_weight is None:
+                raise SystemExit("Runner/capacity change: current policy unreadable")
+            if (effective_quota > actual["quota_seconds"] * 100 + 0.2
+                    or effective_weight > actual["weight"]):
+                raise SystemExit("Runner/capacity changed: refusing unproven CPU increase")
+            s = newer_host
+            quota, weight, mode = newer_quota, newer_weight, newer_mode
+            urgent, moderate = pressure_reasons(s)
+            reasons = urgent + moderate
         # No command shell, no privileged unit and no service restart.
         subprocess.run(
             ["systemctl", "--user", "set-property", "--runtime",
