@@ -43,7 +43,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
         // Deduplicate by incident episode, not forever by reusable incident ID.
         // If an incident disappears from the current feed, its old receipt is
         // retired; a later recurrence is allowed to notify again.
-        val currentEpisodes = urgent.map { it.episodeKey() }.toSet()
+        val currentEpisodes = urgent.map { IncidentSnoozeStore.episodeKey(it) }.toSet()
         delivered.retainAll(currentEpisodes)
         val permissionGranted = Build.VERSION.SDK_INT < 33 ||
             applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
@@ -55,7 +55,13 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Critical project blockers", NotificationManager.IMPORTANCE_HIGH)
             )
-            urgent.filter { it.episodeKey() !in delivered }.take(3).forEach { alert ->
+            urgent.asSequence()
+                .filter { IncidentSnoozeStore.episodeKey(it) !in delivered }
+                // User snoozes an episode locally. This does not remove the
+                // current incident from the read-only status page.
+                .filter { IncidentSnoozeStore.remainingMillis(applicationContext, it) == 0L }
+                .take(3)
+                .forEach { alert ->
                 // Each incident needs its OWN pending-intent identity.
                 // requestCode=0 alone made all visible cards share the last
                 // notification's target when FLAG_UPDATE_CURRENT was used.
@@ -86,7 +92,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 manager.notify(alert.id, 0, notification)
                 // Mark only successfully posted alerts. The fourth blocked item
                 // must still be eligible at the next scheduled poll.
-                delivered += alert.episodeKey()
+                delivered += IncidentSnoozeStore.episodeKey(alert)
             }
             prefs.edit().putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet()).apply()
         }
@@ -94,8 +100,6 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
     } catch (_: Exception) {
         Result.retry()
     }
-
-    private fun AlertItem.episodeKey() = id + "\\u001f" + occurredAt.orEmpty()
 
     private fun AlertItem.isUrgent() =
         severity.equals("high", true) ||
