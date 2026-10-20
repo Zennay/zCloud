@@ -963,6 +963,38 @@ def dynamic_worker_settings():
         'policy':'per_worker_rate_limit_plus_memory_admission',
     }
 
+def _dynamic_worker_resize_guard_locked(connection, chatgpt_count, claude_count):
+    """Reject a resize that would abandon or change a live owner's provider.
+
+    Must be called inside the same SQLite write transaction as the settings
+    update. A task's status/slot and an in-flight browser command are ownership
+    evidence, not disposable capacity. The caller never revokes either.
+    """
+    total=chatgpt_count+claude_count
+    if total>MAX_CHATGPT_WORKERS:
+        raise ValueError('Totaal aantal browserworkers overschrijdt de uitvoerbare globale limiet')
+    rows=connection.execute(
+        """SELECT worker_slot FROM portfolio_queue
+           WHERE worker_slot IS NOT NULL
+             AND status IN ('claimed','running','verifying')"""
+    ).fetchall()
+    pending=connection.execute(
+        """SELECT s.slot AS worker_slot
+           FROM ai_global_slots s JOIN runner_commands cmd
+             ON cmd.project_id=s.project_id || '::w' || s.worker_slot
+           WHERE cmd.status='pending' AND cmd.action IN ('start','new_chat','push')"""
+    ).fetchall()
+    for row in [*rows,*pending]:
+        try:
+            slot=int(row['worker_slot'])
+        except (TypeError,ValueError):
+            raise ValueError('Workerlimiet wijzigen geweigerd: ongeldige actieve slotidentiteit')
+        if slot<1 or slot>total:
+            raise ValueError('Workerlimiet wijzigen geweigerd: actieve taak of browseroverdracht buiten nieuwe slots')
+        if (slot<=DYNAMIC_CHATGPT_WORKERS)!=(slot<=chatgpt_count):
+            raise ValueError('Workerlimiet wijzigen geweigerd: actieve taak of browseroverdracht wisselt van provider')
+
+
 def set_dynamic_worker_settings(payload,actor='dashboard'):
     global GLOBAL_CHATGPT_WORKER_LIMIT,DYNAMIC_CHATGPT_WORKERS,DYNAMIC_CLAUDE_WORKERS
     global DYNAMIC_CHATGPT_COOLDOWN_SECONDS,DYNAMIC_CLAUDE_COOLDOWN_SECONDS
@@ -999,6 +1031,10 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
         DYNAMIC_WORKER_SETTING_KEYS['scheduler_interval_seconds']:str(scheduler_seconds),
     }
     with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        # Admission is serialized with the settings writer, not a stale
+        # snapshot outside the transaction. Do not change settings on HOLD.
+        _dynamic_worker_resize_guard_locked(c,chatgpt_count,claude_count)
         for key,value in values.items():
             c.execute(
                 "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
@@ -3821,7 +3857,11 @@ def portfolio_queue_allocation():
         'score':10000-_portfolio_priority_rank(item['priority'])*1000,
         'reason':'vps_queue:'+item['queue_id'],'desired_state':'queued',
         'queue_id':item['queue_id'],'priority':item['priority']
-    } for item in queued if item['status']=='queued' and item['eligible']]
+    } for item in queued
+      if item['status']=='queued' and item['eligible']
+      and item.get('worker_slot') is None
+      and item.get('claimed_at') is None and item.get('claim_expires') is None
+      and item.get('delivery_policy_disposition')=='product']
     return {
         'limit':GLOBAL_CHATGPT_WORKER_LIMIT,
         'workers':workers,
@@ -3845,23 +3885,26 @@ def portfolio_queue_allocation():
     }
 
 def reconcile_dynamic_worker_limit():
-    """Immediately converge SQLite queue claims and browser slot mapping to the dashboard limit."""
+    """Converge idle slot mapping without resetting active queue ownership.
+
+    Settings admission guards owner/provider continuity. Recheck the release
+    boundary under a fresh write lock: a concurrent claim must never become an
+    implicit queued task just because the capacity setting changed.
+    """
     limit=max(0,min(MAX_CHATGPT_WORKERS,int(GLOBAL_CHATGPT_WORKER_LIMIT)))
-    ts=now()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        if limit <= 0:
-            c.execute("""UPDATE portfolio_queue
-                         SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE eligible=1 AND status IN ('claimed','running','verifying')
-                           AND worker_slot IS NOT NULL""",(ts,))
-            c.execute('DELETE FROM ai_global_slots')
-        else:
-            c.execute("""UPDATE portfolio_queue
-                         SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE eligible=1 AND status IN ('claimed','running','verifying')
-                           AND worker_slot>?""",(ts,limit))
-            c.execute('DELETE FROM ai_global_slots WHERE slot>?',(limit,))
+        unsafe=c.execute(
+            """SELECT 1 FROM portfolio_queue
+               WHERE worker_slot IS NOT NULL AND worker_slot>?
+                 AND status IN ('claimed','running','verifying') LIMIT 1""",
+            (limit,),
+        ).fetchone()
+        if unsafe:
+            raise ValueError('Workerlimiet: actieve eigenaar buiten nieuwe capaciteit; geen automatische requeue')
+        # Only the empty high slots can disappear. Running/verifying and
+        # claimed rows retain status, lease and worker identity unchanged.
+        c.execute('DELETE FROM ai_global_slots WHERE slot>?',(limit,))
     portfolio_queue_allocate()
     allocation=portfolio_queue_allocation()
     _persist_global_worker_allocation(allocation)
