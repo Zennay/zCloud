@@ -311,6 +311,7 @@ def render_html(board):
                 fmt("queued") + " · actief (status) " + fmt("owned") +
                 " · hoge claimpogingen " + fmt("high_claim_attempts") +
                 " · verlopen lease-rijen " + fmt("expired_owner_leases") +
+                 " · leaseklok onbekend " + fmt("unverifiable_owner_leases") +
                 " · herstelroute " + escape(info["owner_next_action"]) +
                 "</li>"
             )
@@ -560,6 +561,7 @@ def render_markdown(board):
                          " · actief=" + str(info["owned"]) +
                          " · herhaalde claims=" + str(info["high_claim_attempts"]) +
                          " · lease-review=" + str(info["expired_owner_leases"]) +
+                          " · leaseklok-onbekend=" + str(info["unverifiable_owner_leases"]) +
                          " · actie=" + _markdown_literal(info["owner_next_action"]))
     if windows:
         lines.extend(["", "## Gecombineerde portfolio-bronvensters",
