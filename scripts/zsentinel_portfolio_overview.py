@@ -734,6 +734,8 @@ def main():
                         help="opt-in: read at most one failed exact-head check annotation per selected PR; no actions")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
     parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk", "handoff"), default="html")
+    parser.add_argument("--show-owner-handoff", action="store_true",
+                        help="opt-in P0-first incident/worker/issue strip inside existing portfolio HTML")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--output", type=Path,
@@ -780,6 +782,8 @@ def main():
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
+        if args.show_owner_handoff and args.format != "html":
+            raise ValueError("--show-owner-handoff requires HTML portfolio output")
         if args.output is not None and args.format not in ("html", "json", "text", "handoff"):
             raise ValueError("--output supports only html, json, text or human handoff")
         if args.compare_with is not None and args.format not in ("html", "json", "text"):
@@ -894,6 +898,10 @@ def main():
         # advancing the optional private dedup ledger. A failed HTML view or
         # corrupt source must not silently consume an incident notification.
         decision["private_ledger_written"] = bool(args.state)
+        owner_handoff = None
+        if args.show_owner_handoff:
+            from zsentinel_runtime_handoff import build_handoff
+            owner_handoff = build_handoff(decision)
         local_runner = None
         if args.observe_local_runner:
             from zsentinel_local_runner_observer import observe_local_runner
@@ -1065,6 +1073,12 @@ def main():
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
                                       pr_desk=pr_desk, unblock=unblock)
+            if owner_handoff is not None:
+                from zsentinel_runtime_handoff import handoff_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible portfolio owner handoff HTML")
+                rendered = rendered.replace("<main>", "<main>" +
+                                            handoff_html(owner_handoff), 1)
             if worker_delta is not None:
                 from zsentinel_worker_progress_delta import public_html as worker_delta_html
                 if rendered.count("<main>") != 1:
