@@ -267,6 +267,15 @@ source coverage, permissions or filters may have changed.</p>
 <p id="comparisonMeta" aria-live="polite">Only this captured board is loaded; no baseline or live comparison.</p>
 <p id="comparisonCoverage" aria-live="polite">Coverage: current bounded source only.</p>
 <dl id="comparisonStats" class="portfolio"></dl><ol id="comparisonRows"></ol>
+<div class="brief" aria-label="Reviewed snapshot difference export">
+<h3>Portable two-snapshot change ledger</h3>
+<p>Export all bounded changes between the two exact saved boards, including
+items no longer visible. Disappearance is NOT proof of issue resolution.
+No private human notes or live claim states are included.</p>
+<button type="button" id="previewDeltaCsv" disabled>Preview full change CSV</button>
+<div id="deltaCsvPanel" hidden><pre id="deltaCsvContent"></pre>
+<button type="button" id="downloadDeltaCsv" disabled>Download reviewed two-snapshot CSV</button></div>
+</div>
 <div class="brief">
 <h3>Reviewed human follow-up carry-forward</h3>
 <p>After loading the earlier source board, select its exact private handoff JSON.
@@ -438,9 +447,13 @@ window.addEventListener('beforeunload',event=>{
  if(!unsavedLocal)return;
  event.preventDefault();event.returnValue='';
 });
-let viewedBrief=null,viewedCsv=null;
+let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
+ viewedDeltaCsv=null;
+ document.getElementById('deltaCsvPanel').hidden=true;
+ document.getElementById('deltaCsvContent').textContent='';
+ document.getElementById('downloadDeltaCsv').disabled=true;
  viewedCsv=null;
  document.getElementById('csvPanel').hidden=true;
  document.getElementById('csvContent').textContent='';
@@ -730,6 +743,7 @@ function refreshComparison(){
  const stats=document.getElementById('comparisonStats'),list=document.getElementById('comparisonRows');
  stats.replaceChildren();list.replaceChildren();
  document.getElementById('clearBaseline').disabled=!baseline;
+ document.getElementById('previewDeltaCsv').disabled=!baseline;
  const changeSelect=document.getElementById('change');
  changeSelect.disabled=!baseline;
  if(!baseline)changeSelect.value='';
@@ -1228,6 +1242,56 @@ document.getElementById('downloadBrief').onclick=()=>{
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
  status.textContent='Private Markdown saved locally. It does not authorize any worker action.';
  invalidateBrief();
+};
+// A two-observation transport, including vanished-but-not-proven-resolved issues.
+function deltaCsvSource(){
+ if(!baseline||!baseline.sha)return null;
+ const cols=['previous_board_sha256','current_board_sha256',
+  'previous_observed_at_utc','current_observed_at_utc','change_kind',
+  'issue','original_issue_url','priority_previous','priority_current',
+  'project_previous','project_current','changed_source_fields',
+  'previous_project_coverage','current_project_coverage',
+  'previous_snapshot_partial_or_denied','current_snapshot_partial_or_denied',
+  'not_observed_proves_resolved','claim_authorized','merge_authorized','deploy_authorized'];
+ const oldPartial=baseline.coverage.inbox_truncated||
+  baseline.coverage.cards_truncated||baseline.coverage.github_denial;
+ const newPartial=board.coverage.inbox_truncated||
+  board.coverage.cards_truncated||board.coverage.github_denial;
+ const rows=changesSinceBaseline().map(change=>{
+  const before=baseline.items.get(change.issue),after=entries.get(change.issue);
+  const projectBefore=before?.project||'',projectAfter=after?.project||'';
+  const parts=change.issue.split('#');
+  return [baseline.sha,boardSha,baseline.observed_at_utc,board.observed_at_utc,
+   change.kind,change.issue,'https://github.com/'+parts[0]+'/issues/'+parts[1],
+   before?.priority||'',after?.priority||'',projectBefore,projectAfter,
+   change.changedFields?.join(' | ')||'',
+   baseline.coverage.projects[projectBefore]||'unavailable',
+   board.coverage.projects[projectAfter]||'unavailable',
+   String(oldPartial),String(newPartial),'false','false','false','false'];
+ });
+ if(!rows.length)return null;
+ return [cols,...rows].map(row=>row.map(csvCell).join(',')).join('\\r\\n')+'\\r\\n';
+}
+document.getElementById('previewDeltaCsv').onclick=()=>{
+ viewedDeltaCsv=deltaCsvSource();
+ document.getElementById('deltaCsvPanel').hidden=!viewedDeltaCsv;
+ document.getElementById('deltaCsvContent').textContent=viewedDeltaCsv||'';
+ document.getElementById('downloadDeltaCsv').disabled=!viewedDeltaCsv;
+ status.textContent=viewedDeltaCsv?
+  'Review both exact-source SHA values and every change row. Missing is not resolved.':
+  'No validated two-snapshot differences available for export.';
+};
+document.getElementById('downloadDeltaCsv').onclick=()=>{
+ if(!viewedDeltaCsv)return;
+ if(deltaCsvSource()!==viewedDeltaCsv){
+  invalidateBrief();status.textContent='The observed comparison changed. Preview again.';return;
+ }
+ const uri=URL.createObjectURL(new Blob(['\\ufeff',viewedDeltaCsv],
+  {type:'text/csv;charset=utf-8'}));
+ const a=elem('a');a.href=uri;a.download='zsentinel-two-snapshot-changes.csv';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ invalidateBrief();
+ status.textContent='Private observed-change ledger saved; it proves no issue was fixed or released.';
 };
 // A reviewed, local-only export. It must never be mistaken for fresh claims.
 function csvCell(value){
