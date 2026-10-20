@@ -3010,6 +3010,10 @@ function exportCombinedActivityTimeline(){
     lines.push('- '+clean(project.id)+' · '+(source?
       clean(source.status)+' · sampled '+events.length+' events · observed '+clean(observed)+
         (stale?' · STALE / unverified':'')+
+        (source.providerAdmission&&source.providerAdmission!=='none'&&
+         Object.hasOwn(GITHUB_PROVIDER_ADMISSIONS,source.providerAdmission)
+          ?' · GITHUB PROVIDER HOLD: '+GITHUB_PROVIDER_ADMISSIONS[source.providerAdmission]+
+           ' · missing events UNKNOWN':'')+
         (last?' · latest event '+clean(last.ts):' · event timestamp unknown'):
       'GitHub NOT OBSERVED in this bounded snapshot'));
   }
