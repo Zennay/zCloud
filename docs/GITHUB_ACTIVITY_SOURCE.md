@@ -128,7 +128,12 @@ states, in addition to the existing scoped local VPS section. The export
 contains **no tokens, owner claims or release authority**.
 
 The overview's former generic "Recent activity / Full history" copy now reads
-"Recent local activity / Inspect source coverage". A green `/api/status` or
+"Recent local activity / Inspect source coverage". The same overview panel
+now also shows **GitHub projects sampled / total visible projects** and the
+number of source observations older than six hours. This is drawn exclusively
+from the explicitly imported or manually fetched in-tab GitHub receipt. It
+does not claim an automatic GitHub sync, that PRs merged on main or that VPS
+deployment was verified. A green `/api/status` or
 the presence of a local checkout commit does not imply remote PR/CI sync.
 Manual opt-in GitHub source collection, its request budgets, source validation,
 protected-main merge proof and all existing release gates are unchanged.
