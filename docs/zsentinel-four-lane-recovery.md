@@ -150,3 +150,18 @@ The source was directly parsed and its bounded read-only text view
 invoked using an exact pinned GitHub commit on the connected VPS.
 No QA, regression suite, GitHub workflow retrigger, queue mutation,
 runner action, service change or release deploy was performed.
+
+### Per-row limits for busy VPS environments
+
+The desk also bounds individual SQLite TEXT fields, not only its row counts.
+Task titles are sampled to at most 512 characters, completion criteria to
+3,072 characters and queue/claim metadata to 8,192 characters per row.
+Any oversize queue cell marks the local source *incomplete* and requires
+owner reconciliation before interpreting any lane. Oversize claim
+metadata is treated as ambiguous rather than silently admitted as a free
+claim. This is an operator observation guard, not a change to runtime
+SQLite rows or the portfolio dispatch policy.
+
+The exact `89f5d63046e125d5467c2794d9bfac1bf28c66bf` source was
+directly parsed and its real read-only VPS CLI path inspected; no suites,
+services, SQLite writes, runners or release gates were touched.
