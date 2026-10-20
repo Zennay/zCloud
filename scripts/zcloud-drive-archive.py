@@ -3,6 +3,7 @@
 import argparse
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -51,15 +52,18 @@ def examine(path, cutoff):
     count = 0
     scanned = 0
     newest = 0
+    fingerprint = hashlib.sha256()
     try:
         device = path.lstat().st_dev
         for current, dirs, files in os.walk(path, followlinks=False):
             st = os.lstat(current)
             if not stat.S_ISDIR(st.st_mode) or st.st_dev != device:
                 return None
-            newest = max(newest, st.st_mtime)
+            newest = max(newest, st.st_mtime, st.st_ctime)
             scanned += 1
-            for name in dirs + files:
+            fingerprint.update(repr((os.path.relpath(current, path), st.st_mode,
+                st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)).encode("utf-8", "surrogateescape"))
+            for name in sorted(dirs + files):
                 child = Path(current) / name
                 x = child.lstat()
                 scanned += 1
@@ -67,7 +71,10 @@ def examine(path, cutoff):
                         (not stat.S_ISDIR(x.st_mode) and
                          (not stat.S_ISREG(x.st_mode) or x.st_nlink != 1))):
                     return None
-                newest = max(newest, x.st_mtime)
+                newest = max(newest, x.st_mtime, x.st_ctime)
+                fingerprint.update(repr((os.path.relpath(child, path), x.st_mode,
+                    x.st_dev, x.st_ino, x.st_size, x.st_nlink,
+                    x.st_mtime_ns, x.st_ctime_ns)).encode("utf-8", "surrogateescape"))
                 if stat.S_ISREG(x.st_mode):
                     size += x.st_size
                     count += 1
@@ -79,7 +86,8 @@ def examine(path, cutoff):
         return None
     if newest >= cutoff or count == 0:
         return None
-    return {"name": path.name, "path": path, "bytes": size, "files": count, "latest_mtime": newest}
+    return {"name": path.name, "path": path, "bytes": size, "files": count,
+            "latest_mtime": newest, "fingerprint": fingerprint.hexdigest()}
 
 def candidates(age, limit=MAX_CANDIDATES):
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=age)).timestamp()
@@ -129,7 +137,7 @@ def transfer(item, prune=False):
             raise RuntimeError("Pruning requires the offline-key-backup approval file")
         old = examine(src, (dt.datetime.now(dt.timezone.utc) -
                             dt.timedelta(days=MIN_PRUNE_DAYS)).timestamp())
-        if not old or old["bytes"] != item["bytes"] or old["files"] != item["files"] or active_process(src):
+        if not old or old["fingerprint"] != item["fingerprint"] or active_process(src):
             raise RuntimeError("Source changed, insufficiently cold, or referenced by active process")
         # Never follow symlinks; do not remove any directory that is now active.
         shutil.rmtree(src)
