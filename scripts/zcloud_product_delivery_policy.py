@@ -50,6 +50,19 @@ NEGATED_DELIVERY = re.compile(
 
 
 
+# Imperative test-only tasks also exist as old backlog titles without QA lane
+# metadata ("Run full regression suite", "Draai alle regressietests").
+QA_RUN_ONLY_TITLE = re.compile(
+    r"^(?:(?:p[0-3])\s*[:.·/-]\s*)?"
+    r"(?:run|rerun|execute|start|draai|voer(?:\s+uit)?)\s+"
+    r"(?:[\w-]+\s+){0,4}"
+    r"(?:qa(?:\b|[-_/])|regression(?:\s+(?:test|suite))?\b|"
+    r"regressie(?:tests?|suite|ronde)?\b|tests?\b|test[- ]suite\b|"
+    r"kwaliteitscontrole\b|validatieronde\b)",
+    re.IGNORECASE,
+)
+
+
 # "QA-only" is an explicit lane declaration even if a note mentions a fix.
 EXPLICIT_QA_ONLY_TITLE = re.compile(
     r"^(?:(?:p[0-3])\s*[:.·/-]\s*)?"
@@ -143,6 +156,8 @@ def product_delivery_classification(item):
     title = title.strip()
     if EXPLICIT_QA_ONLY_TITLE.match(title):
         return "qa_only", "explicit_qa_title"
+    if QA_RUN_ONLY_TITLE.match(title):
+        return "qa_only", "qa_execution_only_title"
     if (QA_TITLE.match(title) and not _positive_delivery(title)
             and not _positive_delivery(criteria)):
         return "qa_only", "qa_title_without_delivery"
@@ -170,7 +185,7 @@ def is_new_product_delivery(item):
 HOLD_REASON_CODES = frozenset({
     "invalid_row", "not_queued", "invalid_metadata", "invalid_lane_metadata",
     "invalid_title", "invalid_completion_criteria", "explicit_qa_lane",
-    "explicit_qa_title", "qa_title_without_delivery",
+    "explicit_qa_title", "qa_execution_only_title", "qa_title_without_delivery",
     "qa_criteria_without_delivery",
 })
 
