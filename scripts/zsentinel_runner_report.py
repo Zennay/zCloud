@@ -1202,7 +1202,7 @@ def render_private_immediate_handoff(data):
         "- Geen actie door deze overdracht uitgevoerd.",
         "",
     ]
-    result = "\\n".join(rows)
+    result = "\n".join(rows)
     if len(result.encode("utf-8")) > 128 * 1024:
         raise ValueError("Private immediate handoff exceeds artifact limit")
     return result
