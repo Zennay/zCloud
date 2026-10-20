@@ -563,6 +563,12 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                     " (apart opvragen met --candidate-page; geen automatisch "
                     "opnieuw starten of eigenaarschap nemen).</p>"
                 )
+            target_section += (
+                "<p>Geobserveerde bestaande PR-rapporten: " +
+                esc(target_coverage.get("linked_prs_observed", 0)) +
+                " / maximum " + esc(target_coverage.get("max_linked_prs", 12)) +
+                " voor deze gerichte zoekopdracht.</p>"
+            )
             if not target_coverage["search_complete"]:
                 target_section += (
                     "<p><strong>Brondekking onvolledig.</strong> "
@@ -585,6 +591,8 @@ def main():
                      help="continue targeted issue search on page 1–50 of 20 PRs")
     cli.add_argument("--auto-pages", type=int, default=1,
                      help="follow 1–3 existing PR search pages within the same bounded run")
+    cli.add_argument("--max-linked-prs", type=int, default=12,
+                     help="inspect up to 1–12 linked existing PR reports in this full targeted search")
     cli.add_argument("--candidate-offset", type=int, default=0,
                      help="resume candidate index 0–19 inside the exact same result page")
     cli.add_argument("--expected-page-sha",
@@ -607,6 +615,10 @@ def main():
         cli.error("--auto-pages must remain inside page 1–50 and be at most 3")
     if args.issue is None and args.auto_pages != 1:
         cli.error("--auto-pages requires --issue")
+    if not 1 <= args.max_linked_prs <= board.MAX_PRS:
+        cli.error("--max-linked-prs must be 1–12")
+    if args.issue is None and args.max_linked_prs != board.MAX_PRS:
+        cli.error("--max-linked-prs requires --issue")
     if not 0 <= args.candidate_offset < TARGET_CANDIDATES_PER_PAGE:
         cli.error("--candidate-offset must be 0–19")
     if args.candidate_offset and (
@@ -633,7 +645,8 @@ def main():
                 args.project[0], args.issue, registry, budget,
                 candidate_page=args.candidate_page, auto_pages=args.auto_pages,
                 candidate_offset=args.candidate_offset,
-                expected_page_sha=args.expected_page_sha)
+                expected_page_sha=args.expected_page_sha,
+                max_linked_prs=args.max_linked_prs)
             unmatched = []
         else:
             rows, unmatched, partial = collect(args.project, registry, budget)
@@ -695,6 +708,8 @@ def main():
                       f"total={target_coverage['search_total']} "
                       f"next_page={target_coverage['next_page']} "
                       f"next_candidate_offset={target_coverage.get('next_candidate_offset')} "
+                      f"linked_prs={target_coverage.get('linked_prs_observed')} "
+                      f"max_linked_prs={target_coverage.get('max_linked_prs')} "
                       f"source_page_sha256={target_coverage.get('source_page_sha256')} "
                       f"complete={target_coverage['search_complete']}")
     except (ValueError, OSError, KeyError, TypeError):
