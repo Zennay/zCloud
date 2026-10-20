@@ -290,11 +290,13 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
 
 def collect_targeted_windows(project, issue_number, registry, budget,
                              candidate_page=1, auto_pages=1, candidate_offset=0,
-                             expected_page_sha=None):
+                             expected_page_sha=None, max_linked_prs=12):
     """Bounded multiple-page read only; no atomic-search or free-owner claim."""
     if (type(auto_pages) is not int or not 1 <= auto_pages <= 3
             or candidate_page + auto_pages - 1 > MAX_TARGET_PAGES):
         raise ValueError("invalid automatic page window")
+    if type(max_linked_prs) is not int or not 1 <= max_linked_prs <= board.MAX_PRS:
+        raise ValueError("invalid linked PR report cap")
     combined, partials, pages = [], [], []
     observed_candidates, observed_prs = set(), {}
     unstable_pr_keys = set()
@@ -305,7 +307,8 @@ def collect_targeted_windows(project, issue_number, registry, budget,
             rows, current_issue, partial, coverage = collect_targeted(
                 project, issue_number, registry, budget, candidate_page=page,
                 candidate_offset=(candidate_offset if not pages else 0),
-                expected_page_sha=(expected_page_sha if not pages else None))
+                expected_page_sha=(expected_page_sha if not pages else None),
+                max_reports=max_linked_prs - len(combined))
         except (RuntimeError, ValueError, OSError, KeyError, TypeError):
             if not pages:
                 raise
@@ -345,6 +348,10 @@ def collect_targeted_windows(project, issue_number, registry, budget,
             combined.append(row)
         partials.extend(partial)
         pages.append(coverage)
+        if len(combined) >= max_linked_prs:
+            if coverage["next_candidate_offset"] is not None or coverage["next_page"] is not None:
+                partials.append({"project": project, "reason": "TOTAL_LINKED_PR_REPORT_LIMIT"})
+            break
         if coverage.get("next_candidate_offset") is not None:
             partials.append({"project": project, "reason": "STOPPED_INSIDE_CURRENT_PAGE"})
             break
@@ -366,6 +373,8 @@ def collect_targeted_windows(project, issue_number, registry, budget,
         "source_page_sha256": last["source_page_sha256"],
         "auto_pages_requested": auto_pages,
         "auto_pages_observed": len(pages),
+        "max_linked_prs": max_linked_prs,
+        "linked_prs_observed": len(combined),
         "page_windows": [{
             "candidate_page": p["candidate_page"],
             "window_start": p["window_start"], "window_end": p["window_end"],
