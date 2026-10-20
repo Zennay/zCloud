@@ -190,11 +190,16 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "age_seconds": age, "stale": age > 900, "prs": rows,
         }
     missing = [i for i in range(1, total + 1) if i not in batches]
-    all_rows = [row for i in sorted(batches) for row in batches[i]["prs"]]
-    unavailable = sum(row["source_status"] != "observed_partial" for row in all_rows)
-    stale = sum(row["saved_source_stale_over_15_minutes"] for row in all_rows)
+    all_rows = [
+        ((i - 1) * MAX_PRS + local_index + 1, row)
+        for i in sorted(batches)
+        for local_index, row in enumerate(batches[i]["prs"])
+    ]
+    unavailable = sum(row["source_status"] != "observed_partial"
+                      for _, row in all_rows)
+    stale = sum(row["saved_source_stale_over_15_minutes"] for _, row in all_rows)
     category_counts = {}
-    for row in all_rows:
+    for _, row in all_rows:
         category = row["historic_gate_category"]
         category_counts[category] = category_counts.get(category, 0) + 1
     # Saved observations are never atomic live GitHub state.
@@ -204,7 +209,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     # Existing manifest order is P0/P1-first and deduplicated.
     manual_queue = [
         {
-            "manifest_position": pos + 1,
+            "manifest_position": pos,
             "url": row["url"],
             "historic_gate_category": row["historic_gate_category"],
             "human_next_gate": row["next_human_gate"],
@@ -214,7 +219,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
             "owner_and_release_authorized": False,
             "merge_authorized": False,
         }
-        for pos, row in enumerate(all_rows)
+        for pos, row in all_rows
     ]
     first_actions = manual_queue[:24]
     return {
