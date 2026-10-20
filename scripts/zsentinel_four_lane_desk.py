@@ -135,11 +135,64 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
     }
 
 
-def collect(database, maximum, include_runner_processes=False):
+def observe_local_contract(path):
+    """Bounded read-only local *file* evidence; never claims loaded runtime state."""
+    packet = {
+        "status": "NOT_OBSERVED",
+        "profile": "UNKNOWN",
+        "worker_cap": None,
+        "matches_proposed_profile": "NOT_INFERABLE",
+        "loaded_runtime_profile": "NOT_VERIFIED",
+    }
+    fd = None
+    try:
+        fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 131072:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        raw = os.read(fd, 131073)
+        if len(raw) > 131072:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        document = json.loads(raw.decode("utf-8"))
+        projects = document.get("projects") if isinstance(document, dict) else None
+        config = projects.get("zsentinel") if isinstance(projects, dict) else None
+        if not isinstance(config, dict):
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        profile = config.get("lane_profile")
+        cap = config.get("ai_worker_cap")
+        if not isinstance(profile, str) or not 0 < len(profile) < 64:
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        if profile not in ("portfolio-recovery", "platform", "product"):
+            packet["status"] = "UNTRUSTED_SOURCE"
+            return packet
+        packet["profile"] = profile
+        packet["worker_cap"] = cap if type(cap) is int and 0 <= cap <= 8 else None
+        packet["matches_proposed_profile"] = (
+            "MATCH_LOCAL_FILE" if profile == "portfolio-recovery"
+            else "MISMATCH_LOCAL_FILE"
+        )
+        packet["status"] = "OBSERVED_LOCAL_FILE"
+    except (OSError, ValueError, UnicodeError, TypeError):
+        packet["status"] = "NOT_OBSERVED"
+    finally:
+        if fd is not None:
+            os.close(fd)
+    return packet
+
+
+def collect(database, maximum, include_runner_processes=False, contracts_file=None):
     """Capture one bounded, read-only SQLite snapshot without owner identities."""
     path = Path(database).absolute()
     if not path.is_file():
         raise ValueError("SQLite source unavailable")
+    contract_path = Path(contracts_file).absolute() if contracts_file else (
+        path.parent / "project-contracts.json"
+    )
+    local_contract = observe_local_contract(contract_path)
     uri = path.as_uri() + "?mode=ro"
     db = sqlite3.connect(uri, uri=True, timeout=2)
     try:
@@ -295,6 +348,9 @@ def collect(database, maximum, include_runner_processes=False):
         (lane.get("active_profile_mismatch_count", 0) for lane in lanes),
         default=0,
     )
+    local_config_mismatch = (
+        local_contract["matches_proposed_profile"] == "MISMATCH_LOCAL_FILE"
+    )
     # Diagnostic only. The dispatch path itself remains governed by the
     # existing lane generator and actual external claim/release gates.
     active_items = [
@@ -325,7 +381,7 @@ def collect(database, maximum, include_runner_processes=False):
         or unknown_active_scopes or unknown_claim_scopes or runtime_shadowed_active
         or portfolio_partial or unknown_project_groups
         or inconsistent_queue_claim_windows or untrusted_active_leases
-        or active_profile_mismatch
+        or active_profile_mismatch or local_config_mismatch
     )
     missing_local_claim = (
         sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
@@ -393,6 +449,7 @@ def collect(database, maximum, include_runner_processes=False):
         "active_scope_declarations_invalid_or_empty": invalid_active_declarations,
         "active_legacy_profile_claims_observed": active_profile_mismatch,
         "deployed_four_lane_profile": "NOT_VERIFIED",
+        "local_contract_evidence": local_contract,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
         "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
@@ -422,7 +479,7 @@ def collect(database, maximum, include_runner_processes=False):
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
-            or active_profile_mismatch
+            or active_profile_mismatch or local_config_mismatch
             or any(collision_counts.values())
             or missing_local_claim
         ),
