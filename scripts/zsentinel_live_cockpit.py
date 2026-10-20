@@ -240,6 +240,8 @@ def main():
                         help="opt-in private preceding .json from the same workspace and scanner settings")
     parser.add_argument("--observe-vps-capacity", action="store_true",
                         help="read current Linux host CPU/load/memory and database-mount disk; use ONLY on the intended VPS")
+    parser.add_argument("--observe-local-runners", action="store_true",
+                        help="opt-in bounded read-only /proc Runner.Listener/Worker process counts on this Linux VPS; private report required")
     parser.add_argument("--worker-events-database", type=Path,
                         help="optional existing indexed zCloud history.db: read-only browser-worker progress, no worker claims")
     parser.add_argument("--skip-ci-discovery", action="store_true",
@@ -284,6 +286,11 @@ def main():
             if any(p is not None and args.disk_hotspots_output.resolve() == p.resolve()
                    for p in (args.state, args.desk_output, args.disk_hotspots_previous)):
                 raise ValueError("disk hotspot output overlaps ledger or desk file")
+        if args.observe_local_runners:
+            if args.output is None or args.format not in ("html", "json", "text"):
+                raise ValueError("--observe-local-runners needs a private --output and html/json/text")
+            if args.output.suffix not in (".html", ".json", ".txt"):
+                raise ValueError("local runner evidence must be owner-private")
         if args.pin_issue and args.skip_github_issues:
             raise ValueError("--pin-issue cannot be combined with --skip-github-issues")
         if args.read_notion_claims and args.notion_claims_export is not None:
@@ -373,6 +380,10 @@ def main():
                     if args.state and args.state.exists() else None)
         decision, ledger = plan(bundle, previous)
         decision["live_sources"] = provenance
+        if args.observe_local_runners:
+            from zsentinel_local_runner_processes import observe as observe_local_runners
+            from zsentinel_local_runner_processes import _admit as admit_local_runners
+            decision["local_runner_processes"] = admit_local_runners(observe_local_runners())
         if "worker_progress_observation" in bundle:
             decision["worker_progress_observation"] = bundle["worker_progress_observation"]
         if "notion_claims_observation" in bundle:
@@ -415,6 +426,13 @@ def main():
             from zsentinel_pinned_issue import pinned_receipts_html
             from zsentinel_worker_progress_observer import worker_progress_html
             rendered = html_view(decision)
+            if args.observe_local_runners:
+                from zsentinel_local_runner_processes import render_html as runner_process_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible local runner cockpit view")
+                rendered = rendered.replace(
+                    "<main>", "<main>" + runner_process_html(
+                        decision["local_runner_processes"]), 1)
             if owner_handoff is not None:
                 from zsentinel_runtime_handoff import handoff_html
                 if rendered.count("<main>") != 1:
@@ -460,6 +478,9 @@ def main():
             rendered = review_html(decision)
         else:
             lines = [operator_text(decision)]
+            if args.observe_local_runners:
+                from zsentinel_local_runner_processes import render_text as runner_process_text
+                lines.insert(0, runner_process_text(decision["local_runner_processes"]))
             if "disk_pressure_private_report" in decision:
                 disk = decision["disk_pressure_private_report"]
                 lines.append("SCHIJFRUIMTE: afzonderlijk privé HTML-rapport aangemaakt; "
