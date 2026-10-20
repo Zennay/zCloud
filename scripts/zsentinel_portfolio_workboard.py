@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from zsentinel_issue_delivery import render_html, render_markdown
+from zsentinel_issue_delivery import build_workboard, render_html, render_markdown
 from zsentinel_issue_progress import load_private_prior, _source
-from zsentinel_product_issue_inbox import ROOT, canonical_projects
+from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect
 
 MAX_WINDOWS = 6
 MAX_PROJECTS = 18
@@ -166,11 +167,46 @@ def combine_workboards(snapshots, registry, now=None):
     }
 
 
+
+def collect_live_workboards(registry, projects, token=None):
+    """One explicit, bounded round across canonical repositories.
+
+    Reuse the already-admitted issue and exact-head PR collectors. Each
+    three-project window remains its own source observation; no global
+    completeness, ownership or merge authority is inferred from aggregation.
+    """
+    if (not isinstance(registry, dict) or type(projects) is not list
+            or not 1 <= len(projects) <= MAX_PROJECTS
+            or len(set(projects)) != len(projects)
+            or any(type(pid) is not str or pid not in registry for pid in projects)):
+        raise ValueError("select one to eighteen distinct canonical live projects")
+    reports = []
+    for start in range(0, len(projects), 3):
+        selected = projects[start:start + 3]
+        inbox = collect(registry, selected, token, max_items=MAX_ITEMS_PER_WINDOW)
+        report = build_workboard(inbox, registry, token=token)
+        if (report.get("projects") != selected
+                or report.get("claims_taken") is not False
+                or report.get("merge_authorized") is not False
+                or report.get("writes_performed") is not False
+                or type(report.get("issue_source_requests")) is not int
+                or type(report.get("exact_head_pr_requests")) is not int
+                or report["issue_source_requests"] > 3 * len(selected)
+                or report["exact_head_pr_requests"] > 15):
+            raise ValueError("invalid or unbounded live source receipt")
+        reports.append(report)
+    return reports
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description="Combine private zSentinel source windows")
     p.add_argument("--registry", type=Path, default=ROOT / "projects.json")
-    p.add_argument("--snapshot", type=Path, action="append", required=True,
+    p.add_argument("--snapshot", type=Path, action="append",
                    help="one through six bounded original JSON files")
+    p.add_argument("--collect-live", action="store_true",
+                   help="one-shot read-only issue and existing PR scan of canonical project windows")
+    p.add_argument("--project", action="append",
+                   help="optional canonical project selection for --collect-live; defaults to all")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
     p.add_argument("--output", type=Path,
                    help="explicit create-only private report output; never overwrites")
@@ -178,11 +214,26 @@ def main(argv=None):
                    help="existing local read-only zSentinel portfolio JSON; no queue writes")
     args = p.parse_args(argv)
     try:
-        if not 1 <= len(args.snapshot) <= MAX_WINDOWS:
-            raise ValueError("one through six source windows required")
         registry = canonical_projects(args.registry)
-        board = combine_workboards(
-            [load_private_prior(path) for path in args.snapshot], registry)
+        if args.collect_live:
+            if args.snapshot or args.output is None:
+                raise ValueError("live collection requires private --output and no --snapshot")
+            selected = args.project if args.project is not None else list(registry)
+            snapshots = collect_live_workboards(
+                registry, selected, token=os.getenv("GITHUB_TOKEN"))
+        else:
+            if args.project or not args.snapshot or not 1 <= len(args.snapshot) <= MAX_WINDOWS:
+                raise ValueError("provide one to six private snapshots, without --project")
+            snapshots = [load_private_prior(path) for path in args.snapshot]
+        board = combine_workboards(snapshots, registry)
+        board["collection_mode"] = (
+            "one_shot_live_read_only" if args.collect_live
+            else "explicit_saved_private_sources")
+        board["observed_provider_gets"] = sum(
+            source.get("issue_source_requests", 0) +
+            source.get("exact_head_pr_requests", 0) for source in snapshots)
+        if board["observed_provider_gets"] > 24 * MAX_WINDOWS:
+            raise ValueError("combined source request count exceeds bounded budget")
         if args.queue_overview:
             from zsentinel_workboard_queue import read_queue_overview, attach_queue_pressure
             attach_queue_pressure(board, read_queue_overview(args.queue_overview),
