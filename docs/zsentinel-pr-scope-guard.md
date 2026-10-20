@@ -141,3 +141,10 @@ Het programma hergebruikt `zsentinel_operator_workbench.read_source_and_sha` en 
 - Alle outputs laten `claims_verified=false`, `may_take_ownership=false`, `merge_authorized=false`, `deploy_authorized=false` en `writes_performed=false`.
 
 Dit scherm is een **operatorintegratie**, geen automatische productiequeue-adapter. Het raakt geen `server.py`, worker/scheduler, GitHub Actions, tests, Notion of live SQLite, doet geen deployments en kan geen beschermde gates omzeilen. Het kan in bron worden geïntegreerd onafhankelijk van de wachtende PR #1563, waarna die herstelrouter op zijn eigen autorisatiepad blijft wachten.
+
+
+### Bestaande exacte PR-checks en onafhankelijke review als observatie
+
+Als de canonical `zsentinel_product_delivery_board.py` bij het vormen van de lokale triage-bron een optionele `--prs` exacte-head PR-receipt heeft gekregen, hergebruikt de nieuwe geïntegreerde cockpit deze **al aanwezige** historische status. Het nieuwe scherm toont bij de passende bestaande PR: geobserveerde bron-HEAD, of de toen geobserveerde native checks geslaagd waren en hoeveel approvals de opgeslagen bron meldde.
+
+Er worden hiervoor **geen nieuwe GitHub Actions gestart en geen extra API-calls gedaan**. Een opgeslagen checkstatus wordt expliciet als historisch getoond; niet-beschreven verplichte branchregels, actuele SHA, nieuwe pushes, review-freshness en productieautorisatie blijven **niet geverifieerd**. De PR blijft dus op HOLD voor merge totdat de normale actuele gates apart bevestigd zijn.
