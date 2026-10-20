@@ -23,7 +23,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
     override suspend fun doWork(): Result = try {
         val snapshot = ZennayCloudRepository().loadHome()
         // Do not broadcast stale historical alerts as if they were current.
-        if (snapshot.stale) return Result.success()
+        if (snapshot.stale || !snapshot.currentBlockerFeedAvailable) return Result.success()
 
         val prefs = applicationContext.getSharedPreferences("zennay_alerts", Context.MODE_PRIVATE)
         val previouslySeen = prefs.getStringSet("delivered_ids", null)
@@ -36,6 +36,11 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             .sortedWith(compareBy<AlertItem> {
                 if (it.severity.equals("critical", true)) 0 else 1
             }.thenByDescending { it.occurredAt.orEmpty() })
+        // Deduplicate by incident episode, not forever by reusable incident ID.
+        // If an incident disappears from the current feed, its old receipt is
+        // retired; a later recurrence is allowed to notify again.
+        val currentEpisodes = urgent.map { it.episodeKey() }.toSet()
+        delivered.retainAll(currentEpisodes)
         val permissionGranted = Build.VERSION.SDK_INT < 33 ||
             applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
                 PackageManager.PERMISSION_GRANTED
@@ -46,7 +51,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Critical project blockers", NotificationManager.IMPORTANCE_HIGH)
             )
-            urgent.filter { it.id !in delivered }.take(3).forEach { alert ->
+            urgent.filter { it.episodeKey() !in delivered }.take(3).forEach { alert ->
                 val intent = Intent(applicationContext, MainActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 val pending = PendingIntent.getActivity(
@@ -63,10 +68,12 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                     .setAutoCancel(true)
                     .setCategory(Notification.CATEGORY_ERROR)
                     .build()
-                manager.notify(alert.id.hashCode(), notification)
+                // Use the stable string tag overload, not a potentially
+                // colliding String.hashCode() notification integer.
+                manager.notify(alert.id, 0, notification)
                 // Mark only successfully posted alerts. The fourth blocked item
                 // must still be eligible at the next scheduled poll.
-                delivered += alert.id
+                delivered += alert.episodeKey()
             }
             prefs.edit().putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet()).apply()
         }
@@ -74,6 +81,8 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
     } catch (_: Exception) {
         Result.retry()
     }
+
+    private fun AlertItem.episodeKey() = id + "\\u001f" + occurredAt.orEmpty()
 
     private fun AlertItem.isUrgent() =
         severity.equals("high", true) ||
