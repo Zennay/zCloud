@@ -388,6 +388,39 @@ def work_package_rank(item):
     return 1
 
 
+def _prohibited_recovery_qa(item):
+    """Do not admit a NEW QA/validation package to zSentinel recovery.
+
+    Existing active work remains reserved; mandatory GitHub CI still runs
+    under its independent release gates. An incidental mention of tests in a
+    genuine bug-fix ticket does not turn that product fix into a QA package.
+    """
+    title = str(item.get("title") or "").strip().lower()
+    if re.match(
+        r"^(?:qa(?:[ :(-]|$)|tests?(?:[ :(-]|$)|regression[ -]tests?(?:[ :(-]|$)|"
+        r"quality[ -]validation(?:[ :(-]|$)|validation[ -]suite(?:[ :(-]|$)|"
+        r"regression[ -]suite(?:[ :(-]|$)|run[ -](?:qa|regression)(?:[ :(-]|$))",
+        title,
+    ):
+        return True
+    metadata = _metadata(item)
+    lanes = [
+        metadata.get("lane_id"),
+        metadata.get("work_type"),
+        metadata.get("work_lane"),
+    ]
+    execution_lane = metadata.get("execution_lane")
+    if isinstance(execution_lane, dict):
+        lanes.append(execution_lane.get("lane_id"))
+    return any(
+        str(value or "").strip().lower().replace("_", "-") in {
+            "qa", "qa-validation", "quality-validation", "regression-testing",
+            "test-suite", "testing-only",
+        }
+        for value in lanes
+    )
+
+
 def _queue_order(item):
     status = str(item.get("status") or "queued").lower()
     return (
@@ -435,6 +468,13 @@ def generate_execution_lanes(project, backlog, claims=()):
     for item in items:
         lane = classify_backlog_item(project, item)
         classified.append({**item, **lane})
+    deferred_qa_by_lane = {lane["id"]: 0 for lane in lane_defs}
+    for item in classified:
+        if (profile == "portfolio-recovery"
+                and str(item.get("status") or "queued").lower() == "queued"
+                and _prohibited_recovery_qa(item)):
+            deferred_qa_by_lane[item["lane_id"]] += 1
+
 
     # The cross-project zSentinel profile must fail closed if already active
     # work does not declare its actual file/capability scope. A synthetic
@@ -517,6 +557,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             item for item in classified
             if str(item.get("status") or "queued").lower() == "queued"
             and item["lane_id"] not in chosen_by_lane
+            and not (profile == "portfolio-recovery" and _prohibited_recovery_qa(item))
         ],
         key=_queue_order,
     )
@@ -615,7 +656,8 @@ def generate_execution_lanes(project, backlog, claims=()):
             "profile": profile,
             "lane_id": lane_id,
             "queue_id": str(chosen.get("queue_id") or "") if chosen else None,
-            "status": str(chosen.get("status") or "") if chosen else "blocked" if blocked_by else "idle",
+            "status": str(chosen.get("status") or "") if chosen else "blocked" if (blocked_by or deferred_qa_by_lane[lane_id]) else "idle",
+            "deferred_qa_packages": deferred_qa_by_lane[lane_id],
             "scope": scope,
             # Advisory reconciliation only: never take, release, or supersede
             # an existing worker claim on the strength of this count.
