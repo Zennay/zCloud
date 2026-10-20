@@ -634,3 +634,63 @@ de visuele weergave is compacter.
 
 Dit blijft een volledig offline document met gewone links, geen scripts,
 geen live GitHub-status en geen automatische workflow- of mergeactie.
+
+
+## Eén commando: actuele PR-botsingen én exacte-head CI/review (optioneel)
+
+De bestaande portfolio-conflictkaart en de bestaande huidige-head PR-gatecollector
+zijn nu geïntegreerd in **dezelfde operatorflow**. Zonder extra optie verandert
+niets en blijft het programma uitsluitend bij PR-bestandscope. Met
+`--inspect-current-pr-gates` selecteert de tool uit de reeds gelezen stabiele
+PR-steekproef maximaal vier bestaande open PRs en vraagt hun actuele
+GitHub-checks, oudere statuscontexten en ingediende reviews op:
+
+```sh
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --project haxlab \
+  --max-prs 10 --inspect-current-pr-gates \
+  --format html --output ./private-zsentinel-current-merge-desk.html
+```
+
+Hiermee ontstaat één offline operatorpagina met naast elkaar:
+bestandsbotsingen tussen bestaande PR's, dubbele verwijzingen naar open
+productissues, en **voor maximaal vier PR's** een apart exact-head
+CI/reviewoverzicht met bron-HEAD, lopende/mislukte checks, waargenomen
+onafhankelijke approvals en relevante menselijke vervolgactie.
+Voor menselijke bediening zijn ook `--format markdown`, `text` en
+`json` beschikbaar. Het bronveld
+`current_live_pr_gate_observation` in JSON is altijd niet-autoriserend.
+
+De selectie gebeurt **zonder extra open-PR-zoekronde**:
+- Alleen eerder dubbel gelezen, stabiele PR-identiteiten komen in aanmerking.
+- Bij gedeelde bestandspaden worden die PR's eerst ter menselijke inspectie
+  aangeboden, daarna PR's die in hun body hetzelfde issue noemen, vervolgens
+  de rest van de bestaande waargenomen PR-volgorde.
+- Maximaal vier PR-gatebronopvragen per run, eerlijk verdeeld over maximaal
+  drie gekozen projecten. De huidige exacte PR-HEAD en base-SHA worden
+  vergeleken met de opgeslagen file-scope-bron. Bronverandering = UNKNOWN,
+  nooit een groen of mergeklaar oordeel.
+- Elke PR gebruikt de **bestaande** `zsentinel_pr_gate_now.py`-broncollector
+  (maximaal vijf GitHub GETs per PR). De extra limiet is **20 GETs**;
+  volledige standaardvraag maximaal drie projecten × twaalf GETs plus
+  twintig = 56 GETs. Gebruik een geautoriseerde `GITHUB_TOKEN` wanneer
+  rate limits dit vereisen. Er wordt niets opnieuw getriggerd.
+- Projecten met onbereikbare of tijdens het lezen veranderende scopebron
+  krijgen géén verzonnen PR-gate-uitslagen; andere onafhankelijke projecten
+  kunnen wel worden weergegeven. Ongecontroleerde PR's en brononvolledigheid
+  worden expliciet genoemd.
+
+De bestandsinventaris en de gate-inventaris zijn **twee opeenvolgende**
+waarnemingen, geen atomisch GitHub-snapshot. Zelfs de vier gevonden
+exact-head CI-uitslagen bewijzen nog niet dat **alle verplichte branchregels,
+Notion/workerclaims, onafhankelijke reviewpolicies of releasebevoegdheid**
+zijn vervuld. `merge_authorized=false`, `claim_authorized=false`,
+`deploy_authorized=false`, `writes_performed=false` blijven expliciet
+van kracht.
+
+`--output` is optioneel en maakt een **nieuw**, niet te overschrijven
+privébestand met mode 0600 en fsync. Het programma print dan geen
+privébroninhoud of lokaal bestandspad in workerlogs. Zonder `--output`
+blijft de bestaande stdout-interface bruikbaar. Het resultaat wordt niet
+automatisch in zCloud geïmporteerd en veroorzaakt geen queue-, claim-,
+GitHub-mutatie, workflowdispatch, CI-rerun of production deploy.
