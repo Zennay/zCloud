@@ -951,3 +951,35 @@ De issue-cockpit toont historische wijzigingen apart van actuele P0/P1
 productissues en van afzonderlijk opgevraagde exacte PR-checks.
 De vergelijking verifieert geen huidige Notion-claims, runner-herstel,
 verplichte branchregels of bevoegdheid om te mergen.
+
+
+### 20 oktober · Historie direct bij P0/P1-issuekaarten en veilige privé-output
+
+De gecombineerde issue-/PR-cockpit gebruikt nu dezelfde bronvergelijker
+om **concrete, reeds gekoppelde open PR's** in P0/P1-issuekaarten aan te
+merken wanneer HEAD/basis, hun beperkte bronvermelding of een gedeeld
+bestandspad tussen twee snapshots veranderde. De offline HTML heeft een
+filter **Met waargenomen PR-wijziging**; Markdown, tekst en JSON geven
+dezelfde per-issue en per-PR observaties met expliciet volledige of
+ONVOLLEDIGE bron aan. Afwezige activiteit betekent niet dat een PR
+niet is bijgewerkt of een issue is opgelost.
+
+De issuecockpit kan zelf een privérapport aanmaken in plaats van
+een onveilig geërfde shell-redirection te vereisen:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --compare-previous /private/zsentinel-pr-earlier.json \
+  --format html --output /private/zsentinel-issues-met-historie.html
+```
+
+`--output` maakt **uitsluitend een NIEUW regulier bestand** met mode 0600
+aan en weigert overschrijven, symlinks en bestaande workerbestanden.
+Zonder `--output` blijft uitvoer op stdout ondersteund. Bij één geweigerde
+historische bron wordt geen rapport als compleet gepresenteerd.
+
+Deze informatie is een brongebonden mensenwerkbak, geen automatische
+workerclaim, PR-merge, CI-rerun, release of runneractie. Bestaande
+eigenaren, exact-head verplichte checks, reviews, branchregels en release
+autoriteit blijven bepalend.
