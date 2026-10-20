@@ -359,11 +359,11 @@ def html(report):
              "code{overflow-wrap:anywhere}</style><main>",
              "<h1>zSentinel · VPS schijfruimtewerkbank</h1>",
              "<p><strong>Alleen-lezen. Geen opruimactie uitgevoerd of toegestaan.</strong></p>"]
+    from zsentinel_disk_unlinked_open import public_summary as unlinked_public_summary
     brief = operator_action_brief(
         report["mount_capacity"], report["coverage"],
-        ( __import__("zsentinel_disk_unlinked_open", fromlist=["public_summary"]).public_summary(
-            report["unlinked_open_files_observation"])
-          if "unlinked_open_files_observation" in report else None))
+        (unlinked_public_summary(report["unlinked_open_files_observation"])
+         if "unlinked_open_files_observation" in report else None))
     lines += [
         "<article><h2>Wat nu?</h2><p>" + escape(brief["problem"]) +
         "</p><p>" + escape(brief["next_action"]) +
@@ -550,7 +550,7 @@ def public_summary_html(summary):
               '<p>' + escape(brief["next_action"]) + '</p>'
               '<p>' + escape(brief["status"]) + '</p></aside>')
     return (
-        '<section aria-label="VPS schijfruimtewerkbank">' + action
+        '<section aria-label="VPS schijfruimtewerkbank">' + action +
         '<h2>VPS · Schijfruimtewerkbank (privé)</h2>'
         '<p>Mount: ' + str(summary["mount_available_gib_observed"]) +
         ' GiB beschikbaar; ' +
