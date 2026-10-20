@@ -30,6 +30,8 @@ def assignment_observation(job):
                 "worker_resumed_verified": False}
     marker = object()
     runner = job.get("runner_id", marker)
+    if type(runner) is bool:
+        raise ValueError("boolean is not a GitHub runner ID")
     if runner is marker:
         stage = "runner_assignment_missing_from_source"
         complete = False
