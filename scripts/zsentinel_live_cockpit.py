@@ -227,6 +227,8 @@ def main():
                         help="explicit workspace for bounded, read-only disk hotspot scan")
     parser.add_argument("--disk-hotspots-output", type=Path,
                         help="create-only PRIVATE .html containing filenames; never stdout")
+    parser.add_argument("--disk-inspect-unlinked-files", action="store_true",
+                        help="opt-in private deleted-but-open files, bounded /proc, no cleanup")
     parser.add_argument("--disk-inspect-open-handles", action="store_true",
                         help="optional private bounded /proc fd metadata; no PID or writer proof")
     parser.add_argument("--disk-hotspots-previous", type=Path,
@@ -251,6 +253,8 @@ def main():
     try:
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk hotspot scan requires both root and private output")
+        if args.disk_inspect_unlinked_files and args.disk_hotspots_root is None:
+            raise ValueError("--disk-inspect-unlinked-files requires a private disk scan")
         if args.disk_inspect_open_handles and args.disk_hotspots_root is None:
             raise ValueError("--disk-inspect-open-handles requires a private disk scan")
         if args.disk_hotspots_previous is not None and args.disk_hotspots_root is None:
@@ -321,6 +325,9 @@ def main():
             if args.disk_inspect_open_handles:
                 from zsentinel_disk_hotspots import attach_open_references
                 attach_open_references(disk_report, args.disk_hotspots_root)
+            if args.disk_inspect_unlinked_files:
+                from zsentinel_disk_hotspots import attach_unlinked_open_files
+                attach_unlinked_open_files(disk_report, args.disk_hotspots_root)
             if args.disk_hotspots_previous is not None:
                 from zsentinel_disk_trend import compare, load_previous
                 disk_report["disk_growth_comparison"] = compare(
