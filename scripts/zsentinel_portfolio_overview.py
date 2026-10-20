@@ -677,6 +677,8 @@ def main():
     parser = argparse.ArgumentParser(description="Read-only complete zSentinel portfolio and bounded GitHub window")
     parser.add_argument("--database", type=Path,
                         help="existing zCloud SQLite file (never created or modified)")
+    parser.add_argument("--queue-previous", type=Path,
+                        help="private 0600 previous queue snapshot (same SQLite file, max 72h); issue #677")
     parser.add_argument("--github-only", action="store_true",
                         help="explicitly run without SQLite: queue/claim status UNKNOWN; only GitHub/optional Notion sources")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
@@ -752,6 +754,8 @@ def main():
                 raise ValueError("--github-only requires omitting --database")
             if args.observe_vps_capacity or args.observe_local_runner:
                 raise ValueError("--github-only cannot infer local VPS runtime process or capacity evidence")
+            if args.queue_previous is not None:
+                raise ValueError("--queue-previous needs an actual read-only SQLite queue")
         elif args.database is None:
             raise ValueError("--database is required unless --github-only was chosen")
         if args.pin_issue and args.skip_github_issues:
@@ -838,6 +842,17 @@ def main():
             raise ValueError("branch scope/filter/strict mode require --inspect-unpr-branches")
         queue = (explicitly_unobserved_queue() if args.github_only
                  else observe(args.database))
+        queue_churn = None
+        queue_churn_error = None
+        if args.queue_previous is not None:
+            try:
+                from zsentinel_disk_trend import load_previous
+                from zsentinel_queue_churn import compare as compare_claim_attempts
+                queue_churn = compare_claim_attempts(load_previous(args.queue_previous), queue)
+            except (OSError, ValueError, json.JSONDecodeError):
+                # This optional comparison never blocks GitHub/Notion/queue
+                # observations. Do not invent absence of churn on failure.
+                queue_churn_error = "private_previous_unavailable_or_source_mismatch"
         bundle, provenance = assemble(
             registry, selected, args.job, args.database,
             token=os.environ.get("GITHUB_TOKEN"),
@@ -871,6 +886,14 @@ def main():
             from zsentinel_local_runner_observer import observe_local_runner
             local_runner = observe_local_runner()
             decision["local_runner_observation"] = local_runner
+        if queue_churn is not None:
+            from zsentinel_queue_churn import public_summary as churn_public
+            decision["queue_claim_churn"] = churn_public(queue_churn)
+        elif queue_churn_error is not None:
+            decision["queue_claim_churn"] = {
+                "coverage": "unavailable", "reason": queue_churn_error,
+                "automatic_retry_authorized": False,
+                "lease_release_authorized": False, "claim_failure_proven": False}
         github_coverage = verified_source_coverage(selected, provenance, bundle)
         summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
         runner_cross_source = None
@@ -996,6 +1019,12 @@ def main():
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
                                       pr_desk=pr_desk, unblock=unblock)
+            if queue_churn is not None:
+                from zsentinel_queue_churn import public_html as claim_churn_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible portfolio HTML for queue trend")
+                rendered = rendered.replace("<main>", "<main>" +
+                                            claim_churn_html(queue_churn), 1)
             if "disk_pressure_private_report" in decision:
                 from zsentinel_disk_hotspots import public_summary_html
                 if rendered.count("<main>") != 1:
@@ -1030,6 +1059,14 @@ def main():
         elif args.format == "handoff":
             from zsentinel_unblock_board import human_handoff_markdown
             rendered = human_handoff_markdown(unblock)
+            if queue_churn is not None:
+                from zsentinel_queue_churn import human_text as queue_churn_text
+                rendered = ("## zSentinel · claimpogingen/lease-eigenaar #677\n\n" +
+                            queue_churn_text(queue_churn) + "\n\n" + rendered)
+            elif queue_churn_error is not None:
+                rendered = ("## zSentinel · queue-vergelijking onzeker\n\n"
+                            "Oude bron geweigerd; retries of afwezigheid niet bewezen.\n\n" +
+                            rendered)
             if runner_cross_source is not None:
                 from zsentinel_runner_cross_source import as_text as runner_cross_text
                 rendered = ("## zSentinel · exacte runner en lokale VPS-observatie\n\n" +
@@ -1045,6 +1082,7 @@ def main():
                 "blocker_continuity": continuity,
                 "local_runner_observation": local_runner,
                 "runner_cross_source": runner_cross_source,
+                "queue_claim_churn": decision.get("queue_claim_churn"),
                 "existing_pr_delivery": (pr_desk if pr_desk is not None else
                     {"coverage": "not_requested", "merge_authorized": False}),
                 "recent_unpr_branch_ownership": (
@@ -1058,6 +1096,11 @@ def main():
             if runner_cross_source is not None:
                 from zsentinel_runner_cross_source import as_text as runner_cross_text
                 lines.append(runner_cross_text(runner_cross_source))
+            if queue_churn is not None:
+                from zsentinel_queue_churn import human_text as queue_churn_text
+                lines.append(queue_churn_text(queue_churn))
+            elif queue_churn_error is not None:
+                lines.append("QUEUE #677: vorige privébron niet leesbaar of niet vergelijkbaar; status onbekend.")
             if args.github_only:
                 lines.append("QUEUE: NIET WAARGENOMEN (--github-only); geen nulmeting, vrijgave of leasebewijs.")
             if provenance.get("pinned_requested"):
