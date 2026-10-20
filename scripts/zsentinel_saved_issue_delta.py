@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from html import escape
+import os
 from pathlib import Path
+import secrets
+import stat
 import sys
 from zipfile import BadZipFile
 
 from zsentinel_saved_issue_archive import canonical_issue, read_issue_dossier
-from zsentinel_saved_gate_dossier import _save_private_handoff
+from zsentinel_saved_gate_dossier import _open_private_extract_parent, _save_private_handoff
 
 MAX_DIFF_BYTES = 48 * 1024
 
@@ -156,6 +160,124 @@ def human_markdown(change):
     return rendered
 
 
+
+def human_html(change):
+    """Script-free private operator view of historical link changes."""
+    e = lambda x: escape(str(x), quote=True)
+    def links(values):
+        if not values:
+            return "<li>No references observed in this source selection.</li>"
+        return "".join(
+            '<li><a href="' + e(value) +
+            '" target="_blank" rel="noopener noreferrer">' +
+            e(value) + '</a></li>'
+            for value in values)
+    altered = "".join(
+        '<li><a href="' + e(url) +
+        '" target="_blank" rel="noopener noreferrer">' + e(url) +
+        '</a><br><small>' + e(", ".join(fields)) + '</small></li>'
+        for url, fields in change["changed"]
+    ) or "<li>No comparable source differences observed.</li>"
+    result = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; script-src 'none'; img-src 'none'; form-action 'none'; base-uri 'none'">
+<title>zSentinel - Historisch issueverschil</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif}
+body{margin:0;background:#101d2e;color:#f1f7ff;line-height:1.6}
+main{max-width:980px;margin:auto;padding:clamp(16px,4vw,42px)}
+a{color:#96dcff;overflow-wrap:anywhere}a:focus-visible{outline:3px solid #f5dc81}
+section,aside{border:1px solid #597890;background:#1b3048;border-radius:12px;padding:15px 20px;margin:15px 0}
+aside{border-color:#e2ba72}li{margin:10px 0;overflow-wrap:anywhere}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,245px),1fr));gap:14px}
+strong.value{font-size:1.5rem}code{overflow-wrap:anywhere}
+@media print{body,section,aside{color:black;background:white}}
+</style></head><body><main><h1>Issue → bestaande PR · bronverschil</h1>
+<aside><strong>Historische privébronnen; NIET live.</strong> Afwezigheid in
+een steekproef bewijst geen issue-sluiting, PR-merge, vrij eigenaarschap,
+geslaagde CI, review of herstel. Controleer huidige GitHub/Notion-bronnen
+voordat een eigenaar werk claimt of merge-/release-acties onderneemt.</aside>
+<p><a href="""" + e(change["url"]) + """" target="_blank"
+rel="noopener noreferrer">Origineel GitHub-issue</a></p>
+<section><h2>Oorspronkelijke bron</h2>
+<p>Ouder: """ + e(change["old_time"]) + """ · <code>""" +
+e(change["old_manifest"]) + """</code></p><p>Nieuwer: """ +
+e(change["new_time"]) + """ · <code>""" +
+e(change["new_manifest"]) + """</code></p><p>Ontbrekende batches:
+""" + str(change["old_missing_batches"]) + " → " +
+str(change["new_missing_batches"]) + """ (beperkte snapshots)</p></section>
+<div class="cards"><section><strong class="value">""" +
+str(len(change["first_seen"])) + """</strong><p>Nieuw waargenomen PR-links
+in de latere bron, niet bewezen nieuw geopend.</p></section>
+<section><strong class="value">""" +
+str(len(change["no_longer_seen"])) + """</strong><p>Niet meer gezien;
+<b>NIET bewezen afgerond</b>.</p></section>
+<section><strong class="value">""" +
+str(len(change["changed"])) + """</strong><p>Gewijzigde historische
+PR-gegevens, geen actuele checkstatus.</p></section></div>
+<section><h2>Nieuw in steekproef</h2><ol>""" +
+links(change["first_seen"]) + """</ol></section>
+<section><h2>Verdwenen uit steekproef — NIET opgelost</h2><ol>""" +
+links(change["no_longer_seen"]) + """</ol></section>
+<section><h2>Brongegevens veranderd</h2><ol>""" +
+altered + """</ol></section>
+<footer>Geen fetch, workerclaim, CI-dispatch, PR-merge of deploy door dit
+statische dossier. Verplichte toestemming, reviewers en CI blijven gelden.
+</footer></main></body></html>"""
+    if len(result.encode("utf-8")) > MAX_DIFF_BYTES:
+        raise ValueError("Private HTML issue handoff exceeds size budget")
+    return result
+
+
+def save_private_html(destination: Path, body: str):
+    """Create an owner-only file without replacing an existing handoff."""
+    if not destination.name.endswith(".html") or destination.name in (".", ".."):
+        raise ValueError("Select a new private .html output")
+    data = body.encode("utf-8")
+    if not data or len(data) > MAX_DIFF_BYTES:
+        raise ValueError("Invalid private HTML handoff size")
+    parentfd = _open_private_extract_parent(destination.parent)
+    stage = ".zsentinel-issue-delta-" + secrets.token_hex(12) + ".tmp"
+    stagefd = None
+    identity = None
+    try:
+        stagefd = os.open(stage, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                          os.O_NOFOLLOW, 0o600, dir_fd=parentfd)
+        opened = os.fstat(stagefd)
+        identity = (opened.st_dev, opened.st_ino)
+        if (not stat.S_ISREG(opened.st_mode) or
+                opened.st_uid != os.geteuid() or
+                stat.S_IMODE(opened.st_mode) & 0o077):
+            raise ValueError("Unable to create private handoff")
+        pending = memoryview(data)
+        while pending:
+            count = os.write(stagefd, pending)
+            if count <= 0:
+                raise OSError("Private HTML output did not progress")
+            pending = pending[count:]
+        os.fsync(stagefd)
+        check = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
+        if (not stat.S_ISREG(check.st_mode)
+                or (check.st_dev, check.st_ino) != identity):
+            raise ValueError("Staged handoff identity changed")
+        os.link(stage, destination.name, src_dir_fd=parentfd,
+                dst_dir_fd=parentfd, follow_symlinks=False)
+        os.fsync(parentfd)
+    finally:
+        if stagefd is not None:
+            os.close(stagefd)
+        if identity is not None:
+            try:
+                existing = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
+                if (existing.st_dev, existing.st_ino) == identity:
+                    os.unlink(stage, dir_fd=parentfd)
+                    os.fsync(parentfd)
+            except OSError:
+                pass
+        os.close(parentfd)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous", required=True, type=Path,
@@ -164,15 +286,19 @@ def main(argv=None):
                         help="Newer private issue continuity ZIP")
     parser.add_argument("--issue", required=True,
                         help="Canonical exact source issue URL")
+    parser.add_argument("--format", choices=("markdown", "html"),
+                        default="markdown")
     parser.add_argument("--output", type=Path, required=True,
-                        help="New private human handoff .md; never overwrite")
+                        help="New owner-only .md or .html handoff; never overwrite")
     args = parser.parse_args(argv)
     try:
         previous = read_issue_dossier(args.previous)
         current = read_issue_dossier(args.current)
         change = issue_difference(previous, current, args.issue)
-        handoff = human_markdown(change)
-        _save_private_handoff(args.output, handoff)
+        if args.format == "html":
+            save_private_html(args.output, human_html(change))
+        else:
+            _save_private_handoff(args.output, human_markdown(change))
         print("Private source-bound issue difference saved: " + args.issue)
         print("Existing PR references newly sampled: " +
               str(len(change["first_seen"])))
