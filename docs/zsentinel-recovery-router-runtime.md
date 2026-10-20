@@ -2873,3 +2873,52 @@ vond voor `cloud` twee worker-slotvoorbeelden en één expliciete
 eigenaar-followupkandidaat, zonder workerherstel- of productbewijs.
 **De claim-epoch blijft onbekend; geen claim, pauze, restart, retry,
 dispatch, release of productie-actie is toegestaan door deze functie.**
+
+
+## VPS SQLite/WAL disk owner workbench (20 oktober 2026)
+
+De optionele SQLite-footprint werkbank voor schijfruimteproblemen leest
+alleen de eerste 100 SQLite-headerbytes (met O_NOFOLLOW en bestandsidentiteit)
+en stat-only metadata van WAL/SHM op dezelfde mount. Nooit SQL, VACUUM,
+checkpoint, delete, truncate, claims, runner of CI-mutaties.
+
+Voor een enkele DB; kies zelf een al bestaande prive rapportdirectory en
+een NIEUW doelbestand (create-only, 0600):
+
+    python3 scripts/zsentinel_sqlite_footprint.py \
+      --root /home/ubuntu/zennay-cloud \
+      --sqlite history.db \
+      --format html \
+      --output /path/to/existing/private/sqlite-owner-20261020.html
+
+Dezelfde bron is gekoppeld aan de bestaande schijfruimtescan:
+
+    python3 scripts/zsentinel_disk_hotspots.py \
+      --root /home/ubuntu/zennay-cloud \
+      --sqlite history.db \
+      --max-entries 1000 --max-depth 2 --max-seconds 2 \
+      --format html \
+      --output /path/to/existing/private/disk-owner-20261020.html
+
+Ook bereikbaar via zowel de portfoliocockpit als de live cockpit, met
+--disk-hotspots-root, --disk-hotspots-output en herhaalbare --disk-sqlite.
+De private HTML bevat file-labels en metadata; de publieke samenvatting
+alleen het aantal bronwaargenomen databases en de harde
+reclaimable_bytes_verified=false, ZONDER namen of private paden.
+JSON en Markdown zijn uitsluitend prive rapportformaten, niet voor
+openbare dashboards of GitHub artifacts.
+
+SQLite-header-pagecount/freelist tonen hoogstens het laatst zichtbare
+checkpoint. Een groeiende WAL kan nieuwere logische data bevatten.
+Slechts bij ongewijzigde device/inode/size/mtime tijdens de read,
+consistente header-version en paginagrootte = bestandsomvang verschijnt
+een indicatieve interne page-freelist (nooit diskruimtegarantie).
+De eigenaar controleert actieve schrijvers, back-ups, retentie,
+diskcapaciteit, exclusieve maintenance en productieleases alvorens een
+eventueel apart geautoriseerd checkpoint/compactie/cleanup te plannen.
+Geen actie of veilig op te ruimen bytes worden door deze tool afgeleid.
+
+Nieuwe bron van PR #1563 moet de oorspronkelijke onafhankelijke review,
+exact-head verplichte CI en protected-main eigenaar-releasepoort
+doorlopen. Er is geen runtime deployment of zelfherstellende runner.
+
