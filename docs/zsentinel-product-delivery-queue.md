@@ -372,3 +372,21 @@ wijziging staat hierdoor automatisch op main of productie. Verplichte
 exact-head CI, onafhankelijke review, bestaande branchregels en geautoriseerde,
 geserialiseerde VPS-release blijven vereist. Geen QA-tests geschreven of
 gedraaid; geen live taak/worker/runner/SQLite/service gewijzigd.
+
+### 20 oktober · Cooldown- en intervalwijzigingen zonder reallocatie
+
+Een beheerder kan in dezelfde geautoriseerde `/api/dynamic-workers`-route
+een bestaande provider-cooldown, heartbeat-, DOM- of schedulerinterval aanpassen
+zonder daarmee de producttaakverdeling te willen herschikken. De
+configuratie-actie roept daarom de slotreconciler **alleen aan wanneer een
+ChatGPT- of Claude-aantal echt verandert**. Bij ongewijzigde capaciteit blijft
+de actuele queue/browserverdeling intact en wordt de read-only bestaande
+allocatie gebruikt voor de respons. De respons rapporteert expliciet
+`capacity_changed` en `reconciled`; beide zijn `false` voor een timing-only
+update. Een blokkade op de resize van bezette slots hindert zo niet een
+onafhankelijke veilige timingcorrectie. Het werkelijke boventotaal blijft wel
+voor iedere configuratieaanvraag geldig.
+
+Dit beschermt al begonnen productwerk; het is geen bewijs van fysieke browser-
+of releasegezondheid. Echte workeropdrachten en planning blijven onder de
+bestaande scheduler, eigenaarsclaims en productie-autorisatie.
