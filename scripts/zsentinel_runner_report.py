@@ -1100,6 +1100,114 @@ def render_private_json_handoff(data):
     return result
 
 
+
+def render_private_immediate_handoff(data):
+    """Single-observation or T0/T1 owner handoff from the same JSON decision.
+
+    No historical 3+ sample requirement for an urgent human-owner message.
+    Preserve UNKNOWN assignment and source coverage rather than invent recovery.
+    """
+    import json
+    evidence = json.loads(render_private_json_handoff(data))
+    if evidence["source"] not in {"local-read-only-current", "private-offline-pair"}:
+        raise ValueError("Immediate handoff requires current or saved T0/T1 evidence")
+    source = evidence["source"]
+    window = evidence["window"]
+    observed = evidence["evidence"]
+    origin = ("Live eenmalig gelezen (alleen lokale host/systemd-bron)"
+              if source == "local-read-only-current" else
+              "HISTORISCHE T0/T1-bonnen (niet opnieuw live bevestigd)")
+    coverage = ("Volledig binnen de lokale runnerlimiet"
+                if observed["runner_inventory_complete"] else
+                "GEDEELTELIJK OF ONBEKEND")
+    readings = observed["capacity"]
+    rows = [
+        "# zSentinel | privé onmiddellijke runner-eigenaaroverdracht",
+        "",
+        "Bron: " + origin + ".",
+        "Laatste bronmoment: " + _handoff_text(window.get("last_utc")) + ".",
+        "Waarnemingen: " + str(window["observations"]) + "; "
+        "vergelijkingen: " + str(window["comparison_count"]) + ".",
+        "**GEEN GECONFIRMEERD GITHUB-HERSTEL, CLAIMVRIJGAVE OF PRODUCTIEDEPLOY.**",
+        "",
+        "## Kort eigenaarwerk",
+    ]
+    for item in evidence["owner_actions"][:3]:
+        rows += [
+            "### " + _handoff_text(item["problem"]),
+            "Probleem en bevoegde vervolgactie: "
+            + _handoff_text(item["owner_action"], 500),
+            "Status: " + _handoff_text(item["status"]) + ".",
+            "",
+        ]
+    rows += [
+        "## Brondekking en VPS-capaciteit",
+        "- Runnerinventaris: " + coverage + ".",
+        "- Capaciteit: " + ("volledig" if observed["capacity_complete"] else
+                           "GEDEELTELIJK / ONBEKEND") + ".",
+    ]
+    service_counts = observed["runner_service_counts"]
+    if service_counts is None:
+        rows.append("- Servicetellingen: ONBEKEND (geen lege bron als nul geïnterpreteerd).")
+    else:
+        rows.append("- Servicetellingen binnen bronlimiet: " + ", ".join(
+            key + "=" + str(service_counts[key])
+            for key in ("active", "failed", "inactive", "unknown")
+        ) + ".")
+    for field, label, suffix in (
+        ("host_load", "Load", ""), ("cores", "CPU-kernen", ""),
+        ("memory_available_gib", "RAM beschikbaar", " GiB"),
+        ("swap_used_percent", "Swap gebruikt", "%"),
+        ("disk_unavailable_percent", "Root niet beschikbaar", "%"),
+        ("root_available_gib", "Root beschikbaar", " GiB"),
+        ("root_inode_available_percent", "Root-inodes vrij", "%"),
+    ):
+        rows.append("- " + label + ": " +
+                    _handoff_number(readings.get(field), suffix) + ".")
+    rows += ["", "## Waargenomen runner-services (alleen systemd)", ""]
+    services = observed["runner_services"]
+    if services is None:
+        rows.append("- Geen verifieerbare bron; actuele runnerstatus ONBEKEND.")
+    elif not services:
+        rows.append("- Geen runner-service binnen deze bron gezien; geen bewijs dat GitHub gezond is.")
+    else:
+        for entry in services[:20]:
+            rows.append("- " + _handoff_text(entry["unit"]) + ": "
+                        + _handoff_text(entry["systemd_state"])
+                        + "; GitHub-jobtoewijzing NIET BEWEZEN.")
+    steps = evidence["observation_steps"]
+    if steps:
+        rows += ["", "## T0/T1 bronverschillen"]
+        for step in steps[:11]:
+            rows.append("- " + _handoff_text(step["from_utc"]) + " → "
+                        + _handoff_text(step["to_utc"])
+                        + "; " + str(step["observed_transition_count"])
+                        + " overgang(en), bron "
+                        + ("volledig" if step["source_complete"] else "ONZEKER")
+                        + ", zelfde boot "
+                        + ("ja" if step["same_boot_verified"] else "niet bevestigd") + ".")
+        for change in evidence["observed_transitions"][:40]:
+            rows.append("  - " + _handoff_text(change["unit"]) + ": "
+                        + _handoff_text(change["change"]) + "; geen herstelbewijs.")
+        if evidence["transition_items_omitted"]:
+            rows.append("- Weggelaten oudere overgangen: "
+                        + str(evidence["transition_items_omitted"]) + ".")
+    rows += [
+        "",
+        "## Veiligheid en vervolgstap",
+        "- Eigenaar controleert echte GitHub-run/toewijzing en claim apart.",
+        "- Alle claim-, serviceherstart-, workflow-, merge- en deployautorisaties: NEE.",
+        "- Actieve systemd-service is geen bewijs van geslaagde job of modeltraining.",
+        "- Bronvenster is niet bewijs van onafgebroken runner- of leasecontinuïteit.",
+        "- Geen actie door deze overdracht uitgevoerd.",
+        "",
+    ]
+    result = "\\n".join(rows)
+    if len(result.encode("utf-8")) > 128 * 1024:
+        raise ValueError("Private immediate handoff exceeds artifact limit")
+    return result
+
+
 def save_private(path, markup, extension=".html"):
     target = Path(path)
     if extension not in {".html", ".md", ".json"} or (
@@ -1134,7 +1242,7 @@ def main():
     parser = argparse.ArgumentParser(description="Private one-shot zSentinel runner incident workbench")
     parser.add_argument("--output", required=True, help="NEW private 0600 output (never overwritten)")
     parser.add_argument("--format", choices=("html", "markdown", "json"), default="html",
-                        help="Offline timeline may be exported as a private Markdown owner handoff")
+                        help="Private HTML, JSON or Markdown owner handoff from current, T0/T1 or offline timeline")
     parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
     parser.add_argument("--t0", help="Offline replay: first owner-private JSON receipt")
     parser.add_argument("--t1", help="Offline replay: later owner-private JSON receipt")
@@ -1146,8 +1254,6 @@ def main():
         parser.error("Choose one: --t0 and --t1, --previous, or --timeline")
     if args.timeline and not 3 <= len(args.timeline) <= 12:
         parser.error("--timeline requires 3–12 chronological private receipts")
-    if args.format == "markdown" and not args.timeline:
-        parser.error("--format markdown requires offline --timeline; never produce guessed live evidence")
     try:
         if args.timeline:
             data = offline_timeline_report(args.timeline)
@@ -1164,7 +1270,8 @@ def main():
             markup = render_private_json_handoff(data)
             save_private(args.output, markup, extension=".json")
         elif args.format == "markdown":
-            markup = render_private_handoff(data)
+            markup = (render_private_handoff(data) if args.timeline else
+                      render_private_immediate_handoff(data))
             save_private(args.output, markup, extension=".md")
         else:
             markup = render(data)
