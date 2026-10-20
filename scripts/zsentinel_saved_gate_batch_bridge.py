@@ -152,7 +152,7 @@ def observed_time(value: str):
     return moment
 
 
-def combined_manifest(manifest: dict, raw: bytes, paths: list[Path]):
+def combined_manifest(manifest: dict, raw: bytes, paths: list[Path], *, allow_partial=False):
     selected, digest = canonical_manifest(manifest, raw)
     total = (len(selected) + 3) // 4
     if not 1 <= len(paths) <= 75:
@@ -225,12 +225,16 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path]):
                     raise ValueError("Malformed exact-head gate observation")
             sanitized[url] = {k: row[k] for k in GATE_FIELDS if k in row}
         indexed[idx] = sanitized
-    if set(indexed) != set(range(1, total + 1)):
-        raise ValueError("Some gate batches are absent: no complete import generated")
+    missing = sorted(set(range(1, total + 1)) - set(indexed))
+    if missing and not allow_partial:
+        raise ValueError("Saved review batches missing; explicitly allow partial observations")
     issue_map = {}
     for position, (_, _, _, ref) in enumerate(selected):
         url = ref["url"]
         idx = position // 4 + 1
+        if idx not in indexed:
+            # A missing batch is UNKNOWN, never represented as a passed PR.
+            continue
         gate = indexed[idx][url]
         for item in ref["observed_issue_refs"]:
             identity = item["issue"]
@@ -254,9 +258,13 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path]):
         "issues": list(issue_map.values()),
         "original_review_manifest_sha256": digest,
         "original_board_sha256": manifest["source_board_sha256"],
-        "observed_batch_count": total,
-        "missing_batch_count": 0,
-        "all_batches_observed_not_all_checks_required_verified": True,
+        "observed_batch_count": len(indexed),
+        "expected_batch_count": total,
+        "review_candidate_pr_count": len(selected),
+        "missing_batch_count": len(missing),
+        "missing_batch_indexes": missing,
+        "all_batches_observed_not_all_checks_required_verified": not missing,
+        "saved_receipts_not_required_checks_verified": True,
         "claim_authorized": False,
         "merge_authorized": False,
         "deploy_authorized": False,
@@ -269,11 +277,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-review", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, action="append", required=True)
+    parser.add_argument("--allow-partial", action="store_true",
+                        help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         review, raw = bounded_json(args.from_review)
-        result = combined_manifest(review, raw, args.receipt)
+        result = combined_manifest(review, raw, args.receipt,
+                                   allow_partial=args.allow_partial)
         rendered = (json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2) +
                     "\n").encode("utf-8")
         if len(rendered) > MAX_BYTES:
@@ -288,7 +299,10 @@ def main(argv=None):
         except BaseException:
             args.output.unlink(missing_ok=True)
             raise
-        print("Private browser-compatible gate batch bridge written; no action authorized.")
+        if result["missing_batch_count"]:
+            print("Private PARTIAL saved-gate bridge written: missing batch data UNKNOWN; no action authorized.")
+        else:
+            print("Private COMPLETE saved-gate bridge written: required CI/review still UNKNOWN.")
         return 0
     except (OSError, ValueError, UnicodeError, OverflowError, TypeError):
         print("Refused: invalid bounded source, incomplete/mismatched batches or output.",
