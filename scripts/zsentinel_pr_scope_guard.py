@@ -372,8 +372,12 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
         "cross_page_duplicate_prs_observed": duplicate_numbers,
         "inspected_prs": sum(pr["number"] != source["number"]
                               for pr in selected) if source is not None else len(selected),
-        "open_pr_page_may_be_truncated": len(before) == page_size,
-        "inspection_limit_reached": len(before) > limit,
+        # Only the final selected page controls an undiscovered next page;
+        # earlier intentionally full pages are normal in a contiguous scan.
+        "open_pr_page_may_be_truncated": bool(snapshots_before and
+                                              len(snapshots_before[-1]) == page_size),
+        "inspection_limit_reached": len(before) >= limit * page_count,
+        "requested_scan_max_prs": limit * page_count,
         "pr_file_lists_truncated": truncated_files,
         "open_pr_snapshot_stable": snapshot_stable,
         "pr_file_scope_sample_complete": complete,
@@ -636,6 +640,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "open_pr_window_end": (open_page - 1) * page_size + len(before),
         "earlier_pages_not_inspected": open_page > 1,
         "cross_page_duplicate_prs_observed": duplicate_numbers,
+        "requested_scan_max_prs": limit * page_count,
         "inspected_prs": len(chosen),
         "inspected_pr_heads": observed,
         "open_pr_issue_references_unverified": issue_links,
@@ -658,7 +663,10 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "unpaired_hidden_because_source_incomplete": not fully_sampled,
         "collision_cards_truncated": len(ordered) > MAX_CONFLICT_PAIRS,
         "pr_file_lists_truncated": suspicious_lists,
-        "open_pr_page_may_be_truncated": len(before) == page_size,
+        # Only the final selected page controls an undiscovered next page;
+        # earlier intentionally full pages are normal in a contiguous scan.
+        "open_pr_page_may_be_truncated": bool(snapshots_before and
+                                              len(snapshots_before[-1]) == page_size),
         "open_pr_snapshot_stable": stable,
         "pr_file_scope_sample_complete": fully_sampled,
         "source_result": ("collisions_observed" if ordered else
