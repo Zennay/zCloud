@@ -176,6 +176,83 @@ def portfolio_html(selected, integrated, *, project=None):
             ''.join(cards) + '</div></section>')
 
 
+
+
+def portfolio_page_html(selected, integrated, *, project=None):
+    """One complete, fully offline project delivery page from saved receipts.
+
+    The selected project must occur in the fully validated source; no new
+    GitHub request, ownership claim, CI decision or worker dispatch is made.
+    """
+    oldest, latest, missing = _admit(selected, integrated)
+    projects = project_worklist(selected, integrated, project=project)
+    scoped = sum(p["source_prs_observed"] for p in projects)
+    e = lambda value: escape(str(value), quote=True)
+    source_digest = e(integrated["original_review_manifest_sha256"])
+    board_digest = e(integrated["original_board_sha256"])
+    label = e(project) if project is not None else "Geobserveerde portfolio"
+    cards = portfolio_html(selected, integrated, project=project)
+    html = """<!doctype html>
+<html lang="nl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+ content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'">
+<title>zSentinel — offline project PR-dossier</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,sans-serif}
+*{box-sizing:border-box}body{margin:0;background:#111e30;color:#f2f8ff;line-height:1.55}
+main{max-width:1150px;margin:auto;padding:clamp(15px,4vw,38px)}
+h1{font-size:clamp(1.7rem,4vw,2.6rem);line-height:1.2}
+a{color:#94d8ff;text-underline-offset:3px}
+a:focus-visible,summary:focus-visible{outline:3px solid #fbd675;outline-offset:4px}
+aside{border-left:4px solid #e9bb61;background:#2b2930;padding:14px 20px;border-radius:8px}
+.provenance{margin:22px 0;padding:15px;background:#172b41;border-radius:10px;overflow-wrap:anywhere}
+.provenance code{overflow-wrap:anywhere}
+.portfolio-overview{margin-top:22px}
+.portfolio-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,390px),1fr));gap:16px}
+.portfolio-project{border:1px solid #607e92;background:#1b334c;padding:18px;border-radius:12px}
+.portfolio-project h3{font-size:1.1rem;margin:0 0 8px}
+.portfolio-project ol{padding-left:24px}
+.portfolio-project li{margin:12px 0;overflow-wrap:anywhere}
+.portfolio-project summary{cursor:pointer;padding:7px 2px;font-weight:650}
+.portfolio-project small{color:#d3e1ed}
+.portfolio-overview nav{margin:14px 0;padding:12px;background:#1b334c;border-radius:8px}
+.portfolio-overview nav a{display:inline-block;margin:3px 7px}
+article:target{outline:3px solid #fbd675;scroll-margin:20px}
+footer{font-size:.9rem}
+@media print{body{background:white;color:black}
+aside,.portfolio-project,.provenance{background:white;color:black;border-color:#444}
+a{color:#034f80}details{display:block}}
+</style></head><body><main>
+<header><p>zCloud / zSentinel / opgeslagen bronbewijs</p>
+<h1>Projectdossier · """ + label + """</h1>
+<p>Een bestaande PR-werkrij vanuit één strikt begrensde, privé opgeslagen
+GitHub-observatie. Selectie en links zijn geen actueel releasebewijs.</p>
+</header>
+<aside><strong>Geen automatische uitvoering of mergevrijgave.</strong>
+Oorspronkelijke CI, reviewers, actuele claims, main-branch-regels en
+productie-autorisatie moeten afzonderlijk live gecontroleerd worden.
+Niet waargenomen PRs of projecten zijn UNKNOWN, nooit opgelost of vrij.</aside>
+<section class="provenance" aria-label="Herkomst">
+<h2>Vastgepinde bron</h2>
+<p>Reviewmanifest SHA256: <code>""" + source_digest + """</code><br>
+Oorspronkelijk board SHA256: <code>""" + board_digest + """</code></p>
+<p>Broninterval UTC: """ + e(oldest.isoformat()) + " — " + e(latest.isoformat()) + """<br>
+Batches: """ + str(integrated["observed_batch_count"]) + "/" + str(integrated["expected_batch_count"]) + """.
+Niet waargenomen batches: """ + e(", ".join(map(str, sorted(missing))) or "geen") + """.
+Getoonde PRs: """ + str(scoped) + " van " + str(len(selected)) + """ uit
+de oorspronkelijke begrensde PR-bron.</p>
+</section>
+""" + cards + """
+<footer><p>Dit bestand blijft lokaal, gebruikt geen scripts, externe
+lettertypes, API's, persistent browsergeheugen of automatische verzending.
+Alleen vrijwillig openen van de originele GitHub-links navigeert extern.</p>
+</footer></main></body></html>"""
+    if len(html.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Offline project dossier exceeds one MiB")
+    return html
+
+
 def portfolio_csv(selected, integrated, *, project=None):
     """One compact Excel-friendly human triage row per observed project."""
     projects = project_worklist(selected, integrated, project=project)
