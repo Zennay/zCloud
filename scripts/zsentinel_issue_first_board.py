@@ -10,6 +10,7 @@ import hashlib
 from urllib.parse import quote
 import html
 import json
+import re
 import time
 
 import zsentinel_merge_first_board as board
@@ -26,6 +27,39 @@ TARGET_CANDIDATES_PER_PAGE = 20
 MAX_TARGET_PAGES = 50
 
 
+QA_ONLY_LABELS = frozenset({
+    "qa", "qa-only", "qa-validation", "quality-validation",
+    "regression", "tests-only", "test-only",
+})
+QA_BRANCH_PREFIXES = ("qa/", "test/", "tests/", "quality-validation/", "regression/")
+
+
+def explicit_qa_only_pr(item):
+    """Do not route QA-only PRs into either existing-product delivery path."""
+    title = item.get("title")
+    head = item.get("head")
+    labels = item.get("labels")
+    if (type(title) is not str or not isinstance(head, dict)
+            or not isinstance(head.get("ref"), str)
+            or not isinstance(labels, list)):
+        # Incomplete metadata is not a free/open product assignment.
+        return True
+    lowered = title.strip().casefold()
+    prefix = re.match(
+        r"^(?:\\[?p[0-3]\\]?[\\s:—-]*)?"
+        r"(?:qa|tests?|regression|quality[ -]validation)"
+        r"(?=\\b|\\(|:|-)", lowered)
+    marked = any(
+        isinstance(label, dict)
+        and isinstance(label.get("name"), str)
+        and label["name"].strip().casefold() in QA_ONLY_LABELS
+        for label in labels[:40])
+    return bool(prefix or marked or
+                head["ref"].casefold().startswith(QA_BRANCH_PREFIXES) or
+                lowered.startswith(("chore(qa)", "docs(qa)", "ci(qa)")) or
+                "quality-validation" in lowered)
+
+
 def eligible_pr(item):
     if not isinstance(item, dict):
         raise ValueError("invalid PR item")
@@ -37,12 +71,10 @@ def eligible_pr(item):
             or not isinstance(base, dict)):
         raise ValueError("invalid PR source fields")
     lowered = title.strip().casefold()
-    # Drafts are unfinished *existing* product work, never merge permission.
-    # Include them in discovery so a new duplicate PR is not encouraged.
+    # Keep draft product PRs visible, but exclude explicit QA-only work
+    # consistently for ordinary and targeted issue discovery.
     if (item.get("state") != "open" or type(item.get("draft")) is not bool
-            or base.get("ref") != "main"
-            or lowered.startswith(("test(", "test:", "qa(", "qa:", "chore(qa)"))
-            or "quality-validation" in lowered):
+            or base.get("ref") != "main" or explicit_qa_only_pr(item)):
         return None
     rank = (0 if lowered.startswith(("p0", "fix:", "fix("))
             else 1 if lowered.startswith(("p1", "feat:", "feat(")) else 2)
