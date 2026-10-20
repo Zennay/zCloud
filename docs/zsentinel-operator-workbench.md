@@ -2072,3 +2072,28 @@ worker, has its exact-head mandatory CI complete, has an independent review,
 was merged on main or is deployed. Operators must verify those directly in
 GitHub/Notion and satisfy all existing gates **before** merging or assigning
 work. No QA/regression suite was created or run.
+
+
+### Direct issue-to-existing-PR desk inside the private HTML dossier
+
+The already generated `project-dossier.html` inside the source-pinned
+private ZIP now includes an **Issue naar bestaande PR · merge eerst** section,
+before the ordinary project-by-project queue. This lets operators start from
+a historically observed issue and open every displayed matching existing PR,
+instead of opening another duplicate branch. It works without JavaScript,
+network access, browser storage or extra permissions and uses only validated
+original GitHub links from the same packaged evidence.
+
+Issues appear by the highest sampled priority among their associated PRs;
+each issue groups up to four original PR links and their observed primary
+blocker. The view is bounded to 60 issue groups and explicitly reports
+hidden source items, preserving the existing one-MiB dossier budget.
+An issue absent from this section is **not resolved**: it may have no PR
+reference in the sampled source or be outside the discovery window. A PR
+present in the section is not necessarily open, unclaimed, CI-passing,
+approved, main-merged or deployed. Do not treat a historical link as merge
+permission. Review required source/owner/CI/security/production gates remain.
+
+No QA/regression suite was written or run; implementation stays in the
+existing zSentinel PR and does not modify the production dashboard or live
+server.
