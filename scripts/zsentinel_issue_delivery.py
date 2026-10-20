@@ -201,8 +201,16 @@ def attach_notion_work_visibility(board, observed):
             or board.get("claims_taken") is not False
             or board.get("writes_performed") is not False
             or not isinstance(observed, dict)
-            or observed.get("source") != "notion_readonly_data_source_pages"
-            or observed.get("coverage") not in ("incomplete", "current_pages_only")
+            or observed.get("source") not in (
+                "notion_readonly_data_source_pages",
+                "user_supplied_notion_connector_export_unverified_origin")
+            or observed.get("coverage") not in (
+                "incomplete", "current_pages_only",
+                "saved_single_page_not_live_current_claims_unknown")
+            or (observed.get("source") ==
+                "user_supplied_notion_connector_export_unverified_origin" and (
+                observed.get("origin_authenticity_verified") is not False or
+                observed.get("live_claim_ownership_verified") is not False))
             or observed.get("claim_scope_verified") is not False
             or observed.get("task_inventory_verified") is not False
             or observed.get("can_dispatch") is not False
@@ -226,7 +234,10 @@ def attach_notion_work_visibility(board, observed):
         # Zero Notion status hits is NOT a complete file-level claim read.
         found[project] = amount if amount is not None and amount > 0 else None
     board["notion_active_work_observation"] = {
-        "source": "notion_readonly_active_status_only",
+        "source": ("notion_saved_connector_query_unverified"
+                   if observed["source"] ==
+                   "user_supplied_notion_connector_export_unverified_origin"
+                   else "notion_readonly_active_status_only"),
         "observed_at_utc": stamp.isoformat(),
         "coverage": observed["coverage"],
         "active_project_min": found,
@@ -643,6 +654,8 @@ def main(argv=None):
                    help="optional read-only Notion active statuses; never file/lease owner proof")
     p.add_argument("--notion-data-source",
                    help="canonical Notion queue data source UUID for explicit source read")
+    p.add_argument("--notion-claims-export", type=Path,
+                   help="private saved connector snapshot; NOT current lease/ownership proof")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
     p.add_argument("--output", type=Path,
                    help="optional create-only private output (.html/.json/.md); no overwrites")
@@ -659,17 +672,26 @@ def main(argv=None):
             from zsentinel_workboard_queue import read_queue_overview, attach_queue_pressure
             attach_queue_pressure(board, read_queue_overview(args.queue_overview),
                                   registry)
-        if args.read_notion_claims:
+        if args.read_notion_claims and args.notion_claims_export is not None:
+            raise ValueError("select one Notion mode: live token or saved connector export")
+        if args.read_notion_claims or args.notion_claims_export is not None:
             from zsentinel_notion_claim_observer import (
                 observe_claims, project_labels,
             )
             mapping = project_labels(args.registry, registry)
             try:
-                notion_source = observe_claims(
-                    args.notion_data_source or os.getenv("NOTION_QUEUE_DATA_SOURCE_ID"),
-                    os.getenv("NOTION_TOKEN"), known_projects=mapping)
+                if args.notion_claims_export is not None:
+                    from zsentinel_notion_connector_snapshot import observe_saved_connector
+                    notion_source = observe_saved_connector(
+                        args.notion_claims_export,
+                        args.notion_data_source or os.getenv("NOTION_QUEUE_DATA_SOURCE_ID"),
+                        mapping)
+                else:
+                    notion_source = observe_claims(
+                        args.notion_data_source or os.getenv("NOTION_QUEUE_DATA_SOURCE_ID"),
+                        os.getenv("NOTION_TOKEN"), known_projects=mapping)
                 attach_notion_work_visibility(board, notion_source)
-            except (ValueError, OSError):
+            except (ValueError, OSError, TypeError):
                 # Optional external source failure blocks only Notion data,
                 # never the already-observed independent GitHub workboard.
                 # Do not echo provider errors or leaked request metadata.
@@ -683,7 +705,7 @@ def main(argv=None):
                     "can_dispatch": False, "writes_performed": False,
                 }
         elif args.notion_data_source:
-            raise ValueError("--notion-data-source requires --read-notion-claims")
+            raise ValueError("--notion-data-source requires --read-notion-claims or --notion-claims-export")
         if args.previous:
             board["progress_since_previous"] = progress_since(
                 board, load_private_prior(args.previous))
@@ -699,10 +721,12 @@ def main(argv=None):
         else:
             print(output)
         fully_read = all(x["status"] == "partial" for x in board["coverage"])
-        if args.read_notion_claims:
+        if args.read_notion_claims or args.notion_claims_export is not None:
             fully_read = (fully_read and
                           board["notion_active_work_observation"]["coverage"] ==
                           "current_pages_only")
+            # A manually saved source is not a complete authenticated live
+            # claim inventory even when its captured pagination is complete.
         return 0 if fully_read else 3
     except (ValueError, TypeError, KeyError, OSError, json.JSONDecodeError) as error:
         p.exit(2, "zSentinel herstelbord bron onvolledig/ongeldig: " +
