@@ -1899,3 +1899,18 @@ python3 scripts/zsentinel_pr_scope_portfolio.py \
 Voor verschillende projecten kan `--project` maximaal drie keer en `--gate-pr` maximaal vier keer worden opgegeven. Alle project- en repo-identiteiten moeten uit de canonieke registry komen; een expliciet oudere PR kan apart begrensd direct worden gelezen. Zonder `--inspect-current-pr-gates` of zonder `--output` wordt **geen werkopdracht gemaakt**. Het bestand wordt exclusief met eigenaarrechten en `0600` aangemaakt: geen overwrite, geen symlink-follow, geen stdout-dump. De uitvoer is begrensd tot 512 KiB. Gebruik voor machines de reeds bestaande private `--format csv` of read-only JSON, niet een nieuwe schedulerclaim.
 
 Het document noemt een SHA256-inhoudsbewijs zodat twee handoffs vergeleken kunnen worden; dit bewijst alleen **welke bronfeiten in deze eenmalige opname waren verwerkt**, geen identiteit van een reviewer of actualiteit van de API. Het is geen automatische opdracht tot merge of CI-rerun: een PR-eigenaar moet actuele HEAD, actieve claims, werkelijk verplichte CI, onafhankelijke review, protected-main en releasebevoegdheid apart controleren. Gedeelde bestandsnamen betekenen niet dat GitHub een mergeconflict heeft bevestigd. Beperkte 4-PR-selectie en oudere snapshots bewijzen niets over onbekende PRs of de tussenliggende periode. Alleen handmatig gecontroleerde owner-handoff; geen eigen releasegates toegevoegd.
+
+### Machineleesbare, maar niet-uitvoerende eigenaarshandoff
+
+Dezelfde CLI ondersteunt nu `--format workorders-json` met verplicht een **nieuw privé-outputbestand**, voor systemen die de handoff willen *lezen* zonder de veel grotere debug-board JSON te verwerken:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders-json --output /private/path/pr-owner-workorders.json
+```
+
+Het gestructureerde document heeft `schema=zsentinel-private-pr-workorders-v1`, afzonderlijke PR-kaarten met HEAD/base, blocker, exacte links, mogelijke overlapbestanden, bronwaarschuwingen, eerstvolgende eigenaar-veilige actie en een SHA256-provenancevingerafdruk van de waargenomen inhoud. Verplichte 0600/nieuw-pad en 512 KiB-outputlimiet gelden voor zowel Markdown als JSON. `claim_authorized`, `merge_authorized`, `deploy_authorized` en `writes_performed` zijn altijd `false` en hoeven geen server/API te benaderen om te worden afgeleid.
+
+**Bronnuance bij oudere PRs:** rechtstreeks met `--gate-pr` geselecteerde oude PRs kunnen gedeelde *bestandsnamen* hebben in hun directe bounded `sampled_file_overlaps_observed`-waarneming zonder in de recente `shown_collision_pairs`-lijst te staan. De eigenaarshandoff neemt nu ook deze werkelijk geobserveerde paden op, samen met de waarschuwing dat de volledige repository en ongetoonde bestandspagina's onbekend blijven. Dit is geen bewijs van een Git-mergeconflict of van vrij eigenaarschap.
