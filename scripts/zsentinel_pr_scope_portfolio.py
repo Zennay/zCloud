@@ -284,6 +284,8 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "live_owner_claim_verified": False,
                 "merge_authorized": False,
             }
+        item["human_gate_blocker"] = current_gate_blocker(item)
+        item["merge_authorized"] = False
         output.append(item)
     result = {
         **board,
@@ -294,6 +296,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             "items": output,
             "inspected_stable_sample_prs": total_inspected,
             "pr_gate_receipts_requested": len(selected),
+            "observed_gate_blocker_counts": {
+                category: sum(row["human_gate_blocker"] == category for row in output)
+                for category in sorted({row["human_gate_blocker"] for row in output})
+            },
             "explicit_selected_prs": list(focus_prs),
             "qa_only_title_prs_not_inspected": qa_only_skipped,
             "more_sampled_prs_not_gate_checked": total_inspected > len(selected),
@@ -363,6 +369,50 @@ GATE_LABELS = {
     "request_independent_current_head_review": "Vraag onafhankelijke review op actuele HEAD.",
     "verify_required_rules_ownership_and_release_separately":
         "Controleer verplichte branchregels, eigenaar en release apart.",
+}
+
+
+
+def current_gate_blocker(row):
+    """Truthful operator blocker classification, never a merge clearance."""
+    if row["status"] != "current_exact_pr_head_and_sample_match":
+        return "source_changed_or_unavailable"
+    if (row["check_page_complete"] is not True
+            or row["review_page_may_be_truncated"] is True
+            or row["legacy_status_source_may_be_truncated"] is True):
+        return "incomplete_github_gate_source"
+    if (row["observed_checks_not_successful"] > 0
+            or row["observed_legacy_failure_or_error"] > 0):
+        return "failed_checks_or_legacy_context"
+    if row["draft_at_read"]:
+        return "draft_pr_needs_owner"
+    if row["observed_exact_head_changes_requested"] > 0:
+        return "review_changes_requested"
+    if (row["observed_checks_pending"] > 0
+            or row["observed_checks_unknown"] > 0
+            or row["observed_legacy_pending"] > 0):
+        return "checks_still_running"
+    if (row["observed_checks_pending"] == 0
+            and row["observed_checks_not_successful"] == 0
+            and row["legacy_contexts_observed"] == 0
+            and not row["check_runs_sample_complete_and_terminal"]):
+        return "check_source_not_terminal"
+    if row["observed_independent_exact_head_approvals"] < 1:
+        return "independent_review_not_seen"
+    return "branch_rules_ownership_and_release_not_verified"
+
+
+BLOCKER_DESCRIPTIONS = {
+    "source_changed_or_unavailable": "PR-HEAD veranderd of GitHub-bron ontbreekt.",
+    "incomplete_github_gate_source": "Niet alle Check Runs, reviews of legacy-statussen zijn gelezen.",
+    "failed_checks_or_legacy_context": "Er is een falende Check Run of legacy-statuscontext gezien.",
+    "draft_pr_needs_owner": "De PR is nog een draft; eerst door eigenaar reviewklaar maken.",
+    "review_changes_requested": "Er zijn op de exacte HEAD wijzigingen gevraagd.",
+    "checks_still_running": "Bestaande Check Runs of legacy-statuscontexten lopen nog.",
+    "check_source_not_terminal": "CI-status kon niet als volledig afgerond worden bevestigd.",
+    "independent_review_not_seen": "Geen onafhankelijke approval voor deze exacte HEAD gezien.",
+    "branch_rules_ownership_and_release_not_verified":
+        "Branch protection, eigenaarschap en release-toestemming niet bevestigd.",
 }
 
 
