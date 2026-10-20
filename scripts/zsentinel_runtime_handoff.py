@@ -124,7 +124,10 @@ def build_handoff(decision):
         records = issue.get("issues", [])
         if not isinstance(records, list) or len(records) > 60:
             raise ValueError("unbounded issue sample")
-        issue_coverage = "bounded_issue_sample_never_complete"
+        if issue.get("source") == "github_readonly_issue_inbox":
+            issue_coverage = "bounded_" + _short(issue.get("coverage"), 30)
+        elif records:
+            raise ValueError("issues cannot appear without read-only GitHub source")
         seen_urls = set()
         for row in records:
             if not isinstance(row, dict):
