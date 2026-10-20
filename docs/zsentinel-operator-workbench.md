@@ -503,7 +503,14 @@ UTC source observation timestamp, canonical issue link, captured issue title
 and priority/project, observed candidate PR links, evidence gaps, proposed next
 step, manual disposition, private follow-up state and date, plus explicit
 `claim_authorized=false`, `merge_authorized=false`,
-`deploy_authorized=false` for **each row**. It is a portable working view
+`deploy_authorized=false` for **each row**. The CSV also preserves the
+snapshot's **per-project coverage** (`partial`, `degraded` or `unavailable`),
+`inbox_truncated`, `cards_truncated` and `github_denial` flags in each
+row. Ordinary issues with no explicitly marked human-only follow-up export
+`private_followup_status=not-configured`, not a misleading `open`.
+Canonical candidate PR links must match the original issue repository
+and cannot be duplicates; malformed or cross-repository candidates cause
+the entire untrusted source board to be refused. It is a portable working view
 for spreadsheet sorting, **not** proof of current issue state or authority.
 
 By default no private contact labels or free-text operator notes are exported.
