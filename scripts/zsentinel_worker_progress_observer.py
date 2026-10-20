@@ -8,6 +8,8 @@ title, user message, raw reason, error, or event payload is exported.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -396,6 +398,13 @@ def observe_worker_progress(database, projects, *, now=None):
     path = Path(database)
     if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
         raise ValueError("existing nonempty worker events database required")
+    before = path.stat()
+    # Private cross-snapshot comparison token; never publish the path,
+    # device/inode or hostname in the public worker cards.
+    source_identity = hashlib.sha256(
+        (os.uname().nodename + "\\0" + str(path.resolve()) + "\\0" +
+         str(before.st_dev) + "\\0" + str(before.st_ino)).encode("utf-8")
+    ).hexdigest()
     observed = (now or datetime.now(UTC)).astimezone(UTC)
     uri = "file:" + quote(str(path.resolve()), safe="/") + "?mode=ro"
     entries = []
@@ -467,6 +476,10 @@ def observe_worker_progress(database, projects, *, now=None):
         con.execute("COMMIT")
     finally:
         con.close()
+    after = path.stat()
+    if ((before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+            or path.is_symlink()):
+        raise ValueError("worker event source identity changed during observation")
     entries.sort(key=lambda row: (row["project_id"], row["worker_slot"]))
     # Only concrete operator-attention classes, not every stale or paused
     # worker, belong in the bounded intervention inbox. These are never
@@ -508,6 +521,7 @@ def observe_worker_progress(database, projects, *, now=None):
         "coverage": ("bounded_partial_or_no_events" if missing or truncated
                      else "selected_project_event_slots_only"),
         "source": "existing_sqlite_mode_ro_query_only_indexed_runner_events",
+        "source_file_identity_sha256_private": source_identity,
         "selected_projects": list(projects),
         "entries": entries,
         "unobserved_project_ids": missing,
