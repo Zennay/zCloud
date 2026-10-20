@@ -951,10 +951,22 @@ def main():
             snapshots = [_read(path) for path in history_files] + [current]
             continuity = (compare(snapshots[0], snapshots[1]) if len(snapshots) == 2
                           else compare_history(snapshots))
+        disk_private_html = None
+        if args.disk_hotspots_root is not None:
+            from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
+            disk_report = disk_observe(args.disk_hotspots_root)
+            disk_private_html = disk_html(disk_report)
+            decision["disk_pressure_private_report"] = public_summary(disk_report)
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
                                       pr_desk=pr_desk, unblock=unblock)
+            if "disk_pressure_private_report" in decision:
+                from zsentinel_disk_hotspots import public_summary_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible disk workbench portfolio HTML")
+                rendered = rendered.replace("<main>", "<main>" +
+                    public_summary_html(decision["disk_pressure_private_report"]), 1)
             if local_runner is not None:
                 from zsentinel_local_runner_observer import runner_html
                 if rendered.count("<main>") != 1:
@@ -1083,10 +1095,20 @@ def main():
                         entry["commit_age_hours"], entry["path_count"],
                         str(entry["potential_overlap"])))
             lines.append("Geen actieve claim of runtime gemuteerd; eigenaarstatus moet apart worden geverifieerd.")
+            if "disk_pressure_private_report" in decision:
+                disk = decision["disk_pressure_private_report"]
+                lines.append("SCHIJFRUIMTE: privé HTML; begrensd >=%s GiB"
+                             " en >=%s grote bestanden, dekking=%s;"
+                             " geen verwijdering of workeractie." % (
+                    disk["observed_allocated_gib_min"],
+                    disk["large_file_candidates_min"], disk["coverage"]))
             rendered = "\n".join(lines)
             if continuity is not None:
                 from zsentinel_blocker_continuity import as_text
                 rendered = as_text(continuity) + "\n" + rendered
+        if disk_private_html is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.disk_hotspots_output, disk_private_html, "html")
         if args.output is not None:
             from zsentinel_private_output import write_private_output
             write_private_output(
