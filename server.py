@@ -3192,10 +3192,47 @@ def portfolio_queue_allocate():
     preempted=set()
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
-        c.execute("""UPDATE portfolio_queue
-                     SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                     WHERE eligible=1 AND status IN ('claimed','running','verifying')
-                       AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
+        expired=c.execute(
+            """SELECT queue_id,status,project_id,worker_slot FROM portfolio_queue
+               WHERE status IN ('claimed','running','verifying')
+                 AND claim_expires IS NOT NULL AND claim_expires<=?""",
+            (ts,),
+        ).fetchall()
+        for previous in expired:
+            old_status=str(previous['status'] or '')
+            old_slot=int(previous['worker_slot'] or 0)
+            owner_key=prior_worker_by_slot.get(old_slot,'')
+            # An expired timestamp by itself is not evidence that a running
+            # worker has stopped. Protect running/verifying work and any
+            # demonstrably busy claimed browser until the current owner
+            # explicitly concludes or releases it. Renewal is a scheduler
+            # ownership hold, NOT proof of task progress or CI success.
+            owner_protected=(
+                old_status in ('running','verifying')
+                or bool(owner_key and owner_key in busy_worker_keys)
+            )
+            if owner_protected:
+                c.execute(
+                    """UPDATE portfolio_queue SET claim_expires=?,updated_at=?
+                       WHERE queue_id=? AND status IN ('claimed','running','verifying')
+                         AND claim_expires IS NOT NULL AND claim_expires<=?""",
+                    (lease_until,ts,previous['queue_id'],ts),
+                )
+                logging.debug('Preserved expired active-owner lease for human-safe recovery: %s',
+                              previous['queue_id'])
+                continue
+            changed=c.execute(
+                """UPDATE portfolio_queue
+                   SET status='queued',worker_slot=NULL,claimed_at=NULL,
+                       claim_expires=NULL,updated_at=?
+                   WHERE queue_id=? AND status='claimed'
+                     AND claim_expires IS NOT NULL AND claim_expires<=?""",
+                (ts,previous['queue_id'],ts),
+            )
+            if changed.rowcount:
+                # An expired idle claim cannot be taken back in the same
+                # scheduler tick, before its old browser mapping has cleared.
+                preempted.add(str(previous['queue_id']))
         active_lane_conflicts=_portfolio_observe_conflicting_claimed_lanes_locked(c)
         if active_lane_conflicts:
             logging.debug('Active owner lane overlaps require owner follow-up; retained %d claims',
@@ -3205,7 +3242,7 @@ def portfolio_queue_allocate():
             """SELECT * FROM portfolio_queue
                WHERE worker_slot IS NOT NULL
                  AND status IN ('claimed','running','verifying')
-                 AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
+                 AND (claim_expires IS NULL OR claim_expires>?)
                ORDER BY worker_slot""",
             (ts,),
         ).fetchall()
@@ -3355,7 +3392,7 @@ def portfolio_queue_allocate():
         for slot in range(1,GLOBAL_CHATGPT_WORKER_LIMIT+1):
             row=c.execute("""SELECT * FROM portfolio_queue
                              WHERE worker_slot=? AND status IN ('claimed','running','verifying')
-                               AND eligible=1 AND (claim_expires IS NULL OR claim_expires>?)
+                               AND (claim_expires IS NULL OR claim_expires>?)
                              ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
             # Memory admission counts net-new browser slots, not queue-owner
             # turnover inside a slot that is already resident. Remember that the
