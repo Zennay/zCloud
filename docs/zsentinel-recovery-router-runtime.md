@@ -3043,3 +3043,24 @@ begrensde venster. Nul in deze onvolledige sample betekent NIET dat er
 geen koude data op andere opslagplaatsen is. Geen bestand verplaatst,
 gekopieerd, verwijderd, noch claim of runner gewijzigd.
 
+
+### Eigenaarroute: optionele koude-data-steekproef in beveiligde VPS-audit
+
+De bestaande handmatige `.github/workflows/zsentinel-vps-owner-reviewed.yml`
+heeft nu naast `inspect_sqlite_space` de standaard **uitgeschakelde**
+boolean `inspect_external_archive`. Alleen de bevoegde eigenaar kan
+deze later vanaf **geïntegreerde main** inschakelen na de al bestaande
+actor-, exacte-main-SHA-, runneridentiteit-, load/RAM- en omgevingstoetsen.
+Er is vanuit deze branch geen dispatch uitgevoerd.
+
+De nieuwe extra stap leest alleen de bestaande project-metadata in
+`/home/ubuntu/zennay-cloud` en `/home/ubuntu/Haxlab` en controleert
+de afzonderlijke mount `/home/ubuntu/VPS-Archief`. Bounded per bron:
+1500 entries, diepte 2 en maximaal 2 seconden; per projectpartitie
+worden ontoegankelijke bronnen expliciet onbekend. De GitHub-jobsummary
+bevat uitsluitend anonieme aantallen van aangetroffen / onbekende
+workspaces en koude-data hints (NOOIT private bestandsnamen, workervelden
+of archiefpaden). Geen nieuwe runner-temp export, GitHub-artifact,
+SQL, kopie, verplaatsing of delete. Actor en normale CI/review-protecties
+blijven ongewijzigd.
+
