@@ -3862,22 +3862,31 @@ def portfolio_queue_allocate():
     return selected
 
 def portfolio_queue_drop(queue_id,evidence=''):
+    """Retire only an unclaimed queue item, never an active worker's task."""
     queue_id=str(queue_id or '').strip()
     if not queue_id:
         raise ValueError('queue_id is verplicht')
     ts=now()
     with connect() as c:
+        # A trusted management caller still cannot override an assigned
+        # worker's claim. Compare all ownership fields atomically at the write
+        # boundary; do not treat an expired time as consent to take it over.
         cur=c.execute("""UPDATE portfolio_queue
                          SET status='dropped',eligible=0,evidence=?,blocker=?,
                              worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                         WHERE queue_id=? AND status NOT IN ('done','dropped')""",
+                         WHERE queue_id=? AND status='queued'
+                           AND worker_slot IS NULL AND claimed_at IS NULL
+                           AND claim_expires IS NULL""",
                       (str(evidence or '')[:4000],str(evidence or '')[:2000],ts,queue_id))
         dropped=bool(cur.rowcount)
-    # A dropped item is intentionally retired, but an active project must not
-    # lose its runnable inventory until the next scheduler tick. Refill from
-    # the canonical project state immediately without resurrecting this queue_id.
+    if not dropped:
+        # No queue refilling, audit mutation or owner displacement on an
+        # unsuccessful drop, including claimed/running/verifying and unknown IDs.
+        return {'dropped':False,'queue_id':queue_id,
+                'reason':'unclaimed-queued-item-required'}
+    # Refill remains the ordinary authorized post-retirement continuation.
     audit=portfolio_queue_audit(refill=True)
-    return {'dropped':dropped,'queue_id':queue_id,'queue_audit':audit}
+    return {'dropped':True,'queue_id':queue_id,'queue_audit':audit}
 
 def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=None):
     result=str(result or '').strip().upper()
@@ -5178,7 +5187,10 @@ class Handler(BaseHTTPRequestHandler):
                         return self.reply({'ok':bool(item.get('updated')),'result':item,'time':now()},200 if item.get('updated') else 409)
                     if action=='drop':
                         item=portfolio_queue_drop(payload.get('queue_id'),payload.get('evidence') or '')
-                        return self.reply({'ok':True,'result':item,'time':now()})
+                        return self.reply(
+                            {'ok':bool(item.get('dropped')),'result':item,'time':now()},
+                            200 if item.get('dropped') else 409,
+                        )
                     return self.reply({'error':'Ongeldige portfolio-queue actie'},400)
                 except ValueError as e:
                     return self.reply({'error':str(e)},400)
