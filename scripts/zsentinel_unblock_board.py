@@ -671,13 +671,12 @@ HUMAN_BRIEF_KINDS = frozenset({
     "read_only_worker_progress_gap_not_proven_outage",
 })
 HUMAN_PR_STEPS = frozenset({
-    "finish_existing_draft_with_owner",
+    # Only steps that actually depend on an independent person/account owner;
+    # source refresh, source edits and ordinary CI fixes are worker actions.
     "resolve_exact_head_review_with_owner",
-    "fix_exact_head_ci_with_owner",
-    "inspect_unlisted_status_contexts_with_owner",
     "request_independent_review",
     "resolve_hosted_billing_with_account_owner",
-    "verify_pr_source_with_owner",
+    "confirm_branch_protection_and_release_with_owner",
 })
 
 
