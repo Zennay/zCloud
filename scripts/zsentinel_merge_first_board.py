@@ -209,22 +209,30 @@ def discovery(projects, allowed, budget, max_per_project):
         if len(matches) != 1:
             raise ValueError("missing or ambiguous project registry")
         repo, key = matches[0]
-        inventory = bounded_gh(
-            f"repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=desc",
-            budget)
+        try:
+            inventory = bounded_gh(
+                f"repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=desc",
+                budget)
+        except (RuntimeError, ValueError, KeyError, TypeError):
+            partial.append(repo)
+            continue  # A failed project does not discard unrelated PR sources.
         if not isinstance(inventory, list):
-            raise ValueError("incomplete PR inventory")
+            partial.append(repo)
+            continue
         if len(inventory) >= 100:
             partial.append(repo)
-        count = 0
+        eligible = []
+        malformed = False
         for entry in inventory:
             if not isinstance(entry, dict):
-                raise ValueError("malformed PR inventory")
+                malformed = True
+                break
             title = entry.get("title")
             number = entry.get("number")
             if (not isinstance(title, str) or not isinstance(number, int)
                     or number <= 0 or number > 9999999):
-                raise ValueError("untrusted PR inventory entry")
+                malformed = True
+                break
             # QA-only work is excluded from discovery, not from observed
             # collision evidence or other workers' authoritative ownership.
             normalized = title.strip().casefold()
@@ -237,10 +245,16 @@ def discovery(projects, allowed, budget, max_per_project):
             base = entry.get("base")
             if not isinstance(base, dict) or base.get("ref") != "main":
                 continue
+            rank = (0 if normalized.startswith(("p0", "fix(p0", "fix:", "fix("))
+                    else 1 if normalized.startswith(("p1", "feat(", "feat:"))
+                    else 2)
+            eligible.append((rank, len(eligible), number))
+        if malformed:
+            partial.append(repo)
+            continue  # Fail closed for this inventory, retain other projects.
+        # Priority is only an ordering aid, never ownership or merge evidence.
+        for _, _, number in sorted(eligible)[:max_per_project]:
             selected.append((repo, key, number))
-            count += 1
-            if count >= max_per_project:
-                break
     return selected, partial
 
 
