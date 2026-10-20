@@ -68,7 +68,10 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                     applicationContext, 0, intent,
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
-                val text = alert.message.ifBlank { "Open zCloud voor de oorzaak en vervolgstap." }
+                // A bounded explicit owner action takes priority over a
+                // generic incident summary on a very small notification face.
+                val text = alert.action?.takeIf { it.isNotBlank() }
+                    ?: alert.message.ifBlank { "Open zCloud voor de oorzaak en vervolgstap." }
                 val notification = Notification.Builder(applicationContext, CHANNEL)
                     .setSmallIcon(R.drawable.ic_launcher)
                     .setContentTitle("${alert.project?.uppercase() ?: "zCloud"}: ${alert.title}")
