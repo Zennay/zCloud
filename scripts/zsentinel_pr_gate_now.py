@@ -273,7 +273,13 @@ def main(argv=None):
             print("Created private read-only PR gate receipt (0600); no merges or GitHub writes.",
                   file=sys.stderr)
         return 0
-    except (OSError, ValueError) as exc:
+    except OSError:
+        # A failed private output may contain its local path in OSError text.
+        # Do not echo that location to shared terminal or worker logs.
+        print("zSentinel PR gate desk refused: GitHub or private output unavailable",
+              file=sys.stderr)
+        return 2
+    except ValueError as exc:
         print("zSentinel PR gate desk refused: " + str(exc), file=sys.stderr)
         return 2
 
