@@ -13,6 +13,8 @@ import json
 import time
 
 import zsentinel_merge_first_board as board
+from portfolio_merge_ready import DB
+from zsentinel_claim_visibility import observe as observe_local_claims
 from zsentinel_issue_merge_priority import (
     issue_inventory, link_candidates, priority_rank, unaddressed_urgent,
     classification, references
@@ -259,7 +261,35 @@ def render_issue_sections(unmatched, partial):
     return note + "</section>"
 
 
-def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=None):
+def render_claim_visibility(source):
+    esc = lambda value: html.escape(str(value), quote=True)
+    cards = [
+        "<section aria-label='Lokale ownerclaims'>",
+        "<h2>Lokale werkclaims (alleen bronwaarneming)</h2>",
+        "<p>Een lokale SQLite-observatie kan nooit aantonen dat Notion, een andere "
+        "worker of een externe bron vrij is. Er is geen claim, owner-ID, "
+        "worker-ID of mergeautorisatie geëxporteerd.</p>",
+    ]
+    for project, result in source.items():
+        cards.append(
+            "<p><strong>" + esc(project) + "</strong>: " + esc(result["status"]) +
+            " · lokale actieve leases=" +
+            esc(result["active_local_leases_observed"] if
+                result["active_local_leases_observed"] is not None else "UNKNOWN") +
+            " · exclusieve schrijvers=" +
+            esc(result["active_local_writers_observed"] if
+                result["active_local_writers_observed"] is not None else "UNKNOWN") +
+            " · ambigue leases=" +
+            esc(result["ambiguous_active_leases"] if
+                result["ambiguous_active_leases"] is not None else "UNKNOWN") +
+            " · Notion=" + esc(result["notion_claim_status"]) + "</p>"
+        )
+    cards.append("</section>")
+    return "".join(cards)
+
+
+def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=None,
+            local_claims=None):
     raw = board.render(rows, observed)
     esc = lambda x: html.escape(str(x), quote=True)
     cards = []
@@ -309,7 +339,8 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                     "Onbekende PRs zijn niet automatisch onbezet.</p>"
             )
         target_section += "</section>"
-    return raw.replace("<main>", target_section +
+    claim_panel = render_claim_visibility(local_claims or {})
+    return raw.replace("<main>", claim_panel + target_section +
                        render_issue_sections(unmatched, partial) +
                        related + "<main>", 1)
 
@@ -347,11 +378,13 @@ def main():
             rows, unmatched, partial = collect(args.project, registry, budget)
             target_coverage = None
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        local_claims = observe_local_claims(DB, args.project)
         if args.output:
             board.private_write(board.Path(args.output),
                                 to_html(rows, unmatched, partial, observed,
                                         targeted=targeted,
-                                        target_coverage=target_coverage))
+                                        target_coverage=target_coverage,
+                                        local_claims=local_claims))
         payload = {
             "observed_utc": observed,
             "project_ids": args.project,
@@ -363,6 +396,7 @@ def main():
             "targeted_issue": targeted,
             "targeted_coverage": target_coverage,
             "observed_unlinked_issues": unmatched,
+            "local_claims": local_claims,
             "prs": rows,
             "missing_authorization": "EXACT_CI_REVIEW_CLAIM_AND_RELEASE_REQUIRE_SEPARATE_EVIDENCE",
             "main_merged": False, "live_verified": False,
@@ -370,6 +404,11 @@ def main():
         if args.format == "json":
             print(json.dumps(payload, ensure_ascii=False))
         else:
+            for project, claim in local_claims.items():
+                print(f"LOCAL_CLAIMS {project} {claim['status']}; "
+                      f"leases={claim['active_local_leases_observed']}; "
+                      f"writers={claim['active_local_writers_observed']}; "
+                      "Notion/other ownership remains UNKNOWN")
             for item in rows:
                 refs = ", ".join(str(issue["priority"]) + "#" + str(issue["number"])
                                  for issue in item["observed_issue_refs"]) or "none observed"
