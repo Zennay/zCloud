@@ -130,9 +130,15 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
     raw_by_issue = {}
     validated_by_issue = {card["issue"]: card for card in source["cards"]}
     for raw in raw_board["cards"]:
-        if type(raw) is not dict or raw.get("issue") not in validated_by_issue:
-            raise ValueError("raw product issue identity missing from canonical validator")
-        issue = raw["issue"]
+        if type(raw) is not dict:
+            raise ValueError("invalid raw product issue record")
+        issue = raw.get("issue")
+        # validated_view has already accepted every original source card;
+        # --focus-issue narrows only the displayed set, not the raw source.
+        if issue not in validated_by_issue:
+            if focus_issue is None:
+                raise ValueError("raw issue absent from canonical validated source")
+            continue
         if issue in raw_by_issue:
             raise ValueError("duplicate raw issue record")
         canonical_row = validated_by_issue[issue]
