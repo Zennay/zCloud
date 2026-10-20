@@ -1310,6 +1310,7 @@ def graph_private_csv(report):
         "cluster_number", "shared_filename", "pr_number", "pr_url",
         "pr_head_sha", "related_pr_url", "related_pr_head_sha",
         "shared_files_observed", "unverified_issue_number",
+        "issue_identity_status", "observed_issue_priority",
         "owner_verified", "merge_authorized", "operator_notice"
     )
     writer.writerow(header)
@@ -1369,7 +1370,16 @@ def graph_private_csv(report):
             row("unverified_issue_number", pr_url=pr["url"],
                 pr_head_sha=pr["head_sha"],
                 unverified_issue_number=group["issue_number"],
-                operator_notice="PR text hint; issue identity/fix unverified.")
+                issue_identity_status=group["identity_status"],
+                observed_issue_priority=group["observed_issue_priority"],
+                operator_notice=("PR-title/body mention; even a confirmed open "
+                                 "issue is NOT proof of ownership or fix."))
+    for pr in report["unpaired_open_prs_in_sample_not_claim_verified"]:
+        row("unpaired_pr_in_sample",
+            pr_number=pr["number"], pr_url=pr["url"],
+            pr_head_sha=pr["head_sha"],
+            operator_notice=("No identical file within the observed sample; "
+                             "NOT claim-free, merge-ready or owner-verified."))
     if report["collision_cards_truncated"] or report["duplicate_issue_groups_truncated"]:
         row("source_warning", operator_notice=(
             "Some file collision pairs or issue hints are beyond the output cap."))
