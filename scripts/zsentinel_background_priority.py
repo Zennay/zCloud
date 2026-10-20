@@ -128,6 +128,22 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
         "started_mono": now, "last_mono": now, "observations": 1,
     }
     old = previous.get("promotion") if type(previous) is dict else None
+    wait_state = "promotion-waiting"
+    if type(old) is dict:
+        if (old.get("boot") != boot or old.get("context") != context
+                or boot is None or context is None):
+            wait_state = "promotion-reset-context"
+        elif (old.get("target_quota") != recommended_quota
+              or old.get("target_weight") != recommended_weight
+              or old.get("current_weight") != actual_weight
+              or type(old.get("current_quota")) not in (int, float)
+              or not math.isfinite(old["current_quota"])
+              or abs(old["current_quota"] - current_quota) >= 0.2):
+            wait_state = "promotion-reset-policy"
+        elif (type(old.get("last_mono")) in (int, float)
+              and math.isfinite(old["last_mono"])
+              and now - old["last_mono"] > PROMOTION_MAX_SAMPLE_GAP):
+            wait_state = "promotion-reset-gap"
     if (boot is not None and isinstance(context, str)
             and re.fullmatch(r"[a-f0-9]{24}", context)
             and type(old) is dict and old.get("boot") == boot
@@ -157,7 +173,7 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
                 and candidate["observations"] >= PROMOTION_MIN_OBSERVATIONS):
             return recommended_quota, recommended_weight, "sustained-headroom", None
     # Stay at the currently verified cgroup; never increase on a single sample.
-    return current_quota, actual_weight, "promotion-waiting", candidate
+    return current_quota, actual_weight, wait_state, candidate
 
 
 
@@ -506,9 +522,17 @@ def human_preview(data):
               + (str(data.get("effective_quota")) + "% / gewicht "
                  + str(data.get("effective_weight"))
                  if data.get("effective_quota") is not None else "niet veilig te bepalen"))
-        if data["promotion_status"] == "promotion-waiting":
-            print("Opschalen uitgesteld: minimaal 5 minuten aanhoudende "
-                  "vrije capaciteit en drie gescheiden observaties nodig.")
+        if data["promotion_status"] in {
+            "promotion-waiting", "promotion-reset-context",
+            "promotion-reset-policy", "promotion-reset-gap",
+        }:
+            reason = {
+                "promotion-reset-context": "nieuwe runner/drukcategorie/boot",
+                "promotion-reset-policy": "gewijzigde cgroup of herstelstap",
+                "promotion-reset-gap": "te grote pauze tussen bronmomenten",
+            }.get(data["promotion_status"], "nieuwe vrije-capaciteitsperiode")
+            print("Opschalen uitgesteld (" + reason + "): minimaal 5 minuten "
+                  "en drie gescheiden betrouwbare bronmomenten vereist.")
         elif data["promotion_status"] == "sustained-headroom":
             print("Opschalen toegestaan door herhaald stabiel bronbewijs; "
                   "preview heeft niets toegepast.")
