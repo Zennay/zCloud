@@ -282,6 +282,16 @@ bronnen onvolledig waren. Een telling is nadrukkelijk **niet** het aantal
 nieuwe crashes, retries, downminuten of daadwerkelijk toegewezen GitHub-jobs.
 Bij ontbrekende metingen worden er geen nulmeting of herstelde service verzonnen.
 
+In hetzelfde historisch overzicht verschijnt vervolgens een beperkte
+**eigenaar-herstelagenda van maximaal drie regels**: onder meer een
+P0-verzoek om eerst hostcapaciteit en oorzaak te laten bevestigen wanneer
+`failed`-services samengaan met resourcepressure, een expliciete
+GitHub-claim-/jobhercontrole na een bootwissel, of een bronvolledigheidsvraag.
+Ieder voorstel toont probleem, veilige menselijke vervolgactie en
+`NIET HERSTELD`/`BRON ONVOLLEDIG`-achtige status. Dit zijn handmatige
+beslisadviezen en nooit een impliciete toestemming tot process kill,
+auto-restart, terugzetten van claims, dispatch, GitHub merge of deploy.
+
 De weergave laat per opeenvolgende meting zien: servicestatuswijzigingen,
 onvolledige inventarisdekking, dezelfde of veranderde Linux-opstartsessie,
 load/RAM/swap/root-schijfverschil en (uitsluitend waar vergelijkbaar) de
