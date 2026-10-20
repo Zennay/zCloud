@@ -3462,3 +3462,28 @@ geen enkele taakstatus, workerlease, claim, retry, workflow of
 productiedatabase. De functie is broncode in de bestaande open PR
 en wacht op dezelfde verplichte exacte-head CI en onafhankelijke
 review alvorens main of live-productie geraakt worden.
+
+
+### Portfolio-first oplevering: inconsistente queueclaims per project
+
+De bestaande `scripts/zsentinel_portfolio_overview.py` neemt de nieuwe
+onderlinge lease-tijdcontrole nu op in de echte, geobserveerde
+projectrijen. Het veld `inconsistent_owner_lease_windows` blijft
+`null` wanneer de wachtrijbron niet beschikbaar of onvolledig is, dus
+ontbrekende observatie wordt niet voor nul problemen aangezien.
+
+Bij een complete bron verschijnt de afzonderlijke teller in de
+HTML-portfoliotabel en de Nederlandse tekstregel. Wanneer een project
+een onbetrouwbaar actief claimvenster heeft, is de projectactie
+`request_inconsistent_claim_window_owner_review`: huidige eigenaar
+moet de start- én vervaltijd controleren; géén automatische herclaim.
+Dat wordt eerder getoond dan de normale verlopen-lease- of
+veelvuldige-claimaantallen, tenzij een werkelijk hogere externe
+GitHub-/runner-/bronautorisatieblokkade voorgaat.
+
+Het is een **zichtbare operatorroute over bestaande projectdata**,
+zonder extra CI-runs, extra databaseverbindingen of automatische
+wijzigingen aan queue, claims, worker, runner, services of release.
+De nieuwe velden bestaan nog uitsluitend op de bestaande open PR,
+niet op main of de productie-VPS. Onafhankelijke PR-review,
+exacte HEAD-CI en bestaande release-gates blijven vereist.
