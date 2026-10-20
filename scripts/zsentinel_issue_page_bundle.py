@@ -127,7 +127,7 @@ def load_pages(paths):
         if (payload.get("snapshot_schema") != 1 or not isinstance(checksum, str)
                 or len(checksum) != 64
                 or any(c not in "0123456789abcdef" for c in checksum)):
-            raise ValueError("unknown or unsigned snapshot envelope")
+            raise ValueError("missing versioned snapshot content checksum")
         unsigned = dict(payload)
         del unsigned["snapshot_content_sha256"]
         expected = hashlib.sha256(json.dumps(
