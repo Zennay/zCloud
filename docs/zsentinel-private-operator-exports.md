@@ -185,3 +185,18 @@ incidentidentiteit, oorspronkelijke opvolgdeadline, eigenaarlabel met
 onbevestigde status, bronhiaten en de waarschuwing dat niet opnieuw gezien
 **geen bewezen herstel** is. Er wordt niets verstuurd, geclaimd, gemerged,
 als geslaagd afgetekend of automatisch in een agenda geïmporteerd.
+
+### Veilig doelpad en bestandsaanmaak
+
+De gedeelde operator-exportwriter is nu ook op de **bestaande doelmap**
+vergrendeld. Maak die map vooraf onder het eigen operatoraccount en voorkom
+groep-/wereldschrijfrechten (bijvoorbeeld een eigen privémap met `chmod 700`).
+De writer weigert ontbrekende, vreemde of groep-/wereldschrijfbare mappen,
+opent de map met `O_DIRECTORY|O_NOFOLLOW`, vergelijkt de werkelijke
+geopende directory-inode met de vooraf gelezen eigenaargegevens, en maakt
+het bestand uitsluitend via directory-geankerde `openat` met
+`O_EXCL|O_NOFOLLOW`. Bestand blijft exact 0600. Ook bij een schijffout
+wordt alleen de eigen nieuw gemaakte inode opgeruimd; een vervangen
+bestandsnaam wordt nooit blind verwijderd. Dit is uitsluitend opslag voor
+uitdrukkelijk gevraagde privébestanden en geeft geen rechten voor andere
+VPS-paden, runner- of productieacties.
