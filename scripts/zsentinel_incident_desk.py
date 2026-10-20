@@ -193,9 +193,93 @@ def write_private_html(path, rendered):
             os.unlink(temporary)
 
 
+
+def branch_work_review_panel(decision):
+    """Static non-authorizing duplicate-work disclosure in the human desk."""
+    source = decision.get("recent_branch_ownership")
+    if source is None:
+        return ""
+    if (type(source) is not dict
+            or source.get("project_id") != "cloud"
+            or type(source.get("supplied")) is not bool
+            or source.get("coverage") not in (
+                "not_supplied", "bounded_complete", "stale", "incomplete", "invalid")
+            or source.get("ownership_verified") is not False
+            or source.get("claim_authorized") is not False
+            or type(source.get("observed_branches")) is not int
+            or not 0 <= source["observed_branches"] <= 100
+            or type(source.get("suppressed_task_count")) is not int
+            or not 0 <= source["suppressed_task_count"] <= 250
+            or type(source.get("suppressed_task_examples")) is not list
+            or len(source["suppressed_task_examples"]) > 8
+            or len(source["suppressed_task_examples"]) > source["suppressed_task_count"]
+            or source.get("samples_truncated") is not (
+                source["suppressed_task_count"] > len(source["suppressed_task_examples"]))):
+        raise ValueError("invalid read-only branch routing source")
+    reason_labels = {
+        "prless_branch_source_stale_or_incomplete":
+            "Bron verouderd of onvolledig. Controleer de bestaande branches opnieuw.",
+        "overlaps_existing_recent_unpr_branch":
+            "Er wordt al aan een overlappend bestand gewerkt op een branch zonder PR.",
+        "task_file_scope_unavailable":
+            "Bestandsscope van de taak is onvoldoende bekend.",
+    }
+    rows = []
+    for row in source["suppressed_task_examples"]:
+        if (type(row) is not dict or row.get("project_id") != "cloud"
+                or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                or type(row.get("id")) is not str
+                or SLUG.fullmatch(row["id"]) is None
+                or row.get("reason") not in reason_labels
+                or ("branch_ref" in row) != ("conflicting_path" in row)):
+            raise ValueError("invalid omitted recovery task")
+        details = ""
+        if "branch_ref" in row:
+            reference, path = row["branch_ref"], row["conflicting_path"]
+            if (type(reference) is not str or len(reference) > 161
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,160}", reference) is None
+                    or type(path) is not str or not 1 <= len(path) <= 220
+                    or any(ord(c) < 32 or ord(c) == 127 for c in path)):
+                raise ValueError("invalid observed branch/file reference")
+            details = ('<p class="meta">Bestaande branch: <code>' +
+                       escape(reference, quote=True) +
+                       '</code> · bestand: <code>' + escape(path, quote=True) + '</code></p>')
+        rows.append(
+            '<li class="panel wait"><strong>' +
+            escape(row["priority"], quote=True) + ' cloud / ' +
+            escape(row["id"], quote=True) + '</strong><p>' +
+            escape(reason_labels[row["reason"]], quote=True) +
+            '</p>' + details +
+            '<p class="meta">Voorstel overgeslagen, niet geclaimd. Controleer de '
+            'oorspronkelijke branch en actieve eigenaar.</p></li>'
+        )
+    coverage = {
+        "not_supplied": "Geen branchbron meegestuurd. Dat betekent NIET dat scope vrij is.",
+        "bounded_complete": "Bestaande recente PR-loze branchpaden gecontroleerd binnen het bronvenster.",
+        "stale": "Bron ouder dan vijf minuten; cloud-voorstellen niet vrijgegeven.",
+        "incomplete": "Brondekking of bestandspaden onvolledig; cloud-voorstellen onderdrukt.",
+        "invalid": "Optionele branchbron ongeldig; alleen cloud-voorstellen onderdrukt.",
+    }[source["coverage"]]
+    return (
+        '<section class="panel" aria-label="Voorkom dubbel productwerk">'
+        '<h2>Dubbel werk voorkomen · recente branches zonder PR</h2><p>' +
+        escape(coverage, quote=True) + '</p><p class="meta">' +
+        str(source["suppressed_task_count"]) +
+        ' potentiële cloud-taken niet voorgesteld · ' +
+        str(source["observed_branches"]) +
+        ' recente branches in bron. Andere projecten blijven onafhankelijk.</p>' +
+        ('<ol>' + "".join(rows) + '</ol>' if rows else
+         '<p class="meta">Geen individuele conflicttaken in dit bronvenster getoond.</p>') +
+        ('<p class="meta">Extra conflicttaken zijn niet weergegeven.</p>'
+         if source["samples_truncated"] else '') +
+        '<p class="meta">Geen claims, branches, werkitems of GitHub-reviews gewijzigd.</p></section>'
+    )
+
+
 def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
     source = _source(decision)
+    branch_panel = branch_work_review_panel(decision)
     payload = json.dumps(source, ensure_ascii=True, separators=(",", ":"))
     payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
                .replace("&", "\\u0026"))
@@ -253,6 +337,7 @@ geen huidige incidenten, watch-alerts of nieuwe taakclaims. Controleer exact bro
 met een bevoegde eigenaar; er worden nooit retries of herstelacties gestart.</p>
 <p id="historyCount" class="meta"></p><div id="historical" class="scroll"></div>
 </section>
+__BRANCH_PANEL__
 <section class="panel" aria-label="Human escalation overview"><h2>Wie heeft actie nodig?</h2>
 <p class="meta">Alleen huidige gedeeltelijke bron: eigenaarverdeling is geen eigenaarsbewijs of werktoewijzing.</p>
 <div id="ownerSummary"></div></section>
@@ -538,4 +623,4 @@ $("downloadBrief").onclick=()=>{
 };
 isFresh();render();
 </script></html>"""
-    return html.replace("__SOURCE__", payload)
+    return html.replace("__SOURCE__", payload).replace("__BRANCH_PANEL__", branch_panel)
