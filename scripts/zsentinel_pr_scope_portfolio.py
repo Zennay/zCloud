@@ -967,11 +967,15 @@ def as_private_csv(board):
                      pr_head_sha=pr["head_sha"],
                      shared_files_observed=group["distinct_shared_file_count_observed"],
                      operator_notice="Observed shared paths, NOT source ownership or merge approval.")
-            for filename in group["shared_files_sample"]:
-                emit("cluster_shared_filename", project, repo, source_status,
-                     **summary, cluster_number=group["component_number"],
-                     shared_filename=filename,
-                     operator_notice="Exact observed filename; other cluster paths may be hidden.")
+            for file_row in group["shared_file_pr_matrix"]:
+                for touching in file_row["touching_prs"]:
+                    emit("shared_file_exact_pr", project, repo, source_status,
+                         **summary, cluster_number=group["component_number"],
+                         shared_filename=file_row["path"],
+                         pr_number=touching["number"], pr_url=touching["url"],
+                         pr_head_sha=touching["head_sha"],
+                         operator_notice="Exact shared filename on this PR HEAD; "
+                                         "ownership and merge status NOT verified.")
             if group["shared_files_sample_truncated"]:
                 emit("source_warning", project, repo, source_status, **summary,
                      cluster_number=group["component_number"],
