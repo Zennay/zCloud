@@ -20,16 +20,34 @@ QA_TITLE = re.compile(
     r"^(?:(?:p[0-3])\s*[:.·/-]\s*)?"
     r"(?:qa(?:\b|[-_/])|quality[ -]validation\b|"
     r"regression[ -](?:test|suite|validation)\b|"
-    r"(?:test|tests|testing|verify|validate|validation|"
-    r"audit|inspect|review|testen|toets|toetsen|controle|controleer|"
-    r"valideer|validatie|inspecteer|beoordeel)[ :·/-])",
+    r"kwaliteits[ -]?(?:controle|validatie)\b|"
+    r"regressie[ -]?(?:test|controle)\b|"
+    r"(?:test|tests|testing|verify|validate|validation|audit|inspect|"
+    r"review|testen|toets|toetsen|controle|controleer|valideer|"
+    r"validatie|inspecteer|beoordeel)[ :·/-])",
     re.IGNORECASE,
 )
 DELIVERY_VERBS = re.compile(
     r"\b(?:build|implement|integrate|ship|deliver|deploy|fix|repair|"
-    r"migrate|restore|unblock|enable|release|merge|refactor)\b",
+    r"migrate|restore|unblock|enable|release|merge|refactor|"
+    r"bouw|bouwen|implementeer|implementeren|integreer|integreren|"
+    r"repareer|repareren|herstel|herstellen|los|oplossen|"
+    r"lever|leveren|uitrollen|vrijgeven|samenvoegen|verhelp)\b",
     re.IGNORECASE,
 )
+# Negative delivery phrases must not turn a QA-only ticket into product work.
+NEGATED_DELIVERY = re.compile(
+    r"\b(?:do\s+not|don't|never|not|no|geen|niet|zonder|"
+    r"mag\s+niet)\s+(?:[\w-]+\s+){0,3}"
+    r"(?:merge|deploy|release|build|fix|repair|implement|integrate|"
+    r"ship|deliver|refactor|migrate|restore|enable|herstel|"
+    r"repareer|bouw|implementeer|integreer|lever|samenvoegen)\b",
+    re.IGNORECASE,
+)
+
+
+def _positive_delivery(text):
+    return bool(DELIVERY_VERBS.search(NEGATED_DELIVERY.sub(" ", text)))
 
 
 def _unique_object(pairs):
@@ -64,7 +82,7 @@ def _lane_value(value):
     """Normalize only known work-type labels; never infer ownership."""
     if not isinstance(value, str):
         return ""
-    return re.sub(r"[\\s_]+", "-", value.strip().casefold())
+    return re.sub(r"[\s_]+", "-", value.strip().casefold())
 
 
 def product_delivery_disposition(item):
@@ -111,19 +129,19 @@ def product_delivery_disposition(item):
     if not isinstance(criteria, str) or len(criteria) > 32768:
         return "invalid"
     title = title.strip()
-    # Preserve an actual repair even when the *ticket title* starts with
-    # "Test ...", but never convert an explicitly QA-only metadata lane.
-    if (QA_TITLE.match(title) and not DELIVERY_VERBS.search(title)
-            and not DELIVERY_VERBS.search(criteria)):
+    # Keep an actual code repair, including Dutch wording, even if a legacy
+    # ticket title begins with "Test". Explicit QA metadata always wins.
+    if (QA_TITLE.match(title) and not _positive_delivery(title)
+            and not _positive_delivery(criteria)):
         return "qa_only"
-    # Neutral legacy tickets that only ask for a QA cycle cannot acquire a
-    # new worker. Dutch and English wording use the same bounded decision.
-    if not DELIVERY_VERBS.search(title) and re.search(
-        r"\\b(?:test suite|regression suite|qa round|quality.validation|"
+    # Legacy neutral-title QA work is held when nothing asks to deliver
+    # product functionality. Negated release phrases cannot override this.
+    if not _positive_delivery(title) and re.search(
+        r"\b(?:test suite|regression suite|qa round|quality.validation|"
         r"test(?:en|suite)?|regressie(?:test|ronde)|"
-        r"kwaliteitscontrole|validatieronde)\\b", criteria,
+        r"kwaliteitscontrole|validatieronde)\b", criteria,
         flags=re.IGNORECASE,
-    ) and not DELIVERY_VERBS.search(criteria):
+    ) and not _positive_delivery(criteria):
         return "qa_only"
     return "product"
 
