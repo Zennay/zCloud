@@ -3027,21 +3027,27 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         raise ValueError('Queue-ID moet een unieke canonieke identiteit van 1-160 tekens zijn')
     ts=now()
     with connect() as c:
-        # A producer retry must never rewrite an actively owned task, a
-        # verifying result, an ineligible/human-held row or a completed
-        # historical receipt. SQLite makes this check atomic with the UPSERT.
+        # A producer retry must never rewrite a different task, an actively
+        # owned task, an ineligible/human-held row or a completed receipt.
+        # Title and parent alone are not a complete task identity: changed
+        # requirements/source/priority must require a new authorized queue ID.
+        # SQLite verifies the full immutable request under the UPSERT lock.
         inserted=c.execute("""INSERT INTO portfolio_queue(
             queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
             created_at,updated_at,parent_queue_id
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(queue_id) DO UPDATE SET
-            project_id=excluded.project_id,title=excluded.title,priority=excluded.priority,
-            completion_criteria=excluded.completion_criteria,source_url=excluded.source_url,
-            updated_at=excluded.updated_at
+            -- An exact repeated producer request is a true no-op, including
+            -- timestamps. A changed priority, requirements or source is NOT
+            -- the same task even when its title and parent stayed unchanged.
+            updated_at=portfolio_queue.updated_at
         WHERE portfolio_queue.status='queued' AND portfolio_queue.eligible=1
           AND portfolio_queue.project_id=excluded.project_id
           AND portfolio_queue.title=excluded.title
-          AND COALESCE(portfolio_queue.parent_queue_id,'')=COALESCE(excluded.parent_queue_id,'')
+          AND portfolio_queue.parent_queue_id IS excluded.parent_queue_id
+          AND portfolio_queue.priority=excluded.priority
+          AND portfolio_queue.completion_criteria=excluded.completion_criteria
+          AND portfolio_queue.source_url=excluded.source_url
           AND portfolio_queue.worker_slot IS NULL
           AND portfolio_queue.claimed_at IS NULL
           AND portfolio_queue.claim_expires IS NULL""",
@@ -3050,7 +3056,7 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         if inserted.rowcount != 1:
             # An existing claim or completed task is unchanged. A privileged
             # owner must decide whether a new continuation ID is appropriate.
-            raise ValueError('Queue-ID is bezet door bestaande taak; geen actieve of afgesloten taak overschreven')
+            raise ValueError('Queue-ID is bezet of producerinhoud wijkt af; gebruik een nieuwe geautoriseerde taak-ID')
         row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
     return _portfolio_queue_row(row)
 
