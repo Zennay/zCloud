@@ -249,7 +249,8 @@ toestemming van de runtime-eigenaar; export doet dit nooit automatisch.
 De eerste opdracht maakt uitsluitend een **nieuwe** map met mode `0700`
 binnen de reeds geopende privé bovenmap (zonder symlink en via directory-FD)
 en drie Python-modules (ieder `0600`), `LEESMIJ.txt` en
-`MANIFEST.json` met per module SHA-256 en byteomvang. Bij bestaande
+`MANIFEST.json` met per module SHA-256 en byteomvang **én een afzonderlijke
+SHA-256 van de operatorinstructies**. Bij bestaande
 bestemming wordt niet overschreven. De tweede opdracht leest eigenaar-privé
 bronbestanden en verifieert volledigheid en bytevingerafdrukken, zonder
 modules uit te voeren of services aan te raken. De bijbehorende
