@@ -146,7 +146,12 @@ class GitHubReader:
                 # global stop; ordinary 403 may be repository-specific.
                 remaining = (error.headers.get("X-RateLimit-Remaining")
                              if error.headers is not None else None)
-                if remaining == "0":
+                retry_after = (error.headers.get("Retry-After")
+                               if error.headers is not None else None)
+                # A server-supplied Retry-After is itself a global cooldown
+                # instruction even with nonzero primary quota. Do not
+                # fan out to other repositories during secondary throttling.
+                if remaining == "0" or retry_after is not None:
                     self.denied = True
                     raise ValueError("github_rate_limit_confirmed") from None
                 self.repository_denials.add(repo)
