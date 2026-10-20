@@ -751,7 +751,14 @@ def merge_first_attention(board):
                 overlaps.append(left["url"])
         for other in gate.get("sampled_file_overlaps_observed", []):
             overlaps.append(other["other_pr_url"])
-        overlaps = sorted(set(overlaps))[:8]
+        # Only canonical same-repository PR locations are clickable. This is
+        # presentation data from a bounded, possibly stale collision sample.
+        candidate_links = sorted(set(overlaps))
+        overlaps = [other for other in candidate_links
+                    if other.startswith(prefix) and
+                    re.fullmatch(r"[1-9][0-9]{0,8}",
+                                 other[len(prefix):]) is not None
+                    and other != url][:8]
         blocker = gate["human_gate_blocker"]
         rank = ATTENTION_RANK[blocker]
         rows.append({
@@ -1202,6 +1209,7 @@ def as_private_csv(board):
         "check_name", "check_state", "check_conclusion", "check_url",
         "prior_gate_blocker", "current_gate_blocker", "gate_episode_change",
         "gate_evidence_category", "operator_next_step",
+        "attention_rank", "attention_group",
         "owner_claim_verified", "merge_authorized", "operator_notice",
     )
     writer.writerow(columns)
@@ -1372,6 +1380,60 @@ def as_private_csv(board):
                 emit("source_warning", view["project"], view["repository"],
                      "historical_gate_comparison",
                      operator_notice="Previous or current gate receipts absent; no stable gate conclusion.")
+    desk = board.get("merge_first_attention")
+    if desk is not None:
+        if (desk.get("merge_authorized") is not False or
+                desk.get("claim_authorized") is not False or
+                desk.get("writes_performed") is not False):
+            raise ValueError("non-read-only PR attention source")
+        for row in desk["items"]:
+            emit("merge_first_action", row["project"], row["repository"],
+                 "current_exact_head_gate_observation",
+                 pr_url=row["url"], pr_number=row["number"],
+                 pr_head_sha=row["head_sha"] or "",
+                 pr_base_sha=row["base_sha"] or "",
+                 current_gate_blocker=row["blocker"],
+                 attention_rank=row["rank"],
+                 attention_group=row["attention_group"],
+                 operator_next_step=row["human_next_step"],
+                 operator_notice=(
+                     "Human owner action only; NOT exact required checks, "
+                     "owner lease, branch-protection or merge authorization."))
+            for job in row["non_green_jobs"]:
+                emit("merge_first_blocking_job", row["project"], row["repository"],
+                     "current_exact_head_gate_observation",
+                     pr_url=row["url"], pr_number=row["number"],
+                     pr_head_sha=row["head_sha"] or "",
+                     pr_base_sha=row["base_sha"] or "",
+                     attention_rank=row["rank"],
+                     operator_next_step=row["human_next_step"],
+                     check_name=job["name"], check_state=job["state"],
+                     check_url=job["url"],
+                     operator_notice=(
+                         "Observed non-green job in capped current sample; "
+                         "GitHub required-rule membership NOT verified."))
+            for related in row["observed_file_overlap_prs"]:
+                emit("merge_first_related_pr", row["project"], row["repository"],
+                     "current_exact_head_gate_observation",
+                     pr_url=row["url"], pr_number=row["number"],
+                     related_pr_url=related, attention_rank=row["rank"],
+                     operator_notice=(
+                         "Observed filename overlap; NOT confirmed Git conflict "
+                         "or ownership/merge order."))
+            if row["non_green_jobs_hidden"]:
+                emit("source_warning", row["project"], row["repository"],
+                     "current_exact_head_gate_observation",
+                     pr_url=row["url"],
+                     operator_notice=(
+                         "More non-green check contexts than action desk preview; "
+                         "inspect original GitHub source."))
+        if desk["source_not_a_complete_pr_inventory"]:
+            for view in board["project_views"]:
+                emit("source_warning", view["project"], view["repository"],
+                     "current_exact_head_gate_observation",
+                     operator_notice=(
+                         "Merge-first action desk covers <=4 selected PRs, "
+                         "not the full repository backlog."))
     # The caller checks the true UTF-8 output length and creates a 0600
     # output exclusively. Never put sensitive cross-project CSV into stdout.
     return "\ufeff" + output.getvalue()
