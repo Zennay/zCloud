@@ -263,7 +263,8 @@ def combine_sources(sources, repository):
     return {
         "schema": SCHEMA,
         "repository": repository,
-        "source": "bounded_saved_double_read_github_graphs_not_one_live_snapshot",
+        "source": "bounded_sequential_double_read_github_graphs_not_atomic", 
+        "collection_mode": "private_saved_graph_files",
         "snapshot_count": len(sources),
         "total_observed_prs": len(all_prs),
         "observed_source_page_numbers": sorted(all_pages),
@@ -321,7 +322,15 @@ def collect_live(repository, token, *, start_page=1, windows=2, prs_per_page=8):
         if len(encoded) > MAX_SOURCE_BYTES:
             raise ValueError("one live graph inventory is oversized")
         evidence.append((graph, len(encoded)))
-    return combine_sources(evidence, repository)
+    combined = combine_sources(evidence, repository)
+    # Explicit provenance: the operator knows whether these were supplied
+    # private saved files or freshly collected bounded GitHub GET windows.
+    # Sequential GET windows remain non-atomic and cannot grant a claim.
+    combined["collection_mode"] = "current_run_bounded_github_GET_only"
+    combined["live_collection_observed_windows"] = windows
+    combined["live_collection_prs_per_page"] = prs_per_page
+    combined["live_collection_max_http_gets"] = windows * (4 + 2 * prs_per_page)
+    return combined
 
 
 def render(report, fmt):
@@ -330,6 +339,8 @@ def render(report, fmt):
         "",
         "Repository: " + report["repository"],
         "Bronmomenten (UTC): " + " tot ".join(report["observation_window_utc"]),
+        "Bronmodus: " + report["collection_mode"] +
+        " (niet-atomair, geen owner- of mergevrijgave)",
         "Opgeslagen momentopnamen: " + str(report["snapshot_count"]) +
         " · PRs: " + str(report["total_observed_prs"]),
         "Geziene GitHub-PR-pagina's: " +
@@ -426,6 +437,7 @@ def render(report, fmt):
         "<p>Repository: " + escape(report["repository"]) +
         " · momentopnamen: " + str(report["snapshot_count"]) +
         " · onderzochte PRs: " + str(report["total_observed_prs"]) +
+        " · bron: " + escape(report["collection_mode"]) +
         "</p><aside>Geen atomische live bron, eigenaars- of mergevrijgave. "
         "Andere GitHub-pagina's blijven UNKNOWN.</aside><p>" +
         ("WAARSCHUWING: sommige PR-bestandlijsten zijn gedeeltelijk."
@@ -489,7 +501,8 @@ def main(argv=None):
         except BaseException:
             args.output.unlink(missing_ok=True)
             raise
-        print("Private cross-window PR collision handoff written; NO claim/merge authority.")
+        print("Private " + report["collection_mode"] +
+              " cross-window PR handoff written; NO claim/merge authority.")
         return 0
     except (OSError, ValueError, UnicodeError, OverflowError, TypeError):
         print("Refused: invalid or conflicting saved PR windows; no actions.",
