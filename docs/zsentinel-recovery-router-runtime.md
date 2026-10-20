@@ -2343,3 +2343,25 @@ statussen ONBEKEND blijven, **niet** dat de gekozen lokale schijfmeting
 recht geeft op een runner-, claim-, herstel- of deployactie. Geen QA-suites
 toegevoegd of gedraaid. Laat de bestaande CI/review/protected-main
 releasegates intact.
+
+### 20 oktober · eerlijkere workspace-dekking en verplichte privé-uitvoer
+
+De schijfruimtewerkbank doorzoekt nu breedte-eerst (`deque.popleft`)
+zodat één diepe projectmap andere eerste-niveau projecten niet volledig
+verdringt voordat het begrensde tijd-/itemsbudget op is. Onvolledige
+submappen blijven expliciet onverwerkt in het verslag.
+
+Voor de zelfstandige tool is `--output PRIVATE.{html,json,md}` nu
+**verplicht**. Padrijke schijfresultaten verschijnen **nooit op stdout**:
+na succesvolle create-only schrijf verschijnt alleen een neutrale
+bevestiging zonder workspace- of bestandsnamen. Dit maakt de eerder
+getoonde standalone HTML-opdracht een geldige standaard in plaats van
+een optionele privacymaatregel. Beide cockpitintegraties vereisen apart
+`--disk-hotspots-output PRIVATE.html` en vermelden namen alleen in die
+besloten output.
+
+De bronhelper weigert bovendien expliciet
+credentials-/geheimenwerkspaces en skips bekende sleutelbestandsextensies.
+Nog altijd geen autorisatie voor file deletion, dataretentie, herstart,
+Notion/queue mutations of automatisch CI dispatch. Geen QA-suites
+geschreven of gestart; enkel exacte-bron Python syntax gecontroleerd.
