@@ -162,6 +162,10 @@ def html_content(result):
                 '</a> — ' + e(p["source_priority"]) + ' · gate ' +
                 e(p["observed_primary_gate"]) +
                 ' · HEAD ' + e(p["observed_head"] or "ONBEKEND") +
+                ' · issue-link bronmoment(en) ' +
+                e(", ".join(map(str, p["issue_ref_observed_in_snapshots"]))) +
+                (' · Issueverband niet meer in laatste bron (ONBEKEND)'
+                 if p["issue_ref_absent_in_last_snapshot"] else '') +
                 (' · Verdwenen uit eindsteekproef (NIET gesloten)'
                  if p["missing_from_final_sample"] else '') + '</li>')
         cards.append(
@@ -230,6 +234,10 @@ def markdown_content(result):
                          " · oude bron-HEAD " +
                          (p["observed_head"] or "ONBEKEND") +
                          " · gate " + p["observed_primary_gate"] +
+                         " · issue-link laatst gezien in bron " +
+                         str(p["issue_ref_last_seen_snapshot"]) +
+                         (" · issue-link niet meer gezien (ONBEKEND)"
+                          if p["issue_ref_absent_in_last_snapshot"] else "") +
                          (" · UIT STEEKPROEF, NIET bewezen gesloten"
                           if p["missing_from_final_sample"] else ""))
         lines.append("")
@@ -250,7 +258,9 @@ def csv_content(result):
     writer.writerow([
         "Issue bron URL", "Issue bronprioriteit", "Bestaande PR bron URL",
         "PR bronprioriteit", "PR laatst geobserveerde HEAD", "PR hoofdgate",
-        "Laatst gezien bronnummer", "Verdwenen uit eindsteekproef",
+        "Laatst gezien bronnummer", "Issue-link laatst gezien",
+        "Issue-link niet meer in eindsteekproef",
+        "Verdwenen uit eindsteekproef",
         "Menselijke vervolgactie", "Huidige claim/CI/review",
         "Main merge", "Issue status live",
     ])
@@ -260,6 +270,9 @@ def csv_content(result):
                 issue["issue_url"], issue["highest_source_priority"], p["pr_url"],
                 p["source_priority"], p["observed_head"] or "ONBEKEND",
                 p["observed_primary_gate"], p["last_seen_snapshot"],
+                p["issue_ref_last_seen_snapshot"],
+                "JA, issueverband ONBEKEND" if p["issue_ref_absent_in_last_snapshot"]
+                else "NEE",
                 "JA, NIET bewezen gesloten" if p["missing_from_final_sample"]
                 else "NEE", issue["human_next_action"], "ONBEKEND",
                 "ONBEKEND", "ONBEKEND",
@@ -268,6 +281,7 @@ def csv_content(result):
         writer.writerow([
             "ONBEKEND", p["priority"], p["url"], p["priority"], "ONBEKEND",
             "ONBEKEND", p["last_seen_snapshot"],
+            "ONBEKEND", "ONBEKEND",
             "ONBEKEND", "Eerst oorspronkelijke PR/issue-scope live bekijken.",
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
         ])
