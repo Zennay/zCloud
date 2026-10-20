@@ -29,7 +29,9 @@ from zsentinel_pr_scope_guard import ROOT, registry
 from zsentinel_pr_scope_portfolio import collect_portfolio
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
 from zsentinel_issue_pr_history import attach as attach_history
-from zsentinel_issue_action_board import build as build_human_work_inbox
+from zsentinel_issue_action_board import (
+    build as build_human_work_inbox, render_compact_inbox,
+)
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -1005,7 +1007,11 @@ def main(argv=None):
                         help="Toon slechts één issue die echt in de begrensde bron voorkomt, bv. Zennay/zCloud#1326")
     parser.add_argument("--output", type=Path,
                         help="Create a NEW 0600 private operator report, never overwrite")
-    parser.add_argument("--format", choices=("html", "json", "text", "markdown"),
+    parser.add_argument("--worklist-limit", type=int, default=20,
+                        help="Rows in compact worklist output, maximum 60")
+    parser.add_argument("--format", choices=("html", "json", "text", "markdown",
+                                             "worklist-markdown", "worklist-text",
+                                             "worklist-json"),
                         default="html")
     args = parser.parse_args(argv)
     try:
@@ -1158,10 +1164,24 @@ def main(argv=None):
                 "independent_review_policy_verified": False,
                 "merge_authorized": False, "writes_performed": False}
         report["human_work_inbox"] = build_human_work_inbox(report)
+        if not 1 <= args.worklist_limit <= MAX_ISSUES:
+            raise ValueError("worklist-limit must be between 1 and 60")
         if args.format == "json":
             rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+        elif args.format == "worklist-json":
+            inbox = report["human_work_inbox"]
+            trimmed = {**inbox, "cards": inbox["cards"][:args.worklist_limit],
+                       "cards_not_displayed": max(
+                           0, inbox["issue_count"] - args.worklist_limit),
+                       "source_coverage_complete": False}
+            rendered = json.dumps(trimmed, ensure_ascii=False, indent=2) + "\n"
         elif args.format == "html":
             rendered = output_html(report) + "\n"
+        elif args.format in ("worklist-markdown", "worklist-text"):
+            rendered = render_compact_inbox(
+                report["human_work_inbox"],
+                "markdown" if args.format == "worklist-markdown" else "text",
+                args.worklist_limit)
         else:
             rendered = output_text(report, markdown=args.format == "markdown")
         if args.output is None:
