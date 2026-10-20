@@ -43,7 +43,10 @@ data class AlertItem(
     val project: String?,
     val title: String,
     val message: String,
-    val occurredAt: String?
+    val occurredAt: String?,
+    // Explicitly asserted by the current server incident source. A high
+    // severity or an old-server historical alert alone is never enough.
+    val humanActionRequired: Boolean = false
 )
 
 data class WatchSnapshot(
