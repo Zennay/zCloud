@@ -113,7 +113,8 @@ def collect(projects, registry, budget):
     return rows, unmatched[:24], partial
 
 
-def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
+def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
+                     candidate_offset=0, expected_page_sha=None):
     """Find existing product PRs for an explicit urgent issue, even when old.
 
     The ordinary issue-first inventory sees only the most recently modified
@@ -135,6 +136,12 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
     issue_info["url"] = f"https://github.com/{repo}/issues/{issue_number}"
     if type(candidate_page) is not int or not 1 <= candidate_page <= MAX_TARGET_PAGES:
         raise ValueError("candidate page outside bounded GitHub Search window")
+    if type(candidate_offset) is not int or not 0 <= candidate_offset < TARGET_CANDIDATES_PER_PAGE:
+        raise ValueError("candidate offset outside bounded search page")
+    if candidate_offset and (not isinstance(expected_page_sha, str)
+                             or len(expected_page_sha) != 64
+                             or any(c not in "0123456789abcdef" for c in expected_page_sha)):
+        raise ValueError("resuming a page requires its exact ordered candidate fingerprint")
     query = quote(f"repo:{repo} is:pr is:open {issue_number}", safe="")
     # Each page is independently bounded and can be inspected without scanning
     # all previous candidates. GitHub Search has a 1000-hit result ceiling.
@@ -148,8 +155,18 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
     if (not isinstance(matches, list) or type(total) is not int
             or type(found.get("incomplete_results")) is not bool):
         raise ValueError("incomplete issue search result")
-    window_start = (candidate_page - 1) * TARGET_CANDIDATES_PER_PAGE
-    window_end = window_start + len(matches)
+    page_start = (candidate_page - 1) * TARGET_CANDIDATES_PER_PAGE
+    page_numbers = [item.get("number") if isinstance(item, dict)
+                    and type(item.get("number")) is int else None
+                    for item in matches]
+    page_sha = hashlib.sha256(json.dumps(page_numbers,
+                       separators=(",", ":")).encode("utf-8")).hexdigest()
+    if candidate_offset and expected_page_sha != page_sha:
+        raise ValueError("GitHub Search candidate order changed; restart from offset zero")
+    if candidate_offset > len(matches):
+        raise ValueError("resume offset is outside this search result page")
+    window_start = page_start + candidate_offset
+    window_end = page_start + len(matches)
     partial = []
     if (found["incomplete_results"] or total > 1000 or total > window_end
             or window_start > 0):
@@ -159,7 +176,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
     # Search can yield unrelated PRs with coincidental numeric tokens. The
     # actual PR body and current head are the only admitted link evidence.
     rows, examined, unique, candidate_ids = [], 0, set(), []
-    for hit in matches:
+    for hit in matches[candidate_offset:]:
         # Reserve calls/time for exact-source PR evidence and final issue
         # reconciliation; an exhausted source must never masquerade as DONE.
         if (budget[0] > board.MAX_GETS - 8
@@ -217,6 +234,10 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
         if len(rows) >= MAX_PER_PROJECT:
             partial.append({"project": project, "reason": "MAX_FOUR_MATCHING_PRS"})
             break
+    next_candidate_offset = (candidate_offset + examined
+                             if candidate_offset + examined < len(matches) else None)
+    if next_candidate_offset is not None:
+        partial.append({"project": project, "reason": "CURRENT_PAGE_CANDIDATES_UNSEEN"})
     # Never advertise a current open issue without an independent end-of-scan
     # issue read. Failed reconciliation preserves the PR gate observations but
     # clears purported current issue links and records the source limitation.
@@ -237,13 +258,16 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
     else:
         issue_info["current_state"] = "OPEN_RECONFIRMED"
     next_page = (candidate_page + 1 if
-                 window_end < min(total, 1000) and
-                 candidate_page < MAX_TARGET_PAGES else None)
+                 next_candidate_offset is None and window_end < min(total, 1000)
+                 and candidate_page < MAX_TARGET_PAGES else None)
     return rows, issue_info, partial, {
         "search_total": total,
         "search_examined": examined,
         "candidate_pr_numbers": candidate_ids,
         "candidate_page": candidate_page,
+        "candidate_offset": candidate_offset,
+        "next_candidate_offset": next_candidate_offset,
+        "source_page_sha256": page_sha,
         "window_start": window_start,
         "window_end": window_end,
         "next_page": next_page,
