@@ -232,6 +232,21 @@ def connected_cross_window_groups(all_prs, owners):
                 crossing_edges += 1
         ranked = sorted(member_ids, key=lambda number: (-degree[number], number))
         files = sorted(all_paths)
+        file_ownership_rows = []
+        for path in files[:MAX_CLUSTER_EXAMPLE_PATHS]:
+            touching = sorted(owners[path] & member_set)
+            source_windows = sorted({all_prs[n]["snapshot"] for n in touching})
+            file_ownership_rows.append({
+                "path": path,
+                "participating_pr_count_observed": len(touching),
+                "source_windows_observed": source_windows,
+                "cross_window_overlap_observed": len(source_windows) > 1,
+                "prs": [{
+                    "number": n, "url": all_prs[n]["url"],
+                    "head_sha": all_prs[n]["head_sha"],
+                    "source_window": all_prs[n]["snapshot"],
+                } for n in touching],
+            })
         cards.append({
             "source_windows_observed": windows,
             "pr_count_observed": len(member_ids),
@@ -239,6 +254,7 @@ def connected_cross_window_groups(all_prs, owners):
             "cross_window_filename_edges_observed": crossing_edges,
             "distinct_shared_files_observed": len(files),
             "shared_file_samples": files[:MAX_CLUSTER_EXAMPLE_PATHS],
+            "shared_file_ownership_samples": file_ownership_rows,
             "shared_file_samples_truncated": len(files) > MAX_CLUSTER_EXAMPLE_PATHS,
             "participating_prs": [
                 {"number": number, "url": all_prs[number]["url"],
@@ -513,8 +529,18 @@ def render(report, fmt):
                          " · HEAD " + pr["head_sha"][:12] +
                          " · directe bestandspadverbindingen " +
                          str(pr["direct_filename_neighbors_observed"]))
-        for path in group["shared_file_samples"]:
-            lines.append("  - Gedeeld bestand: " + path.replace("\n", " "))
+        for file_row in group["shared_file_ownership_samples"]:
+            lines.append("  - Bestandsmatrix: " + file_row["path"].replace("\n", " ") +
+                         " · " + str(file_row["participating_pr_count_observed"]) +
+                         " PRs, bronvensters " +
+                         "/".join(map(str, file_row["source_windows_observed"])) +
+                         (" · OVER pagina's" if file_row["cross_window_overlap_observed"]
+                          else " · binnen één venster"))
+            for related in file_row["prs"]:
+                lines.append("    - [PR #" + str(related["number"]) +
+                             "](" + related["url"] + ") · venster " +
+                             str(related["source_window"]) + " · HEAD " +
+                             related["head_sha"][:12])
         if group["shared_file_samples_truncated"]:
             lines.append("  - Aanvullende gedeelde bestanden niet getoond.")
     if not report["shown_connected_cross_window_groups"]:
@@ -602,8 +628,18 @@ def render(report, fmt):
             str(pr["direct_filename_neighbors_observed"]) +
             " directe bestandsverbindingen</li>"
             for pr in group["participating_prs"])
-        samples = "".join("<li><code>" + escape(name) + "</code></li>"
-                          for name in group["shared_file_samples"])
+        samples = "".join(
+            "<li><code>" + escape(file_row["path"]) + "</code> · " +
+            str(file_row["participating_pr_count_observed"]) + " PRs · " +
+            ("over bronvensters" if file_row["cross_window_overlap_observed"]
+             else "binnen bronvenster") + "<ul>" +
+            "".join("<li><a rel='noopener noreferrer' href='" +
+                    escape(pr["url"], quote=True) + "'>PR #" +
+                    str(pr["number"]) + "</a> · venster " +
+                    str(pr["source_window"]) + " · HEAD " +
+                    escape(pr["head_sha"][:12]) + "</li>"
+                    for pr in file_row["prs"]) + "</ul></li>"
+            for file_row in group["shared_file_ownership_samples"])
         cluster_rows.append(
             "<li><strong>Groep " +
             str(group["group_number_in_this_observation"]) + "</strong> · " +
