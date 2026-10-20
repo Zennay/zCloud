@@ -420,6 +420,17 @@ def generate_execution_lanes(project, backlog, claims=()):
         lane = classify_backlog_item(project, item)
         classified.append({**item, **lane})
 
+    # The cross-project zSentinel profile must fail closed if already active
+    # work does not declare its actual file/capability scope. A synthetic
+    # lane-only capability does not prove that another lane can edit safely.
+    # Existing owners remain active; this only suppresses NEW queued admission.
+    unknown_active_scopes = [
+        item for item in classified
+        if profile == "portfolio-recovery"
+        and str(item.get("status") or "").lower() in ACTIVE_STATUSES
+        and not any(_scope_from_item(item).values())
+    ]
+
     active_claims = []
     for claim in claims or ():
         if str(claim.get("project_id") or project_id).strip().lower() != project_id:
@@ -480,6 +491,15 @@ def generate_execution_lanes(project, backlog, claims=()):
         lane_id = candidate["lane_id"]
         if lane_id in chosen_by_lane:
             continue
+        if unknown_active_scopes:
+            # No owner identities or task IDs are needed to explain the hold.
+            blocked_by_lane[lane_id].append({
+                "kind": "queue",
+                "reason": "active_write_scope_not_declared",
+                "ambiguous_active_count": len(unknown_active_scopes),
+                "overlap": {"capabilities": [], "files": []},
+            })
+            continue
 
         conflicts = []
         for claim in active_claims:
@@ -531,6 +551,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             # an existing worker claim on the strength of this count.
             "active_backlog_count": active_backlog_counts[lane_id],
             "parallel_active_warning": active_backlog_counts[lane_id] > 1,
+            "unknown_active_scope_count": len(unknown_active_scopes),
             "blocked_by": blocked_by,
         })
     return results
