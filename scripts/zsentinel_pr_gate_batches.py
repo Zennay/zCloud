@@ -263,12 +263,28 @@ def human(report, markdown=False):
         "Ontbrekende batches: " + (", ".join(map(str, report["missing_batches"])) or "geen"),
         "Onbereikbare of veranderde HEADs: " + str(report["unavailable_or_drifted_prs"]),
         "Verouderde (>15 min) opgeslagen PR-waarnemingen: " + str(report["stale_over_15_minutes_prs"]),
+        "Tijdverschil tussen bronbatches: " +
+            str(report["cross_batch_observation_spread_seconds"]) +
+            " seconden · onderlinge bron binnen 10 min: " +
+            str(report["cross_batch_observation_within_10_minutes"]),
         "Historische gatecategorieën: " + ", ".join(
             key + "=" + str(value) for key, value in
             sorted(report["saved_historic_gate_category_counts"].items())),
         "Belangrijk: alle gegevens zijn historisch; beschermde main, exacte CI, "
         "review, actieve ownerclaim en release zijn NIET geverifieerd.",
     ]
+    lines.append("")
+    lines.append("## Eerst bekijken: menselijke merge-first werkbak" if markdown
+                 else "Eerst bekijken: menselijke merge-first werkbak")
+    for action in report["manual_review_queue_preview"]:
+        link = ("[" + action["url"] + "](" + action["url"] + ")"
+                if markdown else action["url"])
+        lines.append("- " + str(action["manifest_position"]) + ". " + link +
+                     " · [" + action["historic_gate_category"] + "] " +
+                     action["human_next_gate"] + " · geen mergevrijgave")
+    if report["manual_review_queue_hidden_after_24"]:
+        lines.append(str(report["manual_review_queue_hidden_after_24"]) +
+                     " extra PR's buiten compacte shortlist, zie volledige bronbatches.")
     for batch in report["batches"]:
         lines.append(("\n## " if markdown else "\n") + "Batch " + str(batch["batch"]) +
                      " · bron UTC " + batch["observed_at_utc"])
