@@ -403,8 +403,39 @@ def observe_worker_progress(database, projects, *, now=None):
     finally:
         con.close()
     entries.sort(key=lambda row: (row["project_id"], row["worker_slot"]))
+    # Only concrete operator-attention classes, not every stale or paused
+    # worker, belong in the bounded intervention inbox. These are never
+    # claim transfers, dispatch instructions or restart authorizations.
+    actionable = {
+        "allocated_paused_with_claimed_queue_owner_gate",
+        "recent_client_block_event_owner_review",
+        "generating_but_progress_unverified_or_stale",
+        "worker_event_stale_or_unknown",
+        "configured_running_no_event_evidence",
+    }
+    followups = []
+    for row in sorted(entries, key=_operator_worker_priority):
+        if row["classification"] not in actionable:
+            continue
+        followups.append({
+            "project_id": row["project_id"],
+            "worker_slot": row["worker_slot"],
+            "classification": row["classification"],
+            "safe_followup": row["safe_followup"],
+            "current_queue_lease_observed": row["queue_lease_current_from_source"],
+            "recent_block_events_after_prompt_in_sample":
+                row["timeline"]["recent_block_events_after_last_prompt_in_sample"],
+            "recent_progress_events_after_prompt_in_sample":
+                row["timeline"]["recent_progress_events_after_last_prompt_in_sample"],
+            "timeline_truncated": row["timeline"]["timeline_truncated"],
+            "owner_claim_verified": False,
+            "recovery_authorized": False,
+            "continuation_verified": False,
+        })
     return {
         "schema": "zsentinel-worker-progress-observation-v1",
+        "owner_followup_candidates": followups[:MAX_PROJECTS * MAX_SLOTS],
+        "followup_inventory_exhaustive": False,
         "observed_at_utc": observed.isoformat(timespec="seconds"),
         "coverage": ("bounded_partial_or_no_events" if missing or truncated
                      else "selected_project_event_slots_only"),
@@ -431,6 +462,12 @@ def operator_text(source):
             or source.get("worker_resumed_verified") is not False):
         raise ValueError("invalid read-only worker source")
     lines = ["WORKER VOORTGANG · read-only eventbewijs; GEEN bewezen product-/claimhervatting."]
+    for row in source.get("owner_followup_candidates", []):
+        lines.append(
+            f"  PRIORITEIT eigenaarcontrole · {row['project_id']} worker {row['worker_slot']}"
+            f" · {row['classification']} · actie={row['safe_followup']}"
+            f" · recente_blocks={row['recent_block_events_after_prompt_in_sample']}"
+            f" · claim_niet_geverifieerd")
     for row in source["entries"]:
         lines.append(
             f"  {row['project_id']} worker {row['worker_slot']} · {row['classification']}"
