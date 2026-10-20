@@ -2847,7 +2847,9 @@ function combinedActivityCoverage(){
   const scope=[...visible].filter(id=>!filter||id===filter);
   const local=ACTIVITY_COVERAGE,coverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[])
     .filter(c=>scope.includes(c.project));
-  const liveProjects=coverage.filter(c=>c.status==='partial_sources').length;
+  const blocked=coverage.filter(c=>c.providerAdmission&&c.providerAdmission!=='none').length;
+  const liveProjects=coverage.filter(c=>c.status==='partial_sources'
+    &&(!c.providerAdmission||c.providerAdmission==='none')).length;
   const stale=coverage.filter(c=>c.staleEvidence||
     !Number.isFinite(Date.parse(c.observedAt))||Date.now()-Date.parse(c.observedAt)>6*3600000).length;
   const missing=scope.length-coverage.length;
@@ -2855,6 +2857,7 @@ function combinedActivityCoverage(){
     'Local VPS '+(local.lastSuccess?'last read '+date(local.lastSuccess,true):'not yet read'),
     'GitHub '+coverage.length+'/'+scope.length+' projects observed in bounded windows',
     missing?'missing '+missing:'',stale?'stale '+stale:'',
+    blocked?'provider holds '+blocked:'',
     liveProjects?'partial source '+liveProjects:'',
     'never a complete GitHub or production ledger'
   ];
@@ -2891,20 +2894,24 @@ function combinedProjectCoverageRows(){
     const syncAt=ghCoverage?.observedAt||null;
     const ghFresh=syncAt&&Number.isFinite(Date.parse(syncAt))
       &&current-Date.parse(syncAt)<=6*3600000;
-    // Event timestamp and time of observing its source are independent facts.
-    const status=!ghCoverage?'not observed':ghCoverage.status==='unavailable'
-      ?'unavailable':!ghFresh||ghCoverage.staleEvidence?'stale/partial':
+    // A fresh timestamp on a provider-denied read is *not* a fresh feed.
+    // Provider reasons are from a fixed validated allowlist, not free text.
+    const providerAdmission=ghCoverage?.providerAdmission||'none';
+    const status=!ghCoverage?'not observed':
+      providerAdmission!=='none'?'provider blocked / incomplete':
+      ghCoverage.status==='unavailable'?'unavailable':
+      !ghFresh||ghCoverage.staleEvidence?'stale/partial':
       ghCoverage.status||'partial';
     rows.push({project:id,canonicalRepo,localLast,localStatus,localSourceAt,
       localCount:localCache?.rows.length??null,localLimited:localCache?.limited===true,
-      ghLast,syncAt,status});
+      ghLast,syncAt,status,providerAdmission});
   }
   return rows;
 }
 function combinedProjectCoverageTable(){
   const entries=combinedProjectCoverageRows();
   const missing=entries.filter(r=>r.status==='not observed').length;
-  const stale=entries.filter(r=>['stale/partial','unavailable'].includes(r.status)).length;
+  const stale=entries.filter(r=>['stale/partial','unavailable','provider blocked / incomplete'].includes(r.status)).length;
   const unscoped=entries.filter(r=>r.localStatus!=='scoped read').length;
   return '<details data-disclosure="timelineCoverage"><summary>Project source coverage ('+
     entries.length+' projects · '+unscoped+' local not fresh · '+missing+
@@ -2920,6 +2927,10 @@ function combinedProjectCoverageTable(){
       '</small></div><small>GitHub '+esc(row.status)+'<br>'+
       (row.syncAt?'observed '+esc(date(row.syncAt,true)):'not fetched')+
       (row.ghLast?'<br>latest sampled event '+esc(date(row.ghLast,true)):'')+
+      (row.providerAdmission!=='none'?
+        '<br><strong>GitHub provider HOLD:</strong> '+
+        esc(GITHUB_PROVIDER_ADMISSIONS[row.providerAdmission]||'Source admission unknown')+
+        ' · missing activity UNKNOWN':'')+
       (row.canonicalRepo?'<br><a href="'+esc(row.canonicalRepo+'/pulls')+
         '" target="_blank" rel="noopener noreferrer">Current PRs ↗</a> · <a href="'+
         esc(row.canonicalRepo+'/actions')+
