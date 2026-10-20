@@ -2910,16 +2910,27 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
     queue_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(queue_id).strip())[:160]
     ts=now()
     with connect() as c:
-        c.execute("""INSERT INTO portfolio_queue(
+        # A producer retry must never rewrite an actively owned task, a
+        # verifying result, an ineligible/human-held row or a completed
+        # historical receipt. SQLite makes this check atomic with the UPSERT.
+        inserted=c.execute("""INSERT INTO portfolio_queue(
             queue_id,project_id,title,priority,status,eligible,completion_criteria,source_url,
             created_at,updated_at,parent_queue_id
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(queue_id) DO UPDATE SET
             project_id=excluded.project_id,title=excluded.title,priority=excluded.priority,
             completion_criteria=excluded.completion_criteria,source_url=excluded.source_url,
-            updated_at=excluded.updated_at""",
+            updated_at=excluded.updated_at
+        WHERE portfolio_queue.status='queued' AND portfolio_queue.eligible=1
+          AND portfolio_queue.worker_slot IS NULL
+          AND portfolio_queue.claimed_at IS NULL
+          AND portfolio_queue.claim_expires IS NULL""",
             (queue_id,project_id,title,priority,'queued',1,str(completion_criteria or ''),
              str(source_url or ''),ts,ts,parent_queue_id))
+        if inserted.rowcount != 1:
+            # An existing claim or completed task is unchanged. A privileged
+            # owner must decide whether a new continuation ID is appropriate.
+            raise ValueError('Queue-ID is bezet door bestaande taak; geen actieve of afgesloten taak overschreven')
         row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',(queue_id,)).fetchone()
     return _portfolio_queue_row(row)
 
@@ -2995,16 +3006,27 @@ def portfolio_queue_audit(refill=True):
     """Keep the execution queue write-only, broad enough, and separate from human gates."""
     removed=[]
     with connect() as c:
+        # Only clean *unstarted*, unowned queue rows. Running/verifying
+        # work must remain under its current lease even when policy changes.
         rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria FROM portfolio_queue
-                          WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
+                          WHERE eligible=1 AND status='queued'
+                            AND worker_slot IS NULL
+                            AND claimed_at IS NULL AND claim_expires IS NULL""").fetchall()
         for row in rows:
             project=PROJECT_INDEX.get(str(row['project_id'])) or {}
             human_gated=str(project.get('queue_mode') or '').lower()=='human-gated'
             if human_gated or not _portfolio_queue_execution_capable(row['title'],row['completion_criteria']):
-                c.execute("""UPDATE portfolio_queue SET status='dropped',eligible=0,worker_slot=NULL,
-                             claimed_at=NULL,claim_expires=NULL,blocker=?,updated_at=? WHERE queue_id=?""",
-                          ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
-                removed.append(str(row['queue_id']))
+                # Recheck at the write boundary: the allocator could have
+                # claimed this row since the earlier SELECT. Never revoke
+                # another worker's lease as a side effect of queue hygiene.
+                changed=c.execute("""UPDATE portfolio_queue
+                    SET status='dropped',eligible=0,blocker=?,updated_at=?
+                    WHERE queue_id=? AND eligible=1 AND status='queued'
+                      AND worker_slot IS NULL
+                      AND claimed_at IS NULL AND claim_expires IS NULL""",
+                    ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
+                if changed.rowcount:
+                    removed.append(str(row['queue_id']))
     if not refill:
         with connect() as c:
             ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
