@@ -2365,3 +2365,47 @@ credentials-/geheimenwerkspaces en skips bekende sleutelbestandsextensies.
 Nog altijd geen autorisatie voor file deletion, dataretentie, herstart,
 Notion/queue mutations of automatisch CI dispatch. Geen QA-suites
 geschreven of gestart; enkel exacte-bron Python syntax gecontroleerd.
+
+### 20 oktober · groei/krimp tussen twee strikt vergelijkbare privé-observaties
+
+zSentinel heeft nu een **brongebonden historische vergelijking** naast een
+momentopname. De zelfstandige `scripts/zsentinel_disk_trend.py` gebruikt
+uitsluitend een eerder opgeslagen **regulier privé-JSON-bestand (0600)** en
+het huidige read-only scandocument. Een symlink, te groot/leeg bestand,
+ongeldig JSON of dubbele JSON-keys wordt geweigerd.
+
+De vergelijking weigert verschillende workspace-roots, gewijzigde
+scanlimieten of een niet-oplopende / meer dan 72 uur oude bronvolgorde.
+Zij bewaart hoogstens 128 zwaarste waargenomen projectonderdelen per bron,
+en toont verschillen uitsluitend van groepen die **in beide** snapshots
+aanwezig zijn. Niet meer gezien = **ONBEKEND**, niet opgeschoond.
+De scan zelf is begrensd, kan tijdens actief schrijven lopen en sluit
+gevoelige paden uit. Zelfs een negatieve som is daarom **geen bewijs van
+vrijgemaakte schijfruimte**.
+
+Dit werkt voortaan in **alle drie uitvoerroutes**:
+- standalone `zsentinel_disk_hotspots.py --previous OLD.json`
+- bestaande `zsentinel_live_cockpit.py --disk-hotspots-previous OLD.json`
+- bestaande `zsentinel_portfolio_overview.py --disk-hotspots-previous OLD.json`
+
+Voor een startmomentopname:
+```sh
+python3 scripts/zsentinel_disk_hotspots.py \
+  --root /home/ubuntu/zennay-cloud \
+  --format json \
+  --output /home/ubuntu/zennay-cloud/.operator-private/disk-T0.json
+```
+En later hetzelfde scanprofiel, met besloten groei/krimp-HTML:
+```sh
+python3 scripts/zsentinel_disk_hotspots.py \
+  --root /home/ubuntu/zennay-cloud \
+  --previous /home/ubuntu/zennay-cloud/.operator-private/disk-T0.json \
+  --format html \
+  --output /home/ubuntu/zennay-cloud/.operator-private/disk-T1.html
+```
+Het padrijke T1-verslag is uitsluitend privé; de geïntegreerde cockpit
+en portfolio-HTML/JSON/tekst ontvangen enkel de padvrije
+**waargenomen MiB-verschilsom, aantal gedeelde mappen en
+onvolledige-bronwaarschuwing**. Bij een fout is er geen stilzwijgende
+"alles opgelost" status, geen claim, automatische cleanup, runnerrestart,
+workflowdispatch, CI-omzeiling of release.
