@@ -20,7 +20,7 @@ python3 scripts/zsentinel_merge_first_board.py \
   --max-per-project 4 --output /private/new-merge-first-worklist.html
 ```
 
-This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft, child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 60 exact PR/check/review GETs.
+This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft, child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 60 exact PR/check/review GETs. The workbench also stops new reads after a 120-second monotonic source window (an already started bounded GitHub GET may finish afterwards); no unlimited background polling. An empty selection explicitly says it is not evidence that the backlog is empty.
 
 The output is a new, exclusive-create, private (0600) responsive standalone HTML file. Without `--output` there is no local write. JSON output is available using `--format json`. The HTML contains no JavaScript, network fetches, tokens, worker credentials or queue identifiers. Never point output at a shared web directory. Existing reports are never overwritten.
 
@@ -35,6 +35,8 @@ python3 scripts/portfolio_merge_ready.py --repo Zennay/Supa --project supa --pr 
 ```
 
 The result describes the current PR source HEAD, draft/base status, **exact-HEAD independent** GitHub review receipts, complete observed GitHub check-runs/legacy statuses, and whether a merge would still need a valid exclusive lease. A green-looking result is **not** a claim, GitHub branch protection waiver or production-deploy proof. If the source is unavailable or untrusted the tool fails closed rather than inventing green checks.
+
+The older `portfolio_merge_ready.py` read-only no-`--pr` sweep now inspects at most the **12 newest open PRs** by default (`--max-prs 1..24`). Both the 100-PR GitHub list window and the smaller local selection are marked PARTIAL when they omit records. An explicitly pinned `--pr` ignores this recent-window cap. Do not treat a quiet limited window as a cleared backlog.
 
 ## Authorized single-PR merge
 
