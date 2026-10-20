@@ -5,6 +5,7 @@ Does not acquire claims, merge, trigger CI, touch SQLite or deploy. A CI green
 observation is never a substitute for protected-branch requirements or review.
 """
 import argparse
+import hashlib
 import datetime as dt
 import html
 import json
@@ -97,7 +98,7 @@ def observed_checks(checks, legacy):
     return "OBSERVED_GREEN_ONLY"
 
 
-def inspect(repo, number, budget):
+def inspect(repo, number, budget, expected_body_digest=None):
     try:
         first = bounded_gh(f"repos/{repo}/pulls/{number}", budget)
         if not isinstance(first, dict) or not isinstance(first.get("head"), dict):
@@ -109,6 +110,19 @@ def inspect(repo, number, budget):
         if not isinstance(base, dict) or not isinstance(base.get("ref"), str):
             raise ValueError("invalid PR base")
         title = str(first.get("title") or "")[:160]
+        if expected_body_digest is not None:
+            if not isinstance(expected_body_digest, str) or not re.fullmatch(
+                    r"[0-9a-f]{64}", expected_body_digest):
+                raise ValueError("invalid PR body fingerprint")
+            body = first.get("body") or ""
+            if not isinstance(body, str) or len(body) > 128000:
+                raise ValueError("untrusted PR body")
+            first_digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            if first_digest != expected_body_digest:
+                return {"repo": repo, "number": number, "title": title, "head": sha,
+                        "status": "PR_DESCRIPTION_CHANGED", "review": "UNKNOWN",
+                        "checks": "UNKNOWN", "source": "CHANGED",
+                        "actions": ["Refresh current issue references"]}
         if first.get("state") != "open":
             return {"repo": repo, "number": number, "title": title, "head": sha,
                     "status": "CLOSED_OR_MERGED", "review": "NOT_INSPECTED",
@@ -132,6 +146,15 @@ def inspect(repo, number, budget):
             return {"repo": repo, "number": number, "title": title, "head": sha,
                     "status": "SOURCE_MOVED", "review": "UNKNOWN",
                     "checks": "UNKNOWN", "source": "CHANGED", "actions": ["Refresh exact-head evidence"]}
+        if expected_body_digest is not None:
+            latest_body = last.get("body") or ""
+            if (not isinstance(latest_body, str) or len(latest_body) > 128000
+                    or hashlib.sha256(latest_body.encode("utf-8")).hexdigest()
+                    != expected_body_digest):
+                return {"repo": repo, "number": number, "title": title, "head": sha,
+                        "status": "PR_DESCRIPTION_CHANGED", "review": "UNKNOWN",
+                        "checks": "UNKNOWN", "source": "CHANGED",
+                        "actions": ["Refresh current issue references"]}
         author = first.get("user", {}).get("login", "") if isinstance(first.get("user"), dict) else ""
         review = latest_approvals(revs, author, sha)
         check = observed_checks(runs, legacy)
