@@ -908,9 +908,6 @@ def main():
         # corrupt source must not silently consume an incident notification.
         decision["private_ledger_written"] = bool(args.state)
         owner_handoff = None
-        if args.show_owner_handoff:
-            from zsentinel_runtime_handoff import build_handoff
-            owner_handoff = build_handoff(decision, registry=registry)
         local_runner = None
         if args.observe_local_runner:
             from zsentinel_local_runner_observer import observe_local_runner
@@ -947,6 +944,13 @@ def main():
                 "coverage": "unavailable", "reason": queue_churn_error,
                 "automatic_retry_authorized": False,
                 "lease_release_authorized": False, "claim_failure_proven": False}
+        # Queue trend is bound into the same source decision before the
+        # owner handoff renders. Previously the handoff was built too early
+        # and silently omitted lease conflicts from --queue-previous.
+        if args.show_owner_handoff:
+            from zsentinel_runtime_handoff import build_handoff
+            owner_handoff = build_handoff(
+                decision, registry=registry, queue_trend=queue_churn)
         github_coverage = verified_source_coverage(selected, provenance, bundle)
         summary = portfolio_summary(registry, queue, selected, github_coverage, decision)
         runner_cross_source = None
