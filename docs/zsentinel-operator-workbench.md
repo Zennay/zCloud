@@ -2143,3 +2143,21 @@ live deploy blijven onbekend zonder afzonderlijke verse bronverificatie.
 Dit is een lokale 0600 create-only operatorfunctie zonder netwerk,
 queue-/claimwijziging, CI-rerun, QA-suite of productieactie. De bestaande
 verplichte CI, onafhankelijke review en releasebevoegdheden gelden onverkort.
+
+
+### P0/P1 issueprioriteit blijft bij het oorspronkelijke issueverband
+
+Een PR kan in latere opgeslagen snapshots naar een andere bronprioriteit
+verschuiven of zijn oorspronkelijke issue-link verwijderen. De eerdere
+issue-eerst lijst leidde dan de issueprioriteit uit de **nieuwste algemene
+PR-prioriteit** af, zelfs wanneer die bronobservatie het issue niet langer
+noemde. Dat kon een historische P0-issue onterecht lager plaatsen.
+
+De huidige bronlezer bewaart nu per issue-link de hoogste prioriteit uit
+uitsluitend de snapshots waarin de **exacte oorspronkelijke issue-URL**
+werkelijk gekoppeld was. De nieuwste algemene PR-prioriteit blijft apart
+zichtbaar in HTML, Markdown, CSV en JSON. Meerdere PRs bij hetzelfde issue
+worden op de historisch gekoppelde issueprioriteit gerangschikt. Dit is
+alleen een getrouwe historische triagevolgorde: een historische P0 is geen
+bewijs van een nu nog open P0, en sluiting, eigenaarschap en merge worden
+nog altijd niet automatisch geclaimd.
