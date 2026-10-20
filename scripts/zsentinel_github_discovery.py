@@ -45,8 +45,10 @@ def recent_runs(root, canonical_repository, token, status):
             or len(result["workflow_runs"]) > MAX_RUNS):
         raise ValueError("GitHub workflow list shape or bounds invalid")
     selected = []
+    partial = False
     for run in result["workflow_runs"]:
         if not isinstance(run, dict):
+            partial = True
             continue
         rid, sha = run.get("id"), run.get("head_sha")
         repository = run.get("repository")
@@ -54,9 +56,10 @@ def recent_runs(root, canonical_repository, token, status):
                 or not isinstance(sha, str) or not SHA.fullmatch(sha)
                 or not isinstance(repository, dict)
                 or repository.get("full_name") != canonical_repository):
+            partial = True
             continue
         selected.append((rid, sha))
-    return selected[:RUN_PAGES_PER_WINDOW]
+    return selected[:RUN_PAGES_PER_WINDOW], partial
 
 
 def run_job_candidates(root, run_id, sha, token, kind):
@@ -133,7 +136,10 @@ def discover(registry, selected, token=None):
             for status in RUN_WINDOWS:
                 try:
                     request_count += 1
-                    run_ids = recent_runs(root, canonical_repository, token, status)
+                    run_ids, partial_runs = recent_runs(
+                        root, canonical_repository, token, status)
+                    if partial_runs and status not in incomplete_windows:
+                        incomplete_windows.append(status)
                     for run_id, sha in run_ids:
                         request_count += 1
                         checked += 1
