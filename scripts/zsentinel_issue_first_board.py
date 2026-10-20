@@ -158,7 +158,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
         raise ValueError("unbounded search candidate source")
     # Search can yield unrelated PRs with coincidental numeric tokens. The
     # actual PR body and current head are the only admitted link evidence.
-    rows, examined, unique = [], 0, set()
+    rows, examined, unique, candidate_ids = [], 0, set(), []
     for hit in matches:
         # Reserve calls/time for exact-source PR evidence and final issue
         # reconciliation; an exhausted source must never masquerade as DONE.
@@ -176,7 +176,9 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
             continue
         unique.add(number)
         if not 1 <= number <= 9999999:
+            partial.append({"project": project, "reason": "MALFORMED_SEARCH_ITEM"})
             continue
+        candidate_ids.append(number)
         # Search issue's PR-specific listing can be imperfect; source PR GET
         # is the only admitted current description and exact head.
         try:
@@ -240,6 +242,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
     return rows, issue_info, partial, {
         "search_total": total,
         "search_examined": examined,
+        "candidate_pr_numbers": candidate_ids,
         "candidate_page": candidate_page,
         "window_start": window_start,
         "window_end": window_end,
