@@ -378,6 +378,13 @@ def operator_text(report):
         "Bron compleet voor geopende PR's: " +
         ("ja" if report["pr_file_scope_sample_complete"] else "NEE / onzeker"),
     ]
+    if report["selected_source_pr"] is not None:
+        src = report["selected_source_pr"]
+        lines.append(
+            "Bron-PR bestanden: " + str(src["source_file_count"]) +
+            " paden uit " + str(src["source_file_pages_observed"]) +
+            " gelezen pagina('s); uitgebreide bron: " +
+            str(src["expanded_source_file_pages_requested"]) + ".")
     if report["observed_overlaps"]:
         for hit in report["observed_overlaps"]:
             lines.append("OVERLAP " + hit["path"] + " | PR #" +
@@ -413,7 +420,12 @@ def html_view(report):
     source_link = ("<p>Bron-PR: <a rel='noreferrer noopener' href='" +
                    escape(source["url"], quote=True) + "'>#" +
                    str(source["number"]) + "</a> — exacte head " +
-                   escape(source["head_sha"][:12]) + "</p>" if source else "")
+                   escape(source["head_sha"][:12]) +
+                   " · " + str(source["source_file_count"]) + " paden uit " +
+                   str(source["source_file_pages_observed"]) +
+                   " pagina('s) · uitgebreid: " +
+                   str(source["expanded_source_file_pages_requested"]) +
+                   "</p>" if source else "")
     targets = "<ul>" + "".join(
         "<li><code>" + escape(path) + "</code></li>"
         for path in report["requested_paths"]) + "</ul>"
@@ -732,7 +744,11 @@ def as_markdown(report):
         lines.extend([
             "Geselecteerde bron-PR: [#" + str(selected["number"]) +
             "](" + selected["url"] + "), head `" +
-            selected["head_sha"] + "`, base `" + selected["base_sha"] + "`.",
+            selected["head_sha"] + "`, base `" + selected["base_sha"] +
+            "`. Bestandspaden: " + str(selected["source_file_count"]) +
+            " uit " + str(selected["source_file_pages_observed"]) +
+            " pagina('s). Uitgebreide bron: " +
+            str(selected["expanded_source_file_pages_requested"]) + ".",
             "",
         ])
     lines.extend([
@@ -844,8 +860,9 @@ def main(argv=None):
         # evidence even if some overlaps are visible. Never exit 0 for permission.
         return 2 if report["observed_overlaps"] else (
             3 if not report["pr_file_scope_sample_complete"] else 0)
-    except (ValueError, OSError) as error:
-        print("zSentinel scope unavailable: " + str(error), file=sys.stderr)
+    except (ValueError, OSError):
+        print("zSentinel source unavailable or invalid; no claim or merge clearance",
+              file=sys.stderr)
         return 3
 
 
