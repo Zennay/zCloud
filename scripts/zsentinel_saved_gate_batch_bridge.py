@@ -545,8 +545,6 @@ def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]
                 if url in indexed and indexed[url] != gate:
                     raise ValueError("Inconsistent saved PR receipts")
                 indexed[url] = gate
-        return indexed
-
         for url in allowed:
             if batch_of[url] not in missing_batches and url not in indexed:
                 raise ValueError("Observed batch omitted known linked PR")
