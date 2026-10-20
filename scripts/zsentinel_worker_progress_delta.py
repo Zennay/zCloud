@@ -54,9 +54,17 @@ OPERATOR_LABELS = {
 
 
 def _owner_sort(rows):
+    if (type(rows) is not list or len(rows) > 2 * MAX_ENTRIES
+            or any(type(row) is not dict
+                   or row.get("stage") not in OPERATOR_ORDER
+                   or type(row.get("project_id")) is not str
+                   or not SLUG.fullmatch(row["project_id"])
+                   or type(row.get("worker_slot")) is not int
+                   or not 1 <= row["worker_slot"] <= 16
+                   for row in rows)):
+        raise ValueError("untrusted or unbounded operator worker rows")
     return sorted(rows, key=lambda row: (
-        OPERATOR_ORDER.get(row.get("stage"), 99),
-        row.get("project_id", ""), row.get("worker_slot", 0),
+        OPERATOR_ORDER[row["stage"]], row["project_id"], row["worker_slot"],
     ))
 
 
