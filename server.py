@@ -2924,20 +2924,25 @@ def portfolio_attention_add(project_id,action,detail='',source_url='',severity='
         raise ValueError('action is verplicht')
     if severity not in ('urgent','attention','later'):
         severity='attention'
-    if not attention_id:
+    if attention_id is None:
         digest=hashlib.sha256((project_id+'\n'+action).encode()).hexdigest()[:16]
         attention_id=project_id+'-'+digest
-    attention_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(attention_id).strip())[:160]
+    # Never alias two distinct operator-specified incident identifiers.
+    if not isinstance(attention_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',attention_id):
+        raise ValueError('Attention-ID moet een canonieke identiteit van 1-160 tekens zijn')
     ts=now()
     with connect() as c:
-        c.execute("""INSERT INTO portfolio_attention(
+        write=c.execute("""INSERT INTO portfolio_attention(
             attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at,resolved_at
         ) VALUES(?,?,?,?,?,?, 'open',?,?,NULL)
         ON CONFLICT(attention_id) DO UPDATE SET
-            project_id=excluded.project_id,action=excluded.action,detail=excluded.detail,
+            action=excluded.action,detail=excluded.detail,
             severity=excluded.severity,source_url=excluded.source_url,status='open',
-            updated_at=excluded.updated_at,resolved_at=NULL""",
+            updated_at=excluded.updated_at,resolved_at=NULL
+        WHERE portfolio_attention.project_id=excluded.project_id""",
             (attention_id,project_id,action,str(detail or '')[:4000],severity,_safe_operator_source_url(source_url),ts,ts))
+        if write.rowcount!=1:
+            raise ValueError('Attention-ID behoort al bij een ander project; incident niet overschreven')
         row=c.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',(attention_id,)).fetchone()
     return dict(row)
 
