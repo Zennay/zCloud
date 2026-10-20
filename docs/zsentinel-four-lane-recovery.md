@@ -231,3 +231,20 @@ was executed.
 PR branch. Exact-head required CI, independent review, branch protection
 and release ownership remain mandatory. PR source is not main or live
 deployment, and live worker recovery remains unverified.
+
+### CLI import fix for normal operator execution
+
+At commit [c652aa6](https://github.com/Zennay/zCloud/commit/c652aa6768dfed3db288f345e2ddcba1bcea3595),
+the direct script entrypoint resolves the canonical repository root before
+importing its shared lane generator, and imports the source action adapter
+from the adjacent `scripts` package. This is necessary because
+`python3 scripts/zsentinel_four_lane_desk.py` ordinarily puts the script
+directory, rather than the repository root, first on Python's module path.
+It supports the documented operator command when the **matching PR
+sources are available together**. Running an older main checkout is not
+proof this branch's functionality is deployed.
+
+Do not copy the scripts individually to a VPS production root: use a
+source-matched, reviewed checkout after existing branch/CI/release gates
+permit integration. Until then, exact-source read-only inspection is
+distinct from installed/live product behavior.
