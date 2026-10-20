@@ -1549,3 +1549,10 @@ Ook het bestaande multi-projectcommando (tot drie canoniek geregistreerde reposi
     python3 scripts/zsentinel_pr_scope_portfolio.py --project cloud --project supa --max-prs 10 --format html > /secure/location/zsentinel-portfolio-clusters.html
 
 De portfolioresultaten bevatten per project het aantal waargenomen groepen en de brongebonden clusterkaarten, in tekst, privé-Markdown, offline HTML en JSON. Wanneer één project niet bereikbaar is, blijft de groepwaarde daarvan ONBEKEND en blijven de onafhankelijke projectresultaten beschikbaar. De bestaande beperking van 80 zichtbare losse botsingsparen verandert niet hoeveel geobserveerde edges worden gebruikt om de clusters te vormen. Alle resultaten zijn uitsluitend observaties; er is geen claim- of main-mergeautorisatie.
+
+
+### Historische groepsverandering zonder valse mergeclaims
+
+De al bestaande lokale, privé historische portfoliovergelijking berekent nu ook op basis van de oorspronkelijke PR-paren een nieuwe indeling in verbonden bestandscopegroepen. **Alleen als beide snapshots de volledige open PR-inventaris stabiel en zonder afgesneden overlapparen bevatten**, meldt het verslag welke exact-genummerde PR-ledencombinaties alleen in het vorige of huidige bronmoment voorkomen. Iedere combinatie bevat directe canonieke PR-links. Dit is een bronverschil, geen bewijs dat het werk is gemerged, dat een issue opgelost is of dat een eigenaar vrij is.
+
+Wanneer één inventaris onvolledig is, blijven groepsveranderingen expliciet ONBEKEND. De historische weergave in tekst, privé-Markdown en HTML gebruikt dezelfde bestaande read-only snapshotfunctie. Er worden geen workflow- of VPS-verzoeken toegevoegd en er veranderen geen claims of releasegates.
