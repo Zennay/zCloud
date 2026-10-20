@@ -27,8 +27,17 @@ production writer from cancelling an in-flight deployment.
    Later owner gates still verify exact checkout, remote main and VPS identity.
 4. The worker-tab workflow now checks remote main **again** before copying
    the browser background file and before attempting an in-place addon reload.
-   Existing idle checks decide whether activation is safe; neither worker
-   sessions nor tabs are forcibly restarted.
+   It refuses a runtime checkout whose HEAD differs from the approved main,
+   dirty/untracked runtime background changes, symlinked worker addon files
+   or a missing installed background. These are operator-denied installs, not
+   permission to overwrite active-owner work. Existing idle checks decide
+   whether activation is safe; neither worker sessions nor tabs are forcibly
+   restarted.
+5. All three VPS checkout steps rely on the canonical GitHub workflow-event
+   SHA selected by the pinned `actions/checkout`. Explicit `ref` expression
+   overrides in these privileged jobs were removed because they were rejected
+   by the mandatory permanent-runner source gate. The separate manual
+   owner/triggering-actor/first-attempt/exact-main checks remain required.
 5. A changed main, unknown runner, missing permission, non-idle worker or
    failed step leaves activation denied or deferred according to the existing
    fail-closed behavior.
