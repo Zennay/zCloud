@@ -2029,3 +2029,46 @@ combined. `--extract-to` is also unavailable with `--inspect-pr`, so a
 targeted read/hand-off command does not unexpectedly extract the whole ZIP.
 No new QA suite, network operation, runner dispatch, queue claim or
 deployment is involved.
+
+
+## 20 October · Merge-first issue-to-PR inbox from an existing private dossier
+
+An operator can now start with the **existing issue** instead of remembering a
+PR number. The already available private ZIP dossier reader groups only
+canonical original issue links supplied by previously validated sampled PR
+receipts, then exposes the related existing PR candidates:
+
+```sh
+python3 scripts/zsentinel_saved_gate_dossier.py \
+  --input ./private-portfolio-dossier.zip --show-linked-issues --limit 20
+
+python3 scripts/zsentinel_saved_gate_dossier.py \
+  --input ./private-portfolio-dossier.zip \
+  --inspect-issue https://github.com/Zennay/zCloud/issues/1518 \
+  --handoff-markdown ./private-1518-review.md
+```
+
+The issue inbox is bounded, sorted by the highest observed PR priority, and
+shows up to three PR links per displayed issue, with explicit omitted counts.
+An exact source-linked issue can be opened to inspect up to 50 links on the
+terminal and produce a **create-only private Markdown** handoff, containing
+the archive's original SHA-256 identities, observation age, coverage gaps,
+all original candidate PR references (up to 30 individually detailed),
+sampled human follow-up steps and conservative partial gate observations.
+`--project` and `--priority` can narrow the printed saved issue inbox,
+but cannot turn it into proof of GitHub's current open issues.
+
+The reader rejects nonexistent issue URLs, a canonical issue not linked to
+any PR in this particular saved window, foreign repository identities, mixed
+PR/issue selections, unsafe handoff paths and forbidden combinations of
+inspection and extraction. It uses the existing validated ZIP reader and
+private 0600 create-only Markdown publication; no extra provider request
+or writable service interface is introduced. No branch, active claim or
+production worker is touched.
+
+**Delivery truth:** this is a historical, possibly incomplete issue-to-PR
+navigator. It cannot tell whether a PR is still open, conflicts with an active
+worker, has its exact-head mandatory CI complete, has an independent review,
+was merged on main or is deployed. Operators must verify those directly in
+GitHub/Notion and satisfy all existing gates **before** merging or assigning
+work. No QA/regression suite was created or run.
