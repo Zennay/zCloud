@@ -31,6 +31,15 @@ LANE_NAMES = {
 ACTIVE = {"claimed", "running", "verifying"}
 VALID = ACTIVE | {"queued"}
 MAX_ROWS = 500
+# Canonical real projects only; zSentinel is a recovery role, not a 14th.
+PORTFOLIO_PROJECTS = {
+    "cloud": "zCloud", "zssh": "zSSH", "ftmo": "FTMO",
+    "haxlab": "HaxLab", "supa": "Supa", "raiseai": "RaiseAI",
+    "ulab": "uLab", "lightup": "LightUp", "zguard": "zGuard",
+    "tradengine": "TradeEngine", "mixlab": "MixLab",
+    "fuckball": "Fuckball", "tuddy": "Tuddy",
+}
+PORTFOLIO_GROUP_LIMIT = 128
 
 
 def _utc(value):
@@ -68,12 +77,43 @@ def collect(database, maximum):
                  FROM task_claims WHERE project_id=? LIMIT ?""",
             ("zsentinel", maximum + 1),
         ).fetchall()
+        priority_rows = db.execute(
+            """SELECT project_id, UPPER(priority) AS priority,
+                      LOWER(status) AS status, COUNT(*) AS amount
+                 FROM portfolio_queue
+                WHERE UPPER(priority) IN ('P0','P1')
+                  AND LOWER(status) IN ('queued','claimed','running','verifying')
+                GROUP BY project_id, UPPER(priority), LOWER(status)
+                ORDER BY priority, project_id, status LIMIT ?""",
+            (PORTFOLIO_GROUP_LIMIT + 1,),
+        ).fetchall()
         db.execute("ROLLBACK")
     finally:
         db.close()
 
     queue_partial = len(queue_rows) > maximum
     claims_partial = len(claim_rows) > maximum
+    portfolio_partial = len(priority_rows) > PORTFOLIO_GROUP_LIMIT
+    unknown_project_groups = 0
+    portfolio_counts = {}
+    for row in priority_rows[:PORTFOLIO_GROUP_LIMIT]:
+        project_id = row["project_id"]
+        if project_id not in PORTFOLIO_PROJECTS:
+            unknown_project_groups += 1
+            continue
+        values = portfolio_counts.setdefault(project_id, {
+            "project": PORTFOLIO_PROJECTS[project_id],
+            "queued_p0": 0, "queued_p1": 0, "in_flight_p0": 0,
+            "in_flight_p1": 0,
+        })
+        key = ("queued_" if row["status"] == "queued" else "in_flight_") + row["priority"].lower()
+        values[key] += int(row["amount"])
+    portfolio = sorted(
+        (value for value in portfolio_counts.values() if any(
+            value[key] for key in ("queued_p0", "queued_p1", "in_flight_p0", "in_flight_p1")
+        )),
+        key=lambda v: (-v["queued_p0"], -v["queued_p1"], v["project"]),
+    )
     queue = [dict(row) for row in queue_rows[:maximum]]
     now = datetime.now(timezone.utc)
     claims = []
@@ -159,6 +199,9 @@ def collect(database, maximum):
         "observed_utc": now.replace(microsecond=0).isoformat(),
         "profile": "portfolio-recovery",
         "observed_queue": observed,
+        "portfolio_urgent_local": portfolio,
+        "portfolio_priority_partial": portfolio_partial,
+        "portfolio_unknown_project_groups": unknown_project_groups,
         "queue_partial": queue_partial,
         "active_local_leases_observed": len(claims),
         "expired_local_leases_observed": expired,
@@ -176,10 +219,14 @@ def collect(database, maximum):
         "dispatch_authorized": False,
         "release_authorized": False,
         "lanes": visible,
-        "source_complete": not (queue_partial or claims_partial or ambiguous),
+        "source_complete": not (
+            queue_partial or claims_partial or ambiguous
+            or portfolio_partial or unknown_project_groups
+        ),
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
             or ambiguous or queue_partial or claims_partial
+            or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or any(collision_counts.values())
             or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
@@ -203,6 +250,16 @@ def text_view(data):
             f"{lane['active_backlog_count']}; conflicten "
             f"{lane['conflicting_claims'] + lane['conflicting_queue_entries']}{extra}"
         )
+    out.append("Open lokale P0/P1-queue per echt project (adviserend):")
+    for item in data["portfolio_urgent_local"]:
+        out.append(
+            f"  {item['project']}: P0 wacht {item['queued_p0']}; "
+            f"P1 wacht {item['queued_p1']}; "
+            f"P0 in behandeling {item['in_flight_p0']}; "
+            f"P1 in behandeling {item['in_flight_p1']}"
+        )
+    if data["portfolio_priority_partial"] or data["portfolio_unknown_project_groups"]:
+        out.append("  LET OP: portfolio-dekking gedeeltelijk of onbekende project-ID.")
     out.append(
         "Lokale claims: " + str(data["active_local_leases_observed"])
         + "; onduidelijk " + str(data["ambiguous_local_claims"])
