@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from datetime import datetime, timedelta, timezone
+from collections import defaultdict, deque
 from io import BytesIO
 import json
 import os
@@ -370,7 +371,26 @@ def saved_queue(receipt: dict, *, project=None, priority=None):
     if len(seen) != original_total or (project is not None
                                       and project not in discovered_projects):
         raise ValueError("Saved PR count or requested project contradicts source")
-    return queue
+
+    # The offline work queue is for human navigation, not current assignment.
+    # Prioritize sampled P0/P1 product candidates first. Interleave the
+    # repositories fairly within each priority, preserving original saved
+    # order inside each repository and never conflating PR candidates with
+    # reviewed/merge-authorized work.
+    by_priority: dict[str, dict[str, deque]] = defaultdict(dict)
+    for repo, item in queue:
+        priority = item["priority"]
+        by_priority[priority].setdefault(repo, deque()).append((repo, item))
+    ordered = []
+    for priority in PRIORITY:
+        buckets = by_priority.get(priority, {})
+        remaining = sum(len(bucket) for bucket in buckets.values())
+        while remaining:
+            for repo in sorted(buckets):
+                if buckets[repo]:
+                    ordered.append(buckets[repo].popleft())
+                    remaining -= 1
+    return ordered
 
 
 def source_recency_summary(source_observed_at: object) -> str:
