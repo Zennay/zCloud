@@ -63,7 +63,17 @@ def _read_sqlite(path):
         connection.close()
     if len(rows) > MAX_ROWS:
         raise ValueError("active queue exceeds bounded read; coverage unknown")
-    return rows
+    after = location.lstat()
+    if (not stat.S_ISREG(after.st_mode) or
+            (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)):
+        raise ValueError("queue source identity changed during read")
+    # Opaque comparison key. The resolved/private database path and inode
+    # never appear in human-readable reports or any public HTML.
+    source_key = hashlib.sha256(
+        (os.uname().nodename + "\\0" + str(location.absolute()) + "\\0" +
+         str(before.st_dev) + "\\0" + str(before.st_ino)).encode("utf-8")
+    ).hexdigest()
+    return rows, source_key
 
 
 def _stamp(value):
@@ -83,7 +93,7 @@ def observe(path, now=None):
     if moment.tzinfo is None:
         raise ValueError("now must have timezone")
     moment = moment.astimezone(UTC)
-    rows = _read_sqlite(path)
+    rows, source_key = _read_sqlite(path)
     groups = defaultdict(lambda: {
         "queued": 0, "claimed": 0, "running": 0, "verifying": 0,
         "high_claim_attempts": 0, "ten_plus_claim_attempts": 0,
@@ -171,6 +181,7 @@ def observe(path, now=None):
         "schema": "zsentinel-queue-pressure-v1",
         "observed_at_utc": utc_string(moment),
         "source": "local_sqlite_transaction_query_only",
+        "source_file_identity_sha256_private": source_key,
         "database_read_only": True,
         "sample_is_complete": len(samples) <= MAX_SAMPLES,
         "queue_inventory_complete": totals["invalid_record_rows"] == 0,
