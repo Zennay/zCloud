@@ -166,9 +166,9 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
     if candidate_offset > len(matches):
         raise ValueError("resume offset is outside this search result page")
     window_start = page_start + candidate_offset
-    window_end = page_start + len(matches)
+    source_page_end = page_start + len(matches)
     partial = []
-    if (found["incomplete_results"] or total > 1000 or total > window_end
+    if (found["incomplete_results"] or total > 1000 or total > source_page_end
             or window_start > 0):
         partial.append({"project": project, "reason": "SEARCH_WINDOW_PARTIAL"})
     if len(matches) > TARGET_CANDIDATES_PER_PAGE:
@@ -234,6 +234,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
         if len(rows) >= MAX_PER_PROJECT:
             partial.append({"project": project, "reason": "MAX_FOUR_MATCHING_PRS"})
             break
+    window_end = window_start + examined
     next_candidate_offset = (candidate_offset + examined
                              if candidate_offset + examined < len(matches) else None)
     if next_candidate_offset is not None:
@@ -258,7 +259,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
     else:
         issue_info["current_state"] = "OPEN_RECONFIRMED"
     next_page = (candidate_page + 1 if
-                 next_candidate_offset is None and window_end < min(total, 1000)
+                 next_candidate_offset is None and source_page_end < min(total, 1000)
                  and candidate_page < MAX_TARGET_PAGES else None)
     return rows, issue_info, partial, {
         "search_total": total,
@@ -270,9 +271,10 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
         "source_page_sha256": page_sha,
         "window_start": window_start,
         "window_end": window_end,
+        "source_page_end": source_page_end,
         "next_page": next_page,
         "search_complete": not bool(partial) and window_start == 0
-                           and window_end >= total and examined == len(matches),
+                           and source_page_end >= total and examined == len(matches),
         "source": "TARGETED_ISSUE_SEARCH"}
 
 
@@ -355,6 +357,7 @@ def collect_targeted_windows(project, issue_number, registry, budget,
         "page_windows": [{
             "candidate_page": p["candidate_page"],
             "window_start": p["window_start"], "window_end": p["window_end"],
+            "source_page_end": p["source_page_end"],
             "search_examined": p["search_examined"],
             "next_page": p["next_page"],
             "candidate_offset": p["candidate_offset"],
