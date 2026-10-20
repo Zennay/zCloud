@@ -3259,3 +3259,65 @@ Handoffs van uitsluitend incidenten zonder branchbron behouden hun
 bestaande fingerprint-conventie. Bronidentiteit is nog steeds géén
 werk-/releaseautorisatie, alleen een garantie dat de handoff bij dezelfde
 waarneming is gemaakt.
+
+## P0: lokale GitHub Actions-runnerprocessen onderzoeken zonder restart
+
+Het zelfstandige operatorproduct `scripts/zsentinel_local_runner_processes.py`
+leest op de **bedoelde Linux VPS** één begrensde `/proc`-steekproef.
+Het telt `Runner.Listener`, `Runner.Worker` en `runsvc.sh`,
+herkent een rechtstreeks worker→listener-procesouderverband en groepeert
+processen op lokaal gehashte werkdirectory (maximaal 32 groepen).
+Geen PID, commandoregel, secret, pad, GitHub-token, repo- of runnerlabel
+wordt in het rapport opgenomen. Ontbrekende cwd-toegang wordt apart
+geteld; de scope is dan **partial**, niet bewezen compleet.
+
+Zelfstandige read-only operatorinstructie vanaf een bestaande checkout
+onder de toegestane VPS-workspace:
+
+```bash
+python3 scripts/zsentinel_local_runner_processes.py --format text
+```
+
+Om de bron met de bestaande live incidentenbron te combineren en alle
+procesdetails uitsluitend privé op te slaan, gebruik een vooraf bestaande
+eigen 0700-rapportmap:
+
+```bash
+python3 scripts/zsentinel_live_cockpit.py \
+  --github-only --project cloud \
+  --skip-github-issues --skip-ci-discovery \
+  --observe-local-runners --format html \
+  --output /private/zsentinel-runner-processes.html
+```
+
+`--observe-local-runners` is **expliciet opt-in** en eist bij de
+gecombineerde cockpit een `--output` met `html`, `json` of `text`;
+bestand wordt uitsluitend nieuw en mode 0600 onder een eigen map
+aangemaakt. De inhoud gaat niet naar terminalstdout. De zelfstandige
+read-only CLI ondersteunt daarnaast tekst/JSON/HTML met optionele
+private `--output`.
+
+De lokale procescontrole is geen GitHub API-bewijs. Eén of meerdere
+`Runner.Listener`-processen bewijzen **niet** dat de juiste
+`Zennay/zCloud`-repository en vereiste labels
+`[self-hosted,zcloud,vps]` gekoppeld zijn. Ook een onder een listener
+geobserveerde `Runner.Worker` is geen bewijs van succesvolle jobs,
+voortgaande generatie, veilige idle-status of geslaagde release.
+Als de cwd voor processen niet gelezen kan worden (bijvoorbeeld wegens
+Linux proc-privacy), staat de lokale groep als `unknown-cwd` gemarkeerd
+en mag die **nooit** als één runnerinstallatie worden geïnterpreteerd.
+
+**Bevoegde vervolgstap voor #1326:** vergelijk handmatig de GitHub
+`Settings → Actions → Runners`-registratie/repo- en groepszichtbaarheid,
+labels en exacte job-toewijzing met deze actuele lokale procesindicatie.
+Stop, restart, cancel, rerun, register of reconfigure **niets** op
+basis van procesaanwezigheid/afwezigheid. Eén actieve Runner.Worker op
+de host maakt een blinde restart bijzonder onveilig. Elke
+service- of releaseactie volgt uitsluitend de bestaande
+runner- en eigenaarrechten, safe-idle/CI/branch protection en
+afzonderlijke releasegoedkeuring. Historische observaties zijn geen
+herstelbewijs; #1326 blijft open totdat echte GitHub jobs aan de
+bedoelde runner toegewezen zijn en de vereiste uitvoering is bevestigd.
+
+De bron is code op de bestaande open product-PR, niet geïnstalleerd als
+VPS-service of scheduler. Geen extra testsuites, jobs of release-hooks.
