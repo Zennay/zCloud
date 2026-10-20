@@ -537,3 +537,26 @@ authorize merge or dispatch.
 This implementation remains on existing product PR #1572 pending
 independent exact-head CI and review, protected-main merge and separate
 authorized live activation. No QA suite was added or run.
+
+
+### Integrated operator summary and missing active owner evidence
+
+A further production-source fix covers the situation where active
+`portfolio_queue` work exists but no corresponding local
+`task_claims` lease is observed. The existing `claimed_without_local_lease_observation`
+signal now also prevents unrelated lanes from advertising an admissible
+candidate: `HOLD_ACTIVE_OWNER_UNVERIFIED` requires a reconciliation with
+the current worker and Notion/queue owner. An empty lane does **not**
+override that uncertainty.
+
+All four cards provide a stable `admission.code`, Dutch label and
+`next_step`, plus an aggregate `admission_summary` in the same source
+packet. The status line in HTML, text and private Markdown distinguishes
+active owners protected, owners/source on hold, locally identified but
+externally unapproved candidates, and absence of a local candidate. This
+is purposefully not permission to claim, dispatch, merge or deploy.
+The current read-only source preserves existing queue and claim records.
+
+Updated source commit: [8a77d3a](https://github.com/Zennay/zCloud/commit/8a77d3aac00710bdfdbbd7b36a5bd78366d78bd6).
+Still not released until exact-head protected-main review/CI and
+separate authorized deploy proof.
