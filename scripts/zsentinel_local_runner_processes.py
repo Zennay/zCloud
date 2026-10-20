@@ -36,6 +36,7 @@ def observe(proc: Path = Path("/proc")):
     candidates = 0
     inaccessible = 0
     unknown_cwd = 0
+    process_parent_links = []
     cutoff = False
     for entry in os.scandir(proc):
         if not PID.fullmatch(entry.name):
@@ -60,6 +61,20 @@ def observe(proc: Path = Path("/proc")):
         field = {"listener": "listeners", "worker": "workers",
                  "service_wrapper": "service_wrappers"}[kind]
         counts[field] += 1
+        parent_id = None
+        try:
+            with open(proc / entry.name / "status", "r", encoding="ascii") as status:
+                for line in status:
+                    if line.startswith("PPid:"):
+                        raw = line.partition(":")[2].strip()
+                        if raw.isascii() and raw.isdecimal():
+                            parent_id = raw
+                        break
+        except (OSError, UnicodeError):
+            pass
+        # Keep raw /proc IDs exclusively in this ephemeral local scope.
+        # None of these values is serialized or disclosed in the report.
+        process_parent_links.append((entry.name, kind, parent_id))
         try:
             cwd = os.readlink(proc / entry.name / "cwd")
             if not cwd.startswith("/") or len(cwd) > 2048:
@@ -72,6 +87,11 @@ def observe(proc: Path = Path("/proc")):
             group = "unknown-cwd"
             unknown_cwd += 1
         groups[group][field] += 1
+    listener_ids = {pid for pid, kind, _ in process_parent_links
+                    if kind == "listener"}
+    worker_parent_links = sum(
+        kind == "worker" and parent in listener_ids
+        for _, kind, parent in process_parent_links)
     ordered = sorted(groups.items(), key=lambda item: (
         -item[1]["workers"], -item[1]["listeners"], item[0]))
     return {
@@ -85,6 +105,10 @@ def observe(proc: Path = Path("/proc")):
         "unknown_cwd_processes_seen": unknown_cwd,
         "listener_processes_seen": counts["listeners"],
         "worker_processes_seen": counts["workers"],
+        "worker_parent_listener_links_seen": worker_parent_links,
+        "workers_without_verified_parent_listener_link": (
+            counts["workers"] - worker_parent_links),
+        "process_tree_is_non_atomic_snapshot": True,
         "service_wrapper_processes_seen": counts["service_wrappers"],
         "groups_truncated": len(ordered) > MAX_GROUPS,
         "cwd_association_groups": [
@@ -124,10 +148,17 @@ def _admit(report):
     for key in ("listener_processes_seen", "worker_processes_seen",
                 "service_wrapper_processes_seen", "candidate_processes_seen",
                 "numeric_proc_entries_seen", "inaccessible_proc_entries",
-                "unknown_cwd_processes_seen"):
+                "unknown_cwd_processes_seen",
+                "worker_parent_listener_links_seen",
+                "workers_without_verified_parent_listener_link"):
         value = report.get(key)
         if type(value) is not int or not 0 <= value <= MAX_PROCESSES:
             raise ValueError("unbounded runner process counter")
+    if (report.get("process_tree_is_non_atomic_snapshot") is not True
+            or report["worker_parent_listener_links_seen"] +
+                report["workers_without_verified_parent_listener_link"] !=
+                report["worker_processes_seen"]):
+        raise ValueError("untrusted or inconsistent worker parent observations")
     seen = set()
     for item in report["cwd_association_groups"]:
         if not isinstance(item, dict) or any(
@@ -151,6 +182,9 @@ def render_text(report):
         "Runner.Listener %d · Runner.Worker %d · runsvc.sh %d" % (
             r["listener_processes_seen"], r["worker_processes_seen"],
             r["service_wrapper_processes_seen"]),
+        "Worker->Listener parentrelaties in eigen /proc-steekproef: %d; andere worker-parentrelaties %d." %
+            (r["worker_parent_listener_links_seen"],
+             r["workers_without_verified_parent_listener_link"]),
         "Lokale runner-root niet toegankelijk: %d processen; die groep is NIET één bewezen installatie." %
             r["unknown_cwd_processes_seen"],
         "Repo/labels/registratie/job-toewijzing: ONBEKEND; geen herstel of restartautorisatie.",
@@ -180,6 +214,9 @@ def render_html(report):
         '<p><strong>Runner.Listener ' + str(r["listener_processes_seen"]) +
         ' · Runner.Worker ' + str(r["worker_processes_seen"]) +
         ' · runsvc.sh ' + str(r["service_wrapper_processes_seen"]) + '</strong></p>'
+        '<p>Lokale Runner.Worker met Runner.Listener als procesouder: ' +
+        str(r["worker_parent_listener_links_seen"]) +
+        '. Geen bewijs van GitHub job/label of continue werking.</p>'
         '<p>Niet-verifieerbare lokale runner-mappen: ' +
         str(r["unknown_cwd_processes_seen"]) +
         '; deze procesgroep is geen bewijs van één installatie.</p>'
