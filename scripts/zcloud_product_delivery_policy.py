@@ -166,6 +166,15 @@ def is_new_product_delivery(item):
     return product_delivery_disposition(item) == "product"
 
 
+# Stable, intentionally path-free codes; safe for the authenticated UI.
+HOLD_REASON_CODES = frozenset({
+    "invalid_row", "not_queued", "invalid_metadata", "invalid_lane_metadata",
+    "invalid_title", "invalid_completion_criteria", "explicit_qa_lane",
+    "explicit_qa_title", "qa_title_without_delivery",
+    "qa_criteria_without_delivery",
+})
+
+
 def product_queue_snapshot(items, max_visible=8):
     """Bounded read-only queue pressure summary; never an admission receipt."""
     if type(max_visible) is not int or not 1 <= max_visible <= 20:
@@ -178,6 +187,7 @@ def product_queue_snapshot(items, max_visible=8):
     held_slot_occupied = 0
     skipped_qa = 0
     skipped_invalid = 0
+    hold_reasons = {}
     candidate_rows = []
     priorities = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     priority_counts = {"P0": 0, "P1": 0, "P2": 0, "P3": 0, "other": 0}
@@ -201,8 +211,12 @@ def product_queue_snapshot(items, max_visible=8):
             held_slot_occupied += 1
             continue
         disposition = item.get("delivery_policy_disposition")
-        if disposition not in ("product", "qa_only", "invalid"):
-            disposition = product_delivery_disposition(item)
+        reason = item.get("delivery_policy_reason")
+        if (disposition not in ("product", "qa_only", "invalid")
+                or reason not in HOLD_REASON_CODES | {"product_candidate"}):
+            disposition, reason = product_delivery_classification(item)
+        if disposition != "product":
+            hold_reasons[reason] = hold_reasons.get(reason, 0) + 1
         if disposition == "qa_only":
             skipped_qa += 1
         elif disposition != "product":
@@ -227,6 +241,7 @@ def product_queue_snapshot(items, max_visible=8):
         "queued_worker_slot_occupied": held_slot_occupied,
         "queued_qa_only_held": skipped_qa,
         "queued_invalid_or_unknown_held": skipped_invalid,
+        "queued_hold_reason_counts": dict(sorted(hold_reasons.items())),
         "queued_product_candidates": len(candidate_rows),
         "candidate_priority_counts": priority_counts,
         "candidate_list_truncated": len(candidate_rows) > max_visible,
