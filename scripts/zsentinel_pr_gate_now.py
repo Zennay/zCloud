@@ -6,8 +6,13 @@ full required-check rule set, branch protection, release or merge permission.
 """
 from __future__ import annotations
 
+import argparse
 from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
 import re
+import sys
 
 from zsentinel_pr_scope_guard import github_json, REPO, SHA
 
@@ -218,3 +223,60 @@ def observe_many(prs, token=None):
         "merge_authorized": False, "deployment_authorized": False,
         "writes_performed": False,
     }
+
+
+PR_ARGUMENT = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}#[1-9][0-9]{0,8}$")
+
+
+def main(argv=None):
+    """Produce one bounded source receipt for the offline merge-first workbench."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--pr", action="append", required=True,
+        help="Canonical Zennay/repository#number (repeat one to four times)")
+    parser.add_argument(
+        "--output", type=Path,
+        help="Create NEW private 0600 JSON file; omit to print JSON to stdout")
+    args = parser.parse_args(argv)
+    try:
+        if not 1 <= len(args.pr) <= MAX_PRS:
+            raise ValueError("choose one to four PR references")
+        refs = []
+        for raw in args.pr:
+            if type(raw) is not str or PR_ARGUMENT.fullmatch(raw) is None:
+                raise ValueError("PR must use Zennay/repository#number")
+            repo, number = raw.rsplit("#", 1)
+            refs.append((repo, int(number)))
+        if len(set(refs)) != len(refs):
+            raise ValueError("duplicate PR reference")
+        source = observe_many(refs, token=os.environ.get("GITHUB_TOKEN"))
+        rendered = json.dumps(source, sort_keys=True, ensure_ascii=True, indent=2) + "\n"
+        if args.output is None:
+            sys.stdout.write(rendered)
+        else:
+            target = args.output
+            if target.is_dir():
+                raise ValueError("output must be a newly created file")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(target, flags, 0o600)
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    stream.write(rendered)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except Exception:
+                # Creation was exclusive. Never overwrite an existing output.
+                target.unlink(missing_ok=True)
+                raise
+            # Never print private source content or path in a shared log.
+            print("Created private read-only PR gate receipt (0600); no merges or GitHub writes.",
+                  file=sys.stderr)
+        return 0
+    except (OSError, ValueError) as exc:
+        print("zSentinel PR gate desk refused: " + str(exc), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
