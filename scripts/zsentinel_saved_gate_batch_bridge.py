@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Convert complete saved zSentinel PR-gate batches to one offline workbench import.
+
+Never connects to GitHub, modifies a worker/claim, verifies merge eligibility,
+or turns a saved observation into current-head approval.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+SCHEMA = "zsentinel-offline-merge-first-review-v1"
+GATE_SCHEMA = "zsentinel-current-pr-gate-observation-v1"
+OUTPUT_SCHEMA = "zsentinel-integrated-issue-pr-scope-v1"
+PR = re.compile(r"https://github\.com/(Zennay/[A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]{0,8})\Z")
+ISSUE = re.compile(r"(Zennay/[A-Za-z0-9_.-]{1,100})#([1-9][0-9]{0,8})\Z")
+SHA = re.compile(r"[a-f0-9]{64}\Z")
+HEAD = re.compile(r"[a-f0-9]{40}\Z")
+MAX_BYTES = 1024 * 1024
+MAX_TOTAL = 8 * MAX_BYTES
+ALLOWED_STATUS = {"github_source_unavailable_or_head_changed",
+                  "observed_current_head_partial_gate_evidence"}
+# Only these exact source fields may reach the browser; unknown metadata
+# and any accidental credentials are never copied through.
+GATE_FIELDS = (
+    "url", "status", "head_sha_observed", "exact_head_stable_on_second_read",
+    "observed_checks_pending", "observed_checks_not_successful",
+    "observed_independent_exact_head_approvals",
+    "observed_exact_head_changes_requested", "legacy_status_pending_observed",
+    "legacy_status_failure_or_error_observed", "observed_checks_completed",
+    "legacy_status_contexts_observed", "legacy_status_source_may_be_truncated",
+    "check_runs_page_complete", "review_page_may_be_truncated",
+    "human_next_gate_step", "required_branch_checks_and_rules_verified",
+    "required_review_policy_verified", "mergable_by_automation",
+    "merge_authorized", "deployment_authorized", "read_only",
+)
+
+
+def bounded_json(path: Path) -> tuple[dict, bytes]:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or not 2 <= metadata.st_size <= MAX_BYTES:
+            raise ValueError("Source is not a bounded regular file")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            content = stream.read(MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(content) > MAX_BYTES:
+        raise ValueError("Source exceeds one MiB")
+    value = json.loads(content.decode("utf-8", errors="strict"))
+    if type(value) is not dict:
+        raise ValueError("Source must be a JSON object")
+    return value, content
+
+
+def canonical_manifest(source: dict, raw: bytes):
+    if (source.get("schema") != SCHEMA
+            or source.get("evidence_scope") != "bounded_saved_snapshot_not_live"
+            or any(source.get(key) is not False for key in
+                   ("claim_authorized", "merge_authorized", "deploy_authorized",
+                    "dispatch_authorized"))
+            or type(source.get("source_board_sha256")) is not str
+            or not SHA.fullmatch(source["source_board_sha256"])):
+        raise ValueError("Not a canonical, non-authorizing review manifest")
+    refs = source.get("pr_references")
+    if type(refs) is not list or not 1 <= len(refs) <= 300:
+        raise ValueError("Review candidate count is invalid")
+    priorities = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+    selected = []
+    seen = set()
+    for ref in refs:
+        if (type(ref) is not dict or type(ref.get("url")) is not str
+                or PR.fullmatch(ref["url"]) is None
+                or ref.get("merge_authorized") is not False
+                or ref.get("highest_linked_priority") not in priorities
+                or type(ref.get("observed_issue_refs")) is not list
+                or not ref["observed_issue_refs"]):
+            raise ValueError("Malformed saved PR reference")
+        url = ref["url"]
+        if url in seen:
+            raise ValueError("Duplicate PR reference")
+        seen.add(url)
+        for item in ref["observed_issue_refs"]:
+            if (type(item) is not dict or type(item.get("issue")) is not str
+                    or ISSUE.fullmatch(item["issue"]) is None
+                    or item.get("url") != "https://github.com/" +
+                    item["issue"].replace("#", "/issues/")):
+                raise ValueError("Invalid canonical issue-to-PR relationship")
+        match = PR.fullmatch(url)
+        selected.append((priorities[ref["highest_linked_priority"]],
+                         match.group(1), int(match.group(2)), ref))
+    selected.sort(key=lambda row: (row[0], row[1], row[2]))
+    return selected, hashlib.sha256(raw).hexdigest()
+
+
+def observed_time(value: str):
+    if type(value) is not str or len(value) > 40:
+        raise ValueError("Invalid UTC time")
+    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if stamp.tzinfo is None or stamp.utcoffset().total_seconds() != 0:
+        raise ValueError("Not an explicit UTC timestamp")
+    moment = stamp.timestamp()
+    if moment > datetime.now(timezone.utc).timestamp() + 300:
+        raise ValueError("Future observation")
+    return moment
+
+
+def combined_manifest(manifest: dict, raw: bytes, paths: list[Path]):
+    selected, digest = canonical_manifest(manifest, raw)
+    total = (len(selected) + 3) // 4
+    if not 1 <= len(paths) <= 75:
+        raise ValueError("Expected one to 75 saved batch receipts")
+    indexed = {}
+    bytes_total = len(raw)
+    earliest, latest = float("inf"), float("-inf")
+    for path in paths:
+        receipt, payload = bounded_json(path)
+        bytes_total += len(payload)
+        if bytes_total > MAX_TOTAL:
+            raise ValueError("Combined source exceeds eight MiB")
+        count = receipt.get("source_review_pr_count")
+        idx = receipt.get("source_review_batch_index")
+        first = (idx - 1) * 4 if type(idx) is int else -1
+        expected_rows = selected[first:first + 4] if 0 <= first < len(selected) else []
+        rows = receipt.get("items")
+        if (receipt.get("schema") != GATE_SCHEMA
+                or receipt.get("merge_authorized") is not False
+                or receipt.get("deployment_authorized") is not False
+                or receipt.get("writes_performed") is not False
+                or receipt.get("required_branch_protection_verified") is not False
+                or receipt.get("current_review_and_check_samples_only") is not True
+                or receipt.get("source_review_manifest_sha256") != digest
+                or receipt.get("source_review_board_sha256") != manifest["source_board_sha256"]
+                or count != len(selected) or type(count) is not int
+                or type(idx) is not int or not 1 <= idx <= total
+                or idx in indexed or receipt.get("source_review_batches_total") != total
+                or receipt.get("source_review_batch_first_pr") != first + 1
+                or receipt.get("source_review_batch_count") != len(expected_rows)
+                or receipt.get("review_only_top_four_observed") is not (len(selected) > 4)
+                or type(rows) is not list or len(rows) != len(expected_rows)):
+            raise ValueError("Gate batch provenance, order or non-authorizing flags invalid")
+        timestamp = observed_time(receipt.get("observed_at_utc"))
+        earliest = min(earliest, timestamp)
+        latest = max(latest, timestamp)
+        if latest - earliest > 600:
+            raise ValueError("Gate observations exceed ten-minute common window")
+        sanitized = {}
+        for row, expected in zip(rows, expected_rows):
+            url = expected[3]["url"]
+            if (type(row) is not dict or row.get("url") != url
+                    or row.get("status") not in ALLOWED_STATUS
+                    or row.get("read_only") is not True
+                    or row.get("merge_authorized") is not False
+                    or row.get("deployment_authorized") is not False
+                    or row.get("required_branch_checks_and_rules_verified") is not False):
+                raise ValueError("PR receipt is foreign or authorization is unsafe")
+            if row["status"] == "observed_current_head_partial_gate_evidence":
+                counters = ("observed_checks_pending", "observed_checks_not_successful",
+                            "observed_independent_exact_head_approvals",
+                            "observed_exact_head_changes_requested",
+                            "legacy_status_pending_observed",
+                            "legacy_status_failure_or_error_observed",
+                            "observed_checks_completed", "legacy_status_contexts_observed")
+                booleans = ("exact_head_stable_on_second_read",
+                            "legacy_status_source_may_be_truncated",
+                            "check_runs_page_complete", "review_page_may_be_truncated",
+                            "required_review_policy_verified", "mergable_by_automation")
+                if (type(row.get("head_sha_observed")) is not str
+                        or HEAD.fullmatch(row["head_sha_observed"]) is None
+                        or row.get("exact_head_stable_on_second_read") is not True
+                        or any(type(row.get(k)) is not int or not 0 <= row[k] <= 100
+                               for k in counters)
+                        or any(type(row.get(k)) is not bool for k in booleans)
+                        or row.get("required_review_policy_verified") is not False
+                        or row.get("mergable_by_automation") is not False
+                        or type(row.get("human_next_gate_step")) is not str
+                        or re.fullmatch("[a-z_]{5,80}", row["human_next_gate_step"]) is None):
+                    raise ValueError("Malformed exact-head gate observation")
+            sanitized[url] = {k: row[k] for k in GATE_FIELDS if k in row}
+        indexed[idx] = sanitized
+    if set(indexed) != set(range(1, total + 1)):
+        raise ValueError("Some gate batches are absent: no complete import generated")
+    issue_map = {}
+    for _, _, _, ref in selected:
+        url = ref["url"]
+        idx = 1 + next(i for i, selected_row in enumerate(selected)
+                       if selected_row[3]["url"] == url) // 4
+        gate = indexed[idx][url]
+        for item in ref["observed_issue_refs"]:
+            identity = item["issue"]
+            issue = issue_map.setdefault(identity, {
+                "issue": identity, "url": item["url"], "existing_prs": []})
+            if issue["url"] != item["url"]:
+                raise ValueError("Contradictory issue URL")
+            issue["existing_prs"].append({
+                "url": url, "live_exact_head_review_checks_observation": gate})
+            if len(issue["existing_prs"]) > 5:
+                raise ValueError("One issue links more than five PRs; cannot import safely")
+    if len(issue_map) > 60:
+        raise ValueError("More than sixty issue cards; browser importer bound exceeded")
+    return {
+        "schema": OUTPUT_SCHEMA,
+        "generated_at_utc": datetime.fromtimestamp(latest, timezone.utc).isoformat(),
+        "issues": list(issue_map.values()),
+        "original_review_manifest_sha256": digest,
+        "original_board_sha256": manifest["source_board_sha256"],
+        "observed_batch_count": total,
+        "missing_batch_count": 0,
+        "all_batches_observed_not_all_checks_required_verified": True,
+        "claim_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "may_take_ownership": False,
+        "writes_performed": False,
+    }
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--from-review", type=Path, required=True)
+    parser.add_argument("--receipt", type=Path, action="append", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        review, raw = bounded_json(args.from_review)
+        result = combined_manifest(review, raw, args.receipt)
+        rendered = (json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2) +
+                    "\n").encode("utf-8")
+        if len(rendered) > MAX_BYTES:
+            raise ValueError("Browser import format exceeds one MiB")
+        fd = os.open(args.output, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                     getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(rendered)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except BaseException:
+            args.output.unlink(missing_ok=True)
+            raise
+        print("Private browser-compatible gate batch bridge written; no action authorized.")
+        return 0
+    except (OSError, ValueError, UnicodeError, OverflowError, TypeError):
+        print("Refused: invalid bounded source, incomplete/mismatched batches or output.",
+              file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
