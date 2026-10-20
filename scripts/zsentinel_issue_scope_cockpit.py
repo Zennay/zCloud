@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import stat
 import unicodedata
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
@@ -952,6 +953,8 @@ def main(argv=None):
                         help="Opgeslagen private gatebatch-bon, herhaal tot 32 keer")
     parser.add_argument("--focus-issue",
                         help="Toon slechts één issue die echt in de begrensde bron voorkomt, bv. Zennay/zCloud#1326")
+    parser.add_argument("--output", type=Path,
+                        help="Create a NEW 0600 private operator report, never overwrite")
     parser.add_argument("--format", choices=("html", "json", "text", "markdown"),
                         default="html")
     args = parser.parse_args(argv)
@@ -1105,11 +1108,31 @@ def main(argv=None):
                 "independent_review_policy_verified": False,
                 "merge_authorized": False, "writes_performed": False}
         if args.format == "json":
-            print(json.dumps(report, ensure_ascii=False, indent=2))
+            rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
         elif args.format == "html":
-            print(output_html(report))
+            rendered = output_html(report) + "\n"
         else:
-            print(output_text(report, markdown=args.format == "markdown"))
+            rendered = output_text(report, markdown=args.format == "markdown")
+        if args.output is None:
+            sys.stdout.write(rendered)
+        else:
+            # The combined P0 inbox may contain private operator state.
+            # Create it with restrictive mode and refuse to overwrite any
+            # other worker's prior receipts (including symbolic links).
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(args.output, flags, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as sink:
+                    if not stat.S_ISREG(os.fstat(sink.fileno()).st_mode):
+                        raise ValueError("private issue report target is not a regular file")
+                    sink.write(rendered)
+                    sink.flush()
+                    os.fsync(sink.fileno())
+            except Exception:
+                args.output.unlink(missing_ok=True)
+                raise
+            print("Private zSentinel issue and PR report created (0600).",
+                  file=sys.stderr)
         # A saved bundle is never current permission. Mark stale/incoherent
         # saved evidence incomplete without concealing independent issue cards.
         if (report["saved_gate_batch_reconciliation"] is not None
