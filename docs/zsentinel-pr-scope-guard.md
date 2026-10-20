@@ -165,3 +165,12 @@ De eerder beschreven `--issue-board`-modus blijft voor reproduceerbare, privé b
 Bronbelasting: maximaal 3×(2 issue-lijsten + 1 issue-gerelateerde open PR-lijst + 12 PR-bestandslijsten + 2 PR-lijstbevestigingen) = **51 GitHub GET-aanvragen** bij maximaal drie projecten en `--max-prs 12`. Standaard 10 PR's per project = maximaal 45 GET. Op 403/429 of incomplete hoofdbron worden onzekerheid en bronbeperkingen behouden; een ontbrekend issue is geen opgelost issue en een afwezige PR is geen eigenaarsvrijgave. Er zijn geen writes of CI-triggers.
 
 De live-variant toont een SHA-256 van het door de reeds bestaande triageproducer in het geheugen samengestelde JSON-resultaat als *rapportidentiteit*, **niet** als bewijs dat externe GitHub/Notion-werkelijkheid cryptografisch gepind of volledig was. Het controleert geen actuele officiële claims, bevoegdheden, releasegates of Watch/device-eisen.
+
+
+### Reuse van meer bestaande PR's uit hetzelfde project
+
+De canonieke GitHub productissue-inbox inspecteert uit kostenbeperking slechts een korte reeks actuele PR-beschrijvingen voor issueverwijzingen. De PR-bestandsscopecollector leest echter al een groter, begrensd venster van open PR's. Diezelfde **reeds opgehaalde** PR-beschrijvingen worden nu binnen maximaal 32 verwijzingen per PR uitgelegd als *onbevestigde tekstverwijzingen* naar hetzelfde repository-issue (`#123`).
+
+De geïntegreerde cockpit hergebruikt dergelijke bestaande PR-links alléén bij een compleet/stabiel PR-venster, dekkende bronbody en twee bronmomenten binnen 10 minuten. Per issue worden maximaal vijf PR-kandidaten getoond, met zichtbaar onderscheid tussen `existing_product_issue_board_reference` en `current_open_pr_text_mention_unverified`. Een vermelding is **nooit** bewijs van gefixte code, actieve eigenaar, sluiting of merge-authorisatie.
+
+De bestaande canonieke QA-only titelclassificatie blijft leidend: `QA`/`test`/`regression`/quality-only PR's worden niet als nieuwe productkandidaten voorgesteld (maar zijn nog wél zichtbaar in bestandsbotsingen wanneer zij dezelfde paden raken). Hiermee kan zSentinel meer bestaande echte product-PR's hergebruiken zonder extra GitHub-aanvragen, zonder claim-overname en zonder nieuwe tests.
