@@ -77,9 +77,10 @@ def _source(value):
     high = _non_negative(totals, "high_claim_attempt_items")
     lease = _non_negative(totals, "expired_owner_lease_rows")
     unverifiable = _non_negative(totals, "unverifiable_owner_lease_rows")
+    inconsistent = _non_negative(totals, "inconsistent_owner_lease_window_rows")
     _non_negative(totals, "max_claim_attempts", 10**9)
     _non_negative(totals, "invalid_record_rows")
-    if queued + owned != active or high > active or lease + unverifiable > owned:
+    if queued + owned != active or high > active or lease + unverifiable + inconsistent > owned:
         raise ValueError("incoherent queue source totals")
     table = {}
     for row in groups:
@@ -91,11 +92,16 @@ def _source(value):
             raise ValueError("duplicate or invalid queue group")
         counts = {}
         for field in (*STATUSES, "high_claim_attempts", "ten_plus_claim_attempts",
-                      "expired_owner_lease_rows", "unverifiable_owner_lease_rows"):
+                      "expired_owner_lease_rows", "unverifiable_owner_lease_rows",
+                      "inconsistent_owner_lease_window_rows"):
             counts[field] = _non_negative(row, field)
         counts["max_claim_attempts"] = _non_negative(row, "max_claim_attempts", 10**9)
         if (counts["high_claim_attempts"] > sum(counts[x] for x in STATUSES)
-                or counts["ten_plus_claim_attempts"] > counts["high_claim_attempts"]):
+                or counts["ten_plus_claim_attempts"] > counts["high_claim_attempts"]
+                or sum(counts[x] for x in ("expired_owner_lease_rows",
+                    "unverifiable_owner_lease_rows",
+                    "inconsistent_owner_lease_window_rows")) >
+                    sum(counts[x] for x in ("claimed", "running", "verifying"))):
             raise ValueError("queue group counters inconsistent")
         table[(project, priority)] = counts
     sample_map = {}
@@ -113,14 +119,21 @@ def _source(value):
                 or type(claim_count) is not int or not 0 <= claim_count <= 10**9
                 or type(row.get("owner_lease_expired_observed")) is not bool
                 or type(row.get("owner_lease_unverifiable_observed")) is not bool
-                or (row["owner_lease_expired_observed"] and
-                    row["owner_lease_unverifiable_observed"])):
+                or type(row.get("owner_lease_window_inconsistent_observed")) is not bool
+                or sum((row["owner_lease_expired_observed"],
+                        row["owner_lease_unverifiable_observed"],
+                        row["owner_lease_window_inconsistent_observed"])) > 1
+                or (status == "queued" and any((
+                        row["owner_lease_expired_observed"],
+                        row["owner_lease_unverifiable_observed"],
+                        row["owner_lease_window_inconsistent_observed"])))):
             raise ValueError("invalid queue claim identity or status")
         sample_map[identity] = {
             "attempts": claim_count,
             "status": status,
             "lease_expired": row["owner_lease_expired_observed"],
             "lease_unknown": row["owner_lease_unverifiable_observed"],
+            "lease_inconsistent": row["owner_lease_window_inconsistent_observed"],
         }
     return key, _time(value.get("observed_at_utc")), table, sample_map, totals
 
