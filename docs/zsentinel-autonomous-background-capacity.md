@@ -1,0 +1,9 @@
+# zSentinel autonomous background capacity (20 Oct 2026)
+
+A **user-scoped** `zcloud-background-priority.timer` evaluates CPU load, available memory, and live GitHub Runner.Worker processes once per minute. It only changes **Fuckball's existing user training cgroup CPUQuota/CPUWeight**; no process termination, restart, job cancellation, SQLite/claim write, or release promotion occurs.
+
+CPU admission bands: **60% CPU/weight 25** while zSentinel has an active worker, host load exceeds 1.35× available cores or available memory is below 2 GiB; **100%/weight 40** while any other runner has a worker, load exceeds 0.85× cores or available memory is below 3 GiB; **175%/weight 70** when idle. The existing always-restart coach, 3 GiB memory maximum, Nice=10 and model promotion gates are preserved. Background jobs keep running even at the lowest band. Training writes remain subject to the existing 10 GiB disk-space reservation; the tuner does not override it.
+
+On the targeted Ubuntu VPS user session, copy `scripts/zsentinel_background_priority.py` to `/home/ubuntu/.local/bin/zcloud-background-priority.py` and the two files under `ops/systemd/user/` into `~/.config/systemd/user/`. Then as the **ubuntu** user, reload the *user* daemon, enable/start the timer and invoke the oneshot service once. The source is identical to the live independent user-sidecar installed 20 Oct 2026; source integration remains subject to normal protected branch gates.
+
+Keep zSentinel production merges/deploy serialized and reviewed. This sidecar is **not** an FTMO autonomous service repair: that separate root-owned unit currently cannot traverse `/home/ubuntu` under its `ftmo-runner` user and is crashing; its owner must fix service/permissions via an authorized privileged release. GitHub FTMO runners are separate and have been observed working. Do not grant blanket write access to zCloud SQLite merely to bypass this.
