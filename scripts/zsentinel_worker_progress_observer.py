@@ -508,6 +508,72 @@ def worker_progress_html(source):
         if any(value is not None and (type(value) is not int or value < 0)
                for value in (age, progress)):
             raise ValueError("invalid source age")
+        timeline = row.get("timeline")
+        if (type(timeline) is not dict
+                or timeline.get("timeline_scope") not in (
+                    "last_12_indexed_events_not_complete_history",
+                    "no_events_observed")
+                or type(timeline.get("timeline_truncated")) is not bool
+                or timeline.get("claim_epoch_bound") is not False
+                or timeline.get("progress_is_product_delivery_proof") is not False
+                or type(timeline.get("recent_events_newest_first")) is not list
+                or len(timeline["recent_events_newest_first"]) > MAX_TIMELINE_EVENTS):
+            raise ValueError("untrusted bounded worker event chronology")
+        counts = (
+            timeline.get("events_after_last_prompt_in_sample"),
+            timeline.get("recent_block_events_after_last_prompt_in_sample"),
+            timeline.get("recent_progress_events_after_last_prompt_in_sample"),
+        )
+        if any(type(v) is not int or not 0 <= v <= MAX_TIMELINE_EVENTS
+               for v in counts):
+            raise ValueError("invalid bounded timeline counters")
+        followups = {
+            "owner_check_paused_worker_with_current_queue_lease":
+                "Actieve claim op gepauzeerde worker: eigenaarcontrole nodig.",
+            "owner_inspect_current_assignment_and_recent_browser_block":
+                "Open de recente browserblokkade bij de bevoegde workereigenaar.",
+            "owner_verify_current_lease_and_real_worker_progress":
+                "Controleer actuele lease en werkelijke worker-voortgang met eigenaar.",
+            "continue_read_only_observation_without_takeover":
+                "Voortgangssignaal gezien; blijf observeren zonder overname.",
+            "owner_verify_actual_product_commit_or_handoff":
+                "Controleer daadwerkelijke productcommit of overdracht met eigenaar.",
+            "respect_draining_owner_hold":
+                "Draining is een eigenaarbesluit; niet herstarten.",
+            "no_stalled_worker_recovery_from_this_evidence":
+                "Geen gerechtvaardigde vastgelopen-worker-recovery op basis van deze bron.",
+            "owner_recheck_current_source_without_recovery":
+                "Verifieer huidige bron bij eigenaar; geen herstelautorisatie.",
+        }
+        if row.get("safe_followup") not in followups:
+            raise ValueError("untrusted worker followup decision")
+        event_items = []
+        for point in timeline["recent_events_newest_first"]:
+            if (type(point) is not dict or point.get("event") not in
+                    SAFE_EVENT | {"other_event"}
+                    or type(point.get("after_latest_prompt")) is not bool
+                    or type(point.get("browser_generating")) is not bool
+                    or type(point.get("browser_sending")) is not bool
+                    or (point.get("age_seconds") is not None and (
+                        type(point["age_seconds"]) is not int
+                        or point["age_seconds"] < 0))):
+                raise ValueError("invalid worker chronology entry")
+            ago = (str(point["age_seconds"]) + " sec geleden"
+                   if point["age_seconds"] is not None else "leeftijd onbekend")
+            event_items.append("<li><strong>" + escape(point["event"]) +
+                               "</strong> · " + ago +
+                               (" · na laatste prompt" if point["after_latest_prompt"]
+                                else " · vóór laatste prompt / geen prompt")
+                               + "</li>")
+        timeline_html = (
+            '<details><summary>Recente worker-events · maximaal twaalf'
+            + (" · afgekapt" if timeline["timeline_truncated"] else "")
+            + '</summary><p class="small">Alleen geïndexeerde metadata,'
+            ' niet aan een verifieerbare claimepoch gebonden. Een afwezig'
+            ' event betekent niet dat eerdere blokkades ontbraken.</p><ol>'
+            + "".join(event_items or ["<li>Geen events waargenomen.</li>"])
+            + '</ol></details>'
+        )
         rows.append(
             '<article class="panel ' +
             ('warn' if state == "allocated_paused_with_claimed_queue_owner_gate" else 'read') +
@@ -523,8 +589,15 @@ def worker_progress_html(source):
             (str(age) + ' sec' if age is not None else 'ONBEKEND') +
             ' · Laatste bronvoortgang: ' +
             (str(progress) + ' sec' if progress is not None else 'ONBEKEND') +
-            ' · actueel claimrecht: ONBEKEND · werkhervatting NIET bewezen.</p>'
-            '</article>')
+            ' · Actuele sample: ' +
+            str(counts[1]) + ' blokkeersignalen, ' +
+            str(counts[2]) + ' voortgangssignalen na laatste prompt' +
+            (' (afgekapt)' if timeline["timeline_truncated"] else '') +
+            '.</p><p><strong>Veilige vervolgstap:</strong> ' +
+            escape(followups[row["safe_followup"]]) +
+            '</p><p class="small">Actueel claimrecht: ONBEKEND · '
+            'werkhervatting NIET bewezen.</p>' +
+            timeline_html + '</article>')
     if not rows:
         rows.append('<p class="empty">Geen eventbron in gekozen projectvenster;'
                     ' dat bewijst GEEN nul actieve workers.</p>')
