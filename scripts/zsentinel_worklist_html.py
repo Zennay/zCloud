@@ -390,12 +390,17 @@ document.getElementById('session-import').addEventListener('change',async functi
  try{
   if(file.size>524288||file.size<10)throw new Error('Privébestand is ongeldig of te groot');
   const restored=JSON.parse(await file.text());
-  if(!restored||restored.schema!=='zsentinel-local-handoff-v2'||
-     restored.source_token!==document.body.dataset.sourceToken||
+  const oldSession=restored&&restored.schema==='zsentinel-local-handoff-v1'&&
+    restored.source_token===document.body.dataset.legacySourceToken;
+  const currentSession=restored&&restored.schema==='zsentinel-local-handoff-v2'&&
+    restored.source_token===document.body.dataset.sourceToken;
+  if(!restored||(!oldSession&&!currentSession)||
      restored.merge_authorized!==false||restored.claim_authorized!==false||
      restored.remote_writes_performed!==false||
      !Array.isArray(restored.entries)||restored.entries.length!==tickets.length||
-     !Array.isArray(restored.pr_entries)||restored.pr_entries.length!==prs.length)
+     (currentSession&&(!Array.isArray(restored.pr_entries)||
+       restored.pr_entries.length!==prs.length))||
+     (oldSession&&Object.prototype.hasOwnProperty.call(restored,'pr_entries')))
     throw new Error('Deze sessie hoort niet bij dezelfde bronopname');
   const allowed=new Set(Object.keys(labels));
   for(let i=0;i<tickets.length;i++){
@@ -404,24 +409,29 @@ document.getElementById('session-import').addEventListener('change',async functi
        typeof item.note!=='string'||item.note.length>700)
       throw new Error('Sessie bevat geen betrouwbare handmatige opvolging');
   }
-  const prAllowed=new Set(Object.keys(prLabels));
-  for(let i=0;i<prs.length;i++){
-    const item=restored.pr_entries[i];
-    if(!item||item.pr!==prs[i].dataset.pr||!prAllowed.has(item.status)||
-       typeof item.note!=='string'||item.note.length>500)
-      throw new Error('Sessie bevat ongeldige PR-opvolging');
+  if(currentSession){
+   const prAllowed=new Set(Object.keys(prLabels));
+   for(let i=0;i<prs.length;i++){
+     const item=restored.pr_entries[i];
+     if(!item||item.pr!==prs[i].dataset.pr||!prAllowed.has(item.status)||
+        typeof item.note!=='string'||item.note.length>500)
+       throw new Error('Sessie bevat ongeldige PR-opvolging');
+   }
   }
   for(let i=0;i<tickets.length;i++){
     tickets[i].querySelector('.local-state').value=restored.entries[i].status;
     tickets[i].querySelector('textarea').value=restored.entries[i].note;
   }
-  for(let i=0;i<prs.length;i++){
-    prs[i].querySelector('.pr-local-state').value=restored.pr_entries[i].status;
-    prs[i].querySelector('.pr-note').value=restored.pr_entries[i].note;
+  if(currentSession){
+   for(let i=0;i<prs.length;i++){
+     prs[i].querySelector('.pr-local-state').value=restored.pr_entries[i].status;
+     prs[i].querySelector('.pr-note').value=restored.pr_entries[i].note;
+   }
   }
   refresh();
-  document.getElementById('session-status').textContent=
-   'Privésessie hersteld, alleen lokaal in dit browservenster.';
+  document.getElementById('session-status').textContent=oldSession?
+   'Oude issuenotities exact op bron hersteld; PR-groepsnotities blijven ongewijzigd.':
+   'Privésessie inclusief PR-opvolging hersteld, alleen lokaal in dit browservenster.';
  }catch(error){
   document.getElementById('session-status').textContent=
    'Import geweigerd: '+(error instanceof Error?error.message:'onbekende bron');
