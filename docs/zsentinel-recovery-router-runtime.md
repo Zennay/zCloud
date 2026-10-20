@@ -2581,3 +2581,51 @@ Een read-only, exact-head in-memory uitvoering via verbonden zSSH kon
 de private en padvrije operatorrapportage opbouwen. Daarbij stond de
 VPS-mount op circa 93,19% niet-beschikbaar; geen positieve unlinked
 matches binnen **partiële** /proc-dekking. Dit is geen herstelbewijs.
+
+
+### 20 oktober · P0 self-hosted runner: exact GitHub-jobbewijs combineren met lokale listener
+
+De bestaande eenmalige `zsentinel_portfolio_overview.py` kan nu via
+`--observe-local-runner` de lokale, begrensde `/proc`-waarneming van
+`zcloud-vps-1` koppelen aan een **tijdens dezelfde run** door bestaande
+GitHub-read-only-collector opgehaalde exacte `Zennay/zCloud` jobreceipte.
+Nieuwe module `scripts/zsentinel_runner_cross_source.py` hergebruikt de
+reeds geïmplementeerde lokale `zsentinel_local_runner_observer.py` en
+`zsentinel_recovery_refresh.py`; geen aparte GitHub crawler of live
+runner-service writer. De offline HTML/JSON/tekst toont maximaal drie
+Nederlandstalige operatorregels: PROBLEEM, ACTIE, STATUS.
+
+- `queued` + geen runner toegekend + **complete** lokale bron met
+  listenerproces: inspecteer GitHub-runnerregistratie, labels, groep
+  en repo-toegang; een listenerproces is geen bewijs van registratie.
+- `queued` + geen assignment + **complete** lokale bron zonder
+  listener: bevoegde runtime-eigenaar inspecteert de service; nooit
+  impliciet zelf herstarten.
+- Bij onvolledige `/proc`, ontbrekend exact jobbewijs, hosted/custom
+  labels of `waiting/pending` blijft conclusie ONBEKEND respectievelijk
+  mogelijk approval/concurrency. Een workflow-terminatie of historisch
+  toegewezen job bewijst evenmin herstel.
+
+Gebruik één bekende bestaande, exacte GitHub run/job/head binnen het
+geselecteerde window dat project `cloud` bevat. Een gekoppelde
+GitHub-job gebruikt het bestaande formaat
+`--job cloud:RUN_ID:JOB_ID:FULL_HEAD_SHA` en vereist in de portfolio-CLI
+ook de expliciet bestaande `--database`-bron. `--github-only` mag
+niet worden gecombineerd met `--observe-local-runner`, omdat de
+runtimebron dan bewust niet beschikbaar is. Geen workflow wordt gestart
+of herhaald door deze flags.
+
+Een brongecontroleerde lokale VPS-observatie zag op 20 oktober één
+listenerproces, maar `/proc` was **niet volledig** en er was voor die
+uitvoering geen exact gekoppelde GitHub-job. De nieuwe kaart zegt daarom
+`no_pinned_zcloud_job` / geen herstelbewijs; geen worker resumed,
+dienstherstart of repo-/runnerregistatie geclaimd. In de actuele GitHub
+source-head observatie stonden verplichte workflows nog queued/pending.
+
+`registered_runner_verified=false`,
+`job_resumed_verified=false`, `restart_authorized=false`,
+`workflow_dispatch_authorized=false` en `claims_changed=false`
+blijven onveranderlijk. Bestaande P0 [#1326](https://github.com/Zennay/zCloud/issues/1326),
+billing [#1523](https://github.com/Zennay/zCloud/issues/1523),
+onafhankelijke review, exacte-head CI en geserialiseerde productie-
+eigenaar blijven vereisten.
