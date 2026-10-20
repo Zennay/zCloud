@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from html import escape
 import os
 from pathlib import Path
-import sys
+import subprocess
 
 from zsentinel_background_priority import (
     admission, installed_cgroup, matches_cgroup, pressure_reasons,
@@ -65,10 +65,8 @@ def collect():
             if current["quota_seconds"] is not None else None,
             "recommendation_matches": matches_cgroup(current, quota, weight),
         }
-    except (OSError, ValueError, Exception) as exc:
-        # Deliberately redact all error text (may include private unit paths).
-        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-            raise
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        # Deliberately redact systemd error text (may include private paths).
         coach = {"observed": False, "active": None, "weight": None,
                  "quota": None, "recommendation_matches": None}
     return {
@@ -201,7 +199,7 @@ def main():
         data = collect()
         markup = render(data)
         save_private(args.output, markup)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):
         # Do not echo report paths, unit command lines or operator-private details.
         parser.exit(1, "Kon geen privé rapport maken; controleer veilige doelmap en rechten.\n")
     print("Privé herstelwerkbank gemaakt (0600, zonder live wijziging).")
