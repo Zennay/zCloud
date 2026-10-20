@@ -127,8 +127,29 @@ jobs:
           test "$current_main" = "$GITHUB_SHA"
           test "$GITHUB_TRIGGERING_ACTOR" = Zennay
           test "$GITHUB_RUN_ATTEMPT" = 1
-          source="/home/ubuntu/zennay-cloud/firefox-extension"
+          runtime_root="/home/ubuntu/zennay-cloud"
+          source="$runtime_root/firefox-extension"
           live="$HOME/snap/firefox/common/chatgpt-project-extension"
+          # Never overwrite unreviewed local owner edits or redirect through
+          # a symlink. An approved Actions SHA is not the runtime tree SHA.
+          for guarded_path in "$runtime_root" "$source" "$source/background.js" "$live" "$live/background.js"; do
+            if test -L "$guarded_path"; then
+              echo "::error::Worker add-on path is a symlink; refusing live overwrite."
+              exit 1
+            fi
+          done
+          if test "$(GIT_OPTIONAL_LOCKS=0 git -C "$runtime_root" rev-parse --verify HEAD)" != "$GITHUB_SHA"; then
+            echo "::error::Runtime checkout does not match approved main; leave owner files untouched."
+            exit 1
+          fi
+          if test -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$runtime_root" status --porcelain=v1 --untracked-files=all -- firefox-extension/background.js)"; then
+            echo "::error::Runtime worker background has uncommitted owner changes; refusing overwrite."
+            exit 1
+          fi
+          if [ ! -f "$source/background.js" ] || [ ! -f "$live/background.js" ]; then
+            echo "::error::Missing installed worker background; no blind creation."
+            exit 1
+          fi
           if [ ! -f "$source/manifest.json" ] || [ ! -f "$live/manifest.json" ]; then
             echo "Worker extension location differs from the verified VPS layout; refuse replacing unknown code."
             exit 1
