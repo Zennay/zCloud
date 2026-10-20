@@ -237,3 +237,29 @@ job of test-/QA-suite toegevoegd. De wijzigingen staan op de
 bestaande exacte-head CI, onafhankelijke review,
 branch protection, huidige eigenaarschap en serialiseerde
 productie-release blijven vereist.
+
+
+### 20 oktober · Actief browserwerk blijft ook tijdens normale prioriteitswissel behouden
+
+De normale allocator kon in zijn `claimed`-tak nog vóór echte
+browserstatusdetectie een prioriteit-, capaciteit- of diversiteitswissel
+uitvoeren. De scheduler controleert nu vooraf de bestaande
+`_busy_ai_worker_keys()`-momentopname met de bijbehorende
+globale slot-/project-workerrelatie. Is de echte browserworker
+bezig, dan **houdt die dezelfde bestaande taak en slot**,
+wordt alleen de normale leaseverlenging uitgevoerd en volgt
+geen preemptie naar een ander project. Het reeds bestaande
+pending-handoff-slotbehoud blijft eveneens actief.
+
+Dit geldt ook wanneer een geclaimde taak tijdelijk nog niet
+naar `running` is gemarkeerd: de workeractiviteit, niet een
+verouderd queue-label, bepaalt of preëmptie onveilig is.
+Bij onbetrouwbare of ontbrekende actuele ownerinformatie
+is de normale autorisatie/lease-route nog steeds leidend;
+het signaal geeft geen nieuwe rechten aan de scheduler.
+Een bezig zijnde browserworker krijgt **geen extra taak**;
+deze wijziging behoudt uitsluitend het bestaande werk.
+
+Er is geen nieuwe test-, QA-, CI- of VPS-actie gestart en geen
+live queue-mutatie uitgevoerd. Alleen echte geautoriseerde
+merge en productie-uitrol maken dit runtimegedrag actief.
