@@ -112,7 +112,7 @@ Source belongs to **open PR #1569**. Pending exact-HEAD GitHub CI, independent r
 
 ## Review confidence and bounded candidate count (20 October, continuation)
 
-The inventory previously called three-day-old runner logs `completed-runner-diagnostic`. That was an unsafe conclusion: an old modified timestamp is **not** a proof that a long-running Runner.Listener closed the file descriptor. Existing code now reports `aged-runner-log-owner-review` and `aged-training-report-owner-review` instead, with `no_open_handle_verified=true` and `archive_transfer_approved=false`. Optional older APK rows continue to require independent verification that the release is superseded. All candidate rows retain `can_remove_automatically=false`.
+The inventory previously called three-day-old runner logs `completed-runner-diagnostic`. That was an unsafe conclusion: an old modified timestamp is **not** a proof that a long-running Runner.Listener closed the file descriptor. Existing code now reports `aged-runner-log-owner-review` and `aged-training-report-owner-review` instead, with `no_open_handle_verified=false` and `archive_transfer_approved=false`. Optional older APK rows continue to require independent verification that the release is superseded. All candidate rows retain `can_remove_automatically=false`.
 
 The HTML and text operator reports now show per-class **counts and size**, state that the files require owner/open-handle verification, and disclose the exact number of individual examples omitted after the `--limit` threshold. The JSON separately provides `total_candidate_count`, `examples_limit`, `examples_omitted` and `archive_transfer_attempted=false`. Hence a bounded 12-row operator example page must not look like all local inventory has been examined or approved. No renderer embeds file paths, private titles or remote encryption configuration.
 
@@ -130,3 +130,20 @@ The operator view now exposes `inventory_complete`, `scan_limit_reason`, `scan_s
 Connected zSSH directly inspected and ran the immutable read-only source at [`460d2e5`](https://github.com/Zennay/zCloud/commit/460d2e5f987a46c0c1c2032c4c9a56a434bcb797), without installing it. At that instant the scanner observed **386** age-qualified entries, of which **12** private examples were displayed and **374** explicitly marked omitted; `inventory_complete=true`, `archive_transfer_attempted=false`, `bytes_reclaimed=0`. The self-contained HTML review section was present and no external script was loaded. This was a direct functional source inspection, not a new QA suite or production deploy.
 
 No closed-file verification, crypt upload, checksum, cleanup, claim change or trainer restart was performed. The existing owner-gated transfer/retention sequence is still required, and this PR still needs exact-head GitHub CI and independent approval before main merge.
+
+
+## Runtime open-file warnings before archival assessment
+
+Use the optional **positive-only** live handle observation only when a specific owner is evaluating a bounded set of aged files:
+
+```bash
+python3 scripts/vps_storage_audit.py --older-than-days 3 \
+  --limit 35 --open-handle-hints --format text
+```
+
+The scanner reads candidate filesystem inode identities and looks for matching descriptors in a bounded window of `/proc/*/fd` (up to 350 processes, 5000 descriptors and 2 seconds). If a match is observed, `open_handle_observed=true` flags that **displayed file** as in use, and it must not be considered for archival while open. No file descriptor is closed, no process is signalled and no private PID or descriptor target is included in the output.
+
+**Critical boundary:** no observed match does NOT mean a file is closed. Restricted `/proc` access, process churn, path races and cross-host storage make a negative observation untrustworthy. The result always has `no_open_handles_proven=false`; candidate rows now always have `no_open_handle_verified=false`, including old runner diagnostics, training reports and APK exports. Even a positive open-file observation does not authorize writes, nor does the absence of one. The mandatory independent archive owner, encrypted remote checksum and separate prune approval remain intact.
+
+Read-only live source inspection on 20 October of exact [`aa1bd2e`](https://github.com/Zennay/zCloud/commit/aa1bd2eae6d7e3221becb8ef9a7ad1eb76f0246a) sampled 35 old training reports and approximately 4291 visible FDs across the first 350 process entries. It found no positive candidate matches **but marked the observation incomplete** and all 35 files as unverified. No closed-file proof, transfer, cleanup or trainer restart occurred. The actual product remains on the existing open PR until required CI, independent review and protected-main merge.
+
