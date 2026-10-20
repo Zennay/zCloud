@@ -130,8 +130,7 @@ document.getElementById('reset').addEventListener('click',function(){
  search.value='';priority.value='';project.value='';state.value='';refresh();
 });
 function safeText(value){
- return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#' +
- String.fromCharCode(96) + '~])/g,'\\$1').slice(0,720);
+ return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
 }
 document.getElementById('export').addEventListener('click',function(){
  const parts=['# zSentinel · private handmatige opvolging','',
