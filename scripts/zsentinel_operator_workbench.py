@@ -196,6 +196,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .batch li label{display:flex;align-items:flex-start;gap:8px;margin:0}
 .batch .toolbar{margin:10px 0}.batch pre{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .batch button[disabled]{opacity:.55;cursor:not-allowed}
+.prdesk{border:1px solid #5b86a0;border-radius:12px;padding:16px;background:#12283b;margin:16px 0}
+.prdesk ol{padding-left:24px;max-height:440px;overflow:auto}.prdesk li{margin:10px 0;border-bottom:1px solid #405c73;padding:6px 0 10px;overflow-wrap:anywhere}
+.prdesk small{display:block}.prdesk pre{max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.prdesk button[disabled]{opacity:.55;cursor:not-allowed}
 .comparison{border:1px solid #486f87;border-radius:12px;padding:15px;margin:16px 0;background:#132237}
 .comparison ol{padding-left:25px;max-height:320px;overflow:auto}.comparison li{margin:7px 0;overflow-wrap:anywhere}
 .comparison strong{color:#d7f0ff}
@@ -323,6 +327,17 @@ Export private JSON separately to preserve these local changes.</small></p>
 No live owner/claim status is fetched or inferred. Recheck GitHub, Notion and release gates before touching code.</p>
 <p id="triageCount" aria-live="polite"></p><ol id="triageQueue"></ol>
 </section>
+<section class="prdesk" aria-label="Merge-first observed PR desk">
+<h2>Merge first · grouped existing PR references</h2>
+<p>One original PR link per current filtered issue group, not one new branch per issue.
+This is a saved partial snapshot: linked PRs may have changed, closed or merged.
+Open the original PR, inspect the current head, live claims, required checks,
+independent reviews and branch/release authority before touching code or merging.</p>
+<p id="prDeskSummary" aria-live="polite"></p><ol id="prDeskRows"></ol>
+<button type="button" id="previewPrDesk">Preview filtered merge-first handoff</button>
+<div id="prDeskPanel" hidden><pre id="prDeskContent"></pre>
+<button type="button" id="downloadPrDesk" disabled>Download exactly this reviewed PR handoff (.md)</button></div>
+</section>
 <div class="stack">
 <nav aria-label="Observed product issues"><ol class="list" id="issues"></ol></nav>
 <article id="detail" aria-label="Selected product issue">
@@ -447,9 +462,13 @@ window.addEventListener('beforeunload',event=>{
  if(!unsavedLocal)return;
  event.preventDefault();event.returnValue='';
 });
-let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null;
+let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedPrDesk=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
+ viewedPrDesk=null;
+ document.getElementById('prDeskPanel').hidden=true;
+ document.getElementById('prDeskContent').textContent='';
+ document.getElementById('downloadPrDesk').disabled=true;
  viewedDeltaCsv=null;
  document.getElementById('deltaCsvPanel').hidden=true;
  document.getElementById('deltaCsvContent').textContent='';
@@ -506,6 +525,90 @@ function filtered(){
      ['new-observation','changed-evidence'].includes(kinds.get(c.issue)):
      kinds.get(c.issue)===change)))&&
    (!q||(c.issue+' '+c.title+' '+c.project+' '+c.recommended_next_step).toLowerCase().includes(q)));
+}
+
+function prDeskGroups(){
+ const index=new Map(),weights={P0:0,P1:1,P2:2,Unspecified:3};
+ for(const card of filtered()){
+  for(const url of card.open_pr_candidates){
+   let group=index.get(url);
+   if(!group){
+    group={url,project:card.project,priority:card.priority,issues:[],gaps:new Set()};
+    index.set(url,group);
+   }
+   if(weights[card.priority]<weights[group.priority])group.priority=card.priority;
+   group.issues.push(card);
+   for(const gap of card.evidence_gaps)group.gaps.add(gap);
+  }
+ }
+ return [...index.values()].sort((a,b)=>
+  weights[a.priority]-weights[b.priority] ||
+  b.issues.length-a.issues.length ||
+  a.project.localeCompare(b.project) || a.url.localeCompare(b.url));
+}
+function refreshPrDesk(){
+ const list=document.getElementById('prDeskRows');
+ list.replaceChildren();
+ const groups=prDeskGroups(),withMultiple=groups.filter(g=>g.issues.length>1).length;
+ document.getElementById('prDeskSummary').textContent=
+  groups.length+' unique PR links in '+filtered().length+
+  ' filtered observed issue cards · '+withMultiple+
+  ' linked from multiple issues (NOT proof of duplicated code). Snapshot: '+
+  board.observed_at_utc+'. No active PR, merge or claim status verified.';
+ if(!groups.length){
+  list.append(elem('li','No referenced PRs in this bounded filtered snapshot; not proof that none exist.'));
+  return;
+ }
+ for(const group of groups){
+  const item=elem('li');
+  item.append(link(group.url+' ↗',group.url),
+   elem('small',group.priority+' · '+group.project+' · '+group.issues.length+
+     ' captured issue link(s) · NOT CURRENT GATE EVIDENCE'));
+  const inner=elem('ul');
+  for(const card of group.issues){
+   const li=elem('li');
+   li.append(link(card.priority+' '+card.issue+' ↗',card.url),
+    elem('small',card.title+' · human decision: '+
+      (handoffs.get(card.issue)?.decision||'investigate')));
+   inner.append(li);
+  }
+  item.append(inner,elem('small','Source gaps: '+(group.gaps.size?
+   [...group.gaps].slice(0,3).map(g=>line(g,180)).join(' · '):
+   'Live claim, exact-head CI, review, branch and release authority UNVERIFIED')));
+  list.append(item);
+ }
+}
+function currentPrDesk(){
+ const groups=prDeskGroups();
+ if(!groups.length)return null;
+ const lines=[
+  '# zSentinel · MERGE FIRST · review-only PR handoff',
+  '',
+  'Board SHA256: '+boardSha,
+  'Captured UTC: '+board.observed_at_utc,
+  'Filtered current issue cards: '+filtered().length,
+  'Unique referenced PR links: '+groups.length,
+  'Evidence window: bounded and partial; original links are not verified open/current.',
+  'All claim/merge/deploy permissions: FALSE; required CI/branch protection/review UNKNOWN.',
+  'Read current GitHub PR and active Notion/worker claims separately before action.',
+  ''
+ ];
+ for(const group of groups){
+  lines.push('## '+line(group.priority,20)+' · '+group.url,
+   'Project: '+line(group.project,50),
+   'Referenced original issues: '+group.issues.length+
+    (group.issues.length>1?' (coordinate references; code duplication NOT proved)':''),
+   ...group.issues.map(c=>
+    '- '+c.url+' · '+line(c.title,180)+' · '+c.priority+
+    ' · human disposition '+(handoffs.get(c.issue)?.decision||'investigate')),
+   'Observed gaps: '+(group.gaps.size?
+    [...group.gaps].map(g=>line(g,300)).join('; '):
+    'No complete current gate receipt; verify required CI, owner, review and release.'),
+   'Next: inspect this existing PR before creating new source work. Do not auto-merge.',
+   '');
+ }
+ lines.push('Source-only grouping. No GitHub mutations, review approvals or releases performed.','');
+ return lines.join('\\n');
 }
 function refreshPortfolio(){
  const cards=board.cards;
@@ -1000,7 +1103,7 @@ function drawList(){
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
    ' shown · observed '+board.observed_at_utc+' · no active-claim authorization';
  if(selected&&!view.some(c=>c.issue===selected)){saveSelection();selected=null;drawDetail()}
- refreshTriage();refreshFollowups();refreshBatch()
+ refreshTriage();refreshFollowups();refreshBatch();refreshPrDesk()
 }
 function drawDetail(){
  detail.replaceChildren();
@@ -1215,6 +1318,32 @@ document.getElementById('restore').addEventListener('change',async event=>{
    status.textContent='Handoff not restored: invalid, foreign or from another board snapshot.';
  }finally{event.currentTarget.value=''}
 });
+
+document.getElementById('previewPrDesk').onclick=()=>{
+ saveSelection();
+ viewedPrDesk=currentPrDesk();
+ document.getElementById('prDeskPanel').hidden=!viewedPrDesk;
+ document.getElementById('prDeskContent').textContent=viewedPrDesk||'';
+ document.getElementById('downloadPrDesk').disabled=!viewedPrDesk;
+ status.textContent=viewedPrDesk?
+  'Review all captured PR references and issue links; none is verified mergeable.':
+  'No captured PR references under these filters.';
+};
+document.getElementById('downloadPrDesk').onclick=()=>{
+ if(!viewedPrDesk)return;
+ saveSelection();
+ if(currentPrDesk()!==viewedPrDesk){
+  invalidateBrief();
+  status.textContent='PR handoff changed. Preview it again before download.';
+  return;
+ }
+ const uri=URL.createObjectURL(new Blob([viewedPrDesk],{type:'text/markdown;charset=utf-8'}));
+ const a=elem('a');
+ a.href=uri;a.download='zsentinel-merge-first-private-review.md';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ status.textContent='Reviewed snapshot PR handoff downloaded; no GitHub claim or merge made.';
+ invalidateBrief();
+};
 document.getElementById('previewBrief').onclick=()=>{
  saveSelection();
  viewedBrief=currentBrief();
