@@ -549,6 +549,28 @@ def render_html(board):
     listed_prs = board.get("recent_open_product_prs", [])
     if (type(listed_prs) is not list or len(listed_prs) > 162):
         raise ValueError("untrusted existing PR source count")
+    merge_stats = board.get("merge_first_source_summary")
+    if merge_stats is None:
+        # Backwards-compatible offline board snapshots without summary:
+        # missing exact-head evidence remains UNKNOWN, never approved.
+        merge_stats = {
+            "sampled_open_product_prs": len(listed_prs),
+            "observed_exact_head_without_merge_authority": 0,
+            "uninspected_or_moved_head": len(listed_prs),
+            "merge_authorized": False, "owner_claim_verified": False,
+        }
+    if (type(merge_stats) is not dict
+            or merge_stats.get("merge_authorized") is not False
+            or merge_stats.get("owner_claim_verified") is not False
+            or any(type(merge_stats.get(k)) is not int or
+                   merge_stats[k] < 0 or merge_stats[k] > 162
+                   for k in ("sampled_open_product_prs",
+                             "observed_exact_head_without_merge_authority",
+                             "uninspected_or_moved_head"))
+            or merge_stats["sampled_open_product_prs"] != len(listed_prs)
+            or merge_stats["observed_exact_head_without_merge_authority"] +
+            merge_stats["uninspected_or_moved_head"] != len(listed_prs)):
+        raise ValueError("untrusted non-authorizing PR summary")
     listed_sections = []
     for pid in board["projects"]:
         cards = []
@@ -589,10 +611,15 @@ def render_html(board):
     existing_pr_panel = (
         '<section aria-label="Merge eerst: reeds open product PRs">'
         '<h2>Merge eerst · bestaande product-PRs (' +
-        str(len(listed_prs)) + ' in recente steekproef)</h2>'
-        '<p class="notice">Dit is uitsluitend de nieuwste begrensde GitHub '
-        'PR-lijst per project (maximaal acht); geen bewijs dat niet-vermelde '
-        'PRs ontbreken. Getoonde HEAD kan inmiddels gewijzigd zijn. '
+        str(len(listed_prs)) + ' in begrensde steekproef)</h2>'
+        '<p>Op exacte HEAD opnieuw gelezen (GEEN mergebewijs): ' +
+        str(merge_stats["observed_exact_head_without_merge_authority"]) +
+        ' · Nog niet op actuele HEAD gelezen of gewijzigd: ' +
+        str(merge_stats["uninspected_or_moved_head"]) + '.</p>'
+        '<p class="notice">De bron omvat maximaal acht recente GitHub-PRs '
+        'per project plus eerder gevonden issue-gekoppelde PRs. '
+        'Niet-vermelde PRs kunnen bestaan. Getoonde HEAD kan intussen '
+        'gewijzigd zijn. '
         'Geen huidige checks, onafhankelijke review, actieve lease, '
         'mergeautorisatie of productie-release uit deze lijst afleiden.</p>' +
         (''.join(listed_sections) if listed_sections else
@@ -822,10 +849,19 @@ def render_markdown(board):
                          " (" + _markdown_literal(source["status"]) +
                          "); geen nul-issues of herstelbewijs.")
     listed_prs = board.get("recent_open_product_prs", [])
+    merge_stats = board.get("merge_first_source_summary")
     if listed_prs:
         lines.extend(["", "## Merge eerst · reeds open product-PRs uit beperkte bron",
-                      "Per project maximaal acht recentste PRs. HEAD uit lijst, "
-                      "geen actuele review, verplichte CI, lease of mergebewijs."])
+                      "Per project maximaal acht recente PRs plus eerder exact "
+                      "gelezen issue-gekoppelde PRs. Geen actuele "
+                      "review, verplichte CI, lease of mergebewijs."])
+        if isinstance(merge_stats, dict) and (
+                merge_stats.get("merge_authorized") is False and
+                merge_stats.get("owner_claim_verified") is False):
+            lines.append("- Exact-head bron geïnspecteerd (GEEN mergebewijs): " +
+                         str(merge_stats.get("observed_exact_head_without_merge_authority", "ONBEKEND")) +
+                         " · niet geïnspecteerd/gewijzigd: " +
+                         str(merge_stats.get("uninspected_or_moved_head", "ONBEKEND")))
         for pr in listed_prs:
             lines.append("- " + _markdown_literal(pr["project_id"]) +
                          " · [" + _markdown_literal(pr["title"]) +
