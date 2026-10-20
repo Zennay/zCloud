@@ -55,20 +55,27 @@ object IncidentSnoozeStore {
         // Snoozing does NOT resolve the incident in zCloud. It clears only
         // the local delivery receipt so a still-open episode can alert after
         // the user-selected hour expires.
-        val deliveryPrefs = appContext.getSharedPreferences("zennay_alerts", Context.MODE_PRIVATE)
-        val delivered = deliveryPrefs.getStringSet("delivered_ids", emptySet()).orEmpty().toMutableSet()
-        delivered.remove(episodeKey(alert))
-        deliveryPrefs.edit().putStringSet("delivered_ids", delivered).apply()
-
+        clearLocalDeliveryReceipt(appContext, alert)
         (appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
             ?.cancel(alert.id, 0)
     }
 
     fun resume(context: Context, alert: AlertItem) {
-        context.applicationContext
-            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val appContext = context.applicationContext
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().remove(preferenceKey(alert)).apply()
-        // Resume permits a future notification; no immediate network call,
-        // workflow trigger, queue write or notification is performed.
+        // "Resume" restores eligibility for the NEXT regular poll even if
+        // this episode had previously been delivered. No immediate alert,
+        // privileged action, workflow trigger or network request.
+        clearLocalDeliveryReceipt(appContext, alert)
+    }
+
+    private fun clearLocalDeliveryReceipt(context: Context, alert: AlertItem) {
+        val deliveryPrefs = context.getSharedPreferences("zennay_alerts", Context.MODE_PRIVATE)
+        val delivered = deliveryPrefs.getStringSet("delivered_ids", emptySet())
+            .orEmpty().toMutableSet()
+        if (delivered.remove(episodeKey(alert))) {
+            deliveryPrefs.edit().putStringSet("delivered_ids", delivered).apply()
+        }
     }
 }
