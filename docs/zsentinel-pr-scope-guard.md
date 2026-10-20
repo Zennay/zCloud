@@ -1304,3 +1304,31 @@ Zelfs een volledig uitgevoerde lijst GETs wordt expliciet als
 **onvolledig bewijs** gepresenteerd zodra één geobserveerde identiteit
 onbereikbaar/onduidelijk is. Geen bestaande GitHub-issue-status wordt
 naar een claim, fix, merge of live herstel gepromoveerd.
+
+
+### Geen verkeerd herstelwerk starten door een PR-nummer
+
+De optionele bronwaarneming is nu gekoppeld aan een **menselijk
+operatorvervolg**, zichtbaar in JSON, tekst, Markdown en de private HTML:
+
+- `confirmed_open_issue_at_observation` →
+  `review_existing_prs_for_same_open_issue`. Inspecteer eerst de
+  bestaande PR's bij dat issue; dit is geen fix of eigenaarschapsbewijs.
+- `confirmed_closed_issue_at_observation` →
+  `review_closed_issue_before_more_product_work`. Sluiting kan een
+  externe beslissing zijn, dus geen nieuwe claim op basis van een titel.
+- `reference_is_pull_request_not_issue` →
+  `inspect_referenced_pr_not_issue`. Zo verdwijnt een foutieve
+  aanname van dubbel issuewerk; integreer het bestaande PR eerst.
+- Onbereikbaar, onvoldoende of niet aangevraagd →
+  `verify_reference_identity_before_routing`. De route blijft open
+  totdat een echte bron is waargenomen.
+
+De gevolgen blijven **weergave en menselijke triage**. Er wordt niets
+automatisch geclaimd, gedispatcht, betaald, gemerged of gedeployed.
+De status `issue_identity_lookup_incomplete` wordt ook waar wanneer
+een uitgevoerde GitHub-opvraag een onduidelijk/afgewezen resultaat
+teruggeeft: acht ontvangen responses zijn niet gelijk aan acht
+geverifieerde identiteiten. Open issue- en PR-nummers uit dit
+werkoverzicht worden nooit als bewijzen van codefix of live herstel
+gebruikt.
