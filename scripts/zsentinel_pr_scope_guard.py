@@ -149,14 +149,26 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
         title = row.get("title")
         product_candidate = (type(title) is str and 0 < len(title) <= 256
                              and not QA_ONLY_TITLE.match(title))
-        # A malformed/oversized PR body cannot authenticate an issue link.
-        # The normal file collision inventory remains independent.
-        refs_covered = body is None or (type(body) is str and len(body) <= 32000)
-        refs = sorted({int(m.group(1)) for m in re.finditer(
+        # Reuse the existing issue-first product semantics: explicit #N in
+        # a PR title is an unverified hint even when the body has no refs.
+        # Body and title coverage are independent. A truncated/invalid body
+        # must never silently count as a fully inspected issue source.
+        body_covered = body is None or (type(body) is str and len(body) <= 32000)
+        title_covered = type(title) is str and 0 < len(title) <= 256
+        body_refs = ({int(m.group(1)) for m in re.finditer(
             r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b",
-            body or "")}) if refs_covered else []
-        refs_covered = refs_covered and len(refs) <= MAX_REFERENCED_ISSUES
-        refs = refs[:MAX_REFERENCED_ISSUES] if refs_covered else []
+            body or "")} if body_covered else set())
+        title_refs = ({int(m.group(1)) for m in re.finditer(
+            r"(?<![A-Za-z0-9_])#([1-9][0-9]{0,6})(?![0-9])",
+            title)} if title_covered else set())
+        refs_covered = (body_covered and title_covered
+                        and len(body_refs | title_refs) <= MAX_REFERENCED_ISSUES)
+        refs = sorted(body_refs | title_refs)[:MAX_REFERENCED_ISSUES]
+        ref_provenance = {
+            str(n): (["body"] if n in body_refs else []) +
+                    (["title"] if n in title_refs else [])
+            for n in refs
+        }
         if (type(n) is not int or not 0 < n < 100000000 or n in seen
                 or not isinstance(base_repo, dict)
                 or base_repo.get("full_name") != repo
@@ -167,7 +179,10 @@ def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
         result.append({"number": n, "head_sha": head_sha,
                        "base_sha": base_sha,
                        "referenced_issue_numbers_unverified": refs,
-                       "issue_reference_body_covered": refs_covered,
+                       "issue_reference_provenance": ref_provenance,
+                       "issue_reference_title_covered": title_covered,
+                       "issue_reference_body_covered": body_covered,
+                       "issue_reference_text_covered": refs_covered,
                        "product_issue_reference_candidate": product_candidate,
                        "url": "https://github.com/" + repo + "/pull/" + str(n)})
     return result
@@ -555,12 +570,14 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         })
         if truncated:
             suspicious_lists.append(pr["number"])
-        if pr["issue_reference_body_covered"] and pr["product_issue_reference_candidate"]:
+        if pr["product_issue_reference_candidate"]:
             for issue_number in pr["referenced_issue_numbers_unverified"]:
                 issue_links.append({
                     "issue_number": issue_number,
                     "pr_url": pr["url"], "pr_head_sha": pr["head_sha"],
-                    "relation": "unverified_text_mention_only",
+                    "mentioned_in": pr["issue_reference_provenance"].get(
+                        str(issue_number), []),
+                    "relation": "unverified_title_or_body_mention_only",
                     "owner_verified": False,
                     "fix_verified": False,
                 })
@@ -652,10 +669,14 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
             page_count == 1 and open_page == 1
             and len(before) < page_size and len(before) <= limit
             and stable and not any(
-                not pr["issue_reference_body_covered"] for pr in chosen)
+                not pr["issue_reference_text_covered"] for pr in chosen)
             and len(duplicate_issue_groups) <= MAX_DUPLICATE_ISSUE_GROUPS),
         "issue_reference_body_coverage_complete":
             all(pr["issue_reference_body_covered"] for pr in chosen),
+        "issue_reference_title_coverage_complete":
+            all(pr["issue_reference_title_covered"] for pr in chosen),
+        "issue_reference_text_coverage_complete":
+            all(pr["issue_reference_text_covered"] for pr in chosen),
         "observed_file_collision_pairs": len(ordered),
         "shown_file_collision_pairs": cards,
         "unpaired_open_prs_in_sample_not_claim_verified": not_paired,
