@@ -151,7 +151,89 @@ def validated_view(source: dict) -> dict:
             "global_gate": "live claims, exact-head CI, review and release authority unverified"}
 
 
-def html_document(view: dict, board_sha: str) -> str:
+
+
+def issue_pr_connections_html(view: dict, report: dict | None) -> str:
+    """Embed separate, verified saved PR evidence in the existing human desk.
+
+    Board issue cards and offline PR ZIPs are independently admitted inputs.
+    The presence or absence of an observed PR link cannot release a claim.
+    """
+    if report is None:
+        return ""
+    e = lambda v: escape(str(v), quote=True)
+    group_map = {row["issue_url"]: row for row in report["issues"]}
+    visited = set()
+    cards = []
+    for card in view["cards"]:
+        match = group_map.get(card["url"])
+        if match is None:
+            continue
+        visited.add(card["url"])
+        prs = []
+        for pr in match["linked_existing_prs"][:12]:
+            prs.append(
+                '<li><a href="' + e(pr["pr_url"]) +
+                '" target="_blank" rel="noopener noreferrer">Existing PR #' +
+                str(pr["pr_number"]) + '</a> · saved ' +
+                e(pr["source_priority"]) + ' · observed gate ' +
+                e(pr["observed_primary_gate"]) +
+                ' · last issue-link source #' +
+                str(pr["issue_ref_last_seen_snapshot"]) +
+                (' · issue-link NOT seen in final sample (UNKNOWN)'
+                 if pr["issue_ref_absent_in_last_snapshot"] else '') +
+                '</li>')
+        omitted = len(match["linked_existing_prs"]) - len(prs)
+        cards.append(
+            '<article class="brief"><h3><a target="_blank" ' +
+            'rel="noopener noreferrer" href="' + e(card["url"]) + '">' +
+            e(card["priority"]) + ' ' + e(card["issue"]) +
+            '</a></h3><p>' + str(len(match["linked_existing_prs"])) +
+            ' original PR links from the separate historical source. ' +
+            'This is NOT live ownership/CI/review.</p><ol>' +
+            ''.join(prs) + '</ol>' +
+            ('<p>' + str(omitted) +
+             ' other saved PR references not displayed. NOT resolved.</p>'
+             if omitted else '') + '</article>')
+    other_issues = [
+        row for row in report["issues"]
+        if row["issue_url"] not in visited
+    ]
+    unmatched = [
+        '<li><a href="' + e(row["issue_url"]) +
+        '" target="_blank" rel="noopener noreferrer">Issue #' +
+        str(row["issue_number"]) + '</a> · ' +
+        str(len(row["linked_existing_prs"])) +
+        ' source-seen existing PR(s)</li>'
+        for row in other_issues[:30]
+    ]
+    return (
+        '<section id="sourcePrConnections" class="portfolio" '
+        'aria-label="Source-linked existing PRs for current product issues">'
+        '<h2>Existing PRs · source-connected issue desk</h2>'
+        '<p><strong>Separate historical ZIP evidence, NOT a live overlay.</strong> '
+        'Links are matched by exact canonical issue URL. Board and PR ZIP '
+        'sources were validated independently, so a missing link never proves '
+        'that a project has no PR or an issue is free. Active owner, current '
+        'HEAD, required CI, independent review and main merge remain UNKNOWN.</p>'
+        '<p>PR sources: ' + str(len(report["source_snapshots"])) +
+        ' · matched board issues: ' + str(len(cards)) +
+        ' · other source-linked issues: ' + str(len(other_issues)) +
+        ' · PRs without saved issue links: ' +
+        str(report["pr_without_source_issue_count"]) + ' (not free).</p>'
+        '<details><summary>Open existing PR references for matching issues</summary>' +
+        ''.join(cards) + '</details>' +
+        '<details><summary>Other source issues and unlinked PRs (incomplete '
+        'coverage)</summary><ol>' + ''.join(unmatched) + '</ol>' +
+        ('<p>' + str(len(other_issues) - len(unmatched)) +
+         ' other historical issues omitted; NOT resolved.</p>'
+         if len(other_issues) > len(unmatched) else '') +
+        '<p>' + str(report["pr_without_source_issue_count"]) +
+        ' saved PR(s) have no observed issue link; inspect originals before '
+        'opening a new PR.</p></details></section>'
+    )
+
+def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
     records = json.dumps(view, ensure_ascii=True, separators=(",", ":"))
     # The JSON is embedded into an inline script. Escape HTML syntax even if
     # the JSON was formed from malicious public issue titles or operator notes.
@@ -160,6 +242,7 @@ def html_document(view: dict, board_sha: str) -> str:
         '<option value="' + escape(p, quote=True) + '">' + escape(p) + '</option>'
         for p in view["projects"]
     )
+    source_pr_section = issue_pr_connections_html(view, saved_pr_context)
     return """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
@@ -229,6 +312,7 @@ An apparently free issue is never proof that its ownership is clear. Check live
 Notion/queue claims and the exact-head GitHub gates separately before acting.</p>
 <p id="info" aria-live="polite"></p>
 <p id="unsavedStatus" role="status" aria-live="polite">No locally edited handoffs to export.</p></header>
+""" + source_pr_section + """
 <div class="filters">
 <label>Search product issues<input id="search" type="search" placeholder="Issue, project or next step"></label>
 <label>Priority<select id="priority"><option value="">All priorities</option>
@@ -2566,15 +2650,30 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--board", type=Path, required=True,
                         help="Existing private zSentinel JSON delivery-board snapshot")
+    parser.add_argument("--pr-dossier", action="append", type=Path,
+                        help="Optional saved source-bound PR ZIP, repeat 1-12 for "
+                             "existing-PR references beside current board issues")
     parser.add_argument("--output", type=Path, required=True,
                         help="New private HTML workspace file; never overwrites")
     args = parser.parse_args(argv)
     try:
         if args.board.resolve() == args.output.resolve():
             raise ValueError("Output must not overwrite board evidence")
+        if args.pr_dossier:
+            input_paths = [args.board] + args.pr_dossier
+            if len({str(x.resolve()) for x in input_paths + [args.output]}) != (
+                    len(input_paths) + 1):
+                raise ValueError("Board, source ZIPs and output must be distinct")
         source, board_sha = read_source_and_sha(args.board)
         view = validated_view(source)
-        write_create_only(args.output, html_document(view, board_sha))
+        saved_pr_context = None
+        if args.pr_dossier:
+            from zsentinel_saved_dossier_timeline import build_timeline
+            from zsentinel_saved_issue_timeline import issue_worklist
+            timeline = build_timeline(args.pr_dossier, minimum_sources=1)
+            saved_pr_context = issue_worklist(timeline)
+        write_create_only(args.output, html_document(
+            view, board_sha, saved_pr_context=saved_pr_context))
         print(args.output)
         return 0
     except (OSError, ValueError, KeyError, TypeError) as exc:
