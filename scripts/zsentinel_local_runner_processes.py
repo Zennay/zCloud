@@ -35,6 +35,7 @@ def observe(proc: Path = Path("/proc")):
     examined = 0
     candidates = 0
     inaccessible = 0
+    unknown_cwd = 0
     cutoff = False
     for entry in os.scandir(proc):
         if not PID.fullmatch(entry.name):
@@ -69,6 +70,7 @@ def observe(proc: Path = Path("/proc")):
                 cwd.encode("utf-8", "surrogateescape")).hexdigest()[:16]
         except (OSError, ValueError):
             group = "unknown-cwd"
+            unknown_cwd += 1
         groups[group][field] += 1
     ordered = sorted(groups.items(), key=lambda item: (
         -item[1]["workers"], -item[1]["listeners"], item[0]))
@@ -80,6 +82,7 @@ def observe(proc: Path = Path("/proc")):
         "numeric_proc_entries_seen": min(examined, MAX_PROCESSES),
         "candidate_processes_seen": min(candidates, MAX_CANDIDATES),
         "inaccessible_proc_entries": min(inaccessible, MAX_PROCESSES),
+        "unknown_cwd_processes_seen": unknown_cwd,
         "listener_processes_seen": counts["listeners"],
         "worker_processes_seen": counts["workers"],
         "service_wrapper_processes_seen": counts["service_wrappers"],
@@ -120,7 +123,8 @@ def _admit(report):
         raise ValueError("untrusted runner-process inventory")
     for key in ("listener_processes_seen", "worker_processes_seen",
                 "service_wrapper_processes_seen", "candidate_processes_seen",
-                "numeric_proc_entries_seen", "inaccessible_proc_entries"):
+                "numeric_proc_entries_seen", "inaccessible_proc_entries",
+                "unknown_cwd_processes_seen"):
         value = report.get(key)
         if type(value) is not int or not 0 <= value <= MAX_PROCESSES:
             raise ValueError("unbounded runner process counter")
@@ -147,6 +151,8 @@ def render_text(report):
         "Runner.Listener %d · Runner.Worker %d · runsvc.sh %d" % (
             r["listener_processes_seen"], r["worker_processes_seen"],
             r["service_wrapper_processes_seen"]),
+        "Lokale runner-root niet toegankelijk: %d processen; die groep is NIET één bewezen installatie." %
+            r["unknown_cwd_processes_seen"],
         "Repo/labels/registratie/job-toewijzing: ONBEKEND; geen herstel of restartautorisatie.",
         "Menselijk vervolg: " + r["owner_action"],
     ]
@@ -174,6 +180,9 @@ def render_html(report):
         '<p><strong>Runner.Listener ' + str(r["listener_processes_seen"]) +
         ' · Runner.Worker ' + str(r["worker_processes_seen"]) +
         ' · runsvc.sh ' + str(r["service_wrapper_processes_seen"]) + '</strong></p>'
+        '<p>Niet-verifieerbare lokale runner-mappen: ' +
+        str(r["unknown_cwd_processes_seen"]) +
+        '; deze procesgroep is geen bewijs van één installatie.</p>'
         '<p>Geen vastgestelde repositoryregistratie, labels, GitHub-jobtoewijzing,'
         ' veilige idle-status of herstelde productie. Nooit automatisch herstarten.</p>'
         '<p>' + escape(r["owner_action"]) + '</p>'
