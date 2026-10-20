@@ -71,6 +71,10 @@ def observe(repo_key, run_id, job_id, head_sha, token=None):
                 or started not in ("completed_without_steps", "completed_with_steps",
                                    "unknown_not_proven")):
             raise ValueError("untrusted hosted admission stage")
+        conclusion = item.get("conclusion")
+        if status == "completed" and conclusion not in (
+                "success", "failure", "cancelled", "timed_out", "action_required"):
+            raise ValueError("missing trustworthy terminal GitHub conclusion")
         if route == "self_hosted":
             state = "not_hosted_runner_route"
             problem = "De exacte job gebruikt self-hosted labels; geen GitHub-hosted billingbewijs."
@@ -83,9 +87,19 @@ def observe(repo_key, run_id, job_id, head_sha, token=None):
             state = "started_or_assigned_state_not_billing_proof"
             problem = "Job is in progress; een pre-start hostingweigering is niet aangetoond."
             action = "Wacht op het bestaande runresultaat; start geen extra betaalde job."
-        elif item.get("no_job_steps") is True and not assigned and status == "completed":
+        elif status == "completed" and conclusion == "success":
+            state = "exact_job_succeeded_not_global_billing_clearance"
+            problem = "Exacte job succesvol; dit bewijst geen herstel van accountbrede CI-admissie."
+            action = "Behoud het jobbewijs; controleer andere oorspronkelijke mislukte runs apart."
+        elif status == "completed" and conclusion == "cancelled":
+            state = "cancelled_without_admission_conclusion"
+            problem = "Geannuleerde job bewijst geen GitHub-billingweigering."
+            action = "Onderzoek de exacte annulering en eigenaar voordat CI opnieuw wordt gestart."
+        elif (status == "completed" and conclusion in
+                ("failure", "timed_out", "action_required")
+                and item.get("no_job_steps") is True and not assigned):
             state = "completed_without_runner_steps_possible_admission"
-            problem = "Job is beëindigd zonder runner-toewijzing of uitgevoerde steps."
+            problem = "Mislukte job eindigde zonder toegewezen runner of uitgevoerde steps."
             action = ("Accountbevoegde onderzoekt GitHub Actions billing/spending,"
                       " beleidsregels en platformannotaties; oorzaak blijft ONBEKEND.")
         elif status == "completed" and item.get("no_job_steps") is False:
