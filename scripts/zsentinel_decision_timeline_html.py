@@ -78,6 +78,10 @@ Nieuwe browsergeneratie-events zijn <strong>geen</strong> bewijs van productleve
 lease, herstelde worker of merge. Ontbrekende slots en bronwisselingen blijven ONBEKEND.</p>
 <div id="workerMetrics" class="statgrid"></div>
 <div id="workerHistory"></div>
+<h3>Aanhoudende eigenaarcontroles uit twee bronvensters</h3>
+<p>Dit zijn herhaalde <em>classificaties</em>, niet noodzakelijk twee aparte fouten.
+Actuele claim, lease en productlevering zijn niet bewezen.</p>
+<div id="workerFollowup"></div>
 <p>Menselijke overdracht zonder uitvoerbevoegdheid:</p>
 <button id="workerPreview">Bekijk privé worker-opvolging</button>
 <button id="workerDownload" disabled>Download worker-overdracht als Markdown</button>
@@ -255,8 +259,24 @@ $("workerMetrics").append(
  stat("Oorspronkelijke workerbronnen",workers.source_windows),
  stat("Onvolledige of gewijzigde bronparen",workers.unknown_or_partial_pairs),
  stat("Nieuw geobserveerde generatiesignalen",workers.observed_generation_signal_pairs),
+ stat("Herhaald geobserveerde eigenaarcontroles",workers.persistent_observed_owner_review_count),
  stat("Productlevering bewezen","NEE")
 );
+if(!workers.persistent_observed_owner_review.length){
+ $("workerFollowup").append(el("p",null,
+  "Geen herhaalde eigenaarcontroles in de vergelijkbare deelsamples. Dit bewijst niet dat alle workers gezond zijn."));
+}else{
+ const followups=el("ol");
+ for(const row of workers.persistent_observed_owner_review){
+  followups.append(el("li",null,
+   "P"+row.priority+" · "+row.project_id+" worker "+row.worker_slot+
+   " · vensters "+row.from_window+" → "+row.to_window+
+   " · voorheen "+row.previous_classification+" · later "+row.later_classification+
+   " · huidige eigenaar moet zelf verifiëren: "+row.owner_followup+
+   " · geen automatische claim of herstel"));
+ }
+ $("workerFollowup").append(followups);
+}
 for(const pair of workers.adjacent_comparisons){
  const detail=el("details");
  detail.append(el("summary",null,"Vensters "+pair.from_window+" → "+pair.to_window+
@@ -283,8 +303,17 @@ function renderWorkerBrief(){
   "> Ongeziene of gewijzigde slots zijn ONBEKEND. Geen restart, claim, dispatcheractie of merge.","",
   "- Eerste bron: "+data.first_source_observed_at_utc,
   "- Laatste bron: "+data.last_source_observed_at_utc,
-  "- Bron SHA-256: "+data.sources.map(s=>s.normalized_source_sha256).join(", "), ""
+  "- Bron SHA-256: "+data.sources.map(s=>s.normalized_source_sha256).join(", "), "",
+  "## Herhaald geobserveerde eigenaarcontroles, geen herstelbewijs", ""
  ];
+ for(const row of workers.persistent_observed_owner_review){
+  out.push("- "+row.project_id+" worker "+row.worker_slot+
+   " · vensters "+row.from_window+" → "+row.to_window+
+   " · classificatie laatst "+row.later_classification+
+   " · eigenaarcontrole "+row.owner_followup+
+   " · niet als bewezen defect of claimoverdracht interpreteren.");
+ }
+ out.push("");
  for(const pair of workers.adjacent_comparisons){
   out.push("## Vensters "+pair.from_window+" → "+pair.to_window,
    "- Bronvergelijking: "+pair.comparison);
