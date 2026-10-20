@@ -128,3 +128,32 @@ claim-epoch-token en bewijs van echte GitHub/Notion-productoutput.
 Daarom blijft `recovery_verified=false` in de vergelijkingssamenvatting.
 De vorige JSON blijft ongewijzigd en de nieuwe uitvoer wordt nooit
 over een bestaande JSON of HTML heen geschreven.
+
+## Browservoortgang is gescheiden van de laatste heartbeat
+
+Het read-only `runner_events` bronmodel bevat nu twee afzonderlijke
+**geïndexeerde cursors**, die in tekst en HTML zichtbaar zijn:
+
+- `latest_indexed_event_id`: de recentste waargenomen browsergebeurtenis
+  op dit project/worker-slot (kan een gewone heartbeat zijn).
+- `latest_indexed_progress_event_id`: de recentste expliciete
+  `generation-progress` of `generation-finished` gebeurtenis binnen
+  een begrensde indexed-lookback van 240 events. Een herhaald
+  `progress_at`-tijdstip op een heartbeat telt niet meer als een nieuw
+  expliciet progress-event.
+
+De vergelijking tussen twee snapshots toont nu *afzonderlijk* of de
+algemene eventcursor en progresscursor zijn gestegen, gelijk gebleven,
+teruggelopen of onbekend. Daardoor wordt een stroom heartbeats niet
+verward met nieuwe generatiesignalen. De onderliggende browser meldt
+de gebeurtenis zelf; er is **geen** serverbevestigde claimepoch,
+onafhankelijke teksthash, productcommit of work-item-verificatie.
+Zelfs een toegenomen progresscursor kan nooit automatisch betekenen
+dat een claim hersteld, afgerond of overdraagbaar is. Een regressie
+van de cursor vraagt bron-/eigenaarsinspectie in plaats van
+automatische workerreset.
+
+Dit is een bruikbaar read-only voortgangsproduct naast het bestaande
+P1-issue [#1342](https://github.com/Zennay/zCloud/issues/1342), maar
+sluit de onderliggende control-plane writer/claim-token reparatie
+nadrukkelijk niet.
