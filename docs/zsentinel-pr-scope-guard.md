@@ -1061,3 +1061,42 @@ en, als die expliciet gelezen zijn, exacte-HEAD checkinformatie.
 Als de operator een filter actief had, worden de lokale filters voor
 die navigatie gereset. Er worden hierbij geen requests verzonden,
 geen remote state gewijzigd en geen workflowacties gestart.
+
+
+## 20 oktober · Interactieve privé P0/P1-werkbak (offline, zonder remote writes)
+
+De bestaande merge-eerst productwerkbak kan nu als een zelfstandige,
+responsieve HTML-werkpagina worden gemaakt. De kaarten bevatten
+canonieke issue-/PR-links, prioriteit, concrete menselijke volgende stap,
+onvolledige-bronwaarschuwingen en precies dezelfde conservatieve
+autorisatiegrenzen als de gecombineerde productcockpit.
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --format worklist-html --worklist-limit 30 \
+  --output /private/zsentinel-merge-first-desk.html
+```
+
+**Nieuw productgedrag:** lokaal zoeken en filteren op prioriteit, project
+of handmatige status; per issue een handmatige opvolgstatus (*nog te
+bekijken*, *wachten op eigenaar*, *afstemming*, *opvolging genoteerd*)
+en een privénotitie tot 700 tekens. Met **Download privéoverdracht**
+worden alle momenteel geladen bronkaarten inclusief menselijke notities
+als Markdown gedownload. Dat bestand heeft uitsluitend door de browser
+bepaalde lokale rechten; behandel het daarom zelf als privé.
+Het nieuw gemaakte HTML-bronbestand via `--output` heeft wel 0600.
+
+Er is bewust **geen localStorage**, sessieherstel, externe POST,
+GitHub-/Notionmutatie, runneractie, automatische claim of deploy.
+De notities bestaan alleen zolang de HTML-pagina openstaat en zijn
+niet opgehaald uit Notion of veilig naar zCloud opgeslagen; de browser
+waarschuwt bij het verlaten met niet-geëxporteerde menselijke invoer.
+
+Alle output is volledig brongebonden: maximaal 60 kaarten, optionele
+`--worklist-limit`, bronmomenten voor issues en PRs, expliciet hoeveel
+kaarten buiten de beperkte export vallen en per kaart aparte
+PR-bestandsscope en issueverwijzingsdekking. Het ontbreken van een
+PR of van overlap in een beperkte steekproef geeft NOOIT vrijgave.
+Het nieuwe HTML-formaat hergebruikt de bestaande read-only GitHub
+opvraag zonder aanvullende providerrequests.
