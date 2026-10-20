@@ -107,6 +107,8 @@ menselijke beoordelingsdeadline, geen herinnering of bewijs van
 acceptatie. Ongetekende of naïeve tijdstempels falen conservatief;
 jobvelden vereisen positieve integer-ID's en een volledige lowercase SHA.
 
+Ook de standaard tekstuitvoer vermeldt voor een vers incident de exacte run/job/HEAD, en de standaard incidentele HTML-kaarten (live cockpit én portfolio) tonen de bronidentiteit met directe job-/commitlinks zonder dat de optionele handoff-kaart hoeft te worden ingeschakeld. Een bron zonder geverifieerde job-ID blijft linkloos.
+
 De links zijn uitsluitend navigatie naar bronbewijs. Er is geen
 GitHub-mutatierecht, Notion-claim, VPS-, database- of workeractie
 toegevoegd. Claim/retry/merge/deploy blijven uitdrukkelijk niet
