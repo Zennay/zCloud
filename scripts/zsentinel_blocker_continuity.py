@@ -24,12 +24,13 @@ KINDS = {
     "verified_source_incident_not_runtime_recovery",
     "open_owner_only_issue_not_current_outage_proof",
     "github_ci_auth_owner_gate_not_runner_outage",
+    "secondary_queued_self_hosted_job_needs_exact_read",
     "read_only_worker_progress_gap_not_proven_outage",
     "queue_pressure_not_proven_outage",
     "existing_product_pr_gate_inspection_only",
     "historical_not_reconciled",
 }
-IDENT = re.compile(r"^(?:[0-9a-f]{32}|pr:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|owner-issue:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|worker:[a-z0-9_-]{1,40}:(?:[1-9]|1[0-6])|queue:[a-z0-9_-]{1,40}|source-auth:[a-z0-9_-]{1,40})$")
+IDENT = re.compile(r"^(?:[0-9a-f]{32}|pr:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|owner-issue:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|worker:[a-z0-9_-]{1,40}:(?:[1-9]|1[0-6])|queue:[a-z0-9_-]{1,40}|source-auth:[a-z0-9_-]{1,40}|job:[a-z0-9_-]{1,40}:[1-9][0-9]{0,15}:[1-9][0-9]{0,15})$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/(?:pull/[1-9][0-9]{0,8}|issues/[1-9][0-9]{0,8}|actions/runs/[1-9][0-9]{0,15}/job/[1-9][0-9]{0,15})$")
 PRIORITY = {"P0": 0, "P1": 1}
@@ -106,10 +107,32 @@ def _cards(board):
                      or row.get("requires_human") is not True
                      or row.get("observed_from") != "bounded_current_github_api_401_source_only")):
             raise ValueError("GitHub authentication owner-gate identity mismatch")
+        if kind == "secondary_queued_self_hosted_job_needs_exact_read":
+            identity = re.fullmatch(
+                r"job:([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,15}):([1-9][0-9]{0,15})",
+                key)
+            pin = row.get("source_secondary_job_pin")
+            source_url = row.get("source_secondary_job_url")
+            m = (re.fullmatch(
+                r"([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,15}):"
+                r"([1-9][0-9]{0,15}):([0-9a-f]{40})", pin)
+                 if type(pin) is str else None)
+            if (identity is None or m is None or pid != identity.group(1)
+                    or tuple(identity.groups()) != tuple(m.groups()[:3])
+                    or row.get("priority") != "P1"
+                    or row.get("requires_human") is not False
+                    or row.get("observed_from") !=
+                    "bounded_secondary_github_job_sample_only"
+                    or not isinstance(source_url, str)
+                    or not URL.fullmatch(source_url)
+                    or not source_url.endswith(
+                        "/actions/runs/" + m.group(2) + "/job/" + m.group(3))):
+                raise ValueError("untrusted secondary GitHub job continuity")
         if kind in ("historical_not_reconciled", "verified_source_incident_not_runtime_recovery") and not re.fullmatch(r"[0-9a-f]{32}", key):
             raise ValueError("incident identity does not match class")
         urls = []
-        for field in ("source_owner_issue_url", "source_pr_url", "source_job_url_historical_only"):
+        for field in ("source_owner_issue_url", "source_pr_url", "source_job_url_historical_only",
+                      "source_secondary_job_url"):
             link = row.get(field)
             if link is not None:
                 if type(link) is not str or not URL.fullmatch(link):
