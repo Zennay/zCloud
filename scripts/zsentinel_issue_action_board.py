@@ -171,3 +171,55 @@ def build(report):
         "automatic_dispatch": False, "release_authorized": False,
         "writes_performed": False,
     }
+
+
+def render_compact_inbox(board, style="markdown", max_rows=20):
+    """Human handoff using canonical links, not independent task assignment."""
+    if (board.get("schema") != "zsentinel-merge-first-human-inbox-v1"
+            or board.get("merge_authorized") is not False
+            or board.get("automatic_dispatch") is not False
+            or type(max_rows) is not int or not 1 <= max_rows <= MAX_CARDS
+            or style not in ("markdown", "text")):
+        raise ValueError("invalid bounded human inbox handoff")
+    def inert(value):
+        clean = re.sub(r"[\r\n\t]+", " ", value)
+        return re.sub(r"([\\*_\[\]()|<>\x60~!#])", r"\\\1", clean)[:240]
+    lines = [
+        "# zSentinel · bestaande PR's eerst" if style == "markdown"
+        else "zSentinel | bestaande PR's eerst",
+        "",
+        "Bron issue UTC: " + str(board["observed_issue_source_at_utc"]),
+        "Bron PR UTC: " + str(board["observed_pr_source_at_utc"]),
+        "Waargenomen issues: " + str(board["issue_count"]) +
+        "; met een bestaande PR in de beperkte bron: " +
+        str(board["existing_pr_first_issues"]),
+        "GEEN huidige claims, verplichte branchregels, mergebevoegdheid of "
+        "live herstel geverifieerd.",
+        "",
+    ]
+    for index, item in enumerate(board["cards"][:max_rows], 1):
+        issue = (f"[{item['issue']}]({item['issue_url']})"
+                 if style == "markdown" else item["issue_url"])
+        title = inert(item["title"]) if style == "markdown" else re.sub(
+            r"[\r\n\t]+", " ", item["title"])
+        lines.extend([
+            str(index) + ". " + item["priority"] + " · " +
+            item["project"] + " · " + issue + " · " + title,
+            "   " + item["category_nl"],
+            "   " + item["human_next_step_nl"],
+        ])
+        if item["candidate_existing_pr_url"]:
+            url = item["candidate_existing_pr_url"]
+            lines.append("   PR eerst: " + (
+                "[Open bestaande PR](" + url + ")" if style == "markdown"
+                else url))
+    if len(board["cards"]) > max_rows:
+        lines.append("")
+        lines.append("ONVOLLEDIG overzicht: " +
+                     str(len(board["cards"]) - max_rows) +
+                     " overige issues niet getoond. Pas --worklist-limit aan.")
+    lines.extend([
+        "", "Deze overdracht is een menselijke review-werkbak, "
+        "geen claim-/merge-/dispatch- of deployautorisatie.",
+    ])
+    return "\n".join(lines) + "\n"
