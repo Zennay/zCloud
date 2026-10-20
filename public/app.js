@@ -371,7 +371,7 @@ function attentionPanel(projectId=''){
 }
 function archivedPanel(){const list=DATA.archived_projects||[];if(!list.length)return '';return `<div class="archived-panel"><div><strong>Archived</strong><span>Hidden from the dashboard and Watch</span></div><div class="archived-list">${list.map(p=>`<button type="button" data-restore="${esc(p.id)}"><span style="--accent:${p.accent}" class="project-dot"></span>${esc(p.name)}<b>Restore</b></button>`).join('')}</div></div>`}
 function activityItem(a){const p=DATA.projects.find(p=>p.id===a.project);return `<div class="activity-item" style="--accent:${p?.accent||'#aab5c4'}"><span class="activity-symbol">${icon(a.kind==='commit'?'commit':'check')}</span><div class="activity-copy"><p>${esc(a.title)}</p><div class="activity-meta"><strong>${esc(p?.name||a.project)}</strong><span>·</span><time datetime="${esc(a.ts)}" title="${date(a.ts,true)}">${rel(a.ts)}</time><span title="${esc(a.detail)}">${a.kind==='commit'?esc(a.detail):'Project step'}</span></div></div></div>`}
-function activityPanel(pid='',limit=4){const visible=new Set(DATA.projects.map(p=>p.id));const list=ACTIVITY.filter(a=>pid?a.project===pid:visible.has(a.project)).slice(0,limit);return `<div class="panel"><div class="panel-header"><div><h2>Recent activity</h2><div class="panel-subtitle">Code and project updates</div></div>${icon('pulse')}</div><div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No activity recorded yet.</div>'}</div><div class="panel-footer"><a href="#activity${pid?'?project='+pid:''}" class="text-link">Full history ${icon('arrow')}</a></div></div>`}
+function activityPanel(pid='',limit=4){const visible=new Set(DATA.projects.map(p=>p.id));const list=ACTIVITY.filter(a=>pid?a.project===pid:visible.has(a.project)).slice(0,limit);return `<div class="panel"><div class="panel-header"><div><h2>Recent local activity</h2><div class="panel-subtitle">VPS-only sample · GitHub PRs and CI not synchronized</div></div>${icon('pulse')}</div><div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local activity in this bounded sample. GitHub progress may still exist.</div>'}</div><div class="panel-footer"><a href="#activity${pid?'?project='+pid:''}" class="text-link">Inspect source coverage ${icon('arrow')}</a></div></div>`}
 function ranges(){return `<div class="range-control" role="group" aria-label="Chart period">${[['24h','24h'],['7d','7d'],['30d','30d'],['all','Alles']].map(([id,title])=>`<button data-range="${id}" class="${range===id?'active':''}" aria-pressed="${range===id}">${title}</button>`).join('')}</div>`}
 function graphPanel(projects){return `<div class="panel"><div class="panel-header"><div><h2>Progress over time</h2><div class="panel-subtitle">Project steps · Amsterdam time</div></div>${ranges()}</div><div class="legend">${projects.map(p=>`<span style="--accent:${p.accent}"><i class="legend-dot"></i>${p.name}</span>`).join('')}</div><div id="progressChart" class="chart-wrap"></div><div class="chart-detail" id="chartDetail">Select a data point for date and progress.</div></div>`}
 function infraStrip(){const h=DATA.host,mem=h.memory.used/h.memory.total*100,disk=h.disk.used/h.disk.total*100;return `<div class="infra-strip"><div class="server-icon">${icon('server')}</div><div class="infra-title"><strong>VPS · OVHcloud</strong><small>${h.cores} vCPU · ${gb(h.memory.total)} RAM</small></div><div class="infra-item">CPU<strong>${h.cpu==null?'First measurement…':num(h.cpu)+'%'}</strong><div class="microbar"><span style="width:${h.cpu||0}%"></span></div></div><div class="infra-item">Memory<strong>${num(mem)}%</strong><div class="microbar"><span style="width:${mem}%"></span></div></div><div class="infra-item">Free storage<strong>${gb(h.disk.free)}</strong><div class="microbar"><span style="width:${disk}%"></span></div></div><a href="#infrastructure" class="text-link" aria-label="View infrastructure">View VPS ${icon('arrow')}</a></div>`}
@@ -2919,6 +2919,23 @@ function exportCombinedActivityTimeline(){
         ' sampled local events'+(item.limited?' (80-row local source cap)':'')+
         (stale?' · STALE / failed refresh':''):
       'project source NOT OBSERVED'+(failed?' · last read unavailable':'')));
+  }
+  lines.push('','## Bounded GitHub source coverage','',
+    'These provider receipts are read-only observations, not an authorization for main or production.','');
+  const scoped=(DATA?.projects||[]).filter(project=>!filter||project.id===filter).slice(0,ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const ghCoverage=IMPORTED_GITHUB_ACTIVITY?.coverage||[];
+  for(const project of scoped){
+    const source=ghCoverage.find(row=>row.project===project.id);
+    const observed=source?.observedAt||null;
+    const stale=source&&(source.staleEvidence===true||!Number.isFinite(Date.parse(observed))
+      ||Date.now()-Date.parse(observed)>6*3600000);
+    const events=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(row=>row.project===project.id);
+    const last=events.length?events.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y):null;
+    lines.push('- '+clean(project.id)+' · '+(source?
+      clean(source.status)+' · sampled '+events.length+' events · observed '+clean(observed)+
+        (stale?' · STALE / unverified':'')+
+        (last?' · latest event '+clean(last.ts):' · event timestamp unknown'):
+      'GitHub NOT OBSERVED in this bounded snapshot'));
   }
   lines.push('','Missing provider coverage is unknown, not zero. An Actions run is not production proof.','');
   const blob=new Blob([lines.join('\n')],{type:'text/markdown;charset=utf-8'});
