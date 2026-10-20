@@ -119,6 +119,8 @@ def compare(previous, current, now=None):
         "running_allocated_no_new_event": 0,
         "paused_or_draining_owner_hold": 0,
         "indexed_source_reset_or_regression": 0,
+        "new_in_bounded_sample_not_new_claim": 0,
+        "missing_in_current_sample_not_resolved": 0,
         "other_bounded": 0,
     }
     # Both sides of the bounded sample matter. Previously only the intersection
