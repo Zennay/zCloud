@@ -19,6 +19,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from zsentinel_product_issue_inbox import QA as QA_ONLY_TITLE
+
 ROOT = Path(__file__).resolve().parent.parent
 MAX_REGISTRY_BYTES = 512 * 1024
 MAX_REPLY_BYTES = 1024 * 1024
@@ -135,6 +137,9 @@ def open_prs(repo, token):
         head_sha = head.get("sha") if isinstance(head, dict) else None
         base_sha = base.get("sha") if isinstance(base, dict) else None
         body = row.get("body")
+        title = row.get("title")
+        product_candidate = (type(title) is str and 0 < len(title) <= 256
+                             and not QA_ONLY_TITLE.match(title))
         # A malformed/oversized PR body cannot authenticate an issue link.
         # The normal file collision inventory remains independent.
         refs_covered = body is None or (type(body) is str and len(body) <= 32000)
@@ -154,6 +159,7 @@ def open_prs(repo, token):
                        "base_sha": base_sha,
                        "referenced_issue_numbers_unverified": refs,
                        "issue_reference_body_covered": refs_covered,
+                       "product_issue_reference_candidate": product_candidate,
                        "url": "https://github.com/" + repo + "/pull/" + str(n)})
     return result
 
@@ -393,7 +399,7 @@ def observe_conflict_graph(repo, token=None, limit=24):
         })
         if truncated:
             suspicious_lists.append(pr["number"])
-        if pr["issue_reference_body_covered"]:
+        if pr["issue_reference_body_covered"] and pr["product_issue_reference_candidate"]:
             for issue_number in pr["referenced_issue_numbers_unverified"]:
                 issue_links.append({
                     "issue_number": issue_number,
