@@ -717,6 +717,71 @@ def html_view(decision):
         raise ValueError("invalid unresolved incident count")
     def section(cards, empty):
         return '<div class="grid">' + ("".join(cards) if cards else '<p class="empty">' + empty + "</p>") + "</div>"
+    branch = decision.get("recent_branch_ownership")
+    if branch is None:
+        branch = {
+            "supplied": False, "project_id": "cloud", "coverage": "not_supplied",
+            "reason": "optional_source_not_supplied", "observed_branches": 0,
+            "suppressed_task_count": 0, "suppressed_task_examples": [],
+            "samples_truncated": False,
+            "ownership_verified": False, "claim_authorized": False,
+        }
+    examples = branch.get("suppressed_task_examples")
+    if (type(branch) is not dict
+            or branch.get("project_id") != "cloud"
+            or type(branch.get("supplied")) is not bool
+            or branch.get("coverage") not in (
+                "not_supplied", "bounded_complete", "stale", "incomplete", "invalid")
+            or branch.get("ownership_verified") is not False
+            or branch.get("claim_authorized") is not False
+            or type(branch.get("observed_branches")) is not int
+            or not 0 <= branch["observed_branches"] <= 100
+            or type(branch.get("suppressed_task_count")) is not int
+            or not 0 <= branch["suppressed_task_count"] <= 250
+            or type(examples) is not list or len(examples) > 8
+            or len(examples) > branch["suppressed_task_count"]
+            or branch.get("samples_truncated") is not (
+                branch["suppressed_task_count"] > len(examples))):
+        raise ValueError("invalid branch scope routing receipt")
+    branch_cards = []
+    for row in examples:
+        if (type(row) is not dict or row.get("project_id") != "cloud"
+                or row.get("reason") not in (
+                    "prless_branch_source_stale_or_incomplete",
+                    "overlaps_existing_recent_unpr_branch")
+                or row.get("priority") not in ("P0", "P1", "P2", "P3")
+                or type(row.get("id")) is not str or len(row["id"]) > 80):
+            raise ValueError("invalid branch collision candidate")
+        branch_cards.append(
+            '<article class="panel warn"><span class="tag">' +
+            phrase(row["priority"], 5) +
+            '</span><h3>' + phrase(row["project_id"], 80) + ' / ' +
+            phrase(row["id"], 80) + '</h3><p>Al bestaand branchwerk of ' +
+            'onvolledige branchscope; voorstel overgeslagen.</p><p class="small">' +
+            phrase(row["reason"], 70) +
+            '</p><p class="muted small">Controleer de originele branch, huidige ' +
+            'eigenaar en live claims. Geen claim of merge toegestaan.</p></article>'
+        )
+    branch_status = (
+        "Geen branch-eigenaarbron geladen; de voorstellen blijven uitsluitend advies."
+        if not branch["supplied"] else
+        "Bron onvolledig, ongeldig of ouder dan vijf minuten: nieuwe cloud-voorstellen overgeslagen."
+        if branch["coverage"] in ("stale", "incomplete", "invalid") else
+        "Bestaande PR-loze branchpaden geobserveerd; alleen overlappende cloud-voorstellen weggelaten."
+    )
+    branch_panel = (
+        '<section><h2>Dubbel werk voorkomen · bestaande branches zonder PR (' +
+        str(branch["suppressed_task_count"]) +
+        ' voorgestelde taken overgeslagen)</h2><p class="muted">' +
+        phrase(branch_status, 400) + ' Bronstatus: ' +
+        phrase(branch["coverage"], 30) + ' · ' +
+        str(branch["observed_branches"]) +
+        ' recente branches in de waargenomen bron. Andere projecten blijven beschikbaar.</p>' +
+        section(branch_cards, "Geen brongebonden conflicttaken om te tonen.") +
+        ('<p class="muted">Meer conflicttaken niet weergegeven; deze worden niet voorgesteld.</p>'
+         if branch["samples_truncated"] else '') +
+        '</section>'
+    )
     # Urgent first; large portfolios keep the first five visible and make
     # remaining cards available under a native details disclosure (no JS).
     ordered_incidents = sorted(incidents, key=lambda i: (
@@ -775,6 +840,7 @@ def html_view(decision):
             + section(queue_cards if queue_coverage == "current" else [],
                       "Geen actuele individuele wachtrijincidenten. Claimherstel blijft handmatig geautoriseerd.")
             + '</section>'
+            + branch_panel
             + f'<section><h2>Onafhankelijke werkvoorstellen ({len(tasks)})</h2>'
             + section([task_card(row) for row in tasks],
                       "Geen claim- en gate-veilig onafhankelijk werk aangetoond.")
