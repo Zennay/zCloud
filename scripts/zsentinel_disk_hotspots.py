@@ -342,6 +342,9 @@ def markdown(report):
     if "disk_growth_comparison" in report:
         from zsentinel_disk_trend import as_markdown
         lines.extend(["", as_markdown(report["disk_growth_comparison"])])
+    if "sqlite_footprint" in report:
+        from zsentinel_sqlite_footprint import markdown as sqlite_markdown
+        lines.extend(["", sqlite_markdown(report["sqlite_footprint"])])
     return "\n".join(lines)
 
 
@@ -412,6 +415,12 @@ def html(report):
     if "disk_growth_comparison" in report:
         from zsentinel_disk_trend import as_html
         lines.append(as_html(report["disk_growth_comparison"]))
+    if "sqlite_footprint" in report:
+        from zsentinel_sqlite_footprint import markdown as sqlite_markdown
+        lines.append("<article><h2>SQLite en WAL · eigenaarwerkbank</h2><pre "
+                     "style=\"white-space:pre-wrap;overflow-wrap:anywhere\">" +
+                     escape(sqlite_markdown(report["sqlite_footprint"])) +
+                     "</pre></article>")
     lines.append("<p><strong>Vereist:</strong> eigenaar verifieert actieve writers, "
                  "bewaartermijn en back-up vóór afzonderlijk geautoriseerd opruimen.</p></main></html>")
     return "".join(lines)
@@ -495,8 +504,19 @@ def public_summary(report):
     else:
         orphan_summary = None
     brief = operator_action_brief(mount, report["coverage"], orphan_summary)
+    sqlite_obs = report.get("sqlite_footprint")
+    if sqlite_obs is not None and (
+            type(sqlite_obs) is not dict
+            or sqlite_obs.get("schema") != "zsentinel-sqlite-owner-desk-v1"
+            or sqlite_obs.get("checkpoint_or_database_write") is not False
+            or sqlite_obs.get("reclaimable_bytes_verified") is not False
+            or type(sqlite_obs.get("reports")) is not list
+            or not 1 <= len(sqlite_obs["reports"]) <= 8):
+        raise ValueError("untrusted optional SQLite disk evidence")
     return {
         "schema": "zsentinel-disk-workbench-summary-v1",
+        "sqlite_files_metadata_observed": len(sqlite_obs["reports"]) if sqlite_obs else None,
+        "sqlite_reclaimable_bytes_verified": False,
         "operator_action": brief,
         "unlinked_open_files": orphan_summary,
         "files_with_open_references_observed": (
@@ -610,6 +630,8 @@ def main():
                         help="optional private same-mount deleted-but-open file metadata only")
     parser.add_argument("--inspect-open-handles", action="store_true",
                         help="optional bounded /proc fd metadata only; no PID or writer proof")
+    parser.add_argument("--sqlite", action="append", default=[],
+                        help="optional relative existing SQLite DB inside workspace; max 8, metadata only")
     parser.add_argument("--previous", type=Path,
                         help="private preceding .json disk snapshot of SAME workspace, max 72h ago")
     parser.add_argument("--output", type=Path, required=True,
@@ -624,6 +646,9 @@ def main():
             attach_open_references(report, args.root)
         if args.inspect_unlinked_files:
             attach_unlinked_open_files(report, args.root)
+        if args.sqlite:
+            from zsentinel_sqlite_footprint import observe_many
+            report["sqlite_footprint"] = observe_many(args.root, args.sqlite)
         if args.previous is not None:
             from zsentinel_disk_trend import load_previous, compare
             report["disk_growth_comparison"] = compare(load_previous(args.previous), report)
