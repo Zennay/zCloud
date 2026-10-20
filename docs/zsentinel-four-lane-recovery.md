@@ -322,3 +322,71 @@ admission. The server implementation path remains under the independent
 owner's [PR #1571](https://github.com/Zennay/zCloud/pull/1571),
 with a specific owner handoff; no conflicting server source files were
 modified by this PR.
+
+## Optional local GitHub runner presence desk
+
+Source addition: `scripts/zsentinel_runner_presence.py`, loaded only when
+the operator explicitly selects `--runner-processes`. The operator command
+from a source-matched repository checkout is:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --runner-processes
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --runner-processes --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --runner-processes \
+  --format html --output /OWNER-PRIVATE-DIRECTORY/NEW-runner-handoff.html
+```
+
+This is a **read-only** limited traversal of local `/proc`, not an
+Actions API query, SSH control path, status-changing script or authenticated
+runner endpoint. Only recognized `Runner.Listener` and `Runner.Worker`
+processes under known installation folders are counted. It never emits
+PID, raw paths, CLI arguments, env variables, tokens or credentials. No
+running jobs are interrupted and no service is restarted.
+
+Some VPS containers deny `/proc/PID/exe` even to an unprivileged
+operator. The scanner therefore offers a bounded fallback: inspect the
+kernel process name **first**, then only the executable argument zero
+of the matching process. This produces the visibly weaker evidence label
+`PROCESS_ARGV0_SEEN_NOT_VERIFIED`. Missing processes in an incomplete or
+permission-limited procfs scan must never be reported as an established
+runner outage. Raw command lines and executable paths are never exported.
+
+The runner panel appears in opt-in CLI text, private offline HTML,
+Markdown handoff and JSON. A companion read-only action card explains
+that finding a listener **cannot prove** that GitHub assigns jobs. In
+particular, an existing `Runner.Worker` protects in-flight work from
+blanket service restarts or queue drains. The scanner neither queries nor
+claims to verify runner registration, permissions, labels, GH Actions
+`runner_id`, exact-head CI or successful deployment.
+
+### Direct bounded VPS observation · 20 October
+
+Exact source
+[`ab88f887`](https://github.com/Zennay/zCloud/commit/ab88f8871f973ec339110aefb8b11438fc67c5bc)
+was fetched at its fixed SHA, parsed, then run **in memory** through the
+existing connected zSSH observation channel against read-only
+`history.db` and procfs. The private desk observed zCloud, Supa, FTMO,
+Fuckball, RaiseAI, zSSH and Elmo listener processes with argv0-only
+evidence. At the sampled instant it also observed live local
+`Runner.Worker` processes in zCloud and Supa; a subsequent observation
+may differ. Procfs coverage remained partial due OS permissions.
+GitHub Actions registration and assignment remained
+`NOT_OBSERVED`, `restart_authorized=false`. No system mutation,
+runner restart, GH Actions dispatch, QA or release occurred.
+
+An **independent GitHub Actions read-only observation** on this branch's
+then-current commit found hosted jobs still queued (including the
+CPU queue storm offline verification and regression smoke jobs). The
+owner must use existing GitHub Jobs receipts to establish actual
+`runner_id>0` and compare mandatory exact-head workflow outcomes; a
+local listener process is not that proof. The account billing/spending
+platform gate described in zCloud issue #1523 and the separately tracked
+runner-route issue #1326 remain distinct and cannot be bypassed here.
+
+### Remaining release gate
+
+The feature is source-only in the open existing PR #1572. Do not call it
+merged, deployed, live-installed or a resumed worker without the actual
+GitHub merge receipt, exact new default-branch SHA, authorized release
+action and live-state confirmation. The current source may be inspected
+read-only in memory without changing the VPS working tree.
