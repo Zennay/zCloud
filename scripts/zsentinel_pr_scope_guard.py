@@ -537,13 +537,19 @@ def issue_identity(repo, number, token):
         result = github_json(repo, "/issues/" + str(number), token)
     except ValueError:
         return "source_unavailable"
-    if (not isinstance(result, dict) or
-            result.get("number") != number or
-            result.get("html_url") !=
-                "https://github.com/" + repo + "/issues/" + str(number)):
+    if not isinstance(result, dict) or result.get("number") != number:
         return "identity_unconfirmed"
+    # GitHub's /issues/N endpoint returns pull requests too, with html_url
+    # /pull/N (not /issues/N). Detect PR identity *before* the issue URL
+    # comparison, otherwise every PR-number mention looks unavailable.
     if "pull_request" in result:
-        return "reference_is_pull_request_not_issue"
+        if result.get("html_url") == (
+                "https://github.com/" + repo + "/pull/" + str(number)):
+            return "reference_is_pull_request_not_issue"
+        return "identity_unconfirmed"
+    if result.get("html_url") != (
+            "https://github.com/" + repo + "/issues/" + str(number)):
+        return "identity_unconfirmed"
     if result.get("state") == "open":
         return "confirmed_open_issue_at_observation"
     if result.get("state") == "closed":
