@@ -3132,3 +3132,27 @@ eigenaarclaim, verplichte CI en protected-main gates gelden. De
 zSentinel-observers, GitHub workflows en scheduler roepen dit nieuwe
 copy-pad **nooit automatisch** aan.
 
+
+### Later opnieuw controleren zonder het origineel te wissen
+
+Na een **geslaagde, door eigenaar geautoriseerde** handmatige kopie kan
+de operator ook op een later tijdstip het uitsluitend privé opgeslagen
+kopiereceipt opnieuw gebruiken:
+
+    python3 scripts/zsentinel_archive_recheck.py \
+      --copy-receipt /path/to/existing/private/copy-receipt-01.json \
+      --output /path/to/existing/private/archive-recheck-02.json
+
+Deze uitvoering opent het vorige receipt uitsluitend als 0600 bestaand,
+niet-gesymlinkt regulier bestand onder een owner-only besloten directory;
+het leest hoogstens 12 KiB private JSON met dubbele sleutels fail-closed.
+Daarna opent het alleen de in dat receipt genoemde eerdere gekopieerde
+archiefdata via een nofollow bestandsdescriptor, strikt tegen dezelfde
+size en SHA-256, met onveranderde bestandsidentiteit tijdens de bounded
+read. Hij schrijft alleen het NIEUWE 0600 privé-recheckreceipt. Dit is
+een real-time bestand-leesback op die bron en **geen bewezen remote
+provider-retentie, herstelbaarheid of restore naar de app**.
+Het oorspronkelijke bestand, queue, claim, databases en runner blijven
+ongewijzigd. Nooit automatisch opruimen; een aparte owner-approved
+restore- en productieonderhoudsroute blijft vereist.
+
