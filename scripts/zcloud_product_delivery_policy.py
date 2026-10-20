@@ -205,6 +205,9 @@ def product_queue_snapshot(items, max_visible=8):
     skipped_invalid = 0
     hold_reasons = {}
     candidate_rows = []
+    # A bounded, observation-only cross-project view. Its counts never give
+    # permission to reuse a lane, release a lease, or start an unclaimed task.
+    project_activity = {}
     priorities = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     priority_counts = {"P0": 0, "P1": 0, "P2": 0, "P3": 0, "other": 0}
     for item in items:
@@ -212,22 +215,48 @@ def product_queue_snapshot(items, max_visible=8):
             malformed_rows += 1
             continue
         visible += 1
+        raw_project = item.get("project_id")
+        project = (raw_project.strip()[:56]
+                   if isinstance(raw_project, str) else "")
+        activity = None
+        if project:
+            activity = project_activity.setdefault(project, {
+                "project_id": project, "visible_rows": 0,
+                "active_claimed_running_verifying_visible": 0,
+                "queued_rows_visible": 0, "queued_product_candidates_visible": 0,
+                "queued_qa_only_held": 0,
+                "queued_invalid_or_unknown_held": 0,
+                "queued_ineligible_held": 0,
+                "queued_worker_slot_occupied": 0,
+                "queued_residual_lease_fields_held": 0,
+            })
+            activity["visible_rows"] += 1
         status = str(item.get("status") or "").strip().casefold()
         if status in ("claimed", "running", "verifying"):
             active_owner_rows += 1
+            if activity is not None:
+                activity["active_claimed_running_verifying_visible"] += 1
         if status != "queued":
             continue
         queued_visible += 1
+        if activity is not None:
+            activity["queued_rows_visible"] += 1
         # These are NOT reasons to revoke, force-claim or reassign a task.
         # Match fresh SQLite admission including absence of old lease markers.
         if type(item.get("eligible")) not in (int, bool) or item["eligible"] != 1:
             held_ineligible += 1
+            if activity is not None:
+                activity["queued_ineligible_held"] += 1
             continue
         if item.get("worker_slot") is not None:
             held_slot_occupied += 1
+            if activity is not None:
+                activity["queued_worker_slot_occupied"] += 1
             continue
         if item.get("claimed_at") is not None or item.get("claim_expires") is not None:
             held_stale_claim_fields += 1
+            if activity is not None:
+                activity["queued_residual_lease_fields_held"] += 1
             continue
         disposition = item.get("delivery_policy_disposition")
         reason = item.get("delivery_policy_reason")
@@ -238,9 +267,15 @@ def product_queue_snapshot(items, max_visible=8):
             hold_reasons[reason] = hold_reasons.get(reason, 0) + 1
         if disposition == "qa_only":
             skipped_qa += 1
+            if activity is not None:
+                activity["queued_qa_only_held"] += 1
         elif disposition != "product":
             skipped_invalid += 1
+            if activity is not None:
+                activity["queued_invalid_or_unknown_held"] += 1
         else:
+            if activity is not None:
+                activity["queued_product_candidates_visible"] += 1
             candidate_rows.append(item)
             priority = str(item.get("priority") or "").strip().upper()
             priority_counts[priority if priority in priorities else "other"] += 1
@@ -273,6 +308,27 @@ def product_queue_snapshot(items, max_visible=8):
         -row["product_candidates_visible"], row["project_id"],
     ))
     project_shortlist_limit = min(16, max_visible)
+    # These are observed row categories, not inferred blockers or owner identity.
+    # Show pressure where an already-active task and more queued work coexist.
+    pressure = list(project_activity.values())
+    pressure.sort(key=lambda row: (
+        -(row["active_claimed_running_verifying_visible"] > 0
+          and row["queued_product_candidates_visible"] > 0),
+        -row["queued_product_candidates_visible"],
+        -row["active_claimed_running_verifying_visible"],
+        -row["queued_qa_only_held"] - row["queued_invalid_or_unknown_held"],
+        row["project_id"],
+    ))
+    for row in pressure:
+        if row["active_claimed_running_verifying_visible"]:
+            next_step = "check_active_claims_before_any_new_work"
+        elif row["queued_product_candidates_visible"]:
+            next_step = "verify_claim_scope_capacity_and_owner"
+        elif (row["queued_qa_only_held"] or row["queued_invalid_or_unknown_held"]):
+            next_step = "owner_rescope_required_for_held_work"
+        else:
+            next_step = "no_product_candidate_observed"
+        row["operator_next_step"] = next_step
     return {
         "policy": "product-delivery-2026-10-17",
         "source_coverage": "visible_api_rows_only_not_full_queue",
@@ -292,6 +348,10 @@ def product_queue_snapshot(items, max_visible=8):
         "distinct_projects_with_visible_product_work": len(project_leads),
         "project_shortlist_truncated": len(project_shortlist) > project_shortlist_limit,
         "project_shortlist_is_advisory_only": True,
+        "project_activity_source_coverage": "visible_api_rows_only_not_full_queue",
+        "project_activity_is_advisory_only": True,
+        "project_activity_truncated": len(pressure) > 20,
+        "project_activity": pressure[:20],
         "project_shortlist": project_shortlist[:project_shortlist_limit],
         "candidates": [
             {
