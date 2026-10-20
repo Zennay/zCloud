@@ -4,6 +4,9 @@ After=default.target
 
 [Service]
 Type=oneshot
+# Only the existing ubuntu user-scoped coach unit may be reweighted.
 ExecStart=/usr/bin/python3 /home/ubuntu/.local/bin/zcloud-background-priority.py
 NoNewPrivileges=true
-
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=20s
