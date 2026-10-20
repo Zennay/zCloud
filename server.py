@@ -3095,7 +3095,7 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
     if str((PROJECT_INDEX.get(project_id) or {}).get('queue_mode') or '').lower()=='human-gated':
         raise ValueError('Project is human-gated; gebruik Attention Needed in plaats van de workerqueue')
     if not _portfolio_queue_execution_capable(title,completion_criteria):
-        raise ValueError('Alleen uitvoerbare write/build/test/deploy taken mogen in de workerqueue')
+        raise ValueError('Alleen uitvoerbare productbouw-, integratie- en herstelopdrachten mogen in de workerqueue')
     # Refuse new QA-only work *before* writing or modifying any queue row.
     # Owner-controlled existing claimed/running/verifying rows are untouched,
     # and genuine build/repair work keeps all its normal admission gates.
@@ -4020,7 +4020,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                 'Queue sizing rule: execute this as a substantial multi-step work package, not an isolated micro-task. '
                 'After each successful implementation step, continue into the next safe adjacent write-capable step in the same '
                 'project area. DONE requires at least three material implementation actions or one clearly large end-to-end change '
-                'spanning multiple files/components, plus automated test/build/run evidence, unless a real human/external gate stops progress.'
+                'spanning multiple files/components, plus a build or direct functional inspection. Do not write, extend or run QA, regression or test suites. Existing mandatory CI, independent review and release authorization remain intact unless a real human/external gate stops progress.'
             )
             created=portfolio_queue_enqueue(
                 next_task.get('project_id') or row['project_id'],
