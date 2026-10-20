@@ -782,6 +782,7 @@ def merge_first_attention(board):
             "source_current_head_verified": current,
             "historical_gate_change": None,
             "historical_next_step": None,
+            "new_evidence_since_previous_sample": False,
             "merge_authorized": False,
             "owner_claim_verified": False,
             "required_branch_rules_verified": False,
@@ -800,6 +801,10 @@ def merge_first_attention(board):
                 continue
             row["historical_gate_change"] = old["change"]
             row["historical_next_step"] = old["operator_next_step"]
+            row["new_evidence_since_previous_sample"] = (
+                old["change"] not in (
+                    "same_exact_head_and_gate_receipts_at_two_observations",
+                    "one_or_both_gate_observations_absent"))
             # Only exact bounded matching source observations qualify.
             if old["safe_to_defer_repeat_only_when_no_new_evidence"]:
                 row["rank"] = 5
@@ -807,7 +812,9 @@ def merge_first_attention(board):
                 row["human_next_step"] = (
                     "Geen ongewijzigde blokkade opnieuw controleren "
                     "zonder nieuw bronbewijs; pak een andere PR of taak.")
-    rows.sort(key=lambda row: (row["rank"], row["project"], row["number"]))
+    rows.sort(key=lambda row: (
+        row["rank"], not row["new_evidence_since_previous_sample"],
+        row["project"], row["number"]))
     return {
         "source": "bounded_current_exact_head_observation",
         "observed_at_utc": live["observed_at_utc"],
@@ -837,6 +844,10 @@ def attention_lines(board, markdown=False):
         lines.append("- " + row["attention_group"] + " · " + row["project"] +
                      " · " + link + " · " + row["blocker_text"])
         lines.append("  Actie: " + row["human_next_step"])
+        if row["new_evidence_since_previous_sample"]:
+            lines.append("  VERANDERD sinds vorige opname: " +
+                         str(row["historical_gate_change"]) +
+                         " (geen bewijs van volledige CI/merge)")
         if row["head_sha"]:
             lines.append("  HEAD " + row["head_sha"][:12] + " · doelbasis " +
                          row["base_sha"][:12])
@@ -883,12 +894,18 @@ def attention_html(board):
                     "</code> · doelbasis <code>" + escape(row["base_sha"][:12]) +
                     "</code></p>" if row["head_sha"] else
                     "<p>HEAD/bron niet veilig bevestigd.</p>")
+            movement_note = (
+                "<p><strong>Gewijzigd sinds vorige opname:</strong> " +
+                escape(row["historical_gate_change"]) +
+                " · opnieuw bron/HEAD bekijken; geen mergevrijgave.</p>"
+                if row["new_evidence_since_previous_sample"] else "")
             cards.append(
                 "<li><article><strong>" + escape(row["project"]) +
                 " · <a href='" + url + "' rel='noopener noreferrer'>PR #" +
                 str(row["number"]) + "</a></strong><p>" +
                 escape(row["blocker_text"]) + "</p><p><b>Volgende stap:</b> " +
-                escape(row["human_next_step"]) + "</p>" + meta +
+                escape(row["human_next_step"]) + "</p>" +
+                movement_note + meta +
                 ("<details><summary>Open problematische CI- en statuslinks (" +
                  str(len(row["non_green_jobs"])) + ")</summary><ul>" + tasks +
                  "</ul><p>Extra bronnen verborgen: " +
