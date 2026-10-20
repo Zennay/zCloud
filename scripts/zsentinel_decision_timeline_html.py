@@ -59,7 +59,7 @@ Deze werkbak kan geen claim, job, merge of systeemdienst veranderen.</p></sectio
 <div id="sources"></div></section>
 <section class="filters" aria-label="Filters">
 <label>Zoeken<input id="search" type="search" placeholder="Incident, project, eigenaar of advies"></label>
-<label>Prioriteit<select id="severity"><option value="">Alle</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label>
+<label>Hoogste historisch waargenomen prioriteit<select id="severity"><option value="">Alle</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label>
 <label>Laatste steekproef<select id="presence"><option value="">Alle</option><option value="seen">Wel gezien</option><option value="missing">Niet gezien: opvolgen</option></select></label>
 <label>Actietype<select id="human"><option value="">Alle</option><option value="yes">Menselijke actie</option><option value="no">Overig</option></select></label>
 </section>
@@ -109,7 +109,7 @@ function filteredItems(){
  const q=$("search").value.trim().toLowerCase(),s=$("severity").value,
        presence=$("presence").value,human=$("human").value;
  return data.items.filter(r=>
-   (!s||r.last_priority===s)&&
+   (!s||r.highest_observed_priority===s)&&
    (!presence||(presence==="seen" ? r.observed_in_final_sample : !r.observed_in_final_sample))&&
    (!human||(human==="yes" ? r.human_last_observed : !r.human_last_observed))&&
    (!q||[r.id,r.problem,r.project,r.last_owner_label_unverified,r.last_action_advisory]
