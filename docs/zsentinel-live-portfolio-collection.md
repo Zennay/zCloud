@@ -57,6 +57,23 @@ ouder is dan de begrensde eerste/laatste-issue-steekproef. Dezelfde lijst is
 opgenomen in privé JSON en Markdown, ook bij de bestaande offline-snapshotroute
 wanneer de bronsnapshot dit veld bevat.
 
+De bestaande **exact-HEAD PR-lezer** gebruikt nu ook de overgebleven
+ruimte binnen zijn vaste limiet van drie PR's per projectvenster om PR's te
+inspecteren die niet naar een gesampled issue verwijzen. Eerst komen urgente
+issue-gerelateerde PR's, daarna reviewklare open product-PR's eerlijk over
+projecten verdeeld, en daarna drafts. Dit kost hoogstens dezelfde maximaal
+15 bestaande PR-GETs per venster. De kaart toont de werkelijk waargenomen
+vervolgactie als de PR-HEAD niet veranderde; zonder herlezing blijft de bron
+uitdrukkelijk onbekend.
+
+Het offline HTML- en Markdown-overzicht onderscheidt het aantal PR-kaarten
+waarvoor exacte-HEAD-bronnen zijn waargenomen van PR's die nog niet zijn
+geïnspecteerd of sindsdien gewijzigd. **Geen van beide aantallen is
+merge-gereedbewijs**: review-/CI-/branchregels, actuele exclusieve schrijvers
+en de bevoegde productie-eigenaar blijven afzonderlijk verplicht.
+Expliciete QA-only-titels, labels en bronbranch-prefixen worden zowel uit de
+PR-inbox als uit de issue→PR-productroutering geweerd; geen QA is gestart.
+
 Daarnaast verschijnen maximaal **drie** oudere open product-PR's per venster
 wanneer ze via een issue-link zijn geselecteerd en op hun exacte HEAD opnieuw
 zijn gelezen. De kaart vermeldt expliciet dat het om een oudere issue-linkbron
