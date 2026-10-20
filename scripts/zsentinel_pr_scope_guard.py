@@ -134,6 +134,15 @@ def open_prs(repo, token):
         base_repo = base.get("repo") if isinstance(base, dict) else None
         head_sha = head.get("sha") if isinstance(head, dict) else None
         base_sha = base.get("sha") if isinstance(base, dict) else None
+        body = row.get("body")
+        # A malformed/oversized PR body cannot authenticate an issue link.
+        # The normal file collision inventory remains independent.
+        refs_covered = body is None or (type(body) is str and len(body) <= 32000)
+        refs = sorted({int(m.group(1)) for m in re.finditer(
+            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\\b",
+            body or "")}) if refs_covered else []
+        refs_covered = refs_covered and len(refs) <= MAX_REFERENCED_ISSUES
+        refs = refs[:MAX_REFERENCED_ISSUES] if refs_covered else []
         if (type(n) is not int or not 0 < n < 100000000 or n in seen
                 or not isinstance(base_repo, dict)
                 or base_repo.get("full_name") != repo
@@ -142,7 +151,10 @@ def open_prs(repo, token):
             raise ValueError("incomplete PR identity")
         seen.add(n)
         result.append({"number": n, "head_sha": head_sha,
-                       "base_sha": base_sha, "url": "https://github.com/" + repo + "/pull/" + str(n)})
+                       "base_sha": base_sha,
+                       "referenced_issue_numbers_unverified": refs,
+                       "issue_reference_body_covered": refs_covered,
+                       "url": "https://github.com/" + repo + "/pull/" + str(n)})
     return result
 
 
@@ -354,6 +366,7 @@ def html_view(report):
 
 MAX_CONFLICT_PAIRS = 200
 MAX_SHARED_FILES_PER_PAIR = 24
+MAX_REFERENCED_ISSUES = 32
 
 
 def observe_conflict_graph(repo, token=None, limit=24):
@@ -369,6 +382,7 @@ def observe_conflict_graph(repo, token=None, limit=24):
     file_owners = {}
     suspicious_lists = []
     observed = []
+    issue_links = []
     for pr in chosen:
         files, truncated = changed_paths(repo, pr["number"], token)
         observed.append({
@@ -379,6 +393,15 @@ def observe_conflict_graph(repo, token=None, limit=24):
         })
         if truncated:
             suspicious_lists.append(pr["number"])
+        if pr["issue_reference_body_covered"]:
+            for issue_number in pr["referenced_issue_numbers_unverified"]:
+                issue_links.append({
+                    "issue_number": issue_number,
+                    "pr_url": pr["url"], "pr_head_sha": pr["head_sha"],
+                    "relation": "unverified_text_mention_only",
+                    "owner_verified": False,
+                    "fix_verified": False,
+                })
         for path in files:
             file_owners.setdefault(path, set()).add(pr["number"])
     pairs = {}
@@ -424,6 +447,9 @@ def observe_conflict_graph(repo, token=None, limit=24):
         "observed_open_prs": len(before),
         "inspected_prs": len(chosen),
         "inspected_pr_heads": observed,
+        "open_pr_issue_references_unverified": issue_links,
+        "issue_reference_body_coverage_complete":
+            all(pr["issue_reference_body_covered"] for pr in chosen),
         "observed_file_collision_pairs": len(ordered),
         "shown_file_collision_pairs": cards,
         "unpaired_open_prs_in_sample_not_claim_verified": not_paired,
