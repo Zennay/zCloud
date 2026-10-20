@@ -403,7 +403,9 @@ document.getElementById('session-import').addEventListener('change',async functi
 });
 window.addEventListener('beforeunload',function(e){
  if(tickets.some(t=>t.querySelector('textarea').value.trim()||
-   t.querySelector('.local-state').value!=='open')){
+   t.querySelector('.local-state').value!=='open')||
+    prs.some(p=>p.querySelector('.pr-note').value.trim()||
+    p.querySelector('.pr-local-state').value!=='open')){
   e.preventDefault();e.returnValue='';
  }
 });
