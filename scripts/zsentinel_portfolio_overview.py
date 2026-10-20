@@ -499,8 +499,13 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             '<td>' + escape(action_text) + '</td></tr>'
         )
     selected = ", ".join(escape(x) for x in windows[window_index])
+    sources = decision.get("live_sources")
+    pinned_jobs = sources.get("exact_jobs_pinned_requested", 0) if isinstance(sources, dict) else 0
+    if type(pinned_jobs) is not int or not 0 <= pinned_jobs <= 3:
+        raise ValueError("untrusted explicit GitHub job selection")
     caption = (
         f'Venster {window_index + 1} van {len(windows)}: <strong>{selected}</strong>. '
+        f'Expliciete bestaande GitHub-jobpins: {pinned_jobs} (alleen bron-GET; geen rerun). '
         f'{summary["canonical_projects"]} canonieke projecten zichtbaar; '
         f'{summary["github_projects_observed"]} van '
         f'{summary["github_projects_selected"]} geselecteerde projecten met '
@@ -870,6 +875,10 @@ def main():
                 lines.append("QUEUE: NIET WAARGENOMEN (--github-only); geen nulmeting, vrijgave of leasebewijs.")
             if provenance.get("pinned_requested"):
                 lines.append(pinned_receipts_text(provenance))
+            if provenance.get("exact_jobs_pinned_requested"):
+                lines.append("Exacte bestaande GitHub-jobs expliciet gekozen: %s; "
+                             "alleen gelezen, geen rerun, claim of runnerherstel."
+                             % provenance["exact_jobs_pinned_requested"])
             lines.append(blocker_board_text(unblock))
             if local_runner is not None:
                 from zsentinel_local_runner_observer import runner_text
