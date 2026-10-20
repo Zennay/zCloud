@@ -2,6 +2,22 @@
 
 The existing `scripts/portfolio_merge_ready.py` is an **operator tool**, not an unattended merge bot. It lists selected GitHub PR receipts without changing workers, SQLite or repositories unless an explicit, separately authorized merge is requested.
 
+## Merge-first cockpit: cross-project offline worklist
+
+The new `scripts/zsentinel_merge_first_board.py` combines multiple **explicit existing** product PRs into a bounded, read-only operator worklist. It does not discover new owners, claim work, approve PRs, merge, restart runners or deploy. Its canonical repository allowlist comes from `projects.json`.
+
+```sh
+python3 scripts/zsentinel_merge_first_board.py \
+  --pr Zennay/zCloud#1571 --pr Zennay/Supa#123 \
+  --format text --output /private/new-zsentinel-merge-board.html
+```
+
+The output is a new, exclusive-create, private (0600) responsive standalone HTML file. Without `--output` there is no local write. JSON output is available using `--format json`. The HTML contains no JavaScript, network fetches, tokens, worker credentials or queue identifiers. Never point output at a shared web directory. Existing reports are never overwritten.
+
+The board is intentionally bounded: at most 12 explicitly selected PRs, 6 per canonical repository, 3 repositories and 64 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs and legacy statuses are checked separately. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
+
+Operators can quickly select an independent unblocked product PR while other PRs wait on reviewer, CI, claim or release rights. For any actual merge, the **separate** single-PR `portfolio_merge_ready.py --merge` owner-claim preconditions and GitHub server-side protection still apply. Nothing in the board's HTML or JSON is a merge permit; `main_merged=false` and `live_verified=false` remain conservative snapshot indicators, not assertions about the actual GitHub state.
+
 ## Read-only inventory
 
 ```sh
