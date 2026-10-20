@@ -213,3 +213,16 @@ provider admission, trigger CI, merge a PR or deploy a worker. Existing
 mandatory exact-head CI/review, branch protection and owner-controlled
 production release remain unchanged.
 
+
+### Trusted VPS GitHub source uses the same conservation rules
+
+An explicit authenticated **Read VPS GitHub** in the Activity page now runs
+its validated `zcloud-github-activity-readonly-v1` source through the same
+per-project history merger as the offline JSON import. An incomplete server
+receipt cannot silently clear previously visible PR/CI events, nor can an
+older server response replace a newer scoped source. New GitHub evidence for
+an existing identity supersedes the old entry, while un-reobserved old
+entries are labelled historical instead of being promoted to fresh
+evidence. The server endpoint and token boundary are unchanged; this is
+only client-side display and retention behavior.
+
