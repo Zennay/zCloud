@@ -16,7 +16,9 @@ from pathlib import Path
 import stat
 import sys
 
-from zsentinel_pr_scope_guard import REPO, SHA, edit_path, unique
+from zsentinel_pr_scope_guard import (
+    REPO, SHA, edit_path, unique, observe_conflict_graph,
+)
 
 SCHEMA = "zsentinel-saved-pr-cross-window-collisions-v1"
 SOURCE = "zsentinel-pr-file-collision-graph-v1"
@@ -31,6 +33,8 @@ MAX_CROSS_ISSUES = 80
 MAX_ISSUE_LINKS = 8
 MAX_SECONDS_APART = 600
 MAX_REPORT_BYTES = 2 * 1024 * 1024
+MAX_LIVE_PRS = 36
+MAX_LIVE_WINDOWS = 3
 
 
 def read_bounded(path: Path):
@@ -176,13 +180,13 @@ def inspect_source(data, repository):
     return observed, pages, found, incomplete, refs
 
 
-def combine(paths, repository):
-    if not REPO.fullmatch(repository) or not 2 <= len(paths) <= MAX_INPUTS:
-        raise ValueError("supply two to six private graph snapshots for one repository")
+def combine_sources(sources, repository):
+    """One bounded source-reconciliation path for private files or live GETs."""
+    if not REPO.fullmatch(repository) or not 2 <= len(sources) <= MAX_INPUTS:
+        raise ValueError("supply two to six bounded graph sources")
     times, all_pages, all_prs, partial_prs, all_issue_refs = [], set(), {}, [], []
     total_bytes = 0
-    for index, path in enumerate(paths):
-        data, size = read_bounded(path)
+    for index, (data, size) in enumerate(sources):
         total_bytes += size
         if total_bytes > MAX_TOTAL_BYTES:
             raise ValueError("combined sources exceed bounded size")
@@ -260,7 +264,7 @@ def combine(paths, repository):
         "schema": SCHEMA,
         "repository": repository,
         "source": "bounded_saved_double_read_github_graphs_not_one_live_snapshot",
-        "snapshot_count": len(paths),
+        "snapshot_count": len(sources),
         "total_observed_prs": len(all_prs),
         "observed_source_page_numbers": sorted(all_pages),
         "observation_window_utc": [
@@ -285,6 +289,39 @@ def combine(paths, repository):
         "deploy_authorized": False,
         "writes_performed": False,
     }
+
+
+def combine(paths, repository):
+    if not 2 <= len(paths) <= MAX_INPUTS:
+        raise ValueError("supply two to six private graph snapshots")
+    return combine_sources([read_bounded(path) for path in paths], repository)
+
+
+def collect_live(repository, token, *, start_page=1, windows=2, prs_per_page=8):
+    """Read-only bounded current GitHub GET collection, no queue or writer.
+
+    Each window contains exactly two adjacent pages so the source collector
+    uses contiguous page geometry instead of single-page lookahead. Results
+    are never promoted to a globally atomic or claim-verified inventory.
+    """
+    if (not REPO.fullmatch(repository)
+            or type(start_page) is not int or not 1 <= start_page <= 50
+            or type(windows) is not int or not 2 <= windows <= MAX_LIVE_WINDOWS
+            or type(prs_per_page) is not int or not 1 <= prs_per_page <= 12
+            or windows * 2 * prs_per_page > MAX_LIVE_PRS
+            or start_page + 2 * windows - 1 > 50):
+        raise ValueError("live graph scan exceeds bounded GET or page limits")
+    evidence = []
+    for index in range(windows):
+        graph = observe_conflict_graph(
+            repository, token=token, limit=prs_per_page,
+            open_page=start_page + 2 * index,
+            page_count=2, resolve_issue_identity=False)
+        encoded = json.dumps(graph, ensure_ascii=True, allow_nan=False).encode("utf-8")
+        if len(encoded) > MAX_SOURCE_BYTES:
+            raise ValueError("one live graph inventory is oversized")
+        evidence.append((graph, len(encoded)))
+    return combine_sources(evidence, repository)
 
 
 def render(report, fmt):
@@ -410,15 +447,35 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True,
                         help="Exacte canonieke Zennay/eigen-repo identiteit")
-    parser.add_argument("--input", type=Path, action="append", required=True,
+    parser.add_argument("--input", type=Path, action="append", default=[],
                         help="Privé JSON bron uit --audit-open-prs --format json")
+    parser.add_argument("--live-scan", action="store_true",
+                        help="Read-only: verzamel 2–3 opeenvolgende 2-pagina "
+                             "bronvensters direct uit GitHub (max 36 PRs)")
+    parser.add_argument("--start-page", type=int, default=1,
+                        help="Startpagina voor expliciete begrensde --live-scan")
+    parser.add_argument("--windows", type=int, default=2,
+                        help="Aantal 2-pagina-bronvensters, 2 of 3")
+    parser.add_argument("--prs-per-page", type=int, default=8,
+                        help="1..12 PRs/pagina, samen <=36, max 48 GETs")
     parser.add_argument("--format", choices=("json", "markdown", "text", "html"),
                         default="html")
     parser.add_argument("--output", type=Path, required=True,
                         help="Nieuw privé bestand, nooit bestaande data overschrijven")
     args = parser.parse_args(argv)
     try:
-        report = combine(args.input, args.repo)
+        if args.live_scan:
+            if args.input:
+                raise ValueError("--live-scan cannot mix with saved --input files")
+            report = collect_live(
+                args.repo, os.environ.get("GITHUB_TOKEN"),
+                start_page=args.start_page,
+                windows=args.windows, prs_per_page=args.prs_per_page)
+        else:
+            if (args.start_page != 1 or args.windows != 2 or
+                    args.prs_per_page != 8):
+                raise ValueError("live scan flags require --live-scan")
+            report = combine(args.input, args.repo)
         raw = render(report, args.format).encode("utf-8")
         if len(raw) > MAX_REPORT_BYTES:
             raise ValueError("output too large")
