@@ -181,3 +181,59 @@ nooit door productpolicy of de worker worden omzeild.
 
 Dit is **geen wijziging aan reeds geclaimde of lopende
 werkopdrachten**. De branche is nog geen live deploy.
+
+
+## 20 oktober · Actieve workers blijven eigenaar bij herstel, geheugennood en Force Start
+
+De bestaande allocator behandelde een `running`-worker onder kritieke
+geheugendruk soms als een beschikbaar slachtoffer voor automatische
+herverdeling. De Force Start route kon ook `running` en `verifying`
+claims van andere projecten op `queued` zetten. Dat gaf risico op
+verlies van lopend werk en op dubbele voortzetting in een nieuwe slot.
+De aangepaste productcode beperkt deze twee automatische
+herverdeelroutes nu **uitsluitend tot `claimed` taken die nog
+niet `running` of `verifying` zijn**, en controleert nog steeds
+de bekende busy-worker en pending-browser-handoff bescherming.
+
+De laatste slotwissel is nu bovendien **transactioneel
+gecontroleerd**: alleen een echt geslaagde
+`UPDATE ... WHERE status='claimed' AND worker_slot=?`
+maakt ruimte voor een Force Start-vervanging. Als het betrokken
+claimrecord ondertussen is gewijzigd, blijft de bestaande
+slotbezetting staan en wordt geen andere worker toegewezen.
+
+### Conflicterende huidige eigenaars niet automatisch laten verdwijnen
+
+De oude `_portfolio_requeue_conflicting_claimed_lanes_locked()`
+trok een `claimed` taak al in zodra twee actieve lanes
+binnen hetzelfde project qua capaciteiten of bestanden overlapten.
+Dat was onveilig: een `claimed` browser-worker kan reeds een
+accepteerde, nog niet voltooide overdracht hebben.
+De opvolger `_portfolio_observe_conflicting_claimed_lanes_locked()`
+**registreert alleen** waargenomen overlap; alle betrokken
+`claimed`/`running`/`verifying` rijen behouden
+hun status, slot en lease. De bevoegde actuele eigenaar moet
+een echt conflict oplossen, niet de automatische scheduler.
+
+### Direct bruikbare operatoruitvoer
+
+Het bestaande geautoriseerde `GET /api/portfolio-queue`
+bevat aanvullend `active_lane_conflict_observation`.
+Daarin staan `active_lane_conflicts_observed`, maximaal twintig
+project-/lane-/queue-ID-paren, een truncatie-indicator en
+`owner_review_required=true` met
+`reassign_or_release_authorized=false`. Dit is een
+huidige, read-only SQLite-observatie, **geen toestemming**
+om een worker te herstarten, scope te claimen of een PR te mergen.
+Een mislukte bronuitlezing wordt als
+`unavailable_not_a_zero_conflict_observation`
+weergegeven; een lege lijst bij onbereikbare bron betekent
+nooit dat er geen problemen zijn.
+
+De bestaande route blijft onder zijn normale API-autorisatie.
+Er wordt geen nieuwe publieke endpoint, extra runner, geplande
+job of test-/QA-suite toegevoegd. De wijzigingen staan op de
+**bestaande PR #1536**, niet op `main` of live VPS. De
+bestaande exacte-head CI, onafhankelijke review,
+branch protection, huidige eigenaarschap en serialiseerde
+productie-release blijven vereist.
