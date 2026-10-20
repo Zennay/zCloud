@@ -31,8 +31,8 @@ MAX_SCAN_NODES = 100000
 
 def command(*args, capture=False, timeout=3600):
     try:
-        p = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else None,
-                           stderr=subprocess.PIPE if capture else None, timeout=timeout)
+        p = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         # Never include command arguments or upstream output in an error.
         raise RuntimeError("Archive command exceeded its bounded time budget") from exc
@@ -105,7 +105,7 @@ def candidates(age, limit=MAX_CANDIDATES):
 
 def connected():
     try:
-        command(str(BIN), "lsd", "gdrive:", "--max-depth", "1", capture=True, timeout=25)
+        command(str(BIN), "lsd", "gdrive:", "--max-depth", "1", timeout=25)
         return True
     except Exception:
         return False
@@ -160,7 +160,9 @@ def transfer(item, prune=False):
               "--bwlimit", "4M", "--retries", "2", "--low-level-retries", "3"]
     command(str(BIN), "copy", str(src), dst, *common)
     # Compare actual remote bytes, not only size or a copy exit status.
-    command(str(BIN), "check", str(src), dst, "--one-way", "--download", *common)
+    # Two-way verification: a stale extra file in the remote destination
+    # would otherwise be silently included in a later restore.
+    command(str(BIN), "check", str(src), dst, "--download", *common)
     if prune:
         if not prune_authorized():
             raise RuntimeError("Pruning requires the offline-key-backup approval file")
@@ -197,13 +199,16 @@ def main():
         return
     days = MIN_PRUNE_DAYS if args.mode == "cleanup" else MIN_UPLOAD_DAYS
     items = candidates(days)
+    if not items:
+        print("NO_ELIGIBLE_ZCLOUD_COLD_DIRECTORIES: no foreign project data touched")
+        return
     # Mutation modes alone connect to external storage.
     if not connected():
         print("NOT_CONNECTED: authorize Google Drive for the gdrive remote first", file=sys.stderr)
-        return
+        raise SystemExit(4)
     if args.mode == "cleanup" and not prune_authorized():
-        print("PRUNE_DISABLED: back up recovery keys off VPS and explicitly approve", file=sys.stderr)
-        return
+        print("PRUNE_DISABLED: secure the recovery keys and provide a user-owned mode-0600 approval file", file=sys.stderr)
+        raise SystemExit(4)
     total = 0
     for item in items:
         if total + item["bytes"] > MAX_BATCH_BYTES:
