@@ -2167,3 +2167,15 @@ Voorbeeld voor het huidige canonieke projectvenster:
 Ook dit overzicht houdt echte Notion-eigenaars, actieve queueleases en
 workerherstelstatus ONBEKEND. Geen workflowdispatch, bronwrite of runtime
 owner-overname, en alle bestaande CI/review/releasegates blijven vereist.
+
+### Boven de portfolio-tabel zichtbaar: het verschil tussen LIVE, PRIVÉ en ONBEKEND
+
+De portfolio HTML-kop toont nu nadrukkelijk of Notion-werk is:
+1. met de bestaande beperkte API-read geobserveerd (nog steeds geen file-owner);
+2. uit een handmatig opgeslagen connectorbestand afkomstig, inclusief waarschuwing
+   dat de snapshot NIET live en de herkomst NIET geauthenticeerd is;
+3. geheel niet beschikbaar: geen nulclaim of vrijgavebewijs.
+
+Dit onderscheid is ook zichtbaar wanneer een positief projectaantal in de
+portfolio-tabel staat. Afwezige projecten blijven ONBEKEND; geen scheduler,
+lease, worker, CI of productie-autorisatie volgt hieruit.
