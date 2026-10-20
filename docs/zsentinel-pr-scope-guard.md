@@ -1916,3 +1916,27 @@ Het gestructureerde document heeft `schema=zsentinel-private-pr-workorders-v1`, 
 **Bronnuance bij oudere PRs:** rechtstreeks met `--gate-pr` geselecteerde oude PRs kunnen gedeelde *bestandsnamen* hebben in hun directe bounded `sampled_file_overlaps_observed`-waarneming zonder in de recente `shown_collision_pairs`-lijst te staan. De eigenaarshandoff neemt nu ook deze werkelijk geobserveerde paden op, samen met de waarschuwing dat de volledige repository en ongetoonde bestandspagina's onbekend blijven. Dit is geen bewijs van een Git-mergeconflict of van vrij eigenaarschap.
 
 **Issueverwijzingen bij owner-handoff:** de kaart neemt nu ook eenmalige `#N`-vermeldingen uit de recent geobserveerde PR-titel/body mee, niet alleen vermeldingen die toevallig op meerdere open PRs terugkomen. Alleen hints die horen bij de **exact vastgepinde huidige PR-HEAD** worden getoond; een oudere of onbekende HEAD geeft geen mogelijk verouderde issueverwijzing. Zelfs een exact gepinde tekstvermelding is geen bewijs dat `#N` een echte open issue is of dat de PR deze oplost. Controleer GitHub issue-identiteit apart voordat dit als productfix of mergecriterium geldt.
+
+## 20 oktober · Betrouwbare en tijdgebonden eigenaarwerkopdrachten
+
+`--format workorders` en `--format workorders-json` accepteren nu uitsluitend een
+unieke, volledige projectset die exact overeenkomt met de opgeslagen
+projectweergaven. Dubbele projectobjecten en veranderde projectidentiteiten
+worden geweigerd in plaats van stil overschreven. Verwijzingen naar gerelateerde
+PR's in zowel de getoonde conflictparen als expliciet opgenomen oudere PR's
+moeten canonical `https://github.com/Zennay/<repo>/pull/<nummer>` URL's van
+**dezelfde repository** zijn. Een onverwachte/externe link stopt de overdracht
+zonder outputbestand. De werkbank geeft nooit toestemming tot claim, merge,
+workflow-rerun of deploy.
+
+De bron is één momentopname, geen voortdurende live-watcher. Voor bronnen die
+**meer dan zes uur oud** zijn bevat Markdown nu een prominente
+`HISTORISCHE BRON` waarschuwing; iedere betrokken werkkaart meldt dat
+HEAD, onafhankelijke reviews en verplichte checks opnieuw gelezen moeten
+worden. In `workorders-json` staan `source_observation_stale` en
+`source_freshness_budget_seconds=21600`. `source_current` is bij stale
+bronnen `false`, ook als de HEAD op het moment van de opname exact was:
+`source_exact_head_at_observation` blijft die historische nauwkeurigheid
+apart vastleggen. Een recente opname is nog steeds **geen** branch-protection-,
+eigenaar- of releasevrijgave. De inhoudsvingerafdruk blijft alleen een
+provenancebewijs van de waargenomen feiten.
