@@ -44,6 +44,8 @@ NEXT_ACTIONS_NL = {
         "Bekijk de bestaande overlappende PR's en stem af met huidige eigenaar vóór wijzigingen.",
     "inspect_existing_pr_and_owner_gates_first":
         "Herbruik bestaande PR; controleer actuele claim, exacte-head CI, review en releasebevoegdheid.",
+    "coordinate_multiple_existing_pr_issue_mentions":
+        "Meerdere open PR-teksten noemen dit issue. Bekijk eerst bestaande implementaties en stem met hun eigenaren af.",
     "verify_live_owner_then_product_implementation":
         "Controleer eerst huidige Notion-claims, open branches en bestandscope vóór productwerk.",
 }
@@ -333,6 +335,11 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         additional = (sorted(state["mentioned_issues"].get(
             int(card["issue"].rsplit("#", 1)[-1]), set()) - set(original))
             if coherent and state["mention_snapshot_stable"] else [])
+        issue_number = int(card["issue"].rsplit("#", 1)[-1])
+        current_mentions = (
+            sorted(state["mentioned_issues"].get(issue_number, set()))
+            if coherent and state["mention_snapshot_stable"] else [])
+        duplicate_current_mentions = len(current_mentions) > 1
         references = (original + additional)[:MAX_LINKED_PRS_PER_ISSUE]
         refs = []
         for link in references:
@@ -369,6 +376,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             route = "authorized_infrastructure_owner_only"
         elif refs and any(p["file_scope_state"] == "shared_file_paths_observed" for p in refs):
             route = "coordinate_existing_pr_file_overlap_and_owner"
+        elif duplicate_current_mentions:
+            route = "coordinate_multiple_existing_pr_issue_mentions"
         elif refs:
             route = "inspect_existing_pr_and_owner_gates_first"
         else:
@@ -378,6 +387,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             "issue": card["issue"], "url": card["url"],
             "title": raw_by_issue[card["issue"]]["title"],
             "existing_prs": refs, "next_action": route,
+            "multiple_open_pr_issue_text_mentions_observed": duplicate_current_mentions,
+            "open_pr_issue_text_mentions_in_sample": len(current_mentions),
+            "duplicate_mentions_sample_complete": state["mention_sample_complete"],
+            "duplicate_source_links": current_mentions[:MAX_LINKED_PRS_PER_ISSUE],
             "next_action_nl": NEXT_ACTIONS_NL[route],
             "source_recommended_next_step": card["recommended_next_step"],
             "source_evidence_gaps": card["evidence_gaps"],
@@ -552,6 +565,11 @@ def output_text(report, markdown=False):
         lines.append(row["priority"] + " | " + row["project"] + " | " +
                      ref + " | " + operator_inline(row["title"], markdown) +
                      " | " + row["next_action_nl"])
+        if row["multiple_open_pr_issue_text_mentions_observed"]:
+            lines.append("  BESTAANDE PR's eerst: " +
+                         str(row["open_pr_issue_text_mentions_in_sample"]) +
+                         " huidige PR-teksten noemen dit issue; fix/eigenaar ONBEKEND, bron volledig: " +
+                         str(row["duplicate_mentions_sample_complete"]))
         lines.append("  Advies uit bestaande bron: " +
                      operator_inline(row["source_recommended_next_step"], markdown))
         for gap in row["source_evidence_gaps"]:
@@ -641,7 +659,12 @@ def output_html(report):
             " · issuebron: " + escape(row["project_issue_coverage"]) +
             "</p><p><strong>Volgende stap:</strong> " +
             escape(row["next_action_nl"]) +
-            "</p><p>Bronadvies: " + escape(row["source_recommended_next_step"]) +
+            "</p>" +
+            ("<p><strong>Bestaande PR's eerst:</strong> " +
+             str(row["open_pr_issue_text_mentions_in_sample"]) +
+             " open PR-teksten verwijzen naar dit issue. Geen geverifieerde fix of eigenaar.</p>"
+             if row["multiple_open_pr_issue_text_mentions_observed"] else "") +
+            "<p>Bronadvies: " + escape(row["source_recommended_next_step"]) +
             "</p><details><summary>Openstaande bronhiaten (" +
             str(len(row["source_evidence_gaps"])) + ")</summary><ul>" +
             "".join("<li>" + escape(gap) + "</li>"
