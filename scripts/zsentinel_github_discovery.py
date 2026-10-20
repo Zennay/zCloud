@@ -60,14 +60,21 @@ def recent_runs(root, canonical_repository, token, status):
 
 
 def run_job_candidates(root, run_id, sha, token, kind):
+    """Keep usable jobs when a *different* returned job has corrupt metadata.
+
+    A malformed record degrades coverage; it never turns partial results into
+    a zero-incident finding and cannot suppress valid queued runner evidence.
+    """
     query = urlencode({"per_page": MAX_JOBS, "page": 1})
     result = bounded_get(f"{root}/actions/runs/{run_id}/jobs?{query}", token)
     if (not isinstance(result, dict) or not isinstance(result.get("jobs"), list)
             or len(result["jobs"]) > MAX_JOBS):
         raise ValueError("GitHub jobs shape or bounds invalid")
     candidates = []
+    partial = False
     for job in result["jobs"]:
         if not isinstance(job, dict):
+            partial = True
             continue
         jid, actual_run = job.get("id"), job.get("run_id")
         status, conclusion, runner = (
@@ -76,26 +83,32 @@ def run_job_candidates(root, run_id, sha, token, kind):
         if (type(jid) is not int or not 1 <= jid <= 2**53 - 1
                 or actual_run != run_id
                 or (runner is not None and
-                    (type(runner) is not int or runner < 0))):
-            continue
-        created = parse_time(job.get("created_at"))
-        now = datetime.now(UTC)
-        if created > now + timedelta(minutes=2):
+                    (type(runner) is not int or not 0 <= runner <= 2**53 - 1))):
+            partial = True
             continue
         if kind in ("queued", "in_progress"):
-            if status != "queued" or bool(runner) or now-created < timedelta(minutes=30):
+            if status != "queued" or bool(runner):
                 continue
         elif status != "completed" or conclusion not in RESULTS:
             continue
-        route = runner_route(job)
-        # An explicitly labelled self-hosted queue is stronger evidence
-        # than an ambiguous queue, which itself is stronger than hosted.
-        # Search both queued and running workflows before selecting: an
-        # unrelated hosted queue must never hide a genuine VPS backlog.
+        try:
+            created = parse_time(job.get("created_at"))
+            route = runner_route(job)
+        except ValueError:
+            partial = True
+            continue
+        now = datetime.now(UTC)
+        if created > now + timedelta(minutes=2):
+            partial = True
+            continue
+        if status == "queued" and now - created < timedelta(minutes=30):
+            continue
+        # A verified self-hosted queue has higher priority than a hosted
+        # queue. Invalid labels do not erase unrelated well-formed jobs.
         rank = ({"self_hosted": 0, "unknown": 1, "hosted_or_custom": 2}[
             route["runner_route"]] if status == "queued" else 3)
         candidates.append((rank, created, run_id, jid, sha, status, conclusion, runner, route, kind))
-    return candidates
+    return candidates, partial
 
 
 def discover(registry, selected, token=None):
@@ -124,7 +137,11 @@ def discover(registry, selected, token=None):
                     for run_id, sha in run_ids:
                         request_count += 1
                         checked += 1
-                        candidates.extend(run_job_candidates(root, run_id, sha, token, status))
+                        discovered_jobs, partial_jobs = run_job_candidates(
+                            root, run_id, sha, token, status)
+                        candidates.extend(discovered_jobs)
+                        if partial_jobs and status not in incomplete_windows:
+                            incomplete_windows.append(status)
                 except (OSError, ValueError):
                     # Keep independently observed exact job candidates, but
                     # explicitly mark any missed workflow window INCOMPLETE.
