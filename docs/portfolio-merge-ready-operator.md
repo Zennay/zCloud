@@ -24,7 +24,7 @@ This **read-only discovery** prioritizes P0/fix-labelled product titles within e
 
 The output is a new, exclusive-create, private (0600) responsive standalone HTML file. Without `--output` there is no local write. JSON output is available using `--format json`. The HTML contains no JavaScript, network fetches, tokens, worker credentials or queue identifiers. Never point output at a shared web directory. Existing reports are never overwritten.
 
-The board is intentionally bounded: at most 12 selected PRs, 6 per canonical repository, 3 repositories and 84 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs, legacy statuses and all observed exact-head GitHub Actions workflow runs are checked separately. Queued, pending, incomplete, failed or skipped workflows cannot be reported as green. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
+The board is intentionally bounded: at most 12 selected PRs, 6 per canonical repository, 3 repositories and 84 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs, legacy statuses and all observed exact-head GitHub Actions workflow runs are checked separately. Queued, pending, incomplete, or failed current applicable workflows cannot be reported as green; optional skipped/neutral completions are tolerated only alongside positive completed workflow evidence. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
 
 Operators can quickly select an independent unblocked product PR while other PRs wait on reviewer, CI, claim or release rights. For any actual merge, the **separate** single-PR `portfolio_merge_ready.py --merge` owner-claim preconditions and GitHub server-side protection still apply. Nothing in the board's HTML or JSON is a merge permit; `main_merged=false` and `live_verified=false` remain conservative snapshot indicators, not assertions about the actual GitHub state.
 
@@ -45,6 +45,23 @@ python3 scripts/zsentinel_issue_first_board.py --project cloud --format json
 - De werkbak toont daarnaast (max. 24) urgente open issues zonder waargenomen PR-bodyverwijzing, met klikbare issue-URL. Dat is **geen** bewering dat het werk onbezet is, want oude PRs buiten de steekproef, forks, commits zonder PR en actieve Notion-claims kunnen buiten beeld zijn.
 - Een onbereikbare projectbron blokkeert alleen dat project en verschijnt als `SOURCE_UNAVAILABLE`; een volle bronpagina toont `SOURCE_WINDOW_100`. Prioritering volgt uitsluitend de beperkte waarneembare bronnen. Bij onzekerheid worden ontbrekende resultaten nooit stilzwijgend tot `DONE` omgezet.
 - Alle resultaten zijn read-only; export naar een **nieuw** HTML-bestand is exclusief 0600 met nofollow/fsync. Niets publiceert naar GitHub, Notion, SQLite, workerpool of productie. De verplichte onafhankelijke review, exact-head CI, owner/mainwriterclaim en bestaande releaseprocedure blijven separaat.
+
+### Gerichte P0/P1-reparatie zonder recent-PR-venster
+
+Als een kritisch bekend issue niet in de 100 recent bijgewerkte PRs zichtbaar is, gebruik **dezelfde bestaande product-PR**, niet een nieuwe parallelle draft:
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
+  --format text --output /private/zsentinel-issue-1326.html
+```
+
+- `--issue` vereist **exact één** canoniek `--project` en een bestaand open issue-ID. Het leest het exacte GitHub-issue, doorzoekt native GitHub Search naar open PRs op basis van het nummer en controleert daarna de echte PR-body, GitHub-HEAD, huidige CI/legacy/workflows en review. Zo komen **oudere, nog open PRs** aan bod die in de snelle recent-PR-selectie ontbreken.
+- De zoekresultaten zijn slechts een kandidatenlijst. Alleen expliciete brongebonden issueverwijzingen `fixes #N`, `refs #N` enzovoort op dezelfde repository worden gekoppeld. Maximaal 32 bekeken kandidaten en 4 gekoppelde product-PRs; overige zoekresultaten blijven expliciet `CANDIDATE_WINDOW_32`/UNKNOWN. De laatste exacte issue-opvraag moet nog steeds `open` melden. Een tussentijds gewijzigde PR-body wordt geweigerd, ook als de Git commit ongewijzigd bleef.
+- Alle bronnen en één privé offline HTML worden begrensd door hetzelfde totale 84-GET / 120s budget. De HTML toont het gerichte issue, zoekdekking, PRs met concrete next-gate en de onvolledigheidswaarschuwingen. Geen automatische issueclaim, workflowrestart, PR-merge, deploy of P0-statuswijziging.
+
+### Huidige CI versus historische of optionele workflows
+
+De merge-helper en offline PR-board gebruiken dezelfde conservatieve status van **actuele voor de PR relevante workflows**. Exacte HEAD-verificatie blijft verplicht. GitHub Actions-workflows voor `pull_request`, `pull_request_target`, `push`, `merge_group` en `workflow_run` worden per workflow/event/branch tot de nieuwste bestaande run gereduceerd; een oudere door een nieuwe run vervangen fout wordt niet als een aparte actieve blokkade voorgesteld. Handmatige/scheduled workflows worden niet als nieuw verzonnen verplicht PR-checks behandeld. `skipped`/neutrale optionele jobs zijn niet noodzakelijk een fout, maar *alleen* overgeslagen workflows zijn geen bewijs van groen. De echte GitHub branch rules, onafhankelijke review, actuele writerclaim en bestaande releaseautorisatie bepalen nog altijd of mergen mag.
 
 ## Read-only inventory
 
@@ -69,7 +86,7 @@ Use only an **already held and independently authorized** live claim. The helper
 2. Exactly one explicit PR number. No bulk automatic merges, no default-branch surprises; target default must be `main`.
 3. The PR remains open, non-draft, mergeable and targeting `main`. The exact HEAD must still match.
 4. At least one **independent approval for that exact HEAD**, no active changes-requested review, and no incomplete >100-review inventory.
-5. All observed GitHub check-runs, relevant legacy statuses and associated exact-head GitHub Actions workflow receipts are successful; incomplete, missing, pending, skipped or failed sources deny the merge. A completed optional check-run is not proof that other already-queued workflows have completed.
+5. All observed GitHub check-runs, relevant legacy statuses and applicable current exact-head GitHub Actions workflow receipts are successfully completed (or optional skipped/neutral alongside positive evidence); incomplete, missing, pending or failed current gate sources deny the merge. A completed optional check-run is not proof that other already-queued workflows have completed.
 6. A **live non-expired** exact-head `task_claims` record with the specified owner, claim key and a structured `mainwriter` or `main-merge` capability. The same SQLite read-only transaction observes up to 1,000 sibling claims for that canonical project and denies a merge if any other unexpired structured exclusive mainwriter lease exists. Incomplete inventories and ambiguous active writer metadata fail closed; ordinary independent task leases with no writer capability remain untouched. Strings pretending to be a capability list are rejected.
 7. A second fresh PR, review, CI and lease check immediately before one SHA-bound GitHub squash merge request. GitHub's branch protection remains the final gate.
 
