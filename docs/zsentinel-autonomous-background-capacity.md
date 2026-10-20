@@ -449,8 +449,12 @@ nooit een opschaaltoestemming.
 **Bescherming tegen gelijktijdige wijzigingen.** Direct vóór een eventuele
 CPU/gewicht-mutatie leest de regeling de werkelijk ingestelde cgroup nogmaals
 en haalt een nieuwe bounded host-/runnerbron op. Wijzigde een andere eigenaar
-tussentijds CPUQuota/CPUWeight, dan wordt het verouderde advies **niet**
-toegepast. Een nieuwe runner, gewijzigde bronvolledigheid of verandering in
+tussentijds CPUQuota/CPUWeight, zelfs een kleine quota-aanpassing die niet
+door de normale systemd-formatter zichtbaar als hele procentwaarde is,
+dan wordt het verouderde advies **niet** toegepast. De tweede cgroup-readback
+vergelijkt quota op microsecondeprecisie van de systemd-bron en bewaakt ook
+CPUWeight; het historische opschaalvenster reset bij een voldoende afwijkende
+afgeronde CPUQuota in plaats van de eerdere ruime marge. Een nieuwe runner, gewijzigde bronvolledigheid of verandering in
 de drukcategorie verbreekt de oude *promotion epoch*, ook wanneer het
 algemene advies toevallig dezelfde CPU-percentages noemt. De vijf minuten
 opschaalgeschiedenis is voortaan cryptografisch gekoppeld aan die bounded
