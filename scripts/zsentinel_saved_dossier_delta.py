@@ -301,11 +301,39 @@ def render(result, fmt):
             items = []
             for item in group_rows[:300]:
                 notes = ", ".join(REASONS[x] for x in item["changed_fields"] if x in REASONS)
+                old, new = item["before"] or {}, item["after"] or {}
+                def observed_source(row):
+                    if not row:
+                        return "niet in deze bronsteekproef"
+                    counts = row.get("gate_observations")
+                    detail = ("Gate: " + str(row.get("primary_gate")) +
+                              "; HEAD: " + str(row.get("observed_head") or "ONBEKEND"))
+                    if counts is not None:
+                        detail += ("; afgerond " + str(counts["checks_completed"]) +
+                                   ", lopend " + str(counts["checks_pending"]) +
+                                   ", niet succesvol " +
+                                   str(counts["checks_not_successful"]) +
+                                   ", approvals waargenomen " +
+                                   str(counts["independent_approvals_observed"]))
+                    return detail
+                issue_links = sorted(set(old.get("linked_issue_urls", []) +
+                                         new.get("linked_issue_urls", [])))
+                issue_html = " · ".join(
+                    '<a href="' + e(url) +
+                    '" target="_blank" rel="noopener noreferrer">issue #' +
+                    e(url.rsplit("/", 1)[-1]) + '</a>' for url in issue_links)
                 items.append('<li><a target="_blank" rel="noopener noreferrer" href="' +
                              e(item["url"]) + '">' + e(item["priority"]) + " " +
                              e(item["repository"]) + "#" + str(item["number"]) +
                              "</a> — " + e(notes or LABELS[group]) + ". " +
-                             e(item["human_follow_up"]) + "</li>")
+                             e(item["human_follow_up"]) +
+                             '<details><summary>Oorspronkelijke bronwaarden</summary>' +
+                             '<p>Vorige: ' + e(observed_source(old)) +
+                             '<br>Nieuwe: ' + e(observed_source(new)) +
+                             '<br>Claims/review/main/live: ONBEKEND.' +
+                             ('<br>Gekoppelde bronissues: ' + issue_html
+                              if issue_links else '') +
+                             '</p></details></li>")
             panels.append("<section><details" + (" open" if group != "same_in_sample"
                                                    else "") + "><summary>" +
                           e(LABELS[group]) + " (" + str(len(group_rows)) +
