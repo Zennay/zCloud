@@ -3421,3 +3421,44 @@ incidentledgerstatus, neemt geen werk of bestanden over, draait geen CI
 opnieuw en is geen bewijs van herstel. De bestaande actuele
 menselijke incidentbriefing blijft gescheiden, en de huidige incidenten
 en hun eerder opgeslagen privéstatussen behouden hun bronhash.
+
+
+## 20 oktober · Echte claimstart controleren, niet alleen leaseverval
+
+De bestaande SQLite-observer voor de echte zCloud `portfolio_queue`
+leest nu ook het al aanwezige `claimed_at`-veld in dezelfde
+`mode=ro` + `PRAGMA query_only`-transactie. Voor actieve taken met
+`claimed/running/verifying` zijn de volgende categorieën expliciet
+**wederzijds uitsluitend**:
+
+- **Onbetrouwbaar claimvenster:** een geldige vervaltijd bestaat, maar
+  de start ontbreekt, niet parseerbaar is, ná het bronmoment ligt of
+  niet vóór de vervaltijd ligt. Dit heeft voorrang op een schijnbaar
+  verlopen claim.
+- **Verlopen lease:** de bron toont een geldige claimstart vóór de
+  vervaltijd, maar die vervaltijd is inmiddels verstreken.
+- **Vervaltijd onbekend:** geen parseerbare vervaltijd; dit bewijst
+  nooit dat de claim vrijgegeven is.
+- **Opvallend veel claimpogingen:** een apart telveld, géén
+  bewezen mislukte retries en geen toestemming voor nieuwe pogingen.
+
+Het rapport bevat nu
+`inconsistent_owner_lease_window_rows` in totalen en
+project-/prioriteitsgroepen, plus
+`owner_lease_window_inconsistent_observed` op de maximaal twintig
+zichtbare, onherleidbaar gehashte risicovoorbeelden. De bestaande
+routingschema-admissie controleert deze nieuwe waarden én hun
+wederzijdse exclusiviteit voordat bronadviezen naar de console en
+privé herstelcockpit gaan. De UI toont inconsistentie apart, inclusief
+de correcte actie: **bevoegde actuele claimeigenaar controleert
+beide tijdstippen; nooit automatisch herclaimen**. De bestaande
+truncatie-, privacy- en brondekkingsgrenzen blijven intact.
+
+Een directe read-only inspectie via verbonden zSSH bevestigde op
+20 oktober dat de beoogde VPS-`portfolio_queue`-brontabel de
+`claimed_at`-kolom daadwerkelijk heeft. Dit is geen nieuwe
+SQLite-migratie, schemawijziging of runtime-reparatie en verandert
+geen enkele taakstatus, workerlease, claim, retry, workflow of
+productiedatabase. De functie is broncode in de bestaande open PR
+en wacht op dezelfde verplichte exacte-head CI en onafhankelijke
+review alvorens main of live-productie geraakt worden.
