@@ -1698,3 +1698,42 @@ ONBEKEND, zonder restarts of onterechte activiteitsclaims. In een autoritatief
 herstelrapport blijft `worker_resumed_verified=false` tenzij een bevoegde
 runtime-owner daadwerkelijke herstart en nieuwe taakuitvoering onafhankelijk
 bevestigt.
+
+
+### 20 oktober · feitelijke jobtoewijzing en listenerproces zijn twee bronnen
+
+De zSentinel-runnerdiagnose ondersteunt nu naast absolute uitvoerpaden ook
+relatieve vormen zoals `./bin/Runner.Listener` en `bin/Runner.Worker`.
+De lokale waarneming controleert de effectieve proceswerkmap tegen precies
+`/home/ubuntu/actions-runner-zcloud/bin/`. Een even genoemde executable
+onder de FTMO/HaxLab-installatie telt **niet** mee. Verdwenen of onleesbare
+processen maken de bron onvolledig; `listenerprocessen=0` is geen
+GitHub-status, geen veilig-idle-bevestiging en geen herstartbevoegdheid.
+
+Voor exact geïdentificeerde GitHub Actions-jobs rapporteert de bestaande
+read-only discovery/refresh nu afzonderlijk een **toewijzingsfase**:
+`queued_without_runner_assignment`,
+`terminal_without_runner_assignment`,
+`no_runner_assignment_observed`,
+`job_with_runner_assignment`,
+`terminal_with_runner_assignment`, of
+`runner_assignment_missing_from_source`. Een boolean runner-ID wordt
+niet als numerieke ID geaccepteerd. De Nederlandse herstelkaart toont
+de fase naast de jobroute, de runnerlabels en de exacte joblink.
+Een self-hosted **onverdeelde** job geeft de bevoegde eigenaar alleen het
+advies runnerregistratie, repositorytoegang en labels te controleren;
+een reeds toegewezen job is geen bewezen gezonde listener of werkhervatting.
+
+Het portfolio-risicobord classificeert een incident
+`github_job_unassigned` nu als een **oningedeelde GitHub-job met nog te
+bevestigen route**, niet automatisch als defecte zCloud-VPS-listener:
+een ander GitHub-bronvenster kan anders een onterechte P0-oorsprong creëren.
+Ook `completed` zonder runner is niet automatisch een billingconclusie.
+Lokaal procesbewijs en GitHub-toewijzingsbewijs worden niet samen
+gepromoveerd tot herstel, CI-succes, claim-/releaseautorisatie of safe idle.
+
+Bron: de bestaande open [zSentinel PR #1563](https://github.com/Zennay/zCloud/pull/1563).
+De command-line reports blijven one-shot en niet-destructief.
+Geen QA/regressiesuites toegevoegd of handmatig gestart.
+Verplichte exact-head CI, onafhankelijke review, beschermde
+integratie- en productie-releasegates blijven nodig.
