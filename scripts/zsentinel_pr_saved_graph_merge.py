@@ -356,21 +356,27 @@ def combine_sources(sources, repository):
                 # snapshot collisions; this reports NEW cross-window ones.
                 if all_prs[left]["snapshot"] == all_prs[right]["snapshot"]:
                     continue
-                paired.setdefault((left, right), []).append(name)
-    collisions = sorted(paired.items(), key=lambda item: (-len(item[1]), item[0]))
+                key = (left, right)
+                paired[key] = paired.get(key, 0) + 1
+    # Counts are enough to rank the entire bounded inventory; only the
+    # visible top pairs need concrete path materialization.
+    collisions = sorted(paired.items(), key=lambda item: (-item[1], item[0]))
     # Include within-window filename edges when forming a connected graph.
     # A-B within page 1 and B-C on page 2 is ONE product integration group.
     clusters = connected_cross_window_groups(all_prs, owners)
     rows = []
-    for (left, right), names in collisions[:MAX_PAIRS]:
+    for (left, right), overlap_count in collisions[:MAX_PAIRS]:
         a, b = all_prs[left], all_prs[right]
+        names = sorted(set(a["files"]) & set(b["files"]))
+        if len(names) != overlap_count:
+            raise ValueError("inconsistent observed cross-window file counts")
         rows.append({
             "left_url": a["url"], "right_url": b["url"],
             "left_head_sha": a["head_sha"], "right_head_sha": b["head_sha"],
             "left_snapshot": a["snapshot"], "right_snapshot": b["snapshot"],
-            "shared_files_observed": len(names),
-            "shared_paths": sorted(names)[:MAX_SHARED_PATHS],
-            "shared_paths_truncated": len(names) > MAX_SHARED_PATHS,
+            "shared_files_observed": overlap_count,
+            "shared_paths": names[:MAX_SHARED_PATHS],
+            "shared_paths_truncated": overlap_count > MAX_SHARED_PATHS,
             "actual_git_merge_conflict_verified": False,
         })
     # A compact operator worklist groups repeat offenders across observed
@@ -388,10 +394,10 @@ def combine_sources(sources, repository):
             "cross_window_number_hint_count": 0,
             "claim_authorized": False, "merge_authorized": False,
         }
-    for (left, right), names in collisions:
+    for (left, right), overlap_count in collisions:
         for number in (left, right):
             by_pr[number]["cross_window_file_pair_count"] += 1
-            by_pr[number]["cross_window_shared_file_count"] += len(names)
+            by_pr[number]["cross_window_shared_file_count"] += overlap_count
     for _, references in cross_issue_groups:
         for item in references:
             number = int(item["url"].rsplit("/", 1)[-1])
