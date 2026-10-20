@@ -531,3 +531,30 @@ spreadsheet application: the workbench explains this and the private-note
 checkbox defaults off. Original ownership, exact-head checks, independent
 review, security/consent and release gates remain unchanged. No QA or
 regression suite was authored or manually run.
+
+## 20 October · Provenance-bound two-snapshot CSV change ledger
+
+When an operator loads an earlier, validated private board, the offline
+comparison now also enables **Preview full change CSV** and a separate
+**Download reviewed two-snapshot CSV** action. This is a product export,
+not a new live GitHub/Notion observation. It serializes **all bounded issues
+from the two saved boards** (up to 60 in each), distinguishing newly
+observed, changed evidence, still observed and no-longer-observed items.
+
+Each row records both exact source SHA-256 hashes and UTC observation
+times, issue identity/link, before/after priorities and projects,
+the categories of changed source fields, both project-coverage labels,
+and both snapshot truncation/denial flags. The stable field
+`not_observed_proves_resolved=false` explicitly prevents interpreting
+an absent row as fixed, merged, released or remotely closed. All three
+authorization columns remain `false`. There are no private free-text
+annotations, owner labels, current claim assertions, network calls,
+issue mutations or external syncs in this change ledger.
+
+The full CSV must be reviewed before saving. If the earlier board is
+cleared or replaced or the underlying comparison differs, the previous
+preview is invalidated; download recomputes and byte-compares the
+provenance-bound CSV. All fields use the same quoted, control-normalized,
+formula-safe CSV handling as the single-board export. A UTF-8 BOM aids
+manual spreadsheet import. No QA suite was authored or manually executed;
+normal exact-head review, CI, protected-main and runtime gates remain intact.
