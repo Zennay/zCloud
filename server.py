@@ -3204,7 +3204,8 @@ def portfolio_queue_audit(refill=True):
     with connect() as c:
         # Only clean *unstarted*, unowned queue rows. Running/verifying
         # work must remain under its current lease even when policy changes.
-        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria FROM portfolio_queue
+        rows=c.execute("""SELECT queue_id,project_id,title,completion_criteria,
+                                 priority,source_url FROM portfolio_queue
                           WHERE eligible=1 AND status='queued'
                             AND worker_slot IS NULL
                             AND claimed_at IS NULL AND claim_expires IS NULL""").fetchall()
@@ -3212,17 +3213,37 @@ def portfolio_queue_audit(refill=True):
             project=PROJECT_INDEX.get(str(row['project_id'])) or {}
             human_gated=str(project.get('queue_mode') or '').lower()=='human-gated'
             if human_gated or not _portfolio_queue_execution_capable(row['title'],row['completion_criteria']):
-                # Recheck at the write boundary: the allocator could have
-                # claimed this row since the earlier SELECT. Never revoke
-                # another worker's lease as a side effect of queue hygiene.
-                changed=c.execute("""UPDATE portfolio_queue
-                    SET status='dropped',eligible=0,blocker=?,updated_at=?
-                    WHERE queue_id=? AND eligible=1 AND status='queued'
-                      AND worker_slot IS NULL
-                      AND claimed_at IS NULL AND claim_expires IS NULL""",
-                    ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
-                if changed.rowcount:
-                    removed.append(str(row['queue_id']))
+                # A human-gated task may be retired from worker admission
+                # only together with a durable, project-bound human action.
+                # Per-row SAVEPOINT keeps an attention failure from silently
+                # retiring this row or cancelling independent cleanup work.
+                c.execute('SAVEPOINT portfolio_audit_item')
+                try:
+                    changed=c.execute("""UPDATE portfolio_queue
+                        SET status='dropped',eligible=0,blocker=?,updated_at=?
+                        WHERE queue_id=? AND eligible=1 AND status='queued'
+                          AND worker_slot IS NULL
+                          AND claimed_at IS NULL AND claim_expires IS NULL""",
+                        ('queue-audit: non-executable or human-gated task',now(),row['queue_id']))
+                    if changed.rowcount and human_gated:
+                        _portfolio_attention_add_locked(
+                            c,
+                            row['project_id'],
+                            str(project.get('name') or row['project_id'])+
+                                ': menselijke toestemming nodig vóór uitvoering',
+                            'Het bestaande human-gated werkpakket vraagt menselijke beoordeling; '
+                                'geen automatische workerclaim of vrijgave.',
+                            row['source_url'] or project.get('notion_url') or '',
+                            'urgent' if str(row['priority']).upper()=='P0' else 'attention',
+                            attention_id=_queue_attention_id(row['queue_id']),
+                        )
+                    c.execute('RELEASE SAVEPOINT portfolio_audit_item')
+                    if changed.rowcount:
+                        removed.append(str(row['queue_id']))
+                except (ValueError,sqlite3.Error):
+                    c.execute('ROLLBACK TO SAVEPOINT portfolio_audit_item')
+                    c.execute('RELEASE SAVEPOINT portfolio_audit_item')
+                    logging.warning('Human-gated queue retirement held: attention persistence refused')
     if not refill:
         with connect() as c:
             ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
