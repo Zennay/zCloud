@@ -349,6 +349,12 @@ def pressure_reasons(s):
             urgent.append("low-root-disk-headroom")
         elif disk >= 85:
             moderate.append("limited-root-disk-headroom")
+    free = s.get("root_available_gib")
+    if type(free) in (int, float) and math.isfinite(free):
+        if free < 2:
+            urgent.append("critical-root-free-gib")
+        elif free < 5:
+            moderate.append("limited-root-free-gib")
     return urgent, moderate
 
 
@@ -499,6 +505,8 @@ REASON_LABELS = {
     "elevated-swap-use": "het swapgebruik is verhoogd",
     "low-root-disk-headroom": "de root-schijf heeft weinig vrije ruimte",
     "limited-root-disk-headroom": "de vrije ruimte op de root-schijf is beperkt",
+    "critical-root-free-gib": "minder dan 2 GiB root-schijfruimte beschikbaar",
+    "limited-root-free-gib": "minder dan 5 GiB root-schijfruimte beschikbaar",
 }
 
 
