@@ -434,10 +434,13 @@ original canonical Zennay GitHub PR URLs and unique saved PR identities.
 It never trusts saved ownership, prior mergeability or cached CI as live
 authorization. Malformed/unbounded/missing-source inputs stop before any
 GitHub query. It sorts saved PR references P0, P1, P2, Unspecified and
-observes **at most four** using the same existing max-20-read bounded current
-PR gate collector. Any fifth or later PR is explicitly **NOT OBSERVED**:
-the output contains `source_review_pr_count` and
-`review_only_top_four_observed=true` when truncated.
+observes **at most four per batch** using the same existing max-20-read
+bounded current PR gate collector. For a larger source, supply `--batch 2`,
+`--batch 3`, etc. as separate explicit operations with distinct new
+output filenames. Only the chosen batch is observed in each run; the
+output contains `source_review_pr_count`, `source_review_batch_index`,
+`source_review_batches_total`, `source_review_batch_first_pr`, and
+`source_review_batch_count` to make omitted batches explicit.
 
 The GitHub gate receipt embeds the exact imported manifest SHA256 plus the
 original board source SHA256, so the operator can reconcile two saved
@@ -453,3 +456,29 @@ The file reader makes **no edits** to its input. The optional output is
 exclusive-create mode 0600 with no overwrite, and this operation performs
 no QA execution, worker scheduling, Notion writes, PR merge, service change
 or deployment.
+
+
+### Follow-on PR gate batches: never leave the rest invisible
+
+If the manifest lists more than four existing PRs, first collect batch 1 as
+shown above, then choose a **new** output filename for each later batch:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./zsentinel-offline-merge-first-review.json \
+  --batch 2 --output ./private-current-head-gates-batch2.json
+```
+
+For direct `--pr` choices, `--batch` is not allowed. For manifest selection,
+batches are one-based and bounded by the saved candidate count;
+out-of-range requests stop before a GitHub API request. Each output
+remains a separate private 0600 source observation, not a cross-batch
+atomic view of GitHub.
+
+The offline workbench in [#1560](https://github.com/Zennay/zCloud/pull/1560)
+now rejects a supposed manifest-derived receipt if its original
+`source_review_board_sha256` does not exactly equal the currently loaded
+board, or if its batch index/start/count/total do not match the saved
+candidate count. It describes the imported batch number and explicitly
+marks all **other** batches not inspected in that file. These local
+evidence rules never authorize a merge, claim, workflow retry or deployment.
