@@ -78,6 +78,33 @@ def training_reports(cutoff: float):
         }
 
 
+
+def old_app_release_review(cutoff: float):
+    """Only named, old standalone APK exports; not live build directories.
+
+    These are REVIEW candidates, never proven superseded, archived or removable.
+    """
+    old_enough = min(cutoff, dt.datetime.now(dt.timezone.utc).timestamp() - 14 * 86400)
+    for folder, pattern, archive_group in (
+        (HOME, "RaiseAI-v*.apk", "home"),
+        (HOME / "Downloads", "*.apk", "downloads"),
+    ):
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        for path in sorted(folder.glob(pattern)):
+            if not candidate_file(path, old_enough):
+                continue
+            stat = path.stat()
+            yield {
+                "kind": "manual-review-old-app-release",
+                "source": str(path),
+                "relative_archive": f"cold/manual-app-release-review/{archive_group}/{path.name}",
+                "bytes": stat.st_size,
+                "modified_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
+                "release_superseded_verified": False,
+                "can_remove_automatically": False,
+            }
+
 def filesystem():
     root = os.statvfs("/")
     return {"total_bytes": root.f_blocks * root.f_frsize,
@@ -134,12 +161,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--older-than-days", type=int, default=MIN_AGE_DAYS)
     ap.add_argument("--limit", type=int, default=MAX_LIST)
+    ap.add_argument("--include-release-reviews", action="store_true",
+                    help="Also assess old standalone APK exports; never assert superseded or safe to prune")
     args = ap.parse_args()
     if args.older_than_days < 3 or args.limit < 1 or args.limit > 5000:
         ap.error("requires at least 3 cold days and 1..5000 displayed candidates")
     cutoff = dt.datetime.now(dt.timezone.utc).timestamp() - args.older_than_days * 86400
     totals, count, examples = {}, {}, []
-    for row in (*runner_diagnostics(cutoff), *training_reports(cutoff)):
+    additional = tuple(old_app_release_review(cutoff)) if args.include_release_reviews else ()
+    for row in (*runner_diagnostics(cutoff), *training_reports(cutoff), *additional):
         kind = row["kind"]
         totals[kind] = totals.get(kind, 0) + row["bytes"]
         count[kind] = count.get(kind, 0) + 1
@@ -152,6 +182,8 @@ def main():
         "read_only": True,
         "remote": ARCHIVE,
         "minimum_age_days": args.older_than_days,
+        "review_only_app_release_minimum_age_days": 14,
+        "review_only_app_releases_included": args.include_release_reviews,
         "filesystem": live_filesystem,
         "disk_pressure": disk_pressure(live_filesystem["free_bytes"], total_assessed),
         "archive_mount": archive_mount_status(),
@@ -165,6 +197,7 @@ def main():
             "Fuckball active cycle, latest checkpoints and 50 most recent reports",
             "FTMO live trading/paper state, credentials and browser profiles",
             "files with multiple hardlinks or symlinks",
+            "unproven superseded APK exports (manual review only, 14+ day minimum)",
         ],
         "move_policy": "Existing encrypted archive tooling must complete remote full-byte verification; never delete from inventory alone.",
         "source_deletion_authorized": False,
