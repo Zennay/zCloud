@@ -64,6 +64,13 @@ def packet(report_data):
         "host": os.uname().nodename,
         "units": report_data["units"],
         "capacity": report_data["host"],
+        "coach_state": {
+            "observed": report_data["coach"].get("observed") is True,
+            "active": report_data["coach"].get("active"),
+            "quota": report_data["coach"].get("quota"),
+            "weight": report_data["coach"].get("weight"),
+            "recommendation_matches": report_data["coach"].get("recommendation_matches"),
+        },
         "cpu_recommendation": {
             "quota_percent": report_data["quota"], "weight": report_data["weight"],
             "reasons": report_data["reasons"],
