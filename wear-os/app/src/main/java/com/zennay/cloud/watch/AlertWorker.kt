@@ -74,10 +74,15 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 // Each incident needs its OWN pending-intent identity.
                 // requestCode=0 alone made all visible cards share the last
                 // notification's target when FLAG_UPDATE_CURRENT was used.
+                val project = alert.project?.takeIf {
+                    it.matches(Regex("[a-z][a-z0-9_-]{0,39}"))
+                } ?: "cloud"
                 val intent = Intent(applicationContext, MainActivity::class.java)
                     .setAction(MainActivity.ACTION_OPEN_BLOCKER)
-                    .setData(Uri.parse("zcloud-watch://incident/" + Uri.encode(alert.id)))
+                    .setData(Uri.parse("zcloud-watch://incident/" +
+                        Uri.encode(project) + "/" + Uri.encode(alert.id)))
                     .putExtra(MainActivity.EXTRA_INCIDENT_ID, alert.id)
+                    .putExtra(MainActivity.EXTRA_PROJECT_ID, project)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 val pending = PendingIntent.getActivity(
                     applicationContext, 0, intent,
@@ -98,7 +103,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                     .build()
                 // Use the stable string tag overload, not a potentially
                 // colliding String.hashCode() notification integer.
-                manager.notify(alert.id, 0, notification)
+                manager.notify(IncidentSnoozeStore.notificationTag(alert), 0, notification)
                 // Mark only successfully posted alerts. The fourth blocked item
                 // must still be eligible at the next scheduled poll.
                 delivered += IncidentSnoozeStore.episodeKey(alert)
