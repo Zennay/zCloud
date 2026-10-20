@@ -698,6 +698,19 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                     ". Plan deze apart als rechtstreekse --candidate-pr-opdracht "
                     "met hetzelfde issue; dit is geen gelukt bronbewijs.</p>"
                 )
+            outcome_items = []
+            for item in target_coverage.get("candidate_outcomes", []):
+                pr_url = canonical_repo_url + "/pull/" + str(item["number"])
+                outcome_items.append(
+                    "<li><a href='" + esc(pr_url) + "'>PR #" +
+                    esc(item["number"]) + "</a>: " +
+                    esc(item["status"]) + " · issueverband: " +
+                    esc(item["issue_reference_source"]) + "</li>")
+            target_section += (
+                "<details open><summary>Uitkomst per opgegeven PR (" +
+                esc(len(outcome_items)) + ")</summary><ul>" +
+                "".join(outcome_items) + "</ul></details>"
+            )
             if not target_coverage["search_complete"]:
                 target_section += (
                     "<p><strong>Alle andere bestaande PRs blijven onbekend.</strong> "
@@ -902,6 +915,9 @@ def main():
                       f"{targeted['url']} state={targeted.get('current_state', 'UNKNOWN')} "
                       "(issue priority may be stale if state is UNKNOWN; not fix proof)")
                 if target_coverage.get("source") == "EXPLICIT_PR_CANONICAL_GET":
+                    for item in target_coverage.get("candidate_outcomes", []):
+                        print(f"DIRECT_PR #{item['number']} status={item['status']} "
+                              f"issue_link={item['issue_reference_source']}")
                     print("DIRECT_PR_SELECTION " +
                           ",".join(str(n) for n in target_coverage["requested_pr_numbers"]) +
                           f" inspected={target_coverage['search_examined']} " +
