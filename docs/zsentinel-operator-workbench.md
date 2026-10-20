@@ -1121,3 +1121,51 @@ de samenvatting; na zes uur wordt die als verouderd gemarkeerd. Dit is alleen
 een weergave van één bevroren, read-only bewijsset. Nul fouten in een sample
 geeft nooit groen licht: exacte verplichte GitHub-checks, benodigde reviews,
 actieve claims, hoofdbranchmerge en productie zijn afzonderlijk te verifiëren.
+
+
+## Eerdere PR-gatewaarneming vergelijken (20 oktober · merge-first)
+
+Dezelfde bestaande CLI kan één vorige, zelf gegenereerde **private JSON
+gate-bridge** vergelijken met nieuwe bronreceipts van exact hetzelfde
+reviewmanifest. Een oude bestandsmomentopname opnieuw gebruiken is geen
+nieuwe CI-check en er worden geen externe GETs of workflowruns gestart.
+
+\`\`\`sh
+# Eerste momentopname: bronreview plus oorspronkelijke 1–N receipt-batches.
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./old-gates-1.json --receipt ./old-gates-2.json \
+  --output ./prior-gate-bridge.json
+
+# Daarna zelf de werkelijk nieuw verzamelde, tijdsvolgende gate-receipts.
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./new-gates-1.json --receipt ./new-gates-2.json \
+  --previous ./prior-gate-bridge.json \
+  --format markdown --output ./private-gate-delta.md
+\`\`\`
+
+De nieuwe briefing begint met **wat veranderde sinds de vorige privéwaarneming**
+en behoudt alle oorspronkelijke prioritaire P0/P1-PR-kaarten. Voor iedere
+gekoppelde bestaande PR wordt alleen onderscheid gemaakt tussen:
+nieuwe gate-steekproef, uit huidige steekproef gevallen bron, gewijzigde
+waargenomen exacte HEAD, veranderde CI-/reviewsteekproef of onbereikbare
+bron. Verdwijning uit een begrensde steekproef is expliciet **geen bewijs
+van een merge, fix of vrijgave**.
+
+De vorige JSON moet afkomstig zijn van **exact hetzelfde SHA256-gebonden
+reviewmanifest en board**, met exact gelijk aantal batches en ouder
+afgesloten observatievenster. Een ander project-/issuevenster,
+mismatchende bron, vreemd PR-adres, latere/tijd-overlappende waarneming,
+autorisatieclaim of corrupte/private ongeldige bron wordt geweigerd.
+De oude file wordt slechts één keer veilig geopend als bounded regular file,
+zonder symlink, en nooit aangepast; de uitvoer blijft create-only 0600.
+Met \`--format json\` is \`--previous\` bewust niet toegestaan om het bestaande
+browser-importcontract onveranderd te laten.
+
+Zelfs wanneer er **geen waargenomen verschil** is, blijven verplichte
+exact-head GitHub CI, onafhankelijke review, eigenaarschap, protected main,
+releasewriter en live deploy afzonderlijk te controleren. Alleen een echte
+\`merged=true\` respons en exacte nieuwe default-branch SHA tellen als
+source-integratie op main. Geen QA-code, automatische claim, dispatch,
+workflow of productieactie is onderdeel van deze uitbreiding.
