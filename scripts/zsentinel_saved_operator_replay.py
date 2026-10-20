@@ -80,9 +80,17 @@ def render_historical(decision: dict, observed: datetime, fmt: str) -> str:
     if fmt == "desk":
         from zsentinel_incident_desk import review_html
         rendered = review_html(decision)
-        # The incident desk carries the exact original source timestamp and
-        # refuses mismatched human handoff data; never rewrite its source.
-        return rendered
+        # The incident desk has a different HTML template from the ordinary
+        # cockpit. Keep its immutable source in place, but mark saved replays
+        # conspicuously as historical so users cannot mistake old owner
+        # decisions for new GitHub/queue/CI evidence.
+        marker = "<header><small>zCLOUD / zSENTINEL / READ-ONLY SOURCE</small>"
+        if rendered.count(marker) != 1:
+            raise ValueError("incompatible historical incident desk")
+        banner = ('<header><p class="banner"><strong>HISTORISCH ARCHIEF</strong>'
+                  '<br>' + escape(warning) + '</p>'
+                  '<small>zCLOUD / zSENTINEL / READ-ONLY SOURCE</small>')
+        return rendered.replace(marker, banner, 1)
     if fmt == "ics":
         from zsentinel_human_agenda import human_calendar
         return human_calendar(decision)
