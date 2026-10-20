@@ -609,8 +609,8 @@ def main(argv=None):
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--format", choices=("json", "markdown"), default="json",
-                        help="Private JSON browser import or readable merge-first Markdown")
+    parser.add_argument("--format", choices=("json", "markdown", "html"), default="json",
+                        help="Private browser import, Markdown handoff or standalone offline HTML merge-first desk")
     parser.add_argument("--previous", type=Path,
                         help="Prior private JSON bridge for same-manifest PR delta (Markdown only)")
     parser.add_argument("--output", type=Path, required=True)
@@ -621,7 +621,13 @@ def main(argv=None):
                                    allow_partial=args.allow_partial)
         if args.previous is not None and args.format != "markdown":
             raise ValueError("Previous observation requires Markdown output")
-        if args.format == "markdown":
+        if args.format == "html":
+            # The standalone HTML is rendered from the identical validated
+            # source-bound bridge; no extra GitHub, Notion or runner reads.
+            from zsentinel_saved_gate_html import render_html
+            selected, _ = canonical_manifest(review, raw)
+            rendered = render_html(selected, result).encode("utf-8")
+        elif args.format == "markdown":
             briefing = markdown_brief(review, raw, result)
             if args.previous is not None:
                 old, _ = bounded_json(args.previous)
