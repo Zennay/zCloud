@@ -1737,3 +1737,35 @@ De command-line reports blijven one-shot en niet-destructief.
 Geen QA/regressiesuites toegevoegd of handmatig gestart.
 Verplichte exact-head CI, onafhankelijke review, beschermde
 integratie- en productie-releasegates blijven nodig.
+
+
+### 20 oktober · GitHub-bronweigering zonder portfolio-stilstand
+
+Een geweigerde GitHub-repository blokkeert niet automatisch de andere
+projecten. De collectors voor CI, productissues, exact gepinde P0/P1-issues
+en bestaande PR-checks onderbreken herhaalde calls voor de betroffen
+repository binnen dezelfde uitvoering. Onafhankelijke repositories behouden
+hun eigen begrensde bronvenster. Reeds werkelijk waargenomen items worden
+behouden, maar vormen nooit bewijs van een complete of actuele backlog.
+
+HTTP 401 krijgt de categorie `authentication_required`. HTTP 429 of
+een 403 met exact `X-RateLimit-Remaining: 0` wordt
+`rate_limit_confirmed`. Andere 403-responses blijven
+`forbidden_or_rate_limit_unknown`: geen automatische billing- of
+runnerconclusie. Alleen een bevestigde provider-rate-limit onderbreekt
+overige projecten in dezelfde collector. De historische
+`github_permission_or_rate_limit`-fouttekst blijft beschikbaar voor
+compatibiliteit; responsebody, headers, credentials en tokens worden niet
+naar het operatoroverzicht gekopieerd.
+
+Het offline dashboard toont bezochte en overgeslagen CI-vensters met
+een veilige eigenaaractie. Het portfolio noemt 401 expliciet een
+authenticatiepunt, een bevestigde limiet een reden om niet te blijven
+retryen en vrij productwerk door te zetten, en een onduidelijke 403
+een bevoegd repositoryonderzoek. Brondekking is geen toestemming
+tot claim, workflowdispatch, merge, deploy of runnerherstart.
+
+Wijzigingen zijn uitsluitend broncode op open PR #1563.
+Er zijn geen nieuwe QA-/regressiesuites geschreven of handmatig gestart.
+Exacte-head verplichte CI, zelfstandige review en release-ownership
+blijven ongewijzigd.
