@@ -465,7 +465,10 @@ def html_view(decision):
                         or not 0 < primary_run <= 2**53 - 1
                         or not 0 < primary_job <= 2**53 - 1
                         or type(primary_sha) is not str
-                        or not re.fullmatch(r"[a-f0-9]{40}", primary_sha)):
+                        or not re.fullmatch(r"[a-f0-9]{40}", primary_sha)
+                        or row.get("primary_job_status") not in ("queued", "completed")
+                        or row.get("primary_runner_route") not in (
+                            "self_hosted", "hosted_or_custom", "unknown")):
                     raise ValueError("untrusted selected GitHub job identity")
                 primary_href = ("https://github.com/" + repo +
                                 "/actions/runs/" + str(primary_run) +
