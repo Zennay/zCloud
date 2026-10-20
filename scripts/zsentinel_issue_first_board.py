@@ -163,8 +163,8 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
                        separators=(",", ":")).encode("utf-8")).hexdigest()
     if candidate_offset and expected_page_sha != page_sha:
         raise ValueError("GitHub Search candidate order changed; restart from offset zero")
-    if candidate_offset > len(matches):
-        raise ValueError("resume offset is outside this search result page")
+    if candidate_offset and candidate_offset >= len(matches):
+        raise ValueError("resume offset must identify an unread candidate on this page")
     window_start = page_start + candidate_offset
     source_page_end = page_start + len(matches)
     partial = []
