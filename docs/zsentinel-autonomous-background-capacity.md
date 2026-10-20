@@ -237,6 +237,14 @@ beschikbare blokken (`statvfs.f_bavail × f_frsize`) in GiB.
 - Historische HTML-tijdlijnen en Markdown-overdrachten nemen deze delta over;
   de waarneming is geen bewijs dat bestanden veilig zijn opgeruimd, dat
   GitHub-jobs hervat zijn of dat een release is uitgevoerd.
+- Ook wanneer het percentuele schijfgebruik de 85/90%-grenzen
+  niet bereikt, is **minder dan 2 GiB werkelijk beschikbaar** een urgente
+  brongebonden capaciteitssituatie (CPU 60%/gewicht 25 voor de trainer).
+  Bij 2–5 GiB kiest het systeem de gematigde band (100%/40).
+  Bestaande ernstige druk heeft altijd voorrang. De privé operatorweergave
+  noemt de absolute drempel als afzonderlijke oorzaak. Deze CPU-regeling
+  blijft pas actief na onafhankelijke, geautoriseerde runtime-release;
+  de code start of stopt geen training.
 - Geen disk cleaner, extra directory-scan, servicemutatie, runnerrestart,
   CI-dispatch, queueclaim of productieactivatie is toegevoegd.
 
