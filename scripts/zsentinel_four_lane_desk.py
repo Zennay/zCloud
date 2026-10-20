@@ -98,6 +98,10 @@ def collect(database, maximum):
     portfolio_counts = {}
     for row in priority_rows[:PORTFOLIO_GROUP_LIMIT]:
         project_id = row["project_id"]
+        # zSentinel is this desk's role queue, shown by the four lane cards,
+        # not an unknown fourteenth product or missing portfolio source.
+        if project_id == "zsentinel":
+            continue
         if project_id not in PORTFOLIO_PROJECTS:
             unknown_project_groups += 1
             continue
