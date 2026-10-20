@@ -30,6 +30,14 @@ The legacy GET /api/activity originally selected the latest 80 local SQLite even
 
 It also adds GET /api/activity-page with source-limited metadata, per-project keyset cursor and explicit unsynchronized-GitHub coverage. One project can be selected or the canonical registry can be used; unknown projects and malformed cursor/page scope are denied. The backend creates one SQLite deferred read snapshot per request, reads sorted per-project event streams and closes the transaction before writing the HTTP response. The composite event index (project, ts DESC, id DESC) is created only by the **normal authorized database initialization**, not by a GET. Legacy malformed timestamps cause the existing Activity array route to fall back to the old bounded behavior, whereas the explicit page route refuses corrupt time evidence.
 
+The paged metadata-only route now publishes only the four currently observed producer
+event kinds (`commit`, `milestone`, `firefox-recovery`, `firefox-crash`).
+Unexpected future, invalid or free-form database kind values are emitted as
+`other_local_event` while preserving the same source timestamp, ID cursor and
+pagination position. This prevents a raw string in a legacy `kind` column
+from being reflected as user-facing event text and does not infer that the
+event disappeared. The older full-event legacy endpoint is unchanged.
+
 This is a genuine local-feed fix, not proof of GitHub PR/CI synchronization. The independently open [Activity browser UI PR #1550](https://github.com/Zennay/zCloud/pull/1550) covers opt-in GitHub evidence, still subject to its normal gates. Original PR #1519 remains unchanged and unmerged. No QA files were copied or manually run; no production SQLite/service/runner has been modified.
 
 ## Atomic queue allocations and swap-safe new worker admission (#588)
