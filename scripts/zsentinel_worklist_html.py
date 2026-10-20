@@ -66,7 +66,8 @@ def render_html(board, max_rows=20):
                     or alt_url == pr or alt_url in other_seen
                     or gate_state not in (
                         "not_observed", "observed_failed", "observed_pending",
-                        "observed_partial_no_release_permission")
+                        "observed_partial_no_release_permission",
+                        "issue_source_stale", "source_clock_incoherent")
                     or type(other.get("file_overlap_observed")) is not bool
                     or type(other.get("source_movement_observed")) is not bool
                     or other.get("merge_authorized") is not False
@@ -195,6 +196,7 @@ def render_html(board, max_rows=20):
         permitted_gate = {
             "observed_failed", "observed_pending", "not_observed",
             "observed_partial_no_release_permission",
+            "issue_source_stale", "source_clock_incoherent",
             "inconsistent_existing_pr_gate_sources",
         }
         human_gate = group.get("human_next_gate_step")
