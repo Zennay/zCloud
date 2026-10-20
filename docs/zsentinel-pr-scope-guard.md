@@ -1128,3 +1128,21 @@ dat via `--output` ontstaat heeft automatisch permissies `0600`.
 
 Alle statuswaarden zijn menselijke aantekeningen, geen GitHub-review,
 Notion-claim, CI-bewijs, machine-action, merge- of deploybevoegdheid.
+
+
+### Bestaande PR's gebundeld over meerdere P0/P1-issuekaarten
+
+De merge-eerst operatorwerkbak groepeert een bestaande PR die in
+meerdere huidige issuekaarten voorkomt nu **één keer per canonieke
+PR-URL**. Een groep toont de hoogste waargenomen issueprioriteit en
+alle bronissue-links. Dit verschijnt boven de afzonderlijke acties in
+de gecombineerde issuecockpit, de zelfstandige offline HTML-werkbak en
+de compacte Markdown-/tekstoverdracht.
+
+De groepsweergave voorkomt dubbel werk: een operator kan de bestaande
+PR eerst bij zijn huidige eigenaar laten afronden, in plaats van twee
+parallelle fixes voor dezelfde PR-verwijzing te starten. De
+**issuevermeldingen zijn echter géén bewijs dat die PR elk issue oplost**.
+GitHub-scope, Notion-claims, CI, onafhankelijke reviews en releasegates
+moeten nog steeds separaat worden gecontroleerd. Geen claim, merge,
+dispatch, self-hosted runnerwrite of workflowactie vindt plaats.
