@@ -132,7 +132,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
 
 
 
-def current_merge_first_gates(board, token=None):
+def current_merge_first_gates(board, token=None, focus_prs=None):
     """Combine the current PR-overlap board with <=4 actual exact-head gate reads.
 
     This is one opted-in *observation*, never merge authorization or a claim.
@@ -151,6 +151,14 @@ def current_merge_first_gates(board, token=None):
                 "writes_performed"))):
         raise ValueError("untrusted source for live merge-first gate inspection")
 
+    if focus_prs is None:
+        focus_prs = []
+    if (type(focus_prs) is not list or len(focus_prs) > 4
+            or len(set(focus_prs)) != len(focus_prs)
+            or any(type(raw) is not str or
+                   re.fullmatch(r"[a-z][a-z0-9_-]{0,39}#[1-9][0-9]{0,8}", raw) is None
+                   for raw in focus_prs)):
+        raise ValueError("choose at most four distinct canonical --gate-pr project#number refs")
     buckets = []
     total_inspected = 0
     qa_only_skipped = 0
@@ -217,6 +225,18 @@ def current_merge_first_gates(board, token=None):
                     break
         if len(selected) == 4:
             break
+    if focus_prs:
+        available = {
+            project + "#" + str(pr["number"]): (project, repo, pr)
+            for bucket in buckets for project, repo, pr in bucket
+        }
+        # Existing stable double-read PR source remains authoritative.
+        # An unobserved / QA-only / changed source PR cannot be silently
+        # looked up through another route or treated as current.
+        if any(raw not in available for raw in focus_prs):
+            raise ValueError(
+                "selected PR absent from stable sampled product-PR scope; no gate reads")
+        selected = [available[raw] for raw in focus_prs]
     identities = [(repo, pr["number"]) for _, repo, pr in selected]
     gate_rows = observe_many(identities, token)["items"] if identities else []
     output = []
@@ -258,11 +278,13 @@ def current_merge_first_gates(board, token=None):
     result = {
         **board,
         "current_live_pr_gate_observation": {
-            "mode": "opt_in_one_shot_at_most_four_stable_sampled_prs",
+            "mode": ("explicit_stable_sampled_product_pr_refs" if focus_prs else
+                     "opt_in_one_shot_at_most_four_stable_sampled_prs"),
             "observed_at_utc": datetime.now(timezone.utc).isoformat(),
             "items": output,
             "inspected_stable_sample_prs": total_inspected,
             "pr_gate_receipts_requested": len(selected),
+            "explicit_selected_prs": list(focus_prs),
             "qa_only_title_prs_not_inspected": qa_only_skipped,
             "more_sampled_prs_not_gate_checked": total_inspected > len(selected),
             "source_unavailable_or_changed_projects": incomplete_projects,
@@ -563,6 +585,9 @@ def main(argv=None):
     parser.add_argument("--max-prs", type=int, default=10)
     parser.add_argument("--output", type=Path,
                         help="Create NEW private offline receipt (0600); default stdout")
+    parser.add_argument("--gate-pr", action="append", default=[],
+                        help="Optional explicit registered-project#PR target (up to four), "
+                             "must occur in stable sampled product PRs")
     parser.add_argument("--inspect-current-pr-gates", action="store_true",
                         help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
                              "in bestaande PR-steekproef (max 20 extra GETs)")
@@ -573,8 +598,11 @@ def main(argv=None):
         canonical = registry(args.registry)
         board = collect_portfolio(args.project, canonical,
                                   os.environ.get("GITHUB_TOKEN"), args.max_prs)
+        if args.gate_pr and not args.inspect_current_pr_gates:
+            raise ValueError("--gate-pr requires --inspect-current-pr-gates")
         if args.inspect_current_pr_gates:
-            board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"))
+            board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"),
+                                             focus_prs=args.gate_pr)
         if args.format == "json":
             rendered = json.dumps(board, indent=2, ensure_ascii=False) + "\n"
         elif args.format == "html":
