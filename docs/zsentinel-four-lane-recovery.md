@@ -422,6 +422,25 @@ Dit wijzigt alleen het getoonde advies. Geen kaart verleent
 claimrechten, toestemming voor runnerherstart, CI-dispatch, merge of
 deploy en geen job, runtimeproces of lokale SQLite-rij is gewijzigd.
 
+### In-flight queueclaims: brongebonden start én verval
+
+De read-only vier-lane-herstelbalie controleert nu ook de **onderlinge
+volgorde** van de bestaande `claimed_at` en `claim_expires` bij lopende
+(`claimed/running/verifying`) zSentinel-taken. Een vervaldatum in de
+toekomst is niet voldoende bewijs van een betrouwbare actieve lease wanneer
+de claimstart ontbreekt, ongeldig is, in de toekomst ligt, of wanneer het
+vervalmoment niet ná de start ligt.
+
+De balie telt dit afzonderlijk als
+`inconsistent_in_flight_queue_claim_windows_observed`; de globale
+`source_complete` wordt onwaar, `ownership_reconciliation_required`
+waar en een urgente `HOLD_CLAIM_TIME_RECONCILIATION`-kaart vraagt
+de actuele claimeigenaar om beide tijdstippen te verifiëren. Het aantal
+verschijnt in de Nederlandse console, privé offline HTML, JSON en privé
+Markdown-overdracht. Bestaande claims blijven intact: geen vervaltijd,
+queue-row, actieve worker, Notion-claim, GitHub job of runtimeconfiguratie
+wordt gewijzigd. De integratie is alleen broncode in de bestaande PR.
+
 ### Remaining release gate
 
 The feature is source-only in the open existing PR #1572. Do not call it
