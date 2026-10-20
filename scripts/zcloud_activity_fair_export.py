@@ -23,6 +23,25 @@ MAX_CURSOR_BYTES = 16384
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 
 
+def _canonical_projects() -> list[str]:
+    """Admit only the local zCloud projects.json registry, never arbitrary slugs."""
+    registry = Path(__file__).resolve().parents[1] / "projects.json"
+    raw = registry.read_bytes()
+    if len(raw) > 1024 * 1024:
+        raise ValueError("project registry too large")
+    rows = json.loads(raw.decode("utf-8"))
+    if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_PROJECTS:
+        raise ValueError("invalid canonical project registry")
+    slugs: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+            raise ValueError("invalid registry row")
+        slugs.append(row["id"])
+    if len(set(slugs)) != len(slugs):
+        raise ValueError("duplicate project ids in registry")
+    return slugs
+
+
 def _load_cursor(path: str | None, selected: list[str]) -> dict | None:
     if not path:
         return None
@@ -141,17 +160,22 @@ def _write_private(path: str, payload: bytes) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, help="existing local events SQLite database")
-    parser.add_argument("--project", action="append", required=True,
-                        help="explicit canonical project slug; repeat for fair comparison")
+    scope = parser.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--project", action="append",
+                       help="canonical registered project slug; repeat for fair comparison")
+    scope.add_argument("--all-projects", action="store_true",
+                       help="select all registered projects for the portfolio view")
     parser.add_argument("--page-size", type=int, default=MAX_PAGE)
     parser.add_argument("--cursor-file", help="previous JSON export to continue pagination")
     parser.add_argument("--format", choices=("json", "html"), default="html")
     parser.add_argument("--output", help="create-only 0600 private output path; never overwrite")
     args = parser.parse_args(argv)
     try:
-        projects = args.project
-        if len(projects) > MAX_PROJECTS:
-            raise ValueError("too many projects")
+        canonical = _canonical_projects()
+        projects = canonical if args.all_projects else args.project
+        if not projects or len(set(projects)) != len(projects) or any(
+                project not in canonical for project in projects):
+            raise ValueError("requested project is missing or duplicated in canonical registry")
         cursor = _load_cursor(args.cursor_file, projects)
         page = _read_page(args.db, projects, args.page_size, cursor)
         doc = _document(page, projects)
