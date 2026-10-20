@@ -154,7 +154,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
         raise ValueError("invalid issue search source")
     matches = found.get("items")
     total = found.get("total_count")
-    if (not isinstance(matches, list) or type(total) is not int
+    if (not isinstance(matches, list) or type(total) is not int or total < 0
             or type(found.get("incomplete_results")) is not bool):
         raise ValueError("incomplete issue search result")
     page_start = (candidate_page - 1) * TARGET_CANDIDATES_PER_PAGE
@@ -241,7 +241,9 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
         except (RuntimeError, ValueError, KeyError, TypeError):
             partial.append({"project": project, "reason": "CANDIDATE_SOURCE_UNAVAILABLE"})
         if len(rows) >= max_reports:
-            partial.append({"project": project, "reason": "LINKED_PR_REPORT_LIMIT"})
+            if (candidate_offset + examined < len(matches)
+                    or page_start + len(matches) < min(total, 1000)):
+                partial.append({"project": project, "reason": "LINKED_PR_REPORT_LIMIT"})
             break
     window_end = window_start + examined
     next_candidate_offset = (candidate_offset + examined
