@@ -17,7 +17,7 @@ from zsentinel_saved_gate_html import (
 )
 
 
-def project_worklist(selected, integrated):
+def project_worklist(selected, integrated, *, project=None):
     """Compile one source-bound, P0-first human action per observed repository.
 
     Counts are bounded sample counts, NOT an inventory of all open PRs.
@@ -90,14 +90,21 @@ def project_worklist(selected, integrated):
         project["first_candidate"] = project["candidates"][0]
         if len(project["candidates"]) != project["source_prs_observed"]:
             raise ValueError("Missing PR candidates in project worklist")
-    return sorted(indexed.values(), key=lambda p: (
+    ordered = sorted(indexed.values(), key=lambda p: (
         PRIORITIES.index(p["first_candidate"]["priority"]),
         -p["p0_prs_in_sample"], -p["p1_prs_in_sample"], p["repository"]))
+    if project is not None:
+        # Filtering happens only AFTER full original manifest/receipt admission.
+        # A repo outside the bounded snapshot is UNKNOWN, never a free project.
+        if type(project) is not str or project not in indexed:
+            raise ValueError("Project not present in this source-bound PR sample")
+        return [indexed[project]]
+    return ordered
 
 
-def portfolio_html(selected, integrated):
+def portfolio_html(selected, integrated, *, project=None):
     """Offline accessible project-level prioritization with original PR links."""
-    projects = project_worklist(selected, integrated)
+    projects = project_worklist(selected, integrated, project=project)
     e = lambda value: escape(str(value), quote=True)
     cards = []
     for p in projects:
@@ -169,9 +176,9 @@ def portfolio_html(selected, integrated):
             ''.join(cards) + '</div></section>')
 
 
-def portfolio_csv(selected, integrated):
+def portfolio_csv(selected, integrated, *, project=None):
     """One compact Excel-friendly human triage row per observed project."""
-    projects = project_worklist(selected, integrated)
+    projects = project_worklist(selected, integrated, project=project)
     stream = StringIO(newline="")
     writer = csv.writer(stream, delimiter=";", quotechar='"',
                         lineterminator="\r\n")
@@ -208,14 +215,14 @@ def portfolio_csv(selected, integrated):
 
 
 
-def portfolio_markdown(selected, integrated):
+def portfolio_markdown(selected, integrated, *, project=None):
     """Compact private project-by-project PR queue, without granting ownership.
 
     Unlike the full saved-gate review, this handoff keeps every observed PR
     next to its own project and original linked issues. A missing source is an
     explicit follow-up, never a successful or free PR.
     """
-    projects = project_worklist(selected, integrated)
+    projects = project_worklist(selected, integrated, project=project)
     lines = [
         "# zSentinel — projecten en bestaande PR-opvolging",
         "",
@@ -231,8 +238,12 @@ def portfolio_markdown(selected, integrated):
         "/" + str(integrated["expected_batch_count"]),
         "- Ontbrekende batches (UNKNOWN): " +
         (", ".join(map(str, sorted(integrated["missing_batch_indexes"]))) or "geen"),
-        "- Projecten met bronkandidaten: " + str(len(projects)) +
-        "; totaal: " + str(len(selected)),
+        "- Scope: " + (project or "alle waargenomen projecten") +
+        " (bronselectie, niet gehele GitHub-inventaris)",
+        "- Projecten getoond: " + str(len(projects)) +
+        "; PRs oorspronkelijke bron: " + str(len(selected)) +
+        "; PRs getoond: " +
+        str(sum(p["source_prs_observed"] for p in projects)),
         "",
     ]
     status_labels = {
@@ -287,14 +298,14 @@ def portfolio_markdown(selected, integrated):
     return result
 
 
-def portfolio_json(selected, integrated):
+def portfolio_json(selected, integrated, *, project=None):
     """Offline source-bound owner suggestions, never a worker-dispatch contract.
 
     Clients MUST verify fresh actual owner leases, protected-main policy and
     exact current PR HEADs independently before any authorized action. No
     statement in this report can turn unknown coverage into availability.
     """
-    projects = project_worklist(selected, integrated)
+    projects = project_worklist(selected, integrated, project=project)
     source = {
         "schema": "zsentinel-private-portfolio-work-suggestions-v1",
         "source": "saved_exact_manifest_gate_batches_not_live",
@@ -306,6 +317,9 @@ def portfolio_json(selected, integrated):
         "expected_batch_count": integrated["expected_batch_count"],
         "missing_batch_indexes": sorted(integrated["missing_batch_indexes"]),
         "known_complete_project_or_pr_inventory": False,
+        "selected_project_filter": project,
+        "original_source_pr_candidates": len(selected),
+        "filtered_pr_candidates": sum(p["source_prs_observed"] for p in projects),
         "owner_claim_verified": False,
         "required_exact_head_ci_verified": False,
         "independent_reviews_and_branch_rules_verified": False,
