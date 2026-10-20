@@ -348,8 +348,13 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                         item["ci"]["no_start_annotation_coverage"] = "unavailable"
                         if (isinstance(error, GithubAdmissionError)
                                 and error.category == "rate_limit_confirmed"):
-                            annotation_denied_repositories.add(repo)
-                        elif isinstance(error, GithubAdmissionError):
+                            # The optional annotation endpoint confirmed that
+                            # the shared GitHub budget is exhausted. Do not
+                            # burn more requests fetching legacy/reviews of
+                            # this same PR; outer exact-head source handling
+                            # marks the row incomplete and stops further PRs.
+                            raise
+                        if isinstance(error, GithubAdmissionError):
                             annotation_denied_repositories.add(repo)
                 elif repo in annotation_denied_repositories:
                     item["ci"]["no_start_annotation_coverage"] = "not_queried_after_denial"
