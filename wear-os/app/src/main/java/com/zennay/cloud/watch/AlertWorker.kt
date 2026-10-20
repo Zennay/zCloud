@@ -97,6 +97,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
     private fun AlertItem.isUrgent() =
         severity.equals("high", true) ||
         severity.equals("critical", true) ||
+        severity.equals("error", true) ||
         severity.equals("needs_attention", true)
 
     companion object { const val CHANNEL = "zennay_blockers_v2" }
