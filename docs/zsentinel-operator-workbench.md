@@ -2303,3 +2303,60 @@ Dit blijft een controle van onderling samenhangende historische
 brondata, **geen GitHub-provider-authenticatie en geen QA-suite**.
 Een geldig archief mag nog steeds geen vrijgave van eigenaarschap, CI,
 review, merge of deploy suggereren.
+
+
+## 20 oktober · Twee oude issue-ZIPs vergelijken zonder dubbele PR-implementatie
+
+De bestaande privé-issue-dossiers kunnen nu als **brongebonden tijdsverschil**
+worden gelezen via `scripts/zsentinel_saved_issue_delta.py`. De operator kan
+eerst de originele geobserveerde PRs voor een issue zien en vervolgens direct
+bekijken welke links in een latere opgeslagen bron zichtbaar, verdwenen of
+gewijzigd waren. Er wordt **nooit** afgeleid dat een verdwenen PR is gemerged
+of dat een issue is opgelost.
+
+```sh
+python3 scripts/zsentinel_saved_issue_delta.py \
+  --previous ./issue-older.zip \
+  --current ./issue-newer.zip \
+  --issue https://github.com/Zennay/zCloud/issues/1518 \
+  --format html --output ./private-issue-changes.html
+
+python3 scripts/zsentinel_saved_issue_delta.py \
+  --previous ./issue-older.zip \
+  --current ./issue-newer.zip \
+  --issue https://github.com/Zennay/zCloud/issues/1518 \
+  --format markdown --output ./private-issue-changes.md
+```
+
+De huidige bron moet **strikt nieuwer** zijn. Beide dossiers worden volledig
+gelezen en hun vijf vaste privé-ZIP-leden, SHA256-manifesten, canonieke
+issue-/PR-koppelingen en expliciet onbevoegde status opnieuw gecontroleerd.
+De bronselecties moeten dezelfde portfolioscope hebben en chronologisch
+consistente, niet-overlappende of exact aaneengesloten gedeelde bronmomenten
+bevatten. Een identieke bron kan binnen het ene dossier bijvoorbeeld
+bronnummer 3 zijn en binnen het volgende bronnummer 1; het originele
+reviewmanifest-SHA256 en de bronmetadata zijn leidend, niet zo'n lokaal
+volgnummer. Onvergelijkbare bronnen worden geweigerd.
+
+Het operatoroverzicht splitst de bronverschillen in drie duidelijke
+categorieën: voor het eerst in het latere begrensde venster waargenomen PR,
+niet meer in het latere venster waargenomen PR (onbekend, niet opgelost),
+en PRs waarvan specifieke historische gegevens veranderden. Onder die
+laatste categorie vallen onder meer de oude HEAD, hoofdblokkade,
+bronprioriteit, issuegebonden prioriteit en de laatste geobserveerde
+koppeling. De originele bron-SHA256, tijdstippen en ontbrekende batches
+staan bovenaan de HTML-/Markdownoverdracht.
+
+HTML is scriptvrij met een strikt lokaal CSP-beleid, originele canonieke
+GitHub-links en een responsieve, leesbare weergave. Beide outputformaten
+worden uitsluitend als nieuwe **0600 privébestanden** met geen-overschrijf
+semantiek aangemaakt. Bij bronverlies of een ontbrekend issue in de nieuwe
+beperkte steekproef volgt een weigering in plaats van fictieve
+herstel- of mergeclaims.
+
+Dit is operatorfunctionaliteit in de bestaande product-PR #1560. Er
+worden geen CI-/QA-suites geschreven of gestart, geen nieuwe PR geopend,
+geen actieve claims overgenomen en geen release- of VPS-systeem aangepast.
+De actuele eigenaar, vereiste exacte-head CI, onafhankelijke review,
+branch protection, main-merge en live deploy blijven afzonderlijk te
+verifiëren vóór een geautoriseerde levering.
