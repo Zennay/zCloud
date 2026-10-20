@@ -46,6 +46,10 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "source_status": "unavailable",
                 "sample_complete": False,
                 "shown_collision_pairs": [],
+                "shown_duplicate_issue_groups": [],
+                "observed_duplicate_issue_groups": None,
+                "duplicate_issue_groups_truncated": False,
+                "duplicate_issue_group_coverage_complete": False,
                 "unpaired_open_prs_not_claim_verified": [],
                 "issue_reference_source_covered": False,
                 "issue_reference_snapshot_stable": False,
@@ -70,6 +74,11 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "sample_complete": complete,
             "source_sample_complete": source["pr_file_scope_sample_complete"],
             "shown_collision_pairs": pairs,
+            "shown_duplicate_issue_groups": source["shown_duplicate_issue_groups"],
+            "observed_duplicate_issue_groups": source["observed_duplicate_issue_groups"],
+            "duplicate_issue_groups_truncated": source["duplicate_issue_groups_truncated"],
+            "duplicate_issue_group_coverage_complete": (
+                complete and source["duplicate_issue_group_coverage_complete"]),
             "unpaired_open_prs_not_claim_verified":
                 source["unpaired_open_prs_in_sample_not_claim_verified"],
             # Positive links from a *stable inspected subset* remain useful
@@ -104,6 +113,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
         "source_coverage_complete": all(i["sample_complete"] for i in items),
         "any_file_overlaps_observed": any(
             bool(i["observed_collision_pairs"]) for i in items),
+        "any_multiple_pr_issue_mentions_observed": any(
+            bool(i["observed_duplicate_issue_groups"]) for i in items),
         "notion_claims_verified": False,
         "prless_branch_owners_verified": False,
         "worker_file_leases_verified": False,
@@ -123,6 +134,8 @@ def summary_lines(view):
         " / waargenomen " + str(view["observed_open_prs"]),
         "Waargenomen gedeelde-bestandsparen: " +
         str(view["observed_collision_pairs"]),
+        "Open PR-teksten met hetzelfde issue (GEEN fix- of eigenaarsbewijs): " +
+        str(view["observed_duplicate_issue_groups"]),
         "Bron: " + ("volledige huidige open PR-lijst (geen leasebewijs)"
                      if view["sample_complete"] else "ONVOLLEDIG: andere PR's kunnen ontbreken"),
     ]
@@ -133,6 +146,14 @@ def summary_lines(view):
             " | " + str(pair["shared_file_count_observed"]) +
             " bestanden | " + pair["left"]["url"] +
             " | " + pair["right"]["url"])
+    for group in view["shown_duplicate_issue_groups"]:
+        result.append("  ISSUE #" + str(group["issue_number"]) +
+                      " · vermeld door " + str(group["open_pr_mentions_observed"]) +
+                      " open PR's, fix/eigenaar onbekend")
+        for pr in group["shown_pr_sources"]:
+            result.append("    " + pr["url"] + " @ " + pr["head_sha"][:12])
+    if view["duplicate_issue_groups_truncated"]:
+        result.append("  Issue-groepen afgekapt; bron alleen gedeeltelijk.")
     if view["unpaired_open_prs_not_claim_verified"]:
         result.append("Zonder gedeelde paden in steekproef (GEEN claimvrijgave):")
         for pr in view["unpaired_open_prs_not_claim_verified"]:
@@ -190,6 +211,13 @@ def as_markdown(board):
                          ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
                          "): " + str(pair["shared_file_count_observed"]) +
                          " gedeelde bestanden")
+        lines.extend(["", "### Meerdere open PR's noemen hetzelfde issue (geen fix-/claimbewijs)", ""])
+        for group in view["shown_duplicate_issue_groups"]:
+            refs = ", ".join("[PR](" + pr["url"] + ")" for pr in group["shown_pr_sources"])
+            lines.append("- [Issue #" + str(group["issue_number"]) + "](" +
+                         group["issue_url"] + ") · " + refs)
+        if view["duplicate_issue_groups_truncated"]:
+            lines.append("- **ONVOLLEDIG:** er zijn meer issue-groepen dan getoond.")
         if view["unpaired_open_prs_not_claim_verified"]:
             lines.extend(["", "Zonder gedeelde paden binnen de steekproef (GEEN claimvrijgave):"])
             for pr in view["unpaired_open_prs_not_claim_verified"]:
@@ -229,6 +257,18 @@ def as_html(board):
                  else "volledige huidige open-PR-steekproef" if view["sample_complete"]
                  else "onvolledige open-PR-steekproef")
         unpaired = view["unpaired_open_prs_not_claim_verified"]
+        duplicates = []
+        for group in view["shown_duplicate_issue_groups"]:
+            urls = "".join("<li><a rel='noopener noreferrer' href='" +
+                           escape(item["url"], quote=True) + "'>PR @" +
+                           escape(item["head_sha"][:12]) + "</a></li>"
+                           for item in group["shown_pr_sources"])
+            duplicates.append("<li><a rel='noopener noreferrer' href='" +
+                              escape(group["issue_url"], quote=True) +
+                              "'>Issue #" + str(group["issue_number"]) +
+                              "</a> · " + str(group["open_pr_mentions_observed"]) +
+                              " PR-tekstverwijzingen (geen fix-bewijs)<ul>" +
+                              urls + "</ul></li>")
         links = "".join(
             "<li><a rel='noopener noreferrer' href='" +
             escape(pr["url"], quote=True) + "'>PR #" +
@@ -240,6 +280,10 @@ def as_html(board):
             "<table><thead><tr><th>Open PR's</th><th>Gedeelde bestanden</th>"
             "<th>Bestandsnamen</th></tr></thead><tbody>" +
             "".join(rows) + "</tbody></table>"
+            "<h3>Meerdere open PR's noemen hetzelfde issue</h3>"
+            "<p>De links zijn tekstverwijzingen, geen bewezen oplossings-/eigenaarsrelatie.</p><ul>" +
+            ("".join(duplicates) or "<li>Geen dubbele issue-vermeldingen in gelezen steekproef.</li>") +
+            "</ul>"
             "<h3>Geen gedeelde paden in de steekproef</h3><p>Niet automatisch "
             "claimbaar; controleer nog steeds leases en PR-loze branches.</p><ul>" +
             (links or "<li>Geen andere PR's zichtbaar.</li>") +
