@@ -250,6 +250,7 @@ def render(data):
     coach = data["coach"]
     history = render_comparison(data.get("comparison"))
     timeline_html = render_timeline(data.get("timeline"), data.get("timeline_observations", 0))
+    footprint_html = render_timeline_footprint(data.get("timeline_footprint"))
     cards = []
     if not units["runner_units_observed"]:
         cards.append('<p class="warning">Runner-services konden niet worden uitgelezen. Geen bewijs van herstel.</p>')
@@ -338,6 +339,7 @@ def render(data):
 <p>{escape(coach_state)} · {escape(coach_match)}</p>
 <p>De voorbeeldinstellingen zijn niet door dit rapport toegepast.</p></section>
 {history}
+{footprint_html}
 {timeline_html}
 <h2>GitHub-runner-servicestatus</h2><p class="muted">{escape(overview)}</p>
 <div class="grid">{"".join(cards)}</div>
@@ -390,6 +392,90 @@ def offline_comparison_report(t0_path, t1_path):
 
 
 
+
+def timeline_footprint(receipts):
+    """Bounded counts of observed failed services and capacity pressure windows.
+
+    Repeated sampled failures are not separate crashes or proof of a retry.
+    """
+    from zsentinel_runner_snapshot import _unit_states
+    failed = {}
+    observed = {}
+    partial = 0
+    high_swap = 0
+    high_disk = 0
+    high_load = 0
+    unknown_capacity = 0
+    for receipt in receipts:
+        units = receipt.get("units") or {}
+        rows = _unit_states(receipt)
+        if units.get("runner_units_observed") is not True or units.get("runner_units_truncated") is not False:
+            partial += 1
+        for name, state in rows.items():
+            observed[name] = observed.get(name, 0) + 1
+            if state["state"] == "failed":
+                failed[name] = failed.get(name, 0) + 1
+        cap = receipt.get("capacity")
+        if not isinstance(cap, dict) or cap.get("source_complete") is not True:
+            unknown_capacity += 1
+            continue
+        swap, disk = cap.get("swap_used_percent"), cap.get("disk_unavailable_percent")
+        load, cores = cap.get("host_load"), cap.get("cores")
+        if not (type(swap) in (int, float) and 0 <= swap <= 100
+                and type(disk) in (int, float) and 0 <= disk <= 100
+                and type(load) in (int, float) and 0 <= load < 1e6
+                and type(cores) is int and 1 <= cores <= 4096):
+            unknown_capacity += 1
+            continue
+        high_swap += swap >= 80
+        high_disk += disk >= 90
+        high_load += load > 1.35 * cores
+    return {
+        "samples": len(receipts), "incomplete_service_samples": partial,
+        "unknown_capacity_samples": unknown_capacity,
+        "swap_high_samples": high_swap,
+        "root_high_samples": high_disk,
+        "load_high_samples": high_load,
+        "failed_observations": [
+            {"unit": name, "failed_samples": count,
+             "seen_samples": observed[name]}
+            for name, count in sorted(failed.items(),
+                                      key=lambda pair: (-pair[1], pair[0]))[:20]
+        ],
+        "restart_or_job_count_inferable": False,
+    }
+
+
+def render_timeline_footprint(summary):
+    if not isinstance(summary, dict):
+        return ""
+    samples = summary["samples"]
+    rows = []
+    for entry in summary["failed_observations"][:20]:
+        rows.append("<li><strong>" + escape(entry["unit"]) + "</strong>: "
+                    + str(entry["failed_samples"]) + " van "
+                    + str(entry["seen_samples"]) + " waarnemingen met "
+                    "systemd-status failed (geen aantal afzonderlijke crashes).</li>")
+    failed_html = "".join(rows) or (
+        "<li>Geen failed-status in waargenomen runnerregels; dit is geen "
+        "bewijs dat alle runners gezond zijn.</li>")
+    return (
+        "<section class='panel'><h2>Aanhoudende blokkades in het bronvenster</h2>"
+        "<p><strong>" + str(samples) + " privémetingen</strong> · "
+        + str(summary["incomplete_service_samples"]) + " gedeeltelijke "
+        "servicelijsten · " + str(summary["unknown_capacity_samples"])
+        + " onvolledige capaciteitsmetingen</p>"
+        "<p><strong>Druk waargenomen:</strong> hoge swap "
+        + str(summary["swap_high_samples"]) + "× · weinig rootruimte "
+        + str(summary["root_high_samples"]) + "× · hoge CPU-load "
+        + str(summary["load_high_samples"]) + "×. "
+        "Dit zijn meetmomenten, geen minuten onder druk.</p>"
+        "<h3>Als failed waargenomen services</h3><ul>" + failed_html + "</ul>"
+        "<p class='warning'>Een herhaald failed-meetmoment bewijst geen nieuwe "
+        "crash; ontbrekende services of bronnen bewijzen geen herstel. "
+        "Geen automatische herstart, claim of workflowactie.</p></section>"
+    )
+
 def offline_timeline_report(paths):
     """Replay 3–12 owner-private snapshots; never sample current host or services."""
     from zsentinel_runner_snapshot import changes, load_private, _parsed, MAX_AGE_HOURS
@@ -406,6 +492,7 @@ def offline_timeline_report(paths):
     data = offline_comparison_report(paths[-2], paths[-1])
     data["timeline"] = pairs
     data["timeline_observations"] = len(receipts)
+    data["timeline_footprint"] = timeline_footprint(receipts)
     return data
 
 
