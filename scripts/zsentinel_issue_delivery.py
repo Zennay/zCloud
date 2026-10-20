@@ -432,6 +432,11 @@ def render_pr_delta_html(board):
         return ""
     changed = delta["changed_or_newly_observed"]
     older = delta["prior_no_longer_observed_NOT_MERGED"]
+    stale_projects = delta.get("projects_without_newer_read", [])
+    if (type(stale_projects) is not list or
+            any(type(pid) is not str or pid not in board["projects"]
+                for pid in stale_projects)):
+        raise ValueError("untrusted portfolio project chronology")
     links = "".join(
         '<li><a href="' + escape(row["url"], quote=True) +
         '" target="_blank" rel="noopener noreferrer">' +
@@ -455,6 +460,11 @@ def render_pr_delta_html(board):
             ' · Eerder gezien, nu niet gesampled: ' + str(len(older)) +
             ' · Nieuw in beperkte steekproef: ' +
             str(delta["newly_sampled_not_new_pr_count"]) + '.</p>'
+            ('<p class="notice">PROJECTVENSTERS NIET NIEUWER: ' +
+             escape(", ".join(stale_projects)) +
+             '. HEAD-afwijking of afwezigheid voor deze projecten '
+             'is niet betrouwbaar vergelijkbaar.</p>'
+             if stale_projects else '') +
             '<p class="notice">Een verdwenen PR is NIET als gemerged of '
             'gesloten bewezen. Uitgeschoven paginering en verminderde '
             'GitHub-toegang kunnen dezelfde bronafwijking veroorzaken. '
@@ -874,6 +884,8 @@ def render_markdown(board):
             str(delta["newly_sampled_not_new_pr_count"]),
             "Niet langer gesampled (NOOIT merge-/sluitingsbewijs): " +
             str(delta["prior_not_in_current_bounded_sample_count"]),
+            "Projectvensters niet nieuwer dan voorheen (GEEN HEAD-vergelijking): " +
+            ", ".join(delta.get("projects_without_newer_read", [])),
             "Bronwaarnemingen vereisen actuele CI/review/ownercontrole. "
             "Geen volledig PR-overzicht of mergeautoriteit."
         ])
