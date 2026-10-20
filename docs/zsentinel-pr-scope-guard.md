@@ -67,3 +67,26 @@ De bron is een begrensde GitHub-GET-steekproef: maximaal 48 open PR's worden ge�
 *Exitcode*: `2` betekent zichtbare bestandsoverlap, `3` onvolledige bron zonder overlap, `0` complete stabiele open-PR-steekproef zonder overlap. Ook code `0` geeft geen claim-, edit-, merge- of deployrechten.
 
 Deze conflictkaart maakt de grote open-PR backlog bespreekbaar voordat een worker bestaand werk dupliceert. Eventuele bronbotsingen moeten eerst langs de echte eigenaar/lease- en reviewprocedure. Een oude open PR is nooit op zichzelf bewijs van actuele eigenaarschap.
+
+
+## Portfoliooverzicht voor de vliegende keep: 1–3 projecten
+
+Dezelfde bestaande read-only GitHub-bron kan nu meerdere **verschillende canoniek geregistreerde** projecten in één run bekijken. Dit is vooral nuttig als zSentinel een geblokkeerde release moet parkeren en een andere onafhankelijke backlog wil inspecteren.
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --project haxlab \
+  --max-prs 10 --format html \
+  > /secure/location/zsentinel-portfolio-pr-conflicten.html
+```
+
+Ook ondersteund: `--format markdown` (een direct leesbare, handmatig te delen PR-handoff), `--format text` en `--format json`. De Markdown-uitvoer is een privé-operatorresultaat op stdout: er wordt **niets** automatisch geüpload naar GitHub, Notion of het zCloud-portfoliosysteem.
+
+De maximale bronbelasting per run is **3 projecten × (16 open PR-file GET + 2 open PR-list GET) = 54 publieke GitHub GET-aanvragen**. Standaard bekijkt het programma 10 open PR's per project (maximaal 36 GET over drie projecten), zodat het onder de typische anonieme primaire GitHub API-uurgrens blijft. Rechten, huidige quota en latency kunnen alsnog een bron weigeren; een geweigerd project krijgt `source_status=unavailable` en blokkeert **niet** het onafhankelijke inzicht van een ander project. Dat geeft nooit een kunstmatige `0 conflicten` voor een geweigerde bron.
+
+Dit is **broninspectie, geen autonome werktoewijzing**: een botsing kan de operator helpen een bestaande PR te hergebruiken, maar deze tool mag geen claim-lease overnemen, merge doen of runner herstellen. Het portfoliorapport gebruikt uitsluitend `observed_*`-velden en zet alle autorisatieflags expliciet op `false`.
+
+De drie functies kunnen apart worden gebruikt:
+1. `zsentinel_pr_scope_guard.py --project PROJECT --path FILE`: gericht geplande bestanden vergelijken.
+2. `zsentinel_pr_scope_guard.py --project PROJECT --source-pr NUMMER`: één bestaande PR vergelijken met de rest.
+3. `zsentinel_pr_scope_portfolio.py --project PROJECT [--project ...]`: een read-only conflictkaart over meerdere projecten.
