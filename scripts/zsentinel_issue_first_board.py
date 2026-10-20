@@ -72,7 +72,7 @@ def collect(projects, registry, budget):
                 rank = eligible_pr(entry)
                 if rank is not None:
                     available.append((rank, position, entry))
-            links = link_candidates([item for _, _, item in available], issues)
+            links = link_candidates([item for _, _, item in available], issues, repo=repo)
             sorted_prs = sorted(
                 available,
                 key=lambda item: (
@@ -189,7 +189,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
             if not isinstance(body, str) or len(body) > 128000:
                 continue
             if issue_number not in reference_hints(record["title"], body,
-                                                    {issue_number}):
+                                                    {issue_number}, repo=repo):
                 continue
             fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
             title_digest = hashlib.sha256(
@@ -203,7 +203,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
                 report["observed_issue_refs"] = [issue_info]
                 report["issue_reference_source"] = (
                     "TARGETED_VERIFIED_PR_BODY" if
-                    issue_number in references(body, {issue_number})
+                    issue_number in references(body, {issue_number}, repo=repo)
                     else "TARGETED_VERIFIED_PR_TITLE"
                 )
             else:
