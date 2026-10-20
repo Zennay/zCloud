@@ -634,8 +634,8 @@ def main(argv=None):
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv"), default="json",
-                        help="Private browser import, Markdown, offline HTML, PR CSV or project-level CSV")
+    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json"), default="json",
+                        help="Private browser import, Markdown, offline HTML, PR/project CSV or owner-neutral portfolio JSON")
     parser.add_argument("--previous", type=Path,
                         help="Prior private JSON bridge for same-manifest PR change view (HTML or Markdown)")
     parser.add_argument("--output", type=Path, required=True)
@@ -646,7 +646,13 @@ def main(argv=None):
                                    allow_partial=args.allow_partial)
         if args.previous is not None and args.format not in ("markdown", "html"):
             raise ValueError("Previous observation requires a human-readable handoff")
-        if args.format == "portfolio-csv":
+        if args.format == "portfolio-json":
+            # Downstream runtime owners receive only source-bound suggestions,
+            # never dispatch/claim/release permission or all-clear evidence.
+            from zsentinel_saved_gate_portfolio import portfolio_json
+            selected, _ = canonical_manifest(review, raw)
+            rendered = portfolio_json(selected, result).encode("utf-8")
+        elif args.format == "portfolio-csv":
             # Project-level work slices must preserve unknown gates and
             # never infer that absent projects have no open product PRs.
             from zsentinel_saved_gate_portfolio import portfolio_csv
