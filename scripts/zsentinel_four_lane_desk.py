@@ -344,6 +344,12 @@ def collect(database, maximum, include_runner_processes=False):
             ),
             # Scope, queue IDs and worker/claim identity are intentionally absent.
         })
+    admission_counts = {
+        "active_owner_protected": sum(lane["admission"]["code"] == "ACTIVE_OWNER_PROTECTED" for lane in visible),
+        "held_for_owner_or_source": sum(lane["admission"]["code"].startswith("HOLD_") for lane in visible),
+        "local_candidate_external_gates": sum(lane["admission"]["code"] == "CANDIDATE_EXTERNAL_GATES" for lane in visible),
+        "no_local_candidate_observed": sum(lane["admission"]["code"] == "NO_LOCAL_CANDIDATE" for lane in visible),
+    }
     packet = {
         "schema": "zsentinel.four-lane-desk.v1",
         "observed_utc": now.replace(microsecond=0).isoformat(),
@@ -375,6 +381,7 @@ def collect(database, maximum, include_runner_processes=False):
         "dispatch_authorized": False,
         "release_authorized": False,
         "lanes": visible,
+        "admission_summary": admission_counts,
         "source_complete": source_complete,
         "ownership_reconciliation_required": bool(
             expired or expired_queue_claims or unknown_queue_claim_expiry
@@ -399,6 +406,14 @@ def text_view(data):
         "zSentinel · herstelbalie (alleen lezen)",
         "Bron: lokale, begrensde SQLite-snapshot; eigenaarvrijheid NIET afleidbaar.",
     ]
+    summary = data["admission_summary"]
+    out.append(
+        "Beslisoverzicht: " + str(summary["active_owner_protected"])
+        + " eigenaars beschermd; " + str(summary["held_for_owner_or_source"])
+        + " banen HOLD; " + str(summary["local_candidate_external_gates"])
+        + " lokale kandidaten met externe gates; "
+        + str(summary["no_local_candidate_observed"]) + " zonder lokale taak."
+    )
     for lane in data["lanes"]:
         extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
         if lane["deferred_qa_packages"]:
@@ -635,6 +650,14 @@ def html_view(data):
         if data["portfolio_priority_partial"] or data["portfolio_unknown_project_groups"]
         else "<p>Alleen lokale wachtrij, geen live GitHub-issue- of Notion-claimbewijs.</p>"
     )
+    summary = data["admission_summary"]
+    admission_banner = (
+        "<p class='warn' role='status'>"
+        + str(summary["active_owner_protected"]) + " bestaande eigenaar(s) beschermd · "
+        + str(summary["held_for_owner_or_source"]) + " baan/banen HOLD · "
+        + str(summary["local_candidate_external_gates"]) + " lokale kandidaten zonder externe toelating · "
+        + str(summary["no_local_candidate_observed"]) + " zonder lokale taak.</p>"
+    )
     return (
         "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -664,7 +687,8 @@ def html_view(data):
         "</style></head><body><main><header><div class='eyebrow'>"
         "Portfolio recovery · operatorweergave</div><h1>Vier herstelbanen</h1>"
         "<p>Actueel lokaal bronmoment: "
-        + html.escape(data["observed_utc"]) + "</p></header><div class='grid'>"
+        + html.escape(data["observed_utc"]) + "</p>"
+        + admission_banner + "</header><div class='grid'>"
         + "".join(cards) + "</div><section class='notice'>"
         "<h2>Veilige herstelacties</h2><p>Elke kaart: probleem, actie en status. Alleen advies.</p>"
         "<div class='grid'>" + action_cards + "</div></section><section class='notice'>"
@@ -690,6 +714,13 @@ def markdown_view(data):
         "**Lokale bron:** " + data["observed_utc"],
         "**Context:** alleen read-only wachtrijobservatie; Notion-claims en"
         " GitHub-releasegates NIET gecontroleerd.",
+        "**Beslisoverzicht:** "
+        + str(data["admission_summary"]["active_owner_protected"])
+        + " eigenaars beschermd; "
+        + str(data["admission_summary"]["held_for_owner_or_source"])
+        + " banen HOLD; "
+        + str(data["admission_summary"]["local_candidate_external_gates"])
+        + " lokale kandidaten zonder externe toelating.",
         "",
         "## Actiekaarten",
     ]
