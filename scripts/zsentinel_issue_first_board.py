@@ -970,6 +970,17 @@ def main():
                       f"issue refs={refs}; review={item['review']}; CI={item['checks']}; "
                       f"workflows={item.get('workflows', 'UNKNOWN')}; "
                       f"next={'; '.join(item['actions'])}")
+                holds = item.get("workflow_holds")
+                if isinstance(holds, dict):
+                    if holds.get("coverage") != "COMPLETE":
+                        print(f"  CI_RUN_SOURCE {item['repo']}#{item['number']} UNKNOWN")
+                    else:
+                        for hold in holds.get("items", []):
+                            print(f"  CI_OBSERVED_NON_GREEN {hold['status']} "
+                                  f"{hold['name']} {hold['url']} | "
+                                  f"next: {hold['next_action']}")
+                        if holds.get("more"):
+                            print("  CI_HOLD_MORE additional observations outside bounded display")
             for issue in unmatched:
                 print(f"OPEN_UNLINKED_OBSERVED {issue['priority']} "
                       f"{issue['repo']}#{issue['number']} (ownership unknown)")
