@@ -232,18 +232,36 @@ private fun HomeScreen(
                         )
                         Spacer(Modifier.height(4.dp))
                         if (expanded) {
-                            val separator = " · Actie: "
-                            val parts = alert.message.split(separator, limit = 2)
-                            if (parts.size == 2 && parts[0].startsWith("Oorzaak: ")) {
+                            val cause = alert.cause?.takeIf { it.isNotBlank() }
+                            val action = alert.action?.takeIf { it.isNotBlank() }
+                            val impact = alert.impact?.takeIf { it.isNotBlank() }
+                            if (cause != null && action != null) {
                                 Label("OORZAAK", Warning)
-                                Text(parts[0].removePrefix("Oorzaak: "),
-                                     color = TextMain, fontSize = 11.sp)
+                                Text(cause, color = TextMain, fontSize = 11.sp)
+                                if (impact != null) {
+                                    Spacer(Modifier.height(7.dp))
+                                    Label("IMPACT", Blue)
+                                    Text(impact, color = TextMain, fontSize = 11.sp)
+                                }
                                 Spacer(Modifier.height(7.dp))
                                 Label("VOLGENDE ACTIE", Accent)
-                                Text(parts[1], color = TextMain, fontSize = 11.sp)
+                                Text(action, color = TextMain, fontSize = 11.sp)
                             } else {
-                                Label("DETAILS", Blue)
-                                Text(alert.message, color = TextMain, fontSize = 11.sp)
+                                // Backward-compatible with older watch servers:
+                                // use the combined description if source fields
+                                // have not yet reached the deployed endpoint.
+                                val parts = alert.message.split(" · Actie: ", limit = 2)
+                                if (parts.size == 2 && parts[0].startsWith("Oorzaak: ")) {
+                                    Label("OORZAAK", Warning)
+                                    Text(parts[0].removePrefix("Oorzaak: "),
+                                         color = TextMain, fontSize = 11.sp)
+                                    Spacer(Modifier.height(7.dp))
+                                    Label("VOLGENDE ACTIE", Accent)
+                                    Text(parts[1], color = TextMain, fontSize = 11.sp)
+                                } else {
+                                    Label("DETAILS", Blue)
+                                    Text(alert.message, color = TextMain, fontSize = 11.sp)
+                                }
                             }
                             alert.occurredAt?.let { seen ->
                                 Spacer(Modifier.height(7.dp))
