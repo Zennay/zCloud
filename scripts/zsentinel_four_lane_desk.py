@@ -64,7 +64,7 @@ def _utc(value):
         return None
 
 
-def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch):
+def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim, active_profile_mismatch, local_config_mismatch):
     """Map a local lane observation to human-only admission guidance.
 
     This deliberately never claims a task and is not an admission token.
@@ -79,6 +79,12 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "code": "ACTIVE_OWNER_PROTECTED",
             "label": "Bestaande eigenaar behouden",
             "next_step": "Controleer actuele claimhouder en voortgang; neem deze taak niet over.",
+        }
+    if local_config_mismatch:
+        return {
+            "code": "HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH",
+            "label": "Lokale configuratie gebruikt niet het voorgestelde vierbaanprofiel",
+            "next_step": "Laat de runtime-eigenaar eerst het lokaal geobserveerde contract en de geladen serviceconfiguratie vergelijken.",
         }
     if expired_local_leases:
         return {
@@ -392,7 +398,7 @@ def collect(database, maximum, include_runner_processes=False, contracts_file=No
         admission = operator_admission(
             lane, source_complete, cross_lane_coverage,
             collision_counts[lane["lane_id"]], expired, missing_local_claim,
-            active_profile_mismatch,
+            active_profile_mismatch, local_config_mismatch,
         )
         visible.append({
             "id": lane["lane_id"],
@@ -570,6 +576,11 @@ def text_view(data):
                    str(data["inconsistent_in_flight_queue_claim_windows_observed"])
                    + " actieve queue-claimvensters hebben onmogelijke of ontbrekende start; "
                    "behoud huidige eigenaar.")
+    config = data["local_contract_evidence"]
+    out.append(
+        "Lokaal contract: " + config["status"] + "; profiel "
+        + config["profile"] + "; voorgesteld portfolio-recovery; geladen service NIET geverifieerd."
+    )
     if data["active_legacy_profile_claims_observed"]:
         out.append("MIGRATIE-HOLD: "
                    + str(data["active_legacy_profile_claims_observed"])
@@ -636,6 +647,14 @@ def html_view(data):
             + "</p></article>"
         )
     warnings = []
+    config = data["local_contract_evidence"]
+    if config["matches_proposed_profile"] == "MISMATCH_LOCAL_FILE":
+        warnings.append(
+            "Het lokale projectcontract gebruikt profiel " + config["profile"]
+            + " in plaats van portfolio-recovery. Dit is geen bewijs van het geladen serviceprofiel."
+        )
+    elif config["status"] != "OBSERVED_LOCAL_FILE":
+        warnings.append("Lokaal projectcontract niet betrouwbaar waargenomen; live profiel onbekend.")
     if data["expired_local_leases_observed"]:
         warnings.append(
             str(data["expired_local_leases_observed"])
@@ -829,6 +848,10 @@ def markdown_view(data):
         "**Lokale bron:** " + data["observed_utc"],
         "**Context:** alleen read-only wachtrijobservatie; Notion-claims en"
         " GitHub-releasegates NIET gecontroleerd.",
+        "**Lokaal contract:** "
+        + data["local_contract_evidence"]["status"] + " / "
+        + data["local_contract_evidence"]["profile"]
+        + " (geladen service: NIET GEVERIFIEERD).",
         "**Beslisoverzicht:** "
         + str(data["admission_summary"]["active_task_reservations"])
         + " actieve taken in "
@@ -934,6 +957,8 @@ def main():
         description="Read-only four-lane zSentinel occupancy desk"
     )
     parser.add_argument("--db", default="history.db", help="Read-only SQLite source")
+    parser.add_argument("--contracts-file", default=None,
+                        help="Optional local contract JSON; default sibling of DB; read-only")
     parser.add_argument("--max-rows", type=int, default=250)
     parser.add_argument("--runner-processes", action="store_true",
                         help="Read only local /proc listener presence; no job or online proof")
@@ -946,7 +971,8 @@ def main():
         parser.error("HTML/Markdown requires --output, other formats cannot write files")
     try:
         packet = collect(args.db, args.max_rows,
-                         include_runner_processes=args.runner_processes)
+                         include_runner_processes=args.runner_processes,
+                         contracts_file=args.contracts_file)
         if args.format == "html":
             save_private(args.output, html_view(packet), ".html")
             print("Privé herstelbalie gemaakt (0600); geen systeemactie.")
