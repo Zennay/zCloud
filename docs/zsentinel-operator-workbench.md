@@ -885,3 +885,30 @@ partially ingested.
 
 No QA/regression suite, runner restart or privileged production task is
 needed for this offline source feature.
+
+
+### 20 October · Direct PR navigation for missing batches
+
+The partial bridge now records `missing_batch_prs`: for every absent
+original four-PR review batch, it includes its **exact saved canonical PR
+links**. These are extracted from the original previously reviewed manifest;
+they are NOT live-open, current-head, check, review, ownership or deployment
+evidence.
+
+The browser validates the missing batch index sequence, exact expected PRs
+per numbered batch, uniqueness and that every URL belonged to the already
+validated original saved board. A missing-batch PR cannot simultaneously
+appear as a received gate receipt. Invalid source fails atomically without
+replacing a previously imported observation.
+
+In the merge-first desk, a new **PR links with no saved gate observation**
+area provides the original clickable links, grouped by missing batch,
+explicitly marked **UNKNOWN**. The operator can use the existing
+`zsentinel_pr_gate_now.py --from-review <original-reviewed-manifest>
+--batch <number>` read-only collector for just the missing batch when
+appropriate. The Markdown and JSON review-only handoffs include the
+same unobserved PR links; neither output constitutes permission to inspect
+private data, claim work, start CI, merge or deploy.
+
+All original source limits, exact-head release gates, private local file
+permissions and no-network browser restrictions remain unchanged.
