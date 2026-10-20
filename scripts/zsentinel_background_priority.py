@@ -32,7 +32,8 @@ def _boot_token():
     """Opaque process lifetime scope for conservative promotion admission."""
     try:
         boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-        if not re.fullmatch(r"[0-9a-fA-F-]{36}", boot):
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
+                            boot.lower()):
             return None
         return hashlib.sha256(boot.encode("ascii")).hexdigest()[:24]
     except (OSError, UnicodeError):
@@ -91,6 +92,12 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
     if (recommended_quota <= current_quota + 0.2
             and recommended_weight <= actual_weight):
         return recommended_quota, recommended_weight, "no-promotion-needed", None
+    # Never jump from a throttled 60% coach directly to 175% on
+    # one approval window: recover via 100%/40 weight, then require
+    # another independent five-minute low-pressure window for 175%.
+    if recommended_quota > 100 and current_quota < 99.8:
+        recommended_quota = 100
+        recommended_weight = min(recommended_weight, 40)
     candidate = {
         "boot": boot, "target_quota": recommended_quota,
         "target_weight": recommended_weight,
