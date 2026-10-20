@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from html import escape
+from contextlib import closing
 import json
 import os
 import re
@@ -181,7 +182,7 @@ def worker_safety_snapshot(root: Path) -> dict:
             return evidence
         # A separate read-only connection prevents accidental schema setup,
         # queue reconciliation or mutating GET side effects.
-        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2) as conn:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)) as conn:
             conn.execute("PRAGMA query_only=ON")
             conn.execute("PRAGMA busy_timeout=2000")
             conn.execute("BEGIN")
