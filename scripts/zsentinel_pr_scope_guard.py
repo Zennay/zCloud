@@ -584,6 +584,74 @@ def issue_identity(repo, number, token):
     return observation("confirmed_open_issue_at_observation", priority)
 
 
+MAX_CLUSTER_DISPLAY_PATHS = 16
+
+
+def linked_pr_collision_clusters(observed, pairs):
+    """Group PRs by transitive shared filenames: observation, not permission."""
+    by_num = {row["number"]: row for row in observed}
+    parent = {number: number for number in by_num}
+
+    def root(number):
+        while parent[number] != number:
+            parent[number] = parent[parent[number]]
+            number = parent[number]
+        return number
+
+    for left, right in sorted(pairs):
+        x, y = root(left), root(right)
+        if x != y:
+            parent[max(x, y)] = min(x, y)
+
+    groups = {}
+    for (left, right), paths in pairs.items():
+        leader = root(left)
+        group = groups.setdefault(leader, {
+            "pr_numbers": set(), "shared_paths": set(),
+            "observed_edge_count": 0, "degree": {},
+        })
+        group["pr_numbers"].update((left, right))
+        group["shared_paths"].update(paths)
+        group["observed_edge_count"] += 1
+        group["degree"][left] = group["degree"].get(left, 0) + 1
+        group["degree"][right] = group["degree"].get(right, 0) + 1
+
+    clusters = []
+    for group in groups.values():
+        numbers = sorted(group["pr_numbers"])
+        paths = sorted(group["shared_paths"])
+        ranked = sorted(numbers, key=lambda n: (-group["degree"][n], n))
+        most_links = group["degree"][ranked[0]]
+        clusters.append({
+            "pr_count_observed": len(numbers),
+            "shared_file_edge_count_observed": group["observed_edge_count"],
+            "distinct_shared_file_count_observed": len(paths),
+            "shared_files_sample": paths[:MAX_CLUSTER_DISPLAY_PATHS],
+            "shared_files_sample_truncated": len(paths) > MAX_CLUSTER_DISPLAY_PATHS,
+            "participating_prs": [
+                {"number": number, "url": by_num[number]["url"],
+                 "head_sha": by_num[number]["head_sha"],
+                 "base_sha": by_num[number]["base_sha"],
+                 "other_prs_with_shared_files_observed": group["degree"][number]}
+                for number in ranked
+            ],
+            "highest_connected_pr_numbers_observed": [
+                number for number in ranked if group["degree"][number] == most_links
+            ],
+            "component_has_unobserved_prs": "NOT_INFERABLE",
+            "ownership_verified": False,
+            "merge_conflict_verified": False,
+            "integration_order_authorized": False,
+        })
+    clusters.sort(key=lambda c: (-c["distinct_shared_file_count_observed"],
+                                 -c["pr_count_observed"],
+                                 -c["shared_file_edge_count_observed"],
+                                 min(pr["number"] for pr in c["participating_prs"])))
+    for index, cluster in enumerate(clusters, 1):
+        cluster["component_number"] = index
+    return clusters
+
+
 def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                            page_count=1, resolve_issue_identity=False):
     """Show PR-to-PR file collisions over a bounded, double-read open PR window.
@@ -737,6 +805,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
     # could otherwise touch the exact same path.
     not_paired = ([pr for pr in observed if pr["number"] not in collided]
                   if fully_sampled else [])
+    clusters = linked_pr_collision_clusters(observed, pairs)
     return {
         "schema": "zsentinel-pr-file-collision-graph-v1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -800,6 +869,9 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
             all(pr["issue_reference_text_covered"] for pr in chosen),
         "observed_file_collision_pairs": len(ordered),
         "shown_file_collision_pairs": cards,
+        "observed_connected_pr_collision_clusters": len(clusters),
+        "linked_pr_collision_clusters": clusters,
+        "clusters_are_observed_edges_only_not_ownership_or_merge_authority": True,
         "unpaired_open_prs_in_sample_not_claim_verified": not_paired,
         "unpaired_means_no_shared_paths_in_sample_only": True,
         "unpaired_hidden_because_source_incomplete": not fully_sampled,
@@ -859,6 +931,22 @@ def graph_operator_text(report):
                       str(receipt["observed_prs"]))
     if report["cross_page_duplicate_prs_observed"]:
         result.append("WAARSCHUWING: PR dubbel op pagina's; bron mogelijk verschoven.")
+    for cluster in report["linked_pr_collision_clusters"]:
+        result.append(
+            "BESTANDSCONNECTIE-GROEP " + str(cluster["component_number"]) + " · " +
+            str(cluster["pr_count_observed"]) + " open PRs · " +
+            str(cluster["shared_file_edge_count_observed"]) + " paren · " +
+            str(cluster["distinct_shared_file_count_observed"]) + " gedeelde bestanden")
+        for pr in cluster["participating_prs"]:
+            result.append(
+                "  PR #" + str(pr["number"]) + " · " +
+                str(pr["other_prs_with_shared_files_observed"]) +
+                " verbindingen | " + pr["url"] + " @ " + pr["head_sha"][:12])
+        for path in cluster["shared_files_sample"]:
+            result.append("  gedeeld bestand: " + path)
+        if cluster["shared_files_sample_truncated"]:
+            result.append("  Meer gedeelde paden; weergave ingekort.")
+        result.append("  Alleen waargenomen bestandspaden; geen eigenaar of mergevolgorde.")
     for row in report["shown_file_collision_pairs"]:
         a, b = row["left"], row["right"]
         result.append("PR #" + str(a["number"]) + " ↔ PR #" + str(b["number"]) +
