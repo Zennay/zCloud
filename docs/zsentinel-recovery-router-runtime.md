@@ -2051,3 +2051,23 @@ Het scherm claimt dan nooit "nul blokkades", "lege actuele owner-inbox"
 of "werkhervatting bevestigd": voor de nieuwe velden blijft de status
 ONBEKEND totdat de gebruiker bewust een verse read-only SQLite-observatie
 maakt. Oude source-bestanden worden niet aangepast of herschreven.
+
+### Een foutsignaal is niet eeuwig een actuele blokkade
+
+De huidige bron had de status `recent_client_block_event_owner_review`
+kunnen blijven afgeven nadat hetzelfde worker-slot alweer een
+`generation-progress` of `generation-finished` event had gemeld. De
+observer maakt dit onderscheid nu expliciet: wanneer de nieuwste
+aan de laatste prompt gerelateerde browserblokkade gevolgd wordt door
+een **jonger, recent generatie-event**, toont hij
+`post_block_progress_signal_owner_verification_required`.
+Het oude foutsignaal blijft zichtbaar in de afgekorte tijdlijn;
+de actie wordt **controleer de werkcontinuïteit bij de eigenaar** en
+niet "oude blokkade automatisch herstellen". Als er geen recent later
+signaal bestaat blijft de originele blokkadeclassificatie intact.
+
+Een browser `generation-finished` of `generation-progress` kan niet
+bewijzen dat een GitHub-commit, codebuild, Notion-afronding, queuelease
+of andere productoutput tot stand is gekomen. Deze nieuwe categorie
+heeft daarom dezelfde read-only/human-review grenzen; hij neemt
+geen enkele claim over en doet geen herstel- of continue-actie.
