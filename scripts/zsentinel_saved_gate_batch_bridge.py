@@ -228,6 +228,15 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path], *, allow_pa
     missing = sorted(set(range(1, total + 1)) - set(indexed))
     if missing and not allow_partial:
         raise ValueError("Saved review batches missing; explicitly allow partial observations")
+    # Show exact *existing* unobserved PR references for human follow-up.
+    # These are source-manifest references, not evidence that the PR is open,
+    # unclaimed, green or authorized for merge/release.
+    missing_batch_prs = [
+        {"batch_index": index,
+         "unobserved_pr_urls": [
+             row[3]["url"] for row in selected[(index - 1) * 4:index * 4]]}
+        for index in missing
+    ]
     issue_map = {}
     for position, (_, _, _, ref) in enumerate(selected):
         url = ref["url"]
@@ -263,6 +272,7 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path], *, allow_pa
         "review_candidate_pr_count": len(selected),
         "missing_batch_count": len(missing),
         "missing_batch_indexes": missing,
+        "missing_batch_prs": missing_batch_prs,
         "all_batches_observed_not_all_checks_required_verified": not missing,
         "saved_receipts_not_required_checks_verified": True,
         "claim_authorized": False,
