@@ -641,15 +641,19 @@ def main():
             quota, weight, mode = newer_quota, newer_weight, newer_mode
             urgent, moderate = pressure_reasons(s)
             reasons = urgent + moderate
-        # No command shell, no privileged unit and no service restart.
-        subprocess.run(
-            ["systemctl", "--user", "set-property", "--runtime",
-             UNIT, f"CPUQuota={float(effective_quota):g}%", f"CPUWeight={effective_weight}"],
-            check=True, timeout=12, stdout=subprocess.DEVNULL,
-        )
-        actual = installed_cgroup()
-        if not matches_cgroup(actual, effective_quota, effective_weight):
-            raise SystemExit("Coach policy not verified after systemd update")
+        if not matches_cgroup(newer_cgroup, effective_quota, effective_weight):
+            # No command shell, no privileged unit and no service restart.
+            subprocess.run(
+                ["systemctl", "--user", "set-property", "--runtime",
+                 UNIT, f"CPUQuota={float(effective_quota):g}%",
+                 f"CPUWeight={effective_weight}"],
+                check=True, timeout=12, stdout=subprocess.DEVNULL,
+            )
+    # Never persist 'applied_verified' on a stale initial readback, even
+    # when the earlier policy required no systemd write.
+    actual = installed_cgroup()
+    if not matches_cgroup(actual, effective_quota, effective_weight):
+        raise SystemExit("Final cgroup changed or could not be verified; state not marked applied")
     write_private_state({**s, "quota": effective_quota, "weight": effective_weight,
                          "recommended_quota": quota, "recommended_weight": weight,
                          "promotion_status": promotion_status, "promotion": candidate,
