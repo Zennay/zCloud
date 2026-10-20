@@ -12,7 +12,7 @@ python3 scripts/zsentinel_merge_first_board.py \
   --format text --output /private/new-zsentinel-merge-board.html
 ```
 
-Alternatively, discover up to four recent non-draft product PRs per canonical project without knowing their numbers:
+Alternatively, discover up to four recent product PRs (including owner-controlled drafts) per canonical project without knowing their numbers:
 
 ```sh
 python3 scripts/zsentinel_merge_first_board.py \
@@ -20,7 +20,7 @@ python3 scripts/zsentinel_merge_first_board.py \
   --max-per-project 4 --output /private/new-merge-first-worklist.html
 ```
 
-This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft, child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 72 exact PR/check/review/workflow GETs. The workbench also stops new reads after a 120-second monotonic source window (an already started bounded GitHub GET may finish afterwards); no unlimited background polling. An empty selection explicitly says it is not evidence that the backlog is empty.
+This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft PRs are **included as existing unfinished product work**, with a visible DRAFT / owner-action-required status; they are never treated as merge-ready and never promoted by this read-only tool. Ready PRs lead equally prioritized drafts. Child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 72 exact PR/check/review/workflow GETs. The workbench also stops new reads after a 120-second monotonic source window (an already started bounded GitHub GET may finish afterwards); no unlimited background polling. An empty selection explicitly says it is not evidence that the backlog is empty.
 
 The output is a new, exclusive-create, private (0600) responsive standalone HTML file. Without `--output` there is no local write. JSON output is available using `--format json`. The HTML contains no JavaScript, network fetches, tokens, worker credentials or queue identifiers. Never point output at a shared web directory. Existing reports are never overwritten.
 
@@ -30,7 +30,7 @@ Operators can quickly select an independent unblocked product PR while other PRs
 
 ## Issue-first productrecovery (open issues → bestaande product-PR)
 
-`scripts/zsentinel_issue_first_board.py` is een tweede, zelfstandige operator-ingang die **echte open P0/P1 issues** aan bestaande open product-PR's koppelt voordat nieuw werk zou worden gestart. Hij hergebruikt de exacte-head checks en de private HTML-renderer van de merge-first werkbak, en opent geen claims of PRs.
+`scripts/zsentinel_issue_first_board.py` is een tweede, zelfstandige operator-ingang die **echte open P0/P1 issues** aan bestaande open product-PR's koppelt voordat nieuw werk zou worden gestart. Ook **draft-product-PR's** worden als bestaand potentieel werk getoond, met status `DRAFT` en zonder automatische draft→review-overgang, reviewbewijs, claimrecht of mergeautorisatie. QA-only PR's worden nog steeds niet als productroute geselecteerd. Hij hergebruikt de exacte-head checks en de private HTML-renderer van de merge-first werkbak, en opent geen claims of PRs.
 
 ```sh
 python3 scripts/zsentinel_issue_first_board.py --project cloud --project supa \
