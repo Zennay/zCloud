@@ -85,7 +85,9 @@ def optional_storage_inventory(root: Path) -> dict:
     measured = []
     incomplete = []
     for label, path in targets:
+        # Missing and symlinked roots are unobserved, never proven zero.
         if not path.exists() or path.is_symlink():
+            incomplete.append(label)
             continue
         code, output = command("du", "-sx", "-B1", "--", str(path), timeout=3)
         first = output.split(maxsplit=1)[0] if output else ""
@@ -148,7 +150,7 @@ def archive_mount_readiness(mount_path: Path = Path("/home/ubuntu/VPS-Archief"))
             if not proc.name.isdigit():
                 continue
             try:
-                argv = (proc / "cmdline").read_bytes().split(b"\\0")
+                argv = (proc / "cmdline").read_bytes().split(b"\0")
             except (OSError, PermissionError):
                 continue
             if (argv and b"rclone" in argv[0].lower() and b"mount" in argv
