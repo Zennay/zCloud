@@ -3235,3 +3235,27 @@ Geen QA-/regressiesuite toegevoegd of gestart.
 **Bronoplevering is niet hetzelfde als live:** dit werk staat in de
 bestaande open product-PR #1563 tot echte onafhankelijke review,
 exact-head CI en de normale protected-main merge zijn afgerond.
+
+
+### Incidentenbalie: bronvast branchconflict en eigen vervolgtaak
+
+De bestaande `--format desk --desk-output` interactieve offline
+incidentenbalie toont nu naast menselijke incidenten ook de uit dezelfde
+routerbeslissing afkomstige **overgeslagen producttaken**. Per bronconflict
+zijn P0/P1, taakkenmerk, reden, oorspronkelijke branch en het
+overlappende bestand zichtbaar. Bij een onvoldoende verse of onvolledige
+branchbron staat expliciet dat slechts de `cloud`-takensuggesties zijn
+tegengehouden. Andere projecten blijven onafhankelijk behandelbaar.
+
+Alle branchgegevens komen uit het gevalideerde read-only routerresultaat,
+worden als inert HTML weergegeven en starten nooit een GitHub-fetch,
+taskclaim, merge of runneractie. De gegenereerde incidentenbalie blijft
+lokaal, met bestaande CSP en uitsluitend handmatig op te slaan privéhandoff.
+
+Om te voorkomen dat een eerdere handmatige afhandeling ongemerkt wordt
+teruggezet op gewijzigde scope, maakt een **daadwerkelijk aangeleverde**
+branchbron nu deel uit van de incidentenbalie's bronvingerafdruk.
+Handoffs van uitsluitend incidenten zonder branchbron behouden hun
+bestaande fingerprint-conventie. Bronidentiteit is nog steeds géén
+werk-/releaseautorisatie, alleen een garantie dat de handoff bij dezelfde
+waarneming is gemaakt.
