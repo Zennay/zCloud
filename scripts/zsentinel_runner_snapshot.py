@@ -10,8 +10,7 @@ import json
 import os
 from pathlib import Path
 import stat
-import uuid
-
+from zsentinel_background_priority import RUNNER_UNIT
 from zsentinel_runner_report import collect
 
 SCHEMA = "zsentinel.runner-observation.v1"
@@ -47,8 +46,7 @@ def _unit_states(bundle):
         state = row.get("state")
         detail = row.get("detail")
         if (not isinstance(name, str) or len(name) > 160 or
-                not name.startswith("actions.runner.") or
-                not name.endswith(".service") or
+                not RUNNER_UNIT.fullmatch(name) or
                 state not in {"active", "inactive", "failed", "activating", "deactivating", "unknown"} or
                 not isinstance(detail, str) or len(detail) > 30 or name in states):
             raise ValueError("Malformed/duplicate service observation")
