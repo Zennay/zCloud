@@ -51,7 +51,8 @@ object IncidentSnoozeStore {
         val allowed = (listOf(key) + active.map { it.first })
             .distinct().take(MAX_SNOOZES).toSet()
         val editor = prefs.edit()
-        prefs.all.keys.filter { it.startsWith(PREFIX) && it !in allowed }.forEach(editor::remove)
+        prefs.all.keys.filter { it.startsWith(PREFIX) && it !in allowed }
+            .forEach { editor.remove(it) }
         editor.putLong(key, now + DURATION_MS).apply()
 
         // Snoozing does NOT resolve the incident in zCloud. It clears only
