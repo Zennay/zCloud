@@ -90,6 +90,8 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         if not 1 <= index <= total:
             raise ValueError("batch index exceeds original review")
         expected = read_review_manifest(manifest, batch=index)
+        if expected["source_review_manifest_sha256"] != first["source_review_manifest_sha256"]:
+            raise ValueError("review manifest changed during batch reconciliation")
         for key in ("source_review_batches_total", "source_review_batch_first_pr",
                     "source_review_batch_count", "review_only_top_four_observed"):
             if saved.get(key) != expected[key]:
@@ -265,7 +267,8 @@ def main(argv=None):
                 os.fsync(stream.fileno())
             print("Private saved receipt overview created (0600). No live authority.",
                   file=sys.stderr)
-        return 3 if report["missing_batches"] or report["unavailable_or_drifted_prs"] else 0
+        return 3 if (report["missing_batches"] or report["unavailable_or_drifted_prs"]
+                     or report["stale_over_15_minutes_prs"]) else 0
     except (OSError, ValueError):
         print("zSentinel merge-first batch reconciliation refused: saved source invalid or unavailable",
               file=sys.stderr)
