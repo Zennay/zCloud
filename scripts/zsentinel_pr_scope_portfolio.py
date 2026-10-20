@@ -984,6 +984,7 @@ def as_private_csv(board):
         "related_pr_url", "related_pr_head_sha", "cluster_number",
         "shared_filename", "shared_files_observed",
         "issue_number_hint", "current_exact_head_gate_status",
+        "check_name", "check_state", "check_conclusion", "check_url",
         "owner_claim_verified", "merge_authorized", "operator_notice",
     )
     writer.writerow(columns)
@@ -1083,6 +1084,31 @@ def as_private_csv(board):
                  pr_head_sha=item.get("head_sha_observed") or "",
                  current_exact_head_gate_status=item["status"],
                  operator_notice="Observed gate only; branch protection/ownership still unknown.")
+            if item["status"] != "current_exact_pr_head_and_sample_match":
+                continue
+            for check in item["observed_actionable_check_runs"]:
+                emit("current_check_job", project, view["repository"],
+                     view["source_status"], pr_url=url,
+                     pr_head_sha=item["head_sha_observed"],
+                     current_exact_head_gate_status=item["status"],
+                     check_name=check["name"], check_state=check["state"],
+                     check_conclusion=check["conclusion"] or "",
+                     check_url=check["url"],
+                     operator_notice="Latest sampled Check Run attempt; not required-check or merge proof.")
+            for status in item["observed_actionable_legacy_contexts"]:
+                emit("current_legacy_status", project, view["repository"],
+                     view["source_status"], pr_url=url,
+                     pr_head_sha=item["head_sha_observed"],
+                     current_exact_head_gate_status=item["status"],
+                     check_name=status["context"], check_state=status["state"],
+                     check_url=status["url"],
+                     operator_notice="Latest sampled legacy status per context; no merge authorization.")
+            if (item["observed_actionable_check_runs_hidden"] or
+                    item["observed_actionable_legacy_contexts_hidden"]):
+                emit("source_warning", project, view["repository"],
+                     view["source_status"], pr_url=url,
+                     pr_head_sha=item["head_sha_observed"],
+                     operator_notice="Some current non-green check jobs/statuses hidden by per-PR display limit.")
     # The caller checks the true UTF-8 output length and creates a 0600
     # output exclusively. Never put sensitive cross-project CSV into stdout.
     return "\ufeff" + output.getvalue()
