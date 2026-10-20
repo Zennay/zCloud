@@ -2915,7 +2915,13 @@ def portfolio_attention_items(include_resolved=False):
         items.append(item)
     return items
 
-def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None):
+def _portfolio_attention_add_locked(connection,project_id,action,detail='',source_url='',
+                                    severity='attention',attention_id=None,ts=None):
+    """Create/reopen one project-bound attention on the caller's transaction.
+
+    Queue completion must atomically persist its required human escalation.
+    A duplicate ID owned by a different project fails the *whole* transaction.
+    """
     project_id=str(project_id or '').strip().lower()
     action=str(action or '').strip()
     if project_id not in PROJECT_INDEX:
@@ -2925,26 +2931,43 @@ def portfolio_attention_add(project_id,action,detail='',source_url='',severity='
     if severity not in ('urgent','attention','later'):
         severity='attention'
     if attention_id is None:
-        digest=hashlib.sha256((project_id+'\n'+action).encode()).hexdigest()[:16]
+        digest=hashlib.sha256((project_id+'\\n'+action).encode()).hexdigest()[:16]
         attention_id=project_id+'-'+digest
-    # Never alias two distinct operator-specified incident identifiers.
     if not isinstance(attention_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',attention_id):
         raise ValueError('Attention-ID moet een canonieke identiteit van 1-160 tekens zijn')
-    ts=now()
-    with connect() as c:
-        write=c.execute("""INSERT INTO portfolio_attention(
-            attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at,resolved_at
-        ) VALUES(?,?,?,?,?,?, 'open',?,?,NULL)
-        ON CONFLICT(attention_id) DO UPDATE SET
-            action=excluded.action,detail=excluded.detail,
-            severity=excluded.severity,source_url=excluded.source_url,status='open',
-            updated_at=excluded.updated_at,resolved_at=NULL
-        WHERE portfolio_attention.project_id=excluded.project_id""",
-            (attention_id,project_id,action,str(detail or '')[:4000],severity,_safe_operator_source_url(source_url),ts,ts))
-        if write.rowcount!=1:
-            raise ValueError('Attention-ID behoort al bij een ander project; incident niet overschreven')
-        row=c.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',(attention_id,)).fetchone()
+    ts=ts or now()
+    write=connection.execute("""INSERT INTO portfolio_attention(
+        attention_id,project_id,action,detail,severity,source_url,status,created_at,updated_at,resolved_at
+    ) VALUES(?,?,?,?,?,?, 'open',?,?,NULL)
+    ON CONFLICT(attention_id) DO UPDATE SET
+        action=excluded.action,detail=excluded.detail,
+        severity=excluded.severity,source_url=excluded.source_url,status='open',
+        updated_at=excluded.updated_at,resolved_at=NULL
+    WHERE portfolio_attention.project_id=excluded.project_id""",
+        (attention_id,project_id,action,str(detail or '')[:4000],severity,
+         _safe_operator_source_url(source_url),ts,ts))
+    if write.rowcount!=1:
+        raise ValueError('Attention-ID behoort al bij een ander project; incident niet overschreven')
+    row=connection.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',
+                           (attention_id,)).fetchone()
     return dict(row)
+
+
+def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None):
+    with connect() as c:
+        return _portfolio_attention_add_locked(c,project_id,action,detail,source_url,
+                                               severity,attention_id)
+
+
+def _queue_attention_id(queue_id):
+    """Keep legacy short IDs; hash long canonical IDs instead of truncating."""
+    value=str(queue_id or '')
+    if not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',value):
+        raise ValueError('Ongeldige queue-identiteit voor menselijke escalatie')
+    if len('queue:'+value)<=160:
+        return 'queue:'+value
+    return 'queuehash:'+hashlib.sha256(value.encode('utf-8')).hexdigest()
+
 
 def portfolio_attention_resolve(attention_id):
     attention_id=str(attention_id or '').strip()
@@ -3864,6 +3887,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     try: slot=int(global_slot)
     except Exception: raise ValueError('geldige global worker slot vereist')
     ts=now()
+    attention=None
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         row=c.execute("""SELECT * FROM portfolio_queue
@@ -3871,6 +3895,20 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                       (queue_id,slot)).fetchone()
         if not row:
             return {'updated':False,'reason':'assignment-mismatch'}
+        # Human escalation and the queue transition share this transaction.
+        # A rejected attention identity or SQLite failure rolls back both,
+        # so no claimed task disappears without its required operator action.
+        if result=='BLOCKED' and _blocker_needs_human(evidence):
+            attention=_portfolio_attention_add_locked(
+                c,
+                row['project_id'],
+                _attention_action_for_blocker(row['project_id'],row['title'],evidence),
+                str(evidence or '')[:4000],
+                row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
+                'urgent' if str(row['priority']).upper()=='P0' else 'attention',
+                attention_id=_queue_attention_id(queue_id),
+                ts=ts,
+            )
         if result=='DONE':
             c.execute("""UPDATE portfolio_queue SET status='done',eligible=0,evidence=?,blocker='',
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
@@ -3884,16 +3922,6 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             c.execute("""UPDATE portfolio_queue SET status='queued',eligible=1,evidence=?,
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
-    attention=None
-    if result=='BLOCKED' and _blocker_needs_human(evidence):
-        attention=portfolio_attention_add(
-            row['project_id'],
-            _attention_action_for_blocker(row['project_id'],row['title'],evidence),
-            str(evidence or '')[:4000],
-            row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
-            'urgent' if str(row['priority']).upper()=='P0' else 'attention',
-            attention_id='queue:'+queue_id,
-        )
     created=None
     if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
         try:
