@@ -179,6 +179,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .triage ol{padding-left:23px;margin:8px 0;max-height:360px;overflow:auto}.triage li{padding:5px 0;overflow-wrap:anywhere}
 .triage button{background:#243c56;color:#ecf5ff;border:1px solid #7897b6;padding:6px 9px;margin-right:8px}
 .triage small{display:inline-block;margin:2px}
+.escalations{border:1px solid #677d9a;border-radius:12px;background:#15283a;padding:15px;margin:14px 0}
+.escalations ol{padding-left:23px;max-height:360px;overflow:auto}
+.escalations li{padding:7px 0;overflow-wrap:anywhere}
+.escalations button{padding:5px 9px;margin-right:10px;background:#233c55;color:white;border:1px solid #779db8}
+.escalations small{display:block;color:#d6e3f2}
 .comparison{border:1px solid #486f87;border-radius:12px;padding:15px;margin:16px 0;background:#132237}
 .comparison ol{padding-left:25px;max-height:320px;overflow:auto}.comparison li{margin:7px 0;overflow-wrap:anywhere}
 .comparison strong{color:#d7f0ff}
@@ -242,6 +247,12 @@ source coverage, permissions or filters may have changed.</p>
 <p id="comparisonCoverage" aria-live="polite">Coverage: current bounded source only.</p>
 <dl id="comparisonStats" class="portfolio"></dl><ol id="comparisonRows"></ol>
 </section>
+<section class="escalations" aria-label="Human follow-up schedule">
+<h2>Human follow-up · private, manual only</h2>
+<p>Track human-only blockers with a local contact label and UTC review date. Overdue means
+the operator-selected date passed, not that an owner accepted a task or a notification was delivered.</p>
+<p id="followupSummary" aria-live="polite"></p><ol id="followupRows"></ol>
+</section>
 <section class="triage" aria-label="Human-only priority and blocker queue">
 <h2>Next-action queue · observed evidence only</h2>
 <p>Prioritizes the currently filtered P0/P1 issues and the work you explicitly parked.
@@ -283,6 +294,19 @@ const issueList=document.getElementById('issues'),detail=document.getElementById
 const status=document.getElementById('status');
 const entries=new Map(board.cards.map(c=>[c.issue,c]));
 const permitted=new Set(['investigate','integrate-existing-pr','coordinate-owner','park-blocker','ready-for-new-product-work']);
+const manualGateDecisions=new Set(['coordinate-owner','park-blocker']);
+const utcToday=()=>new Date().toISOString().slice(0,10);
+function validFollowupDate(value){
+ if(value==='')return true;
+ return typeof value==='string' && /^20[2-9][0-9]-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])$/.test(value) &&
+  !Number.isNaN(Date.parse(value+'T00:00:00Z')) &&
+  new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+}
+function dueState(info){
+ if(!info?.owner?.trim()||!info?.due)return 'needs human contact/date';
+ return info.due<utcToday()?'overdue (manual review required)':info.due===utcToday()?
+  'due today UTC':'scheduled by operator';
+}
 let selected=null;const handoffs=new Map();
 let viewedBrief=null;
 function invalidateBrief(){
@@ -296,7 +320,11 @@ function link(text,url){const a=elem('a',text);a.href=url;a.rel='noopener norefe
 function saveSelection(){
  if(!selected)return;
  const decision=document.getElementById('decision'),note=document.getElementById('note');
- if(decision&&note)handoffs.set(selected,{decision:decision.value,note:note.value.slice(0,1000)});
+ const owner=document.getElementById('followupOwner'),due=document.getElementById('followupDue');
+ if(decision&&note&&owner&&due)handoffs.set(selected,{
+  decision:decision.value,note:note.value.slice(0,1000),
+  owner:owner.value.slice(0,80).trim(),due:validFollowupDate(due.value)?due.value:''
+ });
 }
 function filtered(){
  const q=document.getElementById('search').value.trim().toLowerCase();
@@ -343,12 +371,41 @@ function refreshPortfolio(){
    'Saved observation within six hours (not a live status).')+
    ' Recorded '+board.observed_at_utc+'.';
 }
+function refreshFollowups(){
+ const list=document.getElementById('followupRows');
+ list.replaceChildren();
+ const rows=board.cards.filter(c=>manualGateDecisions.has(handoffs.get(c.issue)?.decision))
+  .map(c=>({card:c,info:handoffs.get(c.issue)}))
+  .sort((a,b)=>Number(!a.info?.due)-Number(!b.info?.due)||
+   (a.info?.due||'').localeCompare(b.info?.due||'')||
+   ({P0:0,P1:1,P2:2,Unspecified:3}[a.card.priority]-
+    {P0:0,P1:1,P2:2,Unspecified:3}[b.card.priority])||
+   a.card.issue.localeCompare(b.card.issue)).slice(0,60);
+ const overdue=rows.filter(x=>x.info?.owner&&x.info?.due&&x.info.due<utcToday()).length;
+ const incomplete=rows.filter(x=>!x.info?.owner?.trim()||!x.info?.due).length;
+ document.getElementById('followupSummary').textContent=
+  rows.length+' human-only follow-ups · '+overdue+' past selected date · '+
+  incomplete+' missing contact/date · 0 external notifications, 0 authorized claims.';
+ if(!rows.length){list.append(elem('li','No manual follow-ups saved in this session. Live blocker status unknown.'));return;}
+ rows.forEach(({card,info})=>{
+  const li=elem('li'),btn=elem('button',card.priority+' '+card.issue);
+  btn.type='button';
+  btn.onclick=()=>{saveSelection();invalidateBrief();selected=card.issue;
+    drawList();drawDetail();detail.scrollIntoView({block:'nearest'});};
+  li.append(btn,elem('strong',card.title),elem('small',
+   'Human label: '+(info.owner||'not entered')+' · UTC review date: '+
+   (info.due||'not entered')+' · '+dueState(info)+' · '+info.decision));
+  list.append(li);
+ });
+}
 function refreshTriage(){
  const ranks={P0:0,P1:1,P2:2,Unspecified:3};
  const observations=baseline?new Map(changesSinceBaseline().map(c=>[c.issue,c.kind])):null;
  const weight=kind=>({'new-observation':0,'changed-evidence':1,'still-observed':2})[kind]??3;
  const cards=filtered().slice().sort((a,b)=>
   ranks[a.priority]-ranks[b.priority] ||
+  Number(dueState(handoffs.get(b.issue)).startsWith('overdue'))-
+    Number(dueState(handoffs.get(a.issue)).startsWith('overdue')) ||
   Number(handoffs.get(a.issue)?.decision==='park-blocker')-Number(handoffs.get(b.issue)?.decision==='park-blocker') ||
   (observations?weight(observations.get(a.issue))-weight(observations.get(b.issue)):0) ||
   a.project.localeCompare(b.project) || a.issue.localeCompare(b.issue));
@@ -367,7 +424,9 @@ function refreshTriage(){
    'live owner, exact-head CI and release admission unverified';
   const changed=observations?.get(c.issue);
   li.append(b,elem('strong',' '+c.title),
-   elem('small',' · '+c.project+' · '+(changed?changed+' · ':'')+human+' · '+line(gap,160)));list.append(li);
+   elem('small',' · '+c.project+' · '+(changed?changed+' · ':'')+human+
+   (manualGateDecisions.has(human)?' · '+dueState(handoffs.get(c.issue)):'')+
+   ' · '+line(gap,160)));list.append(li);
  });
 }
 function sourceInstant(value){
@@ -556,7 +615,7 @@ function drawList(){
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
    ' shown · observed '+board.observed_at_utc+' · no active-claim authorization';
  if(selected&&!view.some(c=>c.issue===selected)){saveSelection();selected=null;drawDetail()}
- refreshTriage()
+ refreshTriage();refreshFollowups()
 }
 function drawDetail(){
  detail.replaceChildren();
@@ -604,12 +663,24 @@ function drawDetail(){
   ['coordinate-owner','Coordinate current owner'],['park-blocker','Park external blocker'],
   ['ready-for-new-product-work','Candidate for new product implementation (verify live claims)']]
  .forEach(([v,t])=>{const o=elem('option',t);o.value=v;sel.append(o)});
+ const ownerLabel=elem('label','Manual follow-up contact label (not an assignee, max 80 characters)');
+ ownerLabel.htmlFor='followupOwner';
+ const owner=elem('input');owner.type='text';owner.id='followupOwner';owner.maxLength=80;
+ owner.setAttribute('autocomplete','off');
+ const dueLabel=elem('label','Human-only next review date (UTC, no automated reminder)');
+ dueLabel.htmlFor='followupDue';
+ const due=elem('input');due.type='date';due.id='followupDue';due.min='2020-01-01';due.max='2099-12-31';
  const nlabel=elem('label','Private operator note (max 1000 characters)');nlabel.htmlFor='note';
  const note=elem('textarea');note.id='note';note.maxLength=1000;note.rows=5;
- const saved=handoffs.get(selected);sel.value=saved?.decision||'investigate';note.value=saved?.note||'';
- detail.append(label,sel,nlabel,note);
- sel.addEventListener('change',()=>{saveSelection();invalidateBrief();drawList()});
- note.addEventListener('input',()=>{saveSelection();invalidateBrief();refreshTriage()});
+ const saved=handoffs.get(selected);
+ sel.value=saved?.decision||'investigate';note.value=saved?.note||'';
+ owner.value=saved?.owner||'';due.value=saved?.due||'';
+ detail.append(label,sel,ownerLabel,owner,dueLabel,due,nlabel,note);
+ const update=()=>{saveSelection();invalidateBrief();refreshTriage();refreshFollowups();};
+ sel.addEventListener('change',()=>{update();drawList()});
+ note.addEventListener('input',update);
+ owner.addEventListener('input',update);
+ due.addEventListener('change',update);
 }
 ['search','priority','project','disposition','change'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
