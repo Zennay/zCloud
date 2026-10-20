@@ -516,3 +516,37 @@ Het daadwerkelijke moment waarop een taak door de bevoegde eigenaar wordt
 afgesloten, blijft ongewijzigd. Deze branch voert geen live leasevernieuwing,
 database- of browserwijziging uit. Alleen normale CI, onafhankelijke review,
 protected main en runtime-owner-release kunnen dit operationeel maken.
+
+
+## 20 oktober · Producer-identiteit blijft volledig onveranderlijk bij herhaling
+
+De bestaande `portfolio_queue_enqueue()` behandelt een retry op dezelfde queue-ID nu
+alleen als dezelfde taak als project, exacte titel, parent, prioriteit, volledige
+completion criteria en source URL **allemaal identiek** zijn. Eerder kon een
+nog vrije queued rij binnen dezelfde project/titel/parent andere requirements,
+prioriteit of bron krijgen zonder nieuwe taakidentiteit. De SQLite UPSERT laat
+geen inhoudelijke wijziging meer toe; een afwijkende herhaling krijgt een
+duidelijke `ValueError` en vraagt de eigenaar om een nieuwe geautoriseerde
+taakidentiteit. Ook `NULL` en een lege parent-ID worden niet samengevoegd.
+
+Deze bescherming geldt *naast* de reeds bestaande atomische waarborgen voor
+`queued`, eligibility, ontbrekende workerbinding en ontbrekende leasevelden.
+Een automatische producer krijgt geen recht om een claim, verificatie, historisch
+resultaat of human-held item te wijzigen. Geen database-migratie of productie-
+queuewijziging is uitgevoerd vanuit deze branch.
+
+## 20 oktober · Oude QA-backlog verbergt geen vrije herstelopdracht in projectvenster
+
+Het aanvullende per-project bronvenster gaat nu maximaal vier opeenvolgende
+pagina's van 128 vrije queued rijen langs en stopt bij acht
+policy-toegestane productkandidaten of einde van het bronvenster. Een project
+met bijvoorbeeld 128 oudere QA-only werkitems en daarna een uitvoerbaar issue
+kan daardoor een herstelkandidaat aanleveren; eerder was alleen de eerste
+projectpagina zichtbaar. De 512-rijengrens blijft expliciet: een langer
+onbekend restant is geen bewijs dat het project geen productwerk heeft.
+
+Er zijn geen extra workers toegestaan door deze bronselectie: alle bestaande
+live lane-/scopeclaims, eigenaarstoewijzing, projectcaps, geheugendruk,
+lease- en CI-/review-/deployvoorwaarden blijven ongewijzigd. De pagina's zijn
+uitsluitend SELECTs op de bestaande databaseconnectie; geen nieuwe queue,
+scheduler- of VPS-mutatie is uitgevoerd.
