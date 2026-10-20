@@ -50,3 +50,18 @@ All outputs explicitly declare `source_deletion_authorized=false`, `remote_copie
 **Direct live source inspection (read-only, no installed script, no QA suite):** connected zSSH executed the exact immutable source `8b1a02d` in memory against the VPS. Observed root available **9,914,683,392 bytes**, which is **822,734,848 bytes below** the 10 GiB reserve. This bounded source sample found **381** older diagnostic/training-report candidates totalling **833,723 bytes**. Even hypothetical verified pruning of *all* of those would leave a gap of **821,901,125 bytes**. Mount: `fuse.rclone`, `mounted_read_only`. **No bytes were moved/reclaimed and Fuckball training was not restarted.** The eligible candidate count and amount may legitimately differ from older snapshots, since source files and access change; the prior unverified ~1.6 GiB statement must not be treated as current reclaimable capacity.
 
 This makes the next real storage choice explicit: a separately authorized search for other *completed, unreferenced, recoverable* cold objects or a larger local disk, without gambling on active models, live databases, dirty worktrees, trainer inputs or a read-only archive browse mount. Existing uploader/prune permissions, remote crypt recovery proof, and service ownership remain unchanged.
+
+
+## Optional old release file review (not a cleanup authorization)
+
+For **one-time/manual operator assessment**, the read-only inventory also supports:
+
+```bash
+python3 scripts/vps_storage_audit.py --older-than-days 3 --include-release-reviews --limit 30
+```
+
+The additional scanner is restricted to aged standalone `/home/ubuntu/RaiseAI-v*.apk` and `/home/ubuntu/Downloads/*.apk` exports, a **minimum 14-day age** regardless of the ordinary three-day log horizon. It excludes active Gradle trees, signed-key material, browser profiles, datasets, models and APK installation files in current build directories. It marks each row `release_superseded_verified=false` and `can_remove_automatically=false`; merely old doesn't establish unused.
+
+On the live VPS, exact source `0df732b` read-only inspection identified **two** possible manual APK review objects totalling **178,153,114 bytes**. Existing three-day old diagnostics/reports remained **833,723 bytes**. Those figures are **possible review surface**, not crypt-backed remote copies or reclaimable space. Even if both old APK files were independently proven superseded, encrypted-copied, remote-verified, and explicitly cleared by their release owners, this alone would not cover the measured ~823 MB gap to the 10 GiB free-space reserve.
+
+Do not rename/delete these installation artifacts, change the browse mount's access mode, or let the storage inventory silently invoke a transfer. Protect app release/signing owners, backup provenance and the currently running Fuckball/HaxLab pipelines. This code adds **discovery**, not automatic cleanup, storage migration or restart authority.
