@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from zsentinel_recovery_router import read_json
-from zsentinel_notion_claim_observer import project_labels
 
 SCHEMA = "zsentinel-notion-connector-snapshot-v1"
 UUID = re.compile(r"^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$", re.I)
@@ -64,7 +63,8 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
         raise ValueError("canonical project mapping required")
     source = read_json(source_file, MAX_BYTES, "private Notion connector export")
     if (type(source) is not dict or source.get("schema") != SCHEMA
-            or source.get("data_source_id", "").lower() != data_source_id.lower()
+            or not isinstance(source.get("data_source_id"), str)
+            or source["data_source_id"].lower() != data_source_id.lower()
             or type(source.get("response")) is not dict):
         raise ValueError("Notion snapshot wrapper/source identity mismatch")
     captured = _datetime(source.get("observed_at_utc"))
@@ -80,7 +80,9 @@ def observe_saved_connector(source_file: Path, data_source_id: str,
     if (type(response.get("has_more")) is not bool
             or response["has_more"] is not False
             or type(ids) is not list or ids != [data_source_id]
-            or type(rows) is not list or len(rows) > MAX_ROWS):
+            or type(rows) is not list or len(rows) > MAX_ROWS
+            or response.get("next_cursor") not in (None, "")):
+        # An old or cursor-continued page is never a complete claim snapshot.
         raise ValueError("Notion snapshot incomplete or not bound to exact source")
     seen, active, counts = set(), [], {}
     for row in rows:
