@@ -409,3 +409,37 @@ evidence that a worker resumed, a GitHub issue was fixed, an owner acknowledged
 the request, CI passed or a release occurred. No event is transmitted to
 Notion, GitHub, a calendar or any external service; the original lease,
 authorization, independent review and deployment gates still apply.
+
+## 20 October · Reviewed bulk human follow-up actions
+
+The offline Product Delivery Workbench now supports a bounded **bulk human
+follow-up panel**, built on the existing SHA-pinned source cards and *private
+operator annotations*. It operates only on issues explicitly marked by an
+operator as `coordinate-owner` or `park-blocker`. All currently open manual
+follow-ups may be selected with one click; the user may also select individual
+entries. Maximum scope is the current captured board (60 issues), never a
+live GitHub/Notion owner inventory.
+
+The operator chooses exactly one local transformation for the selected
+entries: mark the private human follow-up **locally completed**, **reopen** a
+previously completed human follow-up, or change a specified **UTC review
+date** for still-open human follow-ups. The date is validated as a real
+calendar day in 2020–2099; completed entries are not silently reopened by
+date edits. The selected source issue IDs, current private annotation values,
+requested operation and source SHA/observation timestamp are bound to
+a reviewed **Preview exact private changes**. A second deliberate confirmation
+applies only the rows shown. If selection, local notes, dates or source state
+change before confirmation, the preview is refused and must be recreated.
+
+Applying a locally completed/reopened state records one device-derived UTC
+toggle timestamp; batch date edits do not forge an event timestamp.
+Private contact labels, notes and original source evidence are preserved.
+All edits mark the private workbench as unsaved until the user explicitly
+downloads a JSON handoff. The follow-up and issue lists refresh immediately,
+and local completions cease appearing in future optional .ics calendar
+exports. Original GitHub issues remain visible and their live state, owner,
+lease, authorization, CI, review, runner and release admission are all
+**UNVERIFIED**. No automatic claim, reviewer assignment, CI retry, notifications,
+calendar writes, workflow dispatch, VPS command or production deployment
+occurs. The existing protected-main and independent review gates are
+unchanged. No QA or regression suites were authored or manually executed.
