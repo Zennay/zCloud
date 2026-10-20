@@ -306,6 +306,8 @@ def collect_targeted_windows(project, issue_number, registry, budget,
             target, search_total = dict(current_issue), coverage["search_total"]
         else:
             if (current_issue.get("url") != target.get("url")
+                    or current_issue.get("title") != target.get("title")
+                    or current_issue.get("priority") != target.get("priority")
                     or current_issue.get("current_state") != "OPEN_RECONFIRMED"):
                 issue_reconfirmation_failed = True
                 partials.append({"project": project, "reason": "ISSUE_MOVED_BETWEEN_PAGES"})
@@ -386,6 +388,15 @@ def collect_targeted_windows(project, issue_number, registry, budget,
                         or "pull_request" in final):
                     issue_reconfirmation_failed = True
                     partials.append({"project": project, "reason": "FINAL_ISSUE_NOT_OPEN"})
+                else:
+                    current_class = classification(final)
+                    current_priority = (current_class["priority"] if current_class
+                                        else "UNCLASSIFIED")
+                    current_title = str(final.get("title") or "")[:160]
+                    if (target["priority"] != current_priority or
+                            target["title"] != current_title):
+                        issue_reconfirmation_failed = True
+                        partials.append({"project": project, "reason": "FINAL_ISSUE_PRIORITY_OR_TITLE_CHANGED"})
             except (RuntimeError, ValueError, OSError, KeyError, TypeError):
                 issue_reconfirmation_failed = True
                 partials.append({"project": project, "reason": "FINAL_ISSUE_SOURCE_UNAVAILABLE"})
