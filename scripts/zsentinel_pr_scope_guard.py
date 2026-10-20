@@ -584,12 +584,13 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         for path in files:
             file_owners.setdefault(path, set()).add(pr["number"])
     # A second product overlap exists even when PRs modify disjoint files:
-    # several open source PR bodies mentioning the same issue. These are
-    # unverified text mentions, not issue fixes, owners, or merge authority.
+    # several open PR titles/bodies mentioning the same issue are hints
+    # only, NOT verified fixes, owners or merge authority.
     by_issue = {}
     for link in issue_links:
         by_issue.setdefault(link["issue_number"], {})[link["pr_url"]] = {
-            "url": link["pr_url"], "head_sha": link["pr_head_sha"]}
+            "url": link["pr_url"], "head_sha": link["pr_head_sha"],
+            "mentioned_in": link["mentioned_in"]}
     duplicate_issue_groups = sorted(
         [(issue, sorted(prs.values(), key=lambda item: item["url"]))
          for issue, prs in by_issue.items() if len(prs) > 1],
@@ -600,7 +601,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "open_pr_mentions_observed": len(prs),
         "shown_pr_sources": prs[:MAX_LINKS_PER_DUPLICATE_ISSUE],
         "source_pr_list_truncated": len(prs) > MAX_LINKS_PER_DUPLICATE_ISSUE,
-        "relation": "same_issue_number_unverified_open_pr_body_text_only",
+        "relation": "same_issue_number_unverified_open_pr_title_or_body_only",
         "issue_fix_verified": False,
         "common_owner_verified": False,
         "merge_authorized": False,
@@ -745,7 +746,8 @@ def graph_operator_text(report):
                       " · " + str(group["open_pr_mentions_observed"]) +
                       " PR-bronvermeldingen, geen geverifieerde oplossing")
         for link in group["shown_pr_sources"]:
-            result.append("  " + link["url"] + " @ " + link["head_sha"][:12])
+            result.append("  " + link["url"] + " @ " + link["head_sha"][:12] +
+                          " · vermeld in: " + "/".join(link["mentioned_in"]))
     if report["duplicate_issue_groups_truncated"]:
         result.append("Meer mogelijke dubbele issue-PR vermeldingen afgekapt.")
     if report["unpaired_open_prs_in_sample_not_claim_verified"]:
@@ -799,7 +801,8 @@ def graph_html(report):
         mentioned = "".join(
             "<li><a rel='noopener noreferrer' href='" +
             escape(item["url"], quote=True) + "'>PR @" +
-            escape(item["head_sha"][:12]) + "</a></li>"
+            escape(item["head_sha"][:12]) + "</a> · in " +
+            escape("/".join(item["mentioned_in"])) + "</li>"
             for item in group["shown_pr_sources"])
         duplicate_cards.append(
             "<li><a rel='noopener noreferrer' href='" +
@@ -951,6 +954,20 @@ def graph_markdown(report):
                      " waargenomen gedeelde bestanden")
     if not report["shown_file_collision_pairs"]:
         lines.append("Geen gemeenschappelijke bestandsnamen waargenomen.")
+    lines.extend(["", "## Mogelijk dubbel werk rond hetzelfde issue (titel of body)", ""])
+    for group in report["shown_duplicate_issue_groups"]:
+        lines.append("- [Issue #" + str(group["issue_number"]) + "](" +
+                     group["issue_url"] + ") · " +
+                     str(group["open_pr_mentions_observed"]) +
+                     " open PR-tekstverwijzingen, geen geverifieerde fix")
+        for row in group["shown_pr_sources"]:
+            lines.append("  - [PR](" + row["url"] + ") · " +
+                         "/".join(row["mentioned_in"]) +
+                         " · HEAD " + row["head_sha"][:12])
+    if not report["shown_duplicate_issue_groups"]:
+        lines.append("Geen dubbele issuevermelding in de gelezen bronsteekproef.")
+    if report["duplicate_issue_groups_truncated"]:
+        lines.append("Overige groepen buiten begrensde weergave ONBEKEND.")
     if report["unpaired_open_prs_in_sample_not_claim_verified"]:
         lines.extend(["", "## PR's zonder gedeelde paden (geen claimvrijgave)"])
         for pr in report["unpaired_open_prs_in_sample_not_claim_verified"]:
