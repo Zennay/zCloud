@@ -307,3 +307,25 @@ gecommit, niet in live SQLite gedeployed. Alle bestaande
 merge-, CI-, reviewer- en productieautorisatiegates
 blijven verplicht. Geen QA- of regressierondes,
 geen serviceherstart en geen live workerclaimmutaties.
+
+
+### 20 oktober · Actieve claims zonder projectregistratie zichtbaar, niet als veilig beschouwd
+
+De read-only scopewaarneming slaat nu ook
+`claimed/running/verifying`-rijen op waarvan de project-ID
+niet meer in `PROJECT_INDEX` voorkomt. Eerder zouden die
+stilzwijgend uit een conflictinventaris verdwijnen, zodat
+nul waargenomen overlaps ten onrechte als volledig overzicht
+kon worden gelezen.
+
+Het geautoriseerde `GET /api/portfolio-queue` meldt nu
+naast de echte scope-overlaps expliciet
+`unclassified_active_claim_count`,
+`unclassified_active_claims` (maximaal twintig),
+`unclassified_list_truncated` en een afwijkende
+`coverage=active_project_scope_unknown_owner_review_required`
+wanneer een actieve eigenaar door de actuele projectregistratie
+niet classificeerbaar is. Bij bronfouten zijn beide counts
+`null`, nooit een fictieve nul. De actieve records
+blijven ongemoeid; dit is een menselijke herstelactie en
+verleent geen vrijgave of claimrecht.
