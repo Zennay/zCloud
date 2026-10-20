@@ -227,6 +227,8 @@ def main():
                         help="explicit workspace for bounded, read-only disk hotspot scan")
     parser.add_argument("--disk-hotspots-output", type=Path,
                         help="create-only PRIVATE .html containing filenames; never stdout")
+    parser.add_argument("--disk-hotspots-previous", type=Path,
+                        help="opt-in private preceding .json from the same workspace and scanner settings")
     parser.add_argument("--observe-vps-capacity", action="store_true",
                         help="read current Linux host CPU/load/memory and database-mount disk; use ONLY on the intended VPS")
     parser.add_argument("--worker-events-database", type=Path,
@@ -247,13 +249,15 @@ def main():
     try:
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk hotspot scan requires both root and private output")
+        if args.disk_hotspots_previous is not None and args.disk_hotspots_root is None:
+            raise ValueError("previous disk snapshot requires current private disk observation")
         if args.disk_hotspots_root is not None and args.format not in ("html", "json", "text"):
             raise ValueError("disk hotspot scan supports html, json, text only")
         if args.disk_hotspots_output is not None:
             if args.disk_hotspots_output.suffix != ".html":
                 raise ValueError("disk hotspot private output must be .html")
             if any(p is not None and args.disk_hotspots_output.resolve() == p.resolve()
-                   for p in (args.state, args.desk_output)):
+                   for p in (args.state, args.desk_output, args.disk_hotspots_previous)):
                 raise ValueError("disk hotspot output overlaps ledger or desk file")
         if args.pin_issue and args.skip_github_issues:
             raise ValueError("--pin-issue cannot be combined with --skip-github-issues")
@@ -310,6 +314,10 @@ def main():
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
             disk_report = disk_observe(args.disk_hotspots_root)
+            if args.disk_hotspots_previous is not None:
+                from zsentinel_disk_trend import compare, load_previous
+                disk_report["disk_growth_comparison"] = compare(
+                    load_previous(args.disk_hotspots_previous), disk_report)
             disk_private_html = disk_html(disk_report)
             decision["disk_pressure_private_report"] = public_summary(disk_report)
         # Render complete operator output before mutating the optional local
