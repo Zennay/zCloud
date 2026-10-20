@@ -125,6 +125,8 @@ def build(report):
             # Every existing candidate remains visible, not just the most
             # informative one. Gate observations never confer merge rights.
             candidate_state = (
+                "issue_source_stale" if issue.get("issue_evidence_stale") is True else
+                "source_clock_incoherent" if report.get("source_clocks_within_10_minutes") is not True else
                 "observed_failed" if failed else
                 "observed_pending" if pending else
                 "observed_partial_no_release_permission" if has_live_gate else
@@ -265,6 +267,8 @@ def build(report):
             "observed_failed": "Eigenaar: herstel falende exacte-HEAD checks of reviewwijzigingen.",
             "observed_pending": "Wacht op CI; pak intussen ander onafhankelijk productwerk.",
             "not_observed": "Haal actuele exacte-HEAD check- en reviewbron op.",
+            "issue_source_stale": "Issuebron verouderd: vernieuw issue en PR voordat een herstelactie gekozen wordt.",
+            "source_clock_incoherent": "Bronmomenten lopen uiteen: vernieuw issue, PR en CI samen.",
             "observed_partial_no_release_permission":
                 "Controleer verplichte branchregels, onafhankelijke review en eigenaarschap.",
             "inconsistent_existing_pr_gate_sources":
