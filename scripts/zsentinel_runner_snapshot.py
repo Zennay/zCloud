@@ -84,6 +84,38 @@ def packet(report_data):
             "quota": report_data["coach"].get("quota"),
             "weight": report_data["coach"].get("weight"),
             "recommendation_matches": report_data["coach"].get("recommendation_matches"),
+            # The read-only proposal is not an applied cgroup or a release.
+            "effective_quota": (
+                report_data["coach"].get("effective_quota")
+                if type(report_data["coach"].get("effective_quota")) in (int, float)
+                and 0 < report_data["coach"]["effective_quota"] <= 10000 else None
+            ),
+            "effective_weight": (
+                report_data["coach"].get("effective_weight")
+                if type(report_data["coach"].get("effective_weight")) is int
+                and 1 <= report_data["coach"]["effective_weight"] <= 10000 else None
+            ),
+            "promotion_status": (
+                report_data["coach"].get("promotion_status")
+                if report_data["coach"].get("promotion_status") in {
+                    "promotion-waiting", "sustained-headroom", "immediate-cpu-yield",
+                    "immediate-weight-yield", "no-promotion-needed",
+                    "inactive-no-action", "source-unavailable",
+                    "unreadable-current-cgroup", "current-cgroup-unavailable",
+                } else None
+            ),
+            "promotion_observations": (
+                report_data["coach"].get("promotion_observations")
+                if type(report_data["coach"].get("promotion_observations")) is int
+                and 1 <= report_data["coach"]["promotion_observations"] <= 1000
+                else None
+            ),
+            "promotion_remaining_seconds": (
+                report_data["coach"].get("promotion_remaining_seconds")
+                if type(report_data["coach"].get("promotion_remaining_seconds")) is int
+                and 0 <= report_data["coach"]["promotion_remaining_seconds"] <= 300
+                else None
+            ),
         },
         "cpu_recommendation": {
             "quota_percent": report_data["quota"], "weight": report_data["weight"],
