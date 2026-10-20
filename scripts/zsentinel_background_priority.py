@@ -75,16 +75,22 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
     """
     actual_quota = observed.get("quota_seconds")
     actual_weight = observed.get("weight")
-    if (not observed.get("active") or
-            type(actual_quota) not in (int, float) or
+    if not observed.get("active"):
+        return recommended_quota, recommended_weight, "inactive-no-action", None
+    if (type(actual_quota) not in (int, float) or
             not math.isfinite(actual_quota) or actual_quota <= 0 or
-            type(actual_weight) is not int):
-        return recommended_quota, recommended_weight, "no-active-readable-cgroup", None
+            type(actual_weight) is not int or not 1 <= actual_weight <= 10000):
+        # A currently active cgroup with unknown settings may NEVER be
+        # silently boosted because we cannot prove its present limits.
+        return None, None, "unreadable-current-cgroup", None
     current_quota = actual_quota * 100
-    if recommended_quota <= current_quota + 0.2:
-        # A reduction / equal recommendation is never delayed, even if
-        # historical evidence is absent or manipulated.
-        return recommended_quota, recommended_weight, "immediate-yield-or-equal", None
+    if recommended_quota < current_quota - 0.2:
+        return recommended_quota, min(recommended_weight, actual_weight), "immediate-cpu-yield", None
+    if recommended_weight < actual_weight:
+        return min(recommended_quota, current_quota), recommended_weight, "immediate-weight-yield", None
+    if (recommended_quota <= current_quota + 0.2
+            and recommended_weight <= actual_weight):
+        return recommended_quota, recommended_weight, "no-promotion-needed", None
     candidate = {
         "boot": boot, "target_quota": recommended_quota,
         "target_weight": recommended_weight,
@@ -426,6 +432,17 @@ def human_preview(data):
             print("  Let op: gedeeltelijk overzicht; niet alle services zijn gezien.")
     elif data.get("runner_units_observed") is False:
         print("GitHub runner-services: niet uitleesbaar.")
+    if "promotion_status" in data:
+        print("Effectieve CPU-regeling: "
+              + (str(data.get("effective_quota")) + "% / gewicht "
+                 + str(data.get("effective_weight"))
+                 if data.get("effective_quota") is not None else "niet veilig te bepalen"))
+        if data["promotion_status"] == "promotion-waiting":
+            print("Opschalen uitgesteld: minimaal 5 minuten aanhoudende "
+                  "vrije capaciteit en drie gescheiden observaties nodig.")
+        elif data["promotion_status"] == "sustained-headroom":
+            print("Opschalen toegestaan door herhaald stabiel bronbewijs; "
+                  "preview heeft niets toegepast.")
     print("Er zijn geen systeeminstellingen of taken gewijzigd.")
 
 
@@ -459,7 +476,19 @@ def main():
     if args.preview:
         try:
             current = installed_cgroup()
+            clock = time.monotonic()
+            effective_quota, effective_weight, promotion_status, candidate = promotion_policy(
+                quota, weight, current, read_private_state(), clock, _boot_token()
+            )
             observed = {
+                "effective_quota": effective_quota,
+                "effective_weight": effective_weight,
+                "promotion_status": promotion_status,
+                "promotion_observations": candidate["observations"] if candidate else None,
+                "promotion_elapsed_seconds": (
+                    round(clock - candidate["started_mono"])
+                    if candidate else None
+                ),
                 "unit_observed": True,
                 "unit_active": current["active"],
                 "current_quota_percent": (round(current["quota_seconds"] * 100, 2)
@@ -471,7 +500,11 @@ def main():
             # Read-only preview still works outside an available user systemd bus.
             observed = {"unit_observed": False, "unit_active": None,
                         "current_quota_percent": None, "current_weight": None,
-                        "recommendation_currently_applied": None}
+                        "recommendation_currently_applied": None,
+                        "effective_quota": None, "effective_weight": None,
+                        "promotion_status": "current-cgroup-unavailable",
+                        "promotion_observations": None,
+                        "promotion_elapsed_seconds": None}
         result = {**s, **observed, "mode": mode, "quota": quota,
                   "weight": weight, "reasons": reasons, "applied": False}
         if args.runners or args.report or args.snapshot:
@@ -529,23 +562,31 @@ def main():
     if not actual["active"]:
         write_private_state({**s, "quota": quota, "weight": weight, "mode": mode,
                              "unit_active": False, "applied_verified": False,
-                             "reasons": reasons})
+                             "promotion": None, "reasons": reasons})
         print("coach-not-active: capacity observed, CPU controls left unchanged")
         return
-    if not matches_cgroup(actual, quota, weight):
+    effective_quota, effective_weight, promotion_status, candidate = promotion_policy(
+        quota, weight, actual, read_private_state(), time.monotonic(), _boot_token()
+    )
+    if effective_quota is None or effective_weight is None:
+        raise SystemExit("Current active cgroup unreadable: refusing CPU change")
+    if not matches_cgroup(actual, effective_quota, effective_weight):
         # No command shell, no privileged unit and no service restart.
         subprocess.run(
             ["systemctl", "--user", "set-property", "--runtime",
-             UNIT, f"CPUQuota={quota}%", f"CPUWeight={weight}"],
+             UNIT, f"CPUQuota={effective_quota:g}%", f"CPUWeight={effective_weight}"],
             check=True, timeout=12, stdout=subprocess.DEVNULL,
         )
         actual = installed_cgroup()
-        if not matches_cgroup(actual, quota, weight):
+        if not matches_cgroup(actual, effective_quota, effective_weight):
             raise SystemExit("Coach policy not verified after systemd update")
-    write_private_state({**s, "quota": quota, "weight": weight,
+    write_private_state({**s, "quota": effective_quota, "weight": effective_weight,
+                         "recommended_quota": quota, "recommended_weight": weight,
+                         "promotion_status": promotion_status, "promotion": candidate,
                          "mode": mode, "unit_active": True, "applied_verified": True,
                          "reasons": reasons})
-    print(f"{mode}: Fuckball CPUQuota={quota}%; CPUWeight={weight}; "
+    print(f"{mode}: Fuckball CPUQuota={effective_quota:g}%; "
+          f"CPUWeight={effective_weight}; promotion={promotion_status}; "
           f"active runner={s['runner_active']}; sources complete={s['source_complete']}")
 
 
