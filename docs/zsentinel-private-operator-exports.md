@@ -229,3 +229,21 @@ De module weigert autoriserende bronflags, inconsistenties in totals
 of per-projectgroepen en verwarring tussen originele observatietijd en het
 moment van latere rapportexport. De oorspronkelijke bron-UTC en
 niet-autorisatiestatus blijven bij ieder venster zichtbaar.
+
+### Private eigenaarsoverdracht voor wachtrij-/claimdruk
+
+Naast de eerdere incidentenoverdracht bevat de offline HTML nu een tweede,
+specifieke knop **Bekijk privé wachtrijoverdracht**. De voorvertoning toont
+de volledig brongebonden P0-eerst gesorteerde projectverschillen, plus de
+betreffende oude observatiemomenten en bron-SHA-256-identiteiten. De download
+(**Download wachtrijoverdracht als Markdown**) kan pas ná die expliciete
+voorvertoning en werkt zonder externe verbinding. Alle ontbrekende of
+afgekapt gelezen projectgroepen staan als *ONBEKEND* genoteerd; er worden
+geen herstelclaims of geautoriseerde retries van afgeleid.
+
+De overdracht is bedoeld voor **handmatig onderzoek door de huidige
+bevoegde eigenaar**: uitzoeken of herhaalde claimpogingen wijzen op
+werkelijke stagnatie, verlopen lease-registraties of andere bronnen.
+Niets wordt automatisch geclaimd, verwijderd, gerequeued, uitgevoerd,
+gemerged, verstuurd of gedeployed. Ook eventuele lagere wachtrijaantallen
+zijn zonder expliciet nieuw bewijs geen succesmelding.
