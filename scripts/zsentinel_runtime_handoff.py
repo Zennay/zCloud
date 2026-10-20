@@ -193,6 +193,81 @@ def build_handoff(decision, registry=None):
             card["existing_pr_urls"] = sorted(set(related))
             card["review_existing_pr_first"] = bool(related)
             cards.append(card)
+    # Historical backlog is a DIFFERENT source class. Never splice it into
+    # fresh incidents, issue intake, live alerts or worker assignment.
+    backlog = decision.get("historical_owner_recheck_candidates", [])
+    old = decision.get("historical_unresolved")
+    historical = []
+    if (type(backlog) is not list or len(backlog) > 5):
+        raise ValueError("invalid bounded historical owner recheck source")
+    if backlog:
+        if (type(old) is not dict
+                or old.get("schema") != "zsentinel-historical-backlog-v1"
+                or old.get("source_partial") is not True
+                or old.get("action_authorized") is not False
+                or type(old.get("shown")) is not list
+                or len(old["shown"]) > 30):
+            raise ValueError("historical handoff needs canonical unresolved ledger")
+        historical_source = {row.get("incident_id"): row for row in old["shown"]
+                             if type(row) is dict}
+        if len(historical_source) != len(old["shown"]):
+            raise ValueError("duplicate historical ledger incident ID")
+        seen_history = set()
+        for row in backlog:
+            if (type(row) is not dict or type(row.get("incident_id")) is not str
+                    or not re.fullmatch("[0-9a-f]{32}", row["incident_id"])
+                    or row["incident_id"] in seen_history
+                    or row.get("source_status") !=
+                        "historical_not_observed_needs_owner_recheck"
+                    or row.get("current_source_observed") is not False
+                    or row.get("notifier_delivery_authorized") is not False
+                    or row.get("recovery_action_authorized") is not False
+                    or row.get("owner_confirmation_required") is not True
+                    or row.get("severity_at_last_observation") not in ("P0", "P1")
+                    or type(row.get("next_step")) is not str):
+                raise ValueError("untrusted historical owner recheck")
+            seen_history.add(row["incident_id"])
+            prior = historical_source.get(row["incident_id"])
+            if (prior is None
+                    or prior.get("source_status") !=
+                        "not_observed_needs_reconciliation"
+                    or prior.get("current_source_observed") is not False
+                    or prior.get("mutation_authorized") is not False
+                    or prior.get("human_escalation_historical") is not True
+                    or prior.get("project_id") != row.get("project_id")
+                    or prior.get("severity") != row["severity_at_last_observation"]
+                    or prior.get("problem") != row.get("problem_at_last_observation")
+                    or prior.get("last_seen") != row.get("source_last_seen")
+                    or prior.get("exact_github_job") != row.get("exact_github_job")):
+                raise ValueError("historical owner source contradicts private ledger")
+            original = row.get("exact_github_job")
+            if original is not None:
+                if (type(original) is not dict
+                        or original.get("project_id") != row["project_id"]):
+                    raise ValueError("cross-project historical GitHub job")
+                fields = {key: original.get(key) for key in
+                          ("run_id", "job_id", "head_sha")}
+            else:
+                fields = None
+            card = _card(row["severity_at_last_observation"],
+                         row["project_id"], "historical_owner_recheck",
+                         row["next_step"], source="prior_private_ledger_not_current")
+            card = _attach_verified_job(card, fields, registry, None)
+            last = row["source_last_seen"]
+            if type(last) is not str or len(last) > 40:
+                raise ValueError("invalid historical last seen")
+            try:
+                parsed = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError("invalid historical last seen") from exc
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise ValueError("historical last seen needs timezone")
+            card.update({"historical_source_last_seen_utc":
+                         parsed.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                         "current_source_observed": False,
+                         "historical_reconciliation_required": True,
+                         "live_alert_authorized": False})
+            historical.append(card)
     # Priority before kind: make owner/incident work visible before new intake.
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1, "open_product_issue": 2}
@@ -210,6 +285,11 @@ def build_handoff(decision, registry=None):
                      "queue": queue_coverage, "workers": worker_coverage,
                      "issues": issue_coverage, "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
+        "historical_owner_rechecks": historical,
+        "historical_source_incomplete": (
+            old.get("source_partial") is True if type(old) is dict else True),
+        "historical_rechecks_truncated": (
+            decision.get("historical_recheck_source_truncated") is True),
         "items_truncated": len(cards) > MAX_ITEMS,
         "all_sources_complete": False,
         "owner_and_current_claim_verified": False,
