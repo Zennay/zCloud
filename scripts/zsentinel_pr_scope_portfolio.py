@@ -486,6 +486,40 @@ def as_html(board):
             "claimbaar; controleer nog steeds leases en PR-loze branches.</p><ul>" +
             (links or "<li>Geen andere PR's zichtbaar.</li>") +
             "</ul></section>")
+    gate_panel = ""
+    if board.get("current_live_pr_gate_observation") is not None:
+        live = board["current_live_pr_gate_observation"]
+        pr_cards = []
+        for gate in live["items"]:
+            url = escape(gate["url"], quote=True)
+            if gate["status"] != "current_exact_pr_head_and_sample_match":
+                detail = "GitHub-bron of exacte PR-HEAD veranderd; geen gates afleiden."
+            else:
+                detail = (
+                    "HEAD " + escape(gate["head_sha_observed"][:12]) +
+                    " · CI lopend " + str(gate["observed_checks_pending"]) +
+                    " · mislukt " + str(gate["observed_checks_not_successful"]) +
+                    " · onafhankelijke approvals gezien " +
+                    str(gate["observed_independent_exact_head_approvals"]) +
+                    " · " + escape(GATE_LABELS.get(
+                        gate["human_next_gate_step"], "Bron onvolledig.")))
+            pr_cards.append(
+                "<li><a href='" + url + "' rel='noopener noreferrer'>" +
+                escape(gate["project"]) + " · " + url +
+                "</a><br><small>" + detail +
+                " · geen mergevrijgave</small></li>")
+        gate_panel = (
+            "<section><h2>Actuele PR-gates · maximaal vier</h2>"
+            "<p>Afzonderlijke read-only waarneming, niet atomair met de "
+            "bestandscope. Bronclaims, release en verplichte regels "
+            "zijn niet geautoriseerd.</p><ol>" +
+            ("".join(pr_cards) or "<li>Geen betrouwbare PR-bron geselecteerd.</li>") +
+            "</ol><p>" +
+            ("Overige PR-gates NIET waargenomen. " if
+             live["more_sampled_prs_not_gate_checked"] else "") +
+            "Maximaal " + str(live["max_additional_github_gets"]) +
+            " extra GitHub GETs in deze optionele opname.</p></section>"
+        )
     return (
         "<!doctype html><html lang='nl'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -503,7 +537,7 @@ def as_html(board):
         "<aside>Alleen gedeelde bestandspaden uit een begrensde GitHub-bron. "
         "Dit bewijst geen mergeconflicten, claims of vrije werkscope. "
         "Geen automatische actie, merge of deploy.</aside>" +
-        "".join(cards) + "</html>"
+        gate_panel + "".join(cards) + "</html>"
     )
 
 
