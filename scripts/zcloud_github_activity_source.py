@@ -503,20 +503,22 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         item["first_observed_at"] = stamp(first_seen or observed)
         item["new_since_previous"] = (item["id"] not in prior) if prior is not None else None
     events = sorted(deduped.values(), key=lambda x: (x["source_at"], x["id"]), reverse=True)
-    # Actions can outnumber PRs and main commits. Interleave all three
-    # bounded source types within each project before the output cap.
-    # A short operator view must never hide all PRs behind recent CI runs.
-    buckets = {(project, kind): [] for project in selected for kind in ("pr", "ci", "commit")}
+    # Interleave four bounded source categories within each project. A noisy
+    # PR-update or CI stream cannot consume every slot before a genuine
+    # GitHub close-without-merge is made visible to the operator.
+    buckets = {(project, kind): [] for project in selected
+               for kind in ("pr", "closed", "ci", "commit")}
     for item in events:
         category = ("ci" if item["kind"] == "ci_run" else
-                    "commit" if item["kind"] == "main_commit" else "pr")
+                    "commit" if item["kind"] == "main_commit" else
+                    "closed" if item["kind"] == "pr_closed" else "pr")
         buckets[(item["project"], category)].append(item)
     fair = []
     positions = {key: 0 for key in buckets}
     while len(fair) < max_events:
         advanced = False
         for project in selected:
-            for category in ("pr", "ci", "commit"):
+            for category in ("pr", "closed", "ci", "commit"):
                 key = (project, category)
                 index = positions[key]
                 if index >= len(buckets[key]):
