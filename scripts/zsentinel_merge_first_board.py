@@ -90,7 +90,11 @@ def observed_checks(checks, legacy):
         return "NO_CHECK_EVIDENCE"
     if any(not isinstance(r, dict) for r in runs) or any(not isinstance(s, dict) for s in statuses):
         return "UNKNOWN"
-    if any(r.get("status") != "completed" or r.get("conclusion") != "success" for r in runs):
+    # A skipped or neutral optional check does not invalidate positive CI
+    # workflow evidence. Mandatory contexts and approval remain independent.
+    if any(r.get("status") != "completed"
+           or r.get("conclusion") not in {"success", "skipped", "neutral"}
+           for r in runs):
         return "PENDING_OR_FAILURE"
     if statuses and legacy.get("state") != "success":
         return "PENDING_OR_FAILURE"
@@ -403,11 +407,12 @@ def render(rows, observed):
                         " · " + esc(hold["next_action"]) + "</li>")
                 if workflow_cards:
                     holds_html = (
-                        "<details open><summary>Exacte CI-runblokkades (" +
+                        "<details open><summary>Geobserveerde niet-groene CI-runs (" +
                         esc(len(workflow_cards)) +
                         ("+; bronbegrenzing" if holds_source.get("more") else "") +
                         ")</summary><ul>" + "".join(workflow_cards) +
-                        "</ul></details>")
+                        "</ul><p>Niet iedere geobserveerde run is verplicht; "
+                        "alleen GitHub-branchregels bepalen mergegates.</p></details>")
             else:
                 holds_html = (
                     "<p><strong>CI-runbron onvolledig:</strong> geen "
