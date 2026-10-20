@@ -173,10 +173,17 @@ def capacity_changes(previous, current):
         a["root_volume_bytes"] > 0 and
         a["root_volume_bytes"] == b.get("root_volume_bytes")
     )
+    inode_ok = (
+        mount_ok
+        and type(a.get("root_inode_total")) is int
+        and a["root_inode_total"] > 0
+        and a["root_inode_total"] == b.get("root_inode_total")
+    )
     labels = (
         ("host_load", False), ("memory_available_gib", False),
         ("swap_used_percent", False), ("disk_unavailable_percent", True),
         ("root_available_gib", True),
+        ("root_inode_available_percent", True),
     )
     metrics = []
     for key, is_disk in labels:
@@ -185,7 +192,8 @@ def capacity_changes(previous, current):
             type(old) in (int, float) and type(new) in (int, float) and
             0 <= old < 1e12 and 0 <= new < 1e12
         )
-        if key in {"swap_used_percent", "disk_unavailable_percent"}:
+        if key in {"swap_used_percent", "disk_unavailable_percent",
+                   "root_inode_available_percent"}:
             numeric = numeric and old <= 100 and new <= 100
         if key == "root_available_gib":
             # A source may be syntactically valid yet claim more free GiB
@@ -193,7 +201,8 @@ def capacity_changes(previous, current):
             max_gib = a["root_volume_bytes"] / (1024 ** 3) if mount_ok else None
             numeric = (numeric and max_gib is not None
                        and old <= max_gib + 0.02 and new <= max_gib + 0.02)
-        comparable = numeric and (not is_disk or mount_ok)
+        comparable = (numeric and (not is_disk or mount_ok)
+                      and (key != "root_inode_available_percent" or inode_ok))
         metrics.append({
             "metric": key,
             "previous": old if numeric else None,
@@ -205,6 +214,7 @@ def capacity_changes(previous, current):
         "source_complete": a.get("source_complete") is True
                            and b.get("source_complete") is True,
         "root_comparable": mount_ok,
+        "root_inode_comparable": inode_ok,
         "metrics": metrics,
         "explanation": (
             "Observed host capacity difference only; no proof of recovered "
