@@ -698,8 +698,22 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "issue_identity_lookups_requested": bool(resolve_issue_identity),
         "issue_identity_lookups_performed": len(checked_identities),
         "issue_identity_lookup_budget": MAX_IDENTITY_LOOKUPS,
+        # A requested GET may be denied, unavailable, or return an
+        # ambiguous identity. Completed requests alone are not complete
+        # *evidence*; keep unresolved observations explicitly incomplete.
         "issue_identity_lookup_incomplete":
-            len(duplicate_issue_groups) > len(checked_identities),
+            len(duplicate_issue_groups) > len(checked_identities)
+            or any(v not in (
+                "confirmed_open_issue_at_observation",
+                "confirmed_closed_issue_at_observation",
+                "reference_is_pull_request_not_issue")
+                for v in checked_identities.values()),
+        "observed_confirmed_open_issue_groups": sum(
+            v == "confirmed_open_issue_at_observation"
+            for v in checked_identities.values()),
+        "observed_issue_number_is_pr_groups": sum(
+            v == "reference_is_pull_request_not_issue"
+            for v in checked_identities.values()),
         "shown_duplicate_issue_groups": duplicate_issue_cards,
         "duplicate_issue_groups_truncated": (
             len(duplicate_issue_groups) > MAX_DUPLICATE_ISSUE_GROUPS),
@@ -755,6 +769,12 @@ def graph_operator_text(report):
         " / gezien " + str(report["observed_open_prs"]) +
         " · opeenvolgende pagina's: " + str(report["open_pr_page_count"]),
         "Gedeelde-bestandparen: " + str(report["observed_file_collision_pairs"]),
+        "Optionele GH issueidentiteit: " +
+        str(report["issue_identity_lookups_performed"]) + " opgevraagd, " +
+        str(report["observed_confirmed_open_issue_groups"]) + " open issues, " +
+        str(report["observed_issue_number_is_pr_groups"]) + " waren PR-nummers; " +
+        ("onvolledig/ongezien" if report["issue_identity_lookup_incomplete"]
+         else "waargenomen bronnen beschikbaar"),
         "Meerdere open PR-tekstverwijzingen naar hetzelfde issue: " +
         str(report["observed_duplicate_issue_groups"]) +
         " (alleen onderzochte bronnen, geen fix-eigendom)",
