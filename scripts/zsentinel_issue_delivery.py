@@ -261,6 +261,16 @@ def build_workboard(inbox, registry, token=None):
             "owner_next_step": NEXT_ACTION_NL[evidence["next_step"]],
         })
         listed_urls.add(url)
+    # A ready-to-open PR belongs ahead of uninspected source-list entries,
+    # but its observed status is NOT a branch-rule / merge authorization.
+    # Previously referenced issues still determine the selection budget.
+    observed_gate = "bounded_exact_head_observed_not_authorized"
+    pr_cards.sort(key=lambda row: (
+        row.get("gate_observation") != observed_gate,
+        row["draft"],
+        project_names.index(row["project_id"]),
+        row["url"],
+    ))
     for row in sampled:
         for link in row["existing_pr_links_unverified"]:
             if link not in by_link:
@@ -314,6 +324,14 @@ def build_workboard(inbox, registry, token=None):
         "items": sampled,
         "recent_open_product_prs": pr_cards,
         "recent_open_product_pr_count": len(pr_cards),
+        "merge_first_source_summary": {
+            "sampled_open_product_prs": len(pr_cards),
+            "observed_exact_head_without_merge_authority": sum(
+                pr["gate_observation"] == observed_gate for pr in pr_cards),
+            "uninspected_or_moved_head": sum(
+                pr["gate_observation"] != observed_gate for pr in pr_cards),
+            "merge_authorized": False, "owner_claim_verified": False,
+        },
         "inspected_pr_count": len(inspected["items"]),
         "stopped_after_permission_or_rate_limit": degraded,
         "ownership_verified": False, "claims_taken": False,
