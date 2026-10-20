@@ -199,7 +199,9 @@ def product_queue_snapshot(items, max_visible=8):
         if item.get("worker_slot") is not None:
             held_slot_occupied += 1
             continue
-        disposition = product_delivery_disposition(item)
+        disposition = item.get("delivery_policy_disposition")
+        if disposition not in ("product", "qa_only", "invalid"):
+            disposition = product_delivery_disposition(item)
         if disposition == "qa_only":
             skipped_qa += 1
         elif disposition != "product":
