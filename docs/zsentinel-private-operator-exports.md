@@ -171,3 +171,17 @@ Dit is een **operatorproduct**, niet een nieuwe Quality Validation- of
 schedulerfunctie. Het genereert geen providerrequests, eigenaarsclaims,
 GitHub merges, CI-retries, runneracties, betalingen of productie-deploys.
 Een opgeslagen waarneming is geen actueel CI- of reviewbewijs.
+
+### Privé menselijke actieoverdracht vanuit de tijdlijn
+
+De offline HTML-tijdlijn heeft lokale filters en een aparte **Bekijk
+privéoverdracht**-voorvertoning. Alleen geselecteerde, historisch als
+menselijke P0/P1 geobserveerde incidentkaarten worden in de Markdown
+opgenomen. Na expliciete controle kan de operator op **Download geselecteerd
+Markdown** klikken. Een gewijzigd project-/zoek-/prioriteitsfilter maakt de
+oude voorvertoning ongeldig; de download wordt pas na een nieuwe preview
+beschikbaar. De overdracht bevat originele bronvensters en bron-SHA-256,
+incidentidentiteit, oorspronkelijke opvolgdeadline, eigenaarlabel met
+onbevestigde status, bronhiaten en de waarschuwing dat niet opnieuw gezien
+**geen bewezen herstel** is. Er wordt niets verstuurd, geclaimd, gemerged,
+als geslaagd afgetekend of automatisch in een agenda geïmporteerd.
