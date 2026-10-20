@@ -7,6 +7,7 @@ stops, restarts, dispatches or modifies a portfolio queue or model.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -206,6 +207,58 @@ def write_private_state(data):
             pass
 
 
+RUNNER_UNIT = re.compile(r"^actions\\.runner\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.service$")
+
+
+def runner_inventory():
+    """Optional one-shot local unit inventory: no permission or service changes."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "--no-pager", "--plain", "--no-legend",
+             "list-units", "--all", "--type=service", "actions.runner.*"],
+            check=True, timeout=8, capture_output=True, text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"runner_units_observed": False, "runner_units": [],
+                "runner_units_truncated": None}
+    units = []
+    seen = set()
+    partial = len(result.stdout) > 20000
+    for line in result.stdout[:20000].splitlines():
+        fields = line.strip().split()
+        if len(fields) < 4 or not RUNNER_UNIT.fullmatch(fields[0]):
+            continue
+        name, state, detail = fields[0], fields[2], fields[3]
+        if name in seen:
+            continue
+        seen.add(name)
+        if len(units) >= 20:
+            partial = True
+            break
+        if state not in {"active", "failed", "inactive", "activating", "deactivating"}:
+            state = "unknown"
+        if detail not in {"running", "dead", "failed", "exited", "start", "stop",
+                          "auto-restart", "waiting", "listening"}:
+            detail = "unknown"
+        entry = {"unit": name, "state": state, "detail": detail,
+                 "reason": None}
+        if state == "failed":
+            try:
+                receipt = subprocess.run(
+                    ["systemctl", "--no-pager", "show", name, "-p", "Result"],
+                    check=True, timeout=3, capture_output=True, text=True,
+                )
+                value = receipt.stdout.strip().removeprefix("Result=")
+                if value in {"oom-kill", "exit-code", "signal", "timeout", "watchdog",
+                             "core-dump", "resources", "success"}:
+                    entry["reason"] = value
+            except (OSError, subprocess.SubprocessError):
+                pass
+        units.append(entry)
+    return {"runner_units_observed": True, "runner_units": units,
+            "runner_units_truncated": partial}
+
+
 REASON_LABELS = {
     "incomplete-capacity-source": "een benodigde systeemmeting ontbreekt",
     "zcloud-github-job-running": "een zCloud GitHub-job is actief",
@@ -243,6 +296,15 @@ def human_preview(data):
               f" gewicht {data['current_weight'] if data['current_weight'] is not None else 'onbekend'}")
         print("Advies al toegepast: " +
               ("ja" if data["recommendation_currently_applied"] else "nee of niet verifieerbaar"))
+    if data.get("runner_units_observed") is True:
+        print("GitHub runner-services (service actief is geen bewijs van een lopende job):")
+        for entry in data["runner_units"]:
+            reason = f" ({entry['reason']})" if entry["reason"] else ""
+            print(f"  {entry['unit']}: {entry['state']}/{entry['detail']}{reason}")
+        if data.get("runner_units_truncated"):
+            print("  Let op: gedeeltelijk overzicht; niet alle services zijn gezien.")
+    elif data.get("runner_units_observed") is False:
+        print("GitHub runner-services: niet uitleesbaar.")
     print("Er zijn geen systeeminstellingen of taken gewijzigd.")
 
 
@@ -252,9 +314,11 @@ def main():
                         help="Show policy decision in JSON without changing CPU controls or state")
     parser.add_argument("--human", action="store_true",
                         help="Explain a read-only preview in Dutch")
+    parser.add_argument("--runners", action="store_true",
+                        help="Include read-only GitHub runner service states in preview")
     args = parser.parse_args()
-    if args.human and not args.preview:
-        parser.error("--human requires --preview")
+    if (args.human or args.runners) and not args.preview:
+        parser.error("--human and --runners require --preview")
     if not args.preview and os.geteuid() != 1000:
         raise SystemExit("Refusing to alter units outside ubuntu user scope")
     s = snapshot()
@@ -279,6 +343,8 @@ def main():
                         "recommendation_currently_applied": None}
         result = {**s, **observed, "mode": mode, "quota": quota,
                   "weight": weight, "reasons": reasons, "applied": False}
+        if args.runners:
+            result.update(runner_inventory())
         if args.human:
             human_preview(result)
         else:
