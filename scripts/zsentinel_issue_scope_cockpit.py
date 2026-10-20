@@ -26,6 +26,7 @@ from zsentinel_product_issue_inbox import (
 from zsentinel_product_delivery_board import prepare as prepare_delivery_board
 from zsentinel_pr_scope_guard import ROOT, registry
 from zsentinel_pr_scope_portfolio import collect_portfolio
+from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -657,12 +658,16 @@ def output_text(report, markdown=False):
                              " (geen actuele merge-autorisatie)")
             for other in pr["overlap_with_open_prs"]:
                 lines.append("    Gedeeld bestandspad met " + other)
+    if report.get("historical_pr_delta"):
+        lines.extend(["", render_delta(report["historical_pr_delta"],
+                                       "markdown" if markdown else "text")])
     lines.extend(["", "Gedeeld pad ≠ mergeconflict. Geen claims, PR-less ownership, CI of review geautoriseerd.",
                   "P0 infrastructuur/billing uitsluitend bevoegd eigenaar. Geen writes, retries, merge of deploy."])
     return "\n".join(lines) + "\n"
 
 
 def output_html(report):
+    delta_panel = render_delta(report.get("historical_pr_delta"), "html")
     signals = []
     for item in report["saved_operational_context"]:
         signals.append(
@@ -886,7 +891,7 @@ update();
             "<p>Actuele PR-review/checkbron: " +
             escape(report["current_head_gate_observations"]["mode"]) +
             " · verplichte rules en eigenaarrechten blijven onbekend.</p>" +
-            signals_html + bundle_summary + filter_bar + "<main>" + "".join(cards) + "</main>" +
+            signals_html + delta_panel + bundle_summary + filter_bar + "<main>" + "".join(cards) + "</main>" +
             offline_script + "<footer><small>Issue SHA256 " +
             escape(report["product_issue_source_sha256"]) + "</small></footer></html>")
 
@@ -901,6 +906,8 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append")
     parser.add_argument("--max-prs", type=int, default=10)
+    parser.add_argument("--compare-previous", type=Path,
+                        help="Vergelijk met privé 0600 JSON uit de PR-portfoliobalie")
     parser.add_argument("--inspect-pr-gates", action="store_true",
                         help="Optioneel: current-head checks/reviews van maximaal vier PRs")
     parser.add_argument("--from-review", type=Path,
@@ -965,6 +972,8 @@ def main(argv=None):
         if not projects:
             raise ValueError("no canonical product-issue projects in the selected issue source")
         pr_scope = collect_portfolio(projects, canonical, os.environ.get("GITHUB_TOKEN"), args.max_prs)
+        historical = (compare(read_private_previous(args.compare_previous), pr_scope)
+                      if args.compare_previous is not None else None)
         report = compose(view, sha, canonical, projects, pr_scope,
                          saved_gates=_saved_pr_gates(source),
                          source_mode=("live_exact_selected_github_issue"
@@ -972,6 +981,7 @@ def main(argv=None):
                                       else "live_readonly_github_issues" if args.live_issues
                                       else "saved_local_snapshot"),
                          focus_issue=args.focus_issue, raw_board=source)
+        report["historical_pr_delta"] = historical
         if saved_bundle is not None:
             saved_entries = {
                 row["url"]: row for batch in saved_bundle["batches"]
