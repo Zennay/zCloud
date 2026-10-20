@@ -13,7 +13,7 @@ import subprocess
 import time
 
 from zsentinel_background_priority import (
-    PROMOTION_SECONDS, _boot_token, admission, installed_cgroup,
+    PROMOTION_SECONDS, _admission_context, _boot_token, admission, installed_cgroup,
     matches_cgroup, pressure_reasons, promotion_policy, read_private_state,
     runner_inventory, snapshot,
 )
@@ -61,7 +61,8 @@ def collect():
         current = installed_cgroup()
         clock = time.monotonic()
         effective_quota, effective_weight, promotion_status, promotion = promotion_policy(
-            quota, weight, current, read_private_state(), clock, _boot_token()
+            quota, weight, current, read_private_state(), clock, _boot_token(),
+            _admission_context(host)
         )
         coach = {
             "observed": True,
