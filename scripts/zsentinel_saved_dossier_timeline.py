@@ -28,10 +28,16 @@ TAGS = ("changed_head", "changed_gate", "changed_issues",
         "reappeared_in_sample", "missing_between_samples", "last_sample_missing")
 
 
-def build_timeline(paths):
-    """Summarize up to twelve nonoverlapping fully admitted private sources."""
-    if not MIN_SNAPSHOTS <= len(paths) <= MAX_SNAPSHOTS:
-        raise ValueError("The source timeline requires two to twelve archives")
+def build_timeline(paths, *, minimum_sources=MIN_SNAPSHOTS):
+    """Summarize up to twelve nonoverlapping fully admitted private sources.
+
+    Issue-first callers may request one saved observation for an immediate
+    existing-PR reuse view. The history CLI itself still requires two.
+    """
+    if (type(minimum_sources) is not int
+            or minimum_sources not in (1, MIN_SNAPSHOTS)
+            or not minimum_sources <= len(paths) <= MAX_SNAPSHOTS):
+        raise ValueError("Expected one to twelve bounded offline source archives")
     if len({str(p.absolute()) for p in paths}) != len(paths):
         raise ValueError("An input archive was repeated")
     source = []
