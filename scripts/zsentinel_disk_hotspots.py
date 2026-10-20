@@ -693,7 +693,9 @@ def main():
     try:
         if args.previous is not None and args.previous.resolve() == args.output.resolve():
             raise ValueError("previous and new private output cannot overlap")
-        report = observe(args.root, min_mib=args.min_mib, max_entries=args.max_entries,
+        report = observe(args.root, min_mib=(min(args.min_mib, 1)
+                         if args.archive_target is not None else args.min_mib),
+                         max_entries=args.max_entries,
                          max_depth=args.max_depth, max_seconds=args.max_seconds)
         if args.inspect_open_handles:
             attach_open_references(report, args.root)
