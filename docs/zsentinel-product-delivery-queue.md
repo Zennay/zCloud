@@ -594,3 +594,36 @@ vervangen. Er wordt geen bestaande aandacht opgelost of verwijderd.
 Deze wijziging hoort bij dezelfde veilige bronlinkafhandeling en queue-ID-
 beveiliging. De status in deze PR is uitsluitend source committed; geen live
 attentionrecords, productiedatabase of actieve worker-claim gewijzigd.
+
+
+## 20 oktober · Menselijke escalatie en beëindiging van werk zijn één transactie
+
+Een `BLOCKED`-antwoord van een actieve worker kan een menselijke vervolgstap
+vereisen. Voorheen zette `portfolio_queue_finish()` de taak **eerst definitief
+op `dropped`**, waarna de bron in een tweede SQLite-transactie via
+`portfolio_attention_add()` een `Attention Needed`-record aanmaakte.
+Een ID-collision, SQLite-schrijfweigering of andere fout tijdens dat tweede
+record kon een taak dus beëindigen zonder bijbehorende menselijke escalatie:
+de HTTP-aanroep rapporteerde dan een fout terwijl de taak al weg was.
+
+De implementatie gebruikt nu één gedeelde transactie op de bestaande
+SQLite-connectie voor de `BLOCKED`-statusovergang én de bijbehorende
+projectgebonden menselijke aandacht. De nieuwe
+`_portfolio_attention_add_locked()` is dezelfde persistente
+upsert als de bestaande openbare attentionfunctie, alleen met de
+transactie van de bevoegde caller. Wordt het aandachtspunt geweigerd of
+faalt een schrijfopdracht, dan blijven taakstatus, worker-slot,
+lease, evidence en aandachtspunt **allemaal** onveranderd door rollback.
+De gewone attention-API blijft dezelfde functie gebruiken, met een eigen
+standaardtransactie.
+
+De nieuwe `_queue_attention_id()` laat de bestaande `queue:<id>`-
+referenties ongemoeid zolang ze onder de 160 tekens blijven. Voor een
+geldige lange queue-ID (maximaal 160 tekens) genereert de bron in plaats
+van een ongeldige 166-teken-sleutel een begrensde, deterministische
+`queuehash:<SHA256>`-incident-ID. Geen stille truncatie, geen nieuwe
+permissie, geen afname of overname van actieve workerkoppelingen.
+
+Dit is code op de bestaande PR; geen live database-write of service-
+herstart. Exact-head CI, onafhankelijke review en geserialiseerde
+productierelease blijven ongewijzigd vereist.
