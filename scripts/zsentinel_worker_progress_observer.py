@@ -881,7 +881,10 @@ def main():
             from zsentinel_worker_handoff import (
                 render_html, render_markdown, load_private_previous
             )
-            prior = load_private_previous(args.previous) if args.previous else None
+            try:
+                prior = load_private_previous(args.previous) if args.previous else None
+            except OSError as exc:
+                raise ValueError("private previous worker snapshot unavailable") from exc
             content = (render_html(receipt, previous=prior) if args.format == "html"
                        else render_markdown(receipt, previous=prior))
         elif args.format == "json":
@@ -889,7 +892,13 @@ def main():
         else:
             content = operator_text(receipt)
         if args.output is not None:
-            write_private_handoff(args.output, content, format=args.format)
+            try:
+                write_private_handoff(args.output, content, format=args.format)
+            except OSError as exc:
+                # Keep operator-private report paths out of CLI/log errors.
+                raise ValueError(
+                    "private report cannot be created (already exists or directory rights denied)"
+                ) from exc
             print("Privé worker-handoff veilig aangemaakt (create-only; niets overschreven).")
         else:
             print(content)
