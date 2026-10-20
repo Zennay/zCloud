@@ -11,6 +11,7 @@ REF = re.compile(
     r"\b(?:close[ds]?|fix(?:e[ds])?|resolve[ds]?|addresses|refs?)\s+\#([1-9][0-9]{0,6})\b",
     re.IGNORECASE,
 )
+TITLE_ISSUE_REF = re.compile(r"(?<![A-Za-z0-9_])#([1-9][0-9]{0,6})(?![0-9])")
 PRIO_TITLE = re.compile(r"^\s*(?:\[)?P([01])(?:\]|\b|\s*[-:])", re.IGNORECASE)
 LABELS_P0 = {"p0", "priority:p0", "priority/p0", "critical", "severity:critical",
              "severity/p0", "urgent", "blocker"}
@@ -69,14 +70,29 @@ def references(body, existing):
                    if int(match) in existing})[:20]
 
 
+def title_references(title, existing):
+    """Explicit same-repository #123 mentions are issue *hints*, not fixes."""
+    if not isinstance(title, str) or len(title) > 5000:
+        return []
+    return sorted({int(number) for number in TITLE_ISSUE_REF.findall(title)
+                   if int(number) in existing})[:20]
+
+
+def reference_hints(title, body, existing):
+    """Union of explicit PR-title mentions and bounded body action links."""
+    return sorted(set(references(body, existing)) |
+                  set(title_references(title, existing)))[:20]
+
+
 def link_candidates(pr_list, issues):
-    """Stable source-ranked PR mapping; never treats body refs as accepted fixes."""
+    """Stable source-ranked mappings; neither title nor body proves a fix."""
     links = {}
     for item in pr_list:
         number = item.get("number")
         if not isinstance(number, int):
             raise ValueError("invalid PR ref")
-        links[number] = references(item.get("body"), issues)
+        links[number] = reference_hints(item.get("title"), item.get("body"),
+                                       issues)
     return links
 
 
