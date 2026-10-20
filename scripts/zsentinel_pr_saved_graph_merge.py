@@ -123,7 +123,7 @@ def inspect_source(data, repository):
                 or type(head) is not str or SHA.fullmatch(head) is None
                 or type(base) is not str or SHA.fullmatch(base) is None
                 or type(files) is not list or len(files) > MAX_FILES_PER_PR
-                or pr.get("file_list_complete") not in (True, False)
+                or type(pr.get("file_list_complete")) is not bool
                 or type(pr.get("file_count_observed")) is not int
                 or pr["file_count_observed"] != len(files)
                 or number in found):
@@ -390,7 +390,12 @@ def render(report, fmt):
         " · momentopnamen: " + str(report["snapshot_count"]) +
         " · onderzochte PRs: " + str(report["total_observed_prs"]) +
         "</p><aside>Geen atomische live bron, eigenaars- of mergevrijgave. "
-        "Andere GitHub-pagina's blijven UNKNOWN.</aside>"
+        "Andere GitHub-pagina's blijven UNKNOWN.</aside><p>" +
+        ("WAARSCHUWING: sommige PR-bestandlijsten zijn gedeeltelijk."
+         if report["prs_with_partial_file_scope"] else
+         "Alle afzonderlijk getoonde PR-bestandlijsten zijn binnen hun "
+         "eigen bronvenster volledig; portfolio-dekking blijft onbekend.") +
+        "</p>"
         "<table><thead><tr><th>Open bron-PRs</th><th>Gedeelde paden</th>"
         "<th>Geobserveerde bestanden</th></tr></thead><tbody>" +
         (rows or "<tr><td colspan='3'>Geen botsing gezien, geen vrijgave.</td></tr>") +
