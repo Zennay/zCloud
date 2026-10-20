@@ -277,7 +277,8 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
 
 
 def collect_targeted_windows(project, issue_number, registry, budget,
-                             candidate_page=1, auto_pages=1):
+                             candidate_page=1, auto_pages=1, candidate_offset=0,
+                             expected_page_sha=None):
     """Bounded multiple-page read only; no atomic-search or free-owner claim."""
     if (type(auto_pages) is not int or not 1 <= auto_pages <= 3
             or candidate_page + auto_pages - 1 > MAX_TARGET_PAGES):
@@ -290,7 +291,9 @@ def collect_targeted_windows(project, issue_number, registry, budget,
     for page in range(candidate_page, candidate_page + auto_pages):
         try:
             rows, current_issue, partial, coverage = collect_targeted(
-                project, issue_number, registry, budget, candidate_page=page)
+                project, issue_number, registry, budget, candidate_page=page,
+                candidate_offset=(candidate_offset if not pages else 0),
+                expected_page_sha=(expected_page_sha if not pages else None))
         except (RuntimeError, ValueError, OSError, KeyError, TypeError):
             if not pages:
                 raise
@@ -328,6 +331,9 @@ def collect_targeted_windows(project, issue_number, registry, budget,
             combined.append(row)
         partials.extend(partial)
         pages.append(coverage)
+        if coverage.get("next_candidate_offset") is not None:
+            partials.append({"project": project, "reason": "STOPPED_INSIDE_CURRENT_PAGE"})
+            break
         if coverage["next_page"] is None:
             break
         if budget[0] > board.MAX_GETS - 10 or time.monotonic() > budget[1] - 10:
@@ -342,13 +348,18 @@ def collect_targeted_windows(project, issue_number, registry, budget,
         "search_examined": sum(p["search_examined"] for p in pages),
         "candidate_pr_numbers": sorted(observed_candidates),
         "next_page": last["next_page"],
+        "next_candidate_offset": last.get("next_candidate_offset"),
+        "source_page_sha256": last["source_page_sha256"],
         "auto_pages_requested": auto_pages,
         "auto_pages_observed": len(pages),
         "page_windows": [{
             "candidate_page": p["candidate_page"],
             "window_start": p["window_start"], "window_end": p["window_end"],
             "search_examined": p["search_examined"],
-            "next_page": p["next_page"]} for p in pages],
+            "next_page": p["next_page"],
+            "candidate_offset": p["candidate_offset"],
+            "next_candidate_offset": p["next_candidate_offset"],
+            "source_page_sha256": p["source_page_sha256"]} for p in pages],
         "search_complete": (first["search_complete"] and not partials
                             if len(pages) == 1 else False),
         "cross_page_source": ("SINGLE_GITHUB_SEARCH_PAGE" if len(pages) == 1
@@ -388,7 +399,8 @@ def collect_targeted_windows(project, issue_number, registry, budget,
                 row["issue_reference_source"] = "PR_SOURCE_MOVED"
     if len(pages) > 1:
         partials.append({"project": project, "reason": "NONATOMIC_SEARCH_PAGINATION"})
-    if len(pages) < auto_pages and last["next_page"] is not None:
+    if len(pages) < auto_pages and (
+            last["next_page"] is not None or last["next_candidate_offset"] is not None):
         partials.append({"project": project, "reason": "AUTO_PAGE_NOT_FINISHED"})
     deduped, seen = [], set()
     for item in partials:
