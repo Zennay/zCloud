@@ -180,6 +180,34 @@ def build(report):
         0 if row["candidate_existing_pr_url"] else 1,
         0 if row["category"] == "existing_pr_failed_gates" else 1,
         row["project"], row["issue_url"]))
+    # One existing PR can be referenced by several different product issues.
+    # Surface that single review opportunity once, while keeping the original
+    # issue cards and their independent ownership and source gaps intact.
+    by_pr = {}
+    for card in cards:
+        pr_url = card["candidate_existing_pr_url"]
+        if pr_url is None:
+            continue
+        group = by_pr.setdefault(pr_url, {
+            "pr_url": pr_url,
+            "highest_priority": card["priority"],
+            "linked_issue_urls_in_source": [],
+            "issue_categories_observed": [],
+            "fixes_all_linked_issues_verified": False,
+            "current_owner_verified": False,
+            "merge_authorized": False,
+        })
+        if ORDER[card["priority"]] < ORDER[group["highest_priority"]]:
+            group["highest_priority"] = card["priority"]
+        group["linked_issue_urls_in_source"].append(card["issue_url"])
+        if card["category"] not in group["issue_categories_observed"]:
+            group["issue_categories_observed"].append(card["category"])
+    pr_groups = sorted(by_pr.values(), key=lambda g: (
+        ORDER[g["highest_priority"]], -len(g["linked_issue_urls_in_source"]),
+        g["pr_url"]))
+    for group in pr_groups:
+        group["linked_issue_count_observed"] = len(group["linked_issue_urls_in_source"])
+        group["additional_issues_do_not_prove_fixes"] = True
     totals = Counter(item["category"] for item in cards)
     return {
         "schema": "zsentinel-merge-first-human-inbox-v1",
@@ -188,6 +216,10 @@ def build(report):
         "issue_count": len(cards),
         "existing_pr_first_issues": sum(bool(c["candidate_existing_pr_url"]) for c in cards),
         "human_only_infrastructure_issues": totals["human_infrastructure"],
+        "pr_groups": pr_groups,
+        "distinct_existing_pr_groups_observed": len(pr_groups),
+        "multi_issue_existing_pr_groups_observed": sum(
+            group["linked_issue_count_observed"] > 1 for group in pr_groups),
         "observed_action_counts": dict(sorted(totals.items())),
         "cards": cards,
         "current_claims_verified": False,
@@ -222,6 +254,22 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
         "live herstel geverifieerd.",
         "",
     ]
+    if board.get("pr_groups"):
+        lines.extend([
+            "## Bestaande PR-bundels (observatie, geen fixbewijs)" if style == "markdown"
+            else "Bestaande PR-bundels (observatie, geen fixbewijs)", "",
+        ])
+        for group in board["pr_groups"]:
+            pr_url = group["pr_url"]
+            link = ("[Open bestaande PR](" + pr_url + ")"
+                    if style == "markdown" else pr_url)
+            lines.append("- " + group["highest_priority"] + " · " + link +
+                         " · " + str(group["linked_issue_count_observed"]) +
+                         " productissue(s) noemen deze PR in de bron.")
+            for issue_url in group["linked_issue_urls_in_source"]:
+                lines.append("  " + ("[Issue](" + issue_url + ")"
+                                    if style == "markdown" else issue_url))
+        lines.append("")
     for index, item in enumerate(board["cards"][:max_rows], 1):
         issue = (f"[{item['issue']}]({item['issue_url']})"
                  if style == "markdown" else item["issue_url"])
