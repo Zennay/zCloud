@@ -370,7 +370,8 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
         except (RuntimeError, ValueError, KeyError, TypeError, OSError):
             limitations.append({"project": project,
                                 "reason": f"EXPLICIT_PR_SOURCE_UNAVAILABLE_{number}"})
-    if examined < len(pr_numbers):
+    remaining = pr_numbers[examined:]
+    if remaining:
         limitations.append({"project": project, "reason": "EXPLICIT_PR_SELECTION_UNREAD"})
     try:
         final = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
@@ -397,6 +398,7 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
         "source": "EXPLICIT_PR_CANONICAL_GET",
         "candidate_pr_numbers": pr_numbers[:examined],
         "requested_pr_numbers": pr_numbers,
+        "remaining_pr_numbers": remaining,
         "search_examined": examined,
         "search_total": None,
         "candidate_page": None,
@@ -668,6 +670,17 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                 "; bruikbare PR-rapporten: " +
                 esc(target_coverage["linked_prs_observed"]) + ".</p>"
             )
+            remaining = target_coverage.get("remaining_pr_numbers", [])
+            if remaining:
+                remaining_links = ", ".join(
+                    "<a href='" + esc(canonical_repo_url + "/pull/" + str(n)) +
+                    "'>#" + esc(n) + "</a>" for n in remaining)
+                target_section += (
+                    "<p><strong>Nog NIET geïnspecteerde PRs:</strong> " +
+                    remaining_links +
+                    ". Plan deze apart als rechtstreekse --candidate-pr-opdracht "
+                    "met hetzelfde issue; dit is geen gelukt bronbewijs.</p>"
+                )
             if not target_coverage["search_complete"]:
                 target_section += (
                     "<p><strong>Alle andere bestaande PRs blijven onbekend.</strong> "
@@ -876,6 +889,7 @@ def main():
                           ",".join(str(n) for n in target_coverage["requested_pr_numbers"]) +
                           f" inspected={target_coverage['search_examined']} " +
                           f"reports={target_coverage['linked_prs_observed']} " +
+                          f"remaining_prs={','.join(str(n) for n in target_coverage['remaining_pr_numbers']) or 'none'} " +
                           "backlog_coverage=UNKNOWN_NOT_SEARCHED")
                 else:
                     print(f"SEARCH_WINDOW page={target_coverage['candidate_page']} "
