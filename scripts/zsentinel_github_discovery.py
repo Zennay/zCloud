@@ -271,6 +271,8 @@ def discover(registry, selected, token=None):
                 "run_id": run_id, "job_id": job_id,
                 "repository": canonical_repository,
                 "run_pages_checked": checked, "workflow_status_window": window,
+                "primary_job_status": status,
+                "primary_runner_route": route["runner_route"],
                 "sampled_actionable_jobs": unique_jobs,
                 "additional_job_links": other_jobs,
                 "additional_jobs_truncated": unique_jobs > len(other_jobs) + 1,
