@@ -20,6 +20,8 @@ from zsentinel_pr_scope_guard import (
     ROOT, observe_conflict_graph, registry,
 )
 
+from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
+
 MAX_PROJECTS = 3
 MAX_PRS_PER_PROJECT = 16
 MAX_VISIBLE_PAIRS = 80
@@ -628,6 +630,8 @@ def as_text(board):
         output.append("[" + view["project"] + "] " + view["repository"])
         output.extend(summary_lines(view))
     output.extend(current_gate_lines(board))
+    if board.get("historical_pr_delta"):
+        output.extend(["", render_delta(board["historical_pr_delta"])])
     output.extend([
         "",
         "Gedeelde bestandsnamen ≠ bewezen Git-mergeconflict of huidige eigenaar.",
@@ -681,6 +685,8 @@ def as_markdown(board):
         if view.get("source_truncated"):
             lines.append("Bronkaarten afgekapt; inspecteer overige PR's.")
     lines.extend(current_gate_lines(board, markdown=True))
+    if board.get("historical_pr_delta"):
+        lines.extend(["", render_delta(board["historical_pr_delta"], "markdown")])
     return "\n".join(lines) + "\n"
 
 
@@ -829,6 +835,7 @@ def as_html(board):
             ". Maximaal " + str(live["max_additional_github_gets"]) +
             " extra GitHub GETs in deze optionele opname.</p></section>"
         )
+    delta_panel = render_delta(board.get("historical_pr_delta"), "html")
     return (
         "<!doctype html><html lang='nl'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -846,7 +853,7 @@ def as_html(board):
         "<aside>Alleen gedeelde bestandspaden uit een begrensde GitHub-bron. "
         "Dit bewijst geen mergeconflicten, claims of vrije werkscope. "
         "Geen automatische actie, merge of deploy.</aside>" +
-        gate_panel + "".join(cards) + "</html>"
+        gate_panel + delta_panel + "".join(cards) + "</html>"
     )
 
 
@@ -857,6 +864,8 @@ def main(argv=None):
     parser.add_argument("--max-prs", type=int, default=10)
     parser.add_argument("--output", type=Path,
                         help="Create NEW private offline receipt (0600); default stdout")
+    parser.add_argument("--compare-previous", type=Path,
+                        help="Private 0600 JSON snapshot from an earlier run, same projects")
     parser.add_argument("--gate-pr", action="append", default=[],
                         help="Explicit project#PR target (max four); older PRs use up to "
                              "three extra bounded file pages per target")
@@ -875,6 +884,9 @@ def main(argv=None):
         if args.inspect_current_pr_gates:
             board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"),
                                              focus_prs=args.gate_pr)
+        if args.compare_previous is not None:
+            board["historical_pr_delta"] = compare(
+                read_private_previous(args.compare_previous), board)
         if args.format == "json":
             rendered = json.dumps(board, indent=2, ensure_ascii=False) + "\n"
         elif args.format == "html":
