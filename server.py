@@ -3932,7 +3932,12 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                          worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=? WHERE queue_id=?""",
                       (str(evidence or '')[:4000],ts,queue_id))
     created=None
+    # A queue state transition can succeed while its distinct follow-up
+    # producer or receipt write fails. Report that boundary explicitly, rather
+    # than claiming that the complete project handoff was delivered.
+    continuation_status='original_task_requeued' if result=='CONTINUE' else 'not_requested'
     if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
+        continuation_status='requested'
         try:
             child_criteria=str(next_task.get('completion_criteria') or '').strip()
             child_criteria += (
@@ -3950,15 +3955,20 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                 next_task.get('source_url') or '',
                 parent_queue_id=queue_id
             )
+            continuation_status='created' if created else 'not_created'
         except ValueError:
             created=None
+            continuation_status='rejected_by_producer_guard'
     elif result in ('DONE','BLOCKED'):
         try:
             created=portfolio_write_continuation(row['project_id'],queue_id)
+            continuation_status='created' if created else 'not_created'
         except ValueError:
             created=None
+            continuation_status='rejected_by_producer_guard'
     # Every material queue transition leaves an evidence-backed state receipt.
     # Rich CI/deploy paths may later supersede this with a more specific receipt.
+    receipt_saved=False
     try:
         next_gate=(
             (created or {}).get('title')
@@ -3984,10 +3994,19 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                     'evidence':str(evidence or '')[:3500],
                 },
             )
+        receipt_saved=True
     except Exception:
         logging.exception('Could not persist project state receipt for %s',queue_id)
     audit=portfolio_queue_audit(refill=False)
-    return {'updated':True,'queue_id':queue_id,'result':result,'next_task':created,'attention':attention,'queue_audit':audit}
+    return {
+        'updated':True,'queue_id':queue_id,'result':result,
+        'next_task':created,'attention':attention,'queue_audit':audit,
+        'continuation_status':continuation_status,
+        'state_receipt_saved':receipt_saved,
+        'handoff_complete':receipt_saved and continuation_status in (
+            'created','not_requested','original_task_requeued'
+        ),
+    }
 
 def portfolio_queue_allocation():
     active=[]
