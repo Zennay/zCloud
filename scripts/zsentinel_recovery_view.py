@@ -435,8 +435,76 @@ def html_view(decision):
             if not_scanned:
                 description += " Niet doorzocht: " + ", ".join(
                     labels[x] for x in not_scanned) + "."
+            # Other exact jobs observed in this very same bounded workflow
+            # sample are useful for unblock triage even when the recovery
+            # router follows only one selected job. They carry no authority.
+            extras = row.get("additional_job_links", [])
+            extra_total = row.get("sampled_actionable_jobs")
+            extra_cut = row.get("additional_jobs_truncated", False)
+            linked = ""
+            if (type(extras) is not list or len(extras) > 5
+                    or type(extra_cut) is not bool):
+                raise ValueError("untrusted extra GitHub job sample")
+            if extra_total is not None:
+                if (type(extra_total) is not int or not 1 <= extra_total <= 150
+                        or extra_total < len(extras) + 1
+                        or extra_cut != (extra_total > len(extras) + 1)
+                        or row["status"] not in (
+                            "selected_one_source_bound_job",
+                            "selected_one_source_bound_job_partial_window")):
+                    raise ValueError("contradictory additional job count")
+                repo = row.get("repository")
+                if (type(repo) is not str or
+                        not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", repo)):
+                    raise ValueError("invalid exact job source repository")
+                seen_links = set()
+                additional = []
+                for job in extras:
+                    if (type(job) is not dict
+                            or job.get("observed_only") is not True
+                            or job.get("work_resumed_verified") is not False
+                            or job.get("action_authorized") is not False
+                            or job.get("runner_route") not in (
+                                "self_hosted", "hosted_or_custom", "unknown")
+                            or job.get("job_status") not in ("queued", "completed")
+                            or job.get("source_window") not in labels):
+                        raise ValueError("invalid extra GitHub job proof")
+                    run_id, job_id = job.get("run_id"), job.get("job_id")
+                    if (type(run_id) is not int or type(job_id) is not int
+                            or not 0 < run_id <= 2**53-1
+                            or not 0 < job_id <= 2**53-1
+                            or (run_id, job_id) in seen_links):
+                        raise ValueError("duplicate or invalid exact job link")
+                    seen_links.add((run_id, job_id))
+                    sha = job.get("head_sha")
+                    href = ("https://github.com/" + repo + "/actions/runs/" +
+                            str(run_id) + "/job/" + str(job_id))
+                    if (type(sha) is not str
+                            or not re.fullmatch(r"[a-f0-9]{40}", sha)
+                            or job.get("url") != href):
+                        raise ValueError("job link not bound to source repository")
+                    additional.append(
+                        '<li><a target="_blank" rel="noopener noreferrer" href="' +
+                        escape(href, quote=True) + '">GitHub-job ' +
+                        str(job_id) + '</a> · ' +
+                        phrase(job["runner_route"], 24) + ' · ' +
+                        phrase(job["job_status"], 24) + ' · HEAD ' +
+                        sha[:12] + '</li>')
+                linked = (
+                    '<details><summary>Andere brongebonden jobs (' +
+                    str(len(extras)) + ' getoond van ≥' + str(extra_total) +
+                    ' gevonden)</summary><ul>' + ''.join(additional) +
+                    '</ul><p class="small">Niet alle workflows of jobpagina’s'
+                    ' zijn gelezen. Deze links geven GEEN herstart-, claim-'
+                    ' of releasebevoegdheid.</p></details>'
+                    if extras else '')
+                if extra_cut:
+                    description += " Extra gevonden jobs buiten deze vijf zijn niet getoond."
+            elif extras or extra_cut:
+                raise ValueError("additional job links lack a bounded count")
             cards.append('<article class="panel read"><h3>' + pid +
-                         '</h3><p>' + phrase(description, 600) + '</p></article>')
+                         '</h3><p>' + phrase(description, 750) +
+                         '</p>' + linked + '</article>')
         discovery_panel = (
             '<section><h2>GitHub-zoekvensters · alleen een beperkte steekproef</h2>'
             '<p class="muted">Volgorde: wachtende workflows, lopende workflows met '
