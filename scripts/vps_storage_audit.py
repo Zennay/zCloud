@@ -138,7 +138,8 @@ def observe_open_handle_hints(rows: list[dict], seconds: float = 2.0) -> dict:
     """
     result = {
         "mode": "bounded_proc_fd_positive_only",
-        "sampled_candidates": len(rows),
+        "sampled_candidates": min(len(rows), 100),
+        "unexamined_candidates": max(0, len(rows) - 100),
         "observed_open_files": 0,
         "files_open_unknown": len(rows),
         "scanned_processes": 0,
@@ -305,7 +306,7 @@ def hotspot_inventory() -> dict:
 
 
 def capacity_recovery_plan(local_capacity: dict, review_bytes: int, target_gib: int,
-                           hotspot: dict | None) -> dict:
+                           hotspot: dict | None, inventory_complete: bool) -> dict:
     """Explain measurable recovery headroom, never manufacture safe cleanup."""
     gib = 1024 ** 3
     free = local_capacity["free_bytes"]
@@ -320,6 +321,9 @@ def capacity_recovery_plan(local_capacity: dict, review_bytes: int, target_gib: 
     elif gap == 0:
         reason = "target_currently_met"
         recommendation = "Storage owner: no removal is needed to meet this target; preserve active workloads and watch for new growth."
+    elif not inventory_complete:
+        reason = "incomplete_archive_inventory"
+        recommendation = "Archive/storage owner: finish a complete bounded inventory under owner supervision before concluding that old artifacts can cover the target; preserve all active files."
     elif candidate_limit < gap:
         reason = "aged_review_scope_insufficient"
         recommendation = "Storage owner: plan additional capacity or identify independently-owned, unreferenced old artifacts. Do not clear active cache, runner work, databases or model files based on directory size."
@@ -334,7 +338,8 @@ def capacity_recovery_plan(local_capacity: dict, review_bytes: int, target_gib: 
         "shortfall_bytes": gap,
         "reason": reason,
         "recommended_owner_action": recommendation,
-        "aged_review_upper_bound_bytes": candidate_limit,
+        "aged_review_upper_bound_bytes": candidate_limit if inventory_complete else None,
+        "archive_inventory_complete": inventory_complete,
         "hot_directories_observed_bytes": hot_bytes,
         "hot_directories_reclaimable_proven_bytes": 0,
         "actually_reclaimed_bytes": 0,
@@ -649,7 +654,8 @@ def main():
         "archive_mount": archive_mount_status(),
         "hotspot_inventory": hot_inventory,
         "capacity_plan": capacity_recovery_plan(live_filesystem, total_assessed,
-                                                 args.target_free_gib, hot_inventory),
+                                                 args.target_free_gib, hot_inventory,
+                                                 scan_limit_reason is None),
         "open_handle_hints": handle_hints,
         "cold_candidate_counts": count,
         "cold_candidate_bytes": totals,
