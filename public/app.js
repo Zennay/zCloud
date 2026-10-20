@@ -757,6 +757,15 @@ async function controlWorker(workerId,action,button,force=false,globalSlot=null)
 // the local VPS feed, and never grant merge/deploy/worker authority from a file.
 let IMPORTED_GITHUB_ACTIVITY=null,IMPORTED_GITHUB_ERROR='';
 const GITHUB_RECEIPT_KINDS=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']);
+// Bind operator-supplied receipts to the ACTUAL canonical project registry.
+// A plausible Zennay/repository string is not evidence that it belongs to
+// the claimed project; otherwise cross-project events become misleading.
+function canonicalGitHubRepositoryForProject(projectId){
+  const matches=(DATA?.projects||[]).filter(item=>item&&item.id===projectId);
+  if(matches.length!==1)return null;
+  const match=/^https:\/\/github\.com\/Zennay\/([A-Za-z0-9_.-]{1,100})\/?$/.exec(matches[0].repo_url||'');
+  return match?'Zennay/'+match[1]:null;
+}
 // Bounded, fixed operator text only: never surface a provider response body,
 // token, request URL, or unvalidated imported reason in the dashboard.
 const GITHUB_PROVIDER_ADMISSIONS=Object.freeze({
@@ -842,13 +851,19 @@ function validateGitHubActivityReceipt(value){
       ||!Number.isFinite(Date.parse(value.observed_at)))throw Error('Unrecognized or unsafe read-only receipt');
   const observed=Date.parse(value.observed_at);
   if(observed>Date.now()+120000)throw Error('Snapshot time is in the future');
-  const projects=new Set((DATA?.projects||[]).map(p=>p.id));
   const sourceByProject=new Map(),coverage=[];
+  const requested=value.requested_projects;
+  const requestedSet=new Set(requested);
+  if(!requested.length||requested.length!==requestedSet.size||
+      requested.length!==value.coverage.length||
+      requested.some(id=>typeof id!=='string'||!canonicalGitHubRepositoryForProject(id)))
+    throw Error('Receipt project scope does not match the canonical registry');
   for(const row of value.coverage){
     if(!row||typeof row!=='object'||typeof row.project!=='string'
-       ||!projects.has(row.project)||sourceByProject.has(row.project)
+       ||!requestedSet.has(row.project)||sourceByProject.has(row.project)
        ||typeof row.repository!=='string'
-       ||!/^Zennay\/[A-Za-z0-9_.-]{1,100}$/.test(row.repository))throw Error('Unexpected project or repository');
+       ||row.repository!==canonicalGitHubRepositoryForProject(row.project))
+      throw Error('Receipt repository does not belong to its canonical project');
     // Older receipts omit this field. Unknown values fail closed rather than
     // becoming arbitrary HTML or a false "GitHub healthy" claim.
     const admission=row.provider_admission===undefined?'none':row.provider_admission;
@@ -1204,7 +1219,8 @@ function validateProductIssueInbox(value){
   for(const item of value.coverage){
     if(!item||typeof item.project!=='string'||!visible.has(item.project)||covered.has(item.project)
        ||typeof item.repository!=='string'
-       ||!/^Zennay\/[A-Za-z0-9_.-]{1,100}$/.test(item.repository))throw Error('Unknown issue-inbox project');
+       ||item.repository!==canonicalGitHubRepositoryForProject(item.project))
+      throw Error('Issue-inbox repository does not belong to its canonical project');
     covered.set(item.project,item.repository);
   }
   if(!covered.size)throw Error('No canonical issue coverage');
