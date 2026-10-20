@@ -124,7 +124,8 @@ class ZennayCloudRepository(
         message = o.optNullableString("detail")
             ?: o.optNullableString("message")
             ?: "Open zCloud voor meer informatie.",
-        occurredAt = o.optNullableString("ts") ?: o.optNullableString("occurred_at")
+        occurredAt = o.optNullableString("ts") ?: o.optNullableString("occurred_at"),
+        humanActionRequired = o.optBoolean("human_action_required", false)
     )
 }
 
