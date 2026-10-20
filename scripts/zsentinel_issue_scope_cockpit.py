@@ -335,6 +335,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             raise ValueError("invalid saved un-PR'd branch evidence")
         branch_context = {
             "repository": "Zennay/zCloud",
+            "historical_branch_source_fresh":
+                source.get("fresh", {}).get("branches") is True,
+            "historical_branch_observed_at_utc":
+                source.get("source_times_utc", {}).get("branches"),
             "recent_overlap_candidates_observed":
                 branch_raw["recent_overlap_candidates"],
             "sample_complete": branch_raw["coverage_complete"],
@@ -347,6 +351,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         "product_issue_source_sha256": source_sha,
         "issue_source_mode": source_mode,
         "source_issue_observed_at_utc": source["observed_at_utc"],
+        "saved_claim_source_observed_at_utc":
+            source.get("source_times_utc", {}).get("claims"),
+        "saved_queue_source_observed_at_utc":
+            source.get("source_times_utc", {}).get("retry"),
         "source_pr_observed_at_utc": collision["observed_at_utc"],
         "source_clocks_within_10_minutes": coherent,
         "chosen_projects": selected,
@@ -376,6 +384,8 @@ def output_text(report, markdown=False):
     intro = ("# zSentinel · Gecombineerde product- en PR-bestandsscope"
              if markdown else "zSentinel | productissues + PR-bestandsscope")
     lines = [intro, "Issue-bron: " + report["issue_source_mode"],
+             "Issue-bronmoment: " + report["source_issue_observed_at_utc"],
+             "PR-bestandsmoment: " + report["source_pr_observed_at_utc"],
              "Issue-bron SHA256: " + report["product_issue_source_sha256"],
              "Bronmomenten ≤10 min uiteen: " +
              ("ja" if report["source_clocks_within_10_minutes"] else "NEE — oude bron is geen live claim")]
@@ -398,7 +408,9 @@ def output_text(report, markdown=False):
         lines.append("PR-loze branches (opgeslagen, geen live eigenaren): " +
                      str(branches["recent_overlap_candidates_observed"]) +
                      " overlapkandidaten; compleet: " +
-                     str(branches["sample_complete"]))
+                     str(branches["sample_complete"]) +
+                     "; bron vers volgens originele board: " +
+                     str(branches["historical_branch_source_fresh"]))
     for row in report["issues"]:
         ref = ("[" + row["issue"] + "](" + row["url"] + ")" if markdown
                else row["url"])
@@ -441,6 +453,8 @@ def output_html(report):
         str(branch_context["recent_overlap_candidates_observed"]) +
         " mogelijke overlappen (opgeslagen bron, compleet: " +
         str(branch_context["sample_complete"]) +
+        "; volgens originele board vers: " +
+        str(branch_context["historical_branch_source_fresh"]) +
         "; geen actuele eigenaarsbevestiging).</p>"
         if branch_context else
         "<p>PR-loze-branchwaarneming ontbreekt; geen eigenaarsconclusie.</p>")
@@ -569,7 +583,10 @@ update();
             " · Projecten: " + escape(", ".join(report["chosen_projects"])) +
             ". Bronmomenten samenhangend: " +
             ("ja" if report["source_clocks_within_10_minutes"] else
-             "NEE — controleer eerst nieuwe issue-evidence") + "</p>" +
+             "NEE — controleer eerst nieuwe issue-evidence") +
+            "</p><p>Issuebron " + escape(report["source_issue_observed_at_utc"]) +
+            " · PR-bestandsbron " + escape(report["source_pr_observed_at_utc"]) +
+            "</p>" +
             signals_html + filter_bar + "<main>" + "".join(cards) + "</main>" +
             offline_script + "<footer><small>Issue SHA256 " +
             escape(report["product_issue_source_sha256"]) + "</small></footer></html>")
