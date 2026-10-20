@@ -472,6 +472,8 @@ def render(report, fmt):
         ", ".join(map(str, report["observed_source_page_numbers"])),
         "Nieuwe OVER-PAGINA bestandsparen: " +
         str(report["cross_snapshot_file_collision_pairs_observed"]),
+        "Verbonden groepen over PR-pagina's: " +
+        str(report["connected_cross_window_groups_observed"]),
         "Geen atomische live bron, geen eigenaarsclaim en geen mergevrijgave.",
         "",
     ]
@@ -490,6 +492,35 @@ def render(report, fmt):
         lines.append("Geen getroffen bestaande PRs in deze bronvensters gezien.")
     if report["prioritized_existing_prs_truncated"]:
         lines.append("Overige bestaande PRs buiten de verkorte werklijst.")
+    lines.extend(["", "## Samenhangende PR-groepen over bronvensters", "",
+                  "Ook binnen-venster bestandsverbindingen tellen mee bij het bepalen " +
+                  "van groepen. Alleen geobserveerde bron-PR's: geen eigenaar, " +
+                  "Git-mergeconflict of toestemming.", ""])
+    for group in report["shown_connected_cross_window_groups"]:
+        lines.append("### Groep " + str(group["group_number_in_this_observation"]) +
+                     " · " + str(group["pr_count_observed"]) +
+                     " PR's · pagina's " +
+                     "/".join(map(str, group["source_windows_observed"])))
+        lines.append(str(group["cross_window_filename_edges_observed"]) +
+                     " directe over-venster PR-paren; " +
+                     str(group["within_window_filename_edges_observed"]) +
+                     " binnen-venster PR-paren; " +
+                     str(group["distinct_shared_files_observed"]) +
+                     " verschillende gedeelde bestanden.")
+        for pr in group["participating_prs"]:
+            lines.append("- [PR #" + str(pr["number"]) + "](" + pr["url"] +
+                         ") · venster " + str(pr["source_window"]) +
+                         " · HEAD " + pr["head_sha"][:12] +
+                         " · directe bestandspadverbindingen " +
+                         str(pr["direct_filename_neighbors_observed"]))
+        for path in group["shared_file_samples"]:
+            lines.append("  - Gedeeld bestand: " + path.replace("\n", " "))
+        if group["shared_file_samples_truncated"]:
+            lines.append("  - Aanvullende gedeelde bestanden niet getoond.")
+    if not report["shown_connected_cross_window_groups"]:
+        lines.append("Geen verbonden groepen over de bekeken vensters waargenomen.")
+    if report["connected_cross_window_groups_truncated"]:
+        lines.append("Meer verbonden groepen bestaan buiten de begrensde weergave.")
     lines.extend(["", "## Cross-window bestandsparen", ""])
     for row in report["shown_collision_pairs"]:
         lines.append("- [PR](" + row["left_url"] + ") ↔ [PR](" +
@@ -560,6 +591,34 @@ def render(report, fmt):
         str(item["cross_window_number_hint_count"]) +
         " onzekere issue-/PR-nummers</li>"
         for item in report["prioritized_existing_prs"])
+    cluster_rows = []
+    for group in report["shown_connected_cross_window_groups"]:
+        linked = "".join(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(pr["url"], quote=True) + "'>PR #" +
+            str(pr["number"]) + "</a> · venster " +
+            str(pr["source_window"]) + " · HEAD " +
+            escape(pr["head_sha"][:12]) + " · " +
+            str(pr["direct_filename_neighbors_observed"]) +
+            " directe bestandsverbindingen</li>"
+            for pr in group["participating_prs"])
+        samples = "".join("<li><code>" + escape(name) + "</code></li>"
+                          for name in group["shared_file_samples"])
+        cluster_rows.append(
+            "<li><strong>Groep " +
+            str(group["group_number_in_this_observation"]) + "</strong> · " +
+            str(group["pr_count_observed"]) + " PRs · " +
+            str(group["cross_window_filename_edges_observed"]) +
+            " over-vensterparen · " +
+            str(group["within_window_filename_edges_observed"]) +
+            " binnen-vensterparen · " +
+            str(group["distinct_shared_files_observed"]) +
+            " verschillende gedeelde bestanden<ul>" + linked +
+            "</ul><details><summary>Gedeelde bestandspaden</summary><ul>" +
+            samples + "</ul>" +
+            ("<p>Extra gedeelde paden niet afgebeeld.</p>"
+             if group["shared_file_samples_truncated"] else "") +
+            "</details></li>")
     issue_rows = "".join(
         "<li><a rel='noopener noreferrer' href='" +
         escape(group["unverified_reference_url"], quote=True) + "'>Nummer #" +
@@ -600,7 +659,13 @@ def render(report, fmt):
          if report["prs_with_partial_file_scope"] else
          "Alle afzonderlijk getoonde PR-bestandlijsten zijn binnen hun "
          "eigen bronvenster volledig; portfolio-dekking blijft onbekend.") +
-        "</p>"
+        "</p><h2>Verbonden PR-groepen over bronvensters</h2>"
+        "<p>Alleen waargenomen bestandsverbindingen, ook binnen bronpagina's. "
+        "Geen mergevolgorde, Git-conflict of eigenaarsvrijgave.</p><ol>" +
+        ("".join(cluster_rows) or "<li>Geen cross-window groepen gezien.</li>") +
+        ("<li>Meer groepen buiten de begrensde weergave.</li>"
+         if report["connected_cross_window_groups_truncated"] else "") +
+        "</ol>"
         "<table><thead><tr><th>Open bron-PRs</th><th>Gedeelde paden</th>"
         "<th>Geobserveerde bestanden</th></tr></thead><tbody>" +
         (rows or "<tr><td colspan='3'>Geen botsing gezien, geen vrijgave.</td></tr>") +
