@@ -59,3 +59,15 @@ De backend retourneert nu bij `active_blockers` aparte maximaal 240 tekens lange
 Op de Watch toont een uitgeklapte actieve incidentkaart alle drie de secties, inclusief de bedrijfsimpact. Bij een oudere server zonder de drie velden blijft de bestaande gecombineerde tekst als fallback. Bij een brongebonden menselijke escalatie toont de eigenlijke Android-notificatie eerst de expliciete `action`, zodat het scherm niet alleen een algemeen probleem noemt. Het notificatiebeleid blijft fail-closed voor oude of onbekende menselijke-autorisatievelden.
 
 Alles staat alleen als source op [bestaande PR #1561](https://github.com/Zennay/zCloud/pull/1561); er zijn geen QA-tests geschreven/gedraaid, geen CI-gates uitgeschakeld, geen APK, Watch-installatie of live-deploy geleverd. Vereiste exacte-head CI, onafhankelijke review en release-eigenaar blijven verplicht.
+
+## 20 oktober · lokaal één uur dempen van een specifiek incident
+
+De actuele menselijke escalatiekaart op Wear OS heeft een expliciete gebruikersactie **Notificaties 1 uur dempen** en **Meldingen hervatten**. De bestaande urgente statuskaart blijft volledig zichtbaar en uitklapbaar. Dit is **geen** erkenning of oplossing van een GitHub/Notion/zCloud-blokkade; geen lease, incidentstatus, workflow, queue of server wordt aangepast.
+
+- De lokale `IncidentSnoozeStore.kt` bewaart uitsluitend SHA-256-afgeleide sleutels en een uur-expiratietijdstip voor maximaal 32 incidentele episodes, zonder inhoud of ruwe incidenttitels. De huidige incident-ID + detectietijd vormen de episode; een werkelijk nieuwe episode wordt niet door een oude demping verborgen.
+- De achtergrondworker leest uitsluitend actuele, niet-stale `active_blockers` met de bestaande human-only authorisatievlag, slaat tijdelijk gedempte episodes over **vóór** de maximaal drie notificaties per normale poll, en laat ze na afloop weer toe. Een snooze haalt een eventueel al getoonde Android-notificatie van het horloge weg, zonder een serveractie te doen.
+- Handmatig hervatten wist alleen de lokale demping en de lokale afgiftebeperking. Een eventuele nieuwe melding mag pas via een **volgende normale, bestaande** WorkManager-poll komen; er wordt geen nieuwe polllus gestart.
+- De resterende tijd is maximaal één uur; extreme klokterugsprongen mogen niet zorgen voor langere stille perioden. Bij offline/historische bronnen blijft dezelfde reeds bestaande fail-closed notificatiegrens gelden.
+- De UI is alleen voor incidenten met `humanActionRequired=true` bereikbaar en toont expliciet dat het incident actief blijft. Lokale SharedPreferences zijn appprivé, zonder online synchronisatie.
+
+**Scope/levering:** broncode in de bestaande open [zCloud PR #1561](https://github.com/Zennay/zCloud/pull/1561), geen nieuwe PR of QA-/regressiesuite, geen handmatige CI-rerun, APK-installatie of productie-deploy. Verplichte exacte-head CI, onafhankelijke review, protected-main merge en hardwareacceptatie blijven van kracht.
