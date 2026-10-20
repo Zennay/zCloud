@@ -103,7 +103,7 @@ def incident_card(item, registry=None):
             + exact_html + '</article>')
 
 
-def historical_card(item):
+def historical_card(item, registry=None):
     """Historically unresolved only: deliberately distinct from fresh cards."""
     if (item.get("source_status") != "not_observed_needs_reconciliation"
             or item.get("current_source_observed") is not False
@@ -125,8 +125,34 @@ def historical_card(item):
           or len(exact["head_sha"]) != 40):
         raise ValueError("invalid exact historical job reference")
     else:
+        if (exact.get("project_id") != item.get("project_id")
+                or type(exact.get("run_id")) is not int
+                or type(exact.get("job_id")) is not int
+                or not 1 <= exact["run_id"] <= 2**53-1
+                or not 1 <= exact["job_id"] <= 2**53-1):
+            raise ValueError("historical job project or identity mismatch")
+        from zsentinel_runtime_handoff import _attach_verified_job, SAFE_SHA
+        if not SAFE_SHA.fullmatch(exact["head_sha"]):
+            raise ValueError("invalid historical exact SHA")
         source = (f"GitHub run {exact['run_id']} · job {exact['job_id']} · "
                   f"SHA {phrase(exact['head_sha'], 40)}")
+        # Historical link is always a link to the OLD exact job, not to a
+        # claimed current recovery. Missing project mapping stays unlinked.
+        mapped_repo = (registry.get(item["project_id"])
+                       if isinstance(registry, dict) else None)
+        if isinstance(mapped_repo, str):
+            pinned = _attach_verified_job(
+                {"project": item["project_id"]},
+                {key: exact[key] for key in ("run_id", "job_id", "head_sha")},
+                registry, None)
+            for field, title in (
+                    ("exact_github_job_url", "Bekijk historische job"),
+                    ("exact_github_commit_url", "Bekijk historische commit")):
+                url = pinned.get(field)
+                if url:
+                    source += (' <a href="' + escape(url, quote=True) +
+                               '" target="_blank" rel="noopener noreferrer">' +
+                               title + '</a>')
     return (f'<article class="panel"><span class="tag">HISTORISCH · GEEN ACTUELE BRON</span>'
             f'<span class="tag">{severity}</span><span class="tag">{project}</span>'
             f'<h3 class="word">{reason}</h3>'
@@ -915,7 +941,7 @@ def html_view(decision, registry=None):
             + '<p class="muted">Deze incidenten zijn uitsluitend uit het lokale incidentledger bekend. '
               'Een niet-bekeken projectvenster of ontbrekende GitHub-bron is GEEN herstelbewijs. '
               'Ze staan niet in actuele watch-alerts of automatische werkvoorstellen.</p>'
-            + section([historical_card(row) for row in historic["shown"]],
+            + section([historical_card(row, registry=registry) for row in historic["shown"]],
                       "Geen historische bronrijen beschikbaar; onbekend blijft onbekend.")
             + ('<p class="muted">Historische lijst afgekapt tot 30 items; overige incidenten blijven '
                'onopgelost in het privéledger.</p>' if historic["truncated"] else "")
