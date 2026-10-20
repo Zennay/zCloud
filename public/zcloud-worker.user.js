@@ -178,7 +178,11 @@
       return false;
     }
     if(resetRoute!==null)return false;
-    // Hold all prompt sends until the compositor returns or one safe repair
+    // A confirmed terminal conversation-load error has its own guarded
+    // recovery later in poll(). Do not let the missing-composer grace return
+    // early and permanently hide that stronger, existing recovery signal.
+    if(failedConversation())return false;
+    // Hold all prompt sends until the composer returns or one safe repair
     // has been requested; do not keep retrying fill() against a missing DOM.
     if(!missingComposerSince){missingComposerSince=nowMs;return true}
     if(composerRepairAttempted||nowMs-missingComposerSince<COMPOSER_IDLE_REPAIR_MS)
