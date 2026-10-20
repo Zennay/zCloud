@@ -1100,3 +1100,31 @@ PR-bestandsscope en issueverwijzingsdekking. Het ontbreken van een
 PR of van overlap in een beperkte steekproef geeft NOOIT vrijgave.
 Het nieuwe HTML-formaat hergebruikt de bestaande read-only GitHub
 opvraag zonder aanvullende providerrequests.
+
+
+### Heropen handmatige opvolging via een brongebonden privé-sessie
+
+De interactieve P0/P1-werkbak biedt nu ook **Bewaar lokale sessie (JSON)**
+en **Heropen lokale sessie**. Deze optie is apart van de bestaande leesbare
+Markdown-overdracht: het privésessiebestand bevat alleen handmatige
+statussen en notities (maximaal 700 tekens per getoonde issuekaart),
+de exacte volgorde van de lokale bronkaarten en een SHA-256 vingerafdruk
+van de oorspronkelijke issue-/PR-bronmomenten en de getoonde canonieke
+issue-/PR-links.
+
+Import gebeurt volledig lokaal vanuit een expliciet gekozen bestand;
+bestanden groter dan 64 KiB worden geweigerd. Alle bronidentiteiten
+en handmatige statuswaarden moeten **eerst allemaal** overeenkomen.
+Bij mismatch wordt de hele import geweigerd zonder gedeeltelijke
+wijzigingen aan de huidige sessie. Er worden uitsluitend bestaande
+`select.value` en `textarea.value` velden gevuld; geïmporteerde
+inhoud wordt niet als HTML of JavaScript geïnterpreteerd.
+
+Een nieuwe GitHub-opname of ander PR-head/issuevenster vereist een nieuwe
+beoordeling en accepteert de oude sessie bewust niet stilzwijgend.
+Handmatig opgeslagen JSON en gedownloade Markdown blijven **privé
+bestanden onder beheer van de operator**; alleen het initiële HTML-bestand
+dat via `--output` ontstaat heeft automatisch permissies `0600`.
+
+Alle statuswaarden zijn menselijke aantekeningen, geen GitHub-review,
+Notion-claim, CI-bewijs, machine-action, merge- of deploybevoegdheid.
