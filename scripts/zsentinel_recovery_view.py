@@ -268,6 +268,27 @@ def html_view(decision):
                         and (row["job_status"] != "completed"
                              or row.get("no_job_steps") is not False))):
                 raise ValueError("contradictory exact GitHub job start evidence")
+            # A job may finish before a runner is ever assigned.
+            stage = row.get("job_assignment_stage", "runner_assignment_missing_from_source")
+            assignment_complete = row.get("assignment_source_complete", False)
+            assignment_labels = {
+                "runner_assignment_missing_from_source": "GitHub-toewijzing ONBEKEND.",
+                "queued_without_runner_assignment": "Job in wachtrij zonder toegewezen runner.",
+                "terminal_without_runner_assignment": "Job geëindigd zonder runner; billing niet bewezen.",
+                "no_runner_assignment_observed": "Geen runner toegewezen bij deze bronwaarneming.",
+                "job_with_runner_assignment": "Runner-ID ontvangen; listenergezondheid ONBEKEND.",
+                "terminal_with_runner_assignment": "Afgeronde job had een runner-ID.",
+            }
+            if (type(stage) is not str or stage not in assignment_labels
+                    or type(assignment_complete) is not bool
+                    or (stage == "runner_assignment_missing_from_source") != (not assignment_complete)
+                    or (stage == "queued_without_runner_assignment"
+                        and (row["job_status"] != "queued" or row["runner_assigned"]))
+                    or (stage == "terminal_without_runner_assignment"
+                        and (row["job_status"] != "completed" or row["runner_assigned"]))
+                    or (stage == "terminal_with_runner_assignment"
+                        and (row["job_status"] != "completed" or not row["runner_assigned"]))):
+                raise ValueError("contradictory GitHub job assignment stage")
             canonical_assignment = row.get(
                 "canonical_zcloud_runner_assignment_observed")
             exact_runner_id = row.get("runner_id_observed")
@@ -313,6 +334,8 @@ def html_view(decision):
                 phrase(route_description, 180) + '</p><p class="small">Jobstatus: ' +
                 phrase(row["job_status"], 30) + ' · runner toegewezen: ' +
                 ('ja' if row["runner_assigned"] else 'nee') +
+                '</p><p class="small">Toewijzingsfase: ' +
+                phrase(assignment_labels[stage], 180) +
                 '</p><p class="small">zCloud-toewijzingsbewijs: ' +
                 phrase(canonical_details, 230) +
                 '</p><p class="small">Startbewijs: ' + phrase(start_message, 250) +
