@@ -193,9 +193,11 @@ def changes(previous, current):
     for name in sorted(set(a) | set(b)):
         before, after = a.get(name), b.get(name)
         if before is None:
-            tag = "newly_observed"
+            # A capped/unreadable T0 list does not establish a new service.
+            tag = "newly_observed" if coverage_a else "previous_source_gap"
         elif after is None:
-            tag = "no_longer_observed"
+            # A capped/unreadable T1 list is never service removal evidence.
+            tag = "no_longer_observed" if coverage_b else "current_source_gap"
         elif before != after:
             tag = "service_state_changed"
         else:
