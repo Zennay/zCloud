@@ -139,7 +139,7 @@ def open_prs(repo, token):
         # The normal file collision inventory remains independent.
         refs_covered = body is None or (type(body) is str and len(body) <= 32000)
         refs = sorted({int(m.group(1)) for m in re.finditer(
-            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\\b",
+            r"(?<![A-Za-z0-9/_])#([1-9][0-9]{0,7})\b",
             body or "")}) if refs_covered else []
         refs_covered = refs_covered and len(refs) <= MAX_REFERENCED_ISSUES
         refs = refs[:MAX_REFERENCED_ISSUES] if refs_covered else []
