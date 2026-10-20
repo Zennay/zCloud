@@ -21,6 +21,20 @@ from zsentinel_saved_gate_dossier import _open_private_extract_parent, _save_pri
 MAX_DIFF_BYTES = 48 * 1024
 
 
+def admit_comparable_source_pair(older, newer):
+    """Verify original source scope, chronology and contiguous overlapping SHA receipts.
+
+    Both inputs must already have passed private ZIP and canonical issue/PR
+    receipt admission. Returns no current owner, CI or release authority.
+    """
+    admit_comparable_source_pair(older, newer)
+    _, _, _, old_issues, old_sources = older
+    _, _, _, new_issues, new_sources = newer
+    old_ids = [r["original_review_manifest_sha256"] for r in old_sources]
+    new_ids = [r["original_review_manifest_sha256"] for r in new_sources]
+    return old_ids[-1], new_ids[-1]
+
+
 def issue_difference(older, newer, issue_url):
     """Compare fully admitted chronological dossiers for one canonical issue."""
     if not canonical_issue(issue_url):
