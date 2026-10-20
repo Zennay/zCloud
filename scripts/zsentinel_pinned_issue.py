@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import re
 
-from zsentinel_product_issue_inbox import bounded_get, observed_time, priority
+from zsentinel_product_issue_inbox import bounded_get, observed_time, priority, GithubAdmissionError
 
 PIN = re.compile(r"^([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,8})$")
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
@@ -94,6 +94,7 @@ def read_pinned_issues(inbox, registry, selected, pins, token=None):
     receipts = []
     requests = 0
     denied = inbox.get("stopped_after_rate_or_auth_denial") is True
+    denied_repositories = set()
     now = datetime.now(timezone.utc)
     for pid, number, repo in numbered:
         original = existing.get((pid, number))
@@ -103,7 +104,7 @@ def read_pinned_issues(inbox, registry, selected, pins, token=None):
         items = [row for row in items if not (
             isinstance(row, dict) and row.get("project") == pid
             and row.get("number") == number)]
-        if denied:
+        if denied or repo in denied_repositories:
             receipts.append({"project_id": pid, "issue_number": number,
                              "coverage": "not_queried_after_auth_or_rate_limit",
                              "owner_verified": False, "actions_authorized": False})
@@ -152,8 +153,12 @@ def read_pinned_issues(inbox, registry, selected, pins, token=None):
                              "owner_verified": False, "actions_authorized": False})
         except (OSError, ValueError) as error:
             label = str(error)
-            if label == "github_permission_or_rate_limit":
-                denied = True
+            if isinstance(error, GithubAdmissionError):
+                denied_repositories.add(repo)
+                if error.category == "rate_limit_confirmed":
+                    denied = True
+            elif label == "github_permission_or_rate_limit":
+                denied_repositories.add(repo)
             receipts.append({"project_id": pid, "issue_number": number,
                              "coverage": ("unavailable_or_denied" if label ==
                                           "github_permission_or_rate_limit"
