@@ -17,7 +17,7 @@ from zsentinel_saved_issue_archive import read_issue_dossier
 from zsentinel_saved_issue_delta import (
     admit_comparable_source_pair, issue_difference, save_private_html,
 )
-from zsentinel_saved_gate_dossier import _save_private_handoff
+from zsentinel_saved_gate_dossier import PROJECT, _save_private_handoff
 
 PRIORITIES = ("P0", "P1", "P2", "Unspecified")
 RANK = {p: i for i, p in enumerate(PRIORITIES)}
@@ -69,9 +69,16 @@ def portfolio_delta(previous, current):
             else:
                 kind = "unchanged"
                 counts["unchanged_sampled_issues"] += 1
+        priority = min(
+            (item["highest_source_priority"] for item in (old, new) if item),
+            key=lambda value: RANK[value],
+        )
         entries.append({
             "issue_url": url, "repository": issue["repository"],
-            "priority": issue["highest_source_priority"],
+            # Rank by highest historically observed issue-linked severity
+            # across both snapshots; downgrades cannot bury an older P0.
+            # This is not proof of current GitHub issue priority.
+            "priority": priority,
             "old_priority": old["highest_source_priority"] if old else None,
             "new_priority": new["highest_source_priority"] if new else None,
             "kind": kind,
@@ -113,11 +120,14 @@ def portfolio_delta(previous, current):
     }
 
 
-def selected_page(report, *, priority=None, change_only=False,
-                  page=1, page_size=30):
+def selected_page(report, *, priority=None, repository=None,
+                  change_only=False, page=1, page_size=30):
     """Retain honest global counts while rendering only chosen rows."""
     if priority is not None and priority not in RANK:
         raise ValueError("Invalid priority filter")
+    if repository is not None and (
+            type(repository) is not str or PROJECT.fullmatch(repository) is None):
+        raise ValueError("Invalid canonical GitHub project repository")
     if type(page) is not int or not 1 <= page <= 10:
         raise ValueError("Invalid page")
     if type(page_size) is not int or not 1 <= page_size <= MAX_DISPLAY:
@@ -125,6 +135,7 @@ def selected_page(report, *, priority=None, change_only=False,
     matches = [
         row for row in report["issues"]
         if (priority is None or row["priority"] == priority)
+        and (repository is None or row["repository"] == repository)
         and (not change_only or row["kind"] != "unchanged")
     ]
     start = (page - 1) * page_size
@@ -137,7 +148,8 @@ def selected_page(report, *, priority=None, change_only=False,
         "total_pages": max(1, (len(matches) + page_size - 1) // page_size),
         "shown": len(page_data["issues"]),
         "matched": len(matches), "total": report["total_distinct_source_issues"],
-        "priority": priority, "change_only": change_only,
+        "priority": priority, "repository": repository,
+        "change_only": change_only,
         "unshown_or_absent_is_never_closed": True,
     }
     return page_data
@@ -156,6 +168,9 @@ def render_markdown(report):
         "- Ontbrekende bronbatches: " +
         str(report["old_sample_missing_batches"]) + " → " +
         str(report["new_sample_missing_batches"]),
+        "- Historische projectfilter: " + (s["repository"] or "alle"), 
+        "- Getoonde prioriteit is hoogste historisch gelinkte ernst; "
+        "geen actuele GitHub-issue-labelstatus.",
         "- Totale historische issue-unie: " + str(s["total"]),
         "- Filtermatches: " + str(s["matched"]) + ", getoond: " +
         str(s["shown"]) + "; pagina " + str(s["page"]) + "/" +
@@ -283,7 +298,10 @@ geslaagde CI/review, merge of deployment.</aside>""" + (
     "</p><p><strong>" + str(d["shown"]) + " getoond</strong> van " +
     str(d["matched"]) + " filtersmatches; " + str(d["total"]) +
     " unieke bronissues; pagina " + str(d["page"]) + "/" +
-    str(d["total_pages"]) + ". Niet getoond is NIET opgelost.</p>"
+    str(d["total_pages"]) + ". Projectfilter: " +
+    e(d["repository"] or "alle") +
+    ". Prioriteit is de hoogste historische issuekoppeling, niet live." +
+    " Niet getoond is NIET opgelost.</p>"
     ) + '<div class="grid">' + "".join(cards) + """</div>
 <footer>Raadpleeg actuele GitHub-PR, review, exact-head CI, branch protection,
 Notion-claim en live-bron alvorens bevoegde merge/release-actie.
@@ -299,6 +317,7 @@ def main(argv=None):
     parser.add_argument("--previous", type=Path, required=True)
     parser.add_argument("--current", type=Path, required=True)
     parser.add_argument("--priority", choices=PRIORITIES)
+    parser.add_argument("--repository", help="Filter canonical Zennay/repo")
     parser.add_argument("--changed-only", action="store_true")
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=30)
@@ -310,7 +329,8 @@ def main(argv=None):
         later = read_issue_dossier(args.current)
         source = portfolio_delta(earlier, later)
         chosen = selected_page(
-            source, priority=args.priority, change_only=args.changed_only,
+            source, priority=args.priority, repository=args.repository,
+            change_only=args.changed_only,
             page=args.page, page_size=args.page_size)
         if args.format == "html":
             save_private_html(args.output, render_html(chosen))
