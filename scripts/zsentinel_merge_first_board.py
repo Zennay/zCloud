@@ -15,7 +15,7 @@ import re
 import sys
 import time
 
-from portfolio_merge_ready import PROJECTS, REPO_URL, gh
+from portfolio_merge_ready import PROJECTS, REPO_URL, gh, summarize_required_workflows
 
 MAX_PROJECTS = 3
 MAX_PRS = 12
@@ -99,7 +99,7 @@ def observed_checks(checks, legacy):
 
 
 def observed_workflows(receipt, sha):
-    """Source-complete exact-SHA workflow receipts, not merge permission."""
+    """Display the same observed GitHub PR CI gate as the merge helper."""
     if not isinstance(receipt, dict):
         return "UNKNOWN"
     records = receipt.get("workflow_runs")
@@ -107,15 +107,16 @@ def observed_workflows(receipt, sha):
     if (not isinstance(records, list) or type(total) is not int
             or len(records) != total or len(records) >= 100):
         return "INCOMPLETE"
-    if not records:
-        return "NO_WORKFLOW_EVIDENCE"
-    if any(not isinstance(r, dict) or r.get("head_sha") != sha for r in records):
-        return "UNKNOWN"
-    if any(r.get("status") != "completed" for r in records):
+    state = summarize_required_workflows(records, sha)
+    if state == "GREEN":
+        return "OBSERVED_GREEN_ONLY"
+    if state == "HEAD_WORKFLOWS_NOT_FINISHED":
         return "PENDING"
-    if any(r.get("conclusion") != "success" for r in records):
-        return "FAILED_OR_SKIPPED"
-    return "OBSERVED_GREEN_ONLY"
+    if state == "HEAD_WORKFLOWS_NOT_GREEN":
+        return "FAILED"
+    if state == "NO_PR_WORKFLOW_EVIDENCE":
+        return "NO_PR_WORKFLOW_EVIDENCE"
+    return state
 
 
 def inspect(repo, number, budget, expected_body_digest=None):
