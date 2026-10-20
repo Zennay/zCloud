@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import unicodedata
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
 from zsentinel_product_issue_inbox import (
@@ -496,6 +497,23 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
     }
 
 
+def operator_inline(value, markdown=False):
+    """Keep public issue titles and saved human notes on ONE inert output line."""
+    if type(value) is not str:
+        raise ValueError("invalid operator text source")
+    single = "".join(
+        " " if unicodedata.category(char).startswith("C") else char
+        for char in value)
+    if markdown:
+        # This is an operator Markdown handoff, not a source of privileged
+        # commands or HTML. Canonical GitHub URLs are assembled separately.
+        single = (single.replace("\\", "\\\\").replace("<", "&lt;")
+                  .replace(">", "&gt;").replace("|", "\\|")
+                  .replace("[", "\\[").replace("]", "\\]")
+                  .replace("`", "\\`"))
+    return single
+
+
 def output_text(report, markdown=False):
     intro = ("# zSentinel · Gecombineerde product- en PR-bestandsscope"
              if markdown else "zSentinel | productissues + PR-bestandsscope")
@@ -518,7 +536,8 @@ def output_text(report, markdown=False):
                      str(item["high_claim_cycles_observed"]) +
                      ", actuele eigenaar: ONBEKEND")
         if item["human_next_step"]:
-            lines.append("  Bronadvies: " + item["human_next_step"])
+            lines.append("  Bronadvies: " +
+                         operator_inline(item["human_next_step"], markdown))
     if report["saved_unpr_branch_context"] is not None:
         branches = report["saved_unpr_branch_context"]
         lines.append("PR-loze branches (opgeslagen, geen live eigenaren): " +
@@ -531,10 +550,12 @@ def output_text(report, markdown=False):
         ref = ("[" + row["issue"] + "](" + row["url"] + ")" if markdown
                else row["url"])
         lines.append(row["priority"] + " | " + row["project"] + " | " +
-                     ref + " | " + row["title"] + " | " + row["next_action_nl"])
-        lines.append("  Advies uit bestaande bron: " + row["source_recommended_next_step"])
+                     ref + " | " + operator_inline(row["title"], markdown) +
+                     " | " + row["next_action_nl"])
+        lines.append("  Advies uit bestaande bron: " +
+                     operator_inline(row["source_recommended_next_step"], markdown))
         for gap in row["source_evidence_gaps"]:
-            lines.append("  Onbekend: " + gap)
+            lines.append("  Onbekend: " + operator_inline(gap, markdown))
         for pr in row["existing_prs"]:
             link = ("[" + pr["url"] + "](" + pr["url"] + ")" if markdown else pr["url"])
             lines.append("  " + link + " · " + pr["file_scope_state"] +
