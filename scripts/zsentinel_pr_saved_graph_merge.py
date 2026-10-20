@@ -241,8 +241,19 @@ def connected_cross_window_groups(all_prs, owners):
         # materialize the capped operator matrix, not per-pair path copies.
         candidates = {name for number in member_ids
                       for name in all_prs[number]["files"]}
-        files = sorted(name for name in candidates
-                       if len(owners[name] & member_set) > 1)
+        # Cross-window connectors are the reason this view exists. Surface
+        # them first, then the paths touched by the most observed PRs.
+        # Keep lexical tie-breaking for repeatable private exports.
+        file_priority = []
+        for name in candidates:
+            touching = owners[name] & member_set
+            if len(touching) < 2:
+                continue
+            windows_for_file = {all_prs[n]["snapshot"] for n in touching}
+            file_priority.append(
+                (len(windows_for_file) > 1, len(touching), name))
+        file_priority.sort(key=lambda row: (-int(row[0]), -row[1], row[2]))
+        files = [row[2] for row in file_priority]
         ranked = sorted(member_ids, key=lambda number: (-degree[number], number))
         file_ownership_rows = []
         for path in files[:MAX_CLUSTER_EXAMPLE_PATHS]:
