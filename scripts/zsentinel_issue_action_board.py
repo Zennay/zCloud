@@ -254,19 +254,25 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
         "live herstel geverifieerd.",
         "",
     ]
+    visible_urls = {item["issue_url"] for item in board["cards"][:max_rows]}
     if board.get("pr_groups"):
         lines.extend([
             "## Bestaande PR-bundels (observatie, geen fixbewijs)" if style == "markdown"
             else "Bestaande PR-bundels (observatie, geen fixbewijs)", "",
         ])
         for group in board["pr_groups"]:
+            linked_visible = [
+                url for url in group["linked_issue_urls_in_source"]
+                if url in visible_urls]
+            if not linked_visible:
+                continue
             pr_url = group["pr_url"]
             link = ("[Open bestaande PR](" + pr_url + ")"
                     if style == "markdown" else pr_url)
             lines.append("- " + group["highest_priority"] + " · " + link +
-                         " · " + str(group["linked_issue_count_observed"]) +
-                         " productissue(s) noemen deze PR in de bron.")
-            for issue_url in group["linked_issue_urls_in_source"]:
+                         " · " + str(len(linked_visible)) +
+                         " productissue(s) in de beperkte overdracht noemen deze PR.")
+            for issue_url in linked_visible:
                 lines.append("  " + ("[Issue](" + issue_url + ")"
                                     if style == "markdown" else issue_url))
         lines.append("")
