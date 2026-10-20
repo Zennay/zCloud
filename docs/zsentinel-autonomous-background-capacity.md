@@ -274,6 +274,30 @@ python3 scripts/zsentinel_runner_report.py --output herstelverloop.html \
   --timeline T0.json T1.json T2.json
 ```
 
+Dezelfde reeds gemaakte **privé JSON-bonnen** kunnen daarnaast zonder
+nieuwe live metingen worden omgezet naar een compacte, door een bevoegde
+eigenaar overdraagbare **Markdown-hersteloverdracht**:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --output hersteloverdracht.md \
+  --timeline T0.json T1.json T2.json
+```
+
+Dit vormt **één** zelfstandig leesbaar `.md`-document met actuele
+P0/P1-vervolgacties, status en onzekerheid, herhaald geobserveerde
+systemd-fouten, hostcapaciteitsdruk en ieder chronologisch bronverschil.
+Geen handmatige duplicatie van gegevens uit het HTML-rapport. De uitvoer
+maakt alleen een **nieuw** owner-private 0600-bestand (maximaal 128 KiB),
+zonder bestaande bestanden te overschrijven of procesargumenten, tokens
+of servicejournalinhoud toe te voegen. De tekstvelden zijn begrensd en
+onschadelijk gemaakt voor Markdown-injectie.
+
+`--format markdown` wordt uitsluitend met `--timeline` geaccepteerd;
+voor een los live bronmoment mag geen geschiedenis of herstelde status
+worden verzonnen. De standaard blijft `--format html`. Het Markdown-bestand
+is een **operatoroverdracht, geen workflow-, runner- of releasegoedkeuring**.
+
 Het rapport telt daarnaast, over de hele opgegeven reeks, per werkelijk
 geobserveerde service hoeveel meetmomenten een `failed`-status bevatten,
 hoe vaak hoge swapdruk (≥80%), kritieke rootschijfdruk (≥90%) en hoge
