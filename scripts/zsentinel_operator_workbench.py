@@ -860,6 +860,25 @@ function currentPrManifest(){
   saved_gate_focus:document.getElementById('prGateFocus').value||'all',
   evidence_scope:'bounded_saved_snapshot_not_live',
   project_coverage:board.coverage,
+  // Portable triage is descriptive, never an execution or review receipt.
+  saved_gate_triage:{
+   observed_at_utc:prGateImport?.time||null,
+   source_schema:prGateImport?.kind||null,
+   imported_source_sha256:prGateImport?.sha256||null,
+   review_manifest_sha256:prGateImport?.bridgeCoverage?.manifest_sha256||null,
+   complete_saved_batch_set:!!prGateImport?.bridgeCoverage,
+   observed_categories:{
+    failed:groups.filter(g=>gateState(g.url)==='failed').length,
+    waiting:groups.filter(g=>gateState(g.url)==='pending').length,
+    review_needed:groups.filter(g=>gateState(g.url)==='review').length,
+    unknown_or_incomplete:groups.filter(g=>gateState(g.url)==='unverified').length,
+    sampled_clear_not_approved:groups.filter(g=>
+      gateState(g.url)==='observed-no-authority').length
+   },
+   current_head_and_required_branch_checks_verified:false,
+   live_claim_or_review_authorized:false,
+   merge_authorized:false
+  },
   required_current_claim_review_ci_branch_release_check:true,
   current_pr_open_state_verified:false,
   current_pr_head_verified:false,
