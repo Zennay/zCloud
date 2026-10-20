@@ -98,7 +98,7 @@ def observe(proc: Path = Path("/proc")):
         "schema": "zsentinel-local-runner-processes-v1",
         "source": "bounded_linux_proc_comm_cwd_readonly",
         "observed_at_utc": observed,
-        "coverage": "partial" if cutoff or inaccessible else "bounded_observed",
+        "coverage": "partial" if cutoff or inaccessible or unknown_cwd else "bounded_observed",
         "numeric_proc_entries_seen": min(examined, MAX_PROCESSES),
         "candidate_processes_seen": min(candidates, MAX_CANDIDATES),
         "inaccessible_proc_entries": min(inaccessible, MAX_PROCESSES),
