@@ -61,6 +61,15 @@ def combine_workboards(snapshots, registry, now=None):
             if pid not in registry or pid in project_set:
                 raise ValueError("unknown or overlapping project in source windows")
             project_set.add(pid)
+        # The shared HTML renderer uses this exact-head request field. Its
+        # omission made the existing saved-window HTML path raise KeyError.
+        for field, limit in (("issue_source_requests", 3 * len(projects)),
+                             ("exact_head_pr_requests", 15),
+                             ("qa_excluded", MAX_ITEMS_PER_WINDOW),
+                             ("inspected_pr_count", 3)):
+            number = snapshot.get(field)
+            if type(number) is not int or not 0 <= number <= limit:
+                raise ValueError("invalid bounded per-window GitHub receipt")
         snapshots_at.append(observed)
         age = int(max(0, (now - observed).total_seconds()))
         windows.append({
@@ -153,6 +162,10 @@ def combine_workboards(snapshots, registry, now=None):
         "items": ordered,
         "source_budget_maximum": sum(
             s.get("source_budget_maximum", 0) for s in snapshots),
+        "issue_source_requests": sum(s["issue_source_requests"] for s in snapshots),
+        "exact_head_pr_requests": sum(s["exact_head_pr_requests"] for s in snapshots),
+        "qa_excluded": sum(s["qa_excluded"] for s in snapshots),
+        "inspected_pr_count": sum(s["inspected_pr_count"] for s in snapshots),
         "issue_sample_truncated": any(s.get("issue_sample_truncated") is True
                                       for s in snapshots),
         "all_projects_currently_read": all(w["age_seconds"] <= 600 for w in windows),
@@ -184,6 +197,10 @@ def collect_live_workboards(registry, projects, token=None):
     for start in range(0, len(projects), 3):
         selected = projects[start:start + 3]
         inbox = collect(registry, selected, token, max_items=MAX_ITEMS_PER_WINDOW)
+        # A confirmed provider-wide limit is not a prompt to retry the next
+        # independent window under the same denied account budget.
+        if inbox.get("stopped_after_rate_or_auth_denial") is True:
+            raise ValueError("GitHub provider rate budget reached; no additional live fetch")
         report = build_workboard(inbox, registry, token=token)
         if (report.get("projects") != selected
                 or report.get("claims_taken") is not False
@@ -229,9 +246,8 @@ def main(argv=None):
         board["collection_mode"] = (
             "one_shot_live_read_only" if args.collect_live
             else "explicit_saved_private_sources")
-        board["observed_provider_gets"] = sum(
-            source.get("issue_source_requests", 0) +
-            source.get("exact_head_pr_requests", 0) for source in snapshots)
+        board["observed_provider_gets"] = (
+            board["issue_source_requests"] + board["exact_head_pr_requests"])
         if board["observed_provider_gets"] > 24 * MAX_WINDOWS:
             raise ValueError("combined source request count exceeds bounded budget")
         if args.queue_overview:
