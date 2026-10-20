@@ -314,6 +314,27 @@ def render(report, fmt):
             lines.append("    - … overige paden niet getoond")
     if not report["shown_collision_pairs"]:
         lines.append("Geen cross-window botsing in deze bestanden gezien; GEEN vrijgave.")
+    lines.extend([
+        "",
+        "## Mogelijk dubbel productwerk: zelfde issue-nummer OVER vensters",
+        "",
+        "Dit zijn ongeverifieerde tekstverwijzingen, geen bewezen issuefix.",
+    ])
+    for group in report["shown_issue_number_hints"]:
+        lines.append("- [Nummer #" + str(group["number"]) + "](" +
+                     group["unverified_reference_url"] + ") · " +
+                     str(group["observed_distinct_prs"]) + " PR-bronvermeldingen")
+        for entry in group["shown_prs"]:
+            lines.append("  - [PR](" + entry["url"] + ") · bronvenster " +
+                         str(entry["snapshot"]) + " · " +
+                         "/".join(entry["mentioned_in"]) +
+                         " · HEAD " + entry["head_sha"][:12])
+        if group["pr_list_truncated"]:
+            lines.append("  - overige gekoppelde PR-bronnen niet getoond")
+    if not report["shown_issue_number_hints"]:
+        lines.append("Geen nieuw dubbel nummer in deze vensters gezien; geen vrijgave.")
+    if report["issue_hint_groups_truncated"]:
+        lines.append("Extra nummergroepen buiten de begrensde weergave.")
     if report["collision_pairs_truncated"]:
         lines.append("Meer conflicten buiten de begrensde weergave.")
     if report["prs_with_partial_file_scope"]:
@@ -339,6 +360,19 @@ def render(report, fmt):
         "<br>".join(escape(name) for name in item["shared_paths"]) +
         "</td></tr>"
         for item in report["shown_collision_pairs"])
+    issue_rows = "".join(
+        "<li><a rel='noopener noreferrer' href='" +
+        escape(group["unverified_reference_url"], quote=True) + "'>Nummer #" +
+        str(group["number"]) + "</a> · " +
+        str(group["observed_distinct_prs"]) +
+        " PR-vermeldingen (GEEN fix/issue-identiteitsbewijs)<ul>" +
+        "".join(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(row["url"], quote=True) + "'>PR</a> · venster " +
+            str(row["snapshot"]) + " · " +
+            escape("/".join(row["mentioned_in"])) + "</li>"
+            for row in group["shown_prs"]) + "</ul></li>"
+        for group in report["shown_issue_number_hints"])
     return (
         "<!doctype html><html lang='nl'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -360,7 +394,10 @@ def render(report, fmt):
         "<table><thead><tr><th>Open bron-PRs</th><th>Gedeelde paden</th>"
         "<th>Geobserveerde bestanden</th></tr></thead><tbody>" +
         (rows or "<tr><td colspan='3'>Geen botsing gezien, geen vrijgave.</td></tr>") +
-        "</tbody></table></html>"
+        "</tbody></table><h2>Zelfde nummer in PR-titel of body over vensters</h2>"
+        "<p>Niet geverifieerd als bestaand issue of bewezen fix. Controleer GitHub.</p>"
+        "<ul>" + (issue_rows or "<li>Geen nieuwe nummeroverlap in deze "
+                "steekproef, GEEN vrijgave.</li>") + "</ul></html>"
     )
 
 
