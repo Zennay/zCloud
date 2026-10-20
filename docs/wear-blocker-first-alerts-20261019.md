@@ -51,3 +51,11 @@ Bij het openen van een melding doet de Watch-app een nieuwe bronopvraag. Als de 
 De actuele server selecteert `critical`, `high` **en `error` als ernstige incidentniveaus. De notificatie- en UI-clients accepteren nu dezelfde drie niveaus; `error` wordt als kritisch weergegeven en alleen als `human_action_required=true` daadwerkelijk notificatiewaardig. Oude feed/algemene status blijft zonder human attestation stil. Dit voorkomt dat een echte brongebonden `recovery_failed` of `deploy_failed` met severity `error` wel door de server maar niet door de Watch zou worden getoond.
 
 Geen nieuwe test-/QA-suite of handmatige CI-rerun. Deze bronverbeteringen zijn nog niet naar `main` gemerged of op een fysiek toestel geïnstalleerd; bestaande Android-CI, onafhankelijke review, signing en device-acceptatie blijven nodig.
+
+## 20 oktober · gestructureerd incidentdossier in plaats van afgebroken samenvatting
+
+De backend retourneert nu bij `active_blockers` aparte maximaal 240 tekens lange `cause`, `impact` en `action` velden. Het oude `detail` blijft backwards compatible, maar de tekstbudgetten voor oorzaak en actie zijn afzonderlijk begrensd (elk max. 180 tekens); één extreem lange oorzaak kan daarom de vervolgstap niet meer volledig wegdrukken.
+
+Op de Watch toont een uitgeklapte actieve incidentkaart alle drie de secties, inclusief de bedrijfsimpact. Bij een oudere server zonder de drie velden blijft de bestaande gecombineerde tekst als fallback. Bij een brongebonden menselijke escalatie toont de eigenlijke Android-notificatie eerst de expliciete `action`, zodat het scherm niet alleen een algemeen probleem noemt. Het notificatiebeleid blijft fail-closed voor oude of onbekende menselijke-autorisatievelden.
+
+Alles staat alleen als source op [bestaande PR #1561](https://github.com/Zennay/zCloud/pull/1561); er zijn geen QA-tests geschreven/gedraaid, geen CI-gates uitgeschakeld, geen APK, Watch-installatie of live-deploy geleverd. Vereiste exacte-head CI, onafhankelijke review en release-eigenaar blijven verplicht.
