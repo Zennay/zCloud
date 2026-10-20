@@ -16,3 +16,11 @@ Admission scans at most four ordered 240-row queue pages (960 queued rows in tot
 The existing authorized `GET /api/portfolio-queue` now also exposes `delivery_policy` with queued QA-only held count, a bounded count and up to eight P0-first advisory product candidate IDs, explicitly flagged `not_claimed_or_authorized=true` and `admission_scope_lease_and_capacity_not_verified=true`. This is read-only, additive and does not modify the existing queue `items`, lease, route authorization or allocation response contracts.
 
 Unparseable, duplicate-key, non-object or overlong workstream metadata now fails closed for **new** admissions, preventing an ambiguous serialized `qa-only` classification from being silently converted to product work. Existing active claims and historical queue records are never rewritten.
+
+## Multilingual admission and truthful holds (20 October)
+
+The source policy now recognises Dutch build/repair language (including `bouw`, `implementeer`, `herstel`, `repareer`, `integreer`, `oplossen`) alongside English product tasks. Dutch QA/validation lane labels, QA title prefixes, and criteria that request only a validation cycle are held **before a new worker can be admitted**. A genuine delivery action embedded in a QA-prefixed legacy title is not blocked on title alone; an explicitly QA-only workstream remains excluded. No language heuristic grants claims or merge rights.
+
+`product_delivery_disposition` has three outcomes: `product` (eligible for the *existing* subsequent authorization path), `qa_only` (hold new QA admission), and `invalid` (unknown/corrupt metadata or malformed ticket: fail closed). Existing `is_new_product_delivery` delegates to that same decision, avoiding a second classifier.
+
+The read-only portfolio API's `delivery_policy` now separates `queued_qa_only_held` from `queued_invalid_or_unknown_held`; malformed metadata no longer increases a count labelled as QA. Both counts are limited to the returned visible queue items, not a complete queue-wide census. Active claims and owner scopes are never released or displaced by either classification. All existing review, exact-HEAD CI, main-merge, resource and release gates remain mandatory; these committed source changes are **not** a live VPS deployment.
