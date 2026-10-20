@@ -187,6 +187,15 @@ def _historical_html(lines):
             '</div></details></section>')
 
 
+def _pr_anchor(repo, number):
+    """Derive stable, safe in-page anchors from canonical saved PR identities."""
+    if (type(repo) is not str or
+            re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", repo) is None
+            or type(number) is not int or not 1 <= number <= 100000000):
+        raise ValueError("Invalid project PR anchor")
+    return "pr-" + repo.replace("/", "-") + "-" + str(number)
+
+
 def render_html(selected, integrated, *, historical_change_lines=None):
     """Static operator dashboard: no JS, no remote sources, no approval inference."""
     oldest, latest, missing = _admit(selected, integrated)
@@ -200,6 +209,12 @@ def render_html(selected, integrated, *, historical_change_lines=None):
             raise ValueError("Invalid classified gate")
         grouped[bucket].append((PRIORITIES[priority], repo, number, ref, gate))
     counts = Counter({name: len(rows) for name, rows in grouped.items()})
+    project_index = {}
+    for reason, _label, _action in REASONS:
+        for priority, repo, number, _ref, _gate in grouped[reason]:
+            project_index.setdefault(repo, []).append((priority, number, reason))
+    if sum(len(items) for items in project_index.values()) != len(selected):
+        raise ValueError("Portfolio index disagrees with saved PR inventory")
     age_seconds = max(0, (datetime.now(timezone.utc) - oldest).total_seconds())
     stale = age_seconds >= 6 * 3600
     n = lambda s: escape(str(s), quote=True)
@@ -207,6 +222,24 @@ def render_html(selected, integrated, *, historical_change_lines=None):
         '<a class="stat" href="#' + key + '"><strong>' + str(counts[key]) +
         '</strong><span>' + n(label) + '</span></a>'
         for key, label, _action in REASONS)
+    projects = []
+    for repo, references in sorted(project_index.items()):
+        links = "".join(
+            '<li><a href="#' + _pr_anchor(repo, number) + '">' +
+            n(priority) + ' · PR #' + str(number) + '</a> · ' +
+            n(LABELS[reason][0]) + '</li>'
+            for priority, number, reason in sorted(
+                references, key=lambda item: (PRIORITIES.index(item[0]), item[1])))
+        projects.append(
+            '<details class="project"><summary>' + n(repo) +
+            ' · ' + str(len(references)) + ' bestaande PR-kandidaten</summary><ol>' +
+            links + '</ol></details>')
+    project_navigation = (
+        '<section class="projects" aria-label="Projectnavigatie">'
+        '<h2>Spring naar een project of bestaande PR</h2><p>Alleen PRs uit de '
+        'opgeslagen bron, niet per se nog open of vrij.</p>' +
+        ''.join(projects) + '</section>')
+
     cards = []
     for key, label, action in REASONS:
         items = []
@@ -231,7 +264,8 @@ def render_html(selected, integrated, *, historical_change_lines=None):
                            str(gate["observed_independent_exact_head_approvals"]) +
                            ' (policy onbekend).</small>')
             items.append(
-                '<article><div class="line"><strong>' + n(priority) + ' · ' +
+                '<article id="' + _pr_anchor(repo, number) +
+                '"><div class="line"><strong>' + n(priority) + ' · ' +
                 n(repo) + ' #' + str(number) + '</strong>' +
                 '<a href="' + n(url) + '" target="_blank" rel="noopener noreferrer">Open PR ↗</a></div>' +
                 '<p>' + sha + ' · ' + n(label) + '</p>' +
@@ -270,6 +304,12 @@ article p{margin:9px 0}.line{display:flex;justify-content:space-between;flex-wra
 small{display:block;color:#c3d6e6}code{font-size:12px;background:#0b182a;border-radius:5px;padding:3px 6px}
 .provenance{padding-top:18px;border-top:1px solid #405774;color:#b1c6d8;font-size:13px;overflow-wrap:anywhere}
 .changes{padding:6px 20px 20px}.changes ol{padding-left:24px}.changes li{padding:6px 0;overflow-wrap:anywhere}
+.projects{background:#101c2f;border:1px solid #3c5d73;border-radius:14px;padding:12px 20px}
+.projects h2{font-size:19px;margin:6px 0}.projects p{color:#c5d8e7}
+.projects details{margin:10px 0}.projects ol{columns:2;padding:4px 25px 14px}
+.projects li{break-inside:avoid;padding:3px 0;overflow-wrap:anywhere}
+article:target{outline:3px solid #7bd3ff;scroll-margin:15px}
+@media(max-width:700px){.projects ol{columns:1}}
 @media print{body{background:white;color:black}.stat,details,article{background:white;color:black;border-color:#555}.cards{display:block}article{margin:10px 0}summary{color:black}}
 </style></head><body><main>
 <header><div class="subtitle">zCloud / zSentinel / opgeslagen bewijs</div>
@@ -280,7 +320,7 @@ Deze pagina kan geen claim, CI, vereiste branchregels, onafhankelijke review,
 merge of productieactie autoriseren. Controleer altijd de actuele exacte PR-HEAD in GitHub.</div>
 </header>'''
     html += (warning + _historical_html(historical_change_lines) +
-             '<div class="stats">' + summary + '</div>' +
+             '<div class="stats">' + summary + '</div>' + project_navigation +
              '<p>Bronvenster: ' + n(integrated["earliest_observed_at_utc"]) +
              ' — ' + n(integrated["latest_observed_at_utc"]) +
              ' · batches: ' + str(integrated["observed_batch_count"]) + '/' +
