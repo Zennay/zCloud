@@ -131,6 +131,10 @@ def refresh(bundle, registry, token=None):
                 "verified_receipt": "github_exact_run_job",
                 "runner_route": route["runner_route"],
                 "route_labels": route["route_labels"],
+                "job_assignment_stage": route["job_assignment_stage"],
+                "assignment_source_complete": route["assignment_source_complete"],
+                "runner_healthy_verified": False,
+                "worker_resumed_verified": False,
             }
             if status == "completed":
                 updated["conclusion"] = conclusion
@@ -162,6 +166,8 @@ def refresh(bundle, registry, token=None):
                            "runner_id_observed": runner_id if runner_id else None,
                            "runner_route": route["runner_route"],
                            "route_labels": route["route_labels"],
+                           "job_assignment_stage": route["job_assignment_stage"],
+                           "assignment_source_complete": route["assignment_source_complete"],
                            "no_job_steps": updated.get("no_job_steps"),
                            "job_start_evidence": (
                                "completed_without_steps" if status == "completed"
