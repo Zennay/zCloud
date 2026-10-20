@@ -45,6 +45,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "repository": repo,
                 "source_status": "unavailable",
                 "sample_complete": False,
+                "open_pr_snapshot_stable": False,
+                "sampled_open_pr_heads": [],
                 "shown_collision_pairs": [],
                 "shown_duplicate_issue_groups": [],
                 "observed_duplicate_issue_groups": None,
@@ -72,6 +74,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "source_status": "complete_open_pr_sample_only"
                              if complete else "partial_open_pr_sample",
             "sample_complete": complete,
+            "open_pr_snapshot_stable": source["open_pr_snapshot_stable"],
+            "sampled_open_pr_heads": source["inspected_pr_heads"],
             "source_sample_complete": source["pr_file_scope_sample_complete"],
             "shown_collision_pairs": pairs,
             "shown_duplicate_issue_groups": source["shown_duplicate_issue_groups"],
