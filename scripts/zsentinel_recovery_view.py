@@ -458,8 +458,28 @@ def html_view(decision):
                 if (type(repo) is not str or
                         not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", repo)):
                     raise ValueError("invalid exact job source repository")
-                seen_links = set()
-                additional = []
+                primary_run = row.get("run_id")
+                primary_job = row.get("job_id")
+                primary_sha = row.get("primary_head_sha")
+                if (type(primary_run) is not int or type(primary_job) is not int
+                        or not 0 < primary_run <= 2**53 - 1
+                        or not 0 < primary_job <= 2**53 - 1
+                        or type(primary_sha) is not str
+                        or not re.fullmatch(r"[a-f0-9]{40}", primary_sha)):
+                    raise ValueError("untrusted selected GitHub job identity")
+                primary_href = ("https://github.com/" + repo +
+                                "/actions/runs/" + str(primary_run) +
+                                "/job/" + str(primary_job))
+                seen_links = {(primary_run, primary_job)}
+                additional = [
+                    '<li><strong>Primaire job:</strong> <a target="_blank"'
+                    ' rel="noopener noreferrer" href="' +
+                    escape(primary_href, quote=True) + '">GitHub-job ' +
+                    str(primary_job) + '</a> · ' +
+                    phrase(row.get("primary_runner_route"), 24) + ' · ' +
+                    phrase(row.get("primary_job_status"), 24) +
+                    ' · HEAD ' + primary_sha[:12] + '</li>'
+                ]
                 for job in extras:
                     if (type(job) is not dict
                             or job.get("observed_only") is not True
@@ -492,13 +512,13 @@ def html_view(decision):
                         phrase(job["job_status"], 24) + ' · HEAD ' +
                         sha[:12] + '</li>')
                 linked = (
-                    '<details><summary>Andere brongebonden jobs (' +
-                    str(len(extras)) + ' getoond van ≥' + str(extra_total) +
+                    '<details><summary>Geobserveerde GitHub-jobs (' +
+                    str(len(extras) + 1) + ' getoond van ≥' + str(extra_total) +
                     ' gevonden)</summary><ul>' + ''.join(additional) +
                     '</ul><p class="small">Niet alle workflows of jobpagina’s'
-                    ' zijn gelezen. Deze links geven GEEN herstart-, claim-'
-                    ' of releasebevoegdheid.</p></details>'
-                    if extras else '')
+                    ' zijn gelezen. De primaire job wordt afzonderlijk'
+                    ' opnieuw geverifieerd; deze bronlinks geven GEEN'
+                    ' herstart-, claim- of releasebevoegdheid.</p></details>')
                 if extra_cut:
                     description += " Extra gevonden jobs buiten deze vijf zijn niet getoond."
             elif extras or extra_cut:
