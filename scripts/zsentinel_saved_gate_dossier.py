@@ -7,14 +7,12 @@ gate, claim verifier, merge authority or proof of GitHub provenance.
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 import hashlib
 from io import BytesIO
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import stat
 import sys
 from zipfile import BadZipFile, ZipFile, ZIP_DEFLATED
@@ -26,6 +24,12 @@ MAX_MEMBER = MAX_ARCHIVE
 MAX_EXPANDED = 4 * MAX_ARCHIVE
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 PROJECT = re.compile(r"Zennay/[A-Za-z0-9_.-]{1,100}\Z")
+
+PR_URL = re.compile(r"https://github\\.com/(Zennay/[A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]{0,8})\\Z")
+ISSUE_URL = re.compile(r"https://github\\.com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}\\Z")
+PRIORITY = ("P0", "P1", "P2", "Unspecified")
+CATEGORIES = {"source", "failed", "pending", "changes", "partial", "review", "policy"}
+SOURCES = {"missing_batch", "source_unavailable_or_head_changed", "observed_partial_gate_receipt"}
 
 
 def unique_pairs(pairs):
@@ -173,10 +177,71 @@ def extract_dossier(path: Path, destination: Path, *, expected_manifest_sha=None
     return manifest, receipt
 
 
+
+
+def saved_queue(receipt: dict, *, project=None, priority=None):
+    """Read known PR hints from verified archive, never assert current state."""
+    projects = receipt.get("projects")
+    if type(projects) is not list or not 1 <= len(projects) <= 100:
+        raise ValueError("Invalid bounded project queue")
+    if project is not None and (type(project) is not str
+                                or PROJECT.fullmatch(project) is None):
+        raise ValueError("Invalid requested canonical project")
+    if priority is not None and priority not in PRIORITY:
+        raise ValueError("Invalid requested priority")
+    original_total = receipt.get("filtered_pr_candidates")
+    if type(original_total) is not int or not 1 <= original_total <= 300:
+        raise ValueError("Invalid original PR evidence cardinality")
+    queue = []
+    seen = set()
+    discovered_projects = set()
+    for group in projects:
+        repo = group.get("repository") if type(group) is dict else None
+        rows = group.get("candidates") if type(group) is dict else None
+        if (type(repo) is not str or PROJECT.fullmatch(repo) is None
+                or repo in discovered_projects or type(rows) is not list
+                or not 1 <= len(rows) <= 300
+                or group.get("source_prs_observed") != len(rows)):
+            raise ValueError("Inconsistent sampled project inventory")
+        discovered_projects.add(repo)
+        for row in rows:
+            if type(row) is not dict:
+                raise ValueError("Invalid saved candidate record")
+            url, number = row.get("url"), row.get("pr_number")
+            match = PR_URL.fullmatch(url) if type(url) is str else None
+            issues = row.get("linked_issue_urls")
+            if (match is None or match.group(1) != repo
+                    or type(number) is not int or int(match.group(2)) != number
+                    or url in seen or row.get("priority") not in PRIORITY
+                    or row.get("primary_gate") not in CATEGORIES
+                    or row.get("gate_source") not in SOURCES
+                    or type(issues) is not list or len(issues) > 60
+                    or any(type(i) is not str or
+                           ISSUE_URL.fullmatch(i) is None for i in issues)
+                    or type(row.get("next_action")) is not str
+                    or not 1 <= len(row["next_action"]) <= 300):
+                raise ValueError("Untrusted saved PR or issue source")
+            seen.add(url)
+            if ((project is None or repo == project)
+                    and (priority is None or priority == row["priority"])):
+                queue.append((repo, row))
+    if len(seen) != original_total or (project is not None
+                                      and project not in discovered_projects):
+        raise ValueError("Saved PR count or requested project contradicts source")
+    return queue
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True,
                         help="One previously generated private portfolio-zip")
+    parser.add_argument("--show-queue", action="store_true",
+                        help="Show human next actions for already-sampled PRs")
+    parser.add_argument("--project", help="Optional canonical source project filter")
+    parser.add_argument("--priority", choices=PRIORITY,
+                        help="Filter printed sampled PR work, never GitHub")
+    parser.add_argument("--limit", type=int, default=20,
+                        help="Maximum printed PR hints (1-50, default 20)")
     parser.add_argument("--extract-to", type=Path,
                         help="New, nonexistent private directory; otherwise inspect only")
     parser.add_argument("--expect-review-sha256",
@@ -186,6 +251,9 @@ def main(argv=None):
         if (args.expect_review_sha256 is not None
                 and SHA.fullmatch(args.expect_review_sha256) is None):
             raise ValueError("Invalid expected source SHA256")
+        if (not 1 <= args.limit <= 50
+                or (args.priority is not None and not args.show_queue)):
+            raise ValueError("Invalid read-only queue selection")
         if args.extract_to is None:
             _files, manifest, receipt = open_dossier(args.input)
         else:
@@ -204,6 +272,22 @@ def main(argv=None):
               " / " + str(receipt["original_source_pr_candidates"]))
         print("Archive hashes are internally consistent, NOT authenticated; "
               "no current GitHub owner, CI, merge or live state is established.")
+        if args.show_queue:
+            ordered = saved_queue(receipt, project=args.project,
+                                  priority=args.priority)
+            for repo, item in ordered[:args.limit]:
+                print(item["priority"] + " " + repo + "#" +
+                      str(item["pr_number"]) + " [" +
+                      item["primary_gate"] + ", " + item["gate_source"] +
+                      "]: " + item["next_action"])
+                print("  Original PR: " + item["url"])
+                print("  Linked source issues: " +
+                      (", ".join(item["linked_issue_urls"]) or "none observed"))
+            if len(ordered) > args.limit:
+                print(str(len(ordered) - args.limit) +
+                      " additional source-sampled PRs not displayed (NOT resolved).")
+            if not ordered:
+                print("No PRs in this saved filter; current GitHub coverage UNKNOWN.")
         if args.extract_to is not None:
             print("Private dossier extracted into: " + str(args.extract_to))
         return 0
