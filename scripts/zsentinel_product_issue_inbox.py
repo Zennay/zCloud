@@ -306,8 +306,13 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                 pr_coverage = "bounded_truncated" if len(open_prs) == 8 else "bounded_window"
             except ValueError as error:
                 pr_coverage = str(error)
-                if str(error) == "github_permission_or_rate_limit":
-                    rate_or_auth_denied = True
+                if isinstance(error, GithubAdmissionError):
+                    project_denied = True
+                    denial_category = error.category
+                    if error.category == "rate_limit_confirmed":
+                        rate_or_auth_denied = True
+                elif str(error) == "github_permission_or_rate_limit":
+                    project_denied = True
         coverage.append({
             "project": project, "repository": repo, "oldest_window": statuses[0], "open_pr_window": pr_coverage,
             "recent_window": statuses[1],
