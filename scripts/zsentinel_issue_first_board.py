@@ -6,6 +6,7 @@ Observed references in PR descriptions are *not* evidence of fixes.
 """
 import argparse
 import datetime as dt
+import hashlib
 import html
 import json
 import time
@@ -76,8 +77,16 @@ def collect(projects, registry, budget):
                 unmatched.append({"project": project, "repo": repo, **item})
             for _, _, item in sorted_prs[:MAX_PER_PROJECT]:
                 observed_head = (item.get("head") or {}).get("sha")
-                report = board.inspect(repo, item["number"], budget)
-                if (report.get("source") == "COMPLETE" and report.get("head") == observed_head
+                body = item.get("body") or ""
+                if not isinstance(body, str) or len(body) > 128000:
+                    partial.append({"project": project, "reason": "INVALID_PR_BODY"})
+                    continue
+                fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
+                report = board.inspect(repo, item["number"], budget,
+                                       expected_body_digest=fingerprint)
+                if (report.get("source") == "COMPLETE"
+                        and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY"}
+                        and report.get("head") == observed_head
                         and isinstance(observed_head, str)):
                     report["observed_issue_refs"] = [
                         issues[number] for number in links.get(item["number"], [])][:8]
