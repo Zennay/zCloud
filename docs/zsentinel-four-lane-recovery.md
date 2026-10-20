@@ -51,3 +51,62 @@ An approved deploy is a distinct event; a live, recovered worker must be
 observed separately. Do not start QA suites, force CI, restart services,
 modify broker/security/research state, or reassign protected owner claims
 to make these labels turn green.
+
+## Private four-lane operator desk
+
+The concrete read-only product is `scripts/zsentinel_four_lane_desk.py`.
+Use the zCloud SQLite source and the **current branch's matching**
+`lane_generator.py` when working from a checkout of this PR:
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --format html --output /PRIVATE-OWNER-DIRECTORY/new-report.html
+```
+
+JSON/text output intentionally contains no claim keys, owner identities,
+queue identifiers, raw titles, file paths or capabilities. The report is an
+offline, single-file, Dutch four-card interface with restrictive CSP and no
+external assets. HTML export refuses existing files, symlinks and non-private
+or other-user parent directories; an output is created 0600 only on explicit
+request. All other modes perform **no file writes**.
+
+The SQLite connection is `mode=ro` with `PRAGMA query_only=ON` and a
+single transactional snapshot. Both queue entries and local claim rows are
+bounded independently to a configurable maximum of 500. Above that bound,
+coverage becomes partial: **never** interpret missing rows as idle workers.
+Unparseable lease records remain ambiguous. The desk records observed
+queue `claimed/running/verifying` expiry as either expired or unknown,
+but does **not** reclaim or alter either category. It keeps queue occupancy
+distinct from the active `task_claims` table. Absence of local rows says
+nothing about Notion and other external owners.
+
+Only up to 64 in-flight queue records receive an explicit pairwise
+cross-lane capability/file overlap inspection in the private desk. More than
+64 produces an *incomplete* comparison rather than a false zero. The
+underlying lane generator continues to reserve **every** active task scope
+when assessing new candidates, independently from this optional view.
+Existing in-flight collisions trigger an advisory warning, never a forced
+reallocation.
+
+### Actual direct VPS observation (20 October)
+
+Against a read-only current `history.db` snapshot, source pinned to
+`bed05d016965e1e539afad5159384b0aba6ee517`, the desk observed
+one claimed PR-integration item, two claimed worker-recovery items and one
+queued CI/deploy item; product remediation was idle in this **local** view.
+No zSentinel rows existed in the observed local `task_claims` table.
+The view correctly warned about multiple worker-recovery queue entries
+and about claimed work without locally observed leases. These findings
+are **not** a release/worker recovery claim, global source completeness,
+permission to take a Notion claim, or evidence that an external owner
+is absent. Source syntax and this bounded, real-data functional invocation
+were inspected without starting any QA suite.
+
+### Delivery boundaries
+
+Current code in a GitHub PR is not `main`. Exact-head mandatory CI,
+independent reviews, branch protection and release authority remain
+required. An operator must separately verify GitHub `merged=true`,
+the newly observed default-branch SHA and authorized live activation
+before describing this feature as delivered or live.
