@@ -188,7 +188,52 @@ def changed_paths(repo, number, token):
     return sorted(files), len(rows) == 100
 
 
-def selected_source_pr(repo, number, token):
+
+MAX_FOCUSED_PR_FILE_PAGES = 3
+MAX_FOCUSED_PR_PATHS = 240
+
+
+def changed_paths_focused(repo, number, token):
+    """Bounded complete path collection for one *explicitly* selected PR.
+
+    This is never used for the ordinary multi-PR collision scan: large
+    portfolios keep their original one-page-per-PR GitHub rate budget.
+    Exactly 100 files on the last permitted page is ambiguous and refused.
+    """
+    paths = set()
+    seen_filenames = set()
+    for page in range(1, MAX_FOCUSED_PR_FILE_PAGES + 1):
+        rows = github_json(
+            repo, "/pulls/" + str(number) +
+            "/files?per_page=100&page=" + str(page), token)
+        if type(rows) is not list or len(rows) > 100:
+            raise ValueError("invalid focused PR page")
+        for row in rows:
+            if type(row) is not dict:
+                raise ValueError("invalid focused PR file metadata")
+            name = row.get("filename")
+            if type(name) is not str:
+                raise ValueError("missing focused PR path")
+            name = edit_path(name)
+            if name in seen_filenames:
+                raise ValueError("duplicate focused PR file across pages")
+            seen_filenames.add(name)
+            paths.add(name)
+            if row.get("status") == "renamed":
+                previous = row.get("previous_filename")
+                if type(previous) is not str:
+                    raise ValueError("missing renamed source path")
+                paths.add(edit_path(previous))
+            if len(paths) > MAX_FOCUSED_PR_PATHS:
+                raise ValueError("focused PR exceeds bounded path budget")
+        if len(rows) < 100:
+            if not paths:
+                raise ValueError("focused PR contains no source files")
+            return sorted(paths), page
+    raise ValueError("focused PR file pagination remains incomplete")
+
+
+def selected_source_pr(repo, number, token, expanded_files=False):
     """Pin one explicitly selected existing PR, never infer its owner."""
     if type(number) is not int or not 0 < number < 100000000:
         raise ValueError("invalid selected source PR")
@@ -213,12 +258,17 @@ def selected_source_pr(repo, number, token):
     if type(title) is not str or not 0 < len(title) <= 256:
         raise ValueError("selected PR product title unavailable")
     product_candidate = QA_ONLY_TITLE.match(title) is None
-    files, truncated = changed_paths(repo, number, token)
-    if truncated or not 1 <= len(files) <= MAX_SOURCE_FILES:
-        raise ValueError("source PR file scope is incomplete or exceeds 80 paths")
+    if expanded_files:
+        files, observed_pages = changed_paths_focused(repo, number, token)
+    else:
+        files, truncated = changed_paths(repo, number, token)
+        if truncated or not 1 <= len(files) <= MAX_SOURCE_FILES:
+            raise ValueError("source PR file scope is incomplete or exceeds 80 paths")
+        observed_pages = 1
     return {"number": number, "url": "https://github.com/" + repo +
             "/pull/" + str(number), "head_sha": sha,
             "base_sha": base_sha, "paths": files,
+            "source_file_pages_observed": observed_pages,
             "product_candidate_based_on_title": product_candidate,
             "read_only": True}
 
