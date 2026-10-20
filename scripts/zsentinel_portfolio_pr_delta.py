@@ -72,11 +72,14 @@ def _read(board, registry):
             type(coverage) is not list or len(coverage) != len(projects)):
         raise ValueError("invalid bounded portfolio source")
     statuses = {}
+    project_times = {}
     for row in coverage:
         if (type(row) is not dict or row.get("project") not in projects or
                 row["project"] in statuses or row.get("status") not in STATUS):
             raise ValueError("invalid portfolio project coverage")
         statuses[row["project"]] = row["status"]
+        project_times[row["project"]] = observed_time(
+            row.get("source_observed_at_utc"))
     if len(statuses) != len(projects):
         raise ValueError("incomplete portfolio source coverage")
     observed = observed_time(board.get("newest_source_observed_at_utc"))
@@ -102,13 +105,15 @@ def _read(board, registry):
             "draft": row["draft"], "title": row["title"],
             "exact_read": row.get("gate_observation") == EXACT,
         }
-    return observed, projects, statuses, rows
+    if any(moment > observed for moment in project_times.values()):
+        raise ValueError("project observation later than portfolio source")
+    return observed, projects, statuses, project_times, rows
 
 
 def compare_portfolio_prs(current, previous, registry, previous_sha256, now=None):
     """Show observable PR changes; never infer missing PR closure/merge."""
-    current_at, projects, current_coverage, current_prs = _read(current, registry)
-    previous_at, older_projects, previous_coverage, prior_prs = _read(previous, registry)
+    current_at, projects, current_coverage, current_times, current_prs = _read(current, registry)
+    previous_at, older_projects, previous_coverage, previous_times, prior_prs = _read(previous, registry)
     if projects != older_projects:
         raise ValueError("portfolio source scope differs; select identical ordered projects")
     if (type(previous_sha256) is not str or
@@ -122,13 +127,23 @@ def compare_portfolio_prs(current, previous, registry, previous_sha256, now=None
             current_at > now + timedelta(minutes=2) or
             previous_at < now - timedelta(days=30)):
         raise ValueError("portfolio observations not chronologically comparable")
+    # Portfolio windows are independently observed. A globally newer report
+    # can still contain a project whose local window predates the old report.
+    # Never describe old project data as a fresh changed HEAD or closed PR.
+    newer_by_project = {
+        pid: current_times[pid] > previous_times[pid] for pid in projects
+    }
     changed = []
     for url, row in current_prs.items():
         old = prior_prs.get(url)
-        comparable = (current_coverage[row["project"]] == "partial" and
+        project_newer = newer_by_project[row["project"]]
+        comparable = (project_newer and
+                      current_coverage[row["project"]] == "partial" and
                       previous_coverage[row["project"]] == "partial")
         notices = []
-        if old is None:
+        if not project_newer:
+            state = "current_project_window_not_newer_NO_DELTA_INFERRED"
+        elif old is None:
             state = ("newly_in_bounded_sample_NOT_NEW_PR" if comparable
                      else "current_source_observed_prior_coverage_unknown")
         else:
@@ -142,7 +157,7 @@ def compare_portfolio_prs(current, previous, registry, previous_sha256, now=None
                 notices.append("product_pr_title_changed_in_source")
             if old["exact_read"] != row["exact_read"]:
                 notices.append("exact_head_inspection_coverage_changed_NOT_GATE_PROOF")
-        if old is None or notices:
+        if old is None or notices or not project_newer:
             changed.append({
                 "project_id": row["project"], "url": url, "state": state,
                 "changes": notices, "listed_head_sha": row["head"],
@@ -155,7 +170,9 @@ def compare_portfolio_prs(current, previous, registry, previous_sha256, now=None
         if url not in current_prs:
             no_longer_listed.append({
                 "project_id": row["project"], "url": url,
-                "state": ("missing_from_current_bounded_sample_NOT_MERGED"
+                "state": ("current_project_window_not_newer_NO_CLOSURE_EVIDENCE"
+                          if not newer_by_project[row["project"]] else
+                          "missing_from_current_bounded_sample_NOT_MERGED"
                           if current_coverage[row["project"]] == "partial"
                           else "current_source_unavailable_NO_CLOSURE_EVIDENCE"),
                 "previous_listed_head_sha": row["head"],
@@ -168,6 +185,8 @@ def compare_portfolio_prs(current, previous, registry, previous_sha256, now=None
         "previous_observed_at_utc": previous_at.isoformat(),
         "current_observed_at_utc": current_at.isoformat(),
         "projects": list(projects),
+        "projects_without_newer_read": [
+            pid for pid in projects if not newer_by_project[pid]],
         "newly_sampled_not_new_pr_count": sum(
             x["state"] == "newly_in_bounded_sample_NOT_NEW_PR" for x in changed),
         "changed_listed_head_count": sum(
