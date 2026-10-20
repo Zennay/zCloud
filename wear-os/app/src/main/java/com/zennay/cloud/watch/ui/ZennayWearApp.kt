@@ -107,9 +107,11 @@ private fun HomeScreen(
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     var expandedAlertId by rememberSaveable { mutableStateOf<String?>(null) }
+    var disappearedIncidentNotice by rememberSaveable { mutableStateOf(false) }
 
     suspend fun reload() {
         loading = true
+        disappearedIncidentNotice = false
         runCatching { repository.loadHome() }
             .onSuccess {
                 data = it
@@ -134,14 +136,18 @@ private fun HomeScreen(
         reload()
         if (openIncidentId != null) {
             val snapshot = data
-            expandedAlertId = openIncidentId.takeIf { id ->
-                error == null && snapshot?.stale == false &&
-                snapshot.currentBlockerFeedAvailable &&
-                snapshot.alerts.any { it.id == id && (
-                    it.severity.equals("high", true) ||
-                    it.severity.equals("critical", true) ||
-                    it.severity.equals("needs_attention", true)) }
+            val current = snapshot?.takeIf {
+                error == null && !it.stale && it.currentBlockerFeedAvailable
             }
+            expandedAlertId = openIncidentId.takeIf { id ->
+                current?.alerts?.any { alert ->
+                    alert.id == id && (
+                        alert.severity.equals("high", true) ||
+                        alert.severity.equals("critical", true) ||
+                        alert.severity.equals("needs_attention", true))
+                } == true
+            }
+            disappearedIncidentNotice = current != null && expandedAlertId == null
             onIncidentHandled()
         }
     }
@@ -165,6 +171,18 @@ private fun HomeScreen(
         }
         if (error != null && data == null) {
             item { ErrorCard(error ?: "Cloud offline", onRetry = { scope.launch { reload() } }) }
+        }
+        if (disappearedIncidentNotice && error == null) {
+            item {
+                SurfaceCard(modifier = Modifier.clickable {
+                    disappearedIncidentNotice = false
+                }) {
+                    Label("MELDING NIET MEER ACTIEF", Accent)
+                    Text("Het incident uit je notificatie staat niet meer in " +
+                         "de actuele blokkadelijst. Tik om deze melding te sluiten.",
+                         color = TextMain, fontSize = 11.sp)
+                }
+            }
         }
         data?.let { snapshot ->
             // A failed refresh may leave the last successful snapshot in memory.
