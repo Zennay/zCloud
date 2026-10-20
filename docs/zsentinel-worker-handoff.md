@@ -195,6 +195,11 @@ python3 scripts/zsentinel_worker_progress_delta.py \
 
 De Markdown bevat per slot de bronclassificatie en concrete opvolgactie,
 samen met tijdstippen en de aantallen gedeeld/nieuw/verdwenen.
+De privé HTML- en Markdown-werkbakken tonen nu **eerst verdwenen
+workers, daarna mogelijke bronresets, eigenaarspauzes en stille running
+workers**. Technische stagecodes zijn vervangen door duidelijke
+Nederlandse operatorlabels. Deze sortering is uitsluitend een
+leesvolgorde, geen automatische prioriteit, claim of escalatie.
 De bestaande create-only 0600-bestandsgrens geldt ongewijzigd; er
 wordt geen bron overschreven en geen queue, worker, lease, GitHub,
 Notion of VPS-service gewijzigd. Een verdwenen slot is in deze
