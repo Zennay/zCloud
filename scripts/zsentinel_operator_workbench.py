@@ -477,8 +477,10 @@ function refreshTriage(){
  const urgent=cards.filter(c=>c.priority==='P0'||c.priority==='P1'||handoffs.get(c.issue)?.decision==='park-blocker');
  const list=document.getElementById('triageQueue');list.replaceChildren();
  const parked=urgent.filter(c=>handoffs.get(c.issue)?.decision==='park-blocker').length;
+ const locallyClosed=urgent.filter(c=>handoffs.get(c.issue)?.followup_status==='local-complete').length;
  document.getElementById('triageCount').textContent=urgent.length+
-  ' observed priority/parked entries · '+parked+' human-parked · 0 independently authorized actions';
+  ' observed priority/parked entries · '+parked+' human-parked · '+
+  locallyClosed+' locally closed follow-ups (issue remains in inbox) · 0 authorized actions';
  if(!urgent.length){list.append(elem('li','No P0/P1 or parked entry in this saved filtered snapshot; live backlog unknown.'));return;}
  urgent.forEach(c=>{
   const li=elem('li'),b=elem('button',c.priority+' '+c.issue);b.type='button';
@@ -640,10 +642,11 @@ function previewCarry(data){
      !permitted.has(record.decision)||typeof record.note!=='string'||
      record.note.length>1000||new TextEncoder().encode(record.note).length>4000||
      [...record.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t')||
-     (data.schema_version===2&&(
+     (data.schema_version>=2&&(
       typeof record.owner!=='string'||record.owner.length>80||
       [...record.owner].some(ch=>ch.codePointAt(0)<32||ch==='<'||ch==='>')||
       !validFollowupDate(record.due)||
+      (data.schema_version===3&&!['open','local-complete'].includes(record.followup_status))||
       (record.carried_from!==undefined&&
        (typeof record.carried_from!=='string'||
         (record.carried_from!==''&&!/^[a-f0-9]{64}$/.test(record.carried_from)))))))
@@ -657,8 +660,9 @@ function previewCarry(data){
   proposed.push({issue:record.issue,
    sourceDelta:sourceDiff.get(record.issue),
    value:{decision:record.decision,note:record.note,
-    owner:data.schema_version===2?record.owner:'',
-    due:data.schema_version===2?record.due:'',
+    owner:data.schema_version>=2?record.owner:'',
+    due:data.schema_version>=2?record.due:'',
+    followup_status:data.schema_version===3?record.followup_status:'open',
     carried_from:baseline.sha}});
  }
  const eligible=proposed.filter(x=>emptyManual(handoffs.get(x.issue)));
@@ -676,6 +680,8 @@ function previewCarry(data){
   li.append(elem('strong',row.issue+' · '),elem('span',c.title),
    elem('small',' · '+row.value.decision+' · Human contact: '+
     (row.value.owner||'unknown')+' · UTC review date: '+(row.value.due||'unknown')+
+    (row.value.followup_status==='local-complete'?
+     ' · LOCALLY CLOSED: issue status unknown':' · open local follow-up')+
     ' · '+(row.sourceDelta?.changedFields?.length?
        'SOURCE CHANGED: '+row.sourceDelta.changedFields.join(', ')+'. ':'')+
     'Current owner/CI must be reverified'));
