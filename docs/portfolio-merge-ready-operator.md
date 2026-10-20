@@ -94,6 +94,8 @@ Een bundel bewijst geen huidige GitHub-state, eigenaarsvrijheid, geslaagde
 checks, review, merge of deploy. Het originele actuele issue moet voor een vervolgactie opnieuw
 worden opgehaald. Onbekende PRs worden nooit automatisch onbezet verklaard.
 
+Iedere nieuwe gerichte privé-JSON snapshot heeft een formaatversie en canonieke SHA-256-inhoudschecksum. De bundelaar weigert een beschadigd of gewijzigd bestand waarvan de checksum niet klopt. Dit is **geen digitale handtekening** en geen bewijs van GitHub-authenticiteit: iedereen met schrijfrechten op het privébestand kan een nieuwe checksum berekenen. Gebruik niet tegelijkertijd `--output` en `--snapshot-output`; het CLI weigert twee potentieel gedeeltelijke lokale bestemmingen.
+
 HTML is een zelfstandige offline werkbak met bestaande PR-links, bron-HEADs,
 review/CI-observaties en bronbeperkingen; `--format json` of `text` kan naar
 stdout of een nieuw 0600-bestand. De export schrijft nooit bestaande bestanden
