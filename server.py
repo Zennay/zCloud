@@ -4269,6 +4269,12 @@ def watch_summary(data):
                 'id':str(item.get('id') or ''),
                 'project':str(item.get('project') or 'cloud'),
                 'severity':str(item.get('severity') or 'high'),
+                # Escalation requires a known human-gated remediation class.
+                # High severity alone is not authority to interrupt a user.
+                # Recovery/deploy failures need explicit owner inspection
+                # before any new irreversible or privileged release action.
+                'human_action_required':str(item.get('type') or '').lower()
+                    in ('recovery_failed','deploy_failed'),
                 'title':str(item.get('title') or 'Aandacht nodig')[:140],
                 'detail':('Oorzaak: '+str(item.get('cause') or 'Nog onbekend')+
                           ' · Actie: '+str(item.get('action') or 'Controleer zCloud'))[:420],
