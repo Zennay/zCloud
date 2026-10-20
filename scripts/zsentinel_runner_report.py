@@ -200,6 +200,36 @@ def render_comparison(comparison):
     if not capacity.get("root_comparable"):
         capacity_html += ('<p class="warning">Geen identieke root-mount en '
                           'volumeomvang vastgesteld; schijfdelta is daarom onbekend.</p>')
+    coach = comparison.get("coach_comparison")
+    if isinstance(coach, dict) and isinstance(coach.get("previous"), dict) and isinstance(coach.get("current"), dict):
+        p, q = coach["previous"], coach["current"]
+        if coach.get("same_boot_policy_comparable") is True:
+            cpu_text = (
+                "Gemeten CPUQuota " + _value(p.get("quota"), "%") + " → "
+                + _value(q.get("quota"), "%") + "; CPUWeight "
+                + _value(p.get("weight")) + " → " + _value(q.get("weight"))
+                + (" (verschil waargenomen)" if coach.get("observed_settings_changed") is True
+                   else " (geen verschil waargenomen)")
+            )
+        else:
+            cpu_text = ("Niet vergelijkbaar: de coach was niet op beide momenten "
+                        "actief en uitleesbaar, of dezelfde Linux-opstartsessie "
+                        "kon niet worden bevestigd.")
+        matched = coach.get("applied_recommendation_now")
+        match_text = ("actueel advies aanwezig in gemeten cgroup"
+                      if matched is True else
+                      "actueel advies verschilt van gemeten cgroup"
+                      if matched is False else
+                      "niet vast te stellen")
+        coach_html = (
+            '<h3>Coach-CPU-beleid tussen bronmomenten</h3><p>'
+            + cpu_text + '</p><p>Advies ten opzichte van actuele cgroup: '
+            + escape(match_text) + '.</p><p class="muted">Geen bewijs dat '
+            'modeltraining draait, werk is hervat of een runner is hersteld.</p>'
+        )
+    else:
+        coach_html = ('<h3>Coach-CPU-beleid tussen bronmomenten</h3>'
+                      '<p class="muted">Geen vergelijkbare privé cgroup-bron beschikbaar.</p>')
     return (
         '<section class="panel"><h2>Verandering sinds privé T0</h2>'
         '<p><strong>Van:</strong> ' + escape(comparison["previous_utc"])
@@ -207,7 +237,7 @@ def render_comparison(comparison):
         + '</p><p><strong>Brontoestand:</strong> ' + escape(heading)
         + ' · ' + escape(str(comparison["elapsed_seconds"])) + ' seconden</p>'
         + boot_note
-        + '<ul class="transitions">' + items + '</ul>' + capacity_html +
+        + '<ul class="transitions">' + items + '</ul>' + capacity_html + coach_html +
         '<p class="warning">Dit toont alleen waargenomen systemd-statusverschillen. '
         'Ook failed→active bewijst geen toegewezen GitHub-job, geslaagde CI, merge '
         'of live herstel. Niet gezien ≠ opgelost; geen automatische herstart.</p></section>'
