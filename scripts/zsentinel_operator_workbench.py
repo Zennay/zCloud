@@ -612,7 +612,7 @@ function acceptGateSource(data){
  if(!data||typeof data!=='object'||Array.isArray(data)||
     data.merge_authorized!==false||data.writes_performed!==false)
   throw Error('Source attempts privileged action');
- let rows,time,reviewContext=null;
+ let rows,time,reviewContext=null,bridgeCoverage=null;
  if(data.schema==='zsentinel-current-pr-gate-observation-v1'){
   if(data.source_review_manifest_sha256!==undefined){
    const hash=data.source_review_manifest_sha256,origin=data.source_review_board_sha256;
@@ -657,6 +657,30 @@ function acceptGateSource(data){
      !Array.isArray(data.issues)||data.issues.length>60)
    throw Error('Invalid issue cockpit source');
   rows=[];time=data.generated_at_utc;
+  // An all-batch bridge is an offline historical source, not merge authority.
+  // Verify provenance separately; legacy single-shot imports stay supported.
+  if(data.original_review_manifest_sha256!==undefined){
+   const hash=data.original_review_manifest_sha256;
+   if(typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash)||
+      data.original_board_sha256!==boardSha||
+      !Number.isInteger(data.observed_batch_count)||
+      data.observed_batch_count<1||data.observed_batch_count>75||
+      data.missing_batch_count!==0||
+      data.all_batches_observed_not_all_checks_required_verified!==true||
+      data.earliest_observed_at_utc!==time||
+      typeof data.latest_observed_at_utc!=='string')
+    throw Error('Invalid complete-batch source provenance');
+   const earliest=gateTime(time),latest=gateTime(data.latest_observed_at_utc);
+   if(latest<earliest||latest-earliest>600000)
+    throw Error('Unbounded batch observation range');
+   bridgeCoverage={manifest_sha256:hash,batches:data.observed_batch_count,
+    earliest_observed_at_utc:time,latest_observed_at_utc:data.latest_observed_at_utc,
+    complete_receipts_not_required_checks:true};
+  }else if(data.original_board_sha256!==undefined||
+   data.observed_batch_count!==undefined||data.missing_batch_count!==undefined||
+   data.earliest_observed_at_utc!==undefined||
+   data.latest_observed_at_utc!==undefined)
+   throw Error('Incomplete all-batch metadata');
   for(const issue of data.issues){
    if(!issue||!Array.isArray(issue.existing_prs)||issue.existing_prs.length>5)
     throw Error('Unbounded issue PR references');
@@ -673,14 +697,17 @@ function acceptGateSource(data){
  const timestamp=gateTime(time),items=new Map();
  for(const row of rows){
   const gate=parseGateRow(row);
-  if(!knownPrLinks.has(gate.url))continue;
+  if(!knownPrLinks.has(gate.url)){
+   if(bridgeCoverage)throw Error('Bridge contains PR not in this board');
+   continue;
+  }
   const previous=items.get(gate.url);
   if(previous&&JSON.stringify(previous)!==JSON.stringify(gate))
    throw Error('Conflicting PR observations');
   items.set(gate.url,gate);
  }
  if(!items.size)throw Error('No PR receipt matches this captured source board');
- return {time,timestamp,items,kind:data.schema,reviewContext};
+ return {time,timestamp,items,kind:data.schema,reviewContext,bridgeCoverage};
 }
 function gateState(url){
  const row=prGateImport?.items.get(url);
@@ -830,6 +857,7 @@ function currentPrManifest(){
     {source_kind:prGateImport.kind,source_observed_at_utc:prGateImport.time,
      imported_source_sha256:prGateImport.sha256,
      original_review_manifest:prGateImport.reviewContext,
+     complete_saved_bridge:prGateImport.bridgeCoverage,
      stale_at_export:Date.now()-prGateImport.timestamp>900000,
      receipt:prGateImport.items.get(g.url),
      current_pr_head_verified:false,mandatory_branch_rules_verified:false,
@@ -1625,6 +1653,10 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
   document.getElementById('prGateClear').disabled=false;
   document.getElementById('prGateStatus').textContent=
    accepted.items.size+' linked PR receipts imported · '+accepted.time+
+   (accepted.bridgeCoverage?' · COMPLETE SAVED BATCH SET '+
+    accepted.bridgeCoverage.batches+' batches · manifest '+
+    accepted.bridgeCoverage.manifest_sha256.slice(0,12)+
+    ' · REQUIRED CI/OWNER/REVIEW STILL UNKNOWN':'')+
    (accepted.reviewContext?' · '+accepted.reviewContext.candidate_count+
     ' candidates in reviewed board; batch '+
     accepted.reviewContext.batch_index+'/'+accepted.reviewContext.batches_total+
