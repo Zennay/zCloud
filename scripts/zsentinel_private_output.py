@@ -11,16 +11,16 @@ import stat
 from pathlib import Path
 
 MAX_OUTPUT = 6 * 1024 * 1024
-EXTENSIONS = frozenset((".html", ".json", ".md"))
+EXTENSIONS = frozenset((".html", ".json", ".md", ".ics", ".txt"))
 
 
 def write_private_output(destination: Path, content: str, fmt: str) -> int:
     if (not isinstance(destination, Path)
             or not isinstance(content, str)
-            or fmt not in ("html", "json", "md")):
+            or ("." + fmt) not in EXTENSIONS):
         raise ValueError("invalid explicit private output")
     if destination.suffix != "." + fmt or not destination.name or destination.name in (".", ".."):
-        raise ValueError("output filename must end in the selected .html, .json or .md")
+        raise ValueError("output filename extension does not match the selected private format")
     if destination.is_symlink() or destination.exists():
         raise ValueError("output file already exists; never overwrite")
     parent = destination.parent
