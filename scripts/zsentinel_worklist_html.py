@@ -96,7 +96,16 @@ def render_html(board, max_rows=20):
             "'>Bestaande PR ↗</a>" if pr else
             "<span>Geen bestaande PR bevestigd in bron</span>"
         )
-        note = ("PR-bestanden: " +
+        alternatives_failed = sum(state == "observed_failed"
+                                  for _, state, _ in alt_items)
+        alternatives_pending = sum(state == "observed_pending"
+                                   for _, state, _ in alt_items)
+        note = ("Bestaande PRs in bron: " + str(len(alt_items) + int(bool(pr))) +
+                (" · andere met mislukte checks: " + str(alternatives_failed)
+                 if alternatives_failed else "") +
+                (" · andere met wachtende checks: " + str(alternatives_pending)
+                 if alternatives_pending else "") +
+                " · PR-bestanden: " +
                 ("volledig binnen steekproef" if row["pr_file_scope_sample_complete"]
                  else "ONVOLLEDIG") +
                 " · Issueverwijzingen: " +
@@ -297,7 +306,10 @@ refresh();
         "issue_time": str(ts_issue), "pr_time": str(ts_pr),
         "visible_rows": [
             (row["issue_url"], row["candidate_existing_pr_url"],
-             tuple(candidate["url"]
+             row.get("candidate_exact_head_gate_state"),
+             tuple((candidate["url"], candidate["gate_state"],
+                    candidate["file_overlap_observed"],
+                    candidate["source_movement_observed"])
                    for candidate in row.get("other_existing_pr_candidates_in_sample", [])))
             for row in cards[:max_rows]
         ],
