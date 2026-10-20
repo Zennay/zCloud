@@ -402,3 +402,45 @@ Deze commits implementeren bronfunctionaliteit in de bestaande open PR; er is ge
 ## Brongetrouwe wachtrijmetadata (20 oktober, commits 3904768 en df9a207)
 
 Bij classificatie gaat een aanwezige ruwe `metadata_json` vóór een afzonderlijke, mogelijk opgeschoonde `metadata`-presentatie. Ongeldige of dubbelgedefinieerde ruwe sleutels kunnen daardoor niet worden verstopt onder een ingelezen `{}` en alsnog als uitvoerbaar productticket verschijnen. De operator-samenvatting accepteert uitsluitend intern consistente paren van disposition en reden. Bij rechtstreekse bronrijen met `metadata_json` wordt de ruwe bron opnieuw geclassificeerd, ongeacht toegevoegde adviserende labels; bij de normale API-presentatie zijn die labels al vóór het weglaten van de ruwe bron vastgelegd. Deze bronbeveiliging schrijft **geen** queue-rij, verandert **geen** eigenaarlease en autoriseert **geen** workeractie.
+
+
+## 20 oktober · Canonieke queue-identiteit, idempotente producer en eerlijk runtime-signaal
+
+De bestaande `portfolio_queue_enqueue` weigert nu expliciet opgegeven niet-canonieke
+queue-ID's, in plaats van bijvoorbeeld `foo#1` en `foo 1` beide stil naar
+`foo-1` te herschrijven. Een producer-retry mag uitsluitend een bestaande,
+nog ongeclaimde taak met **dezelfde project-ID, exacte titel en dezelfde parent-ID**
+actualiseren. Een bezette, anders getitelde of vanuit een andere parent afkomstige
+identiteit geeft een `ValueError` zonder de andere taakinformatie te overschrijven.
+De bestaande SQLite UPSERT controleert bovendien atomair de ongewijzigde
+status-, eligibility-, worker-slot- en leasegrenzen. Voor een werkelijk nieuwe
+taak is een nieuwe canonieke identiteit vereist; actieve, afgeronde of human-held
+items worden nooit teruggezet naar queued.
+
+De source-level uitvoerbaarheidsherkenning gebruikt nu een echte regex-woordgrens
+(`\\b`), in plaats van de letterlijk ge-escapete tekst `\\\\b`.
+Dit herstelt herkenning van uitvoerbare acties in criteria bij bijvoorbeeld
+legacy `review`-prefixen. De aparte product-only/QA-only classifier blijft
+verplicht en verleent nooit een claim of vrijstelling van gatevoorwaarden.
+
+`portfolio_queue_health` scheidt nu in het bestaande read-only API-antwoord
+wat vroeger onder één `product_delivery_ready_observed`-getal viel:
+
+- `product_delivery_unclaimed_candidates_observed`: vrije, policy-admissible
+  queued rijen vóór afzonderlijke lane-, eigenaar- en capaciteitscontrole.
+- `product_delivery_active_owner_rows_observed`: reeds claimed/running/verifying
+  rijen die niet opnieuw mogen worden toegewezen.
+- `queued_worker_slot_occupied_observed` en
+  `queued_residual_lease_fields_observed`: queued rijen die niet vrij zijn door
+  bestaande slotbinding respectievelijk achtergebleven claimvelden.
+- `product_delivery_health_evidence`: `observed_sufficient`,
+  `insufficient_complete` of `incomplete_unknown`. Die laatste waarde voorkomt
+  dat een afgekapt venster van maximaal 1000 rijen voor volledig bronbewijs
+  doorgaat. Bestaande `healthy`- en andere API-velden blijven compatibel;
+  onvoldoende `healthy`-bewijs autoriseert géén herstelactie.
+
+Deze commits zijn uitsluitend aan **de bestaande PR #1536** toegevoegd.
+Bestaande automatische CI, onafhankelijke review, protected main, actieve claims
+en productie-eigenaarschap blijven ongewijzigd. Er zijn geen QA-/regressiesuites
+gecreëerd of handmatig uitgevoerd, geen VPS- of live SQLite-writes verricht en
+er wordt geen merge, workerrecovery of live productherstel geclaimd.
