@@ -89,8 +89,6 @@ def observe_local_runners(proc_root="/proc"):
                     continue
                 family, role = signature
                 seen[family]["listeners" if role == "Runner.Listener" else "workers"] += 1
-        else:
-            pass
         if denied:
             observation["source_warnings"].append("procfs_processes_inaccessible")
         observation["source_complete"] = (
