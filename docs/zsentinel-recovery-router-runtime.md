@@ -1794,3 +1794,51 @@ bronbewijs en autorisatie controleren.
 De zelfstandige productissue-inbox toont bovendien per repository
 401/403/rate-limit-dekking en maakt niet langer de onjuiste claim dat
 iedere 403 alle latere projectrequests onderbreekt.
+
+
+### 20 oktober · oudere vastgelopen GitHub-jobs en gerichte human-only briefing
+
+De read-only GitHub Actions discovery bekijkt per statusvenster eerst maximaal
+vijf geretourneerde workflowruns en leest de meest recente plus de
+verst terugliggende **geldige** run uit dat begrensde venster. Per
+geselecteerde run leest de collector maximaal 25 jobs uit de eerste
+jobpagina (voorheen 10). Daarmee kunnen langdurig wachtende
+self-hosted jobs achter nieuwere workflows en meerdere eerdere jobs
+beter gevonden worden **zonder méér GitHub API-calls**. Niet-uitgelezen
+tussenliggende runs, oudere pagina's of jobs na de eerste 25 zijn
+expliciet onvolledige bronobservaties, geen groene runnerdiagnose.
+De CI-samenvatting behoudt concreet geobserveerde jobs bij gedeeltelijke
+dekking en legt in de Nederlandse operatorinterface uit welk deel van
+de steekproef bekend is.
+
+Het blocker-first operatoroverzicht heeft nu ook een uitklapbare,
+kopieerbare **privébriefing voor alleen noodzakelijke menselijke acties**.
+Dezelfde briefing kan zonder extra HTTP-requests handmatig als Markdown
+worden uitgeschreven:
+
+```sh
+umask 077
+# Deze map moet vooraf bestaan en uitsluitend voor de operator leesbaar zijn.
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 \
+  --format handoff \
+  --output /private/operator-only/zsentinel-human-handoff.md
+```
+
+`--format handoff` hergebruikt de bestaande blockerkaarten uit **dezelfde
+begrensde bronrun** en exporteert alleen geclassificeerde menselijke
+eigenaaracties: geobserveerde human-only incidenten, bestaande open
+owner-only P0/P1-issues, actuele API-authenticatiegates, een werkelijk
+geobserveerd pauze-/leaseconflict of bestaande PR's waarvoor een
+menselijke bron-, review- of releasebeslissing nodig is.
+Gewone CI-pending, claimchurn, historische nog-niet-gereconcilieerde
+incidenten en enkel stale workerevents worden niet ten onrechte
+als urgente hulpvraag aangemerkt. De briefing vermeldt zowel de
+deelsteekproef als de afkapping bij meer dan twaalf blockerkaarten.
+
+Dit is een handmatige lokale uitvoer, **geen notificatie**, automatische
+calendarwijziging, claimovername, merge-autoriteit of bewijs van herstel.
+De standaard `--output`-writer weigert bestaande doelbestanden en
+schrijft uitsluitend create-only `0600` Markdown; zonder outputparameter
+gaat de tekst naar stdout. Geen verandering aan verplichte bestaande
+CI, review, research, security en releasegates; nieuwe QA-suites niet gemaakt.
