@@ -87,7 +87,9 @@ def service_observation() -> dict[str, object]:
         if state in {"active", "inactive", "failed", "activating", "deactivating"}:
             observed[manager] = state
     unique = set(observed.values())
-    state = ("ambiguous" if len(unique) > 1 else next(iter(unique)) if unique else "unavailable")
+    # Even two matching "active" units can compete for the same runner
+    # registration, so duplicate loaded manager ownership is ambiguous.
+    state = ("ambiguous" if len(observed) > 1 else next(iter(unique)) if unique else "unavailable")
     return {"state": state, "manager": next(iter(observed)) if len(observed) == 1 else
             "both" if len(observed) == 2 else "unverified",
             "loaded_managers": sorted(observed)}
@@ -295,7 +297,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
-    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS"}:
+    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS", "RUNNER_UNIT_TRANSITIONING"}:
         recommend("RUNNER_OWNER", "zCloud Actions runner owner (#1326)",
                   "The dedicated listener/registered runner may be unavailable independently of other project runners.",
                   "Inspect the dedicated service and assigned jobs with the authorized runner owner. Restore only under the existing idle and account-identity gates; independently confirm a job was assigned.")
@@ -356,6 +358,9 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         mark("ZCLOUD_RUNNER_MISSING", "block", "Dedicated zCloud Runner.Listener not observed.")
     if unit in {"failed", "inactive"}:
         mark("RUNNER_UNIT_NOT_ACTIVE", "block", f"zCloud runner unit state: {unit}.")
+    elif unit in {"activating", "deactivating"}:
+        mark("RUNNER_UNIT_TRANSITIONING", "block",
+             "Dedicated runner service is still transitioning; no stable release admission.")
     elif unit == "ambiguous":
         mark("RUNNER_UNIT_AMBIGUOUS", "block",
              "Dedicated runner differs between system and user systemd managers; owner reconciliation required.")
@@ -473,7 +478,7 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         clean_status = "locally_clear"
     add("preserve_checkout", clean_status, "Checkout/working-tree owner",
         "Never overwrite an uncommitted or independently owned change.")
-    if not runner["listener_pids"] or runner["unit_state"] in {"failed", "inactive", "ambiguous"}:
+    if not runner["listener_pids"] or runner["unit_state"] in {"failed", "inactive", "ambiguous", "activating", "deactivating"}:
         runner_status = "blocked"
     elif runner["unit_state"] == "unavailable":
         runner_status = "unit_unverified"
