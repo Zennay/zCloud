@@ -3970,11 +3970,11 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             # Attention Needed UI displays escaped detail text to the owner.
             attention_detail=str(evidence or '')[:3600]
             if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
-                proposed_title=str(next_task['title']).strip().replace('\\n',' ')
-                proposed_title=proposed_title.replace('\\r',' ')[:200]
+                proposed_title=str(next_task['title']).strip().replace('\n',' ')
+                proposed_title=proposed_title.replace('\r',' ')[:200]
                 attention_detail=(
                     'Voorgestelde vervolgstap na toestemming (NIET ingepland): '
-                    +proposed_title+'\\n'+attention_detail
+                    +proposed_title+'\n'+attention_detail
                 )[:4000]
             attention=_portfolio_attention_add_locked(
                 c,
