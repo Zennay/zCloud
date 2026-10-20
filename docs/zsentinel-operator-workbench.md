@@ -1655,3 +1655,68 @@ bewijst NOOIT huidig eigenaarschap, geldige verplichte CI, onafhankelijke
 review, main-merge, vrijgegeven productie of werkelijk runnerherstel.
 Geen diensten, Notion claims, workers, tests, workflows of deployments worden
 door deze offline overdrachtsfunctie aangeroepen.
+
+
+## 20 oktober · Twee complete privéprojectdossiers vergelijken — productvervolg
+
+De bestaande `portfolio-zip`-bestanden zijn nu ook **zonder oorspronkelijke
+reviewmanifests of losse gatebatches** chronologisch te vergelijken. De
+nieuwe `scripts/zsentinel_saved_dossier_delta.py` hergebruikt de **bestaande
+strikte ZIP-toelating** uit `zsentinel_saved_gate_dossier.py`. De vergelijking
+leest alleen twee door de operator aangewezen, opgeslagen bestanden en voert
+geen nieuwe GitHub, Notion, CI-, VPS-, queue- of workeractie uit.
+
+```bash
+python3 scripts/zsentinel_saved_dossier_delta.py \
+  --before ./private-zcloud-eerste-moment.zip \
+  --after ./private-zcloud-tweede-moment.zip \
+  --format html \
+  --output ./private-zcloud-pr-veranderingen.html
+```
+
+Andere beschikbare uitvoer: `--format markdown`, `--format json` of
+`--format csv` voor spreadsheetgebruik. De uitvoer is een **nieuw**
+create-only, 0600 privébestand van maximaal 1 MiB. HTML is Nederlands,
+responsief, toegankelijk via gewone toetsenbordfocus, volledig offline,
+scriptvrij en heeft een strikte CSP. CSV heeft een Nederlandse
+puntkomma-/UTF-8-indeling en bevat uitsluitend canonieke PR-URLs,
+vaste categorieën, bronhashes en menselijke standaardacties.
+
+De functie vergelijkt **maximaal 300 PRs per dossier** en maximaal 600
+verschillende PR-identiteiten, alleen bij exact dezelfde gekozen
+projectscope en niet-overlappende UTC-bronmomenten in de juiste volgorde.
+De originele board- en manifest-SHA256 worden per bron bewaard; als die
+verschillen, staat dat uitdrukkelijk in het rapport. Wanneer ook het
+oorspronkelijke bronmanifest verschilt, is de GitHub-steekproef dus niet
+noodzakelijk gelijk gebleven.
+
+Voor ieder origineel bestaand PR toont het resultaat:
+- **Nieuw in de *tweede steekproef***, dus niet bewezen nieuw aangemaakt.
+- **Niet meer zichtbaar in de tweede steekproef**, nadrukkelijk NIET
+  bewezen opgelost, gemerged, gesloten of owner-vrij.
+- **Gewijzigde waarneming:** exacte geobserveerde PR-HEAD, hoofdblokkade,
+  gecombineerde blokkades, eventuele ontbrekende gatebatch,
+  bronissuekoppelingen, prioriteit of menselijke vervolgstap.
+- **Geen waarneembare verandering:** alleen tussen de twee opgeslagen
+  bronnen; NIET gegarandeerd dat een huidige PR onveranderd is.
+
+De portfolio-export bewaart hiervoor voortaan een beperkt, van de originele
+gatebron afkomstig `gate_observations`-veld: afgeronde, lopende en
+niet-succesvolle checks, waargenomen onafhankelijke approvals en
+reviewverzoeken, legacy-statussen en bronpagina-volledigheid. De offline
+projectpagina/Markdown-overdracht toont de belangrijkste aantallen, zonder
+ze te promoveren naar bewijs van **verplichte** geslaagde CI of review.
+Oudere eerder geëxporteerde ZIPs zonder dit optionele veld blijven
+leesbaar: ontbrekende tellers blijven UNKNOWN.
+
+Het veranderingsoverzicht ordent geobserveerde PRs altijd P0 vóór P1;
+beperkte, brongebonden verschilsignalen bepalen vervolgens de handmatige
+opvolging. Het maakt nooit een automatische workerclaim, restart, retry,
+reviewapproval, GitHub-merge of release. Opnieuw actuele HEAD, claims,
+required checks, protected-main-regels en onafhankelijk goedgekeurde release
+controleren voordat een echte PR gemerged of gedeployed wordt.
+
+Belangrijk: interne ZIP-checksums zijn geen bewijs van **authentieke afzender**;
+alleen zelfstandig vertrouwde bronpins en actuele GitHub/Notion-autoriteit
+kunnen dat vertrouwen aanvullen. Distributie van deze private rapporten
+vraagt een aparte menselijke beslissing.
