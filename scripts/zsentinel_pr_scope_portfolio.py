@@ -1130,6 +1130,23 @@ def as_private_csv(board):
                  current_gate_blocker=row["current_blocker"] or "",
                  gate_episode_change=row["change"],
                  operator_notice="Two sampled observations only; no automatic recheck, merge or owner authority.")
+            for detail in row["observed_changed_non_green_checks"]:
+                emit("gate_episode_changed_check", project, repo,
+                     "historical_gate_comparison",
+                     pr_url=row["url"], pr_head_sha=row["current_head"] or "",
+                     current_exact_head_gate_status="two_snapshot_observation_only",
+                     check_name=detail["label"], check_url=detail["url"],
+                     gate_episode_change=detail["kind"],
+                     operator_notice="Observed change in bounded non-green check samples, not a fix or release proof.")
+            if row["observed_changed_non_green_checks_hidden"]:
+                emit("source_warning", project, repo,
+                     "historical_gate_comparison", pr_url=row["url"],
+                     operator_notice="Additional gate episode check changes hidden by preview limit.")
+        if episodes["comparison_status"] != "two_bounded_observations":
+            for view in board["project_views"]:
+                emit("source_warning", view["project"], view["repository"],
+                     "historical_gate_comparison",
+                     operator_notice="Previous or current gate receipts absent; no stable gate conclusion.")
     # The caller checks the true UTF-8 output length and creates a 0600
     # output exclusively. Never put sensitive cross-project CSV into stdout.
     return "\ufeff" + output.getvalue()
