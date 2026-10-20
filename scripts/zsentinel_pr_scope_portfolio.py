@@ -46,6 +46,7 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "source_status": "unavailable",
                 "sample_complete": False,
                 "shown_collision_pairs": [],
+                "unpaired_open_prs_not_claim_verified": [],
                 "observed_collision_pairs": None,
                 "inspected_open_prs": None,
                 "observed_open_prs": None,
@@ -65,6 +66,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "sample_complete": complete,
             "source_sample_complete": source["pr_file_scope_sample_complete"],
             "shown_collision_pairs": pairs,
+            "unpaired_open_prs_not_claim_verified":
+                source["unpaired_open_prs_in_sample_not_claim_verified"],
             "observed_collision_pairs": source["observed_file_collision_pairs"],
             "inspected_open_prs": source["inspected_prs"],
             "observed_open_prs": source["observed_open_prs"],
@@ -114,6 +117,10 @@ def summary_lines(view):
             " | " + str(pair["shared_file_count_observed"]) +
             " bestanden | " + pair["left"]["url"] +
             " | " + pair["right"]["url"])
+    if view["unpaired_open_prs_not_claim_verified"]:
+        result.append("Zonder gedeelde paden in steekproef (GEEN claimvrijgave):")
+        for pr in view["unpaired_open_prs_not_claim_verified"]:
+            result.append("  PR #" + str(pr["number"]) + " | " + pr["url"])
     if view.get("source_truncated"):
         result.append("  Details afgekapt; open bron-PR's voor verdere inspectie.")
     return result
@@ -197,13 +204,22 @@ def as_html(board):
                  if view.get("source_truncated")
                  else "volledige huidige open-PR-steekproef" if view["sample_complete"]
                  else "onvolledige open-PR-steekproef")
+        unpaired = view["unpaired_open_prs_not_claim_verified"]
+        links = "".join(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(pr["url"], quote=True) + "'>PR #" +
+            str(pr["number"]) + "</a></li>" for pr in unpaired)
         cards.append(
             "<section><h2>" + escape(view["project"]) + "</h2>"
             "<p><strong>" + escape(state) +
             "</strong> · " + escape(view["repository"]) + "</p>"
             "<table><thead><tr><th>Open PR's</th><th>Gedeelde bestanden</th>"
             "<th>Bestandsnamen</th></tr></thead><tbody>" +
-            "".join(rows) + "</tbody></table></section>")
+            "".join(rows) + "</tbody></table>"
+            "<h3>Geen gedeelde paden in de steekproef</h3><p>Niet automatisch "
+            "claimbaar; controleer nog steeds leases en PR-loze branches.</p><ul>" +
+            (links or "<li>Geen andere PR's zichtbaar.</li>") +
+            "</ul></section>")
     return (
         "<!doctype html><html lang='nl'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
