@@ -77,7 +77,7 @@ def dedicated_worker_pids() -> list[int]:
         try:
             if (proc / "comm").read_text().strip() != "Runner.Worker":
                 continue
-            argv = (proc / "cmdline").read_bytes().split(b"\\0")
+            argv = (proc / "cmdline").read_bytes().split(b"\0")
             program = argv[0].decode("utf-8", "replace").lower() if argv else ""
             if ("zcloud" in program or "zcloud-vps-1" in program) and program.endswith("/runner.worker"):
                 found.append(int(proc.name))
