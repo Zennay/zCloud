@@ -768,6 +768,7 @@ function currentPrManifest(){
    source_missing_evidence:[...g.gaps],
    optional_imported_observation:prGateImport?.items.get(g.url)?
     {source_kind:prGateImport.kind,source_observed_at_utc:prGateImport.time,
+     imported_source_sha256:prGateImport.sha256,
      stale_at_export:Date.now()-prGateImport.timestamp>900000,
      receipt:prGateImport.items.get(g.url),
      current_pr_head_verified:false,mandatory_branch_rules_verified:false,
@@ -811,6 +812,8 @@ function currentPrDesk(){
    ...group.issues.map(c=>
     '- '+c.url+' · '+line(c.title,180)+' · '+c.priority+
     ' · human disposition '+(handoffs.get(c.issue)?.decision||'investigate')),
+   'Imported source SHA256: '+(prGateImport?.items.has(group.url)?
+    prGateImport.sha256:'not provided or not applicable'),
    'Imported PR gate observation (non-authorizing): '+line(prGateLabel(group.url),650),
    'Observed gaps: '+(group.gaps.size?
     [...group.gaps].map(g=>line(g,300)).join('; '):
@@ -1547,11 +1550,15 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
   const bytes=await file.arrayBuffer();
   const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
   const accepted=acceptGateSource(value);
+  accepted.sha256=Array.from(
+   new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),
+   byte=>byte.toString(16).padStart(2,'0')).join('');
   prGateImport=accepted;
   invalidateBrief();refreshPrDesk();
   document.getElementById('prGateClear').disabled=false;
   document.getElementById('prGateStatus').textContent=
    accepted.items.size+' linked PR receipts imported · '+accepted.time+
+   ' · JSON SHA256 '+accepted.sha256.slice(0,12)+
    (Date.now()-accepted.timestamp>900000?
     ' · STALE saved source':' · recent observation, NOT live ownership')+
    '. Never merge without current mandatory checks, approvals and authority.';
