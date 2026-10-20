@@ -193,9 +193,10 @@ def render_comparison(comparison):
         "memory_available_gib": ("Beschikbaar RAM", " GiB"),
         "swap_used_percent": ("Swapgebruik", " procentpunt"),
         "disk_unavailable_percent": ("Rootruimte niet beschikbaar", " procentpunt"),
+        "root_available_gib": ("Rootruimte beschikbaar", " GiB"),
     }
     metric_rows = []
-    for metric in capacity.get("metrics", [])[:4]:
+    for metric in capacity.get("metrics", [])[:5]:
         name, unit = cap_labels.get(metric.get("metric"), ("Onbekende meting", ""))
         if metric.get("comparable") is True:
             delta = metric.get("difference")
@@ -376,6 +377,7 @@ def render(data):
         box("MemAvailable", _value(host["memory_available_gib"], " GiB")),
         box("Swap gebruikt", _value(host["swap_used_percent"], "%")),
         box("Root niet beschikbaar", _value(host["disk_unavailable_percent"], "%")),
+        box("Root beschikbaar", _value(host.get("root_available_gib"), " GiB")),
     ])
     return f"""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -736,8 +738,9 @@ def render_timeline(pairs, observations):
             "memory_available_gib": ("RAM beschikbaar", " GiB"),
             "swap_used_percent": ("Swap", " procentpunt"),
             "disk_unavailable_percent": ("Root niet beschikbaar", " procentpunt"),
+            "root_available_gib": ("Root beschikbaar", " GiB"),
         }
-        for item in capacity.get("metrics", [])[:4]:
+        for item in capacity.get("metrics", [])[:5]:
             name, unit = labels.get(item.get("metric"), ("Andere metric", ""))
             amount = item.get("difference")
             if item.get("comparable") is True and type(amount) in (float, int):
@@ -870,10 +873,11 @@ def render_private_handoff(data):
         rows.append("Bron: " + continuity + " | runnerinventaris: "
                     + ("volledig binnen limieten" if coverage else "GEDEELTELIJK/ONBEKEND") + ".")
         metrics = (pair.get("capacity_comparison") or {}).get("metrics", [])
-        for m in metrics[:4]:
+        for m in metrics[:5]:
             name = m.get("metric")
             if name not in {"host_load", "memory_available_gib",
-                            "swap_used_percent", "disk_unavailable_percent"}:
+                            "swap_used_percent", "disk_unavailable_percent",
+                            "root_available_gib"}:
                 continue
             diff = m.get("difference")
             if m.get("comparable") is True and type(diff) in (int, float):
