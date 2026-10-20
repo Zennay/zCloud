@@ -694,3 +694,22 @@ privébroninhoud of lokaal bestandspad in workerlogs. Zonder `--output`
 blijft de bestaande stdout-interface bruikbaar. Het resultaat wordt niet
 automatisch in zCloud geïmporteerd en veroorzaakt geen queue-, claim-,
 GitHub-mutatie, workflowdispatch, CI-rerun of production deploy.
+
+
+### Productselectie bij optionele actuele gatecontrole
+
+De geïntegreerde `--inspect-current-pr-gates`-optie gebruikt nu ook de
+reeds in de huidige PR-inventaris vastgestelde titelclassificatie uit
+`zsentinel_product_issue_inbox.py`. Een **QA-only/test-only PR-titel**
+wordt niet als zelfstandig product-merge-werk naar voren geschoven;
+dat voorkomt dat oudere quality-validation-taken opnieuw capaciteit
+vragen onder het product-delivery-beleid van 17 oktober.
+
+Deze classificatie is beperkt tot de *waarneembare PR-titel*: een
+feature-PR is daardoor niet bewezen veilig, vrij of zelfstandig eigendom,
+en een overgeslagen QA-PR wordt **niet automatisch gesloten**. De
+bestandsbotsingskaart blijft alle open PR's inspecteren, zodat gedeelde
+bronpaden en actieve mogelijke collisions zichtbaar blijven. Alleen de
+extra maximaal vier GitHub-check/review-GET-kandidaten zijn
+productgericht geselecteerd. De JSON/tekst/HTML toont het aantal
+overgeslagen QA-only titels; elke bron blijft strikt read-only.
