@@ -681,14 +681,31 @@ function acceptGateSource(data){
    data.earliest_observed_at_utc!==undefined||
    data.latest_observed_at_utc!==undefined)
    throw Error('Incomplete all-batch metadata');
+  const seenBridgeIssues=new Set();
   for(const issue of data.issues){
    if(!issue||!Array.isArray(issue.existing_prs)||issue.existing_prs.length>5)
     throw Error('Unbounded issue PR references');
+   if(bridgeCoverage){
+    const saved=entries.get(issue.issue);
+    if(!saved||saved.url!==issue.url||seenBridgeIssues.has(issue.issue)||
+       issue.existing_prs.length===0)
+     throw Error('Bridge issue is foreign, duplicated or absent from current board');
+    seenBridgeIssues.add(issue.issue);
+   }
+   const seenIssuePrs=new Set();
    for(const pr of issue.existing_prs){
+    if(bridgeCoverage){
+     const saved=entries.get(issue.issue);
+     if(!saved.open_pr_candidates.includes(pr.url)||seenIssuePrs.has(pr.url))
+      throw Error('Bridge PR association differs from captured original issue');
+     seenIssuePrs.add(pr.url);
+    }
     const gate=pr.live_exact_head_review_checks_observation;
     if(gate!==undefined&&gate!==null){
      if(gate.url!==pr.url)throw Error('Mismatch PR observation URL');
      rows.push(gate);
+    }else if(bridgeCoverage){
+     throw Error('Complete source contains issue PR without a gate receipt');
     }
    }
   }
