@@ -23,6 +23,7 @@ from zsentinel_pr_scope_guard import (
 )
 
 from zsentinel_pr_scope_delta import read_private_previous, compare, render_delta
+from zsentinel_pr_gate_continuity import compare_gate_episodes, render_gate_episodes
 
 MAX_PROJECTS = 3
 MAX_PRS_PER_PROJECT = 16
@@ -686,6 +687,8 @@ def as_text(board):
         output.append("[" + view["project"] + "] " + view["repository"])
         output.extend(summary_lines(view))
     output.extend(current_gate_lines(board))
+    if board.get("historical_gate_episodes"):
+        output.extend(["", render_gate_episodes(board["historical_gate_episodes"])])
     if board.get("historical_pr_delta"):
         output.extend(["", render_delta(board["historical_pr_delta"])])
     output.extend([
@@ -752,6 +755,8 @@ def as_markdown(board):
         if view.get("source_truncated"):
             lines.append("Bronkaarten afgekapt; inspecteer overige PR's.")
     lines.extend(current_gate_lines(board, markdown=True))
+    if board.get("historical_gate_episodes"):
+        lines.extend(["", render_gate_episodes(board["historical_gate_episodes"], "markdown")])
     if board.get("historical_pr_delta"):
         lines.extend(["", render_delta(board["historical_pr_delta"], "markdown")])
     return "\n".join(lines) + "\n"
@@ -949,6 +954,7 @@ def as_html(board):
             " extra GitHub GETs in deze optionele opname.</p></section>"
         )
     delta_panel = render_delta(board.get("historical_pr_delta"), "html")
+    gate_episode_panel = render_gate_episodes(board.get("historical_gate_episodes"), "html")
     return (
         "<!doctype html><html lang='nl'><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -966,7 +972,7 @@ def as_html(board):
         "<aside>Alleen gedeelde bestandspaden uit een begrensde GitHub-bron. "
         "Dit bewijst geen mergeconflicten, claims of vrije werkscope. "
         "Geen automatische actie, merge of deploy.</aside>" +
-        gate_panel + delta_panel + "".join(cards) + "</html>"
+        gate_panel + gate_episode_panel + delta_panel + "".join(cards) + "</html>"
     )
 
 
@@ -985,6 +991,7 @@ def as_private_csv(board):
         "shared_filename", "shared_files_observed",
         "issue_number_hint", "current_exact_head_gate_status",
         "check_name", "check_state", "check_conclusion", "check_url",
+        "prior_gate_blocker", "current_gate_blocker", "gate_episode_change",
         "owner_claim_verified", "merge_authorized", "operator_notice",
     )
     writer.writerow(columns)
@@ -1109,6 +1116,20 @@ def as_private_csv(board):
                      view["source_status"], pr_url=url,
                      pr_head_sha=item["head_sha_observed"],
                      operator_notice="Some current non-green check jobs/statuses hidden by per-PR display limit.")
+    episodes = board.get("historical_gate_episodes")
+    if episodes is not None:
+        for row in episodes["items"]:
+            project = row["project"]
+            repo = next((view["repository"] for view in board["project_views"]
+                         if view["project"] == project), None)
+            if repo is None:
+                raise ValueError("historical gate outside canonical project")
+            emit("gate_episode_history", project, repo, "historical_gate_comparison",
+                 pr_url=row["url"], pr_head_sha=row["current_head"] or "",
+                 prior_gate_blocker=row["previous_blocker"] or "",
+                 current_gate_blocker=row["current_blocker"] or "",
+                 gate_episode_change=row["change"],
+                 operator_notice="Two sampled observations only; no automatic recheck, merge or owner authority.")
     # The caller checks the true UTF-8 output length and creates a 0600
     # output exclusively. Never put sensitive cross-project CSV into stdout.
     return "\ufeff" + output.getvalue()
@@ -1142,8 +1163,10 @@ def main(argv=None):
             board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"),
                                              focus_prs=args.gate_pr)
         if args.compare_previous is not None:
-            board["historical_pr_delta"] = compare(
-                read_private_previous(args.compare_previous), board)
+            previous = read_private_previous(args.compare_previous)
+            board["historical_pr_delta"] = compare(previous, board)
+            if args.inspect_current_pr_gates:
+                board["historical_gate_episodes"] = compare_gate_episodes(previous, board)
         if args.format == "csv":
             if args.output is None:
                 raise ValueError("private portfolio CSV requires --output")
