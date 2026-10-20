@@ -983,3 +983,23 @@ Deze informatie is een brongebonden mensenwerkbak, geen automatische
 workerclaim, PR-merge, CI-rerun, release of runneractie. Bestaande
 eigenaren, exact-head verplichte checks, reviews, branchregels en release
 autoriteit blijven bepalend.
+
+
+### Grote repositories: veranderingen in onvolledige bestandssteekproeven
+
+Bij drukke repositories zoals zCloud is de begrensde recente PR-inventaris
+vaak **onvolledig**. Een bestaand overlap-paar dat in de nieuwste beperkte
+opname voorkomt maar niet in de vorige kan dan niet als *nieuw* worden
+beschouwd. De historie-vergelijker toont nu afzonderlijk:
+
+- Overlapparen alleen in de huidige steekproef (**niet bewezen nieuw**).
+- Overlapparen alleen in de vorige steekproef (**niet bewezen opgelost**).
+- PR-HEAD/basis-wijzigingen die wel in beide stabiele snapshots stonden.
+
+Dit gebruikt uitsluitend al aanwezige gesamplede, stabiele GitHub-bronparen,
+geen extra API-calls. De bronlimiet (maximaal 40 getoonde paren per richting)
+en eventuele afgekapte bron blijven expliciet. De gerelateerde open PR's
+verschijnen ook binnen P0/P1-issuekaarten via de bestaande PR-link; zonder
+historische bron of bij niet-stabiele opname blijft de relatie onbekend.
+Een positief steekproefverschil is nooit een geverifieerde bugfix,
+succesvolle merge, runner-herstel of toestemming om andermans claim te nemen.
