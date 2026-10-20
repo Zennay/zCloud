@@ -61,30 +61,61 @@ def issue_inventory(raw, repo):
     return results, len(raw) == 100
 
 
-def references(body, existing):
+
+CANONICAL_REPO = re.compile(r"^[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+$")
+
+
+def canonical_issue_references(text, existing, repo):
+    """Admit explicit links only when they name this exact canonical repo.
+
+    Cross-repository shorthand or URLs are not same-repo issue evidence.
+    They cannot silently link an unrelated issue with the same number.
+    """
+    if (not isinstance(text, str) or not isinstance(existing, (dict, set, list))
+            or not isinstance(repo, str) or not CANONICAL_REPO.fullmatch(repo)
+            or len(text) > 128000):
+        return []
+    escaped = re.escape(repo)
+    url = re.compile(
+        r"(?<![A-Za-z0-9/])https://github\\.com/" + escaped +
+        r"/issues/([1-9][0-9]{0,6})(?![0-9/])",
+        re.IGNORECASE,
+    )
+    short = re.compile(
+        r"(?<![A-Za-z0-9_.\\-/])" + escaped +
+        r"\\#([1-9][0-9]{0,6})(?![0-9])",
+        re.IGNORECASE,
+    )
+    return sorted({int(n) for n in url.findall(text) + short.findall(text)
+                   if int(n) in existing})[:20]
+
+
+def references(body, existing, repo=None):
     if not isinstance(body, str):
         return []
     if len(body) > 128000:
         return []
     return sorted({int(match) for match in REF.findall(body)
-                   if int(match) in existing})[:20]
+                   if int(match) in existing} |
+                  set(canonical_issue_references(body, existing, repo)))[:20]
 
 
-def title_references(title, existing):
+def title_references(title, existing, repo=None):
     """Explicit same-repository #123 mentions are issue *hints*, not fixes."""
     if not isinstance(title, str) or len(title) > 5000:
         return []
     return sorted({int(number) for number in TITLE_ISSUE_REF.findall(title)
-                   if int(number) in existing})[:20]
+                   if int(number) in existing} |
+                  set(canonical_issue_references(title, existing, repo)))[:20]
 
 
-def reference_hints(title, body, existing):
+def reference_hints(title, body, existing, repo=None):
     """Union of explicit PR-title mentions and bounded body action links."""
-    return sorted(set(references(body, existing)) |
-                  set(title_references(title, existing)))[:20]
+    return sorted(set(references(body, existing, repo=repo)) |
+                  set(title_references(title, existing, repo=repo)))[:20]
 
 
-def link_candidates(pr_list, issues):
+def link_candidates(pr_list, issues, repo=None):
     """Stable source-ranked mappings; neither title nor body proves a fix."""
     links = {}
     for item in pr_list:
@@ -92,7 +123,7 @@ def link_candidates(pr_list, issues):
         if not isinstance(number, int):
             raise ValueError("invalid PR ref")
         links[number] = reference_hints(item.get("title"), item.get("body"),
-                                       issues)
+                                       issues, repo=repo)
     return links
 
 
