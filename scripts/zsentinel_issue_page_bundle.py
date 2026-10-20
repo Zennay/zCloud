@@ -78,7 +78,7 @@ def _read_private(path):
             raise ValueError("source path changed during read")
     finally:
         os.close(fd)
-    return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs)
+    return json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs), len(raw)
 
 
 def _utc(text):
@@ -92,9 +92,14 @@ def load_pages(paths):
     """Verify targeted page identity, limits and coherent bounded evidence."""
     if not 1 <= len(paths) <= MAX_PAGES or len(set(paths)) != len(paths):
         raise ValueError("expected 1–50 distinct saved pages")
-    pages = [_read_private(path) for path in paths]
-    if sum(Path(p).stat().st_size for p in paths) > MAX_TOTAL:
-        raise ValueError("aggregate evidence exceeds 8 MiB")
+    pages = []
+    total_size = 0
+    for path in paths:
+        page, length = _read_private(path)
+        total_size += length
+        if total_size > MAX_TOTAL:
+            raise ValueError("aggregate evidence exceeds 8 MiB")
+        pages.append(page)
     selected = {}
     reference = None
     observations = []
@@ -142,8 +147,21 @@ def load_pages(paths):
             total_hits = count
         elif total_hits != count:
             problems.add("SEARCH_TOTAL_CHANGED")
-        if payload["source_partial"] or not coverage["search_complete"]:
-            problems.add("PARTIAL_SOURCE_PAGE")
+        limitations = payload.get("partial_reasons")
+        if not isinstance(limitations, list) or any(not isinstance(x, dict) or
+                not isinstance(x.get("reason"), str) for x in limitations):
+            raise ValueError("missing explicit search source limitations")
+        # A saved page is incomplete by itself when other search pages exist.
+        # That expected paging marker may be resolved by a full coherent
+        # bundle. All *other* limitations survive bundling.
+        substantive = {item["reason"] for item in limitations
+                       if item["reason"] != "SEARCH_WINDOW_PARTIAL"}
+        if substantive:
+            problems.update(substantive)
+        if payload["source_partial"] and not limitations:
+            problems.add("UNEXPLAINED_PARTIAL_SOURCE")
+        if not coverage["search_complete"] and not limitations:
+            problems.add("UNEXPLAINED_INCOMPLETE_COVERAGE")
         if issue.get("current_state") != "OPEN_RECONFIRMED":
             problems.add("ISSUE_NOT_RECONFIRMED")
         if examined != end - start:
@@ -161,6 +179,10 @@ def load_pages(paths):
     if spread > MAX_SPREAD_SECONDS:
         problems.add("OBSERVATIONS_OVER_TEN_MINUTES_APART")
     expected_pages = max(1, (min(total_hits, 1000) + PAGE_SIZE - 1) // PAGE_SIZE)
+    if total_hits and any(page["targeted_coverage"]["window_end"] <
+                          min(total_hits, 1000, index * PAGE_SIZE)
+                          for index, page in selected.items()):
+        problems.add("SHORT_OR_SHIFTED_SEARCH_WINDOW")
     missing = [n for n in range(1, expected_pages + 1) if n not in selected]
     if missing:
         problems.add("UNSAVED_SEARCH_PAGES")
