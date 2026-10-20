@@ -383,6 +383,25 @@ local listener process is not that proof. The account billing/spending
 platform gate described in zCloud issue #1523 and the separately tracked
 runner-route issue #1326 remain distinct and cannot be bypassed here.
 
+### Worker-only waarneming · 20 oktober
+
+Een Runner.Worker kan in dezelfde lokale processnapshot zichtbaar zijn
+terwijl geen Runner.Listener waargenomen is. Dat betekent **niet** dat er
+helemaal geen GitHub-runnerproces is gevonden. De optionele procesbron maakt
+nu dit onderscheid expliciet als `WORKER_SEEN_LISTENER_NOT_OBSERVED`.
+Wanneer een worker alleen via kernel-comm plus argv0 wordt herkend, telt
+dit niet ten onrechte als een zwak geverifieerde listener: de scanner houdt
+beide betrouwbaarheidsaantallen apart.
+
+De herstelagenda toont dan
+`ACTIVE_WORKER_PROTECTED_LISTENER_UNKNOWN` in plaats van een generiek
+afwezigheidsbericht. De eigenaar moet de listener en GitHub-toewijzing
+onafhankelijk inspecteren **zonder de waargenomen job te onderbreken**.
+Ook bij volledige lokale procfs-dekking zijn GitHub-registratie,
+runner-labels, claimrechten en CI-status niet bewezen. Het is een read-only
+productcorrectie op deze bestaande branch; geen herstelactie, merge of
+productie-activatie.
+
 ### Remaining release gate
 
 The feature is source-only in the open existing PR #1572. Do not call it
