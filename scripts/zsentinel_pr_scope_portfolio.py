@@ -345,6 +345,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "draft_at_read": gate["draft_at_read"],
                 "github_mergeable_boolean_observed": gate["github_mergeable_boolean_observed"],
                 "check_runs_total_observed": gate["check_runs_total_observed"],
+                "check_runs_latest_attempts_observed": gate["check_runs_latest_attempts_observed"],
+                "check_runs_superseded_attempts_observed": gate["check_runs_superseded_attempts_observed"],
+                "observed_actionable_check_runs": gate["observed_actionable_check_runs"],
+                "observed_actionable_check_runs_hidden": gate["observed_actionable_check_runs_hidden"],
                 "observed_checks_pending": gate["observed_checks_pending"],
                 "observed_checks_unknown": gate["observed_checks_unknown"],
                 "observed_checks_not_successful": gate["observed_checks_not_successful"],
@@ -630,6 +634,18 @@ def current_gate_lines(board, markdown=False):
             str(gate["observed_independent_exact_head_approvals"]) +
             " · vervolg: " + GATE_LABELS.get(
                 gate["human_next_gate_step"], "Bron onvolledig; actuele gates inspecteren."))
+        lines.append("  Laatste poging per checknaam/app: " +
+                     str(gate["check_runs_latest_attempts_observed"]) +
+                     "; eerdere checkpogingen: " +
+                     str(gate["check_runs_superseded_attempts_observed"]))
+        for check in gate["observed_actionable_check_runs"]:
+            link = ("[" + check["name"] + "](" + check["url"] + ")"
+                    if markdown else check["name"] + " · " + check["url"])
+            lines.append("  CHECK " + link + " · " + check["state"] +
+                         " · " + str(check["conclusion"] or "geen conclusie"))
+        if gate["observed_actionable_check_runs_hidden"]:
+            lines.append("  Extra niet-groene checks verborgen: " +
+                         str(gate["observed_actionable_check_runs_hidden"]))
         if (not gate["check_page_complete"]
                 or gate["review_page_may_be_truncated"]
                 or gate["legacy_status_source_may_be_truncated"]):
@@ -826,6 +842,24 @@ def as_html(board):
             detail = (
                 "BLOKKADE: " + escape(BLOCKER_DESCRIPTIONS[
                     gate["human_gate_blocker"]]) + " · " + detail)
+            check_note = ""
+            if gate["status"] == "current_exact_pr_head_and_sample_match":
+                check_items = []
+                for check in gate["observed_actionable_check_runs"]:
+                    check_items.append("<li><a href=\'" + escape(check["url"], quote=True) +
+                                       "\' rel=\'noopener noreferrer\'>" +
+                                       escape(check["name"]) + "</a> · " +
+                                       escape(check["state"]) + " · " +
+                                       escape(check["conclusion"] or "geen conclusie") + "</li>")
+                check_note = (
+                    "<details><summary>Actuele checkjobs: " +
+                    str(gate["check_runs_latest_attempts_observed"]) +
+                    " contexten, " + str(gate["check_runs_superseded_attempts_observed"]) +
+                    " eerdere pogingen</summary><ul>" +
+                    ("".join(check_items) or "<li>Geen niet-groene jobs waargenomen.</li>") +
+                    "</ul><p>Niet-getoonde jobs: " +
+                    str(gate["observed_actionable_check_runs_hidden"]) +
+                    " · branchregels blijven onbekend.</p></details>")
             source_note = ""
             if gate["observed_in_recent_pr_collision_sample"] is False:
                 collision_links = []
@@ -855,7 +889,7 @@ def as_html(board):
                 "<li><a href='" + url + "' rel='noopener noreferrer'>" +
                 escape(gate["project"]) + " · " + url +
                 "</a><br><small>" + detail +
-                " · geen mergevrijgave</small>" + source_note + "</li>")
+                " · geen mergevrijgave</small>" + check_note + source_note + "</li>")
         gate_panel = (
             "<section><h2>Actuele PR-gates · maximaal vier</h2>"
             "<p>Bronselectie: " + escape(live["mode"]) +
