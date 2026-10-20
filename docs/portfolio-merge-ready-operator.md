@@ -59,6 +59,49 @@ python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
 - De zoekresultaten zijn slechts een kandidatenlijst. Alleen expliciete brongebonden issueverwijzingen `fixes #N`, `refs #N` in de body, óf expliciete `#N` in de PR-titel op dezelfde repository worden gekoppeld. De oorspronkelijke én laatste titel en beschrijving moeten allebei ongewijzigd zijn tegenover de eerste huidige PR-bron. Maximaal 32 bekeken kandidaten en 4 gekoppelde product-PRs; overige zoekresultaten blijven expliciet `CANDIDATE_WINDOW_32`/UNKNOWN. De laatste exacte issue-opvraag moet nog steeds `open` melden. Een tussentijds gewijzigde PR-body **of titel** wordt geweigerd, ook als de Git commit ongewijzigd bleef.
 - Alle bronnen en één privé offline HTML worden begrensd door hetzelfde totale 84-GET / 120s budget. De HTML toont het gerichte issue, zoekdekking, PRs met concrete next-gate en de onvolledigheidswaarschuwingen. Geen automatische issueclaim, workflowrestart, PR-merge, deploy of P0-statuswijziging.
 
+### Rechtstreeks naar bekende bestaande PRs zonder zoekindex
+
+Als een ouder P0/P1-issue al concrete bestaande product-PR-nummers heeft
+(bijvoorbeeld uit Notion of een project-handoff), kan zSentinel deze **direct**
+tegen de actuele canonieke GitHub PR-bron inspecteren, zonder de GitHub Search
+index of paginering:
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py \
+  --project cloud --issue 1326 \
+  --candidate-pr 1563 --candidate-pr 1571 \
+  --format text --output /private/issue-1326-direct-prs.html
+```
+
+Dit werkt ook voor open **draft-product-PRs**. Per expliciet nummer leest de
+operator de actuele PR-HEAD, titel/body en zo mogelijk de bestaande
+checks/review/workflow-waarnemingen met dezelfde product-only filters.
+Verwijzingen in PR-titel/body naar het gekozen issue zijn **alleen hints**;
+een bekende PR zonder verifieerbare issueverwijzing blijft als PR zichtbaar,
+maar krijgt `EXPLICIT_PR_NO_CURRENT_VERIFIED_REFERENCE`. De werkbak claimt
+nooit dat de PR dit issue daadwerkelijk oplost, dat de branch veilig is om te
+mergen of dat andere PRs niet bestaan.
+
+Gebruik maximaal **tien unieke PR-nummers per opdracht**, bewust kleiner dan
+de algemene limiet van twaalf rapporten: een volledig PR-gatebewijs kan per
+nummer meerdere actuele GitHub GETs verbruiken en binnen het **bestaande
+84-GET/120-secondenbronbudget** moet ruimte blijven om het issue zelf
+na afloop opnieuw te bevestigen. Het offline HTML-overzicht bevat de
+bekende geselecteerde PR-nummers en markeert de bron als
+`EXPLICIT_PR_SELECTION_NOT_SEARCH`. Niet-beschikbare, gesloten, QA-only,
+child- of andere niet-geschikte PRs worden expliciet als deelbronbeperking
+zichtbaar, niet stilzwijgend als afwezig bewijs. Als het issue tussentijds
+van status, titel of prioriteit verandert, worden de vermeende actuele
+issuekoppelingen ingetrokken.
+
+`--candidate-pr` is uitsluitend voor één `--project` met `--issue`;
+deze bronroute kan niet samen met `--candidate-page`, `--auto-pages`,
+`--candidate-offset`, `--expected-page-sha` of
+`--snapshot-output` worden gebruikt. Opgeslagen historische GitHub
+Search-pagina's worden niet door de direct-PR-route geclaimd of gemengd.
+Deze functie **leest uitsluitend**: geen claim, workflowdispatch, CI-retry,
+automerge of productieactie.
+
 ### P0/P1 in één opdracht over meerdere bestaande PR-zoekpagina's
 
 Bij een bekend kritisch issue kan de issue-first werkbak nu **zonder handmatige
