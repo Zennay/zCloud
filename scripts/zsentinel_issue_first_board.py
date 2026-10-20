@@ -260,7 +260,15 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
         issue_current = (isinstance(final_issue, dict)
                          and final_issue.get("state") == "open"
                          and final_issue.get("number") == issue_number
-                         and final_issue.get("id") == issue.get("id"))
+                         and final_issue.get("id") == issue.get("id")
+                         and "pull_request" not in final_issue)
+        if issue_current:
+            final_level = classification(final_issue)
+            final_priority = (final_level["priority"] if final_level
+                              else "UNCLASSIFIED")
+            final_title = str(final_issue.get("title") or "")[:160]
+            issue_current = (final_priority == issue_info["priority"]
+                             and final_title == issue_info["title"])
     except (RuntimeError, ValueError, KeyError, TypeError, OSError):
         issue_current = False
     if not issue_current:
@@ -519,13 +527,15 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
     target_section = ""
     if targeted:
         target_section = (
-            "<section aria-label='Gericht open issue'><h2>Gericht P0/P1-issue</h2>"
+            "<section aria-label='Gericht issue'><h2>Gericht issue (bronwaarneming)</h2>"
+            "<p><strong>Actuele issue-status: " +
+            esc(targeted.get("current_state", "UNKNOWN")) + "</strong></p>"
             "<p><a href='" + esc(targeted["url"]) + "'>" +
             esc(targeted["priority"] + " #" + str(targeted["number"]) + " · "
                 + targeted["title"]) + "</a></p>"
-            "<p>Alleen actuele expliciete PR-bodyverwijzingen, geen ownership-"
-            "of oplossingsbewijs. Ook een expliciete PR-titelverwijzing is "
-            "uitsluitend een verwijzing, geen claim of bewezen fix.</p>"
+            "<p>Expliciete PR-body- of titelverwijzingen zijn alleen hints, "
+            "geen ownership-, fix- of mergebewijs. Bij UNKNOWN mag de eerdere "
+            "P0/P1-prioriteit niet als actueel bewezen gelden.</p>"
         )
         if target_coverage:
             target_section += (
@@ -706,7 +716,8 @@ def main():
                 print("No linked existing product PRs observed; this does not prove none exist.")
             if targeted:
                 print(f"TARGET_ISSUE {targeted['priority']} #{targeted['number']} "
-                      f"{targeted['url']} (source-only, not resolution proof)")
+                      f"{targeted['url']} state={targeted.get('current_state', 'UNKNOWN')} "
+                      "(issue priority may be stale if state is UNKNOWN; not fix proof)")
                 print(f"SEARCH_WINDOW page={target_coverage['candidate_page']} "
                       f"observed={target_coverage['search_examined']} "
                       f"total={target_coverage['search_total']} "
