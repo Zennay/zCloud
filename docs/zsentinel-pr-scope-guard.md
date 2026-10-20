@@ -148,3 +148,20 @@ Dit scherm is een **operatorintegratie**, geen automatische productiequeue-adapt
 Als de canonical `zsentinel_product_delivery_board.py` bij het vormen van de lokale triage-bron een optionele `--prs` exacte-head PR-receipt heeft gekregen, hergebruikt de nieuwe geïntegreerde cockpit deze **al aanwezige** historische status. Het nieuwe scherm toont bij de passende bestaande PR: geobserveerde bron-HEAD, of de toen geobserveerde native checks geslaagd waren en hoeveel approvals de opgeslagen bron meldde.
 
 Er worden hiervoor **geen nieuwe GitHub Actions gestart en geen extra API-calls gedaan**. Een opgeslagen checkstatus wordt expliciet als historisch getoond; niet-beschreven verplichte branchregels, actuele SHA, nieuwe pushes, review-freshness en productieautorisatie blijven **niet geverifieerd**. De PR blijft dus op HOLD voor merge totdat de normale actuele gates apart bevestigd zijn.
+
+
+## Snelle productstand zonder handmatig JSON-bundelwerk
+
+Dezelfde geïntegreerde Product Delivery Cockpit kan nu in **één opdracht** de actuele GitHub P0/P1/P2-productissues én open-PR-bestandsscope ophalen. Daarmee is er een directe bruikbare operatorflow wanneer geen eerder opgeslagen privéproductboard beschikbaar is:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --project supa \
+  --max-prs 10 --format html > /secure/location/zsentinel-live-product.html
+```
+
+De eerder beschreven `--issue-board`-modus blijft voor reproduceerbare, privé brongebonden handoffs; beide routes zijn exclusief, zodat één run niet heimelijk oud en nieuw issuebewijs verwart. Live gebruikt **uitsluitend** de al gemergede, canonieke `zsentinel_product_issue_inbox.collect` en `zsentinel_product_delivery_board.prepare` voor productissues en QA-uitsluiting; het maakt geen tweede issuecrawler, geen queue-mutatie en geen Notion-API-sleutel nodig. Het controleert ook dat de twee bestaande projectregisterlezers dezelfde canonieke repositories opleveren.
+
+Bronbelasting: maximaal 3×(2 issue-lijsten + 1 issue-gerelateerde open PR-lijst + 12 PR-bestandslijsten + 2 PR-lijstbevestigingen) = **51 GitHub GET-aanvragen** bij maximaal drie projecten en `--max-prs 12`. Standaard 10 PR's per project = maximaal 45 GET. Op 403/429 of incomplete hoofdbron worden onzekerheid en bronbeperkingen behouden; een ontbrekend issue is geen opgelost issue en een afwezige PR is geen eigenaarsvrijgave. Er zijn geen writes of CI-triggers.
+
+De live-variant toont een SHA-256 van het door de reeds bestaande triageproducer in het geheugen samengestelde JSON-resultaat als *rapportidentiteit*, **niet** als bewijs dat externe GitHub/Notion-werkelijkheid cryptografisch gepind of volledig was. Het controleert geen actuele officiële claims, bevoegdheden, releasegates of Watch/device-eisen.
