@@ -10,10 +10,116 @@ import os
 import re
 from pathlib import Path
 import subprocess
+import stat
+import time
+import math
+import hashlib
 
 UNIT = "fuckball-ai-coach.service"
 STATE = Path(os.environ.get("XDG_RUNTIME_DIR", "/run/user/1000")) / "zcloud-background-priority.json"
 RUNNER_MARKER = "/actions-runner-zcloud/"
+
+# Increase coach capacity only after recurring low-pressure observations.
+# Immediate reductions remain unaffected; this must never delay yielding CPU.
+PROMOTION_SECONDS = 300
+PROMOTION_MIN_OBSERVATIONS = 3
+PROMOTION_MIN_GAP = 45
+PROMOTION_MAX_SAMPLE_GAP = 240
+MAX_PRIVATE_STATE = 16 * 1024
+
+
+def _boot_token():
+    """Opaque process lifetime scope for conservative promotion admission."""
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", boot):
+            return None
+        return hashlib.sha256(boot.encode("ascii")).hexdigest()[:24]
+    except (OSError, UnicodeError):
+        return None
+
+
+def read_private_state():
+    """Inspect a previous own receipt; errors mean NO historical permission."""
+    try:
+        fd = os.open(STATE, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        return None
+    try:
+        meta = os.fstat(fd)
+        if (not stat.S_ISREG(meta.st_mode)
+                or meta.st_uid != os.geteuid()
+                or stat.S_IMODE(meta.st_mode) & 0o077
+                or meta.st_size <= 0 or meta.st_size > MAX_PRIVATE_STATE):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as reader:
+            blob = reader.read(MAX_PRIVATE_STATE + 1)
+        if len(blob) > MAX_PRIVATE_STATE:
+            return None
+        receipt = json.loads(blob.decode("utf-8"))
+        return receipt if type(receipt) is dict else None
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+    finally:
+        os.close(fd)
+
+
+def promotion_policy(recommended_quota, recommended_weight, observed, previous,
+                     now, boot):
+    """Read-only policy decision; never trust JSON over actual systemd.
+
+    A lower recommendation is applied immediately. An increase requires an
+    unchanged current cgroup, repeated samples and five minutes of headroom.
+    Missing/modified state or reboot restarts the observation period.
+    """
+    actual_quota = observed.get("quota_seconds")
+    actual_weight = observed.get("weight")
+    if (not observed.get("active") or
+            type(actual_quota) not in (int, float) or
+            not math.isfinite(actual_quota) or actual_quota <= 0 or
+            type(actual_weight) is not int):
+        return recommended_quota, recommended_weight, "no-active-readable-cgroup", None
+    current_quota = actual_quota * 100
+    if recommended_quota <= current_quota + 0.2:
+        # A reduction / equal recommendation is never delayed, even if
+        # historical evidence is absent or manipulated.
+        return recommended_quota, recommended_weight, "immediate-yield-or-equal", None
+    candidate = {
+        "boot": boot, "target_quota": recommended_quota,
+        "target_weight": recommended_weight,
+        "current_quota": round(current_quota, 2),
+        "current_weight": actual_weight,
+        "started_mono": now, "last_mono": now, "observations": 1,
+    }
+    old = previous.get("promotion") if type(previous) is dict else None
+    if (boot is not None and type(old) is dict and old.get("boot") == boot
+            and type(old.get("target_quota")) is int
+            and old["target_quota"] == recommended_quota
+            and type(old.get("target_weight")) is int
+            and old["target_weight"] == recommended_weight
+            and type(old.get("current_quota")) in (int, float)
+            and abs(old["current_quota"] - current_quota) < 0.2
+            and type(old.get("current_weight")) is int
+            and old["current_weight"] == actual_weight
+            and type(old.get("started_mono")) in (int, float)
+            and type(old.get("last_mono")) in (int, float)
+            and type(old.get("observations")) is int
+            and 1 <= old["observations"] <= 1000
+            and math.isfinite(old["started_mono"])
+            and math.isfinite(old["last_mono"])
+            and 0 <= old["started_mono"] <= old["last_mono"] <= now
+            and 0 <= now - old["last_mono"] <= PROMOTION_MAX_SAMPLE_GAP):
+        candidate["started_mono"] = old["started_mono"]
+        if now - old["last_mono"] >= PROMOTION_MIN_GAP:
+            candidate["observations"] = old["observations"] + 1
+        else:
+            candidate["observations"] = old["observations"]
+        if (now - candidate["started_mono"] >= PROMOTION_SECONDS
+                and candidate["observations"] >= PROMOTION_MIN_OBSERVATIONS):
+            return recommended_quota, recommended_weight, "sustained-headroom", None
+    # Stay at the currently verified cgroup; never increase on a single sample.
+    return current_quota, actual_weight, "promotion-waiting", candidate
 
 
 def workers():
