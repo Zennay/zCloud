@@ -322,10 +322,18 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
     notion = decision.get("notion_claims_observation")
     if notion is not None:
         if (not isinstance(notion, dict)
-                or notion.get("source") != "notion_readonly_data_source_pages"
+                or notion.get("source") not in (
+                    "notion_readonly_data_source_pages",
+                    "user_supplied_notion_connector_export_unverified_origin")
                 or notion.get("claim_scope_verified") is not False
                 or notion.get("can_dispatch") is not False
-                or notion.get("coverage") not in ("current_pages_only", "incomplete")
+                or notion.get("coverage") not in (
+                    "current_pages_only", "incomplete",
+                    "saved_single_page_not_live_current_claims_unknown")
+                or (notion.get("source") ==
+                    "user_supplied_notion_connector_export_unverified_origin"
+                    and (notion.get("origin_authenticity_verified") is not False
+                         or notion.get("live_claim_ownership_verified") is not False))
                 or not isinstance(notion.get("active_project_counts"), dict)):
             raise ValueError("invalid Notion project statuses")
         counts = notion["active_project_counts"]
@@ -333,7 +341,11 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             if not isinstance(key, str) or type(value) is not int or value < 0 or value > 400:
                 raise ValueError("invalid active project status counter")
         for pid in summary:
-            summary[pid]["notion_active_status_min"] = counts.get(pid, 0)
+            # An absent project in a bounded connector sample is UNKNOWN,
+            # never evidence that the project has zero live claims.
+            value = counts.get(pid)
+            summary[pid]["notion_active_status_min"] = (
+                value if value is not None and value > 0 else None)
     # The incident means only that one exact GitHub job has no runner.
     # It cannot establish a self-hosted route: its labels may be unavailable
     # or a sampled job may differ from the one referenced by the incident.
@@ -663,6 +675,8 @@ def main():
     parser.add_argument("--skip-ci-discovery", action="store_true")
     parser.add_argument("--read-notion-claims", action="store_true")
     parser.add_argument("--notion-data-source")
+    parser.add_argument("--notion-claims-export", type=Path,
+                        help="private saved connector active-status snapshot, not live ownership")
     parser.add_argument("--observe-vps-capacity", action="store_true")
     parser.add_argument("--observe-local-runner", action="store_true",
                         help="read-only bounded Linux /proc inspection of canonical zCloud listener/worker processes")
@@ -765,6 +779,8 @@ def main():
         if not 0 <= window_index < len(windows):
             raise ValueError("window out of range for canonical projects")
         selected = windows[window_index]
+        if args.read_notion_claims and args.notion_claims_export is not None:
+            raise ValueError("choose one Notion observation mode")
         if (args.inspect_unpr_branches and args.inspect_unpr_branches not in selected):
             raise ValueError("branch inspection must target a project in the selected window")
         if (args.branch_prefix or args.current_path or args.require_clear_unpr_slice) and not args.inspect_unpr_branches:
@@ -781,6 +797,7 @@ def main():
                                 os.environ.get("NOTION_QUEUE_DATA_SOURCE_ID")),
             notion_token=os.environ.get("NOTION_TOKEN"),
             notion_registry=args.registry,
+            notion_export_path=args.notion_claims_export,
             observe_vps=args.observe_vps_capacity,
             queue_snapshot=queue,
             pinned_issues=args.pin_issue,
