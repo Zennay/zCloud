@@ -912,3 +912,44 @@ private data, claim work, start CI, merge or deploy.
 
 All original source limits, exact-head release gates, private local file
 permissions and no-network browser restrictions remain unchanged.
+
+
+### 20 October · Native offline multi-batch PR gate import in browser
+
+The existing merge-first workbench can now combine original reviewed
+manifests and one or more saved gate batch receipts *without any
+command-line step*. In the **Import GitHub PR-gate snapshot** panel,
+expand **Combine original reviewed manifest and saved PR batches here
+(offline)**, select the exact previously downloaded
+`zsentinel-offline-merge-first-review.json` and select the corresponding
+JSON output files from the read-only
+`zsentinel_pr_gate_now.py --from-review ... --batch N` commands. Press
+**Combine saved batches in this browser**. This processes only
+explicitly selected local files using browser File/crypto APIs; the
+offline page does not contact GitHub, Notion or the VPS and cannot
+start, retry, merge, claim or deploy work.
+
+The browser rejects a mismatched board SHA, manifest SHA, foreign or
+duplicate original PR/issue associations, improperly ordered batches,
+repeated batch indexes, non-canonical PR URLs, unbounded inputs and
+contradictory non-authorizing gate flags. It uses the same numeric PR
+and case-sensitive ASCII repository sort as the Python source
+converter. Input is restricted to **one <=1 MiB manifest, 1–75
+<=1 MiB receipts and 8 MiB total**. All received batches must fall
+within a common 10-minute saved observation window; the timestamp
+used for source age is the **oldest** batch. Invalid input leaves the
+previously imported overlay untouched.
+
+Selecting a subset of originally available batches is supported.
+The UI explicitly shows **PARTIAL** coverage, exact missing indexes,
+the original corresponding PR links as **UNKNOWN**, and observed
+gate categories in the existing merge-first desk and private
+Markdown/JSON human handoffs. Supplying all original batches yields
+**COMPLETE saved-source coverage**, never complete required checks,
+independent approval, live ownership or release authority. Users may
+still import one gate JSON or a precombined CLI bridge using the
+existing single-file control; neither path loses its behavior.
+
+The local source inspection for this feature checks Python
+syntactic validity and embedded browser JavaScript syntax only.
+No QA/regression suite, CI retrigger or privileged VPS task was added.
