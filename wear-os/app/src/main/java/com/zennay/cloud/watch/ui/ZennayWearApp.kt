@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
+import com.zennay.cloud.watch.IncidentSnoozeStore
 import com.zennay.cloud.watch.data.ProjectDetail
 import com.zennay.cloud.watch.data.ProjectSummary
 import com.zennay.cloud.watch.data.ProgressPoint
@@ -106,6 +108,8 @@ private fun HomeScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val appContext = LocalContext.current
+    var snoozeVersion by remember { mutableStateOf(0) }
     var expandedAlertId by rememberSaveable { mutableStateOf<String?>(null) }
     var disappearedIncidentNotice by rememberSaveable { mutableStateOf(false) }
 
@@ -267,6 +271,42 @@ private fun HomeScreen(
                                 Spacer(Modifier.height(7.dp))
                                 Text("Waargenomen: ${shortAge(seen)}",
                                      color = TextMuted, fontSize = 9.sp)
+                            }
+                            if (alert.humanActionRequired) {
+                                // Read only on recomposition; local button taps
+                                // bump the version. No remote acknowledgement.
+                                val version = snoozeVersion
+                                val remaining = IncidentSnoozeStore.remainingMillis(appContext, alert)
+                                Spacer(Modifier.height(9.dp))
+                                Label("LOKALE MELDINGSINSTELLING", Blue)
+                                Text(
+                                    if (remaining > 0) "Melding gedempt · nog maximaal ${(remaining + 59_999L) / 60_000L} min"
+                                    else "Incident blijft actief, ook als meldingen stil zijn.",
+                                    color = TextMuted, fontSize = 10.sp
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp)
+                                        .height(42.dp)
+                                        .background(Surface2, RoundedCornerShape(14.dp))
+                                        .clickable {
+                                            if (remaining > 0) {
+                                                IncidentSnoozeStore.resume(appContext, alert)
+                                            } else {
+                                                IncidentSnoozeStore.snoozeForOneHour(appContext, alert)
+                                            }
+                                            snoozeVersion = version + 1
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        if (remaining > 0) "Meldingen hervatten"
+                                        else "Notificaties 1 uur dempen",
+                                        color = Accent, fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                             val project = snapshot.projects.firstOrNull { it.id == alert.project }
                             if (project != null) {
