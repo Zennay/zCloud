@@ -379,12 +379,12 @@ def private_html(report):
         'td,th{padding:.5rem;border:1px solid #64748b}</style>'
         '<main><h1>zSentinel · Herhaalde claimpogingen</h1>' +
         public_html(report) +
-        '<p>' + escape(report["action"]) + '</p>'
+        '<p>' + escape(report["action"]) + '</p>' +
         '<h2>Tegenstrijdige huidige leasevensters · eigenaarcheck</h2>' +
         ('<ol>' + "".join(conflicts) + '</ol>' if conflicts else
          '<p>Geen tegenstrijdige lease-items in de beperkte privésample.</p>') +
         ('<p>Bronsteekproef afgekapt; verborgen conflicten niet uitgesloten.</p>'
-         if report["lease_conflict_samples_truncated"] else '')
+         if report["lease_conflict_samples_truncated"] else '') +
         '<table><thead><tr><th>Project</th><th>Prioriteit</th>'
         '<th>Claimpogingen</th><th>Status</th><th>Leasebewijs</th></tr></thead><tbody>' +
         "".join(details) +
