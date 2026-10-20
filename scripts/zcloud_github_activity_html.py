@@ -57,7 +57,10 @@ def event_link(event: dict, repo: str) -> tuple[str, str]:
         suffix += " · draft"
     if kind == "pr_merged":
         target = event.get("reported_target") or "unknown"
-        suffix += " · reported target " + target + " (not independently reachable)"
+        suffix += (" · reported target " + target
+                   + (" · exact main SHA in imported receipt (not live deploy proof)"
+                      if event.get("main_merged") is True
+                      else " · main not proven in imported history"))
     return f"Pull request #{n}{suffix}", f"https://github.com/{repo}/pull/{n}"
 
 
@@ -79,6 +82,11 @@ def html_page(data: dict) -> str:
                                  e.get("reported_main_merge") is True for e in rows)
         chips += ("<span>PR merges reporting main target: <b>" +
                   str(main_target_merges) + "</b></span>")
+        observed_main_merges = sum(
+            e["kind"] == "pr_merged" and e.get("main_merged") is True for e in rows
+        )
+        chips += ("<span>Matching main SHA in imported snapshot: <b>" +
+                  str(observed_main_merges) + "</b></span>")
         windows = []
         for key, label in (("github_pr", "Pull requests"), ("github_ci", "Actions"),
                            ("github_main_commits", "Main history")):
