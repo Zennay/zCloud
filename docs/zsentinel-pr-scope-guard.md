@@ -1523,3 +1523,20 @@ en de bestaande offline composer leveren hetzelfde type werklijst
 uit dezelfde strikt begrensde bronobservaties; de huidige
 Notion-claims, branches, verplichte reviews/CI en main/deploy zijn
 nog altijd afzonderlijke releasevoorwaarden.
+
+
+## Verbonden bestandsgroepen bij bestaande PR-integratie
+
+De PR-conflictenkaart geeft nu naast individuele paren een **groepsoverzicht van samenhangende open pullrequests**. Drie PR's die via twee verschillende gedeelde bestanden verbonden zijn, staan bij elkaar, zelfs wanneer de buitenste twee PR's geen identiek bestand delen. Zo wordt zichtbaar hoe groot een mogelijke integratiegroep is voordat iemand zelfstandig een vrij werkpakket kiest.
+
+De bestaande CLI werkt ongewijzigd. Maak lokaal een privé-HTML-bestand met bijvoorbeeld:
+
+    python3 scripts/zsentinel_pr_scope_guard.py --project cloud --audit-open-prs --max-prs 24 --format html > /secure/location/zsentinel-pr-clusters.html
+
+Of lees de tekstuele Markdown via dezelfde opdracht met --format markdown.
+
+Elk cluster vermeldt de bron-PR-links en waargenomen exact-head/base-SHA's, directe bestandspadverbindingen per PR, aantallen waargenomen PR-paren en unieke gedeelde bestandspaden, plus maximaal zestien zichtbare voorbeeldpaden. De hoogst verbonden PR's staan bovenaan, maar zijn geen automatisch geselecteerde eigenaars en worden niet aanbevolen als eerste merge. JSON bevat de volledige begrensde groepen onder linked_pr_collision_clusters en het aantal onder observed_connected_pr_collision_clusters. Groepnummers zijn momentopnamen, niet duurzame IDs.
+
+Clusters worden uit **alle geobserveerde PR-paren** opgebouwd voordat de bestaande 200-parenpresentatie wordt begrensd. Daardoor blijft het binnen de geobserveerde steekproef samenhangende beeld bewaard, ook wanneer de losse kaart is afgekapt. Alleen exact gedeelde bestandsnamen vormen edges; een gedeelde map, issuehint of parallelle branch telt niet als bewezen collision.
+
+Onvolledige GitHub-bestandenlijsten, veranderde inventarissen en niet bekeken zoekpagina's blijven expliciet onbekend. Bestandscope geeft nooit bewijs van een Git-mergeconflict, actuele Notion-claim, vrije eigenaar, werkdir-lease of CI-/releasevrijgave. Het overzicht voert uitsluitend read-only GitHub-verzoeken uit: geen claims, herstarts, workflow-reruns, merges, productie- of beveiligingsacties.
