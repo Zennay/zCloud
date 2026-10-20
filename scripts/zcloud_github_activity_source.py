@@ -278,7 +278,11 @@ def bounded_events(
                           "reported_main_merge": bool(merged_at is not None and target == "main")}
                 add("pr_created", str(number), pr.get("created_at"), **fields)
                 add("pr_updated", str(number), pr.get("updated_at"), **fields)
-                if merged_at is not None:
+                if lifecycle == "closed_without_merge":
+                    # Exact provider close time, not a later generic PR update.
+                    # A closed PR has no merged-main or deploy implication.
+                    add("pr_closed", str(number), closed_at, **fields)
+                elif merged_at is not None:
                     # GitHub merged != proven merged into canonical main.
                     add("pr_merged", str(number), merged_at, **fields)
             coverage["pages"]["pulls"] = page
