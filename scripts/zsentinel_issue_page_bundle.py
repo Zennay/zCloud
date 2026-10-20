@@ -7,6 +7,7 @@ GitHub writes, reviews, merges, CI dispatch or live recovery actions.
 import argparse
 import datetime as dt
 import html
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,8 +33,17 @@ def _unique_pairs(pairs):
 
 def private_json(path, data):
     """Create a NEW private file without following destination symlinks."""
-    raw = (json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-           + "\n").encode("utf-8")
+    if not isinstance(data, dict) or data.get("selection") != "TARGETED_OPEN_ISSUE":
+        raise ValueError("only a targeted issue page can be persisted here")
+    if "snapshot_schema" in data or "snapshot_content_sha256" in data:
+        raise ValueError("snapshot origin fields cannot be provided by caller")
+    envelope = dict(data)
+    envelope["snapshot_schema"] = 1
+    canonical = json.dumps(envelope, ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":")).encode("utf-8")
+    envelope["snapshot_content_sha256"] = hashlib.sha256(canonical).hexdigest()
+    raw = (json.dumps(envelope, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":")) + "\n").encode("utf-8")
     if len(raw) > MAX_BYTES:
         raise ValueError("private snapshot exceeds 1 MiB")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -113,6 +123,18 @@ def load_pages(paths):
     for payload in pages:
         if not isinstance(payload, dict) or payload.get("selection") != "TARGETED_OPEN_ISSUE":
             raise ValueError("not a targeted zSentinel issue snapshot")
+        checksum = payload.get("snapshot_content_sha256")
+        if (payload.get("snapshot_schema") != 1 or not isinstance(checksum, str)
+                or len(checksum) != 64
+                or any(c not in "0123456789abcdef" for c in checksum)):
+            raise ValueError("unknown or unsigned snapshot envelope")
+        unsigned = dict(payload)
+        del unsigned["snapshot_content_sha256"]
+        expected = hashlib.sha256(json.dumps(
+            unsigned, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
+        if checksum != expected:
+            raise ValueError("snapshot content fingerprint does not match")
         issue, coverage = payload.get("targeted_issue"), payload.get("targeted_coverage")
         projects = payload.get("project_ids")
         if (not isinstance(issue, dict) or not isinstance(coverage, dict)
