@@ -185,6 +185,47 @@ def build_timeline(paths):
     }
 
 
+
+
+def select_page(report, *, priority=None, tag=None, page=1, page_size=40):
+    """Filter the *fully admitted* PR set, retaining honest source totals.
+
+    Pages are human display slices only, not evidence of other PRs being
+    closed, green, owner-free, or excluded from GitHub/Notion work.
+    """
+    if priority is not None and priority not in PRIORITIES:
+        raise ValueError("Unknown source priority filter")
+    if tag is not None and tag not in TAGS:
+        raise ValueError("Unknown observed source-change label")
+    if (type(page) is not int or not 1 <= page <= 100
+            or type(page_size) is not int or not 1 <= page_size <= 100):
+        raise ValueError("Invalid bounded page selection")
+    matched = [
+        item for item in report["entries"]
+        if (priority is None or item["latest_sample_priority"] == priority)
+        and (tag is None or tag in item["tags"])
+    ]
+    first = (page - 1) * page_size
+    if first >= len(matched) and (page != 1 or matched):
+        raise ValueError("Page outside selected saved source worklist")
+    result = dict(report)
+    result["entries"] = matched[first:first + page_size]
+    result["display"] = {
+        "source_pr_candidates_total": report["distinct_pr_candidates"],
+        "matched_source_pr_candidates": len(matched),
+        "shown_source_pr_candidates": len(result["entries"]),
+        "first_match_position": first + 1 if result["entries"] else None,
+        "last_match_position": first + len(result["entries"]),
+        "priority_filter": priority,
+        "observed_change_filter": tag,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (len(matched) + page_size - 1) // page_size),
+        "not_shown_is_never_resolved": True,
+    }
+    return result
+
+
 def markdown(report):
     lines = [
         "# zSentinel — historisch PR-volgscherm", "",
@@ -193,7 +234,12 @@ def markdown(report):
         "",
         "- Projectscope: " + (report["scope"] or "oorspronkelijke portfolio-samples"),
         "- Bronmomenten: " + str(len(report["source_snapshots"])),
-        "- Verschillende bron-PR's: " + str(report["distinct_pr_candidates"]), "",
+        "- Verschillende bron-PR's totaal: " +
+          str(report["distinct_pr_candidates"]),
+        "- Weergegeven: " + str(report["display"]["shown_source_pr_candidates"]) +
+          " van " + str(report["display"]["matched_source_pr_candidates"]) +
+          " filtermatches · pagina " + str(report["display"]["page"]) + "/" +
+          str(report["display"]["total_pages"]), "",
     ]
     for s in report["source_snapshots"]:
         lines.append("- Bron " + str(s["index"]) + ": " +
@@ -292,6 +338,7 @@ def html_content(report):
     times = " · ".join(
         "Bron " + str(s["index"]) + ": " + e(s["latest_observed_utc"])
         for s in report["source_snapshots"])
+    paging = report["display"]
     return """<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; object-src 'none'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
@@ -310,7 +357,12 @@ li{margin:9px 0;overflow-wrap:anywhere}
 <aside><strong>Niet live en nooit mergevrijgave.</strong> Alle statussen zijn
 alleen waarnemingen in privé opgeslagen bronnen. Ook herhaald ontbreken
 in latere bronnen bewijst geen merge, sluiting of vrij eigenaarschap.</aside>
-<p>""" + times + "</p>" + "".join(cards) + """
+<p>""" + times + """</p><p><strong>Pagina """ +
+str(paging["page"]) + "/" + str(paging["total_pages"]) + """</strong> · """ +
+str(paging["shown_source_pr_candidates"]) + " getoond van " +
+str(paging["matched_source_pr_candidates"]) + " filtersmatches; " +
+str(paging["source_pr_candidates_total"]) + """ PRs in de bron.
+Niet-getoond is niet opgelost.</p>""" + "".join(cards) + """
 <footer>Controleer de actuele GitHub HEAD, CI, reviews, Notion-eigenaar,
 protected-main en de echte merge-commit voordat een release mag plaatsvinden.
 Geen API-calls, geen automatische claims of dispatch.</footer>
@@ -337,13 +389,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, action="append", required=True,
                         help="Chronologically ordered private portfolio-zip, repeat 2-12 times")
+    parser.add_argument("--priority", choices=PRIORITIES,
+                        help="Filter saved PRs by priority after full source admission")
+    parser.add_argument("--change", choices=TAGS,
+                        help="Only show selected observed historical change type")
+    parser.add_argument("--page", type=int, default=1,
+                        help="Display page, 1..100, default 1")
+    parser.add_argument("--page-size", type=int, default=40,
+                        help="Human display PRs per page, 1..100, default 40")
     parser.add_argument("--format", choices=("html", "markdown", "csv", "json"),
                         default="html")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         report = build_timeline(args.source)
-        data = render(report, args.format)
+        selected = select_page(report, priority=args.priority, tag=args.change,
+                               page=args.page, page_size=args.page_size)
+        data = render(selected, args.format)
         if not hasattr(os, "O_NOFOLLOW"):
             raise ValueError("Required safe output flags unavailable")
         fd = os.open(args.output, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
@@ -356,10 +418,13 @@ def main(argv=None):
         except BaseException:
             args.output.unlink(missing_ok=True)
             raise
-        print("Private read-only saved PR timeline written: " +
-              str(report["distinct_pr_candidates"]) + " sampled PRs over " +
-              str(len(report["source_snapshots"])) +
-              " source snapshots. No current merge/live status inferred.")
+        print("Private read-only PR timeline written: " +
+              str(selected["display"]["shown_source_pr_candidates"]) +
+              " shown, " +
+              str(selected["display"]["matched_source_pr_candidates"]) +
+              " matched out of " + str(report["distinct_pr_candidates"]) +
+              " source PRs across " + str(len(report["source_snapshots"])) +
+              " snapshots. No current merge/live status inferred.")
         return 0
     except (OSError, ValueError, TypeError, KeyError, UnicodeError,
             BadZipFile, OverflowError) as exc:
