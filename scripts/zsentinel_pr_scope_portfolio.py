@@ -568,6 +568,12 @@ BLOCKER_DESCRIPTIONS = {
 }
 
 
+def safe_markdown_label(value):
+    """Escape provider-supplied Check Run/context text inside Markdown links."""
+    return (value.replace("\\", "\\\\")
+            .replace("[", "\\[").replace("]", "\\]"))
+
+
 def current_gate_lines(board, markdown=False):
     observation = board.get("current_live_pr_gate_observation")
     if observation is None:
@@ -645,7 +651,7 @@ def current_gate_lines(board, markdown=False):
                      "; eerdere checkpogingen: " +
                      str(gate["check_runs_superseded_attempts_observed"]))
         for check in gate["observed_actionable_check_runs"]:
-            link = ("[" + check["name"] + "](" + check["url"] + ")"
+            link = ("[" + safe_markdown_label(check["name"]) + "](" + check["url"] + ")"
                     if markdown else check["name"] + " · " + check["url"])
             lines.append("  CHECK " + link + " · " + check["state"] +
                          " · " + str(check["conclusion"] or "geen conclusie"))
@@ -655,7 +661,7 @@ def current_gate_lines(board, markdown=False):
         lines.append("  Eerdere legacy-statuspogingen genegeerd: " +
                      str(gate["legacy_status_superseded_attempts_observed"]))
         for status in gate["observed_actionable_legacy_contexts"]:
-            link = ("[" + status["context"] + "](" + status["url"] + ")"
+            link = ("[" + safe_markdown_label(status["context"]) + "](" + status["url"] + ")"
                     if markdown else status["context"] + " · " + status["url"])
             lines.append("  LEGACY " + link + " · " + status["state"])
         if gate["observed_actionable_legacy_contexts_hidden"]:
