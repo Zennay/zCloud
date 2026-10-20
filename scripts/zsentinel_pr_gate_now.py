@@ -64,6 +64,35 @@ def _one(repo, number, token):
             statuses["pending_observed"] += 1
         else:
             statuses["other_observed"] += 1
+    # Check Runs and legacy commit statuses are distinct GitHub evidence
+    # surfaces. A successful Check Run is not proof that a required legacy
+    # commit-status context succeeded. Keep both visible and non-authorizing.
+    legacy = github_json(repo, "/commits/" + head + "/status?per_page=100", token)
+    if (type(legacy) is not dict or legacy.get("sha") != head
+            or type(legacy.get("statuses")) is not list
+            or len(legacy["statuses"]) > 100):
+        raise ValueError("legacy commit statuses missing or head changed")
+    latest_context = {}
+    seen_status_ids = set()
+    for row in legacy["statuses"]:
+        if (type(row) is not dict or type(row.get("id")) is not int
+                or row["id"] in seen_status_ids
+                or type(row.get("context")) is not str
+                or not 1 <= len(row["context"]) <= 200
+                or row.get("state") not in ("success", "pending", "failure", "error")):
+            raise ValueError("invalid legacy status receipt")
+        seen_status_ids.add(row["id"])
+        # GitHub may retain earlier failed statuses for a now-green context.
+        # Use the highest status ID observed for each exact context rather
+        # than reporting superseded failures as active, but never claim that
+        # the sampled set enumerates all branch-protection requirements.
+        name = row["context"]
+        if name not in latest_context or row["id"] > latest_context[name]["id"]:
+            latest_context[name] = row
+    legacy_states = {"success": 0, "pending": 0, "failure": 0, "error": 0}
+    for row in latest_context.values():
+        legacy_states[row["state"]] += 1
+    legacy_partial = len(legacy["statuses"]) == 100
     reviews = github_json(repo, prefix + "/reviews?per_page=100", token)
     if type(reviews) is not list or len(reviews) > 100:
         raise ValueError("bounded reviews source unavailable")
@@ -113,6 +142,13 @@ def _one(repo, number, token):
         "observed_checks_pending": statuses["pending_observed"],
         "observed_checks_not_successful": statuses["failure_observed"],
         "observed_checks_unknown": statuses["other_observed"],
+        "legacy_status_contexts_observed": len(latest_context),
+        "legacy_status_success_observed": legacy_states["success"],
+        "legacy_status_pending_observed": legacy_states["pending"],
+        "legacy_status_failure_or_error_observed": (
+            legacy_states["failure"] + legacy_states["error"]),
+        "legacy_status_source_may_be_truncated": legacy_partial,
+        "legacy_status_and_checks_required_set_verified": False,
         "observed_independent_exact_head_approvals": approved,
         "observed_exact_head_changes_requested": requested,
         "review_page_may_be_truncated": len(reviews) == 100,
@@ -157,7 +193,7 @@ def observe_many(prs, token=None):
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
         "items": items,
         "observed_prs": len(items),
-        "max_github_gets": len(items) * 4,
+        "max_github_gets": len(items) * 5,
         "current_review_and_check_samples_only": True,
         "required_branch_protection_verified": False,
         "merge_authorized": False, "deployment_authorized": False,
