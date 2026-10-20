@@ -2922,6 +2922,7 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
             completion_criteria=excluded.completion_criteria,source_url=excluded.source_url,
             updated_at=excluded.updated_at
         WHERE portfolio_queue.status='queued' AND portfolio_queue.eligible=1
+          AND portfolio_queue.project_id=excluded.project_id
           AND portfolio_queue.worker_slot IS NULL
           AND portfolio_queue.claimed_at IS NULL
           AND portfolio_queue.claim_expires IS NULL""",
