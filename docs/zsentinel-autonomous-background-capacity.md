@@ -219,10 +219,56 @@ nagevraagd. `--previous T0.json` zonder `--t0/--t1` is de aparte
 nieuwe privé HTML-bestand plaatst. Beide modi zijn afzonderlijk van
 `--snapshot` en van productieactivatie.
 
+## Samenhangend privé operatorpakket (geen installatie)
+
+Een normale toekomstige runtime-installatie van het basis CPU-prioriteitscript
+is **niet automatisch** een installatie van de optionele HTML-/JSON-tools.
+Die laatste importeren `zsentinel_background_priority.py`,
+`zsentinel_runner_report.py` en `zsentinel_runner_snapshot.py` uit
+dezelfde Python-modulemap. Alleen het hoofdscript overzetten veroorzaakt
+`ModuleNotFoundError` in de optionele operatorfuncties.
+
+Een bevoegde operator kan na beoordeling van **dezelfde exacte commit**
+de drie samenhangende modules bundelen, zonder VPS/runner/timer/service
+te starten, te verplaatsen of te updaten:
+
+```bash
+python3 scripts/zsentinel_operator_export.py \
+  --source-dir scripts \
+  --output-dir "$HOME/private-recovery/zsentinel-operator-bron"
+python3 scripts/zsentinel_operator_export.py \
+  --verify-dir "$HOME/private-recovery/zsentinel-operator-bron"
+```
+
+De eerste opdracht maakt uitsluitend een **nieuwe** map met mode `0700`
+en drie Python-modules (ieder `0600`), `LEESMIJ.txt` en
+`MANIFEST.json` met per module SHA-256 en byteomvang. Bij bestaande
+bestemming wordt niet overschreven. De tweede opdracht leest eigenaar-privé
+bronbestanden en verifieert volledigheid en bytevingerafdrukken, zonder
+modules uit te voeren of services aan te raken. De bijbehorende
+bronmap moet bestaan en de benodigde bestanden bevatten; een ontbrekende
+module stopt de export voordat de doelmap wordt aangemaakt. De bundel
+bevat bewust **geen** systemd-unit, runner-script, secrets of autorisatietoken.
+
+De controle bewijst alleen dat de overgebrachte bronbestanden overeenkomen
+met het opgeslagen **pakketmanifest**, **niet** dat de bron al een
+onafhankelijk goedgekeurde GitHub-release is. Het manifest bevat daarom
+`external_source_verified=false`, `systemd_installed=false`,
+`workflow_dispatched=false` en `production_released=false`.
+Controleer daarnaast zelf de exacte GitHub-commit, verplichte CI,
+onafhankelijke review en runtime-eigenaarstoestemming. Deze bundel kopieert
+geen bestanden naar `~/.local/bin`, `~/.config/systemd/user/`,
+of enige productieroute. Bij daadwerkelijk geautoriseerde installatie
+moet de runtime-eigenaar de drie modules in één Python-modulemap beheren,
+zonder bestaande timer of coach te dupliceren.
+
 ## Operator installation and release boundaries
 
 Code files:
 - `scripts/zsentinel_background_priority.py`
+- `scripts/zsentinel_runner_report.py` (optionele privé HTML)
+- `scripts/zsentinel_runner_snapshot.py` (optionele privé JSON/T0-T1)
+- `scripts/zsentinel_operator_export.py` (alleen lokale export en controle)
 - `ops/systemd/user/zcloud-background-priority.service`
 - `ops/systemd/user/zcloud-background-priority.timer`
 
