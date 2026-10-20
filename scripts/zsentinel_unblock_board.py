@@ -715,9 +715,10 @@ def human_handoff_markdown(board):
                 not (kind == "existing_product_pr_gate_inspection_only"
                      and row.get("next_gate") in HUMAN_PR_STEPS)):
             continue
-        project = _brief_text(row.get("project_id"), 40)
-        if not PROJECT.fullmatch(project):
+        raw_project = row.get("project_id")
+        if type(raw_project) is not str or not PROJECT.fullmatch(raw_project):
             raise ValueError("invalid human escalation project")
+        project = _brief_text(raw_project, 40)
         problem = _brief_text(row.get("problem"), 600)
         owner = _brief_text(row.get("owner"), 160)
         action = _brief_text(row.get("action"), 600)
