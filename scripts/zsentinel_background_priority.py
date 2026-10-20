@@ -85,6 +85,12 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
         # silently boosted because we cannot prove its present limits.
         return None, None, "unreadable-current-cgroup", None
     current_quota = actual_quota * 100
+    # Never jump from a throttled 60% coach directly to 175% on
+    # one approval window: recover via 100%/40 weight, then require
+    # another independent five-minute low-pressure window for 175%.
+    if recommended_quota > 100 and current_quota < 99.8:
+        recommended_quota = 100
+        recommended_weight = min(recommended_weight, 40)
     if recommended_quota < current_quota - 0.2:
         return recommended_quota, min(recommended_weight, actual_weight), "immediate-cpu-yield", None
     if recommended_weight < actual_weight:
@@ -92,12 +98,6 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
     if (recommended_quota <= current_quota + 0.2
             and recommended_weight <= actual_weight):
         return recommended_quota, recommended_weight, "no-promotion-needed", None
-    # Never jump from a throttled 60% coach directly to 175% on
-    # one approval window: recover via 100%/40 weight, then require
-    # another independent five-minute low-pressure window for 175%.
-    if recommended_quota > 100 and current_quota < 99.8:
-        recommended_quota = 100
-        recommended_weight = min(recommended_weight, 40)
     candidate = {
         "boot": boot, "target_quota": recommended_quota,
         "target_weight": recommended_weight,
