@@ -236,7 +236,12 @@ onderverdeeld in drie expliciete gevallen:
   oudere v1-bronnen. Dit blijft **onbekend**, niet stilzwijgend dezelfde boot.
 
 De CLI JSON en het privé offline HTML-vergelijkingsrapport tonen dit
-onderscheid. Ook de gededupliceerde service-overgangen binden aan de
+onderscheid. Als T0 of T1 door bronfouten of de inventarislimiet onvolledig
+was, krijgt een alleen in één bron zichtbare service expliciet de aanduiding
+`previous_source_gap` respectievelijk `current_source_gap` in plaats van
+ten onrechte `newly_observed` of `no_longer_observed`. Een verdwenen
+inventarisregel bewijst geen gestopte of herstelde service.
+Ook de gededupliceerde service-overgangen binden aan de
 beschikbare opstartsessie-identiteiten; na reboot wordt niet per ongeluk
 de oude incidentcode als hetzelfde meetmoment behandeld. V1 blijft leesbaar
 en is bewust niet achteraf voorzien van verzonnen bootbewijs.
