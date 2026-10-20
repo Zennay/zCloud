@@ -252,6 +252,56 @@ def _normal_scope(scope):
     return {"capabilities": capabilities, "files": files}
 
 
+def _recovery_declared_scope(metadata):
+    """Fail closed on ambiguous zSentinel WRITE scopes, never synthesized ones.
+
+    A generated `execution_lane.scope` is NOT an owner declaration.
+    Reject the *whole* declaration if a value is malformed: accepting one
+    valid capability alongside an invalid file would falsely prove safety.
+    Other project profiles keep their existing scope representation.
+    """
+    raw = metadata.get("conflict_scope") if isinstance(metadata, dict) else None
+    if not isinstance(raw, dict):
+        return {"capabilities": [], "files": []}
+    parsed = {"capabilities": [], "files": []}
+    for key in ("capabilities", "files"):
+        value = raw.get(key, [])
+        values = [value] if isinstance(value, str) else value
+        if not isinstance(values, (list, tuple)) or len(values) > 64:
+            return {"capabilities": [], "files": []}
+        for original in values:
+            if not isinstance(original, str) or not 1 <= len(original) <= 256:
+                return {"capabilities": [], "files": []}
+            name = original.strip()
+            if not name or name != original or any(c in name for c in ("*", "?", "[", "]", "\\", "\x00")):
+                return {"capabilities": [], "files": []}
+            if key == "files":
+                if name.startswith("/") or name.endswith("/") or "//" in name:
+                    return {"capabilities": [], "files": []}
+                if any(segment in ("", ".", "..") for segment in name.split("/")):
+                    return {"capabilities": [], "files": []}
+                if not re.fullmatch(r"[A-Za-z0-9_./@+-]+", name):
+                    return {"capabilities": [], "files": []}
+            else:
+                name = name.lower()
+                if not re.fullmatch(r"[a-z0-9][a-z0-9._:/-]*", name):
+                    return {"capabilities": [], "files": []}
+            if name not in parsed[key]:
+                parsed[key].append(name)
+    return parsed
+
+
+def _recovery_scope_from_item(item):
+    return _recovery_declared_scope(_metadata(item))
+
+
+def _recovery_scope_from_claim(claim):
+    metadata = claim.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = _metadata(claim)
+    return _recovery_declared_scope(metadata)
+
+
 def _metadata(item):
     value = item.get("metadata")
     if isinstance(value, dict):
@@ -311,7 +361,8 @@ def _profile(project):
 def _lane_scope(project_id, lane_id, item=None):
     capabilities = [f"{project_id}:{lane_id}"]
     capabilities.extend(PROJECT_SCOPE_ALIASES.get((project_id, lane_id), ()))
-    explicit = _scope_from_item(item or {})
+    explicit = (_recovery_scope_from_item(item or {}) if project_id == "zsentinel"
+                else _scope_from_item(item or {}))
     for capability in explicit["capabilities"]:
         if capability not in capabilities:
             capabilities.append(capability)
@@ -484,7 +535,7 @@ def generate_execution_lanes(project, backlog, claims=()):
         item for item in classified
         if profile == "portfolio-recovery"
         and str(item.get("status") or "").lower() in ACTIVE_STATUSES
-        and not any(_scope_from_item(item).values())
+        and not any(_recovery_scope_from_item(item).values())
     ]
     # An active row with an impossible, expired or absent queue lease stays
     # owned by its current worker, but cannot authorize another parallel
@@ -502,7 +553,8 @@ def generate_execution_lanes(project, backlog, claims=()):
     for claim in claims or ():
         if str(claim.get("project_id") or project_id).strip().lower() != project_id:
             continue
-        scope = _scope_from_claim(claim)
+        scope = (_recovery_scope_from_claim(claim) if profile == "portfolio-recovery"
+                 else _scope_from_claim(claim))
         if scope["capabilities"] or scope["files"]:
             active_claims.append({
                 "claim_key": str(claim.get("claim_key") or ""),
@@ -594,7 +646,7 @@ def generate_execution_lanes(project, backlog, claims=()):
 
         candidate_without_scope = (
             profile == "portfolio-recovery"
-            and not any(_scope_from_item(candidate).values())
+            and not any(_recovery_scope_from_item(candidate).values())
         )
         if profile == "portfolio-recovery" and (
             unscoped_queued_writer_reserved
@@ -669,7 +721,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "serialized_unscoped_queue_admitted": (
                 bool(unscoped_queued_writer_reserved)
                 and chosen is not None and chosen.get("status") == "queued"
-                and not any(_scope_from_item(chosen).values())
+                and not any(_recovery_scope_from_item(chosen).values())
             ),
             "blocked_by": blocked_by,
         })
