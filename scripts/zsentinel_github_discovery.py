@@ -129,11 +129,14 @@ def discover(registry, selected, token=None):
         candidates = []
         checked = 0
         incomplete_windows = []
+        attempted_windows = []
+        stop_reason = None
         try:
             # Jobs can remain queued even after other jobs make the *workflow*
             # in_progress. Inspect both workflow windows before old failures;
             # otherwise a stuck self-hosted job can disappear from P0 view.
             for status in RUN_WINDOWS:
+                attempted_windows.append(status)
                 try:
                     request_count += 1
                     run_ids, partial_runs = recent_runs(
@@ -148,11 +151,20 @@ def discover(registry, selected, token=None):
                         candidates.extend(discovered_jobs)
                         if partial_jobs and status not in incomplete_windows:
                             incomplete_windows.append(status)
-                except (OSError, ValueError):
-                    # Keep independently observed exact job candidates, but
-                    # explicitly mark any missed workflow window INCOMPLETE.
-                    # No source failure is promoted to an all-clear.
-                    incomplete_windows.append(status)
+                except (OSError, ValueError) as exc:
+                    # Keep independently observed exact job candidates. Repeating
+                    # the same forbidden or rate-limited repository request
+                    # across every source window provides no new operator value.
+                    # Other canonical projects still receive their own bounded
+                    # attempt; a 403 may be repository-specific.
+                    if status not in incomplete_windows:
+                        incomplete_windows.append(status)
+                    if str(exc) in (
+                            "github_permission_or_rate_limit",
+                            "repository_inaccessible",
+                            "github_network_unavailable"):
+                        stop_reason = str(exc)
+                        break
                 # A queued-workflow candidate must not suppress discovery
                 # of a stronger self-hosted queue in a RUNNING workflow.
                 # Once both waiting windows were sampled, failures are a
@@ -166,6 +178,9 @@ def discover(registry, selected, token=None):
                         else "no_actionable_job_in_sampled_windows"),
                     "run_pages_checked": checked,
                     "incomplete_windows": incomplete_windows,
+                    "not_scanned_windows": [
+                        win for win in RUN_WINDOWS if win not in attempted_windows],
+                    "repository_stop_reason": stop_reason,
                     "authoritative_all_clear": False
                 })
                 continue
@@ -194,12 +209,19 @@ def discover(registry, selected, token=None):
                 "run_id": run_id, "job_id": job_id,
                 "run_pages_checked": checked, "workflow_status_window": window,
                 "incomplete_windows": incomplete_windows,
+                "not_scanned_windows": [
+                    win for win in RUN_WINDOWS if win not in attempted_windows],
+                "repository_stop_reason": stop_reason,
                 "authoritative_all_clear": False
             })
         except (OSError, ValueError):
             coverage.append({
                 "project_id": pid, "status": "degraded_unavailable",
-                "run_pages_checked": checked, "authoritative_all_clear": False
+                "run_pages_checked": checked,
+                "not_scanned_windows": [
+                    win for win in RUN_WINDOWS if win not in attempted_windows],
+                "repository_stop_reason": stop_reason,
+                "authoritative_all_clear": False
             })
     return receipts, {
         "source": "github_canonical_readonly_bounded_discovery",
@@ -211,5 +233,9 @@ def discover(registry, selected, token=None):
         "max_jobs_per_run": MAX_JOBS,
         "coverage": coverage,
         "full_repo_ci_inventory": False,
+        "provider_admission_denials": sum(
+            bool(item.get("repository_stop_reason"))
+            for item in coverage),
+        "per_repository_denial_stops_further_requests": True,
         "jobs_restarted": False, "runner_mutations": False,
     }
