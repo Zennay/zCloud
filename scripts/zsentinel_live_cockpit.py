@@ -223,6 +223,10 @@ def main():
                         help="Notion queue data source UUID, or NOTION_QUEUE_DATA_SOURCE_ID environment variable")
     parser.add_argument("--notion-claims-export", type=Path,
                         help="private saved Notion connector query; no current-claim proof")
+    parser.add_argument("--disk-hotspots-root", type=Path,
+                        help="explicit workspace for bounded, read-only disk hotspot scan")
+    parser.add_argument("--disk-hotspots-output", type=Path,
+                        help="create-only PRIVATE .html containing filenames; never stdout")
     parser.add_argument("--observe-vps-capacity", action="store_true",
                         help="read current Linux host CPU/load/memory and database-mount disk; use ONLY on the intended VPS")
     parser.add_argument("--worker-events-database", type=Path,
@@ -241,6 +245,16 @@ def main():
     args = parser.parse_args()
     ledger_lock = None
     try:
+        if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
+            raise ValueError("disk hotspot scan requires both root and private output")
+        if args.disk_hotspots_root is not None and args.format not in ("html", "json", "text"):
+            raise ValueError("disk hotspot scan supports html, json, text only")
+        if args.disk_hotspots_output is not None:
+            if args.disk_hotspots_output.suffix != ".html":
+                raise ValueError("disk hotspot private output must be .html")
+            if any(p is not None and args.disk_hotspots_output.resolve() == p.resolve()
+                   for p in (args.state, args.desk_output)):
+                raise ValueError("disk hotspot output overlaps ledger or desk file")
         if args.pin_issue and args.skip_github_issues:
             raise ValueError("--pin-issue cannot be combined with --skip-github-issues")
         if args.read_notion_claims and args.notion_claims_export is not None:
@@ -292,6 +306,12 @@ def main():
             decision["worker_progress_observation"] = bundle["worker_progress_observation"]
         if "notion_claims_observation" in bundle:
             decision["notion_claims_observation"] = bundle["notion_claims_observation"]
+        disk_private_html = None
+        if args.disk_hotspots_root is not None:
+            from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
+            disk_report = disk_observe(args.disk_hotspots_root)
+            disk_private_html = disk_html(disk_report)
+            decision["disk_pressure_private_report"] = public_summary(disk_report)
         # Render complete operator output before mutating the optional local
         # ledger. Malformed source or a failed view must not consume incidents.
         decision["private_ledger_written"] = bool(args.state)
@@ -300,6 +320,12 @@ def main():
             from zsentinel_pinned_issue import pinned_receipts_html
             from zsentinel_worker_progress_observer import worker_progress_html
             rendered = html_view(decision)
+            if "disk_pressure_private_report" in decision:
+                from zsentinel_disk_hotspots import public_summary_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible private disk report cockpit HTML")
+                rendered = rendered.replace("<main>", "<main>" +
+                    public_summary_html(decision["disk_pressure_private_report"]), 1)
             if "worker_progress_observation" in decision:
                 if rendered.count("<main>") != 1:
                     raise ValueError("incompatible read-only worker evidence HTML")
@@ -333,6 +359,12 @@ def main():
             rendered = review_html(decision)
         else:
             lines = [operator_text(decision)]
+            if "disk_pressure_private_report" in decision:
+                disk = decision["disk_pressure_private_report"]
+                lines.append("SCHIJFRUIMTE: afzonderlijk privé HTML-rapport aangemaakt; "
+                             "begrensd gezien minstens %s GiB en %s grote bestanden; "
+                             "geen automatische verwijdering of herstelrecht." % (
+                             disk["observed_allocated_gib_min"], disk["large_file_candidates_min"]))
             if "worker_progress_observation" in decision:
                 from zsentinel_worker_progress_observer import operator_text as worker_text
                 lines.insert(0, worker_text(decision["worker_progress_observation"]))
@@ -359,6 +391,9 @@ def main():
                 lines.append("NOTION: not requested.")
             lines.append("WORKER FILE-LEVEL CLAIMS: UNKNOWN. No routing or recovery authorized.")
             rendered = "\n".join(lines)
+        if disk_private_html is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.disk_hotspots_output, disk_private_html, "html")
         if args.desk_output is not None:
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(decision)
