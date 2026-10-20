@@ -623,6 +623,7 @@ function previewCarry(data){
     data.authorizes_deploy!==false||!Array.isArray(data.entries)||
     data.entries.length>60)throw Error('Earlier private handoff does not match exact earlier source');
  const seen=new Set(),proposed=[],missing=[];
+ const sourceDiff=new Map(changesSinceBaseline().map(c=>[c.issue,c]));
  for(const record of data.entries){
   if(!record||Array.isArray(record)||typeof record.issue!=='string'||
      seen.has(record.issue)||!baseline.items.has(record.issue)||
@@ -644,25 +645,30 @@ function previewCarry(data){
     missing.push(record.issue);continue;
   }
   proposed.push({issue:record.issue,
+   sourceDelta:sourceDiff.get(record.issue),
    value:{decision:record.decision,note:record.note,
     owner:data.schema_version===2?record.owner:'',
     due:data.schema_version===2?record.due:'',
     carried_from:baseline.sha}});
  }
  const eligible=proposed.filter(x=>emptyManual(handoffs.get(x.issue)));
+ const changed=eligible.filter(x=>x.sourceDelta?.kind==='changed-evidence').length;
  carryPreview={sha:baseline.sha,eligible};
  const list=document.getElementById('carryRows');list.replaceChildren();
  const preserved=proposed.length-eligible.length;
  document.getElementById('carrySummary').textContent=
   eligible.length+' manual annotations ready for explicit import · '+
   preserved+' already edited on current board (will remain unchanged) · '+
-  missing.length+' no longer matched by current project/issue identity. No live claim is assumed.';
+  missing.length+' no longer matched by current project/issue identity · '+
+  changed+' have changed source evidence and require special attention. No live claim is assumed.';
  for(const row of eligible){
   const c=entries.get(row.issue),li=elem('li');
   li.append(elem('strong',row.issue+' · '),elem('span',c.title),
    elem('small',' · '+row.value.decision+' · Human contact: '+
     (row.value.owner||'unknown')+' · UTC review date: '+(row.value.due||'unknown')+
-    ' · current owner/CI must be reverified'));
+    ' · '+(row.sourceDelta?.changedFields?.length?
+       'SOURCE CHANGED: '+row.sourceDelta.changedFields.join(', ')+'. ':'')+
+    'Current owner/CI must be reverified'));
   list.append(li);
  }
  if(!eligible.length)list.append(elem('li','No safe, unedited matching human follow-ups to carry.'));
@@ -766,7 +772,10 @@ function calendarSource(stamp){
     card.issue.replace(/[^A-Za-z0-9]/g,'-')+'@local.invalid';
   const desc='Human review only, not an assigned task or CI/release approval. '+
     'Original source observed '+board.observed_at_utc+'. Issue: '+card.url+
-    '. Manual contact label: '+info.owner+'. Check original live ownership and gates.';
+    '. Manual contact label: '+info.owner+
+    (info.carried_from?'. Imported from earlier source SHA256 '+info.carried_from+
+     ' (requires renewed owner review)':'')+
+    '. Check original live ownership and gates.';
   lines.push('BEGIN:VEVENT','UID:'+uid,
    'DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+info.due.replace(/-/g,''),
    'SUMMARY:'+calendarEscape('Review '+card.issue+' · '+card.title),
