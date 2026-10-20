@@ -651,7 +651,25 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
             "geen ownership-, fix- of mergebewijs. Bij UNKNOWN mag de eerdere "
             "P0/P1-prioriteit niet als actueel bewezen gelden.</p>"
         )
-        if target_coverage:
+        if target_coverage and target_coverage.get("source") == "EXPLICIT_PR_CANONICAL_GET":
+            numbers = target_coverage["requested_pr_numbers"]
+            target_section += (
+                "<p><strong>Rechtstreeks opgevraagde bestaande PRs:</strong> " +
+                esc(", ".join("#" + str(number) for number in numbers)) +
+                ". Actuele PR-HEAD/checks/review waar bron beschikbaar is; "
+                "geen GitHub Search, geen volledige backlogdekking of eigenaarschapsbewijs.</p>"
+                "<p>Gecontroleerde kandidaat-PRs: " +
+                esc(target_coverage["search_examined"]) +
+                "; bruikbare PR-rapporten: " +
+                esc(target_coverage["linked_prs_observed"]) + ".</p>"
+            )
+            if not target_coverage["search_complete"]:
+                target_section += (
+                    "<p><strong>Alle andere bestaande PRs blijven onbekend.</strong> "
+                    "Een ontbrekende expliciete issueverwijzing is geen afwezige "
+                    "PR en geen goedgekeurde fix.</p>"
+                )
+        elif target_coverage:
             target_section += (
                 "<p>Search total: " + esc(target_coverage["search_total"]) +
                 " · Pagina: " + esc(target_coverage["candidate_page"]) +
@@ -848,7 +866,14 @@ def main():
                 print(f"TARGET_ISSUE {targeted['priority']} #{targeted['number']} "
                       f"{targeted['url']} state={targeted.get('current_state', 'UNKNOWN')} "
                       "(issue priority may be stale if state is UNKNOWN; not fix proof)")
-                print(f"SEARCH_WINDOW page={target_coverage['candidate_page']} "
+                if target_coverage.get("source") == "EXPLICIT_PR_CANONICAL_GET":
+                    print("DIRECT_PR_SELECTION " +
+                          ",".join(str(n) for n in target_coverage["requested_pr_numbers"]) +
+                          f" inspected={target_coverage['search_examined']} " +
+                          f"reports={target_coverage['linked_prs_observed']} " +
+                          "backlog_coverage=UNKNOWN_NOT_SEARCHED")
+                else:
+                    print(f"SEARCH_WINDOW page={target_coverage['candidate_page']} "
                       f"observed={target_coverage['search_examined']} "
                       f"total={target_coverage['search_total']} "
                       f"next_page={target_coverage['next_page']} "
