@@ -2285,3 +2285,21 @@ doorgegeven worden, maar bewijst **nooit** huidige PR-openstatus,
 actief eigenaarschap, exacte-head CI, onafhankelijke reviews, protected-main
 mergerechten of live productie. De originele source- en releasegates
 blijven verplicht; er vinden geen externe systeemmutaties plaats.
+
+
+### Archiefcontrole behoudt historische issue-/PR-betekenis
+
+Bij het heropenen controleert de reader nu niet alleen SHA256 en canonieke
+links, maar ook de **werkelijke onderlinge bronrelaties**: de lijst van
+bronmomenten waarop elk issue bij iedere PR werd gezien, de laatste
+waarneming van die issuekoppeling, PRs die buiten de eindsteekproef
+vielen, en de afzonderlijke telling van links die verdwenen terwijl hun
+PR nog wél in de eindsteekproef voorkwam. Ook de aantallen van meerdere
+PR-kandidaten en de gemelde ontbrekende laatste batches moeten overeenkomen
+met dezelfde bewaarde momentopnamen. Tegenstrijdige invoer wordt afgewezen
+vóórdat de operator die als herstelbewijs kan presenteren of uitpakken.
+
+Dit blijft een controle van onderling samenhangende historische
+brondata, **geen GitHub-provider-authenticatie en geen QA-suite**.
+Een geldig archief mag nog steeds geen vrijgave van eigenaarschap, CI,
+review, merge of deploy suggereren.
