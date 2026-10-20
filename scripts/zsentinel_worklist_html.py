@@ -7,6 +7,8 @@ work scheduling, automatic approval or release permissions.
 from __future__ import annotations
 
 from html import escape
+import hashlib
+import json
 import re
 
 from zsentinel_issue_action_board import MAX_CARDS, ORDER, PR, ISSUE
@@ -157,6 +159,55 @@ document.getElementById('export').addEventListener('click',function(){
  a.href=url;a.download='zsentinel-prive-opvolging.md';a.click();
  window.setTimeout(function(){URL.revokeObjectURL(url);},3000);
 });
+document.getElementById('session-save').addEventListener('click',function(){
+ const rows=tickets.map(function(t){return {
+  issue:t.dataset.issue,
+  status:t.querySelector('.local-state').value,
+  note:t.querySelector('textarea').value.slice(0,700)
+ };});
+ const data=JSON.stringify({
+  schema:'zsentinel-local-handoff-v1',
+  source_token:document.body.dataset.sourceToken,
+  saved_at:new Date().toISOString(),
+  entries:rows,
+  merge_authorized:false,claim_authorized:false,remote_writes_performed:false
+ },null,2);
+ const blob=new Blob([data+'\n'],{type:'application/json;charset=utf-8'});
+ const url=URL.createObjectURL(blob);const a=document.createElement('a');
+ a.href=url;a.download='zsentinel-prive-sessie.json';a.click();
+ window.setTimeout(function(){URL.revokeObjectURL(url);},3000);
+});
+document.getElementById('session-import').addEventListener('change',async function(event){
+ const input=event.currentTarget, file=input.files&&input.files[0];
+ if(!file)return;
+ try{
+  if(file.size>65536||file.size<10)throw new Error('Privébestand is ongeldig of te groot');
+  const restored=JSON.parse(await file.text());
+  if(!restored||restored.schema!=='zsentinel-local-handoff-v1'||
+     restored.source_token!==document.body.dataset.sourceToken||
+     restored.merge_authorized!==false||restored.claim_authorized!==false||
+     restored.remote_writes_performed!==false||
+     !Array.isArray(restored.entries)||restored.entries.length!==tickets.length)
+    throw new Error('Deze sessie hoort niet bij dezelfde bronopname');
+  const allowed=new Set(Object.keys(labels));
+  for(let i=0;i<tickets.length;i++){
+    const item=restored.entries[i];
+    if(!item||item.issue!==tickets[i].dataset.issue||!allowed.has(item.status)||
+       typeof item.note!=='string'||item.note.length>700)
+      throw new Error('Sessie bevat geen betrouwbare handmatige opvolging');
+  }
+  for(let i=0;i<tickets.length;i++){
+    tickets[i].querySelector('.local-state').value=restored.entries[i].status;
+    tickets[i].querySelector('textarea').value=restored.entries[i].note;
+  }
+  refresh();
+  document.getElementById('session-status').textContent=
+   'Privésessie hersteld, alleen lokaal in dit browservenster.';
+ }catch(error){
+  document.getElementById('session-status').textContent=
+   'Import geweigerd: '+(error instanceof Error?error.message:'onbekende bron');
+ }finally{input.value='';}
+});
 window.addEventListener('beforeunload',function(e){
  if(tickets.some(t=>t.querySelector('textarea').value.trim()||
    t.querySelector('.local-state').value!=='open')){
@@ -165,6 +216,16 @@ window.addEventListener('beforeunload',function(e){
 });
 refresh();
 })();</script>"""
+    # Exact saved source identity; local notes cannot silently attach
+    # to different observations or reordered PR/issue sets.
+    source_identity = {
+        "issue_time": str(ts_issue), "pr_time": str(ts_pr),
+        "visible_rows": [(row["issue_url"], row["candidate_existing_pr_url"])
+                         for row in cards[:max_rows]],
+    }
+    source_token = hashlib.sha256(json.dumps(
+        source_identity, ensure_ascii=True, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
     project_names = sorted({r["project"] for r in cards[:max_rows]})
     p_opts = "".join("<option value='" + escape(name, quote=True) + "'>" +
                      escape(name) + "</option>" for name in project_names)
@@ -191,10 +252,11 @@ refresh();
         "gap:16px}.controls textarea{width:100%;box-sizing:border-box;resize:vertical}"
         ".source,.warning{color:#ebce9b}.links a{margin-right:10px}"
         "@media(max-width:640px){.controls{grid-template-columns:1fr}}"
-        "</style></head><body><h1>zSentinel · merge-eerst werkbak</h1>"
+        "</style></head><body data-source-token='" + source_token +
+        "'><h1>zSentinel · merge-eerst werkbak</h1>"
         "<p>Geobserveerde P0/P1-productissues, bestaande PRs en menselijke vervolgstappen. "
         "Geen automatische claim, issue-afhandeling, CI, review, merge, runnerherstel of deploy. "
-        "Notities en statussen blijven in dit tabblad tot export; er wordt niets opgeslagen.</p>"
+        "Notities en statussen blijven lokaal; bewaar een privé-sessiebestand om later precies dezelfde bron te hervatten.</p>"
         "<p>Bron issue UTC <span id='issue-time'>" + issue_stamp +
         "</span> · PR UTC <span id='pr-time'>" + pr_stamp + "</span></p>"
         "<div class='filters'><label>Zoeken<input id='q' type='search'></label>"
@@ -209,7 +271,11 @@ refresh();
         "<option value='coordination'>Afstemming nodig</option>"
         "<option value='followup'>Opvolging genoteerd</option></select></label>"
         "<button id='reset' type='button'>Wis filters</button>"
-        "<button id='export' type='button'>Download privéoverdracht (Markdown)</button></div>"
-        "<p id='visible' aria-live='polite'></p>" + hidden +
+        "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
+        "<button id='session-save' type='button'>Bewaar lokale sessie (JSON)</button>"
+        "<label>Heropen lokale sessie<input id='session-import' type='file' "
+        "accept='.json,application/json'></label></div>"
+        "<p id='visible' aria-live='polite'></p>"
+        "<p id='session-status' aria-live='polite'></p>" + hidden +
         "<main>" + "".join(output) + "</main>" + script + "</body></html>"
     )
