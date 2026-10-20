@@ -198,8 +198,9 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
     items = []
     calls = 0
     rate_limited = False
+    denied_repositories = set()
     observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    annotations_denied = False
+    annotation_denied_repositories = set()
     for row in selections:
         if not isinstance(row, dict) or set(row) != {"project_id", "pr_number"}:
             raise ValueError("invalid PR selection row")
@@ -217,7 +218,7 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
             "action_authorized": False, "merge_authorized": False,
             "deploy_authorized": False, "owner_verified": False,
         }
-        if rate_limited:
+        if rate_limited or repo in denied_repositories:
             item["coverage"] = "not_queried_after_auth_or_rate_limit"
             item["next_step"] = "verify_pr_source_with_owner"
             items.append(item)
@@ -320,7 +321,7 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                     and type(c.get("id")) is int
                     and 1 <= c["id"] <= 2**53 - 1
                 )), None)
-                if candidate is not None and not annotations_denied:
+                if candidate is not None and repo not in annotation_denied_repositories:
                     calls += 1
                     try:
                         notes = bounded_get(
@@ -347,8 +348,10 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                         item["ci"]["no_start_annotation_coverage"] = "unavailable"
                         if (isinstance(error, GithubAdmissionError)
                                 and error.category == "rate_limit_confirmed"):
-                            annotations_denied = True
-                elif annotations_denied:
+                            annotation_denied_repositories.add(repo)
+                        elif isinstance(error, GithubAdmissionError):
+                            annotation_denied_repositories.add(repo)
+                elif repo in annotation_denied_repositories:
                     item["ci"]["no_start_annotation_coverage"] = "not_queried_after_denial"
                 item["ci"]["observed_hosted_billing_start_denial"] = (
                     hosted_billing_start_denial)
@@ -461,9 +464,10 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                 next_step = "confirm_branch_protection_and_release_with_owner"
             item["next_step"] = next_step
         except (OSError, ValueError, TypeError, KeyError) as exc:
-            if (isinstance(exc, GithubAdmissionError)
-                    and exc.category == "rate_limit_confirmed"):
-                rate_limited = True
+            if isinstance(exc, GithubAdmissionError):
+                denied_repositories.add(repo)
+                if exc.category == "rate_limit_confirmed":
+                    rate_limited = True
             # Partially observed checks or a moved source HEAD cannot be
             # displayed as current readiness. Keep only the safe PR link.
             for field in ("ci", "legacy_status_contexts", "reviews", "head_sha", "base_sha", "mentioned_issues_unverified"):
