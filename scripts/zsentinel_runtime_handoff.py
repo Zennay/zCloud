@@ -90,7 +90,7 @@ def _attach_verified_job(card, raw, registry, review_by):
     return card
 
 
-def build_handoff(decision, registry=None):
+def build_handoff(decision, registry=None, queue_trend=None):
     """Prioritize exact incidents, owner/lease conflicts, and open product work.
 
     The handoff does not infer absence of work from a missing/partial source.
@@ -193,6 +193,45 @@ def build_handoff(decision, registry=None):
             card["existing_pr_urls"] = sorted(set(related))
             card["review_existing_pr_first"] = bool(related)
             cards.append(card)
+    # The portfolio already compared exact-private, read-only queue snapshots.
+    # Its owner handoff MUST use that already-observed comparison, never run
+    # a second provider/SQLite read, and never invent a lease-release right.
+    conflict_total = 0
+    conflict_truncated = False
+    if queue_trend is not None:
+        from zsentinel_queue_churn import (
+            public_summary as claim_summary, private_conflict_owner_rows)
+        bound_summary = claim_summary(queue_trend)
+        if decision.get("queue_claim_churn") != bound_summary:
+            raise ValueError("owner queue trend not attached to same decision")
+        conflict_total = bound_summary[
+            "current_inconsistent_lease_windows_owner_review"]
+        conflicts = private_conflict_owner_rows(queue_trend)
+        conflict_truncated = queue_trend["lease_conflict_samples_truncated"]
+        if conflict_total > len(conflicts) and not conflict_truncated:
+            raise ValueError("incomplete queue conflict sample falsely marked complete")
+        for item in conflicts:
+            pri = item["priority"]
+            # P3 is not part of the actionable P0/P1/P2 owner handoff.
+            owner_priority = pri if pri in ("P0", "P1") else "P2"
+            card = _card(
+                owner_priority, item["project_id"], "queue_lease_window_review",
+                "Onbetrouwbare claimstart/vervaltijd op " +
+                item["current_status"] + " queuewerk (priority " + pri +
+                ", " + str(item["current_claim_attempts"]) +
+                " claimpogingen). Bevoegde eigenaar controleert originele " +
+                "claim en lease; geen vrijgave of overname.",
+                source="readonly_exact_private_queue_snapshot_comparison",
+                ref="https://github.com/Zennay/zCloud/issues/677")
+            card["source_priority"] = pri
+            card["queue_claim_failure_proven"] = False
+            card["owner_lease_released_verified"] = False
+            cards.append(card)
+    elif decision.get("queue_claim_churn") is not None:
+        # A previous file missing/unreadable is not a zero-conflict result.
+        if decision["queue_claim_churn"].get("coverage") != "unavailable":
+            raise ValueError("owner queue handoff lacks observed trend")
+        conflict_truncated = True
     # Historical backlog is a DIFFERENT source class. Never splice it into
     # fresh incidents, issue intake, live alerts or worker assignment.
     backlog = decision.get("historical_owner_recheck_candidates", [])
@@ -270,7 +309,8 @@ def build_handoff(decision, registry=None):
             historical.append(card)
     # Priority before kind: make owner/incident work visible before new intake.
     order = {"P0": 0, "P1": 1, "P2": 2}
-    kind_order = {"fresh_incident": 0, "worker_owner_review": 1, "open_product_issue": 2}
+    kind_order = {"fresh_incident": 0, "worker_owner_review": 1,
+                  "queue_lease_window_review": 2, "open_product_issue": 3}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
                               c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
@@ -285,6 +325,9 @@ def build_handoff(decision, registry=None):
                      "queue": queue_coverage, "workers": worker_coverage,
                      "issues": issue_coverage, "notion": _short(sources.get("notion"), 80)},
         "priority_items": cards[:MAX_ITEMS],
+        "queue_claim_conflict_total_observed": conflict_total,
+        "queue_claim_conflicts_sample_truncated": conflict_truncated,
+        "queue_claim_comparison_supplied": queue_trend is not None,
         "historical_owner_rechecks": historical,
         "historical_source_incomplete": (
             old.get("source_partial") is True if type(old) is dict else True),
