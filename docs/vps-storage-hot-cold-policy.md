@@ -93,3 +93,18 @@ python3 scripts/vps_storage_audit.py --limit 20 --hotspot-inventory \
 The comparison refuses symlinks, oversized/malformed snapshots, impossible clocks, invalid size fields, duplicated categories and non-UTC timestamps. Missing hot-path categories cannot be assumed to have zero bytes. **Neither report writes an archive, prunes a runner or authorizes training restart.** Mandatory encrypted remote integrity and explicit deletion review continue to apply.
 
 The 20 October next-source inspection at [7c0a64c](https://github.com/Zennay/zCloud/commit/7c0a64c756f251dbed2a13905f9471e8f8ddbb68) still found the 10 GiB reserve unmet, with approximately **864 MB** of shortfall at that later instant. This is volatile operational observation, not persistent clearance.
+
+
+## Standalone responsive storage owner report
+
+Existing PR source now also renders `--format html` with no service installation, JS or external CDN:
+
+```bash
+python3 scripts/vps_storage_audit.py --hotspot-inventory --format html > /private/path/storage-review.html
+```
+
+The HTML report has three directly usable views: actual free bytes versus the existing 10 GiB training reserve, bounded large-hot-path sizes with explicit owners and **not-reclaimable-by-default** classification, and the current external archive mount's read-only/unverified status. Passing `--previous-report /private/path/first.json` adds an actual size-delta comparison; absent prior data cannot be turned into an invented zero. Paths, active model pointers, archive credentials, source APK filenames and browser/queue data are omitted from the public-facing presentation. Store the generated HTML only in a private operator location.
+
+Connected zSSH direct inspection of the exact immutable source [`6d80e65`](https://github.com/Zennay/zCloud/commit/6d80e65bb19e9219fa2179270b0266f67ac6ecdd) confirmed the current five hot categories render, HTML is self-contained/mobile viewport aware, and the reserve still remains below threshold. The measured local deficit was **962,039,808 bytes** at that later time, demonstrating why scheduled storage comparisons matter. This inspection never wrote a report, copied data, cleared caches, stopped workers or installed a production handler.
+
+Source belongs to **open PR #1569**. Pending exact-HEAD GitHub CI, independent review, branch protection and owned storage/release approvals remain intact. A source commit or preview is not a merged main feature or a live deployment.
