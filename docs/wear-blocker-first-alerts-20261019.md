@@ -43,3 +43,11 @@ De **actuele** Watch-API bevat op elk `active_blockers`-item een expliciete bool
 De notificatieworker eist nu tegelijk een **niet-stale actuele `active_blockers`-bron**, een geldige incident-ID, een urgente severity en `humanActionRequired=true`. De compacte Watch-kaart toont duidelijk het verschil tussen **Menselijke actie nodig** en **Actuele status**. Historische feeds, ontbrekende bronvlag of algemene hoge severity worden niet tot menselijke interventie gepromoveerd. Dit is uitsluitend weergave en best-effort notificatieroutering, geen herstel- of releaseautorisatie.
 
 Bronupdate in de bestaande open PR, **nog niet op main of op Watch 7 geïnstalleerd**. Compatibele server en app moeten samen na bestaande verplichte CI/review en release-eigenaarsacceptatie worden uitgerold; anders staan nieuwe notificaties bewust uit. Geen QA/regressiesuite, handmatige CI-rerun, actuele SQLite-/Notionclaimwijziging of service-restart.
+
+## 20 oktober · verdwenen notificatie + severity error-bronwaarheid
+
+Bij het openen van een melding doet de Watch-app een nieuwe bronopvraag. Als de exacte incident-ID in de actuele `active_blockers`-bron ontbreekt, opent de app geen oude details en toont hij **MELDING NIET MEER ACTIEF** met een afsluitbare toelichting. Bij offline of stale bron blijft de bestaande offline/stale waarschuwing van kracht: afwezigheid kan dan niet als opgelost worden bewezen.
+
+De actuele server selecteert `critical`, `high` **en `error` als ernstige incidentniveaus. De notificatie- en UI-clients accepteren nu dezelfde drie niveaus; `error` wordt als kritisch weergegeven en alleen als `human_action_required=true` daadwerkelijk notificatiewaardig. Oude feed/algemene status blijft zonder human attestation stil. Dit voorkomt dat een echte brongebonden `recovery_failed` of `deploy_failed` met severity `error` wel door de server maar niet door de Watch zou worden getoond.
+
+Geen nieuwe test-/QA-suite of handmatige CI-rerun. Deze bronverbeteringen zijn nog niet naar `main` gemerged of op een fysiek toestel geïnstalleerd; bestaande Android-CI, onafhankelijke review, signing en device-acceptatie blijven nodig.
