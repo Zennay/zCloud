@@ -381,7 +381,11 @@ def operator_text(report):
         "Te wijzigen paden: " + ", ".join(report["requested_paths"]),
         "Bron-PR: " + (report["selected_source_pr"]["url"]
                         if report["selected_source_pr"] else "handmatige doelpaden"),
-        "Open PR's gezien: " + str(report["observed_open_prs"]) +
+        "Open PR-zoekpagina: " + str(report["open_pr_page_number"]) +
+        " · posities " + str(report["open_pr_window_start"]) + "–" +
+        str(report["open_pr_window_end"]) +
+        (" · vorige pagina's NIET gelezen" if report["earlier_pages_not_inspected"] else ""),
+        "Open PR's IN DEZE PAGINA gezien: " + str(report["observed_open_prs"]) +
         "; bestandlijsten bekeken: " + str(report["inspected_prs"]),
         "Bron compleet voor geopende PR's: " +
         ("ja" if report["pr_file_scope_sample_complete"] else "NEE / onzeker"),
@@ -447,7 +451,11 @@ def html_view(report):
             "aside{border-left:3px solid #aaa;padding:1rem;background:#222d3a}</style>"
             "<h1>zSentinel · Live PR-bestandsscope</h1><p>" +
             escape(report["repository"]) + " · " + escape(coverage) +
-            "</p>" + source_link +
+            "</p><p>Open PR-zoekpagina " + str(report["open_pr_page_number"]) +
+            " · posities " + str(report["open_pr_window_start"]) + "–" +
+            str(report["open_pr_window_end"]) +
+            (" · eerdere pagina's niet onderzocht" if report["earlier_pages_not_inspected"] else "") +
+            " · geen uitspraak over overige pagina's.</p>" + source_link +
             "<details><summary>Bekeken doelpaden (" +
             str(len(report["requested_paths"])) + ")</summary>" +
             targets + "</details><p>Geïnspecteerde andere PR's: " +
@@ -620,7 +628,11 @@ def graph_operator_text(report):
     result = [
         "zSentinel | PR-tegen-PR bestandsoverlap (ALLEEN LEZEN)",
         "Repository: " + report["repository"],
-        "Gelezen open PR's: " + str(report["inspected_prs"]) +
+        "Open PR-zoekpagina: " + str(report["open_pr_page_number"]) +
+        " · posities " + str(report["open_pr_window_start"]) + "–" +
+        str(report["open_pr_window_end"]) +
+        (" · eerdere pagina's NIET bekeken" if report["earlier_pages_not_inspected"] else ""),
+        "Gelezen open PR's op deze pagina: " + str(report["inspected_prs"]) +
         " / gezien " + str(report["observed_open_prs"]),
         "Gedeelde-bestandparen: " + str(report["observed_file_collision_pairs"]),
         "Meerdere open PR-tekstverwijzingen naar hetzelfde issue: " +
@@ -717,7 +729,11 @@ def graph_html(report):
             str(report["observed_open_prs"]) +
             " open PR's gelezen | " +
             str(report["observed_file_collision_pairs"]) +
-            " waargenomen paren</p><aside>Bron: " + escape(completeness) +
+            " waargenomen paren</p><p>Open PR-zoekpagina " +
+            str(report["open_pr_page_number"]) + " · posities " +
+            str(report["open_pr_window_start"]) + "–" +
+            str(report["open_pr_window_end"]) +
+            " · geen oordeel over andere pagina's.</p><aside>Bron: " + escape(completeness) +
             ". Gedeelde bestandspaden betekenen niet automatisch Git-mergeconflict."
             " Geen Notion-claim, eigenaar, bestandslease of PR-loze branch"
             " geverifieerd. Geen automatische claim of merge.</aside>"
@@ -746,6 +762,9 @@ def as_markdown(report):
         "",
         "Repository: " + report["repository"],
         "Bronmoment: " + report["observed_at_utc"],
+        "Open PR-zoekpagina: " + str(report["open_pr_page_number"]) +
+        " · posities " + str(report["open_pr_window_start"]) + "–" +
+        str(report["open_pr_window_end"]) + " (andere pagina's onbekend)",
         "",
         "**Bronuitkomst:** " +
         ("Volledige, stabiele huidige open-PR-steekproef."
@@ -796,6 +815,9 @@ def graph_markdown(report):
         "",
         "Repository: " + report["repository"],
         "Bronmoment: " + report["observed_at_utc"],
+        "Open PR-zoekpagina: " + str(report["open_pr_page_number"]) +
+        " · posities " + str(report["open_pr_window_start"]) + "–" +
+        str(report["open_pr_window_end"]) + " (andere pagina's onbekend)",
         "Geïnspecteerde PR's: " + str(report["inspected_prs"]) +
         " / gezien: " + str(report["observed_open_prs"]),
         "Compleet: " + ("ja (alleen open PR's)" if report["pr_file_scope_sample_complete"]
