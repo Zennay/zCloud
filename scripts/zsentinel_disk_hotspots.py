@@ -358,7 +358,16 @@ def html(report):
              "h1,h2{line-height:1.2}strong{color:#fbbf24}"
              "code{overflow-wrap:anywhere}</style><main>",
              "<h1>zSentinel · VPS schijfruimtewerkbank</h1>",
-             "<p><strong>Alleen-lezen. Geen opruimactie uitgevoerd of toegestaan.</strong></p>",
+             "<p><strong>Alleen-lezen. Geen opruimactie uitgevoerd of toegestaan.</strong></p>"]
+    brief = operator_action_brief(
+        report["mount_capacity"], report["coverage"],
+        ( __import__("zsentinel_disk_unlinked_open", fromlist=["public_summary"]).public_summary(
+            report["unlinked_open_files_observation"])
+          if "unlinked_open_files_observation" in report else None))
+    lines += [
+        "<article><h2>Wat nu?</h2><p>" + escape(brief["problem"]) +
+        "</p><p>" + escape(brief["next_action"]) +
+        "</p><p>" + escape(brief["status"]) + "</p></article>",
              "<p>Dekking: " + escape(report["coverage"]) +
              " · items gezien: " + str(report["scanned_entries"]) +
              " · reden grens: " + escape(str(report["truncation_reason"] or "geen")) + "</p>",
@@ -409,6 +418,40 @@ def html(report):
 
 
 
+
+def operator_action_brief(mount, scan_coverage, orphan_summary=None):
+    """Three-line, path-free operator handoff. Advisory only; never dispatch."""
+    unavailable = mount["percent_unavailable"]
+    if unavailable >= 95:
+        problem = "PROBLEEM: mount minstens 95% niet beschikbaar; urgent capaciteitstekort mogelijk."
+        severity = "urgent_owner_review"
+    elif unavailable >= 90:
+        problem = "PROBLEEM: mount minstens 90% niet beschikbaar; verhoogde schijfdruk."
+        severity = "elevated_owner_review"
+    else:
+        problem = "PROBLEEM: lokale capaciteit gemeten; geen schijfdrempelalarm in deze steekproef."
+        severity = "observe_only"
+    if orphan_summary is None:
+        candidate = "verwijderde-open bron niet ingeschakeld"
+    elif orphan_summary["unlinked_files_observed"] > 0:
+        candidate = ("minstens " + str(orphan_summary["unlinked_files_observed"]) +
+                     " verwijderde-open inode(s) op dezelfde mount; geen reclaimbewijs")
+    else:
+        candidate = "geen verwijderde-open inode waargenomen; afwezigheid NIET bewezen"
+    return {
+        "schema": "zsentinel-disk-operator-action-v1",
+        "severity": severity,
+        "problem": problem,
+        "next_action": ("ACTIE: bevoegd VPS-eigenaar onderzoekt actieve writers, "
+                        "retentie en back-up; autoriseert eventuele aparte ingreep."),
+        "status": ("STATUS: alleen-lezen; scan " + scan_coverage +
+                   "; " + candidate + "; cleanup en runnerherstel NIET bevestigd."),
+        "operator_action_only": True,
+        "automatic_cleanup_authorized": False,
+        "runner_restart_authorized": False,
+    }
+
+
 def public_summary(report):
     """Privacy-minimal cockpit receipt: never publish private filenames."""
     if (type(report) is not dict or report.get("schema") != SCHEMA
@@ -451,8 +494,10 @@ def public_summary(report):
         orphan_summary = orphan_public(orphan)
     else:
         orphan_summary = None
+    brief = operator_action_brief(mount, report["coverage"], orphan_summary)
     return {
         "schema": "zsentinel-disk-workbench-summary-v1",
+        "operator_action": brief,
         "unlinked_open_files": orphan_summary,
         "files_with_open_references_observed": (
             activity["files_with_observed_open_references"] if activity else None),
@@ -492,8 +537,20 @@ def public_summary_html(summary):
             or summary.get("deletion_authorized") is not False
             or summary.get("report_contains_paths") is not False):
         raise ValueError("untrusted disk workbench summary")
+    brief = summary.get("operator_action")
+    if (type(brief) is not dict or brief.get("schema") != "zsentinel-disk-operator-action-v1"
+            or brief.get("automatic_cleanup_authorized") is not False
+            or brief.get("runner_restart_authorized") is not False):
+        raise ValueError("invalid disk operator action evidence")
+    for key in ("problem", "next_action", "status"):
+        if type(brief.get(key)) is not str or not 1 <= len(brief[key]) <= 350:
+            raise ValueError("invalid disk operator message")
+    action = ('<aside aria-label="VPS schijf eigenaaractie">'
+              '<p><strong>' + escape(brief["problem"]) + '</strong></p>'
+              '<p>' + escape(brief["next_action"]) + '</p>'
+              '<p>' + escape(brief["status"]) + '</p></aside>')
     return (
-        '<section aria-label="VPS schijfruimtewerkbank">'
+        '<section aria-label="VPS schijfruimtewerkbank">' + action
         '<h2>VPS · Schijfruimtewerkbank (privé)</h2>'
         '<p>Mount: ' + str(summary["mount_available_gib_observed"]) +
         ' GiB beschikbaar; ' +
