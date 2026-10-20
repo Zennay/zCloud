@@ -544,6 +544,14 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
              ' · niet onderzocht: ' +
              escape(", ".join(row["github_ci_windows_not_scanned"]) or "geen") +
              '</small>' if row["github_ci_source_stop_reason"] else '') + '</td>'
+            '<td>' + ('ONBEKEND' if row["github_sampled_actionable_jobs"] is None
+                      else ('≥' + str(row["github_sampled_actionable_jobs"]) +
+                            ' gevonden, waaronder ≥' +
+                            str(row["github_sampled_queued_self_hosted_jobs_min"]) +
+                            ' wachtende self-hosted' +
+                            (' · andere jobs deels verborgen'
+                             if row["github_other_jobs_list_truncated"] else ''))) +
+            '</td>'
             '<td>' + ('ONBEKEND' if row["p0_p1_issue_sample_hits"] is None
                       else '≥' + str(row["p0_p1_issue_sample_hits"])) + '</td>'
             '<td>' + ('ONBEKEND' if row["p2_unranked_issue_sample_hits"] is None
@@ -583,6 +591,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '<th scope="col">Notion actief (min.)</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
         '<th scope="col">GitHub-bereik</th><th scope="col">Laatste bronpoging (geen health)</th><th scope="col">Runnerroute</th>'
+        '<th scope="col">GitHub-jobs (steekproef)</th>'
         '<th scope="col">P0/P1-issues (min.)</th>'
         '<th scope="col">P2/zonder label (min.)</th>'
         '<th scope="col">Incidenten (min.)</th><th scope="col">Historisch (steekproef)</th><th scope="col">Veilige vervolgstap</th>'
@@ -987,6 +996,11 @@ def main():
                     _count(row["incident_sample_hits"]),
                     row["github_observation"], row["github_job_runner_route"],
                     row["next_action"]))
+                lines.append("  GitHub jobs: %s; wachtend self-hosted ≥%s; aanvullende joblijst afgekapt=%s. "
+                             "Steekproef, geen volledig CI- of runnergezondheidsbewijs." % (
+                    _count(row["github_sampled_actionable_jobs"]),
+                    _count(row["github_sampled_queued_self_hosted_jobs_min"]),
+                    row["github_other_jobs_list_truncated"]))
                 lines.append("  GitHub bronpoging: %s (%s, huidige run: %s); historische poging is GEEN health." % (
                     row["github_last_attempt_at_utc"] or "ONBEKEND",
                     row["github_last_attempt_coverage"] or "ONBEKEND",
