@@ -11,6 +11,8 @@ import re
 from html import escape
 from datetime import datetime, timezone
 
+SAFE_SHA = re.compile(r"^[a-f0-9]{40}$")
+SAFE_REPOSITORY = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
 SCHEMA = "zsentinel-runtime-owner-handoff-v1"
 MAX_ITEMS = 24
 MAX_TEXT = 220
@@ -51,7 +53,42 @@ def _card(priority, project, kind, action, *, source="observed_partial", ref=Non
     return card
 
 
-def build_handoff(decision):
+def _attach_verified_job(card, raw, registry, review_by):
+    """Human navigation to one observed job; never authorizes a CI/release action."""
+    if review_by is not None:
+        if type(review_by) is not str or len(review_by) > 40:
+            raise ValueError("invalid incident review deadline")
+        try:
+            deadline = datetime.fromisoformat(review_by.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("invalid incident review deadline") from exc
+        if deadline.tzinfo is None or deadline.utcoffset() is None:
+            raise ValueError("naive incident review deadline")
+        card["review_by_utc"] = deadline.astimezone(timezone.utc).isoformat(timespec="seconds")
+    if raw is None:
+        return card
+    if (type(raw) is not dict
+            or set(raw) != {"run_id", "job_id", "head_sha"}
+            or type(raw["run_id"]) is not int
+            or type(raw["job_id"]) is not int
+            or not 1 <= raw["run_id"] <= 2**53 - 1
+            or not 1 <= raw["job_id"] <= 2**53 - 1
+            or type(raw["head_sha"]) is not str
+            or not SAFE_SHA.fullmatch(raw["head_sha"])):
+        raise ValueError("invalid exact GitHub incident job")
+    card["exact_github_job"] = dict(raw)
+    if registry is not None:
+        repo = registry.get(card["project"]) if type(registry) is dict else None
+        if type(repo) is not str or not SAFE_REPOSITORY.fullmatch(repo):
+            raise ValueError("no canonical repository for verified job")
+        base = "https://github.com/" + repo
+        card["exact_github_job_url"] = (base + "/actions/runs/" +
+            str(raw["run_id"]) + "/job/" + str(raw["job_id"]))
+        card["exact_github_commit_url"] = base + "/commit/" + raw["head_sha"]
+    return card
+
+
+def build_handoff(decision, registry=None):
     """Prioritize exact incidents, owner/lease conflicts, and open product work.
 
     The handoff does not infer absence of work from a missing/partial source.
@@ -67,9 +104,11 @@ def build_handoff(decision):
     for item in incidents:
         if not isinstance(item, dict) or item.get("severity") not in ("P0", "P1", "P2"):
             raise ValueError("malformed fresh incident")
-        cards.append(_card(item["severity"], item.get("project_id"),
-                           "fresh_incident", item.get("action"),
-                           source="bounded_fresh_incident"))
+        cards.append(_attach_verified_job(
+            _card(item["severity"], item.get("project_id"),
+                  "fresh_incident", item.get("action"),
+                  source="bounded_fresh_incident"),
+            item.get("exact_github_job"), registry, item.get("target_review_by")))
     worker = decision.get("worker_progress_observation")
     worker_coverage = "not_requested"
     if worker is not None:
@@ -215,9 +254,38 @@ def handoff_html(report):
         pr_links = "".join(' <a href="' + escape(p, quote=True) +
                            '" target="_blank" rel="noopener noreferrer">Bestaande PR</a>'
                            for p in prs)
+        job = item.get("exact_github_job")
+        job_url = item.get("exact_github_job_url")
+        commit_url = item.get("exact_github_commit_url")
+        if job is not None:
+            if (type(job) is not dict
+                    or set(job) != {"run_id", "job_id", "head_sha"}
+                    or not SAFE_SHA.fullmatch(str(job.get("head_sha", "")))):
+                raise ValueError("invalid private handoff job")
+            if job_url is not None and (
+                    type(job_url) is not str or not job_url.startswith("https://github.com/Zennay/")
+                    or not job_url.endswith("/actions/runs/" + str(job["run_id"]) +
+                                           "/job/" + str(job["job_id"]))):
+                raise ValueError("untrusted private handoff job link")
+            if commit_url is not None and (
+                    type(commit_url) is not str or not commit_url.startswith("https://github.com/Zennay/")
+                    or not commit_url.endswith("/commit/" + job["head_sha"])):
+                raise ValueError("untrusted private handoff commit link")
+        elif job_url is not None or commit_url is not None:
+            raise ValueError("unbound private handoff link")
+        verified_links = ""
+        for target, label in ((job_url, "Exacte job"), (commit_url, "Exacte commit")):
+            if target:
+                verified_links += (' <a href="' + escape(target, quote=True) +
+                                   '" target="_blank" rel="noopener noreferrer">' +
+                                   label + '</a>')
+        due = item.get("review_by_utc")
+        if due is not None and (type(due) is not str or len(due) > 35):
+            raise ValueError("untrusted review deadline")
+        due_label = " · Beoordelen vóór " + escape(due) if due else ""
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
-                     escape(_short(item.get("next_step"))) + link + pr_links + '</li>')
+                     escape(_short(item.get("next_step"))) + due_label + link + pr_links + verified_links + '</li>')
     coverage = report.get("coverage", {})
     if not isinstance(coverage, dict) or len(coverage) > 8:
         raise ValueError("invalid handoff source coverage")
@@ -257,6 +325,16 @@ def markdown(report):
                      " · " + _md(card["next_step"]))
         if card.get("issue_url"):
             lines.append("   Bestaand issue: " + card["issue_url"])
+        if card.get("review_by_utc"):
+            lines.append("   Uiterlijk beoordelen (UTC): " + _md(card["review_by_utc"], 40))
+        job = card.get("exact_github_job")
+        if job:
+            lines.append("   Exacte bron (geen actierecht): run " +
+                         str(job["run_id"]) + ", job " + str(job["job_id"]) +
+                         ", commit " + job["head_sha"])
+            if card.get("exact_github_job_url"):
+                lines.append("   GitHub-job: " + card["exact_github_job_url"])
+                lines.append("   GitHub-commit: " + card["exact_github_commit_url"])
         for pr in card.get("existing_pr_urls", []):
             lines.append("   Eerst bestaande PR beoordelen: " + pr)
     if not report["priority_items"]:
