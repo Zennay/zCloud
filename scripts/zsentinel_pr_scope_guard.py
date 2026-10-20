@@ -24,6 +24,7 @@ MAX_REPLY_BYTES = 1024 * 1024
 MAX_OPEN_PAGE = 100
 MAX_INSPECT = 48
 MAX_PATHS = 12
+MAX_SOURCE_FILES = 80
 SHA = re.compile(r"^[a-f0-9]{40}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
@@ -160,22 +161,50 @@ def changed_paths(repo, number, token):
     return sorted(files), len(rows) == 100
 
 
+def selected_source_pr(repo, number, token):
+    """Pin one explicitly selected existing PR, never infer its owner."""
+    if type(number) is not int or not 0 < number < 100000000:
+        raise ValueError("invalid selected source PR")
+    receipt = github_json(repo, "/pulls/" + str(number), token)
+    base = receipt.get("base") if isinstance(receipt, dict) else None
+    head = receipt.get("head") if isinstance(receipt, dict) else None
+    base_repo = base.get("repo") if isinstance(base, dict) else None
+    sha = head.get("sha") if isinstance(head, dict) else None
+    if (receipt.get("number") != number or receipt.get("state") != "open"
+            or not isinstance(base_repo, dict)
+            or base_repo.get("full_name") != repo
+            or not isinstance(sha, str) or not SHA.fullmatch(sha)):
+        raise ValueError("selected PR is not a canonical open project PR")
+    files, truncated = changed_paths(repo, number, token)
+    if truncated or not 1 <= len(files) <= MAX_SOURCE_FILES:
+        raise ValueError("source PR file scope is incomplete or exceeds 80 paths")
+    return {"number": number, "url": "https://github.com/" + repo +
+            "/pull/" + str(number), "head_sha": sha, "paths": files}
+
+
 def overlaps(wanted, changed):
     # A path ending in '/' explicitly denotes a directory, otherwise one file.
     return changed.startswith(wanted) if wanted.endswith("/") else changed == wanted
 
 
-def observe(repo, wanted, token=None, limit=24):
+def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
     if (not REPO.fullmatch(repo) or not isinstance(wanted, list)
-            or not 1 <= len(wanted) <= MAX_PATHS or len(set(wanted)) != len(wanted)
-            or type(limit) is not int or not 1 <= limit <= MAX_INSPECT):
+            or len(wanted) > MAX_PATHS or len(set(wanted)) != len(wanted)
+            or type(limit) is not int or not 1 <= limit <= MAX_INSPECT
+            or not wanted and source_pr_number is None):
         raise ValueError("invalid scope request")
     wanted = [edit_path(path) for path in wanted]
+    source = (selected_source_pr(repo, source_pr_number, token)
+              if source_pr_number is not None else None)
+    if source is not None:
+        wanted = sorted(set(wanted).union(source["paths"]))
     before = open_prs(repo, token)
     selected = before[:limit]
     hits = []
     truncated_files = []
     for pr in selected:
+        if source is not None and pr["number"] == source["number"]:
+            continue
         files, truncated = changed_paths(repo, pr["number"], token)
         if truncated:
             truncated_files.append(pr["number"])
@@ -188,13 +217,26 @@ def observe(repo, wanted, token=None, limit=24):
                              "matches_truncated": len(matches) > 32})
     after = open_prs(repo, token)
     snapshot_stable = before == after
-    complete = (len(before) < MAX_OPEN_PAGE and len(before) <= limit
+    source_stable = True
+    if source is not None:
+        fresh = github_json(repo, "/pulls/" + str(source["number"]), token)
+        current_head = fresh.get("head") if isinstance(fresh, dict) else None
+        source_stable = (fresh.get("state") == "open"
+                         and isinstance(current_head, dict)
+                         and current_head.get("sha") == source["head_sha"])
+    complete = (source_stable and len(before) < MAX_OPEN_PAGE and len(before) <= limit
                 and not truncated_files and snapshot_stable)
     return {
         "schema": "zsentinel-pr-scope-observation-v1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
         "repository": repo,
         "requested_paths": wanted,
+        "selected_source_pr": (None if source is None else {
+            "url": source["url"], "number": source["number"],
+            "head_sha": source["head_sha"],
+            "source_head_stable": source_stable,
+            "source_file_count": len(source["paths"])
+        }),
         "source": "bounded_double_read_current_open_github_prs",
         "observed_open_prs": len(before),
         "inspected_prs": len(selected),
@@ -222,6 +264,8 @@ def operator_text(report):
         "zSentinel | Live PR-bestandsscope (ALLEEN LEZEN)",
         "Repository: " + report["repository"],
         "Te wijzigen paden: " + ", ".join(report["requested_paths"]),
+        "Bron-PR: " + (report["selected_source_pr"]["url"]
+                        if report["selected_source_pr"] else "handmatige doelpaden"),
         "Open PR's gezien: " + str(report["observed_open_prs"]) +
         "; bestandlijsten bekeken: " + str(report["inspected_prs"]),
         "Bron compleet voor geopende PR's: " +
@@ -236,6 +280,9 @@ def operator_text(report):
         lines.append("Geen overlap in de gelezen steekproef; dit is GEEN vrijgave.")
     if not report["open_pr_snapshot_stable"]:
         lines.append("Let op: open PR-lijst of heads veranderden tijdens inspectie.")
+    if (report["selected_source_pr"] is not None
+            and not report["selected_source_pr"]["source_head_stable"]):
+        lines.append("Let op: geselecteerde bron-PR veranderde tijdens inspectie.")
     if report["pr_file_lists_truncated"]:
         lines.append("Onvolledige PR-bestandlijsten: " +
                      ", ".join(str(n) for n in report["pr_file_lists_truncated"]))
@@ -278,7 +325,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", required=True)
-    parser.add_argument("--path", action="append", required=True)
+    parser.add_argument("--path", action="append", default=[])
+    parser.add_argument("--source-pr", type=int, help="Gebruik alle gewijzigde paden van deze open PR als doel; sla PR zelf over.")
     parser.add_argument("--max-prs", type=int, default=24)
     parser.add_argument("--format", choices=("text", "json", "html"), default="text")
     args = parser.parse_args(argv)
@@ -287,7 +335,7 @@ def main(argv=None):
         if args.project not in repos:
             raise ValueError("unknown canonical project")
         report = observe(repos[args.project], args.path,
-                         os.environ.get("GITHUB_TOKEN"), args.max_prs)
+                         os.environ.get("GITHUB_TOKEN"), args.max_prs, args.source_pr)
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
