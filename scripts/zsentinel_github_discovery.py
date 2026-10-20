@@ -24,6 +24,35 @@ RUN_PAGES_PER_WINDOW = 2
 RUN_WINDOWS = ("queued", "in_progress", "failure")
 MAX_GETS_PER_PROJECT = len(RUN_WINDOWS) * (1 + RUN_PAGES_PER_WINDOW)
 RESULTS = {"failure", "timed_out", "action_required"}
+MAX_VISIBLE_EXTRA_JOBS = 5
+
+
+def additional_job_sources(candidates, repository, primary):
+    """Bounded links to *other* exact observed jobs; not dispatch candidates.
+
+    Keep the source SHA, exact numeric identifiers and route, but do not
+    expose names, step output, command arguments or claimed runtime ownership.
+    Duplicate run/job records (from overlapping source windows) appear once.
+    """
+    rows = []
+    seen = {primary}
+    for rank, created, run_id, jid, sha, status, _conclusion, _runner, route, window in candidates:
+        key = (run_id, jid)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append({
+            "run_id": run_id, "job_id": jid, "head_sha": sha,
+            "job_status": status, "runner_route": route["runner_route"],
+            "source_window": window,
+            "url": "https://github.com/" + repository +
+                   "/actions/runs/" + str(run_id) + "/job/" + str(jid),
+            "observed_only": True, "work_resumed_verified": False,
+            "action_authorized": False,
+        })
+        if len(rows) >= MAX_VISIBLE_EXTRA_JOBS:
+            break
+    return rows
 
 
 def parse_time(value):
@@ -213,6 +242,12 @@ def discover(registry, selected, token=None):
                 continue
             candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
             _, created, run_id, job_id, sha, status, conclusion, runner, route, window = candidates[0]
+            # Only one primary job enters the existing recovery router.
+            # Other validated jobs remain visible for independent operator
+            # diagnosis rather than vanishing behind the first candidate.
+            other_jobs = additional_job_sources(
+                candidates, canonical_repository, (run_id, job_id))
+            unique_jobs = len({(item[2], item[3]) for item in candidates})
             receipt = {
                 "run_id": run_id, "job_id": job_id, "head_sha": sha,
                 "job_status": status, "queued_at": utc_string(created),
@@ -235,6 +270,9 @@ def discover(registry, selected, token=None):
                     else "selected_one_source_bound_job"),
                 "run_id": run_id, "job_id": job_id,
                 "run_pages_checked": checked, "workflow_status_window": window,
+                "sampled_actionable_jobs": unique_jobs,
+                "additional_job_links": other_jobs,
+                "additional_jobs_truncated": unique_jobs > len(other_jobs) + 1,
                 "incomplete_windows": incomplete_windows,
                 "not_scanned_windows": [
                     win for win in RUN_WINDOWS if win not in attempted_windows],
