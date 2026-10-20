@@ -536,6 +536,8 @@ def render_private_csv(report):
         return raw
 
     def row(values):
+        if len(values) != len(header):
+            raise ValueError("invalid private CSV column layout")
         writer.writerow([safe(item) for item in values])
         if output.tell() > MAX_REPORT_BYTES:
             raise ValueError("private CSV exceeds max output")
