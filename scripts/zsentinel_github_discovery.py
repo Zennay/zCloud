@@ -19,7 +19,7 @@ UTC = timezone.utc
 SHA = re.compile(r"^[a-f0-9]{40}$")
 MAX_PROJECTS = 3
 MAX_RUNS = 5
-MAX_JOBS = 10
+MAX_JOBS = 25
 RUN_PAGES_PER_WINDOW = 2
 RUN_WINDOWS = ("queued", "in_progress", "failure")
 MAX_GETS_PER_PROJECT = len(RUN_WINDOWS) * (1 + RUN_PAGES_PER_WINDOW)
@@ -59,6 +59,12 @@ def recent_runs(root, canonical_repository, token, status):
             partial = True
             continue
         selected.append((rid, sha))
+    # A busy repository can bury an old stuck queue behind newer workflow
+    # runs. Inspect the newest and furthest-back visible run from the *same*
+    # bounded GitHub page, not merely the first two. These are samples,
+    # never evidence that intermediate workflows or older pages are clear.
+    if len(selected) > RUN_PAGES_PER_WINDOW:
+        selected = [selected[0], selected[-1]]
     return selected[:RUN_PAGES_PER_WINDOW], partial
 
 
@@ -73,8 +79,14 @@ def run_job_candidates(root, run_id, sha, token, kind):
     if (not isinstance(result, dict) or not isinstance(result.get("jobs"), list)
             or len(result["jobs"]) > MAX_JOBS):
         raise ValueError("GitHub jobs shape or bounds invalid")
+    total = result.get("total_count")
+    if total is not None and (type(total) is not int or total < len(result["jobs"])):
+        raise ValueError("invalid bounded GitHub job count")
+    # A busy workflow can queue job 11+ while earlier hosted jobs finish.
+    # Record that deeper pages exist; absence in the first 25 is NOT an
+    # all-clear and does not justify restarting the VPS.
     candidates = []
-    partial = False
+    partial = total is None or total > len(result["jobs"])
     for job in result["jobs"]:
         if not isinstance(job, dict):
             partial = True
