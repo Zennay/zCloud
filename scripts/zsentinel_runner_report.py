@@ -746,6 +746,12 @@ def render_private_handoff(data):
         f"- Swap >=80%: {summary['swap_high_samples']} meetmomenten.",
         f"- Rootruimte >=90% niet beschikbaar: {summary['root_high_samples']} meetmomenten.",
         f"- Load >1,35× beschikbare CPU-cores: {summary['load_high_samples']} meetmomenten.",
+        f"- Laatste meetmoment: {len(summary['latest_failed_services'])} als failed "
+        "waargenomen services; huidige hostdruk: "
+        + ("hoog" if summary["latest_pressure_high"] is True else
+           "niet hoog in beschikbare laatste bron" if summary["latest_pressure_high"] is False
+           else "onbekend") + ".",
+        "Historische failed-waarnemingen zijn niet automatisch actuele P0-storingen.",
         "Dit zijn aantallen momentopnames, geen tijdsduur, crashfrequentie of vrijgegeven resourcebudget.",
         "",
         "## Herhaald geobserveerde gefaalde runner-services",
@@ -756,7 +762,8 @@ def render_private_handoff(data):
             rows.append("- " + _handoff_text(entry["unit"]) + ": "
                         + str(entry["failed_samples"]) + " × failed in "
                         + str(entry["seen_samples"]) + " bronobservaties; "
-                        "niet gelijk aan evenveel crashes.")
+                        + "laatst gezien: " + _handoff_text(entry["last_observed_state"])
+                        + "; niet gelijk aan evenveel crashes.")
     else:
         rows.append("- Geen failed-bronregel aangetroffen; geen bewijs dat alle runners gezond zijn.")
     rows.extend(["", "## Historische overgangen"])
