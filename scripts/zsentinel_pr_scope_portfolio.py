@@ -251,15 +251,25 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "url": captured["url"],
                 "head_sha_observed": captured["head_sha"],
                 "status": "current_exact_pr_head_and_sample_match",
+                "draft_at_read": gate["draft_at_read"],
+                "github_mergeable_boolean_observed": gate["github_mergeable_boolean_observed"],
                 "observed_checks_pending": gate["observed_checks_pending"],
+                "observed_checks_unknown": gate["observed_checks_unknown"],
                 "observed_checks_not_successful": gate["observed_checks_not_successful"],
                 "observed_legacy_pending": gate["legacy_status_pending_observed"],
+                "legacy_contexts_observed": gate["legacy_status_contexts_observed"],
+                "legacy_status_source_may_be_truncated":
+                    gate["legacy_status_source_may_be_truncated"],
                 "observed_legacy_failure_or_error":
                     gate["legacy_status_failure_or_error_observed"],
                 "observed_independent_exact_head_approvals":
                     gate["observed_independent_exact_head_approvals"],
+                "observed_exact_head_changes_requested":
+                    gate["observed_exact_head_changes_requested"],
                 "human_next_gate_step": gate["human_next_gate_step"],
                 "check_page_complete": gate["check_runs_page_complete"],
+                "check_runs_sample_complete_and_terminal":
+                    gate["check_runs_sample_complete_and_terminal"],
                 "review_page_may_be_truncated": gate["review_page_may_be_truncated"],
                 "required_rules_verified": False,
                 "live_owner_claim_verified": False,
