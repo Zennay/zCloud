@@ -367,6 +367,11 @@ def text_view(data):
         out.append("Onbekende queue-claimtermijnen: "
                    + str(data["unknown_in_flight_queue_expiry_observed"])
                    + " (controleer eigenaar).")
+    if data["inconsistent_in_flight_queue_claim_windows_observed"]:
+        out.append("HOLD: " +
+                   str(data["inconsistent_in_flight_queue_claim_windows_observed"])
+                   + " actieve queue-claimvensters hebben onmogelijke of ontbrekende start; "
+                   "behoud huidige eigenaar.")
     if data["active_write_scopes_not_declared"]:
         out.append("HOLD: " + str(data["active_write_scopes_not_declared"])
                    + " actieve taken hebben geen expliciete schrijf-scope; "
@@ -429,6 +434,12 @@ def html_view(data):
         warnings.append(
             str(data["unknown_in_flight_queue_expiry_observed"])
             + " actieve wachtrijclaims hebben geen betrouwbaar vervalmoment."
+        )
+    if data["inconsistent_in_flight_queue_claim_windows_observed"]:
+        warnings.append(
+            str(data["inconsistent_in_flight_queue_claim_windows_observed"])
+            + " actieve queue-claimvensters hebben een ontbrekende/toekomstige start of "
+              "niet-vooruitlopende vervaltijd; geen herclaim zonder eigenaar."
         )
     if data["active_write_scopes_not_declared"]:
         warnings.append(
@@ -598,6 +609,9 @@ def markdown_view(data):
         "",
         "- Lokale bron volledig: "
         + ("ja" if data["source_complete"] else "nee/onbekend"),
+        "- Onbetrouwbare actieve queue-claimvensters: "
+        + str(data["inconsistent_in_flight_queue_claim_windows_observed"])
+        + " (geen automatische herclaim).",
         "- Actuele externe eigenaarvrijheid: NIET AFLEIDBAAR.",
         "- De term eligible betekent uitsluitend het lokale wachtrijveld.",
         "- Geen claim, serviceherstart, workflow, merge, release of deploy geautoriseerd.",
