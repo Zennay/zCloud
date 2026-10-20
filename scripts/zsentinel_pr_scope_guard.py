@@ -402,11 +402,19 @@ def operator_text(report):
         " · posities " + str(report["open_pr_window_start"]) + "–" +
         str(report["open_pr_window_end"]) +
         (" · vorige pagina's NIET gelezen" if report["earlier_pages_not_inspected"] else ""),
-        "Open PR's IN DEZE PAGINA gezien: " + str(report["observed_open_prs"]) +
+        "Open PR's over " + str(report["open_pr_page_count"]) +
+        " pagina's gezien: " + str(report["observed_open_prs"]) +
         "; bestandlijsten bekeken: " + str(report["inspected_prs"]),
         "Bron compleet voor geopende PR's: " +
         ("ja" if report["pr_file_scope_sample_complete"] else "NEE / onzeker"),
     ]
+    for row in report["open_pr_page_receipts"]:
+        lines.append("BRONPAGINA " + str(row["page"]) +
+                     " · posities " + str(row["first_position"]) + "–" +
+                     str(row["last_position"]) + " · " +
+                     str(row["observed_prs"]) + " PRs")
+    if report["cross_page_duplicate_prs_observed"]:
+        lines.append("ONSTABIEL: dezelfde PR op meerdere pagina's.")
     if report["selected_source_pr"] is not None:
         src = report["selected_source_pr"]
         lines.append(
@@ -436,6 +444,11 @@ def operator_text(report):
 
 def html_view(report):
     rows = []
+    page_list = "".join(
+        "<li>Pagina " + str(row["page"]) + " · posities " +
+        str(row["first_position"]) + "–" + str(row["last_position"]) +
+        " · " + str(row["observed_prs"]) + " PRs</li>"
+        for row in report["open_pr_page_receipts"])
     for hit in report["observed_overlaps"]:
         link = escape(hit["pr_url"], quote=True)
         rows.append("<tr><td>" + escape(hit["path"]) +
@@ -472,7 +485,8 @@ def html_view(report):
             " · posities " + str(report["open_pr_window_start"]) + "–" +
             str(report["open_pr_window_end"]) +
             (" · eerdere pagina's niet onderzocht" if report["earlier_pages_not_inspected"] else "") +
-            " · geen uitspraak over overige pagina's.</p>" + source_link +
+            " · geen uitspraak over overige pagina's.</p><ul>" +
+            page_list + "</ul>" + source_link +
             "<details><summary>Bekeken doelpaden (" +
             str(len(report["requested_paths"])) + ")</summary>" +
             targets + "</details><p>Geïnspecteerde andere PR's: " +
@@ -840,6 +854,14 @@ def as_markdown(report):
         "## Expliciete bestandscope",
         "",
     ])
+    lines.extend(["", "## Waargenomen bronpagina's", ""])
+    for row in report["open_pr_page_receipts"]:
+        lines.append("- Pagina " + str(row["page"]) + " · posities " +
+                     str(row["first_position"]) + "–" +
+                     str(row["last_position"]) + " · " +
+                     str(row["observed_prs"]) + " PRs.")
+    if report["cross_page_duplicate_prs_observed"]:
+        lines.append("**ONSTABIEL:** dezelfde PR op meerdere bronpagina's.")
     for name in report["requested_paths"]:
         # Canonical path strings are bounded and reject control characters.
         # Use a plain indented line instead of Markdown code fences.
