@@ -1,0 +1,10 @@
+[Unit]
+Description=Rebalance Fuckball training CPU without interrupting runners
+
+[Timer]
+OnStartupSec=45s
+OnUnitInactiveSec=60s
+Unit=zcloud-background-priority.service
+
+[Install]
+WantedBy=timers.target
