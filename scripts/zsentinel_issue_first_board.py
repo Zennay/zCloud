@@ -260,6 +260,8 @@ def collect_targeted_windows(project, issue_number, registry, budget,
         raise ValueError("invalid automatic page window")
     combined, partials, pages = [], [], []
     observed_candidates, observed_prs = set(), {}
+    unstable_pr_keys = set()
+    issue_reconfirmation_failed = False
     target, search_total = None, None
     for page in range(candidate_page, candidate_page + auto_pages):
         try:
@@ -268,15 +270,19 @@ def collect_targeted_windows(project, issue_number, registry, budget,
         except (RuntimeError, ValueError, OSError, KeyError, TypeError):
             if not pages:
                 raise
+            issue_reconfirmation_failed = True
             partials.append({"project": project, "reason": "FOLLOW_PAGE_UNAVAILABLE"})
             break
         if target is None:
-            target, search_total = current_issue, coverage["search_total"]
+            target, search_total = dict(current_issue), coverage["search_total"]
         else:
             if (current_issue.get("url") != target.get("url")
                     or current_issue.get("current_state") != "OPEN_RECONFIRMED"):
+                issue_reconfirmation_failed = True
                 partials.append({"project": project, "reason": "ISSUE_MOVED_BETWEEN_PAGES"})
-            if coverage["search_total"] != search_total:
+            if current_issue.get("current_state") != "OPEN_RECONFIRMED":
+            issue_reconfirmation_failed = True
+        if coverage["search_total"] != search_total:
                 partials.append({"project": project, "reason": "SEARCH_TOTAL_CHANGED"})
         candidates = coverage.get("candidate_pr_numbers")
         if not isinstance(candidates, list) or len(candidates) != coverage["search_examined"]:
@@ -292,6 +298,7 @@ def collect_targeted_windows(project, issue_number, registry, budget,
                           if observed_prs[identity] != row.get("head")
                           else "PR_REPEATED_BETWEEN_PAGES")
                 partials.append({"project": project, "reason": reason})
+                unstable_pr_keys.add(identity)
                 continue
             observed_prs[identity] = row.get("head")
             combined.append(row)
@@ -323,6 +330,17 @@ def collect_targeted_windows(project, issue_number, registry, budget,
         "cross_page_source": ("SINGLE_GITHUB_SEARCH_PAGE" if len(pages) == 1
                               else "NONATOMIC_GITHUB_SEARCH"),
     })
+    if issue_reconfirmation_failed:
+        target["current_state"] = "UNKNOWN"
+        for row in combined:
+            row["observed_issue_refs"] = []
+            row["issue_reference_source"] = "UNKNOWN_OR_MOVED"
+        partials.append({"project": project, "reason": "ISSUE_NOT_CURRENTLY_RECONFIRMED"})
+    elif unstable_pr_keys:
+        for row in combined:
+            if (row.get("repo"), row.get("number")) in unstable_pr_keys:
+                row["observed_issue_refs"] = []
+                row["issue_reference_source"] = "PR_SOURCE_MOVED"
     if len(pages) > 1:
         partials.append({"project": project, "reason": "NONATOMIC_SEARCH_PAGINATION"})
     if len(pages) < auto_pages and last["next_page"] is not None:
