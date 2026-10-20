@@ -1130,7 +1130,7 @@ gate-bridge** vergelijken met nieuwe bronreceipts van exact hetzelfde
 reviewmanifest. Een oude bestandsmomentopname opnieuw gebruiken is geen
 nieuwe CI-check en er worden geen externe GETs of workflowruns gestart.
 
-\`\`\`sh
+```sh
 # Eerste momentopname: bronreview plus oorspronkelijke 1–N receipt-batches.
 python3 scripts/zsentinel_saved_gate_batch_bridge.py \
   --from-review ./review-manifest.json \
@@ -1143,7 +1143,7 @@ python3 scripts/zsentinel_saved_gate_batch_bridge.py \
   --receipt ./new-gates-1.json --receipt ./new-gates-2.json \
   --previous ./prior-gate-bridge.json \
   --format markdown --output ./private-gate-delta.md
-\`\`\`
+```
 
 De nieuwe briefing begint met **wat veranderde sinds de vorige privéwaarneming**
 en behoudt alle oorspronkelijke prioritaire P0/P1-PR-kaarten. Voor iedere
@@ -1160,12 +1160,12 @@ mismatchende bron, vreemd PR-adres, latere/tijd-overlappende waarneming,
 autorisatieclaim of corrupte/private ongeldige bron wordt geweigerd.
 De oude file wordt slechts één keer veilig geopend als bounded regular file,
 zonder symlink, en nooit aangepast; de uitvoer blijft create-only 0600.
-Met \`--format json\` is \`--previous\` bewust niet toegestaan om het bestaande
+Met `--format json` is `--previous` bewust niet toegestaan om het bestaande
 browser-importcontract onveranderd te laten.
 
 Zelfs wanneer er **geen waargenomen verschil** is, blijven verplichte
 exact-head GitHub CI, onafhankelijke review, eigenaarschap, protected main,
 releasewriter en live deploy afzonderlijk te controleren. Alleen een echte
-\`merged=true\` respons en exacte nieuwe default-branch SHA tellen als
+`merged=true` respons en exacte nieuwe default-branch SHA tellen als
 source-integratie op main. Geen QA-code, automatische claim, dispatch,
 workflow of productieactie is onderdeel van deze uitbreiding.
