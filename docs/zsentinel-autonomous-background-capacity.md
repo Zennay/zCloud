@@ -181,6 +181,35 @@ voor nieuwe werkzaamheden of automatische recovery geïnterpreteerd.
 Zonder `--snapshot` kan `--previous` niet gebruikt worden; `--report`
 en `--snapshot` zijn bewust afzonderlijke create-only uitvoeracties.
 
+## Historische HTML: twee opgeslagen bronnen zonder VPS-toegang
+
+De privé werkbank ondersteunt nu **offline herweergave** van twee eerder
+vastgelegde runnerbronmomenten. Op dezelfde Unix-gebruikersaccount als de
+privé snapshotbestanden kan de operator uitvoeren:
+
+```bash
+python3 scripts/zsentinel_runner_report.py \
+  --t0 "$HOME/private-recovery/T0.json" \
+  --t1 "$HOME/private-recovery/T1.json" \
+  --output "$HOME/private-recovery/vergelijking.html"
+```
+
+Deze modus leest uitsluitend twee bestaande eigenaar-privé JSON-bronnen
+en maakt één **nieuw** 0600 HTML-rapport. Er worden **geen actuele
+systemd-/proc-/GitHub-metingen uitgevoerd**, geen achtergrondservice
+geactiveerd en geen gegevens naar een netwerkendpoint verzonden. De
+bestaande vergelijking weigert een andere host, verkeerde bronvolgorde,
+onbekend schema of een verschil groter dan 72 uur.
+
+Het HTML toont expliciet de T0- en T1-tijd, dekkingsgraad, waargenomen
+statusovergangen en stabiele incidentcodes, plus de bij T1 **opgeslagen**
+capaciteitswaarden en CPU-aanbeveling. Een vorige bron zonder
+opgeslagen coachinstellingen blijft **onbekend**, niet stiekem live
+nagevraagd. `--previous T0.json` zonder `--t0/--t1` is de aparte
+**actuele**, read-only systeemobservatie die het verschil met T0 in het
+nieuwe privé HTML-bestand plaatst. Beide modi zijn afzonderlijk van
+`--snapshot` en van productieactivatie.
+
 ## Operator installation and release boundaries
 
 Code files:
