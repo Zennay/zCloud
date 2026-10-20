@@ -2943,3 +2943,56 @@ workflowretry, claimwijziging of serviceherstart. De bestaande
 VPS-bescherming, eerste-keer event-/SHA-pin en begrensde runtijd
 blijven ongewijzigd. Bij onbetrouwbare bron weigert de extra stap
 afgesloten in plaats van herstel te claimen.
+
+
+## Koude projectbestanden naar externe VPS-Archief opslag (20 oktober)
+
+**Geobserveerde VPS situatie:** rootvolume /dev/sda1 is 94% vol
+(circa 6,2 GiB vrij); een **afzonderlijk gemount**
+vpsarchive:zcloud-vps-volume is beschikbaar onder /home/ubuntu/VPS-Archief,
+waar df ongeveer 5 TB capaciteit en circa 5 TB vrije ruimte meldt.
+Dat is metadata op één tijdstip: geen bewijs dat het externe archief
+schrijfbaar, betrouwbaar, veilig of geschikt is voor elke dataset.
+Het permanent actieve geheugen/swap en databasewriters kunnen niet
+zonder eigenaarstoestemming worden onderbroken.
+
+Nieuwe zelfstandige read-only productfunctie:
+
+    python3 scripts/zsentinel_archive_readiness.py \
+      --root /home/ubuntu/zennay-cloud \
+      --archive-root /home/ubuntu/VPS-Archief \
+      --min-age-days 7 \
+      --max-entries 5000 --max-depth 3 --max-seconds 5 \
+      --format html \
+      --output /path/to/existing/private/archive-owner-20261020.html
+
+De bron bouwt voort op de bestaande begrensde grote-bestanden
+inventaris; accepteert alleen een al bestaande, niet-gesymlinkte externe
+directory op een fysiek anders geïdentificeerde mount. Candidate hints
+komen uitsluitend van bestandsextensies van oudere grote data-/model- en
+replaybestanden; de 15 grootste entries van de gedeeltelijke scan vormen
+GEEN complete inventaris. In privésamenvatting staan bestandsnamen en
+eigenaarcontrole; publieke dashboards tonen alleen aantallen,
+waargenomen opslagcapaciteit, scanbeperkingen en expliciet
+files_transferred_or_removed=false.
+
+Naast de standalone CLI is het plan optioneel te activeren in
+zsentinel_disk_hotspots.py (--archive-target /home/ubuntu/VPS-Archief).
+Dezelfde --archive-target en --archive-min-age-days zijn opgenomen in
+zsentinel_live_cockpit.py en zsentinel_portfolio_overview.py wanneer ook
+een opt-in --disk-hotspots-root en privé --disk-hotspots-output worden gebruikt.
+
+Dit is een **werkende veilige voorselectie**, **geen kopieer-,
+migratie-, opruim- of productieherstelproces**. Actieve DB/WAL,
+live worker-state, realtime modelcheckpoints, secrets, private datasets,
+licenties, back-upkwaliteit, encryptie, retentie, mount quota,
+remote schrijfrechten en restores zijn niet onafhankelijk beoordeeld.
+Elke verplaatsing moet pas na aparte eigenaarautorisatie, beschermde
+integriteit-gecontroleerde overdracht en veilig herstelplan plaatsvinden.
+Niet zelf verwijderen, kopiëren, schijf op nul brengen of source-prunes
+starten vanuit deze observer. Geen claim/queue/runner/CI-affecterende
+actie, geen QA-suite of workflow-dispatch.
+
+De bestaande CI, branch protection, review en geserialiseerde
+VPS/productie release-toestemming blijven verplicht.
+
