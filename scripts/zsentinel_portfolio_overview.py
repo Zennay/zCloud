@@ -586,7 +586,7 @@ def main():
     parser.add_argument("--inspect-hosted-no-start", action="store_true",
                         help="opt-in: read at most one failed exact-head check annotation per selected PR; no actions")
     parser.add_argument("--state", type=Path, help="optional private ledger, never a live queue")
-    parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk"), default="html")
+    parser.add_argument("--format", choices=("html", "json", "text", "ics", "desk", "handoff"), default="html")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--output", type=Path,
@@ -611,8 +611,8 @@ def main():
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
-        if args.output is not None and args.format not in ("html", "json", "text"):
-            raise ValueError("--output supports only html, json or text")
+        if args.output is not None and args.format not in ("html", "json", "text", "handoff"):
+            raise ValueError("--output supports only html, json, text or human handoff")
         if args.compare_with is not None and args.format not in ("html", "json", "text"):
             raise ValueError("--compare-with supports only html, json or text")
         history_files = args.compare_with or []
@@ -824,6 +824,9 @@ def main():
         elif args.format == "desk":
             from zsentinel_incident_desk import review_html
             rendered = review_html(decision)
+        elif args.format == "handoff":
+            from zsentinel_unblock_board import human_handoff_markdown
+            rendered = human_handoff_markdown(unblock)
         elif args.format == "json":
             rendered = json.dumps({
                 "portfolio": summary, "selected_window": window_index,
@@ -928,7 +931,7 @@ def main():
             from zsentinel_private_output import write_private_output
             write_private_output(
                 args.output, rendered,
-                "md" if args.format == "text" else args.format)
+                "md" if args.format in ("text", "handoff") else args.format)
         if args.desk_output is not None:
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(decision)
