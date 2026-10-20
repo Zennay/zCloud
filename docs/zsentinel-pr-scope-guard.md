@@ -1774,3 +1774,22 @@ Dit is specifiek bedoeld om het oude *merge-first* overzicht veilig
 bruikbaar te maken terwijl externe jobs, claims en reviews wijzigen;
 het is geen extra formele releasegate en geen aanspraak op volledige
 live-brondekking.
+
+## 20 oktober · actuele CI-blokkades in bestaande PR-workbench
+
+De optionele merge-eerst-weergave koppelt actuele file-scopecontrole aan actuele, opnieuw gepinde Check Runs en legacy commit-statuscontexten op dezelfde PR-HEAD.
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 10 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format html --output /secure/location/zsentinel-ci-review.html
+```
+
+Het offline HTML-rapport toont per geselecteerde bestaande PR een inklapbare lijst met maximaal twaalf lopende of mislukte checkjobs, hun canonieke GitHub-links en twaalf nieuwste niet-groene legacy statuscontexten. Tekst, Markdown en JSON bevatten hetzelfde bronbewijs met expliciete aantallen verborgen niet-groene regels.
+
+Een concrete statusclassificatiefout is hersteld: GitHub kan meerdere runs bewaren voor dezelfde checknaam/provider-app op dezelfde HEAD. Een oude gefaalde run mocht niet als actueel falen blijven meetellen nadat een nieuwe poging succesvol is geworden. De collector gebruikt nu de hoogste Check Run-ID per (app.id, checknaam) en meldt hoeveel eerdere pogingen genegeerd zijn. Ook legacy-contexten worden op de recentste bronstatus-ID beoordeeld.
+
+Bij een onvolledig, afgekapt of verplaatst Check Run-, legacy-status-, review- of HEAD-bronbewijs blijft de toestand onbekend. Er wordt niet automatisch herstart of gemerged. Alle getoonde URLs worden uit de canonieke GitHub-repository en numerieke ID of exacte commit samengesteld; onbetrouwbare externe details_url en target_url worden niet gevolgd. Labels worden ge-escaped voor HTML en Markdown.
+
+De bestaande grens van maximaal vier expliciete PR-gatelezingen blijft staan. Branchregels, vereiste CI, reviewerbeleid, actuele Notion-claims, eigenaar en releasebevoegdheid blijven afzonderlijk te controleren; deze waarneming autoriseert geen claim, CI-rerun, merge of deploy. Er zijn geen QA-/regressiesuites geschreven of handmatig gestart.
