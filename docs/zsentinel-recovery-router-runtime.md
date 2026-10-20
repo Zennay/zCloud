@@ -3182,3 +3182,56 @@ Het oorspronkelijke bestand, queue, claim, databases en runner blijven
 ongewijzigd. Nooit automatisch opruimen; een aparte owner-approved
 restore- en productieonderhoudsroute blijft vereist.
 
+
+## 20 oktober 2026 · Geen dubbel herstelwerk bij een recente branch zonder PR
+
+De autonome read-only herstelrouter accepteert nu optioneel de **reeds
+bestaande canonieke zCloud-branchbron** uit
+`scripts/zsentinel_recent_branch_ownership.py`. Dit is geen nieuwe
+GitHub-crawler, geen extra branch-protection-gate en geen automatische
+workerclaim: dit is een concreet bronconflict vóór het voorstellen van een
+tweede implementatie op dezelfde bestanden.
+
+**Gebruikersroute (lokaal, voor bevoegde operator):**
+
+```sh
+python3 scripts/zsentinel_recent_branch_ownership.py \
+  --project cloud > /path/to/private/current-prless-branches.json
+
+python3 scripts/zsentinel_recovery_router.py \
+  /path/to/private/canonical-bundle.json \
+  --prless-branches /path/to/private/current-prless-branches.json \
+  --format html > /path/to/private/owner-reviewed-recovery.html
+```
+
+De CLI leest de JSON met de bestaande stabiele regular-file, nofollow en
+strikte bounded `read_json`-reader. Als het bronbestand al in de bundle
+staat, wordt niet stilzwijgend een tweede bron overschreven. Voor de
+`cloud`-projecttaken wordt uitsluitend een **daadwerkelijk geobserveerde**
+bestands- of mapoverlap met een recente PR-loze branch onderdrukt.
+De oorspronkelijke branchnaam en het conflicterende pad verschijnen
+bij de overgeslagen taak in het Nederlandse tekstoverzicht en de
+offline herstelcockpit. De oorspronkelijke taak wordt niet gewijzigd.
+
+Een onvolledige branchlijst, afgekapt bestandspad, verlopen meting (>5
+minuten) of ongeldige optionele bron levert **geen vrijverklaring** voor
+`cloud`-taken: deze worden voor dit snapshot niet voorgesteld.
+**Andere projecten blijven wel onafhankelijk selecteerbaar.** Een niet
+aangeleverde bron verandert de bestaande routing niet, maar bewijst nooit
+dat er geen open branches of actieve PR-eigenaren bestaan. Zelfs met
+volledige broncoverage zijn claim, bestandscope, PRs en releasegates
+vlak vóór een eventuele bevoegde daadwerkelijke wijziging opnieuw te
+controleren.
+
+De output bevat `recent_branch_ownership` met broncoverage,
+reden, geobserveerde branchaantallen, aantal overgeslagen taken en
+hoogstens acht voorbeelden; verdere voorbeelden worden als afgekapt
+gemeld. `ownership_verified=false`, `claim_authorized=false`.
+Er worden geen PRs, issues, worker-claims, queues, CI, VPS-services,
+branches of bestanden op de doelrepo gewijzigd door deze optionele
+bronroute. Beschermde main en huidige reviews blijven verplicht.
+Geen QA-/regressiesuite toegevoegd of gestart.
+
+**Bronoplevering is niet hetzelfde als live:** dit werk staat in de
+bestaande open product-PR #1563 tot echte onafhankelijke review,
+exact-head CI en de normale protected-main merge zijn afgerond.
