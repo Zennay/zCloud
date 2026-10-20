@@ -149,6 +149,8 @@ def render_comparison(comparison):
         "newly_observed": "Nieuw waargenomen",
         "no_longer_observed": "Niet meer waargenomen",
         "service_state_changed": "Systemd-toestand gewijzigd",
+        "previous_source_gap": "Alleen nu gezien; vorige bron onvolledig",
+        "current_source_gap": "Nu niet gezien; huidige bron onvolledig",
     }
     rows = []
     for entry in comparison.get("transitions", [])[:40]:
