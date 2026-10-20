@@ -7,6 +7,7 @@ It never reads event titles/details or claims GitHub PR/CI synchronization.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 from datetime import datetime, timezone
 import html
 import json
@@ -35,7 +36,7 @@ def _load_cursor(path: str | None, selected: list[str]) -> dict | None:
     # must never silently skip rows in the selected projects.
     if doc.get("format_version") != 1 or doc.get("projects") != selected:
         raise ValueError("cursor export version or project scope mismatch")
-    if doc.get("coverage", {}).get("local_sqlite") != "read_only":
+    if not isinstance(doc.get("coverage"), dict) or doc["coverage"].get("local_sqlite") != "read_only":
         raise ValueError("cursor source provenance mismatch")
     cursor = doc.get("next_cursor")
     if cursor is None:
@@ -52,7 +53,7 @@ def _read_page(db_path: str, projects: list[str], size: int, cursor: dict | None
     # The mode=ro URI and query_only protect the runtime DB.  No migration,
     # table creation, lock acquisition for writing, or replay is attempted.
     uri = "file:" + quote(str(path), safe="/") + "?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=2) as connection:
+    with closing(sqlite3.connect(uri, uri=True, timeout=2)) as connection:
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA busy_timeout=2000")
         connection.execute("BEGIN")
