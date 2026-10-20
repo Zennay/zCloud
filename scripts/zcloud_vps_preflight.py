@@ -19,7 +19,7 @@ def command(*argv: str, cwd: Path | None = None, timeout: int = 8) -> tuple[int,
     try:
         completed = subprocess.run(
             argv, cwd=cwd, capture_output=True, text=True, timeout=timeout,
-            env={**{key: value for key, value in os.environ.items() if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"}}, "GIT_OPTIONAL_LOCKS": "0"},
+            env={**{key: value for key, value in os.environ.items() if not key.startswith("GIT_")}, "GIT_OPTIONAL_LOCKS": "0"},
             check=False,
         )
         return completed.returncode, completed.stdout.strip()
@@ -95,6 +95,70 @@ def optional_storage_inventory(root: Path) -> dict:
             "cleanup_authorized": False}
 
 
+
+def archive_mount_readiness(mount_path: Path = Path("/home/ubuntu/VPS-Archief")) -> dict:
+    """Observe one configured archive mount; never probe by writing a file.
+
+    A FUSE mount can advertise rw even when its rclone client was started
+    --read-only. Therefore "mounted" never proves it can accept new data.
+    """
+    outcome = {
+        "mount": str(mount_path),
+        "state": "unknown",
+        "mount_type": None,
+        "rclone_read_only": None,
+        "archive_write_authorized": False,
+        "transfer_performed": False,
+    }
+    if mount_path.is_symlink():
+        outcome["state"] = "unsafe_symlink"
+        return outcome
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        outcome["state"] = "mountinfo_unavailable"
+        return outcome
+    matched = None
+    for line in lines:
+        left, separator, right = line.partition(" - ")
+        fields, detail = left.split(), right.split()
+        if not separator or len(fields) < 6 or len(detail) < 3:
+            continue
+        # This operator-owned path has no mountinfo escapes/spaces.
+        if fields[4] == str(mount_path):
+            matched = (fields, detail)
+            break
+    if matched is None:
+        outcome["state"] = "not_mounted"
+        return outcome
+    fields, detail = matched
+    outcome["mount_type"] = detail[0]
+    options = set(fields[5].split(",")) | set(detail[2].split(","))
+    if "ro" in options:
+        outcome["state"] = "mount_declares_read_only"
+        return outcome
+
+    # Detect an explicit rclone --read-only client option, without outputting
+    # process arguments or assuming absence of the flag proves writability.
+    try:
+        for proc in Path("/proc").iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                argv = (proc / "cmdline").read_bytes().split(b"\\0")
+            except (OSError, PermissionError):
+                continue
+            if (argv and b"rclone" in argv[0].lower() and b"mount" in argv
+                    and os.fsencode(str(mount_path)) in argv
+                    and (b"--read-only" in argv or b"--read-only=true" in argv)):
+                outcome["rclone_read_only"] = True
+                outcome["state"] = "rclone_client_read_only"
+                return outcome
+    except OSError:
+        pass
+    outcome["state"] = "mounted_write_unverified"
+    return outcome
+
 def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     """Human-readable, non-authorizing recovery ordering; never executes the actions."""
     codes = {entry["code"] for entry in findings}
@@ -129,7 +193,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     return recommendations
 
 
-def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False) -> dict:
+def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False, archive_readiness: bool = False) -> dict:
     findings: list[dict[str, str]] = []
     def mark(code: str, severity: str, detail: str) -> None:
         findings.append({"code": code, "severity": severity, "detail": detail})
@@ -198,6 +262,10 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
     if inventory is not None and inventory["incomplete"]:
         mark("STORAGE_TRIAGE_PARTIAL", "warn",
              "Some bounded disk summaries timed out or were unavailable; do not infer zero usage.")
+    archive = archive_mount_readiness() if archive_readiness else None
+    if archive is not None and archive["state"] != "mounted_write_unverified":
+        mark("ARCHIVE_NOT_WRITABLE_VERIFIED", "warn",
+             "Archive is unavailable, read-only or unverified; never assume relocation is possible.")
     return {
         "schema": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
         "mode": "read_only", "release_authorized": False,
@@ -210,6 +278,7 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         "findings": findings,
         "recovery_priorities": recovery,
         "storage_inventory": inventory,
+        "archive_readiness": archive,
         "next_step": "Obtain existing owner/release approval; never use this report as deploy authorization.",
     }
 
@@ -298,6 +367,16 @@ def render_html(report: dict) -> str:
             f'{item("Severity changed", shown([x["code"] + ": " + x["previous"] + " → " + x["current"] for x in comparison["severity_changes"]]))}</dl>'
             '<p class="muted">Previous report was locally supplied and not independent runtime attestation.</p></section>'
         )
+    archive = report.get("archive_readiness")
+    archive_html = ""
+    if archive is not None:
+        archive_html = (
+            '<section aria-labelledby="archive"><h2 id="archive">External archive readiness</h2>'
+            f'<dl>{item("Mount", archive["mount"])}'
+            f'{item("Observed state", archive["state"])}'
+            f'{item("Filesystem", val(archive["mount_type"]))}</dl>'
+            '<p class="muted">No write probe or transfer was attempted. Archive writes are never authorized by this report.</p></section>'
+        )
     storage = report.get("storage_inventory")
     if storage is None:
         storage_html = ""
@@ -354,6 +433,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 </dl></section>
 {comparison_html}
 {storage_html}
+{archive_html}
 <section aria-labelledby="findings"><h2 id="findings">Release blockers and warnings</h2><ul>{findings}</ul></section>
 <section aria-labelledby="recovery"><h2 id="recovery">Owner-gated recovery priorities</h2><ol>{actions}</ol></section>
 <p class="disclaimer"><strong>Not an approval.</strong> This report cannot prove protected-main review,
@@ -368,6 +448,8 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Print bounded machine-readable evidence")
     parser.add_argument("--disk-hotspots", action="store_true",
                         help="Optional bounded read-only du inventory of five known storage categories")
+    parser.add_argument("--archive-readiness", action="store_true",
+                        help="Read-only external archive mount inspection; never proves write permission")
     parser.add_argument("--previous-report", type=Path, default=None,
                         help="Compare with a saved bounded JSON report; never modifies the prior file")
     parser.add_argument("--format", choices=("text", "json", "html"), default="text",
@@ -377,7 +459,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
-    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots)
+    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness)
     if args.previous_report is not None:
         try:
             report["comparison"] = compare_snapshot(args.previous_report, report)
@@ -410,6 +492,9 @@ def main() -> int:
                 print(f"  {row['category']}: {row['size_gib']} GiB")
             if inventory["incomplete"]:
                 print(f"  Incomplete: {', '.join(inventory['incomplete'])}")
+        archive = report.get("archive_readiness")
+        if archive is not None:
+            print(f"External archive: {archive['state']} ({archive['mount_type'] or 'unknown'}); archive writes NOT authorized")
         print("Owner-gated recovery priorities:")
         for index, item in enumerate(report["recovery_priorities"], 1):
             print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
