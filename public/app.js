@@ -2813,21 +2813,30 @@ function combinedProjectCoverageRows(){
   const observations=IMPORTED_GITHUB_ACTIVITY?.coverage||[];
   const current=Date.now(),rows=[];
   for(const id of projectIds.slice(0,24)){
-    const local=(ACTIVITY||[]).filter(item=>item?.project===id
-      &&Number.isFinite(Date.parse(item.ts)));
+    const localCache=ACTIVITY_LOCAL_PROJECT_CACHE.get(id);
+    const localFailed=ACTIVITY_LOCAL_PROJECT_ERRORS.has(id);
+    const localSourceAt=localCache?.observedAt||null;
+    // A global 80-row fallback is not a successful scoped project read.
+    const localStatus=!localCache?(localFailed?'unavailable':'not scoped'):
+      localFailed?'stale after failed refresh':
+      !Number.isFinite(localSourceAt)||current-localSourceAt>6*3600000?'stale':'scoped read';
+    const localEvents=localCache?.rows||[];
+    const localLast=localEvents.length?
+      localEvents.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y).ts:null;
     const github=(IMPORTED_GITHUB_ACTIVITY?.events||[]).filter(item=>item?.project===id
       &&Number.isFinite(Date.parse(item.ts)));
-    const localLast=local.length?local.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y).ts:null;
     const ghLast=github.length?github.reduce((x,y)=>Date.parse(x.ts)>=Date.parse(y.ts)?x:y).ts:null;
     const ghCoverage=observations.find(c=>c.project===id);
     const syncAt=ghCoverage?.observedAt||null;
-    const localFresh=localLast&&current-Date.parse(localLast)<=6*3600000;
-    const ghFresh=syncAt&&current-Date.parse(syncAt)<=6*3600000;
-    // A read source returning zero events is not proof of no source activity.
+    const ghFresh=syncAt&&Number.isFinite(Date.parse(syncAt))
+      &&current-Date.parse(syncAt)<=6*3600000;
+    // Event timestamp and time of observing its source are independent facts.
     const status=!ghCoverage?'not observed':ghCoverage.status==='unavailable'
       ?'unavailable':!ghFresh||ghCoverage.staleEvidence?'stale/partial':
       ghCoverage.status||'partial';
-    rows.push({project:id,localLast,ghLast,syncAt,status,localFresh:Boolean(localFresh)});
+    rows.push({project:id,localLast,localStatus,localSourceAt,
+      localCount:localCache?.rows.length??null,localLimited:localCache?.limited===true,
+      ghLast,syncAt,status});
   }
   return rows;
 }
@@ -2835,16 +2844,23 @@ function combinedProjectCoverageTable(){
   const entries=combinedProjectCoverageRows();
   const missing=entries.filter(r=>r.status==='not observed').length;
   const stale=entries.filter(r=>['stale/partial','unavailable'].includes(r.status)).length;
+  const unscoped=entries.filter(r=>r.localStatus!=='scoped read').length;
   return '<details data-disclosure="timelineCoverage"><summary>Project source coverage ('+
-    entries.length+' projects · '+missing+' GitHub unobserved · '+stale+' GitHub unavailable/stale)</summary>'+
+    entries.length+' projects · '+unscoped+' local not fresh · '+missing+
+    ' GitHub unobserved · '+stale+' GitHub unavailable/stale)</summary>'+
     '<div class="service-list">'+entries.map(row=>
       '<div class="service-row"><div><a class="text-link" href="#activity?project='+encodeURIComponent(row.project)+'">'+
       esc((DATA.projects.find(p=>p.id===row.project)||{}).name||row.project)+'</a><br>'+
-      '<small>Local last event: '+(row.localLast?esc(date(row.localLast,true)):'unknown')+
-      ' · GitHub last event: '+(row.ghLast?esc(date(row.ghLast,true)):'unknown')+
+      '<small>Local scoped source: '+esc(row.localStatus)+
+      (row.localSourceAt?' · read '+esc(date(new Date(row.localSourceAt).toISOString(),true)):' · never read')+
+      (row.localCount!==null?' · '+row.localCount+' bounded events':'')+
+      (row.localLimited?' · 80-row limit':'')+
+      ' · latest event '+(row.localLast?esc(date(row.localLast,true)):'unknown')+
       '</small></div><small>GitHub '+esc(row.status)+'<br>'+
-      (row.syncAt?esc(date(row.syncAt,true)):'not fetched')+'</small></div>').join('')+
-    '</div><p class="detail-note">This table measures observed evidence coverage, not product completion, actual claim ownership or deployment. Stale data is retained, not treated as no work.</p></details>';
+      (row.syncAt?'observed '+esc(date(row.syncAt,true)):'not fetched')+
+      (row.ghLast?'<br>latest sampled event '+esc(date(row.ghLast,true)):'')+
+      '</small></div>').join('')+
+    '</div><p class="detail-note">Source observation time and last event time are separate. A scoped read returning zero events is not proof of no commits; a fallback global list is not project coverage. GitHub samples, PRs and checks never authorize a merge or deployment.</p></details>';
 }
 function combinedActivityPanel(){
   const rows=combinedActivityRows();
