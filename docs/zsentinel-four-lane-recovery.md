@@ -475,3 +475,30 @@ merged, deployed, live-installed or a resumed worker without the actual
 GitHub merge receipt, exact new default-branch SHA, authorized release
 action and live-state confirmation. The current source may be inspected
 read-only in memory without changing the VPS working tree.
+
+
+## 20 October product-only admission · no new QA assignments
+
+The `portfolio-recovery` planner now **refuses to admit queued,
+standalone QA, regression-test, test-suite and quality-validation packages**
+as new zSentinel recovery work. Explicit QA lane metadata and common
+QA-leading titles are both recognized; a real implementation/bug-fix ticket
+is not excluded just because its acceptance description mentions tests.
+The filter applies only to `queued` zSentinel work, not to other projects.
+
+Already `claimed`, `running` or `verifying` entries keep their existing
+reservation and identity even if their title describes QA. Neither the
+filter nor the four-lane desk cancels, releases, reassigns, edits or
+supersedes those owners. Mandatory independent GitHub CI and protected-main
+review remain unchanged.
+
+An otherwise empty lane containing only forbidden QA work is reported as
+`blocked`, never `idle` or `queued`. Every lane now provides an aggregate
+`deferred_qa_packages` count (no raw task names/IDs), shown in JSON, text,
+Markdown handoff and the private offline HTML cards. This is an operator
+exclusion signal, **not** authority to mutate the legacy backlog. A human
+queue owner decides whether to archive or reroute any pre-existing QA item.
+
+Source is delivered only on PR #1572 until GitHub confirms protected-main
+merge at the exact checked head. This change writes no production SQLite,
+runner state, scheduler, browser or GitHub Actions workflows.
