@@ -154,7 +154,40 @@ def _classify(gate):
     return "policy"
 
 
-def render_html(selected, integrated):
+def _historical_html(lines):
+    """Turn already provenance-checked bridge differences into static review cards."""
+    if lines is None:
+        return ""
+    if (type(lines) is not list or not 5 <= len(lines) <= 145
+            or any(type(value) is not str or len(value) > 900
+                   or any(ord(ch) == 0 for ch in value) for value in lines)):
+        raise ValueError("Unbounded historical review handoff")
+    rows = []
+    detail = []
+    entry = re.compile(
+        r"- \[([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8})\]"
+        r"\((https://github\.com/Zennay/[A-Za-z0-9_.-]{1,100}/pull/[1-9][0-9]{0,8})\): (.{1,300})\Z")
+    for line in lines:
+        match = entry.fullmatch(line)
+        if match:
+            rows.append('<li><a target="_blank" rel="noopener noreferrer" href="' +
+                        escape(match.group(2), quote=True) + '">' +
+                        escape(match.group(1)) + '</a> — ' +
+                        escape(match.group(3)) + '</li>')
+        elif line and not line.startswith("#"):
+            detail.append(escape(line))
+    return ('<section id="changes"><details open><summary>Verschillen tussen '
+            'twee opgeslagen bronmomenten (' + str(len(rows)) + ' PR-kaarten)'
+            '</summary><div class="changes"><p>Historische waarnemingen van '
+            'hetzelfde bronmanifest. Dit bewijst GEEN merge, herstel of '
+            'huidige vereiste CI.</p><p>' +
+            '<br>'.join(detail[:8]) + '</p>' +
+            ('<ol>' + ''.join(rows) + '</ol>' if rows else
+             '<p>Geen PR-verschil waargenomen; dat is geen vrijgave.</p>') +
+            '</div></details></section>')
+
+
+def render_html(selected, integrated, *, historical_change_lines=None):
     """Static operator dashboard: no JS, no remote sources, no approval inference."""
     oldest, latest, missing = _admit(selected, integrated)
     gates = _observed_gate(integrated, selected, missing)
@@ -236,6 +269,7 @@ article p{margin:9px 0}.line{display:flex;justify-content:space-between;flex-wra
 .next{color:#b9e8d5;border-top:1px solid #405a72;padding-top:8px}
 small{display:block;color:#c3d6e6}code{font-size:12px;background:#0b182a;border-radius:5px;padding:3px 6px}
 .provenance{padding-top:18px;border-top:1px solid #405774;color:#b1c6d8;font-size:13px;overflow-wrap:anywhere}
+.changes{padding:6px 20px 20px}.changes ol{padding-left:24px}.changes li{padding:6px 0;overflow-wrap:anywhere}
 @media print{body{background:white;color:black}.stat,details,article{background:white;color:black;border-color:#555}.cards{display:block}article{margin:10px 0}summary{color:black}}
 </style></head><body><main>
 <header><div class="subtitle">zCloud / zSentinel / opgeslagen bewijs</div>
@@ -245,7 +279,8 @@ small{display:block;color:#c3d6e6}code{font-size:12px;background:#0b182a;border-
 Deze pagina kan geen claim, CI, vereiste branchregels, onafhankelijke review,
 merge of productieactie autoriseren. Controleer altijd de actuele exacte PR-HEAD in GitHub.</div>
 </header>'''
-    html += (warning + '<div class="stats">' + summary + '</div>' +
+    html += (warning + _historical_html(historical_change_lines) +
+             '<div class="stats">' + summary + '</div>' +
              '<p>Bronvenster: ' + n(integrated["earliest_observed_at_utc"]) +
              ' — ' + n(integrated["latest_observed_at_utc"]) +
              ' · batches: ' + str(integrated["observed_batch_count"]) + '/' +
