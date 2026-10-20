@@ -391,7 +391,7 @@ def main():
         owner_handoff = None
         if args.handoff_output is not None or args.show_owner_handoff:
             from zsentinel_runtime_handoff import build_handoff
-            owner_handoff = build_handoff(decision)
+            owner_handoff = build_handoff(decision, registry=registry)
         disk_private_html = None
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
