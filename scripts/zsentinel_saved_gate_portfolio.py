@@ -145,6 +145,15 @@ def portfolio_html(selected, integrated, *, project=None):
                 "source_unavailable_or_head_changed": "Bron/HEAD niet vastgepind",
                 "observed_partial_gate_receipt": "Gedeeltelijke gatebron",
             }[candidate["gate_source"]]
+            counters = candidate["gate_observations"]
+            counter_detail = (
+                " · Exact-HEAD steekproef: afgerond " +
+                str(counters["checks_completed"]) + ", lopend " +
+                str(counters["checks_pending"]) + ", niet succesvol " +
+                str(counters["checks_not_successful"]) + ", onafhankelijke " +
+                "approvals gezien " +
+                str(counters["independent_approvals_observed"])
+                if counters is not None else " · Actuele gatewaarneming UNKNOWN")
             queue.append(
                 '<li><a href="' + e(candidate["url"]) +
                 '" target="_blank" rel="noopener noreferrer">' +
@@ -154,7 +163,7 @@ def portfolio_html(selected, integrated, *, project=None):
                 '<br><small>' + e(observation) + ' · Batch ' +
                 str(candidate["batch_index"]) + ' · ' + e(combined) +
                 ' · Gekoppelde bronissues: ' + issue_links +
-                '</small></li>')
+                e(counter_detail) + '</small></li>')
         counts = " · ".join(
             str(p["primary_categories"][key]) + " " + LABELS[key][0]
             for key in LABELS if p["primary_categories"][key])
@@ -421,6 +430,14 @@ def portfolio_markdown(selected, integrated, *, project=None):
                 "  - Gelijktijdige signalen: " + blockers,
                 "  - Batch " + str(candidate["batch_index"]) +
                 ": " + status_labels[candidate["gate_source"]],
+                "  - Exact-HEAD CI steekproef: " +
+                (("afgerond " + str(candidate["gate_observations"]["checks_completed"]) +
+                  ", lopend " + str(candidate["gate_observations"]["checks_pending"]) +
+                  ", niet succesvol " +
+                  str(candidate["gate_observations"]["checks_not_successful"]) +
+                  ", onafhankelijke approvals gezien " +
+                  str(candidate["gate_observations"]["independent_approvals_observed"]))
+                 if candidate["gate_observations"] is not None else "ONBEKEND"),
                 "  - Gekoppelde bronissues: " + (refs or "geen in bron"),
                 "  - Huidige HEAD/reviews/main/live: opnieuw live verifiëren; "
                 "geen vrijgave uit deze momentopname.",
