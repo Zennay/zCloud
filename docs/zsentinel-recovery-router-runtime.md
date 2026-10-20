@@ -1,5 +1,31 @@
 # zSentinel · Runtime incident router (product-only)
 
+## 20 oktober · GitHub CI zonder klassieke statuscontexten
+
+De exacte-head PR-desk onderscheidt nu drie situaties die eerder voor dezelfde
+"pending"-melding konden worden aangezien:
+
+- **Moderne check-runs aanwezig, klassieke statussen leeg:** GitHub kan voor
+  een lege klassieke statuslijst `state=pending` teruggeven. Dat is geen
+  daadwerkelijk lopende klassieke status. De PR- en issue-cockpit, tekst en
+  Markdown tonen daarom "geen klassieke statussen (GitHub API: pending zonder
+  context)". Moderne checks en eventuele review worden afzonderlijk
+  beoordeeld.
+- **Geen moderne check-runs én geen klassieke statussen:** er is helemaal geen
+  actueel CI-bewijs. De volgende stap wordt
+  `wait_for_first_ci_receipt`; dit is **niet** klaar voor merge of
+  automatische reviewvrijgave.
+- **Minstens één bestaande klassieke status pending:** blijft een
+  echte wachtende status, ook wanneer moderne check-runs voltooid zijn.
+
+De feitelijke GitHub-status blijft in JSON onder
+`legacy_status_contexts.combined_observed` behouden. De bron geeft apart
+`implicit_pending_without_contexts` aan, zodat operatoren en vervolgtools
+het onderscheid kunnen reconstrueren. Niets in deze wijziging verifieert
+verplichte branch-protection-contexten, claims, reviewbeleid, merge of deploy.
+Bestaande exacte-head CI blijft verplicht; er zijn geen suites toegevoegd of
+handmatig gestart.
+
 ## Privé-opvolgnotities en optioneel Notion actief werk (19 oktober)
 
 De offline HTML-bediening kan na een **bewuste voorvertoning** maximaal
