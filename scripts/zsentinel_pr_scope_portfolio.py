@@ -251,9 +251,36 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             direct = selected_source_pr(repo, int(number_text), token)
             if direct["product_candidate_based_on_title"] is not True:
                 raise ValueError("QA-only or non-product selected PR")
+            # The first inventory has already fetched bounded file lists.
+            # Reuse them for positive, explicitly incomplete collision
+            # evidence instead of issuing another full GitHub PR scan.
+            observed_overlaps = []
+            view = next(item for item in board["project_views"]
+                        if item["project"] == project)
+            if view.get("open_pr_snapshot_stable") is True:
+                for recent in view.get("sampled_open_pr_heads", []):
+                    shared = sorted(set(direct["paths"]).intersection(
+                        recent.get("file_paths_observed", [])))
+                    if recent["number"] == direct["number"] or not shared:
+                        continue
+                    observed_overlaps.append({
+                        "other_pr_url": recent["url"],
+                        "other_pr_head_when_read": recent["head_sha"],
+                        "shared_file_count_observed": len(shared),
+                        "shared_paths_preview": shared[:12],
+                        "shared_paths_preview_truncated": len(shared) > 12,
+                        "other_pr_file_list_incomplete":
+                            not recent.get("file_list_complete", False),
+                        "complete_repo_collision_scan_verified": False,
+                    })
+            observed_overlaps.sort(
+                key=lambda item: (-item["shared_file_count_observed"],
+                                  item["other_pr_url"]))
             selected.append((project, repo, {
                 **direct,
                 "direct_explicit_source_only": True,
+                "sampled_file_overlaps_observed": observed_overlaps[:16],
+                "sampled_file_overlaps_hidden": max(0, len(observed_overlaps) - 16),
             }))
             fallback_count += 1
     identities = [(repo, pr["number"]) for _, repo, pr in selected]
@@ -272,6 +299,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "observed_in_recent_pr_collision_sample":
                     not captured.get("direct_explicit_source_only", False),
                 "complete_file_collision_coverage_verified": False,
+                "sampled_file_overlaps_observed":
+                    captured.get("sampled_file_overlaps_observed", []),
+                "sampled_file_overlaps_hidden":
+                    captured.get("sampled_file_overlaps_hidden", 0),
                 "status": "current_exact_pr_head_and_sample_match",
                 "draft_at_read": gate["draft_at_read"],
                 "github_mergeable_boolean_observed": gate["github_mergeable_boolean_observed"],
@@ -304,6 +335,10 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "observed_in_recent_pr_collision_sample":
                     not captured.get("direct_explicit_source_only", False),
                 "complete_file_collision_coverage_verified": False,
+                "sampled_file_overlaps_observed":
+                    captured.get("sampled_file_overlaps_observed", []),
+                "sampled_file_overlaps_hidden":
+                    captured.get("sampled_file_overlaps_hidden", 0),
                 "status": "pr_source_unavailable_or_changed_between_observations",
                 "required_rules_verified": False,
                 "live_owner_claim_verified": False,
