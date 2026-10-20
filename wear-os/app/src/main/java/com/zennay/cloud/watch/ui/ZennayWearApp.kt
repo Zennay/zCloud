@@ -110,7 +110,12 @@ private fun HomeScreen(
         item {
             HeaderRow(
                 title = "Zennay Cloud",
-                subtitle = if (loading) "SYNCING" else "LIVE",
+                subtitle = when {
+                    loading -> "SYNCING"
+                    error != null -> "OFFLINE"
+                    data?.stale == true -> "STALE"
+                    else -> "LIVE"
+                },
                 onRefresh = { scope.launch { reload() } }
             )
         }
@@ -118,12 +123,24 @@ private fun HomeScreen(
             item { ErrorCard(error ?: "Cloud offline", onRetry = { scope.launch { reload() } }) }
         }
         data?.let { snapshot ->
-            // Surface actionable blockers before progress metrics: a glance at the
-            // watch should answer "what needs me?" without scrolling through KPIs.
+            // A failed refresh may leave the last successful snapshot in memory.
+            // Never label it LIVE or show its old incidents as current blockers.
+            if (error != null) {
+                item {
+                    ErrorCard("Offline: laatste succesvolle gegevens blijven zichtbaar. " +
+                              "Ververs voordat je een blokkade opvolgt.",
+                              onRetry = { scope.launch { reload() } })
+                }
+            }
+            // Source incident IDs can be empty/duplicated. Compose requires
+            // stable unique lazy-list keys, and only fresh incident evidence
+            // may receive current blocker emphasis.
             val urgent = snapshot.alerts
+                .filter { error == null && !snapshot.stale && it.id.isNotBlank() }
                 .filter { it.severity.equals("critical", true) ||
                           it.severity.equals("high", true) ||
                           it.severity.equals("needs_attention", true) }
+                .distinctBy { it.id }
                 .sortedWith(compareBy<com.zennay.cloud.watch.data.AlertItem> {
                     if (it.severity.equals("critical", true)) 0 else 1
                 }.thenByDescending { it.occurredAt.orEmpty() })
@@ -148,11 +165,11 @@ private fun HomeScreen(
                     }
                 }
             }
-            if (snapshot.stale) {
+            if (snapshot.stale || error != null) {
                 item {
                     SurfaceCard {
                         Label("GEGEVENS VEROUDERD", Warning)
-                        Text("Ververs voordat je een blokkade als opgelost beschouwt.",
+                        Text("Geen actuele incidentbevestiging. Ververs voordat je een blokkade als opgelost beschouwt.",
                             color = TextMain, fontSize = 10.sp)
                     }
                 }
@@ -188,8 +205,8 @@ private fun HomeScreen(
             }
             item {
                 Text(
-                    if (snapshot.stale) "Data stale" else "Live · ${shortAge(snapshot.generatedAt)}",
-                    color = if (snapshot.stale) Warning else TextMuted,
+                    if (snapshot.stale || error != null) "Niet actueel · ${shortAge(snapshot.generatedAt)}" else "Live · ${shortAge(snapshot.generatedAt)}",
+                    color = if (snapshot.stale || error != null) Warning else TextMuted,
                     fontSize = 9.sp,
                     modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                     textAlign = TextAlign.Center
@@ -227,7 +244,11 @@ private fun DetailScreen(
         item {
             HeaderRow(
                 title = detail?.name?.uppercase() ?: projectId.uppercase(),
-                subtitle = if (loading) "syncing" else "project",
+                subtitle = when {
+                    loading -> "syncing"
+                    error != null -> "offline"
+                    else -> "project"
+                },
                 leading = "‹",
                 onLeading = onBack,
                 onRefresh = { scope.launch { reload() } }
@@ -237,6 +258,13 @@ private fun DetailScreen(
             item { ErrorCard(error ?: "Cloud offline", onRetry = { scope.launch { reload() } }) }
         }
         detail?.let { p ->
+            if (error != null) {
+                item {
+                    ErrorCard("Projectdetails zijn mogelijk verouderd. " +
+                              "Ververs voor een actuele beslissing.",
+                              onRetry = { scope.launch { reload() } })
+                }
+            }
             item { ProjectHero(p) }
             item {
                 SurfaceCard {
