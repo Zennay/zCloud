@@ -115,11 +115,15 @@ nog te bekijken pagina. Veranderende zoektotalen, dubbele kandidaten, inmiddels
 veranderde HEADs, ontbrekende issueverificatie, einde van bronbudget of
 onbeschikbare latere pagina blijven expliciet **PARTIAL**; het onafhankelijke
 PR- en repo-eigenaarschap wordt nooit afgeleid. Multi-page GitHub Search is
-niet atomair, ook niet bij een aansluitende paginareeks. Bij minimaal twee
-bekeken pagina's leest de werkbak het echte issue bovendien nogmaals na de laatste
-pagina. Is het issue intussen niet meer aantoonbaar open, of is dat laatste
-bronverzoek niet mogelijk binnen het budget, dan worden de eerder gekoppelde
-issue-referenties expliciet ingetrokken en de issue-state UNKNOWN. Veranderen
+niet atomair, ook niet bij een aansluitende paginareeks. Iedere afzonderlijke gerichte zoekpagina leest het echte issue na afloop
+nogmaals en vergelijkt niet alleen OPEN/nummer/identiteit, maar ook de
+oorspronkelijke titel en P0/P1-prioriteit. Bij minimaal twee bekeken pagina's
+wordt het issue bovendien na de laatste pagina opnieuw gelezen. Is het issue
+niet meer aantoonbaar met dezelfde actuele urgentie open, of ontbreekt het
+laatste bronbewijs binnen het budget, dan worden gekoppelde
+issue-referenties ingetrokken en krijgt de zichtbare operatorweergave
+`current_state=UNKNOWN`. Het historische prioriteitslabel in die weergave
+is dan **niet actueel bewezen**, ook niet bij maar één zoekpagina. Veranderen
 de oorspronkelijke prioriteit of titel van het issue tussen afzonderlijke
 bronmomenten, dan blijven oude P0/P1-labels evenmin als geverifieerd staan.
 Het programma
