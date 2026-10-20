@@ -13,8 +13,8 @@ import sys
 
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPOSITORY = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
-EVENT_ID = re.compile(r"^github:Zennay/[A-Za-z0-9_.-]{1,100}:(?:(?:pr_created|pr_updated|pr_merged|ci_run):[0-9]{1,15}|main_commit:[a-f0-9]{40})$")
-KINDS = {"pr_created", "pr_updated", "pr_merged", "ci_run", "main_commit"}
+EVENT_ID = re.compile(r"^github:Zennay/[A-Za-z0-9_.-]{1,100}:(?:(?:pr_created|pr_updated|pr_merged|pr_closed|ci_run):[0-9]{1,15}|main_commit:[a-f0-9]{40})$")
+KINDS = {"pr_created", "pr_updated", "pr_merged", "pr_closed", "ci_run", "main_commit"}
 OUTCOMES = {"success", "failure", "cancelled", "skipped", "timed_out",
             "action_required", "neutral", "stale", "startup_failure", None}
 # Constant operator language: never interpolate GitHub response text or tokens.
@@ -139,7 +139,7 @@ def digest(payload: dict) -> str:
                 raise ValueError("new_since_previous_missing")
             if not payload["previous_snapshot_compared"] and event.get("new_since_previous") is not None:
                 raise ValueError("unexpected_previous_comparison")
-            if kind in {"pr_created", "pr_updated", "pr_merged"}:
+            if kind in {"pr_created", "pr_updated", "pr_merged", "pr_closed"}:
                 target = event.get("reported_target")
                 if target is not None and (not isinstance(target, str) or
                                            (len(target) > 180 or not re.fullmatch(r"[A-Za-z0-9_./-]+", target) or target.startswith("/") or target.endswith("/") or "//" in target or ".." in target)):
@@ -165,6 +165,14 @@ def digest(payload: dict) -> str:
                 head_sha = event.get("pr_head_sha")
                 if not isinstance(head_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", head_sha):
                     raise ValueError("invalid_pr_head_sha")
+                if kind == "pr_closed":
+                    # A closure is a provider event, not an inferred delivery.
+                    if (lifecycle != "closed_without_merge"
+                            or event.get("merged") is not False
+                            or event.get("main_merged") is not False
+                            or event.get("reported_main_merge") is not False
+                            or not isinstance(event.get("pr_closed_at"), str)):
+                        raise ValueError("invalid_unmerged_closure_evidence")
                 # Older valid receipts do not contain this optional lifecycle.
                 # Never interpret a legacy missing field as an open PR.
                 lifecycle = event.get("pr_lifecycle")
@@ -194,11 +202,10 @@ def digest(payload: dict) -> str:
                     raise ValueError("invalid_main_commit_identity")
             validated.append(event)
         created = sum(e["kind"] == "pr_created" for e in validated)
-        # Count one current closed-unmerged PR per source only, never the
-        # created AND updated record as two separate closures.
+        # Count explicit closure events at provider close-time; these are
+        # unique per PR and never count as shipped to main.
         closed_unmerged = len({
-            e["pr"] for e in validated if e["kind"] == "pr_updated"
-            and e.get("pr_lifecycle") == "closed_without_merge"
+            e["pr"] for e in validated if e["kind"] == "pr_closed"
         })
         merged = sum(e["kind"] == "pr_merged" for e in validated)
         merged_to_main_reported = sum(e["kind"] == "pr_merged" and
@@ -213,7 +220,7 @@ def digest(payload: dict) -> str:
         first_seen_in_view = sum(e.get("new_since_previous") is True for e in validated)
         lines.append("Observed event counts (bounded window, may be truncated): "
                      + str(created) + " PR-created; " + str(closed_unmerged)
-                     + " PRs currently closed without merge (not deliveries); "
+                     + " observed PR closures without merge (not deliveries); "
                      + str(merged)
                      + " PR-merged-to-some-base (of which " +
                      str(merged_to_main_reported) + " reported target=main; " +
@@ -243,7 +250,9 @@ def digest(payload: dict) -> str:
                 label = kind.replace("_", " ") + " #" + str(number) + " · head " + event["pr_head_sha"][:12]
                 if event.get("draft") is True:
                     label += " (draft)"
-                if event.get("pr_lifecycle") == "closed_without_merge":
+                if kind == "pr_closed":
+                    label += " (closed at provider source time; NOT delivered)"
+                elif event.get("pr_lifecycle") == "closed_without_merge":
                     label += " (now closed without merge; NOT delivered)"
                 elif event.get("pr_lifecycle") == "open":
                     label += " (currently open)"
