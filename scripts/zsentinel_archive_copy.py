@@ -238,6 +238,32 @@ def inspect_digest(source_root: Path, relative: str):
         os.close(fd)
 
 
+def _admit_private_receipt(path: Path):
+    """Check private receipt path before any owner-authorized archive write."""
+    if (not isinstance(path, Path) or not path.is_absolute()
+            or path.suffix != ".json" or path.name in (".", "..")
+            or path.is_symlink() or path.exists()):
+        raise ValueError("explicit new absolute private JSON receipt required")
+    parent = path.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise ValueError("existing non-symlink private receipt directory required")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+    fd = os.open(parent, flags)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or info.st_mode & 0o077):
+            raise ValueError("receipt directory must be owned and private (0700)")
+        try:
+            os.stat(path.name, dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise ValueError("private receipt already exists")
+    finally:
+        os.close(fd)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Owner-reviewed one-file archive copy; no source deletion, no automatic migration")
@@ -252,8 +278,7 @@ def main():
                         help="new private .json receipt in an existing controlled folder")
     args = parser.parse_args()
     try:
-        if args.output.suffix != ".json":
-            raise ValueError("private JSON receipt required")
+        _admit_private_receipt(args.output)
         if args.mode == "plan":
             if (args.owner_confirm is not None or args.expected_sha256 is not None
                     or args.archive_filename is not None or
