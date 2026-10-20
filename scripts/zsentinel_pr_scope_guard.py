@@ -631,7 +631,20 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         # actual pull request, not an issue; source evidence distinguishes it.
         for number, _ in duplicate_issue_groups[:MAX_IDENTITY_LOOKUPS]:
             checked_identities[number] = issue_identity(repo, number, token)
+    def next_human_step(status):
+        # Display-only operator routing. Nothing here claims, edits, merges,
+        # schedules a workflow or authorizes a release.
+        if status == "confirmed_open_issue_at_observation":
+            return "review_existing_prs_for_same_open_issue"
+        if status == "confirmed_closed_issue_at_observation":
+            return "review_closed_issue_before_more_product_work"
+        if status == "reference_is_pull_request_not_issue":
+            return "inspect_referenced_pr_not_issue"
+        return "verify_reference_identity_before_routing"
+
     duplicate_issue_cards = [{
+        "operator_next_step": next_human_step(
+            checked_identities.get(issue, "not_observed")),
         "issue_url": "https://github.com/" + repo + "/issues/" + str(issue),
         "issue_number": issue,
         "identity_status": checked_identities.get(issue, "not_observed"),
@@ -809,6 +822,7 @@ def graph_operator_text(report):
                       " · " + str(group["open_pr_mentions_observed"]) +
                       " PR-bronvermeldingen · GitHub identiteit: " +
                       group["identity_status"] +
+                      " · actie: " + group["operator_next_step"] +
                       " · geen geverifieerde oplossing/eigenaar")
         for link in group["shown_pr_sources"]:
             result.append("  " + link["url"] + " @ " + link["head_sha"][:12] +
@@ -876,6 +890,7 @@ def graph_html(report):
             str(group["open_pr_mentions_observed"]) +
             " PR-tekstvermeldingen · GitHub identiteit: " +
             escape(group["identity_status"]) +
+            " · actie: " + escape(group["operator_next_step"]) +
             " (geen fix-/eigenaarbewijs)<ul>" +
             mentioned + "</ul></li>")
     isolated_links = "".join(
@@ -1028,6 +1043,7 @@ def graph_markdown(report):
                      str(group["open_pr_mentions_observed"]) +
                      " open PR-tekstverwijzingen · GitHub identiteit: " +
                      group["identity_status"] +
+                     " · actie: " + group["operator_next_step"] +
                      " · geen geverifieerde fix/eigenaar")
         for row in group["shown_pr_sources"]:
             lines.append("  - [PR](" + row["url"] + ") · " +
