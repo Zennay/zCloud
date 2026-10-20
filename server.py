@@ -3997,14 +3997,16 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
             else ''
         ) or (str(row['title']) if result=='CONTINUE' else '')
         project=PROJECT_INDEX.get(str(row['project_id'])) or {}
-        receipt_status={'DONE':'success','BLOCKED':'failure','CONTINUE':'in_progress'}[result]
+        # Queue DONE is not GitHub CI success, and BLOCKED is not evidence
+        # of a failed CI job. CI state is only established by independent
+        # exact-head workflow evidence, never by a worker result string.
         with connect() as c:
             project_runtime.record_receipt(
                 c,
                 str(row['project_id']),
                 phase=str(project.get('phase') or ''),
                 action=f"{row['title']} -> {result}",
-                ci_status=receipt_status,
+                ci_status='',
                 blocker=str(evidence or '') if result=='BLOCKED' else '',
                 next_gate=next_gate or str(project.get('next_step') or ''),
                 source='portfolio_queue:'+queue_id,
@@ -4013,6 +4015,8 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
                     'result':result,
                     'priority':str(row['priority'] or ''),
                     'evidence':str(evidence or '')[:3500],
+                    'ci_evidence':'not_observed_by_queue_transition',
+                    'main_merge_evidence':'not_observed_by_queue_transition',
                 },
             )
         receipt_saved=True
@@ -4024,6 +4028,8 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
         'next_task':created,'attention':attention,'queue_audit':audit,
         'continuation_status':continuation_status,
         'state_receipt_saved':receipt_saved,
+        'ci_verified_by_queue_result':False,
+        'main_merge_verified_by_queue_result':False,
         'handoff_complete':receipt_saved and continuation_status in (
             'created','not_requested','original_task_requeued'
         ),
