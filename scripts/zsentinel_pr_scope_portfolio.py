@@ -201,8 +201,12 @@ def as_html(board):
                     "</a></td><td>" + str(pair["shared_file_count_observed"]) +
                     "</td><td>" + files + "</td></tr>")
         if not rows:
-            rows = ["<tr><td colspan='3'>Geen overlap zichtbaar in deze "
-                    "steekproef; afwezigheid is geen vrijgave.</td></tr>"]
+            if view["source_status"] == "unavailable":
+                rows = ["<tr><td colspan='3'>BRON ONBESCHIKBAAR: er is geen "
+                        "open-PR-inventaris gelezen en geen uitspraak over overlap mogelijk.</td></tr>"]
+            else:
+                rows = ["<tr><td colspan='3'>Geen overlap zichtbaar in de "
+                        "gelezen steekproef; afwezigheid is geen vrijgave.</td></tr>"]
         state = ("Bron onbeschikbaar" if view["source_status"] == "unavailable"
                  else "bronoverlap > uitvoerlimiet; open PR's zelf voor overige botsingen"
                  if view.get("source_truncated")
