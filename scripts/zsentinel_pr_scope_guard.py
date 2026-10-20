@@ -408,10 +408,14 @@ def observe_conflict_graph(repo, token=None, limit=24):
     for left, right in pairs:
         collided.add(left)
         collided.add(right)
-    not_paired = [pr for pr in observed if pr["number"] not in collided]
     fully_sampled = (len(before) < MAX_OPEN_PAGE and len(before) <= limit
                      and not suspicious_lists and stable
                      and len(ordered) <= MAX_CONFLICT_PAIRS)
+    # An unpaired PR is a useful independent-work candidate ONLY after the
+    # entire open-PR source sample is complete and stable. An unchecked PR
+    # could otherwise touch the exact same path.
+    not_paired = ([pr for pr in observed if pr["number"] not in collided]
+                  if fully_sampled else [])
     return {
         "schema": "zsentinel-pr-file-collision-graph-v1",
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -424,6 +428,7 @@ def observe_conflict_graph(repo, token=None, limit=24):
         "shown_file_collision_pairs": cards,
         "unpaired_open_prs_in_sample_not_claim_verified": not_paired,
         "unpaired_means_no_shared_paths_in_sample_only": True,
+        "unpaired_hidden_because_source_incomplete": not fully_sampled,
         "collision_cards_truncated": len(ordered) > MAX_CONFLICT_PAIRS,
         "pr_file_lists_truncated": suspicious_lists,
         "open_pr_page_may_be_truncated": len(before) == MAX_OPEN_PAGE,
