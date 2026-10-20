@@ -22,6 +22,40 @@ python3 scripts/zsentinel_merge_first_board.py \
 
 This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft PRs are **included as existing unfinished product work**, with a visible DRAFT / owner-action-required status; they are never treated as merge-ready and never promoted by this read-only tool. Ready PRs lead equally prioritized drafts. Child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 72 exact PR/check/review/workflow GETs. The workbench also stops new reads after a 120-second monotonic source window (an already started bounded GitHub GET may finish afterwards); no unlimited background polling. An empty selection explicitly says it is not evidence that the backlog is empty.
 
+### Exacte CI-run links om door te werken wanneer een PR HOLD heeft
+
+De bestaande `zsentinel_merge_first_board.py` leest al de actuele
+GitHub Actions workflowbron van een exact geobserveerde PR-HEAD. De
+operator krijgt nu bij elke geselecteerde PR ook een **begrensde,
+brongebonden lijst met maximaal vier momenteel geobserveerde niet-groene
+workflowruns**, met direct aanklikbare GitHub Actions-runlinks in privé
+HTML en tekstlinks in terminal/JSON. `zsentinel_issue_first_board.py`
+hergebruikt hetzelfde bestaande bronresultaat en toont dezelfde links
+in de issue-first HTML en terminal, zonder extra GitHub-verzoeken.
+
+De actuele run per workflow-ID, event en head-branch wordt gekozen op
+hoogste `run_number`, `run_attempt` en run-ID; oude mislukte reruns
+zijn dan geen fictieve nieuwe blokkade. Alleen resultaten met geldige
+run-ID, canonieke repository, exacte head-SHA en volledig begrensde
+GitHub-bronpagina worden toegelaten. Als het bronbewijs ontbreekt,
+gecorrumpeerd of afgekapt is, blijft de concrete runbron UNKNOWN;
+een incomplete bronpagina wordt nooit als lege runlijst verkocht.
+Er blijft een aparte `more`-indicatie voor niet-getoonde observaties.
+
+Een geobserveerde wachtrijrun of mislukte optionele workflow is
+**niet per definitie een verplichte branch-gate**. Alleen de
+daadwerkelijke GitHub branch protection, onafhankelijk goedgekeurde
+exacte HEAD en actieve bevoegde mainwriter-claim kunnen een merge
+toestaan. De werkbak biedt uitsluitend navigatie en veilige
+eigenaaracties; er is geen GitHub rerun/dispatch, claimwisseling,
+VPS-restart, queue- of productieaanpassing.
+
+Wanneer een optionele check afzonderlijk als `neutral` of `skipped`
+is afgesloten, rapporteert de bestaande check-observatie hem niet langer
+ten onrechte als falend. De daadwerkelijke workflowbron vereist nog steeds
+een positieve geobserveerde succesvolle run; ontbrekende/gedeeltelijke
+verplichte CI en branch rules blijven HOLD.
+
 ### Eén samenhangende status boven de operatorwerkbak
 
 De private offline HTML bevat nu bij zowel de losse merge-first ingang
