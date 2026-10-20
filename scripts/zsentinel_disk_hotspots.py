@@ -233,6 +233,60 @@ def html(report):
     return "".join(lines)
 
 
+
+def public_summary(report):
+    """Privacy-minimal cockpit receipt: never publish private filenames."""
+    if (type(report) is not dict or report.get("schema") != SCHEMA
+            or report.get("deletion_authorized") is not False
+            or report.get("runner_restart_authorized") is not False
+            or report.get("queue_claims_changed") is not False
+            or report.get("file_contents_read") is not False
+            or type(report.get("top_files")) is not list
+            or len(report["top_files"]) > TOP
+            or report.get("coverage") not in (
+                "bounded_complete_with_no_private_exclusions", "partial")):
+        raise ValueError("untrusted disk hotspot observation")
+    return {
+        "schema": "zsentinel-disk-workbench-summary-v1",
+        "observed_at_utc": report["observed_at_utc"],
+        "coverage": report["coverage"],
+        "truncation_reason": report["truncation_reason"],
+        "observed_allocated_gib_min": round(
+            report["observed_allocated_bytes_lower_bound"] / (1024**3), 2),
+        "large_file_candidates_min": report["large_files_seen_lower_bound"],
+        "directories_unscanned": report["directories_unscanned"],
+        "private_report_written": True,
+        "deletion_authorized": False,
+        "runner_restart_authorized": False,
+        "queue_claims_changed": False,
+        "report_contains_paths": False,
+    }
+
+
+def public_summary_html(summary):
+    if (type(summary) is not dict
+            or summary.get("schema") != "zsentinel-disk-workbench-summary-v1"
+            or summary.get("deletion_authorized") is not False
+            or summary.get("report_contains_paths") is not False):
+        raise ValueError("untrusted disk workbench summary")
+    return (
+        '<section aria-label="VPS schijfruimtewerkbank">'
+        '<h2>VPS · Schijfruimtewerkbank (privé)</h2>'
+        '<p>Grote-bestanden inventaris uitsluitend lokaal en begrensd,'
+        ' ondergrens ' + str(summary["observed_allocated_gib_min"]) +
+        ' GiB toegewezen, minstens ' + str(summary["large_file_candidates_min"]) +
+        ' grote bestanden. Dekking: ' + escape(summary["coverage"]) +
+        '; aanvullende niet-bezochte mappen: ' +
+        str(summary["directories_unscanned"]) +
+        '. Bestandsnamen staan uitsluitend in het afzonderlijke'
+        ' aangemaakte privérapport (0600), NIET in deze cockpit.</p>'
+        '<p>Actie: eigenaar controleert actieve schrijvers, bewaartermijnen en'
+        ' backups vóór een afzonderlijk geautoriseerde opruimactie.'
+        ' Geen bestand verwijderd, worker herstart of claim vrijgegeven.</p>'
+        '</section>'
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Bounded read-only project disk hotspot workbench")
     parser.add_argument("--root", required=True, type=Path, help="specific existing project workspace")
