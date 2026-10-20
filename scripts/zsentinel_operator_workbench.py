@@ -653,7 +653,7 @@ async function combineSavedGateFiles(manifestFile,batchFiles){
  const weights={P0:0,P1:1,P2:2,Unspecified:3},seenRefs=new Set();
  const selected=review.pr_references.map(ref=>{
   if(!ref||Array.isArray(ref)||typeof ref.url!=='string'||
-     !RegExp('^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}||
+     !RegExp('^https://github[.]com/Zennay/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,8}$').test(ref.url)||
      !knownPrLinks.has(ref.url)||seenRefs.has(ref.url)||
      !Object.hasOwn(weights,ref.highest_linked_priority)||
      ref.merge_authorized!==false||
@@ -674,81 +674,6 @@ async function combineSavedGateFiles(manifestFile,batchFiles){
   return {url:ref.url,rank:weights[ref.highest_linked_priority],
    repo:path[4],number:Number(path[6])};
  }).sort((a,b)=>a.rank-b.rank||(a.repo<b.repo?-1:a.repo>b.repo?1:0)||a.number-b.number);
- const total=Math.ceil(selected.length/4),observed=new Map();
- let earliest=Infinity,latest=-Infinity;
- for(const file of batchFiles){
-  const {data:receipt}=await readJSON(file);
-  const idx=receipt?.source_review_batch_index;
-  if(!receipt||Array.isArray(receipt)||
-     receipt.schema!=='zsentinel-current-pr-gate-observation-v1'||
-     receipt.merge_authorized!==false||receipt.deployment_authorized!==false||
-     receipt.writes_performed!==false||
-     receipt.required_branch_protection_verified!==false||
-     receipt.current_review_and_check_samples_only!==true||
-     receipt.source_review_manifest_sha256!==reviewSha||
-     receipt.source_review_board_sha256!==boardSha||
-     receipt.source_review_pr_count!==selected.length||
-     receipt.source_review_batches_total!==total||
-     receipt.review_only_top_four_observed!==(selected.length>4)||
-     !Number.isInteger(idx)||idx<1||idx>total||observed.has(idx))
-   throw Error('Gate batch belongs to another review or duplicates an observed batch');
-  const expected=selected.slice((idx-1)*4,idx*4);
-  if(receipt.source_review_batch_first_pr!==(idx-1)*4+1||
-     receipt.source_review_batch_count!==expected.length||
-     !Array.isArray(receipt.items)||receipt.items.length!==expected.length)
-   throw Error('Gate batch has missing or reordered original source rows');
-  const when=gateTime(receipt.observed_at_utc);
-  earliest=Math.min(earliest,when);latest=Math.max(latest,when);
-  if(latest-earliest>600000)throw Error('Saved batches exceed common 10-minute window');
-  const normalized=new Map();
-  for(let i=0;i<expected.length;i++){
-   const row=receipt.items[i];
-   if(row?.url!==expected[i].url||
-      row.required_branch_checks_and_rules_verified!==false)
-    throw Error('Saved PR order or branch gate scope mismatches original review');
-   normalized.set(row.url,parseGateRow(row));
-  }
-  observed.set(idx,normalized);
- }
- const missing=[],missingPrs=[],items=new Map();
- for(let batch=1;batch<=total;batch++){
-  if(!observed.has(batch)){
-   missing.push(batch);
-   missingPrs.push({batch_index:batch,
-    unobserved_pr_urls:selected.slice((batch-1)*4,batch*4).map(x=>x.url)});
-  }else for(const [url,item] of observed.get(batch))items.set(url,item);
- }
- const timestamp=earliest,time=new Date(earliest).toISOString();
- const bridgeCoverage={manifest_sha256:reviewSha,batches:observed.size,
-  expected_batches:total,missing_indexes:missing,
-  candidate_count:selected.length,expected_observed_prs:items.size,
-  missing_prs:missingPrs,complete:missing.length===0,
-  earliest_observed_at_utc:time,latest_observed_at_utc:new Date(latest).toISOString(),
-  complete_receipts_not_required_checks:missing.length===0};
- return {time,timestamp,items,kind:'zsentinel-local-saved-review-batch-import-v1',
-  sha256:reviewSha,reviewContext:null,bridgeCoverage};
-}
-).test(ref.url)||
-     !knownPrLinks.has(ref.url)||seenRefs.has(ref.url)||
-     !Object.hasOwn(weights,ref.highest_linked_priority)||
-     ref.merge_authorized!==false||
-     !Array.isArray(ref.observed_issue_refs)||!ref.observed_issue_refs.length||
-     ref.observed_issue_refs.length>60)
-   throw Error('Foreign, duplicated or malformed reviewed PR');
-  seenRefs.add(ref.url);
-  const path=ref.url.split('/'),repository=path.slice(3,5).join('/');
-  const seenIssues=new Set();
-  for(const issue of ref.observed_issue_refs){
-   const saved=entries.get(issue?.issue);
-   if(!saved||saved.url!==issue.url||seenIssues.has(issue.issue)||
-      !saved.open_pr_candidates.includes(ref.url)||
-      issue.issue.split('#')[0]!==repository)
-    throw Error('Original review links a PR to an unrelated issue');
-   seenIssues.add(issue.issue);
-  }
-  return {url:ref.url,rank:weights[ref.highest_linked_priority],
-   repo:path[4],number:Number(path[6])};
- }).sort((a,b)=>a.rank-b.rank||a.repo.localeCompare(b.repo)||a.number-b.number);
  const total=Math.ceil(selected.length/4),observed=new Map();
  let earliest=Infinity,latest=-Infinity;
  for(const file of batchFiles){
