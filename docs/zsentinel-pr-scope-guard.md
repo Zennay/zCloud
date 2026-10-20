@@ -113,3 +113,31 @@ python3 scripts/zsentinel_pr_scope_guard.py \
 ```
 
 De handoff hoeft niet als JSON aan een eigenaar te worden uitgelegd. De tekst veroorzaakt geen issue-comment, Notion-update, claim, GitHub-merge, betaalde job of VPS-mutatie. Alle bestandsvergelijkingen blijven read-only; bij onvolledige GitHub-overzichten worden suggesties van ogenschijnlijk disjuncte PR's **onderdrukt**.
+
+
+## Werkend geïntegreerd productscherm: issues + bestaande PR's + bestandsscope
+
+Met het nieuwe `scripts/zsentinel_issue_scope_cockpit.py` combineert zSentinel **de reeds op main beschikbare Product Delivery Workbench-bron** met de verse read-only open-PR-bestandsscopecontrole. Geen aparte duplicerende GitHub-issuecrawler en geen aanpassing aan de nog niet gemergede herstelrouter (#1563).
+
+**Stap 1 —** maak een eigen `zsentinel-product-delivery-triage-v1` JSON-rapport via de bestaande, op main aanwezige `scripts/zsentinel_product_delivery_board.py`; gebruik de gedocumenteerde optionele lokale issue/retry/claims/PR-bronparameters van die module. Bewaar het als privébestand buiten de repository.
+
+**Stap 2 —** maak uit die bron **één actueel cockpitoverzicht** zonder opnieuw GitHub-issues te lezen:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --issue-board /secure/location/product-delivery-board.json \
+  --project cloud --project supa --max-prs 10 \
+  --format html > /secure/location/issues-en-bestandscope.html
+```
+
+Zonder `--project` kiest het programma automatisch maximaal drie projecten met P0 vóór P1 vóór P2 vóór ongespecificeerde issues (en vervolgens meer productissues). Dit is **weergaveprioriteit** en neemt nooit een Notion- of zCloud-claim over. Beschikbaar: `--format html`, `json`, `text` of `markdown`.
+
+Het programma hergebruikt `zsentinel_operator_workbench.read_source_and_sha` en `validated_view` uit het reeds gemergede hoofdproduct: dit is de bronvalidator, met gebonden SHA-256, veilige bounded/no-follow bestandstoegang, issueidentiteiten en niet-autoriserende schema-eisen. Vervolgens koppelt het de bestaande issue→PR-verwijzingen aan per-project beperkte live GitHub-bestandsscopewaarnemingen. Het product toont:
+
+- Prioriteit en issue-link; expliciet mensbevoegde P0 #1326 en #1523 **alleen** voor infra/billing-eigenaar.
+- Bestaande PR-kandidaten **eerst**, met eventuele geobserveerde bestandsbotsing met een tweede open PR; dat is niet gelijk aan een bewezen Git-mergeconflict.
+- Een *geen gedeelde paden*-indicatie uitsluitend wanneer de volledige open-PR-steekproef compleet en stabiel is, de PR daar echt in voorkomt en de twee bronmomenten hoogstens tien minuten uiteenliggen.
+- `source_unknown_or_uninspected` bij ontbrekende PR, brondegradatie, onvolledige file-inventaris of oud bronmoment. Afwezigheid van een issue in deze begrensde bron betekent nooit dat het opgelost is.
+- Alle outputs laten `claims_verified=false`, `may_take_ownership=false`, `merge_authorized=false`, `deploy_authorized=false` en `writes_performed=false`.
+
+Dit scherm is een **operatorintegratie**, geen automatische productiequeue-adapter. Het raakt geen `server.py`, worker/scheduler, GitHub Actions, tests, Notion of live SQLite, doet geen deployments en kan geen beschermde gates omzeilen. Het kan in bron worden geïntegreerd onafhankelijk van de wachtende PR #1563, waarna die herstelrouter op zijn eigen autorisatiepad blijft wachten.
