@@ -454,6 +454,10 @@ def html_view(decision):
                             "selected_one_source_bound_job",
                             "selected_one_source_bound_job_partial_window")):
                     raise ValueError("contradictory additional job count")
+                project_slug = row.get("project_id")
+                if (type(project_slug) is not str
+                        or not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", project_slug)):
+                    raise ValueError("untrusted canonical job project")
                 repo = row.get("repository")
                 if (type(repo) is not str or
                         not re.fullmatch(r"Zennay/[A-Za-z0-9_.-]{1,100}", repo)):
@@ -481,7 +485,12 @@ def html_view(decision):
                     str(primary_job) + '</a> · ' +
                     phrase(row.get("primary_runner_route"), 24) + ' · ' +
                     phrase(row.get("primary_job_status"), 24) +
-                    ' · HEAD ' + primary_sha[:12] + '</li>'
+                    ' · HEAD ' + primary_sha[:12] +
+                    '<br><small>Opnieuw exact volgen (één job per project):'
+                    ' <code style="overflow-wrap:anywhere">--job ' +
+                    escape(project_slug + ":" + str(primary_run) + ":" +
+                           str(primary_job) + ":" + primary_sha) +
+                    '</code></small></li>'
                 ]
                 for job in extras:
                     if (type(job) is not dict
@@ -513,7 +522,11 @@ def html_view(decision):
                         str(job_id) + '</a> · ' +
                         phrase(job["runner_route"], 24) + ' · ' +
                         phrase(job["job_status"], 24) + ' · HEAD ' +
-                        sha[:12] + '</li>')
+                        sha[:12] +
+                        '<br><small>Exact volgen: <code style="overflow-wrap:anywhere">--job ' +
+                        escape(project_slug + ":" + str(run_id) + ":" +
+                               str(job_id) + ":" + sha) +
+                        '</code></small></li>')
                 linked = (
                     '<details><summary>Geobserveerde GitHub-jobs (' +
                     str(len(extras) + 1) + ' getoond van ≥' + str(extra_total) +
