@@ -273,12 +273,23 @@ function refresh(){
    (!state.value||state.value===t.querySelector('.local-state').value);
   t.hidden=!show;if(show)count++;
  }
- visible.textContent=count+' van '+tickets.length+' bronkaarten zichtbaar';
+ let prCount=0;
+ for(const p of prs){
+  const content=[p.dataset.pr,p.dataset.issues,p.dataset.project].join(' ').toLocaleLowerCase('nl');
+  const show=(!q||content.includes(q))&&
+    (!priority.value||priority.value===p.dataset.priority)&&
+    (!project.value||project.value===p.dataset.project)&&
+    (!prState.value||prState.value===p.querySelector('.pr-local-state').value);
+  p.hidden=!show;if(show)prCount++;
+ }
+ visible.textContent=count+' van '+tickets.length+' issuekaarten en '+
+   prCount+' van '+prs.length+' bestaande PR-groepen zichtbaar';
 }
-for(const c of [search,priority,project,state])c.addEventListener('input',refresh);
+for(const c of [search,priority,project,state,prState])c.addEventListener('input',refresh);
 for(const t of tickets)t.querySelector('.local-state').addEventListener('change',refresh);
+for(const p of prs)p.querySelector('.pr-local-state').addEventListener('change',refresh);
 document.getElementById('reset').addEventListener('click',function(){
- search.value='';priority.value='';project.value='';state.value='';refresh();
+ search.value='';priority.value='';project.value='';state.value='';prState.value='';refresh();
 });
 function safeText(value){
  return String(value||'').replace(/[\r\n\t]+/g,' ').replace(/([\\*_{}\[\]()|<>!#\x60~])/g,'\\$1').slice(0,720);
@@ -303,6 +314,19 @@ document.getElementById('export').addEventListener('click',function(){
   parts.push('   Handmatige status: '+labels[t.querySelector('.local-state').value]);
   const note=t.querySelector('textarea').value.trim();
   if(note)parts.push('   Lokale operatornotitie: '+safeText(note));
+  parts.push('');
+ }
+ if(prs.length)parts.push('## Bestaande PRs: één handmatige opvolging per PR','',
+  'Groepskoppelingen zijn bronverwijzingen, geen eigenaars-, review- of fixbewijs.','');
+ for(const p of prs){
+  const url=p.dataset.pr;
+  parts.push('- [Bestaande PR]('+url+') · '+safeText(p.dataset.priority)+
+   ' · '+safeText(p.dataset.project));
+  const issues=p.dataset.issues.trim()?p.dataset.issues.trim().split(' '):[];
+  for(const issue of issues)parts.push('  - [Bronissue]('+issue+')');
+  parts.push('  - Handmatige PR-status: '+prLabels[p.querySelector('.pr-local-state').value]);
+  const note=p.querySelector('.pr-note').value.trim();
+  if(note)parts.push('  - Privé PR-opvolging: '+safeText(note));
   parts.push('');
  }
  parts.push('Statussen zijn uitsluitend handmatig, lokaal en niet op GitHub/Notion vastgelegd.');
@@ -425,10 +449,16 @@ refresh();
         "background:#1b293c;border-radius:10px;padding:16px;margin:14px 0}"
         ".ticket[hidden]{display:none}.ticket header{display:flex;gap:12px;"
         "align-items:center}.priority{font-weight:bold;background:#3a4d66;padding:2px 8px}"
+        ".pr-panel{border:1px solid #70879f;border-radius:10px;padding:16px;"
+        "margin:18px 0;background:#172338}.pr-panel ol{padding-left:24px}"
+        ".pr-work{padding:12px;border-bottom:1px solid #526a83}"
+        ".pr-work[hidden]{display:none}"
+        ".pr-controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
+        "gap:14px;margin:12px 0}.pr-note{width:100%;box-sizing:border-box}"
         ".controls{display:grid;grid-template-columns:minmax(170px,260px) 1fr;"
         "gap:16px}.controls textarea{width:100%;box-sizing:border-box;resize:vertical}"
         ".source,.warning{color:#ebce9b}.links a{margin-right:10px}"
-        "@media(max-width:640px){.controls{grid-template-columns:1fr}}"
+        "@media(max-width:640px){.controls,.pr-controls{grid-template-columns:1fr}}"
         "</style></head><body data-source-token='" + source_token +
         "'><h1>zSentinel · merge-eerst werkbak</h1>"
         "<p>Geobserveerde P0/P1-productissues, bestaande PRs en menselijke vervolgstappen. "
@@ -447,6 +477,13 @@ refresh();
         "<option value='owner'>Wacht op eigenaar</option>"
         "<option value='coordination'>Afstemming nodig</option>"
         "<option value='followup'>Opvolging genoteerd</option></select></label>"
+        "<label>PR-opvolging<select id='pr-state'>"
+        "<option value=''>Alle PR-statussen</option>"
+        "<option value='open'>Nog te beoordelen</option>"
+        "<option value='review'>Wacht op review/CI</option>"
+        "<option value='owner'>Wacht op huidige eigenaar</option>"
+        "<option value='coordinate'>Afstemming tussen PRs nodig</option>"
+        "<option value='followup'>Opvolging vastgelegd</option></select></label>"
         "<button id='reset' type='button'>Wis filters</button>"
         "<button id='export' type='button'>Download privéoverdracht (Markdown)</button>"
         "<button id='session-save' type='button'>Bewaar lokale sessie (JSON)</button>"
