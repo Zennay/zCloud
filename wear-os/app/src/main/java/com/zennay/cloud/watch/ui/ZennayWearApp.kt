@@ -272,7 +272,8 @@ private fun HomeScreen(
                                 Text("Waargenomen: ${shortAge(seen)}",
                                      color = TextMuted, fontSize = 9.sp)
                             }
-                            if (alert.humanActionRequired) {
+                            if (alert.humanActionRequired && alert.id.isNotBlank() &&
+                                alert.id.length <= 256) {
                                 // Read only on recomposition; local button taps
                                 // bump the version. No remote acknowledgement.
                                 val version = snoozeVersion
