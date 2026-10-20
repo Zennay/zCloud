@@ -57,6 +57,26 @@ changes the existing dedicated user unit. A preview's observed current
 values **do not prove** this PR source was installed, nor does preview
 validate runner recovery.
 
+
+## Why the CPU band was selected
+
+The preview and private on-host state now include a bounded array of
+machine-readable `reasons`: e.g. `zcloud-github-job-running`,
+`high-system-load`, `high-swap-use`, and
+`low-root-disk-headroom`. These describe independently observed host
+pressure, **not** proof of a failing specific GitHub workflow. An incomplete
+`/proc` or capacity read emits `incomplete-capacity-source` and chooses
+the conservative band. This lets operators distinguish a real running
+zCloud job from high host load or disk/swap pressure without exposing
+process arguments, runner IDs, home paths or command-line credentials.
+
+The tuner independently reconciles with the actual `systemctl --user
+show` values on every authorized oneshot invocation. It does not rely
+on old `zcloud-background-priority.json` data for admission. A unit that
+was manually changed after the previous observation is re-evaluated on
+the next invocation, while an inactive unit remains untouched (but has
+an explicit unverified observation in private state).
+
 ## Operator installation and release boundaries
 
 Code files:
