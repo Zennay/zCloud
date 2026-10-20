@@ -502,3 +502,5 @@ queue owner decides whether to archive or reroute any pre-existing QA item.
 Source is delivered only on PR #1572 until GitHub confirms protected-main
 merge at the exact checked head. This change writes no production SQLite,
 runner state, scheduler, browser or GitHub Actions workflows.
+
+The bounded advisory recovery-action feed also emits `NO_NEW_QA_WORK_ADMISSION` when the desk observes deferred QA packages. The action explicitly returns these legacy items to their existing queue owner and keeps attention on real product issues and PR integration. It does not start, remove, relabel, reprioritize or claim any queued item. If higher-severity owner/runner risks fill the existing nine-card ceiling, the per-lane exclusion count remains independently visible.
