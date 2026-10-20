@@ -514,79 +514,132 @@ MAX_CSV_RECORDS = 3000
 
 
 def render_private_csv(report):
-    """Tabular read-only handoff, not a merge admission decision.
+    """Private sortable handoff of the existing bounded operator evidence.
 
-    Rows are bounded by the same 40 groups/18 filename samples already
-    present in the operator report. Never export raw GitHub API logs.
+    Source inventory, PR worklist, real filename collisions and unverified
+    issue-number text hints have separate record types. Never infer a safe
+    owner, a merge conflict, a complete inventory, or release permission.
     """
     output = io.StringIO(newline="")
     writer = csv.writer(output, dialect="excel", lineterminator="\r\n")
-    header = (
+    columns = (
         "record_type", "repository", "source_mode", "source_windows_utc",
         "group_number", "group_pr_count", "group_shared_files_observed",
         "filename", "file_cross_window", "file_pr_count", "pr_number",
-        "pr_url", "pr_head_sha", "pr_source_window",
+        "pr_url", "pr_head_sha", "pr_source_window", "related_pr_url",
+        "related_pr_head_sha", "related_pr_source_window", "pair_shared_files",
+        "cross_window_pairs_for_pr", "shared_files_for_pr",
+        "unverified_issue_number", "unverified_issue_mentions_for_pr",
         "source_complete_for_all_open_prs", "claims_verified",
         "merge_authorized", "operator_notice"
     )
-    writer.writerow(header)
-
+    writer.writerow(columns)
+    count = 0
+    defaults = {
+        "repository": report["repository"],
+        "source_mode": report["collection_mode"],
+        "source_windows_utc": " / ".join(report["observation_window_utc"]),
+        "source_complete_for_all_open_prs": "false",
+        "claims_verified": "false",
+        "merge_authorized": "false",
+    }
     def safe(value):
-        # Standard CSV quoting alone does NOT stop spreadsheet formula
-        # execution when opened as an Excel/Sheets document.
-        raw = str(value)
-        if raw.lstrip().startswith(("=", "+", "-", "@")) or raw.startswith(
-                ("\t", "\r", "\n")):
+        original = str(value)
+        # No active control bytes inside CSV fields. Visible escapes preserve
+        # operator evidence of unusual git paths without spreadsheet row breaks.
+        raw = "".join(
+            "\\u%04x" % ord(char) if ord(char) < 32 or ord(char) == 127
+            else char for char in original
+        )
+        # Quote dangerous formula prefixes, including after invisible Unicode
+        # format characters that some spreadsheet parsers strip automatically.
+        prefix = raw.lstrip(" \u200b\u200c\u200d\u2060\ufeff")
+        if prefix.startswith(("=", "+", "-", "@")):
             return "'" + raw
         return raw
 
-    def row(values):
-        if len(values) != len(header):
-            raise ValueError("invalid private CSV column layout")
-        writer.writerow([safe(item) for item in values])
+    def row(kind, **facts):
+        nonlocal count
+        if not set(facts).issubset(columns):
+            raise ValueError("unknown private CSV source field")
+        count += 1
+        if count > MAX_CSV_RECORDS:
+            raise ValueError("private CSV row budget exceeded")
+        data = {**defaults, "record_type": kind, **facts}
+        writer.writerow([safe(data.get(column, "")) for column in columns])
+        # Character count is a fast preflight. The caller additionally checks
+        # actual UTF-8 byte length including the BOM before creating a file.
         if output.tell() > MAX_REPORT_BYTES:
-            raise ValueError("private CSV exceeds max output")
+            raise ValueError("private CSV too large")
 
-    always = (
-        report["repository"], report["collection_mode"],
-        " / ".join(report["observation_window_utc"])
-    )
-    notice = ("OBSERVED ONLY; no atomic full PR inventory; "
-              "claim, review, required CI and merge permissions UNKNOWN.")
-    row(("source_summary", *always, "", "", "", "", "", "",
-         "", "", "", "", "false", "false", "false", notice))
-    total = 1
+    row("source_summary", operator_notice=(
+        "OBSERVED ONLY: read-only, non-atomic partial PR evidence; "
+        "owner, required CI, review, Git conflicts and release UNKNOWN."))
+    for pr in report["prioritized_existing_prs"]:
+        row("existing_pr_priority", pr_number=pr["pr_number"],
+            pr_url=pr["url"], pr_head_sha=pr["head_sha_observed"],
+            pr_source_window=pr["snapshot"],
+            cross_window_pairs_for_pr=pr["cross_window_file_pair_count"],
+            shared_files_for_pr=pr["cross_window_shared_file_count"],
+            unverified_issue_mentions_for_pr=pr["cross_window_number_hint_count"],
+            operator_notice="PR to inspect, not a claim or integration order.")
     for group in report["shown_connected_cross_window_groups"]:
         for file_row in group["shared_file_ownership_samples"]:
             for pr in file_row["prs"]:
-                total += 1
-                if total > MAX_CSV_RECORDS:
-                    raise ValueError("private CSV row budget exceeded")
-                row(("file_pr_membership", *always,
-                     group["group_number_in_this_observation"],
-                     group["pr_count_observed"],
-                     group["distinct_shared_files_observed"],
-                     file_row["path"],
-                     "true" if file_row["cross_window_overlap_observed"] else "false",
-                     file_row["participating_pr_count_observed"],
-                     pr["number"], pr["url"], pr["head_sha"],
-                     pr["source_window"], "false", "false", "false",
-                     "Source observation; never an owner or merge instruction."))
+                row("shared_file_pr", group_number=group["group_number_in_this_observation"],
+                    group_pr_count=group["pr_count_observed"],
+                    group_shared_files_observed=group["distinct_shared_files_observed"],
+                    filename=file_row["path"],
+                    file_cross_window="true" if file_row["cross_window_overlap_observed"]
+                                      else "false",
+                    file_pr_count=file_row["participating_pr_count_observed"],
+                    pr_number=pr["number"], pr_url=pr["url"],
+                    pr_head_sha=pr["head_sha"],
+                    pr_source_window=pr["source_window"],
+                    operator_notice="Shared filename only, not a proven git conflict.")
         if group["shared_file_samples_truncated"]:
-            row(("source_warning", *always, group["group_number_in_this_observation"],
-                 group["pr_count_observed"], group["distinct_shared_files_observed"],
-                 "", "", "", "", "", "", "", "false", "false", "false",
-                 "This group has more shared files than the bounded CSV sample; "
-                 "unlisted filenames are UNKNOWN in this export."))
-    if report["connected_cross_window_groups_truncated"]:
-        row(("source_warning", *always, "", "", "", "", "", "", "", "",
-             "", "", "false", "false", "false",
-             "Additional groups beyond the bounded operator view are UNKNOWN."))
+            row("source_warning",
+                group_number=group["group_number_in_this_observation"],
+                group_pr_count=group["pr_count_observed"],
+                group_shared_files_observed=group["distinct_shared_files_observed"],
+                operator_notice="Additional shared filenames in this group are NOT shown.")
+    for pair in report["shown_collision_pairs"]:
+        row("cross_window_collision_pair", pr_url=pair["left_url"],
+            pr_head_sha=pair["left_head_sha"],
+            pr_source_window=pair["left_snapshot"],
+            related_pr_url=pair["right_url"],
+            related_pr_head_sha=pair["right_head_sha"],
+            related_pr_source_window=pair["right_snapshot"],
+            pair_shared_files=pair["shared_files_observed"],
+            operator_notice="Same filename in both PRs, not a verified git conflict.")
+    for group in report["shown_issue_number_hints"]:
+        for pr in group["shown_prs"]:
+            row("unverified_issue_number_hint",
+                unverified_issue_number=group["number"],
+                pr_url=pr["url"], pr_head_sha=pr["head_sha"],
+                pr_source_window=pr["snapshot"],
+                operator_notice="Unverified text number; not issue identity, owner or fix.")
+        if group["pr_list_truncated"]:
+            row("source_warning", unverified_issue_number=group["number"],
+                operator_notice="Additional source PRs mention this unverified number.")
+    warnings = (
+        ("connected_cross_window_groups_truncated",
+         "More connected PR groups exist beyond this bounded view."),
+        ("prioritized_existing_prs_truncated",
+         "Additional existing PRs excluded from the ranked sample."),
+        ("collision_pairs_truncated",
+         "More shared filename pairs exist than this CSV displays."),
+        ("issue_hint_groups_truncated",
+         "Additional unverified issue-number groups were not exported."),
+        ("partial_file_scope_list_truncated",
+         "Additional source PRs have incomplete changed-file lists."),
+    )
+    for flag, message in warnings:
+        if report[flag]:
+            row("source_warning", operator_notice=message)
     if report["prs_with_partial_file_scope"]:
-        row(("source_warning", *always, "", "", "", "", "", "", "", "",
-             "", "", "false", "false", "false",
-             "One or more source PR file lists were incomplete."))
-    # A BOM improves compatibility with Dutch Excel while remaining UTF-8.
+        row("source_warning", operator_notice=(
+            "One or more PR source file lists were incomplete; no absence proof."))
     return "\ufeff" + output.getvalue()
 
 
