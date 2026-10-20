@@ -310,6 +310,55 @@ def summary_lines(view):
     return result
 
 
+
+GATE_LABELS = {
+    "inspect_incomplete_current_head_gate_source": "Controleer ontbrekende huidige CI/reviewbron.",
+    "inspect_current_head_failed_checks_with_owner": "Laat PR-eigenaar mislukte CI herstellen.",
+    "wait_for_existing_current_head_checks": "Bestaande exacte-head CI loopt nog.",
+    "owner_address_exact_head_review_changes": "PR-eigenaar moet reviewwijzigingen verwerken.",
+    "verify_missing_current_head_checks_and_rules": "Controleer branchregels en ontbrekende CI.",
+    "request_independent_current_head_review": "Vraag onafhankelijke review op actuele HEAD.",
+    "verify_required_rules_ownership_and_release_separately":
+        "Controleer verplichte branchregels, eigenaar en release apart.",
+}
+
+
+def current_gate_lines(board, markdown=False):
+    observation = board.get("current_live_pr_gate_observation")
+    if observation is None:
+        return []
+    lines = [
+        "",
+        "## Huidige PR-gates (maximaal vier; observatie, geen mergevrijgave)"
+        if markdown else "Huidige PR-gates (maximaal vier; GEEN mergevrijgave)",
+        "Gatebronnen gezien: " + str(observation["pr_gate_receipts_requested"]) +
+        "; overige PRs in steekproef niet bekeken: " +
+        str(observation["more_sampled_prs_not_gate_checked"]) +
+        "; projectbron ontbreekt/verschoof: " +
+        ", ".join(observation["source_unavailable_or_changed_projects"]),
+    ]
+    for gate in observation["items"]:
+        link = ("[" + gate["url"] + "](" + gate["url"] + ")"
+                if markdown else gate["url"])
+        lines.append("- " + gate["project"] + " · " + link)
+        if gate["status"] != "current_exact_pr_head_and_sample_match":
+            lines.append("  BRON ONZEKER: PR-HEAD veranderd of GitHub gatebron ontbreekt.")
+            continue
+        lines.append(
+            "  Exact HEAD " + gate["head_sha_observed"][:12] +
+            " · CI lopend " + str(gate["observed_checks_pending"]) +
+            " · mislukt " + str(gate["observed_checks_not_successful"]) +
+            " · onafhankelijke approvals gezien " +
+            str(gate["observed_independent_exact_head_approvals"]) +
+            " · vervolg: " + GATE_LABELS.get(
+                gate["human_next_gate_step"], "Bron onvolledig; actuele gates inspecteren."))
+        if not gate["check_page_complete"] or gate["review_page_may_be_truncated"]:
+            lines.append("  WAARSCHUWING: niet alle actuele check/reviewgegevens waargenomen.")
+    lines.append("Afzonderlijke Notion-claims, branch protection, eigenaar/release "
+                 "en verplichte checks blijven NIET vrijgegeven.")
+    return lines
+
+
 def as_text(board):
     output = [
         "zSentinel | Portfolio PR-conflictbalie (alleen lezen)",
@@ -319,6 +368,7 @@ def as_text(board):
         output.append("")
         output.append("[" + view["project"] + "] " + view["repository"])
         output.extend(summary_lines(view))
+    output.extend(current_gate_lines(board))
     output.extend([
         "",
         "Gedeelde bestandsnamen ≠ bewezen Git-mergeconflict of huidige eigenaar.",
@@ -371,6 +421,7 @@ def as_markdown(board):
                 lines.append("- [#" + str(pr["number"]) + "](" + pr["url"] + ")")
         if view.get("source_truncated"):
             lines.append("Bronkaarten afgekapt; inspecteer overige PR's.")
+    lines.extend(current_gate_lines(board, markdown=True))
     return "\n".join(lines) + "\n"
 
 
@@ -461,6 +512,9 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append", required=True)
     parser.add_argument("--max-prs", type=int, default=10)
+    parser.add_argument("--inspect-current-pr-gates", action="store_true",
+                        help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
+                             "in bestaande PR-steekproef (max 20 extra GETs)")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown"),
                         default="text")
     args = parser.parse_args(argv)
@@ -468,6 +522,8 @@ def main(argv=None):
         canonical = registry(args.registry)
         board = collect_portfolio(args.project, canonical,
                                   os.environ.get("GITHUB_TOKEN"), args.max_prs)
+        if args.inspect_current_pr_gates:
+            board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"))
         if args.format == "json":
             print(json.dumps(board, indent=2, ensure_ascii=False))
         elif args.format == "html":
