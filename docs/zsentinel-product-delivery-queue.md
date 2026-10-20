@@ -329,3 +329,46 @@ niet classificeerbaar is. Bij bronfouten zijn beide counts
 `null`, nooit een fictieve nul. De actieve records
 blijven ongemoeid; dit is een menselijke herstelactie en
 verleent geen vrijgave of claimrecht.
+
+
+### 20 oktober · Workerlimiet veilig wijzigen zonder actieve productclaims te verliezen
+
+De bestaande `POST /api/dynamic-workers` maakte eerder een gevaarlijke sprong:
+`reconcile_dynamic_worker_limit()` zette alle `claimed`, `running` en
+`verifying` taken boven een verlaagde limiet (of alle taken bij limiet nul)
+terug naar `queued`. De browser kon echter nog produceren of op review
+wachten. Daardoor kon hetzelfde werk opnieuw worden uitgegeven en de vorige
+overdracht verloren gaan.
+
+De bestaande product-PR bevat nu een **atomaire weigering vóór de instelling
+wordt opgeslagen**. De server leest binnen `BEGIN IMMEDIATE` zowel de huidige
+slotgebonden taken als de browseropdrachten die nog `pending` zijn. Een
+instelling die één van die eigenaren buiten de nieuwe totale capaciteit plaatst
+of diens slot van ChatGPT naar Claude (of omgekeerd) verplaatst, krijgt een
+gewoon HTTP 400 met een concrete melding. Noch de opgeslagen instellingen noch
+de oorspronkelijke claim, lease of browsercommand worden daardoor gewijzigd.
+Ook sommen boven de daadwerkelijk ondersteunde globale poollimiet worden
+geweigerd. Het dashboard meldt dezelfde werkelijke globale bovengrens.
+
+De aansluitende reconciler bevat **geen impliciete actieve-task-requeue meer**:
+hij verwijdert alleen werkelijk buitengrens-slotmappings nadat hij de actuele
+SQLite-status opnieuw heeft gecontroleerd. De bestaande allocator kiest
+eventueel nieuwe *vrije* producttaken via alle bestaande resource-, lane-,
+lease- en eigenaarschecks. De human-only verkleinstap bij actieve workers is:
+laat de bevoegde eigenaar eerst de huidige taak en browseroverdracht netjes
+afronden, stel daarna pas de limiet opnieuw in. Dit is geen bevoegdheid om
+een lopende taak zelf te onderbreken.
+
+Ook de `portfolio_queue_allocation().candidates`-weergave is gecorrigeerd:
+er staan alleen oorspronkelijke queued rijen in met source-gebonden
+`delivery_policy_disposition=product`, zonder slot of resterende
+claim-/leasevelden. QA-only en onbetrouwbare metadata blijven zichtbaar in de
+geautoriseerde queue-inspectie/hold-reasons, maar staan niet langer als
+uitvoerbare kandidaat in de browserworker-allocatie. Deze kandidaten zijn
+**nooit** automatisch geclaimd of geautoriseerd.
+
+**Levergrens:** code staat op de bestaande PR #1536; geen code uit deze
+wijziging staat hierdoor automatisch op main of productie. Verplichte
+exact-head CI, onafhankelijke review, bestaande branchregels en geautoriseerde,
+geserialiseerde VPS-release blijven vereist. Geen QA-tests geschreven of
+gedraaid; geen live taak/worker/runner/SQLite/service gewijzigd.
