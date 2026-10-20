@@ -203,9 +203,9 @@ def write_private_handoff(path: Path, content: str, *, format: str) -> None:
     Uses O_EXCL against existing destination and O_NOFOLLOW for final path.
     Does not touch production service/queue or GitHub/Notion state.
     """
-    if not isinstance(path, Path) or format not in ("html", "markdown"):
+    if not isinstance(path, Path) or format not in ("html", "markdown", "json"):
         raise ValueError("handoff output must be an explicit private path and format")
-    ext = ".html" if format == "html" else ".md"
+    ext = {"html": ".html", "markdown": ".md", "json": ".json"}[format]
     if path.name in ("", ".", "..") or not path.name.endswith(ext):
         raise ValueError("operator report must use matching .html or .md suffix")
     payload = content.encode("utf-8")
