@@ -270,3 +270,53 @@ database horende bron blijven de gates en onbekendstatus zichtbaar.
 [zCloud PR #1563](https://github.com/Zennay/zCloud/pull/1563).
 Dit is geen `main`-merge of productie-uitrol. Exacte-head CI,
 review, branch protection en uitvoerrechten blijven onverminderd gelden.
+
+## 20 oktober · eerste-run actuele queueblokkades in eigenaaroverdracht
+
+De volledige `--show-owner-handoff` is nu ook bruikbaar bij een
+**eerste run zonder eerdere privésnapshot**. De bestaande brongebonden
+router levert vanuit precies dezelfde SQLite `mode=ro` /
+`query_only`-waarneming al een gevalideerde, maximaal achttien
+project-/prioriteitsgroepen tellende actuele queuebron. Deze wordt in
+`scripts/zsentinel_runtime_handoff.py` nu direct aangesloten op de
+bestaande P0/P1/P2-eigenaarwerkbak, zonder extra providercalls of
+query's uit het rapportsysteem.
+
+Per daadwerkelijk **actueel** waargenomen projectgroep met
+tegenstrijdige claimklokken, verlopen leases of ontbrekende
+leaseverificatie komt een `queue_current_owner_review`-kaart.
+Een kaart bevat alleen project, oorspronkelijke prioriteit,
+geobserveerde geaggregeerde risicotellers en het UTC-bronmoment;
+geen taakidentificator, claimtoken, leasegegevens, owner-secret,
+vrije queue-titel of automatiseringsautorisatie.
+De vervolgstap is handmatig: oorspronkelijke claim en vervaltijd
+door de bevoegde eigenaar verifiëren. Ook een verlopen lease is
+**geen** toestemming om werk opnieuw te claimen.
+
+Bij `--queue-previous` wordt bovendien de al bestaande private
+claimsnapshotvergelijking verwerkt als **andere** bronklasse
+(`queue_lease_window_review`), met uitdrukkelijke broncontrole.
+De private HTML/Markdown-werkbak maakt het verschil tussen
+`Queue huidig` en `Queue #677 vergelijking` zichtbaar.
+Bij `--github-only`, ongeldige of verouderde bronstatus is het
+resultaat expliciet **ONBEKEND**, nooit een gefingeerde nulmeting.
+Een afgekapt projectvenster vermeldt dat niet-getoonde gevallen
+niet zijn beoordeeld.
+
+Met de bestaande portfolio-CLI:
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /pad/naar/bestaande/history.db \
+  --show-owner-handoff --format html
+```
+De optionele `--queue-previous /eigenaar/prive/queue-eerst.json`
+levert daarbovenop de afzonderlijke trendinformatie. Alle
+bronvergelijkingen blijven read-only en nieuw aangemaakte
+privérapporten blijven aan het bestaande create-only/0600-pad
+onderworpen.
+
+**Releasestatus:** uitbreiding op bestaande [PR #1563](https://github.com/Zennay/zCloud/pull/1563),
+nog niet gemerged of deployed. Geen QA-, regressie- of testsuites
+geschreven/gestart; geen claims, wachtrij- of runnerwijzigingen.
+Verplichte exacte-head CI, onafhankelijke review en toestemming
+voor productie-inzet blijven intact.
