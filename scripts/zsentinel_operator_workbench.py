@@ -661,21 +661,41 @@ function acceptGateSource(data){
   // Verify provenance separately; legacy single-shot imports stay supported.
   if(data.original_review_manifest_sha256!==undefined){
    const hash=data.original_review_manifest_sha256;
+   const versioned=data.expected_batch_count!==undefined;
    if(typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash)||
       data.original_board_sha256!==boardSha||
       !Number.isInteger(data.observed_batch_count)||
       data.observed_batch_count<1||data.observed_batch_count>75||
-      data.missing_batch_count!==0||
-      data.all_batches_observed_not_all_checks_required_verified!==true||
       data.earliest_observed_at_utc!==time||
       typeof data.latest_observed_at_utc!=='string')
-    throw Error('Invalid complete-batch source provenance');
+    throw Error('Invalid source-bound saved-batch identity');
+   let expected=data.observed_batch_count,missing=[];
+   if(versioned){
+    expected=data.expected_batch_count;missing=data.missing_batch_indexes;
+    const candidateCount=data.review_candidate_pr_count;
+    if(!Number.isInteger(expected)||expected<1||expected>75||
+       !Number.isInteger(candidateCount)||candidateCount<1||candidateCount>300||
+       expected!==Math.ceil(candidateCount/4)||
+       !Number.isInteger(data.missing_batch_count)||
+       data.missing_batch_count<0||
+       !Array.isArray(missing)||missing.length!==data.missing_batch_count||
+       data.observed_batch_count+missing.length!==expected||
+       missing.some((n,i)=>!Number.isInteger(n)||n<1||n>expected||
+        (i>0&&n<=missing[i-1]))||
+       data.saved_receipts_not_required_checks_verified!==true||
+       data.all_batches_observed_not_all_checks_required_verified!==(missing.length===0))
+     throw Error('Missing or contradictory saved batch coverage');
+   }else if(data.missing_batch_count!==0||
+      data.all_batches_observed_not_all_checks_required_verified!==true)
+    throw Error('Incomplete legacy saved-batch provenance');
    const earliest=gateTime(time),latest=gateTime(data.latest_observed_at_utc);
    if(latest<earliest||latest-earliest>600000)
     throw Error('Unbounded batch observation range');
    bridgeCoverage={manifest_sha256:hash,batches:data.observed_batch_count,
+    expected_batches:expected,missing_indexes:missing,
+    complete:missing.length===0,
     earliest_observed_at_utc:time,latest_observed_at_utc:data.latest_observed_at_utc,
-    complete_receipts_not_required_checks:true};
+    complete_receipts_not_required_checks:missing.length===0};
   }else if(data.original_board_sha256!==undefined||
    data.observed_batch_count!==undefined||data.missing_batch_count!==undefined||
    data.earliest_observed_at_utc!==undefined||
@@ -742,7 +762,12 @@ function gateOverview(groups){
  for(const group of groups)counts[gateState(group.url)]++;
  const age=prGateImport?Math.max(0,Math.floor((Date.now()-prGateImport.timestamp)/60000)):null;
  const coverage=prGateImport?.bridgeCoverage?
-   ' · complete SAVED batch set '+prGateImport.bridgeCoverage.batches+
+   ' · '+(prGateImport.bridgeCoverage.complete?'COMPLETE':'PARTIAL')+
+   ' saved batch coverage '+prGateImport.bridgeCoverage.batches+'/'+
+   prGateImport.bridgeCoverage.expected_batches+
+   (prGateImport.bridgeCoverage.missing_indexes.length?
+    ' · UNKNOWN batches '+prGateImport.bridgeCoverage.missing_indexes.slice(0,12).join(', ')+
+     (prGateImport.bridgeCoverage.missing_indexes.length>12?' +more':''):'')+
    ' · source '+prGateImport.bridgeCoverage.manifest_sha256.slice(0,12):
   prGateImport?.reviewContext?
    ' · only saved batch '+prGateImport.reviewContext.batch_index+'/'+
@@ -883,7 +908,10 @@ function currentPrManifest(){
    source_schema:prGateImport?.kind||null,
    imported_source_sha256:prGateImport?.sha256||null,
    review_manifest_sha256:prGateImport?.bridgeCoverage?.manifest_sha256||null,
-   complete_saved_batch_set:!!prGateImport?.bridgeCoverage,
+   complete_saved_batch_set:prGateImport?.bridgeCoverage?.complete===true,
+   observed_saved_batches:prGateImport?.bridgeCoverage?.batches??null,
+   expected_saved_batches:prGateImport?.bridgeCoverage?.expected_batches??null,
+   missing_saved_batch_indexes:prGateImport?.bridgeCoverage?.missing_indexes||[],
    observed_categories:{
     failed:groups.filter(g=>gateState(g.url)==='failed').length,
     waiting:groups.filter(g=>gateState(g.url)==='pending').length,
@@ -1710,9 +1738,13 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
   document.getElementById('prGateClear').disabled=false;
   document.getElementById('prGateStatus').textContent=
    accepted.items.size+' linked PR receipts imported · '+accepted.time+
-   (accepted.bridgeCoverage?' · COMPLETE SAVED BATCH SET '+
-    accepted.bridgeCoverage.batches+' batches · manifest '+
-    accepted.bridgeCoverage.manifest_sha256.slice(0,12)+
+   (accepted.bridgeCoverage?' · '+
+    (accepted.bridgeCoverage.complete?'COMPLETE':'PARTIAL')+
+    ' SAVED BATCH SET '+accepted.bridgeCoverage.batches+'/'+
+    accepted.bridgeCoverage.expected_batches+
+    (accepted.bridgeCoverage.missing_indexes.length?' · UNKNOWN BATCHES '+
+     accepted.bridgeCoverage.missing_indexes.slice(0,16).join(', '):'')+
+    ' · manifest '+accepted.bridgeCoverage.manifest_sha256.slice(0,12)+
     ' · REQUIRED CI/OWNER/REVIEW STILL UNKNOWN':'')+
    (accepted.reviewContext?' · '+accepted.reviewContext.candidate_count+
     ' candidates in reviewed board; batch '+
