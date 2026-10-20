@@ -464,6 +464,13 @@ De bestaande runtime-PR herstelt nu het samenhangende gedrag via
 
 - Scan maximaal vier opeenvolgende vensters van 240 nog niet geclaimde,
   leasevrije bronrijen; QA-only en corrupte metadata blijven uitgesloten.
+- Als die globale bronvensters een geregistreerd project helemaal niet bevatten,
+  bekijkt de allocator maximaal 128 vrije rijen voor elk nog niet waargenomen
+  project (maximaal 24 registerprojecten), en neemt maximaal acht geldige
+  kandidaten daarvan mee. Daardoor kan een project achter meer dan 960 rijen
+  van een ander project toch kandidaat worden zonder extra worker te claimen.
+  Ook deze projectvensters kunnen onvolledig zijn; lange oude QA-backlogs blijven
+  zichtbaar als een eigenaarshandeling, niet als bewijs dat er geen werk is.
 - Binnen die **waargenomen** geldige productrijen reserveert de selectie maximaal
   acht kandidaten per onderscheiden project, en vult resterende plaatsen aan
   met de oorspronkelijk hoogst geprioriteerde overgebleven rijen.
@@ -474,10 +481,10 @@ De bestaande runtime-PR herstelt nu het samenhangende gedrag via
 - De bestaande `generate_execution_lanes`, actieve scope/claim-inventaris,
   hard/soft projectcaps, beschikbare geheugenruimte, busy-browserstatus,
   Force Start, lease- en releasecontrole worden niet overgeslagen.
-- Als ook de 960 onderzochte bronrijen geen werk uit een ander project bevatten,
-  pretendeert de bron niet dat de rest van de onbeperkte queue gecontroleerd is.
-  Er worden geen bestaande claims vrijgemaakt om kunstmatige capaciteit te
-  creëren. Geen automatische scheduler-/VPS-activatie binnen deze PR.
+- Als globale én projectgerichte bronvensters geen geldig werk van een ander
+  project opleveren, pretendeert de bron niet dat de volledige queue is
+  gecontroleerd. Actieve claims blijven behouden; er wordt geen kunstmatige
+  capaciteit gecreëerd en geen scheduler/VPS-actie uitgevoerd.
 
 Dit is een **functionele allocatorwijziging** en niet een nieuwe audit of
 QA-implementatie. De vereiste automatische CI op exact de nieuwe PR-head,
