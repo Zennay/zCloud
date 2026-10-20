@@ -1,0 +1,41 @@
+name: VPS storage housekeeping
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/vps-storage-housekeeping.yml
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-storage-housekeeping
+  cancel-in-progress: false
+
+jobs:
+  reclaim:
+    if: github.repository == 'Zennay/zCloud'
+    runs-on: [self-hosted, zcloud, vps]
+    timeout-minutes: 20
+    steps:
+      - name: Reclaim safely rotated operating system logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "STORAGE_BEFORE"
+          df -h /
+          if sudo -n true 2>/dev/null; then
+            sudo -n journalctl --rotate
+            sudo -n journalctl --vacuum-size=800M --vacuum-time=7d
+            sudo -n apt-get clean
+            sudo -n mkdir -p /etc/systemd/journald.conf.d
+            printf '[Journal]\nSystemMaxUse=800M\nSystemMaxFileSize=128M\nRuntimeMaxUse=200M\n' | sudo -n tee /etc/systemd/journald.conf.d/60-zcloud-storage.conf >/dev/null
+            sudo -n systemctl restart systemd-journald
+          else
+            echo "No sudo rights on this runner; keeping protected OS logs unchanged"
+          fi
+          echo "STORAGE_AFTER"
+          df -h /
