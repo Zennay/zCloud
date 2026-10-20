@@ -8,7 +8,9 @@ actual Git merge conflicts, worker recovery or release authorization.
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timezone
+import io
 from html import escape
 import json
 import os
@@ -503,7 +505,81 @@ def collect_live(repository, token, *, start_page=1, windows=2, prs_per_page=8):
     return combined
 
 
+MAX_CSV_RECORDS = 3000
+
+
+def render_private_csv(report):
+    """Tabular read-only handoff, not a merge admission decision.
+
+    Rows are bounded by the same 40 groups/18 filename samples already
+    present in the operator report. Never export raw GitHub API logs.
+    """
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, dialect="excel", lineterminator="\r\n")
+    header = (
+        "record_type", "repository", "source_mode", "source_windows_utc",
+        "group_number", "group_pr_count", "group_shared_files_observed",
+        "filename", "file_cross_window", "file_pr_count", "pr_number",
+        "pr_url", "pr_head_sha", "pr_source_window",
+        "source_complete_for_all_open_prs", "claims_verified",
+        "merge_authorized", "operator_notice"
+    )
+    writer.writerow(header)
+
+    def safe(value):
+        # Standard CSV quoting alone does NOT stop spreadsheet formula
+        # execution when opened as an Excel/Sheets document.
+        raw = str(value)
+        if raw.lstrip().startswith(("=", "+", "-", "@")) or raw.startswith(
+                ("\t", "\r", "\n")):
+            return "'" + raw
+        return raw
+
+    def row(values):
+        writer.writerow([safe(item) for item in values])
+        if output.tell() > MAX_REPORT_BYTES:
+            raise ValueError("private CSV exceeds max output")
+
+    always = (
+        report["repository"], report["collection_mode"],
+        " / ".join(report["observation_window_utc"])
+    )
+    notice = ("OBSERVED ONLY; no atomic full PR inventory; "
+              "claim, review, required CI and merge permissions UNKNOWN.")
+    row(("source_summary", *always, "", "", "", "", "", "",
+         "", "", "", "", "false", "false", "false", notice))
+    total = 1
+    for group in report["shown_connected_cross_window_groups"]:
+        for file_row in group["shared_file_ownership_samples"]:
+            for pr in file_row["prs"]:
+                total += 1
+                if total > MAX_CSV_RECORDS:
+                    raise ValueError("private CSV row budget exceeded")
+                row(("file_pr_membership", *always,
+                     group["group_number_in_this_observation"],
+                     group["pr_count_observed"],
+                     group["distinct_shared_files_observed"],
+                     file_row["path"],
+                     "true" if file_row["cross_window_overlap_observed"] else "false",
+                     file_row["participating_pr_count_observed"],
+                     pr["number"], pr["url"], pr["head_sha"],
+                     pr["source_window"], "false", "false", "false",
+                     "Source observation; never an owner or merge instruction."))
+    if report["connected_cross_window_groups_truncated"]:
+        row(("source_warning", *always, "", "", "", "", "", "", "", "",
+             "", "", "false", "false", "false",
+             "Additional groups beyond the bounded operator view are UNKNOWN."))
+    if report["prs_with_partial_file_scope"]:
+        row(("source_warning", *always, "", "", "", "", "", "", "", "",
+             "", "", "false", "false", "false",
+             "One or more source PR file lists were incomplete."))
+    # A BOM improves compatibility with Dutch Excel while remaining UTF-8.
+    return "\ufeff" + output.getvalue()
+
+
 def render(report, fmt):
+    if fmt == "csv":
+        return render_private_csv(report)
     lines = [
         "# zSentinel — privé cross-window PR-bestandsbotsingen",
         "",
@@ -756,7 +832,7 @@ def main(argv=None):
                         help="Aantal 2-pagina-bronvensters, 2 of 3")
     parser.add_argument("--prs-per-page", type=int, default=8,
                         help="1..12 PRs/pagina, samen <=36, max 48 GETs")
-    parser.add_argument("--format", choices=("json", "markdown", "text", "html"),
+    parser.add_argument("--format", choices=("json", "markdown", "text", "html", "csv"),
                         default="html")
     parser.add_argument("--output", type=Path, required=True,
                         help="Nieuw privé bestand, nooit bestaande data overschrijven")
