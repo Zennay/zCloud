@@ -619,3 +619,18 @@ toestemmingsgate: het is alleen een correcte aanduiding van incomplete
 Exact-head CI, GitHub-branch protection, onafhankelijke review,
 huidige claims en bevoegd releasebeheer moeten afzonderlijk live worden
 gecontroleerd vóór uitvoering van enige merge of productiehandeling.
+
+
+### Compacte bediening bij grote PR-backlogs
+
+Bij meer dan een handvol afzonderlijk opgeslagen batches toont de offline
+HTML eerst de **brongebonden menselijke werkbak**. Elke volledige batch staat
+daaronder in een toegankelijk uitklapbaar `details`-onderdeel met
+keyboard-focus, het originele batchnummer, waargenomen aantal PR's en
+expliciete historische bronouderdom. Hiermee hoeft een operator niet door
+75 lange geopende bronsecties te scrollen om de P0/P1-opvolging te vinden.
+Dezelfde broninhoud blijft beschikbaar in JSON, Markdown en tekst; alleen
+de visuele weergave is compacter.
+
+Dit blijft een volledig offline document met gewone links, geen scripts,
+geen live GitHub-status en geen automatische workflow- of mergeactie.
