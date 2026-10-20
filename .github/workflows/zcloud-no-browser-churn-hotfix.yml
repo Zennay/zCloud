@@ -148,7 +148,7 @@ jobs:
           state_dir="$HOME/.local/state/zcloud"
           test ! -L "$state_dir"
           umask 077
-          backup="$state_dir/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
+          backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
           mkdir -p "$(dirname "$backup")"
           if test -f "$live"; then cp -p "$live" "$backup"; fi
           if test -d "$root/scripts" && test -w "$root/scripts"; then
