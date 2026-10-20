@@ -352,3 +352,42 @@ python3 scripts/zsentinel_issue_scope_cockpit.py --live-issues \
 Use normal protected GitHub merge/review gates and owner authorization
 separately. No QA/regression suite, runner workflow dispatch or production
 write is part of this change.
+
+
+## 20 October · Direct current-HEAD JSON source for the offline Merge-first Desk
+
+The existing `scripts/zsentinel_pr_gate_now.py` now has a direct
+**read-only operator CLI**, so the offline zSentinel workbench does not
+need a separately assembled mock report or a full issue crawl. Give it
+between one and four canonical existing `Zennay/repo#number` references:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1560' --pr 'Zennay/zCloud#1567' \
+  --output ./private-pr-gate-observation.json
+```
+
+The output file is **create-only** (exclusive, no symlink final component,
+mode 0600), never overwrites an existing receipt, contains at most 4×5
+bounded GitHub GET observations, and carries the existing
+`zsentinel-current-pr-gate-observation-v1` schema. GitHub access comes
+from an already configured `GITHUB_TOKEN` environment variable; no
+token or raw response body is written into the output. If a PR source is
+unavailable, the result is an explicit unknown record rather than a
+success/merge claim. Without `--output` the tool prints JSON to stdout
+for deliberate human redirection, not an automatic upload or service.
+
+Load the saved JSON into the offline Product Delivery Workbench in existing
+[PR #1560](https://github.com/Zennay/zCloud/pull/1560) via
+**Import GitHub PR-gate snapshot**. The workbench matches only canonical
+already-captured PR links, marks old source observations stale, groups
+failed/pending/review-blocked PRs and enables human-reviewed Markdown/JSON
+handoffs. **Neither open PR has yet been merged into main merely because
+this integration code exists.** The operator must still check the real
+current head, mandatory exact-head CI, independent review, permissions and
+protected-main rules before a normal authorized merge.
+
+No GitHub issue, pull request, workflow, Notion task, queue, lease,
+runner, SSH target or live production application is modified by this
+one-shot source generator. No QA suite, regression or CI rerun is created
+or invoked.
