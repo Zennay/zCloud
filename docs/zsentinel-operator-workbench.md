@@ -394,3 +394,18 @@ were added or manually run; all CI, review and security gates remain.
 ### Private follow-up status is never issue closure
 
 Only an explicit human-only blocker decision (coordinate-owner or park-blocker) can carry a locally completed follow-up. Changing the human disposition to a non-escalation decision resets the local follow-up state to open. Imported v3 handoffs, including older-board carry-forward, reject forged locally closed states attached to unrelated issues. This prevents the local completion marker from impersonating real GitHub issue resolution or a released claim. These are changes to the operator's private data model only: original issue visibility, current live ownership verification and release gates remain unaffected.
+
+### Device-clock review trace, not an external acknowledgement
+
+When a human explicitly closes or reopens a private follow-up, the workbench
+records the current device's UTC ISO timestamp as the **last local toggle**.
+The timestamp is visible in the issue detail and private Markdown briefing,
+and is preserved in v3 JSON exports and reviewed cross-snapshot carry-forward.
+Older v3 exports without this optional field and v1/v2 backups remain
+importable. Malformed clock values from private files are rejected.
+
+A device-generated time may be inaccurate or forged and is NEVER treated as
+evidence that a worker resumed, a GitHub issue was fixed, an owner acknowledged
+the request, CI passed or a release occurred. No event is transmitted to
+Notion, GitHub, a calendar or any external service; the original lease,
+authorization, independent review and deployment gates still apply.
