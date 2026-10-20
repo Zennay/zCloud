@@ -710,6 +710,8 @@ def main():
                         help="read-only bounded Linux /proc inspection of canonical zCloud listener/worker processes")
     parser.add_argument("--worker-events-database", type=Path,
                         help="optional existing history.db: indexed read-only worker progress, no worker claim/commands")
+    parser.add_argument("--worker-previous", type=Path,
+                        help="previous 0600 worker snapshot, compare indexed explicit progress vs heartbeat only")
     parser.add_argument("--inspect-unpr-branches",
                         help="canonical project ID in selected GitHub window for a bounded read-only branch ownership sample")
     parser.add_argument("--require-clear-unpr-slice", action="store_true",
@@ -758,6 +760,8 @@ def main():
                 raise ValueError("--queue-previous needs an actual read-only SQLite queue")
         elif args.database is None:
             raise ValueError("--database is required unless --github-only was chosen")
+        if args.worker_previous is not None and args.worker_events_database is None:
+            raise ValueError("--worker-previous requires --worker-events-database")
         if args.pin_issue and args.skip_github_issues:
             raise ValueError("--pin-issue requires actual GitHub issues source")
         if len(args.job) > 3:
@@ -886,6 +890,29 @@ def main():
             from zsentinel_local_runner_observer import observe_local_runner
             local_runner = observe_local_runner()
             decision["local_runner_observation"] = local_runner
+        worker_delta = None
+        worker_delta_error = None
+        if args.worker_previous is not None:
+            try:
+                from zsentinel_disk_trend import load_previous
+                from zsentinel_worker_progress_delta import compare as compare_worker_progress
+                previous_worker = load_previous(args.worker_previous)
+                current_worker = bundle.get("worker_progress_observation")
+                if current_worker is None:
+                    raise ValueError("current worker progress source unavailable")
+                worker_delta = compare_worker_progress(previous_worker, current_worker)
+            except (OSError, ValueError, json.JSONDecodeError):
+                # This optional feature does not block independent P0, CI,
+                # issue or local capacity observation.
+                worker_delta_error = "private_worker_source_unavailable_or_incomparable"
+        if worker_delta is not None:
+            from zsentinel_worker_progress_delta import public_summary as worker_delta_public
+            decision["worker_progress_delta"] = worker_delta_public(worker_delta)
+        elif worker_delta_error is not None:
+            decision["worker_progress_delta"] = {
+                "coverage": "unavailable", "reason": worker_delta_error,
+                "product_delivery_verified": False,
+                "claim_epoch_verified": False, "recovery_authorized": False}
         if queue_churn is not None:
             from zsentinel_queue_churn import public_summary as churn_public
             decision["queue_claim_churn"] = churn_public(queue_churn)
@@ -1019,6 +1046,12 @@ def main():
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
                                       pr_desk=pr_desk, unblock=unblock)
+            if worker_delta is not None:
+                from zsentinel_worker_progress_delta import public_html as worker_delta_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible portfolio HTML for worker progress delta")
+                rendered = rendered.replace("<main>", "<main>" +
+                                            worker_delta_html(worker_delta), 1)
             if queue_churn is not None:
                 from zsentinel_queue_churn import public_html as claim_churn_html
                 if rendered.count("<main>") != 1:
@@ -1059,6 +1092,13 @@ def main():
         elif args.format == "handoff":
             from zsentinel_unblock_board import human_handoff_markdown
             rendered = human_handoff_markdown(unblock)
+            if worker_delta is not None:
+                from zsentinel_worker_progress_delta import human_text as worker_delta_text
+                rendered = ("## zSentinel · worker heartbeat versus progress #1342\n\n" +
+                            worker_delta_text(worker_delta) + "\n\n" + rendered)
+            elif worker_delta_error is not None:
+                rendered = ("## zSentinel · workerbron-onzekerheid\n\n"
+                            "Bronmomenten niet vergelijkbaar; geen herstelbewijs.\n\n" + rendered)
             if queue_churn is not None:
                 from zsentinel_queue_churn import human_text as queue_churn_text
                 rendered = ("## zSentinel · claimpogingen/lease-eigenaar #677\n\n" +
@@ -1083,6 +1123,7 @@ def main():
                 "local_runner_observation": local_runner,
                 "runner_cross_source": runner_cross_source,
                 "queue_claim_churn": decision.get("queue_claim_churn"),
+                "worker_progress_delta": decision.get("worker_progress_delta"),
                 "existing_pr_delivery": (pr_desk if pr_desk is not None else
                     {"coverage": "not_requested", "merge_authorized": False}),
                 "recent_unpr_branch_ownership": (
@@ -1096,6 +1137,11 @@ def main():
             if runner_cross_source is not None:
                 from zsentinel_runner_cross_source import as_text as runner_cross_text
                 lines.append(runner_cross_text(runner_cross_source))
+            if worker_delta is not None:
+                from zsentinel_worker_progress_delta import human_text as worker_delta_text
+                lines.append(worker_delta_text(worker_delta))
+            elif worker_delta_error is not None:
+                lines.append("WORKER #1342: vorige bron ontbreekt of is niet vergelijkbaar.")
             if queue_churn is not None:
                 from zsentinel_queue_churn import human_text as queue_churn_text
                 lines.append(queue_churn_text(queue_churn))
