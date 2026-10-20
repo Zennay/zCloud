@@ -2210,3 +2210,34 @@ steeds niet dat eigendom of herstel geverifieerd is.
 Geen QA/regressiesuites toegevoegd of handmatig gedraaid. Bestaande
 exact-head CI, onafhankelijke review, protected-main, P0 runner #1326,
 billing #1523 en serialized runtime release blijven bindend.
+
+### 20 oktober · Schijfbezetting als harde veiligheidswaarschuwing
+
+De optionele, alleen-lezen Linux-VPS-capaciteitsmeting toont voortaan behalve
+vrije GiB op **de daadwerkelijke database-mount** ook het percentage blokken
+dat niet beschikbaar is voor de normale runtimegebruiker. Dit gebruikt
+`statvfs(f_bavail/f_blocks)`; een root-reserve of overige niet beschikbare
+blokken worden niet als gratis worker-capaciteit gerekend. Ongeldige
+filesystemcounters worden geweigerd.
+
+De bestaande herstelrouter geeft nu `overloaded` terug zodra de
+database-mount **minstens 90% niet beschikbaar** is, zelfs wanneer er meer
+dan 2 GiB absoluut vrij blijft. Andere bestaande drempels voor CPU, RAM,
+swap en vrije GiB blijven ongewijzigd. De Nederlandse HTML-cockpit toont
+de bronoorzaak, bijvoorbeeld **Schijf minstens 90% niet beschikbaar** en
+**OVERBELAST: GEEN NIEUW WERK**.
+
+Oudere resourcebronnen zonder `disk_unavailable_percent` blijven
+leesbaar, maar krijgen expliciet
+`old_snapshot_disk_occupancy_unknown_not_release_authorization` als geen
+andere grens wordt overschreden; ze vormen nooit bewijs van veilige
+startcapaciteit. De bron is opt-in, lokaal, kort geldig en alleen advies;
+geen shell, opgeruimde VPS-schijf, gerepareerde runner, claim, dispatch,
+automatische herstart of productie-release is uitgevoerd of toegestaan.
+
+Rechtstreekse verbonden zSSH read-only waarneming op 20 oktober:
+`/dev/sda1` circa **94% vol**, **6.6 GiB beschikbaar**, swap
+**7772 / 8191 MiB in gebruik**, hoge load rond **15.45**. Deze
+waarneming bewijst geen bestaande scheduleractivatie; exacte-head
+CI, onafhankelijke review, protected-main en bevoegd runtime-eigendom
+blijven vereist. Geen QA-/regressiesuites geschreven of handmatig gedraaid.
