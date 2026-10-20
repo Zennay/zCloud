@@ -3210,6 +3210,13 @@ def portfolio_queue_allocate():
             owner_protected=(
                 old_status in ('running','verifying')
                 or bool(owner_key and owner_key in busy_worker_keys)
+                # The global-slot key may be unavailable during a Firefox
+                # mapping refresh. Protect a claimed slot if any real worker
+                # for that same project is busy rather than guessing it idle.
+                or (old_slot>0 and any(
+                    str(key).startswith(str(previous['project_id'] or '')+'::w')
+                    for key in busy_worker_keys
+                ))
             )
             if owner_protected:
                 c.execute(
