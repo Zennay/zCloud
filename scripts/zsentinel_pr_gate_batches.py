@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""zSentinel offline merge-first desk: reconcile bounded PR gate receipt batches.
+
+This is saved, historical GitHub observation, NOT a live authorization engine.
+No GitHub, queue, runner, claim, workflow, reviewer or deployment writes.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+from html import escape
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+from zsentinel_pr_gate_now import (
+    MAX_PRS, REVIEW_MAX_BYTES, REVIEW_MAX_PRS, REVIEW_SCHEMA,
+    SCHEMA as GATE_SCHEMA, read_review_manifest,
+)
+
+SCHEMA = "zsentinel-pr-gate-batch-reconciliation-v1"
+MAX_RECEIPTS = 32
+MAX_RECEIPT_BYTES = 1024 * 1024
+SHA = re.compile(r"^[a-f0-9]{64}$")
+HEAD = re.compile(r"^[a-f0-9]{40}$")
+OBSERVED = "observed_current_head_partial_gate_evidence"
+UNKNOWN = "github_source_unavailable_or_head_changed"
+
+
+def _load_regular(path: Path, max_bytes: int) -> dict:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not 2 <= info.st_size <= max_bytes:
+            raise ValueError("source must be a bounded regular file")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(max_bytes + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > max_bytes:
+        raise ValueError("oversized saved receipt")
+    try:
+        return json.loads(raw.decode("utf-8", "strict"))
+    except (UnicodeError, ValueError):
+        raise ValueError("invalid UTF-8 saved JSON") from None
+
+
+def _utc(value):
+    if type(value) is not str or len(value) > 50:
+        raise ValueError("invalid observation time")
+    try:
+        moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError("invalid observation time") from None
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise ValueError("observation time must include UTC offset")
+    return moment.astimezone(timezone.utc)
+
+
+def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
+    if not 1 <= len(receipt_paths) <= MAX_RECEIPTS:
+        raise ValueError("choose one to 32 separately created saved gate receipts")
+    # Reuse the existing strict canonical reader. It pins manifest bytes and
+    # deterministically sorts priority and PR identity in each 4-PR batch.
+    first = read_review_manifest(manifest, batch=1)
+    count = first["source_review_pr_count"]
+    total = first["source_review_batches_total"]
+    if total > (REVIEW_MAX_PRS + MAX_PRS - 1) // MAX_PRS:
+        raise ValueError("invalid manifest batch count")
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    batches = {}
+    for path in receipt_paths:
+        saved = _load_regular(path, MAX_RECEIPT_BYTES)
+        if (type(saved) is not dict or saved.get("schema") != GATE_SCHEMA
+                or saved.get("merge_authorized") is not False
+                or saved.get("deployment_authorized") is not False
+                or saved.get("writes_performed") is not False
+                or saved.get("required_branch_protection_verified") is not False
+                or saved.get("source_review_manifest_sha256") != first["source_review_manifest_sha256"]
+                or saved.get("source_review_board_sha256") != first["source_review_board_sha256"]
+                or saved.get("source_review_pr_count") != count
+                or type(saved.get("source_review_batch_index")) is not int):
+            raise ValueError("receipt identity or no-authority contract invalid")
+        index = saved["source_review_batch_index"]
+        if index in batches:
+            raise ValueError("duplicate observed batch; refusing overwrite")
+        if not 1 <= index <= total:
+            raise ValueError("batch index exceeds original review")
+        expected = read_review_manifest(manifest, batch=index)
+        for key in ("source_review_batches_total", "source_review_batch_first_pr",
+                    "source_review_batch_count", "review_only_top_four_observed"):
+            if saved.get(key) != expected[key]:
+                raise ValueError("receipt does not match manifest batch boundaries")
+        items = saved.get("items")
+        if (type(items) is not list or len(items) != expected["source_review_batch_count"]
+                or saved.get("observed_prs") != len(items)):
+            raise ValueError("missing or extra PR evidence rows")
+        clock = _utc(saved.get("observed_at_utc"))
+        if clock > observed_at.replace(microsecond=999999):
+            raise ValueError("receipt observation in the future")
+        age = int((observed_at - clock).total_seconds())
+        if age < 0:
+            age = 0
+        rows = []
+        for item, (repo, number) in zip(items, expected["prs"]):
+            url = "https://github.com/" + repo + "/pull/" + str(number)
+            if (type(item) is not dict or item.get("repository") != repo
+                    or item.get("number") != number or item.get("url") != url
+                    or item.get("merge_authorized") is not False
+                    or item.get("deployment_authorized") is not False
+                    or item.get("read_only") is not True
+                    or item.get("status") not in (OBSERVED, UNKNOWN)):
+                raise ValueError("receipt PR identity, ordering or authority invalid")
+            observed = item["status"] == OBSERVED
+            if observed and (
+                type(item.get("head_sha_observed")) is not str
+                or not HEAD.fullmatch(item["head_sha_observed"])
+                or item.get("required_branch_checks_and_rules_verified") is not False
+                or item.get("required_review_policy_verified") is not False
+                or type(item.get("observed_checks_pending")) is not int
+                or type(item.get("observed_checks_not_successful")) is not int
+                or type(item.get("observed_independent_exact_head_approvals")) is not int
+                or type(item.get("human_next_gate_step")) is not str
+            ):
+                raise ValueError("incomplete observed gate evidence")
+            if observed and any(item[k] < 0 for k in (
+                    "observed_checks_pending", "observed_checks_not_successful",
+                    "observed_independent_exact_head_approvals")):
+                raise ValueError("invalid negative observed gate count")
+            rows.append({
+                "url": url,
+                "exact_head_observed": item["head_sha_observed"] if observed else None,
+                "source_status": "observed_partial" if observed else "unavailable_or_drifted",
+                "checks_pending_observed": item["observed_checks_pending"] if observed else None,
+                "checks_failed_observed": item["observed_checks_not_successful"] if observed else None,
+                "independent_exact_head_approvals_observed": (
+                    item["observed_independent_exact_head_approvals"] if observed else None),
+                "next_human_gate": item["human_next_gate_step"] if observed else "recollect_exact_head_source",
+                "saved_source_stale_over_15_minutes": age > 900,
+                "merge_authorized": False, "deployment_authorized": False,
+            })
+        batches[index] = {
+            "batch": index, "observed_at_utc": clock.isoformat(),
+            "age_seconds": age, "stale": age > 900, "prs": rows,
+        }
+    missing = [i for i in range(1, total + 1) if i not in batches]
+    all_rows = [row for i in sorted(batches) for row in batches[i]["prs"]]
+    unavailable = sum(row["source_status"] != "observed_partial" for row in all_rows)
+    stale = sum(row["saved_source_stale_over_15_minutes"] for row in all_rows)
+    return {
+        "schema": SCHEMA,
+        "generated_at_utc": observed_at.isoformat(),
+        "source_review_manifest_sha256": first["source_review_manifest_sha256"],
+        "source_review_board_sha256": first["source_review_board_sha256"],
+        "source_review_schema": REVIEW_SCHEMA,
+        "total_manifest_prs": count,
+        "total_batches": total,
+        "included_batches": sorted(batches),
+        "missing_batches": missing,
+        "observed_prs": len(all_rows),
+        "unavailable_or_drifted_prs": unavailable,
+        "stale_over_15_minutes_prs": stale,
+        "all_saved_batches_present": not missing,
+        "all_observations_present_and_recent": not missing and not unavailable and not stale,
+        "saved_historical_receipts_only": True,
+        "live_github_state_verified": False,
+        "current_heads_revalidated": False,
+        "required_branch_protection_verified": False,
+        "independent_review_policy_verified": False,
+        "claim_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "writes_performed": False,
+        "batches": [batches[i] for i in sorted(batches)],
+    }
+
+
+def human(report, markdown=False):
+    lines = [
+        "# zSentinel · Merge-first gatebatches (opgeslagen momentopnamen)" if markdown
+        else "zSentinel | Merge-first gatebatches · opgeslagen momentopnamen",
+        "Bronboard: " + report["source_review_board_sha256"],
+        "Review-manifest: " + report["source_review_manifest_sha256"],
+        "Ontvangen: " + str(report["observed_prs"]) + "/" + str(report["total_manifest_prs"]) +
+        " PRs, batches " + str(len(report["included_batches"])) +
+        "/" + str(report["total_batches"]),
+        "Ontbrekende batches: " + (", ".join(map(str, report["missing_batches"])) or "geen"),
+        "Onbereikbare of veranderde HEADs: " + str(report["unavailable_or_drifted_prs"]),
+        "Verouderde (>15 min) opgeslagen PR-waarnemingen: " + str(report["stale_over_15_minutes_prs"]),
+        "Belangrijk: alle gegevens zijn historisch; beschermde main, exacte CI, "
+        "review, actieve ownerclaim en release zijn NIET geverifieerd.",
+    ]
+    for batch in report["batches"]:
+        lines.append(("\n## " if markdown else "\n") + "Batch " + str(batch["batch"]) +
+                     " · bron UTC " + batch["observed_at_utc"])
+        for row in batch["prs"]:
+            name = ("[" + row["url"] + "](" + row["url"] + ")") if markdown else row["url"]
+            lines.append("- " + name + " · " + row["next_human_gate"] +
+                         (" · VEROUderd (>15 min)" if row["saved_source_stale_over_15_minutes"] else "") +
+                         " · MERGE NEE")
+    lines.append("\nGeen claims, workflows, GitHub-writes, merge of deploy uitgevoerd.")
+    return "\n".join(lines) + "\n"
+
+
+def html(report):
+    cards = []
+    for batch in report["batches"]:
+        items = []
+        for row in batch["prs"]:
+            url = escape(row["url"], quote=True)
+            step = escape(row["next_human_gate"])
+            head = escape(row["exact_head_observed"] or "onbekend")
+            note = " · oud bronbewijs" if row["saved_source_stale_over_15_minutes"] else ""
+            items.append('<li><a rel="noopener noreferrer" href="' + url + '">' + url +
+                         '</a><br><small>HEAD ' + head + ' · ' + step + escape(note) +
+                         ' · geen mergevrijgave</small></li>')
+        cards.append("<section><h2>Batch " + str(batch["batch"]) + "</h2><ol>" +
+                     "".join(items) + "</ol></section>")
+    summary = ("Batches " + str(len(report["included_batches"])) + "/" +
+               str(report["total_batches"]) + " · PRs " +
+               str(report["observed_prs"]) + "/" + str(report["total_manifest_prs"]) +
+               " · niet waargenomen " + str(report["unavailable_or_drifted_prs"]) +
+               " · verouderd " + str(report["stale_over_15_minutes_prs"]))
+    missing = ", ".join(map(str, report["missing_batches"])) or "geen"
+    return ('<!doctype html><html lang="nl"><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>zSentinel · Merge-first gatebatches</title>'
+            '<style>body{font:16px/1.55 system-ui;margin:2rem auto;max-width:840px;'
+            'padding:0 1rem;color:#182534;background:#f7fafc}'
+            'section,header{background:white;padding:1rem 1.5rem;margin:1rem 0;'
+            'border:1px solid #d5dee9;border-radius:12px}'
+            'a{overflow-wrap:anywhere}li{margin:.9rem 0}small{color:#41546a}'
+            '</style><header><h1>zSentinel · opgeslagen PR-gates</h1><p>' +
+            escape(summary) + '</p><p>Ontbrekende batches: ' + escape(missing) +
+            '</p><strong>GEEN merge-, claim-, deploy- of reviewvrijgave. '
+            'Bron is niet live.</strong></header>' + "".join(cards) +
+            '<p>Geen GitHub- of runtime-mutaties uitgevoerd.</p></html>\n')
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--from-review", type=Path, required=True)
+    parser.add_argument("--receipt", type=Path, action="append", required=True)
+    parser.add_argument("--format", choices=("html", "json", "text", "markdown"),
+                        default="html")
+    parser.add_argument("--output", type=Path,
+                        help="Exclusive NEW private 0600 output; default stdout")
+    args = parser.parse_args(argv)
+    try:
+        report = reconcile(args.from_review, args.receipt)
+        output = (json.dumps(report, indent=2, ensure_ascii=True) + "\n"
+                  if args.format == "json" else html(report) if args.format == "html"
+                  else human(report, markdown=args.format == "markdown"))
+        if args.output is None:
+            sys.stdout.write(output)
+        else:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(args.output, flags, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(output)
+                stream.flush()
+                os.fsync(stream.fileno())
+            print("Private saved receipt overview created (0600). No live authority.",
+                  file=sys.stderr)
+        return 3 if report["missing_batches"] or report["unavailable_or_drifted_prs"] else 0
+    except (OSError, ValueError):
+        print("zSentinel merge-first batch reconciliation refused: saved source invalid or unavailable",
+              file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
