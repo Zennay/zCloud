@@ -343,6 +343,8 @@ def current_gate_lines(board, markdown=False):
         "## Huidige PR-gates (maximaal vier; observatie, geen mergevrijgave)"
         if markdown else "Huidige PR-gates (maximaal vier; GEEN mergevrijgave)",
         "Gatebronnen gezien: " + str(observation["pr_gate_receipts_requested"]) +
+        "; QA-only titels bewust niet geselecteerd: " +
+        str(observation["qa_only_title_prs_not_inspected"]) +
         "; overige PRs in steekproef niet bekeken: " +
         str(observation["more_sampled_prs_not_gate_checked"]) +
         "; projectbron ontbreekt/verschoof: " +
@@ -528,7 +530,9 @@ def as_html(board):
             "</ol><p>" +
             ("Overige PR-gates NIET waargenomen. " if
              live["more_sampled_prs_not_gate_checked"] else "") +
-            "Maximaal " + str(live["max_additional_github_gets"]) +
+            "QA-only titels niet voor product-gatecontrole gekozen: " +
+            str(live["qa_only_title_prs_not_inspected"]) +
+            ". Maximaal " + str(live["max_additional_github_gets"]) +
             " extra GitHub GETs in deze optionele opname.</p></section>"
         )
     return (
