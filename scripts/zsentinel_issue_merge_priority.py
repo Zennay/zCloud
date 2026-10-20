@@ -77,13 +77,13 @@ def canonical_issue_references(text, existing, repo):
         return []
     escaped = re.escape(repo)
     url = re.compile(
-        r"(?<![A-Za-z0-9/])https://github\\.com/" + escaped +
+        r"(?<![A-Za-z0-9/])https://github\.com/" + escaped +
         r"/issues/([1-9][0-9]{0,6})(?![0-9/])",
         re.IGNORECASE,
     )
     short = re.compile(
-        r"(?<![A-Za-z0-9_.\\-/])" + escaped +
-        r"\\#([1-9][0-9]{0,6})(?![0-9])",
+        r"(?<![A-Za-z0-9_./-])" + escaped +
+        r"#([1-9][0-9]{0,6})(?![0-9])",
         re.IGNORECASE,
     )
     return sorted({int(n) for n in url.findall(text) + short.findall(text)
