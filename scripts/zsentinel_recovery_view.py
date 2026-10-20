@@ -6,6 +6,7 @@ trusts unvalidated markup, performs workflow actions or asserts live recovery.
 """
 from __future__ import annotations
 
+import re
 from html import escape
 from urllib.parse import urlsplit
 
