@@ -614,3 +614,25 @@ Source: [aab2ecfa](https://github.com/Zennay/zCloud/commit/aab2ecfa88fa9688d4cfb
 on existing PR #1572. It is **not** merged or deployed until ordinary
 independent review, exact-head mandatory CI, protected-main merge and
 authorized live verification complete.
+
+
+### Current read-only observation and correct owner counts
+
+The exact pinned source was evaluated against an existing `mode=ro` /
+`query_only=ON` `history.db` snapshot using the connected zSSH channel.
+At that moment, the local queue contained **three claimed and one queued**
+zSentinel tasks, and all three active tasks had **missing real file-scope
+declarations**. The new source conservatively classified two derived lanes
+as protecting active work and two as held pending owner verification.
+That is **three active task reservations in two lanes**, *not two owners*.
+
+The operator decision summary now carries `active_task_reservations`
+and `parallel_active_reservations` separately from the number of
+`active_owner_protected` lanes. Text, private HTML, Markdown and JSON
+no longer equate a displayed lane card with an individual owner's
+reservation. No task was released, changed, reassigned, merged or started.
+
+This evidence is a bounded **local** observation only. It is not a
+Notion lease reconciliation or GitHub source-of-truth update; it cannot
+authorize new parallel workers. Mandatory exact-head CI and independent
+reviews are still external release gates.
