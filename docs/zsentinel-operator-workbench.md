@@ -1988,3 +1988,44 @@ human-only navigation order over an old ZIP, not a real scheduler,
 ownership validator, CI verdict or permission to merge. Combined with the
 six-hour source-age label, it lets an operator find the most urgent known
 work without treating snapshot omissions as an absence of live P0 incidents.
+
+### One saved PR → one private owner handoff (20 October)
+
+The offline project dossier reader now supports selecting a **specific existing
+PR** by its exact canonical GitHub URL, regardless of its position in the
+sampled, priority/fairness-sorted queue. It refuses unknown PRs and foreign
+URLs rather than implying that a missing PR has been merged or released.
+
+```sh
+python3 scripts/zsentinel_saved_gate_dossier.py \
+  --input /home/ubuntu/private-dossiers/portfolio.zip \
+  --inspect-pr https://github.com/Zennay/zCloud/pull/1560 \
+  --expect-review-sha256 YOUR_TRUSTED_64_HEX_MANIFEST_SHA \
+  --handoff-markdown /home/ubuntu/private-dossiers/owner-pr1560.md
+```
+
+Both the input ZIP and handoff destination must be under existing private,
+current-user-owned directories without symlink or shared-writable ancestors.
+The Markdown file must **not already exist**. It is written to a new 0600
+staging inode, fully fsynced, and published under the final name using a
+create-only hardlink; existing output files are not replaced. Unsupported
+mount permissions or hardlinks are rejected. The console displays only the
+canonical public PR URL, original source-derived priority/blocker, number
+of source-linked issues and a privacy-safe success message — no private
+storage path.
+
+The resulting readable Markdown includes source board/manifest SHA256,
+original observation time, explicit stale/clock warning, incomplete batch
+coverage, saved issue links, sampled gates and a bounded source next action,
+plus human steps to confirm **current** PR HEAD, actual ownership, required
+CI/review and protected-branch status in GitHub before any further work.
+It is a **non-authorizing operator artifact**: neither a positive count nor
+a recent snapshot grants ownership, validates exact-head required checks,
+permits merge or proves production health.
+
+For human navigation without a file write, omit `--handoff-markdown`.
+`--show-queue` and `--inspect-pr` are distinct views and cannot be
+combined. `--extract-to` is also unavailable with `--inspect-pr`, so a
+targeted read/hand-off command does not unexpectedly extract the whole ZIP.
+No new QA suite, network operation, runner dispatch, queue claim or
+deployment is involved.
