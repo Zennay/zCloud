@@ -691,8 +691,15 @@ function acceptGateSource(data){
    const earliest=gateTime(time),latest=gateTime(data.latest_observed_at_utc);
    if(latest<earliest||latest-earliest>600000)
     throw Error('Unbounded batch observation range');
+   const expectedObservedPrs=versioned?
+    Array.from({length:expected},(_,i)=>i+1)
+     .filter(i=>!missing.includes(i))
+     .reduce((sum,i)=>sum+Math.min(4,data.review_candidate_pr_count-(i-1)*4),0):
+    null;
    bridgeCoverage={manifest_sha256:hash,batches:data.observed_batch_count,
     expected_batches:expected,missing_indexes:missing,
+    candidate_count:versioned?data.review_candidate_pr_count:null,
+    expected_observed_prs:expectedObservedPrs,
     complete:missing.length===0,
     earliest_observed_at_utc:time,latest_observed_at_utc:data.latest_observed_at_utc,
     complete_receipts_not_required_checks:missing.length===0};
@@ -744,6 +751,10 @@ function acceptGateSource(data){
   items.set(gate.url,gate);
  }
  if(!items.size)throw Error('No PR receipt matches this captured source board');
+ if(bridgeCoverage?.expected_observed_prs!==null&&bridgeCoverage&&
+    bridgeCoverage.expected_observed_prs!==undefined&&
+    items.size!==bridgeCoverage.expected_observed_prs)
+  throw Error('Saved batch count does not match distinct observed PR receipts');
  return {time,timestamp,items,kind:data.schema,reviewContext,bridgeCoverage};
 }
 function gateState(url){
@@ -911,6 +922,8 @@ function currentPrManifest(){
    complete_saved_batch_set:prGateImport?.bridgeCoverage?.complete===true,
    observed_saved_batches:prGateImport?.bridgeCoverage?.batches??null,
    expected_saved_batches:prGateImport?.bridgeCoverage?.expected_batches??null,
+   captured_review_pr_candidates:prGateImport?.bridgeCoverage?.candidate_count??null,
+   distinct_imported_saved_prs:prGateImport?.items.size??0,
    missing_saved_batch_indexes:prGateImport?.bridgeCoverage?.missing_indexes||[],
    observed_categories:{
     failed:groups.filter(g=>gateState(g.url)==='failed').length,
