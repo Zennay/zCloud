@@ -540,6 +540,90 @@ def graph_html(report):
 
 
 
+
+
+def as_markdown(report):
+    """Private operator handoff. Every link is canonical GitHub evidence."""
+    lines = [
+        "# zSentinel · GitHub PR-bestandsscope",
+        "",
+        "Repository: " + report["repository"],
+        "Bronmoment: " + report["observed_at_utc"],
+        "",
+        "**Bronuitkomst:** " +
+        ("Volledige, stabiele huidige open-PR-steekproef."
+         if report["pr_file_scope_sample_complete"]
+         else "ONVOLLEDIG of veranderd: geen uitspraken over ongeziene PR's."),
+        "",
+    ]
+    selected = report["selected_source_pr"]
+    if selected:
+        lines.extend([
+            "Geselecteerde bron-PR: [#" + str(selected["number"]) +
+            "](" + selected["url"] + "), head `" +
+            selected["head_sha"] + "`, base `" + selected["base_sha"] + "`.",
+            "",
+        ])
+    lines.extend([
+        "## Expliciete bestandscope",
+        "",
+    ])
+    for name in report["requested_paths"]:
+        # Canonical path strings are bounded and reject control characters.
+        # Use a plain indented line instead of Markdown code fences.
+        lines.append("- `" + name.replace("`", "\\`") + "`")
+    lines.extend(["", "## Waargenomen gedeelde paden", ""])
+    if not report["observed_overlaps"]:
+        lines.append("Geen overeenkomende paden gezien; dit is GEEN vrijgave.")
+    for hit in report["observed_overlaps"]:
+        lines.append("- [PR #" + str(hit["pr_number"]) + "](" + hit["pr_url"] +
+                     ") raakt `" + hit["path"].replace("`", "\\`") +
+                     "`; gevonden bestanden: " + str(len(hit["matching_files"])) +
+                     (" (gedeeltelijke weergave)" if hit["matches_truncated"] else ""))
+    lines.extend([
+        "",
+        "**Geen toestemming:** Notion-/SQLite-claims, PR-loze branches, "
+        "bestandsleases, review en CI zijn niet geverifieerd.",
+        "Geen codewijziging, claim, merge, betaling, runnerherstart of deploy.",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+def graph_markdown(report):
+    lines = [
+        "# zSentinel · Open PR-bestandsoverlap",
+        "",
+        "Repository: " + report["repository"],
+        "Bronmoment: " + report["observed_at_utc"],
+        "Geïnspecteerde PR's: " + str(report["inspected_prs"]) +
+        " / gezien: " + str(report["observed_open_prs"]),
+        "Compleet: " + ("ja (alleen open PR's)" if report["pr_file_scope_sample_complete"]
+                         else "NEE / onzeker"),
+        "",
+        "## Gedeelde bestandsnamen",
+    ]
+    for row in report["shown_file_collision_pairs"]:
+        left, right = row["left"], row["right"]
+        lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
+                     ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
+                     "): " + str(row["shared_file_count_observed"]) +
+                     " waargenomen gedeelde bestanden")
+    if not report["shown_file_collision_pairs"]:
+        lines.append("Geen gemeenschappelijke bestandsnamen waargenomen.")
+    if report["unpaired_open_prs_in_sample_not_claim_verified"]:
+        lines.extend(["", "## PR's zonder gedeelde paden (geen claimvrijgave)"])
+        for pr in report["unpaired_open_prs_in_sample_not_claim_verified"]:
+            lines.append("- [#" + str(pr["number"]) + "](" + pr["url"] + ")")
+    lines.extend([
+        "",
+        "**Dit bewijst geen Git-mergeconflict of vrije werkclaim.**",
+        "Huidige Notion-claims, bestandsleases, PR-loze branches, verplichte "
+        "CI/review en release-autorisatie blijven onafhankelijk.",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
@@ -549,7 +633,7 @@ def main(argv=None):
     parser.add_argument("--max-prs", type=int, default=24)
     parser.add_argument("--audit-open-prs", action="store_true",
                         help="Toon een bestandsoverlapkaart voor open PR's zonder handmatige doelpaden.")
-    parser.add_argument("--format", choices=("text", "json", "html"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
     args = parser.parse_args(argv)
     try:
         repos = registry(args.registry)
@@ -564,6 +648,8 @@ def main(argv=None):
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             elif args.format == "html":
                 print(graph_html(report))
+            elif args.format == "markdown":
+                print(graph_markdown(report))
             else:
                 print(graph_operator_text(report))
             return (2 if report["observed_file_collision_pairs"] else
@@ -574,6 +660,8 @@ def main(argv=None):
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
             print(html_view(report))
+        elif args.format == "markdown":
+            print(as_markdown(report))
         else:
             print(operator_text(report))
         # Exit status 2 is a real observed collision; status 3 is insufficient
