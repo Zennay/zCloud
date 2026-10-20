@@ -192,12 +192,19 @@ def as_html(result):
     for key in ("problem", "next_action", "status"):
         if type(result.get(key)) is not str or not 1 <= len(result[key]) <= 320:
             raise ValueError("untrusted runner correlation detail")
+    link = result.get("exact_job_url")
+    if link is not None and (type(link) is not str or not re.fullmatch(
+            r"https://github[.]com/Zennay/zCloud/actions/runs/[1-9][0-9]*/job/[1-9][0-9]*",
+            link)):
+        raise ValueError("invalid exact GitHub job link")
+    job_link = (' · <a rel="noopener noreferrer" href="' +
+                escape(link, quote=True) + '">Exacte GitHub-job</a>') if link else ''
     return (
         '<section aria-label="zSentinel exacte runnerbron correlatie">'
         '<h2>P0 runner · exacte job plus lokaal proces</h2>'
         '<p><strong>PROBLEEM:</strong> ' + escape(result["problem"]) + '</p>'
         '<p><strong>ACTIE:</strong> ' + escape(result["next_action"]) + '</p>'
-        '<p><strong>STATUS:</strong> ' + escape(result["status"]) + '</p>'
+        '<p><strong>STATUS:</strong> ' + escape(result["status"]) + job_link + '</p>'
         '</section>'
     )
 
@@ -208,5 +215,7 @@ def as_text(result):
     return "\n".join((
         "RUNNER · " + result["problem"],
         "ACTIE · " + result["next_action"],
-        "STATUS · " + result["status"],
+        "STATUS · " + result["status"] +
+        (" · exact GitHub: " + result["exact_job_url"]
+         if result.get("exact_job_url") else ""),
     ))
