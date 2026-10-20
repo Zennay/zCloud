@@ -40,6 +40,15 @@ def suggested_actions(packet):
             "Laat de bestaande servereigenaar de live in-flight scopebron en de huidige claimhouder vergelijken.",
             "HOLD_RUNTIME_SOURCE_GAP",
         ))
+    untrusted_leases = _number(packet.get("untrusted_active_leases_observed"))
+    if untrusted_leases:
+        result.append(action(
+            "active-lease-admission-held", "urgent",
+            f"{untrusted_leases} actieve herstelopdrachten hebben geen betrouwbare, lopende queuelease.",
+            "Behoud de bestaande worker en laat de runtime-/claimeigenaar beide tijden "
+            "en de echte voortgang vergelijken vóór een nieuwe schrijver.",
+            "HOLD_NEW_RECOVERY_WRITERS",
+        ))
     suspect_windows = _number(
         packet.get("inconsistent_in_flight_queue_claim_windows_observed")
     )
