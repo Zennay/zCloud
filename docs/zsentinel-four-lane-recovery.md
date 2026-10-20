@@ -110,3 +110,43 @@ independent reviews, branch protection and release authority remain
 required. An operator must separately verify GitHub `merged=true`,
 the newly observed default-branch SHA and authorized live activation
 before describing this feature as delivered or live.
+
+## Portfolio-wide urgency, without assuming ownership
+
+The same private desk now includes an explicit cross-project urgency section
+for 13 configured *real* projects. This is a **local portfolio queue census**,
+not a remote GitHub issue crawl, a new zSentinel project or an automated
+scheduler. The zSentinel recovery role is shown only in its four-lane cards
+and deliberately excluded from the external-product tally.
+
+- Only explicit P0/P1 `queued/claimed/running/verifying` rows are counted.
+- `queued_p0/queued_p1` show waiting items; `in_flight_*` are kept separate.
+- `eligible_queued_*` counts only rows with the local `eligible=1`
+  column, and is an *admission hint*, not proof that any owner/claim,
+  resource pool, external Notion task or GitHub branch is free.
+- Counts are independently grouped within the **same read-only SQLite
+  transaction** as the four lane/lease evidence. The SQL aggregate is
+  capped at 128 returned groups plus one to flag incomplete source
+  coverage. Unrecognized project IDs are not printed; they flag partial
+  coverage rather than being silently dropped.
+- The Dutch offline HTML has a responsive urgency table with these
+  counts, including local eligibility, alongside the four lane cards.
+  Raw queue titles, actor identities, credentials and source URLs are
+  never embedded in exported JSON/text/HTML.
+
+Direct read-only VPS observation from exact source
+`21115ef97bec6fb1a95ab27dc62aa6a611031afb`:
+LightUp has six locally eligible waiting P0 queue items and one P0
+in flight; zCloud has two locally eligible waiting P0 queue items;
+FTMO has one P0 plus two P1 locally eligible waiting items; HaxLab
+has one waiting P0 with **eligible=0**; zSSH has 31 locally eligible
+waiting P1 entries; Supa has one locally eligible waiting P1 and
+another P1 in flight. These are queue observations, not real-time
+GitHub issue closures, active independent claims, completion forecasts
+or runner recovery proof. Even a locally eligible item must pass
+existing external gates before another worker can take it.
+
+The source was directly parsed and its bounded read-only text view
+invoked using an exact pinned GitHub commit on the connected VPS.
+No QA, regression suite, GitHub workflow retrigger, queue mutation,
+runner action, service change or release deploy was performed.
