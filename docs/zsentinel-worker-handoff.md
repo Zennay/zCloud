@@ -158,6 +158,41 @@ P1-issue [#1342](https://github.com/Zennay/zCloud/issues/1342), maar
 sluit de onderliggende control-plane writer/claim-token reparatie
 nadrukkelijk niet.
 
+## Twee snapshots: verdwenen workers blijven zichtbaar (#1342)
+
+De read-only worker-eventvergelijking `scripts/zsentinel_worker_progress_delta.py`
+toonde eerder alleen worker-slots die in **beide** metingen voorkwamen.
+Daarmee verdween een niet meer gesampled of nieuw verschenen slot uit
+de concrete eigenaaracties, hoewel een totaalteller wel veranderde.
+
+Nu vergelijkt het werkbord de **vereniging** van beide begrensde
+samples. Per betrokken project en slot wordt vastgelegd of het in
+de vorige en/of huidige bronwaarneming aanwezig was. Een nieuw slot
+krijgt `new_in_bounded_sample_not_new_claim`; een niet langer zichtbaar
+slot `missing_in_current_sample_not_resolved`. Beide leveren expliciet
+een eigenaaractie op, maar **nooit** een conclusie over nieuwe claim,
+voltooide taak, vrijgekomen slot, herstelde runner of veilige takeover.
+Het aantal gedeelde slots wordt afzonderlijk en correct berekend.
+
+De gewone tekst en offline HTML tonen deze ontbrekende/nieuwe
+waarnemingen, inclusief dezelfde disclaimer. Voor een actieoverdracht
+kan de operator vanuit twee reeds bestaande privé-observaties ook
+een **nieuwe privé Markdown-werkbak** laten maken:
+
+```sh
+python3 scripts/zsentinel_worker_progress_delta.py \
+  --previous /bestaande-prive-map/worker-1.json \
+  --current-snapshot /bestaande-prive-map/worker-2.json \
+  --format md --output /bestaande-prive-map/worker-eigenaaracties.md
+```
+
+De Markdown bevat per slot de bronclassificatie en concrete opvolgactie,
+samen met tijdstippen en de aantallen gedeeld/nieuw/verdwenen.
+De bestaande create-only 0600-bestandsgrens geldt ongewijzigd; er
+wordt geen bron overschreven en geen queue, worker, lease, GitHub,
+Notion of VPS-service gewijzigd. Een verdwenen slot is in deze
+beperkte bron **geen herstelbewijs**.
+
 ## Queueclaim zichtbaar, maar lease verlopen: eigenaarcontrole vóór normale pauze
 
 Eerder kon de read-only observer bij een toegewezen gepauzeerde worker
