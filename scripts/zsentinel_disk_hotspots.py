@@ -53,6 +53,34 @@ def _root(path):
     return resolved
 
 
+
+def _open_directory_beneath(root: Path, directory: Path, mount: int):
+    """Open every path component with O_NOFOLLOW relative to trusted root.
+
+    A final-component O_NOFOLLOW alone cannot stop a queued *ancestor*
+    directory from being swapped for a symlink between two BFS visits.
+    The resulting FD is also checked for the original filesystem device.
+    """
+    relative = directory.relative_to(root)
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(root, flags)
+    try:
+        if os.fstat(fd).st_dev != mount:
+            raise OSError("workspace mount changed during scan")
+        for segment in relative.parts:
+            if segment in ("", ".", "..") or _sensitive(segment):
+                raise OSError("unsafe directory segment")
+            newer = os.open(segment, flags, dir_fd=fd)
+            os.close(fd)
+            fd = newer
+            if os.fstat(fd).st_dev != mount:
+                raise OSError("directory entered another filesystem")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
             max_depth=MAX_DEPTH, max_seconds=MAX_SECONDS):
     root = _root(root)
@@ -102,12 +130,7 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         directory, depth = stack.popleft()
         directory_fd = None
         try:
-            directory_fd = os.open(
-                directory, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY |
-                getattr(os, "O_CLOEXEC", 0))
-            if os.fstat(directory_fd).st_dev != mount:
-                mount_skipped += 1
-                continue
+            directory_fd = _open_directory_beneath(root, directory, mount)
             with os.scandir(directory_fd) as entries:
                 for entry in entries:
                     if scanned >= max_entries:
