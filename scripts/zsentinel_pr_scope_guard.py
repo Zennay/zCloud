@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,7 +29,6 @@ MAX_SOURCE_FILES = 80
 SHA = re.compile(r"^[a-f0-9]{40}$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 REPO = re.compile(r"^Zennay/[A-Za-z0-9_.-]{1,100}$")
-SEGMENT = re.compile(r"^[A-Za-z0-9_.@+ -]{1,180}$")
 
 
 def unique(pairs):
@@ -47,7 +47,9 @@ def edit_path(value):
     if value.startswith("/") or "\\" in value or "//" in value:
         raise ValueError("target must be a relative POSIX path")
     parts = value.rstrip("/").split("/")
-    if any(part in ("", ".", "..") or not SEGMENT.fullmatch(part)
+    if any(part in ("", ".", "..") or len(part) > 180 or
+           any(ord(char) < 32 or ord(char) == 127 or
+               unicodedata.category(char).startswith("C") for char in part)
            for part in parts):
         raise ValueError("unsafe or ambiguous path segment")
     return value
