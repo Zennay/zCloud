@@ -108,21 +108,37 @@ def export(source_dir, output_dir):
     files["LEESMIJ.txt"] = README.encode("utf-8")
     parent = output_dir.parent
     if not output_dir.name or output_dir.name in {".", ".."} or parent.is_symlink():
-        raise ValueError("choose a fresh private bundle name and safe parent")
+        raise ValueError("choose a fresh operator bundle name and private parent")
     if not parent.is_dir():
-        raise ValueError("the output parent must already exist")
-    # Exclusive directory creation prevents replacement of existing deployments.
-    os.mkdir(output_dir, mode=0o700)
+        raise ValueError("operator bundle parent must already exist")
+    # Open the parent once, then create/open/remove entries relative to its fd.
+    # A shared or replaceable parent could let another user rename our 0700
+    # bundle after creation, so require the owner and private parent mode.
+    parent_fd = os.open(
+        parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
     directory = None
+    created = False
     try:
+        info = os.fstat(parent_fd)
+        if (not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("operator bundle parent must be private and owned")
+        os.mkdir(output_dir.name, mode=0o700, dir_fd=parent_fd)
+        created = True
         directory = os.open(
-            output_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            | getattr(os, "O_CLOEXEC", 0)
+            output_dir.name,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent_fd,
         )
         os.fchmod(directory, 0o700)
         for name, body in files.items():
             _write_new(directory, name, body)
         os.fsync(directory)
+        os.fsync(parent_fd)
     except BaseException:
         if directory is not None:
             for name in files:
@@ -130,11 +146,13 @@ def export(source_dir, output_dir):
                     os.unlink(name, dir_fd=directory)
                 except FileNotFoundError:
                     continue
-        os.rmdir(output_dir)
+        if created:
+            os.rmdir(output_dir.name, dir_fd=parent_fd)
         raise
     finally:
         if directory is not None:
             os.close(directory)
+        os.close(parent_fd)
     return manifest
 
 
@@ -210,7 +228,7 @@ def main():
         else:
             info = export(args.source_dir, args.output_dir)
     except (OSError, ValueError, UnicodeError, TypeError, KeyError):
-        parser.exit(2, "Privé operatorpakket niet bruikbaar; controleer bron en map.\\n")
+        parser.exit(2, "Privé operatorpakket niet bruikbaar; controleer bron en map.\n")
     if args.verify_dir is not None:
         print("Privé bronpakket herkend: " + str(info["verified_modules"])
               + " modules stemmen overeen met manifest. Geen releaseautorisatie.")
