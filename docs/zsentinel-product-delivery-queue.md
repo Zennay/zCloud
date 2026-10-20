@@ -681,3 +681,30 @@ uitgevoerd aangemerkt; de oorspronkelijke `updated=true` blijft
 waarheidsgetrouw uitsluitend voor de database-statusovergang.
 De bestaande beveiligde beheer-API, claims, PR-/CI-reviewvoorwaarden en
 productiedatabase zijn niet gewijzigd buiten de nieuwe broncode.
+
+
+## 20 oktober · Human-gated queue-audit houdt menselijke actie vast
+
+De gewone `portfolio_queue_audit()` ruimt uitsluitend vrije, nog nooit
+geclaimde queued-taken op, maar het oude pad verwijderde ook werkpakketten
+waarvan het project `queue_mode=human-gated` is zonder een menselijke
+escalatie te bewaren. Daarmee kon een werkpakket uit de wachtrij verdwijnen
+terwijl de reden voor stilstand niet op de `Attention Needed`-lijst stond.
+
+Voor een **daadwerkelijk door de audit verwijderde human-gated rij** wordt
+nu een begrensd, projectgebonden aandachtspunt gemaakt in precies dezelfde
+SQLite-transactie. Een `SAVEPOINT` per rij waarborgt dat een afwijzing van
+de bron-/incidentidentiteit, een ID-conflict of een databasefout uitsluitend
+die rij ongedaan maakt. Een nooit geclaimde taak blijft dan ongewijzigd
+staan, zonder stilzwijgende statuswijziging of incomplete melding.
+Andere onafhankelijke auditregels kunnen gewoon doorgaan.
+
+Een taak die intussen is geclaimd kan niet aan dit pad deelnemen: de
+SQL UPDATE verifieert `status='queued'`, `worker_slot IS NULL`,
+`claimed_at IS NULL` en `claim_expires IS NULL` opnieuw bij de
+daadwerkelijke schrijfopdracht. De melding bevat alleen een generieke
+projectactie (geen prompt-, secret- of queue-tekst), een bestaande
+source-URL volgens het veilige URL-filter en een deterministische
+`queue:` of `queuehash:`-incident-ID. Geen workerclaim wordt gemaakt,
+vrijgegeven of overgenomen. Productie en verplichte releasegates blijven
+ongewijzigd.
