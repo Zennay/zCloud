@@ -446,6 +446,22 @@ oude status, reboot, of veranderde door de operator ingestelde CPU-grens,
 begint een nieuwe opschaalobservatie. Een onleesbare boot-ID verleent
 nooit een opschaaltoestemming.
 
+**Bescherming tegen gelijktijdige wijzigingen.** Direct vóór een eventuele
+CPU/gewicht-mutatie leest de regeling de werkelijk ingestelde cgroup nogmaals
+en haalt een nieuwe bounded host-/runnerbron op. Wijzigde een andere eigenaar
+tussentijds CPUQuota/CPUWeight, dan wordt het verouderde advies **niet**
+toegepast. Een nieuwe runner, gewijzigde bronvolledigheid of verandering in
+de drukcategorie verbreekt de oude *promotion epoch*, ook wanneer het
+algemene advies toevallig dezelfde CPU-percentages noemt. De vijf minuten
+opschaalgeschiedenis is voortaan cryptografisch gekoppeld aan die bounded
+runner-/drukcategorie (zonder process args, commandline of tokens in de
+privéstatus). Bij plots hogere druk kan de regeling uitsluitend een nieuw,
+veiliger **lager** CPU-/gewichtslimiet aanbevelen; een verhoging wordt dan
+geweigerd. Er is geen runtime-claim of privilege-uitbreiding aan toegevoegd.
+Een fysieke verandering ná de allerlaatste meting is niet atomair met
+systemd te voorkomen; operationeel blijft de bevoegde eigenaar
+verantwoordelijk voor de releases en de volgende timercyclus.
+
 De timer schrijft pas in een toekomstige *geautoriseerde installatie* een
 atomair privé (0600) bronmoment met wachttijd en observatietelling. De
 `--preview`-optie leest dezelfde bronnen, toont de aanbevolen én werkelijk
