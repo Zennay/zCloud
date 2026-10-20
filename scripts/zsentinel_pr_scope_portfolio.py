@@ -51,6 +51,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "open_pr_snapshot_stable": False,
                 "sampled_open_pr_heads": [],
                 "shown_collision_pairs": [],
+                "linked_pr_collision_clusters": [],
+                "observed_connected_pr_collision_clusters": None,
                 "shown_duplicate_issue_groups": [],
                 "observed_duplicate_issue_groups": None,
                 "duplicate_issue_groups_truncated": False,
@@ -81,6 +83,9 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "sampled_open_pr_heads": source["inspected_pr_heads"],
             "source_sample_complete": source["pr_file_scope_sample_complete"],
             "shown_collision_pairs": pairs,
+            "linked_pr_collision_clusters": source["linked_pr_collision_clusters"],
+            "observed_connected_pr_collision_clusters":
+                source["observed_connected_pr_collision_clusters"],
             "shown_duplicate_issue_groups": source["shown_duplicate_issue_groups"],
             "observed_duplicate_issue_groups": source["observed_duplicate_issue_groups"],
             "duplicate_issue_groups_truncated": source["duplicate_issue_groups_truncated"],
@@ -443,11 +448,23 @@ def summary_lines(view):
         " / waargenomen " + str(view["observed_open_prs"]),
         "Waargenomen gedeelde-bestandsparen: " +
         str(view["observed_collision_pairs"]),
+        "Samenhangende PR-bestandsgroepen: " +
+        str(view["observed_connected_pr_collision_clusters"]),
         "Open PR-teksten met hetzelfde issue (GEEN fix- of eigenaarsbewijs): " +
         str(view["observed_duplicate_issue_groups"]),
         "Bron: " + ("volledige huidige open PR-lijst (geen leasebewijs)"
                      if view["sample_complete"] else "ONVOLLEDIG: andere PR's kunnen ontbreken"),
     ]
+    for cluster in view["linked_pr_collision_clusters"]:
+        result.append(
+            "  GROEP " + str(cluster["component_number"]) + " · " +
+            str(cluster["pr_count_observed"]) + " open PRs · " +
+            str(cluster["shared_file_edge_count_observed"]) + " directe PR-paren · " +
+            str(cluster["distinct_shared_file_count_observed"]) + " gedeelde bestanden")
+        for pr in cluster["participating_prs"]:
+            result.append("    PR #" + str(pr["number"]) + " · " +
+                          str(pr["other_prs_with_shared_files_observed"]) +
+                          " bestandsverbindingen | " + pr["url"])
     for pair in view["shown_collision_pairs"]:
         result.append(
             "  PR #" + str(pair["left"]["number"]) +
@@ -663,6 +680,17 @@ def as_markdown(board):
                               else "nee") + ".",
             "",
         ])
+        lines.extend(["### Samenhangende PR-bestandsgroepen", "",
+                      "Verbonden door identieke bestanden; geen claim- of mergevrijgave."])
+        for cluster in view["linked_pr_collision_clusters"]:
+            lines.append("- Groep " + str(cluster["component_number"]) + ": " +
+                         str(cluster["pr_count_observed"]) + " PRs, " +
+                         str(cluster["shared_file_edge_count_observed"]) + " directe paren, " +
+                         str(cluster["distinct_shared_file_count_observed"]) + " gedeelde bestanden.")
+            for pr in cluster["participating_prs"]:
+                lines.append("  - [PR #" + str(pr["number"]) + "](" + pr["url"] +
+                             ") · " + str(pr["other_prs_with_shared_files_observed"]) +
+                             " bestandsverbindingen · HEAD " + pr["head_sha"][:12])
         if not view["shown_collision_pairs"]:
             lines.append("Geen overlap in de gelezen steekproef; geen claimvrijgave.")
         for pair in view["shown_collision_pairs"]:
@@ -736,11 +764,29 @@ def as_html(board):
             "<li><a rel='noopener noreferrer' href='" +
             escape(pr["url"], quote=True) + "'>PR #" +
             str(pr["number"]) + "</a></li>" for pr in unpaired)
+        clusters = []
+        for cluster in view["linked_pr_collision_clusters"]:
+            members = "".join(
+                "<li><a rel='noopener noreferrer' href='" +
+                escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
+                "</a> · HEAD " + escape(pr["head_sha"][:12]) + " · " +
+                str(pr["other_prs_with_shared_files_observed"]) +
+                " directe bestandsverbindingen</li>"
+                for pr in cluster["participating_prs"])
+            clusters.append(
+                "<li><strong>Groep " + str(cluster["component_number"]) +
+                "</strong>: " + str(cluster["pr_count_observed"]) +
+                " PRs, " + str(cluster["distinct_shared_file_count_observed"]) +
+                " verschillende gedeelde bestanden<ul>" + members + "</ul></li>")
         cards.append(
             "<section><h2>" + escape(view["project"]) + "</h2>"
             "<p><strong>" + escape(state) +
             "</strong> · " + escape(view["repository"]) + "</p>"
-            "<table><thead><tr><th>Open PR's</th><th>Gedeelde bestanden</th>"
+            "<h3>Samenhangende PR-bestandsgroepen</h3>"
+            "<p>Alleen geobserveerde bestanden, geen vrij eigenaarschap "
+            "of mergevolgorde.</p><ol>" +
+            ("".join(clusters) or "<li>Geen groepen geobserveerd.</li>") +
+            "</ol><table><thead><tr><th>Open PR's</th><th>Gedeelde bestanden</th>"
             "<th>Bestandsnamen</th></tr></thead><tbody>" +
             "".join(rows) + "</tbody></table>"
             "<h3>Meerdere open PR's noemen hetzelfde issue</h3>"
