@@ -863,6 +863,13 @@ The combined JSON carries `observed_batch_count`,
 verifies these fields together: no forged complete flag, missing index outside
 the manifest, duplicate index, or contradictory totals is accepted.
 It reports **PARTIAL saved batch coverage** and exact missing batch indexes.
+For the versioned bridge, it additionally recomputes the number of distinct
+PR receipt identities expected from the manifest's candidate count and
+received batch indexes, and refuses reports that silently omit one PR from
+a supposedly supplied batch. The human review-only JSON export separately
+records the original candidate count, distinct observed PRs, and missing
+batch indexes. A fully supplied source still does **not** establish green
+required checks, independent review or merge authorization.
 Only actually supplied PR observations appear; other captured PRs remain
 **UNKNOWN**. The existing original board membership/URL checks continue
 to apply to every imported issue/PR association.
