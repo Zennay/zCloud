@@ -326,8 +326,12 @@ def html(report):
             items.append('<li><a rel="noopener noreferrer" href="' + url + '">' + url +
                          '</a><br><small>HEAD ' + head + ' · [' + category + '] ' + step + escape(note) +
                          ' · geen mergevrijgave</small></li>')
-        cards.append("<section><h2>Batch " + str(batch["batch"]) + "</h2><ol>" +
-                     "".join(items) + "</ol></section>")
+        cards.append(
+            "<details class='receipt-batch'><summary>Batch " +
+            str(batch["batch"]) + " · " + str(len(batch["prs"])) +
+            " PRs · " + ("bron ouder dan 15 minuten" if batch["stale"]
+                        else "historische bron ≤15 minuten oud") +
+            "</summary><ol>" + "".join(items) + "</ol></details>")
     summary = ("Batches " + str(len(report["included_batches"])) + "/" +
                str(report["total_batches"]) + " · PRs " +
                str(report["observed_prs"]) + "/" + str(report["total_manifest_prs"]) +
@@ -358,6 +362,10 @@ def html(report):
             'padding:0 1rem;color:#182534;background:#f7fafc}'
             'section,header{background:white;padding:1rem 1.5rem;margin:1rem 0;'
             'border:1px solid #d5dee9;border-radius:12px}'
+            'details.receipt-batch{background:white;border:1px solid #d5dee9;'
+            'border-radius:12px;margin:1rem 0;padding:1rem 1.5rem}'
+            'summary{cursor:pointer;font-weight:650;list-style-position:inside}'
+            'summary:focus-visible,a:focus-visible{outline:2px solid currentColor;outline-offset:3px}'
             'a{overflow-wrap:anywhere}li{margin:.9rem 0}small{color:#41546a}'
             '</style><header><h1>zSentinel · opgeslagen PR-gates</h1><p>' +
             escape(summary) + '</p><p>Ontbrekende batches: ' + escape(missing) +
