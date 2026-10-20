@@ -40,30 +40,52 @@ def _boot_token():
         return None
 
 
-def read_private_state():
-    """Inspect a previous own receipt; errors mean NO historical permission."""
+def _private_state_directory(create=False):
+    """Owner-only open directory, never follow a substituted final symlink."""
+    if create:
+        STATE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory = os.open(
+        STATE.parent, os.O_RDONLY | os.O_DIRECTORY
+        | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    )
     try:
-        fd = os.open(STATE, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_CLOEXEC", 0))
+        info = os.fstat(directory)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise PermissionError("CPU state parent must be private to runtime owner")
+        return directory
+    except BaseException:
+        os.close(directory)
+        raise
+
+
+def read_private_state():
+    """Read an owner-private regular receipt; missing proof forbids promotion."""
+    try:
+        directory = _private_state_directory()
     except OSError:
         return None
     try:
-        meta = os.fstat(fd)
-        if (not stat.S_ISREG(meta.st_mode)
-                or meta.st_uid != os.geteuid()
-                or stat.S_IMODE(meta.st_mode) & 0o077
-                or meta.st_size <= 0 or meta.st_size > MAX_PRIVATE_STATE):
-            return None
-        with os.fdopen(fd, "rb", closefd=False) as reader:
-            blob = reader.read(MAX_PRIVATE_STATE + 1)
-        if len(blob) > MAX_PRIVATE_STATE:
-            return None
-        receipt = json.loads(blob.decode("utf-8"))
-        return receipt if type(receipt) is dict else None
+        fd = os.open(STATE.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0), dir_fd=directory)
+        try:
+            meta = os.fstat(fd)
+            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.geteuid()
+                    or stat.S_IMODE(meta.st_mode) & 0o077
+                    or meta.st_size <= 0 or meta.st_size > MAX_PRIVATE_STATE):
+                return None
+            with os.fdopen(fd, "rb", closefd=False) as reader:
+                blob = reader.read(MAX_PRIVATE_STATE + 1)
+            if len(blob) > MAX_PRIVATE_STATE:
+                return None
+            receipt = json.loads(blob.decode("utf-8"))
+            return receipt if type(receipt) is dict else None
+        finally:
+            os.close(fd)
     except (OSError, UnicodeError, ValueError, TypeError):
         return None
     finally:
-        os.close(fd)
+        os.close(directory)
 
 
 def promotion_policy(recommended_quota, recommended_weight, observed, previous,
@@ -352,22 +374,33 @@ def matches_cgroup(observed, quota, weight):
 
 
 def write_private_state(data):
-    """Atomic 0600 state; no partially written decision exposed to timer runs."""
-    STATE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    temp = STATE.with_name(STATE.name + "." + str(os.getpid()) + ".tmp")
-    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    """Create-only private temp and atomic receipt replacement in one open dir."""
+    raw = (json.dumps(data, sort_keys=True, ensure_ascii=False)
+           + "\n").encode("utf-8")
+    if len(raw) > MAX_PRIVATE_STATE:
+        raise ValueError("CPU decision receipt exceeds the private size bound")
+    directory = _private_state_directory(create=True)
+    temp_name = STATE.name + "." + str(os.getpid()) + ".tmp"
+    created = False
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(data, handle, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp, STATE)
+        fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                     | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory)
+        created = True
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, STATE.name,
+                   src_dir_fd=directory, dst_dir_fd=directory)
+        created = False
+        os.fsync(directory)
     finally:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if created:
+            try:
+                os.unlink(temp_name, dir_fd=directory)
+            except OSError:
+                pass
+        os.close(directory)
 
 
 RUNNER_UNIT = re.compile(r"^actions\.runner\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.service$")
