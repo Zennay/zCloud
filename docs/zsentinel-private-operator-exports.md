@@ -247,3 +247,64 @@ werkelijke stagnatie, verlopen lease-registraties of andere bronnen.
 Niets wordt automatisch geclaimd, verwijderd, gerequeued, uitgevoerd,
 gemerged, verstuurd of gedeployed. Ook eventuele lagere wachtrijaantallen
 zijn zonder expliciet nieuw bewijs geen succesmelding.
+
+## Browserworker-continuïteit tussen opgeslagen bronmomenten
+
+De operatorwerkbak ondersteunt nu een **derde bron** naast incidenten
+en SQLite-wachtrijdruk: reeds opgenomen, strikt read-only
+`worker_progress_observation` uit de bestaande
+`zsentinel_worker_progress_observer.py`. Er komt **geen tweede live
+SQLite-query** bij het heropenen van het archief. Deze functionaliteit
+helpt de eigenaar bij het onderzoeken van stagnatie en aanvulling van
+de bestaande voortgangsgeschiedenis, onder andere rond issue #1342.
+
+Maak nieuwe bronmomenten met het al bestaande opt-in-argument voor de
+worker-eventbron (met echte, reeds aanwezige privé-DB-paden op dezelfde
+VPS en in een eigenaar-private directory):
+
+```bash
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/portfolio_queue.db \
+  --worker-events-database /path/to/history.db \
+  --project cloud --skip-github-issues --skip-ci-discovery \
+  --format json --output /private/zsentinel-workers-moment-1.json
+
+# Op een afzonderlijk moment, expliciet opnieuw door de operator:
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/portfolio_queue.db \
+  --worker-events-database /path/to/history.db \
+  --project cloud --skip-github-issues --skip-ci-discovery \
+  --format json --output /private/zsentinel-workers-moment-2.json
+
+# Alleen bestaande privéreports lezen; geen netwerk, worker of queue-writes:
+python3 scripts/zsentinel_decision_timeline.py \
+  --snapshot /private/zsentinel-workers-moment-1.json \
+  --snapshot /private/zsentinel-workers-moment-2.json \
+  --format html --output /private/zsentinel-workers-historisch.html
+```
+
+De nieuwe module `scripts/zsentinel_worker_continuity.py` aanvaardt
+uitsluitend de expliciete bestaande read-only index/lease/runner-eventsbron
+met ongewijzigde niet-autorisatievelden. Hij neemt maximaal 24 geobserveerde
+workerslots per snapshot en vergelijkt maximaal 8 bronvensters, alleen als
+oorspronkelijke bronidentiteit, projectselectie, UTC-tijdstippen en
+bronvolledigheid overeenkomen. Bij een ontbrekende of vervangen SQLite-bron,
+gewijzigde slots, ge-reset eventcursor, gewijzigde workerinstelling of
+geen event-ID wordt **ONBEKEND** vastgelegd; er ontstaat nooit automatisch
+een stalled-worker-label.
+
+Nieuw geobserveerde `generation-progress` of `generation-finished`
+indexcursors zijn uitsluitend **browsersignalen**, geen bewijs van
+commit, afgeronde taak of hervatte eigenaarclaim. Herhaalde classificaties
+die menselijke controle verdienen, staan bovenaan het historische
+operatoroverzicht, expliciet als *herhaald gezien* en niet als meerdere
+bewezen fouten. Privé **Bekijk worker-opvolging** geeft een voorvertoning
+van de brongebonden, niet-autorisatieve Markdown-overdracht; de download
+is afzonderlijk opt-in. Er worden geen browser-URL's, chatberichten,
+prompts, foutpayloads, ruwe hostnamen of onbewerkte claimmetadata
+overgedragen. Zonder echte huidige GitHub/Notion/queue- en workerbronnen
+zijn lease, herstel, ownership, merge en deploy nog steeds NIET bewezen.
+
+Dit is bronimplementatie op de bestaande PR; geen automatische
+schedulerinstallatie, productie- of runnerrelease, SQLite-migratie,
+claimovername, workflow-retry of QA-ronde.
