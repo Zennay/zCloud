@@ -390,3 +390,11 @@ voor iedere configuratieaanvraag geldig.
 Dit beschermt al begonnen productwerk; het is geen bewijs van fysieke browser-
 of releasegezondheid. Echte workeropdrachten en planning blijven onder de
 bestaande scheduler, eigenaarsclaims en productie-autorisatie.
+
+## Portfolio-brede live-wachtrijactiviteit (20 oktober, broncommit 01642cdf)
+
+De bestaande geauthenticeerde `GET /api/portfolio-queue` geeft via `delivery_policy.project_activity` nu maximaal 20 **read-only projectkaarten** op basis van alleen de zichtbare API-rijen. Per project toont de bron aantallen waargenomen actieve `claimed/running/verifying` taken, overige wachtrijdruk, mogelijke productkandidaten, QA-only/ongeldige aanvragen, niet-eligible taken, bezette slots en resterende leasevelden. Projecten met zowel actieve claims als extra productkandidaten worden voor menselijke scopecontrole bovenaan getoond.
+
+Een vaste `operator_next_step` maakt onderscheid tussen eerst actieve claims controleren, autorisatie/capaciteit beoordelen, legacy QA/ongeldig werk door eigenaar laten herdefiniëren, en geen productkandidaat in de huidige steekproef. Er worden **geen namen van actieve claim-eigenaren afgeleid of vrijgegeven**. `project_activity_is_advisory_only=true`, `project_activity_source_coverage=visible_api_rows_only_not_full_queue` en `project_activity_truncated` voorkomen dat een gedeeltelijke weergave als compleet portfolio- of claim-bewijs wordt gelezen. Het bestaande globale allocatiepad, de productshortlist, legacy API-items en alle lease-/releasegates blijven ongewijzigd.
+
+Deze commits implementeren bronfunctionaliteit in de bestaande open PR; er is geen productie-deploy of zelfstandige live-verificatie uitgevoerd. Exact-head CI, onafhankelijke review, branch protection en bevoegde release-acceptatie blijven afzonderlijk verplicht. Er zijn geen QA-suites toegevoegd of uitgevoerd.
