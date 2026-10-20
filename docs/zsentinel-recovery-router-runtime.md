@@ -1877,7 +1877,8 @@ blocker-first bord (maximaal drie unieke geselecteerde projecten):
 python3 scripts/zsentinel_portfolio_overview.py \
   --github-only --window 0 \
   --job 'cloud:RUN_ID:JOB_ID:40_LOWERCASE_HEX_HEAD_SHA' \
-  --format html > /private/operator-only/zsentinel-exact-job.html
+  --format html \
+  --output /private/operator-only/zsentinel-exact-job.html
 ```
 
 Vervang de voorbeeldvelden uitsluitend door de daadwerkelijk op GitHub
