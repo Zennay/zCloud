@@ -119,6 +119,78 @@ def observed_workflows(receipt, sha):
     return state
 
 
+def source_bound_workflow_holds(receipt, sha, repo, limit=4):
+    """Current exact-head GitHub workflow waits, not branch-rule authority.
+
+    Reuses a source already fetched by inspect(). Superseded attempts from
+    the same workflow/event/ref are excluded so an old failed run does not
+    become a present blocker. Never triggers, retries, or cancels a workflow.
+    """
+    unknown = {"coverage": "UNKNOWN", "items": [], "more": False}
+    if (not isinstance(receipt, dict)
+            or not isinstance(repo, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo)
+            or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha)
+            or type(limit) is not int or not 1 <= limit <= 8):
+        return unknown
+    records = receipt.get("workflow_runs")
+    total = receipt.get("total_count")
+    if (not isinstance(records, list) or type(total) is not int
+            or total != len(records) or len(records) >= 100):
+        return unknown
+    current = {}
+    for run in records:
+        if not isinstance(run, dict) or run.get("head_sha") != sha:
+            return unknown
+        event = run.get("event")
+        if event not in {"pull_request", "pull_request_target", "push",
+                         "merge_group", "workflow_run"}:
+            continue
+        values = [run.get("workflow_id"), run.get("run_number"),
+                  run.get("run_attempt", 1), run.get("id")]
+        if any(type(n) is not int or n < 1 for n in values):
+            return unknown
+        branch = run.get("head_branch")
+        if branch is not None and (not isinstance(branch, str)
+                                  or len(branch) > 200):
+            return unknown
+        key = (values[0], event, branch)
+        order = (values[1], values[2], values[3])
+        if key not in current or order > current[key][0]:
+            current[key] = (order, run)
+    blocked = []
+    for _, run in current.values():
+        status = run.get("status")
+        conclusion = run.get("conclusion")
+        if status == "completed" and conclusion in {"success", "neutral", "skipped"}:
+            continue
+        if status not in {"queued", "pending", "in_progress", "waiting",
+                          "requested", "completed"}:
+            return unknown
+        if conclusion is not None and not isinstance(conclusion, str):
+            return unknown
+        name = run.get("name")
+        if not isinstance(name, str):
+            return unknown
+        name = " ".join(name.split())[:100]
+        if not name:
+            return unknown
+        failed = status == "completed"
+        blocked.append({
+            "name": name, "run_id": run["id"], "status": status,
+            "conclusion": conclusion if failed else None,
+            "url": f"https://github.com/{repo}/actions/runs/{run['id']}",
+            "event": run["event"],
+            "next_action": ("Inspect failed workflow; keep mandatory CI gates"
+                            if failed else
+                            "Await assigned runner or hosted admission; no retry"),
+        })
+    blocked.sort(key=lambda item: (item["status"] != "completed",
+                                   item["name"].casefold(), item["run_id"]))
+    return {"coverage": "COMPLETE", "items": blocked[:limit],
+            "more": len(blocked) > limit}
+
+
 def inspect(repo, number, budget, expected_body_digest=None,
             expected_title_digest=None):
     try:
@@ -249,6 +321,7 @@ def inspect(repo, number, budget, expected_body_digest=None,
         review = latest_approvals(revs, author, sha)
         check = observed_checks(runs, legacy)
         workflow = observed_workflows(workflows, sha)
+        workflow_holds = source_bound_workflow_holds(workflows, sha, repo)
         actions = []
         if last.get("mergeable") is not True:
             actions.append("Resolve conflict or wait for GitHub mergeability")
@@ -264,6 +337,7 @@ def inspect(repo, number, budget, expected_body_digest=None,
         return {"repo": repo, "number": number, "title": title, "head": sha,
                 "status": "OBSERVED_GATES_ONLY" if len(actions) == 1 else "HOLD",
                 "review": review, "checks": check, "workflows": workflow,
+                "workflow_holds": workflow_holds,
                 "source": "COMPLETE", "actions": actions}
     except (KeyError, TypeError, ValueError, RuntimeError, OSError):
         return {"repo": repo, "number": number, "title": "", "head": None,
