@@ -1576,3 +1576,15 @@ Dit vermindert geheugenafhankelijkheid van de vermenigvuldiging tussen gedeelde 
 #### Zichtbare bestandsmatrix op integratiewaarde gesorteerd
 
 In de begrensde lijst van achttien voorbeeldbestanden verschijnen nu **eerst paden die daadwerkelijk PRs uit verschillende bronvensters verbinden**. Daarna komen paden met de meeste betrokken PRs, met een stabiele alfabetische tie-break. De volgorde helpt om meteen de kern van een over-pagina integratiegroep te zien; alle geobserveerde bestandsnamen blijven meetellen bij de volledige graaf, ook als zij niet in de voorbeeldlijst staan. Dit is een observatieprioriteit, geen mergevolgorde of toewijzing van code-eigenaarschap.
+
+### Privé-CSV: filterbare cross-window bestandsmatrix
+
+De bestaande read-only cross-window PR-werkbank kan nu een **nieuw privé-CSV-bestand** aanmaken. Gebruik dezelfde begrensde bronvensters en de nieuwe vlag `--format csv`. Bijvoorbeeld:
+
+    python3 scripts/zsentinel_pr_saved_graph_merge.py --repo Zennay/zCloud --input /secure/page1.json --input /secure/page2.json --format csv --output /secure/pr-botsingen.csv
+
+De normale `--live-scan` route werkt eveneens met `--format csv`, met exact dezelfde bestaande GitHub-leeslimieten en zonder claims/merges. De CLI schrijft alleen een nieuw bestand met privébestandsrechten 0600 en weigert overschrijven. Het formaat is UTF-8 met Excel-compatibele BOM en gestandaardiseerde CSV-quoting.
+
+De eerste record is een expliciete **bronwaarschuwing**: dit is een gedeeltelijke historische of sequentiële momentopname, geen volledige atomische inventaris en geen autorisatie. Daarna komt één record per zichtbare combinatie van een gedeeld bestand en de werkelijk geobserveerde PR, inclusief URL, exacte HEAD-SHA, zoekvenster, groepnummer en bronproject. Tot 40 verbonden groepen en 18 prioritaire bestanden per groep zijn weergegeven, maximaal 3.000 records / 2 MiB output. Extra bronnen buiten deze limiet blijven UNKNOWN; bij overschrijding weigert de exporter een halve of misleidende overdracht.
+
+De exporter neutraliseert tekst die spreadsheetformules kan starten (waaronder gelijkteken, plus/minus, apenstaart en voorloop-tab/regelbreuk) door zichtbare spreadsheettekst te forceren. Dit voorkomt dat ongecontroleerde GitHub-bestandsnamen als uitvoerbare spreadsheetformules worden opgenomen. CSV is uitsluitend voor lokaal menselijk sorteren en review; een CSV-rij bewijst geen actieve owner, Git-mergeconflict, goedgekeurde review, groene CI, main-merge of deploy.
