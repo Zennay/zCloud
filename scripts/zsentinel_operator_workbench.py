@@ -341,6 +341,13 @@ Verify current claims and recent branches before opening new implementation work
 <button type="button" id="previewPrDesk">Preview filtered merge-first handoff</button>
 <div id="prDeskPanel" hidden><pre id="prDeskContent"></pre>
 <button type="button" id="downloadPrDesk" disabled>Download exactly this reviewed PR handoff (.md)</button></div>
+<h3>Portable review-only source manifest</h3>
+<p>Structured JSON for human-reviewed handoff to the next operator. Includes only
+captured canonical public issue/PR references and source-coverage flags.
+No personal notes, no credentials, no permission to claim, merge or deploy.</p>
+<button type="button" id="previewPrManifest">Preview exact review manifest (.json)</button>
+<div id="prManifestPanel" hidden><pre id="prManifestContent"></pre>
+<button type="button" id="downloadPrManifest" disabled>Download exactly this review-only JSON</button></div>
 </section>
 <div class="stack">
 <nav aria-label="Observed product issues"><ol class="list" id="issues"></ol></nav>
@@ -466,9 +473,13 @@ window.addEventListener('beforeunload',event=>{
  if(!unsavedLocal)return;
  event.preventDefault();event.returnValue='';
 });
-let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedPrDesk=null;
+let viewedBrief=null,viewedCsv=null,viewedDeltaCsv=null,viewedPrDesk=null,viewedPrManifest=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
+ viewedPrManifest=null;
+ document.getElementById('prManifestPanel').hidden=true;
+ document.getElementById('prManifestContent').textContent='';
+ document.getElementById('downloadPrManifest').disabled=true;
  viewedPrDesk=null;
  document.getElementById('prDeskPanel').hidden=true;
  document.getElementById('prDeskContent').textContent='';
@@ -595,6 +606,45 @@ function refreshPrDesk(){
    'Live claim, exact-head CI, review, branch and release authority UNVERIFIED')));
   list.append(item);
  }
+}
+
+function currentPrManifest(){
+ const groups=prDeskGroups();
+ const cards=filtered();
+ const unlinked=cards.filter(c=>c.open_pr_candidates.length===0);
+ if(!groups.length&&!unlinked.length)return null;
+ const receipt={
+  schema:'zsentinel-offline-merge-first-review-v1',
+  source_board_sha256:boardSha,
+  source_observed_at_utc:board.observed_at_utc,
+  captured_issue_count:cards.length,
+  evidence_scope:'bounded_saved_snapshot_not_live',
+  project_coverage:board.coverage,
+  required_current_claim_review_ci_branch_release_check:true,
+  current_pr_open_state_verified:false,
+  current_pr_head_verified:false,
+  independent_review_verified:false,
+  claim_authorized:false,merge_authorized:false,deploy_authorized:false,
+  dispatch_authorized:false,
+  pr_references:groups.map(g=>({
+   url:g.url,project:g.project,highest_linked_priority:g.priority,
+   observed_issue_refs:g.issues.map(c=>({
+    issue:c.issue,url:c.url,title:c.title,priority:c.priority,
+    missing_evidence:c.evidence_gaps
+   })),
+   source_missing_evidence:[...g.gaps],
+   active_claim_verified:false,
+   exact_head_required_ci_verified:false,
+   independent_review_verified:false,
+   merge_authorized:false
+  })),
+  issues_without_recorded_pr:unlinked.map(c=>({
+   issue:c.issue,url:c.url,title:c.title,project:c.project,
+   priority:c.priority,missing_evidence:c.evidence_gaps,
+   active_claim_verified:false,new_work_authorized:false
+  }))
+ };
+ return JSON.stringify(receipt,null,2)+'\n';
 }
 function currentPrDesk(){
  const groups=prDeskGroups();
@@ -1347,6 +1397,31 @@ document.getElementById('restore').addEventListener('change',async event=>{
  }finally{event.currentTarget.value=''}
 });
 
+
+document.getElementById('previewPrManifest').onclick=()=>{
+ saveSelection();
+ viewedPrManifest=currentPrManifest();
+ document.getElementById('prManifestPanel').hidden=!viewedPrManifest;
+ document.getElementById('prManifestContent').textContent=viewedPrManifest||'';
+ document.getElementById('downloadPrManifest').disabled=!viewedPrManifest;
+ status.textContent=viewedPrManifest?
+  'Review the complete source-bound JSON; it authorizes no action.':
+  'No issues in this captured filter window.';
+};
+document.getElementById('downloadPrManifest').onclick=()=>{
+ if(!viewedPrManifest)return;
+ saveSelection();
+ if(currentPrManifest()!==viewedPrManifest){
+  invalidateBrief();
+  status.textContent='Review manifest changed; preview again before exporting.';
+  return;
+ }
+ const uri=URL.createObjectURL(new Blob([viewedPrManifest],{type:'application/json;charset=utf-8'}));
+ const a=elem('a');a.href=uri;a.download='zsentinel-offline-merge-first-review.json';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ status.textContent='Source manifest downloaded manually. No external claim, merge or dispatch.';
+ invalidateBrief();
+};
 document.getElementById('previewPrDesk').onclick=()=>{
  saveSelection();
  viewedPrDesk=currentPrDesk();
