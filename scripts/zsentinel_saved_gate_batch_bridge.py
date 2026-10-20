@@ -392,7 +392,9 @@ def main(argv=None):
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--format", choices=("json", "markdown"), default="json",\n                        help="Private JSON browser import or readable merge-first Markdown")\n    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--format", choices=("json", "markdown"), default="json",
+                        help="Private JSON browser import or readable merge-first Markdown")
+    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         review, raw = bounded_json(args.from_review)
