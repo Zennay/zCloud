@@ -531,6 +531,9 @@ def output_text(report, markdown=False):
     intro = ("# zSentinel · Gecombineerde product- en PR-bestandsscope"
              if markdown else "zSentinel | productissues + PR-bestandsscope")
     lines = [intro, "Issue-bron: " + report["issue_source_mode"],
+             "Actuele PR-check/review-opvraag: " +
+             report["current_head_gate_observations"]["mode"] +
+             " · zonder mergebevoegdheid.",
              "Issue-bronmoment: " + report["source_issue_observed_at_utc"],
              "PR-bestandsmoment: " + report["source_pr_observed_at_utc"],
              "Issue-bron SHA256: " + report["product_issue_source_sha256"],
@@ -578,6 +581,20 @@ def output_text(report, markdown=False):
             link = ("[" + pr["url"] + "](" + pr["url"] + ")" if markdown else pr["url"])
             lines.append("  " + link + " · " + pr["file_scope_state"] +
                          " · " + pr["issue_link_source"])
+            live_gate = pr.get("live_exact_head_review_checks_observation")
+            if live_gate is not None:
+                if live_gate.get("status") == "observed_current_head_partial_gate_evidence":
+                    lines.append("    HUIDIGE PR-HEAD " +
+                                 live_gate["head_sha_observed"][:12] +
+                                 " · checks lopend: " +
+                                 str(live_gate["observed_checks_pending"]) +
+                                 " · checks niet geslaagd: " +
+                                 str(live_gate["observed_checks_not_successful"]) +
+                                 " · exact-head onafhankelijke approvals gezien: " +
+                                 str(live_gate["observed_independent_exact_head_approvals"]) +
+                                 " · vereiste branch/reviewregels ONBEKEND")
+                else:
+                    lines.append("    Actuele PR-bron onbekend of HEAD veranderd; geen mergebesluit.")
             gates = pr["saved_exact_head_gates"]
             if gates is not None:
                 lines.append("    Historische exacte HEAD " + gates["observed_exact_head_sha"] +
@@ -631,6 +648,21 @@ def output_html(report):
                 "<li><a rel='noopener noreferrer' href='" + escape(other, quote=True) +
                 "'>" + escape(other) + "</a></li>"
                 for other in pr["overlap_with_open_prs"])
+            live_gate = pr.get("live_exact_head_review_checks_observation")
+            live_note = (
+                "<p><strong>ACTUELE PR-HEAD " +
+                escape(live_gate["head_sha_observed"][:12]) +
+                "</strong> · checks lopend: " +
+                str(live_gate["observed_checks_pending"]) +
+                " · checks niet geslaagd: " +
+                str(live_gate["observed_checks_not_successful"]) +
+                " · onafhankelijke HEAD-approvals gezien: " +
+                str(live_gate["observed_independent_exact_head_approvals"]) +
+                ". Vereiste branch/reviewregels ONBEKEND; geen mergevrijgave.</p>"
+                if live_gate is not None and
+                live_gate.get("status") == "observed_current_head_partial_gate_evidence"
+                else "<p>Actuele PR-bron onbereikbaar of HEAD gewijzigd; geen mergebesluit.</p>"
+                if live_gate is not None else "")
             gates = pr["saved_exact_head_gates"]
             gate_note = ("<p>Opgeslagen HEAD " +
                          escape(gates["observed_exact_head_sha"][:12]) +
@@ -647,7 +679,7 @@ def output_html(report):
                 escape(pr["url"], quote=True) + "'>" + escape(pr["url"]) +
                 "</a> · " + escape(pr["file_scope_state"]) +
                 " · " + escape(pr["issue_link_source"]) +
-                gate_note +
+                gate_note + live_note +
                 ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
         cards.append(
             "<article data-priority='" + escape(row["priority"], quote=True) +
@@ -747,6 +779,9 @@ update();
             "</p><p>Issuebron " + escape(report["source_issue_observed_at_utc"]) +
             " · PR-bestandsbron " + escape(report["source_pr_observed_at_utc"]) +
             "</p>" +
+            "<p>Actuele PR-review/checkbron: " +
+            escape(report["current_head_gate_observations"]["mode"]) +
+            " · verplichte rules en eigenaarrechten blijven onbekend.</p>" +
             signals_html + filter_bar + "<main>" + "".join(cards) + "</main>" +
             offline_script + "<footer><small>Issue SHA256 " +
             escape(report["product_issue_source_sha256"]) + "</small></footer></html>")
