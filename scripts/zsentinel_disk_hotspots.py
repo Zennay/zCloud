@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""Bounded, read-only zSentinel disk-pressure workbench.
+
+Identifies candidate large files in an explicitly selected project workspace.
+Never deletes, truncates, reads file contents, follows symlinks, changes
+ownership, or asserts that any reported file may safely be removed.
+"""
+from __future__ import annotations
+
+import argparse
+import heapq
+import json
+import os
+import stat
+import time
+from datetime import datetime, timezone
+from html import escape
+from pathlib import Path
+
+SCHEMA = "zsentinel-disk-pressure-workbench-v1"
+PRIVATE = frozenset({
+    ".ssh", ".gnupg", ".aws", ".config", ".git", ".env", ".secrets",
+    "secrets", "credentials", "tokens", "private_keys", ".private",
+})
+SENSITIVE_PARTS = ("secret", "credential", "token", "password", "api-key", "apikey", "keypair")
+MAX_FILES = 20000
+MAX_DEPTH = 4
+MAX_SECONDS = 5
+TOP = 15
+
+
+def _sensitive(name):
+    lower = name.lower()
+    return lower in PRIVATE or any(word in lower for word in SENSITIVE_PARTS)
+
+
+def _root(path):
+    if not isinstance(path, Path) or not path.is_absolute():
+        raise ValueError("explicit absolute project workspace path required")
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError("existing non-symlink directory required")
+    resolved = path.resolve(strict=True)
+    # Never allow a blind scan of shared OS roots, devices or personal homes.
+    if str(resolved) in ("/", "/home", "/home/ubuntu", "/tmp", "/var", "/root",
+                         "/etc", "/proc", "/sys", "/dev", "/run") or len(resolved.parts) < 4:
+        raise ValueError("choose a specific project workspace, not an OS root")
+    return resolved
+
+
+def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
+            max_depth=MAX_DEPTH, max_seconds=MAX_SECONDS):
+    root = _root(root)
+    if (type(min_mib) is not int or not 1 <= min_mib <= 1048576
+            or type(max_entries) is not int or not 1 <= max_entries <= MAX_FILES
+            or type(max_depth) is not int or not 0 <= max_depth <= MAX_DEPTH
+            or type(max_seconds) is not int or not 1 <= max_seconds <= MAX_SECONDS):
+        raise ValueError("bounded scan settings required")
+    started = time.monotonic()
+    mount = root.stat().st_dev
+    stack = [(root, 0)]
+    visited = set()
+    scanned = 0
+    sensitive_skipped = 0
+    symlinks_skipped = 0
+    directories_unscanned = 0
+    denied = 0
+    mount_skipped = 0
+    large_files_seen = 0
+    observed_allocated = 0
+    top = []
+    limit = min_mib * 1024 * 1024
+    stop_reason = None
+    while stack:
+        if time.monotonic() - started >= max_seconds:
+            stop_reason = "time_budget_exhausted"
+            break
+        directory, depth = stack.pop()
+        try:
+            listing = os.scandir(directory)
+        except OSError:
+            denied += 1
+            continue
+        try:
+            with listing as entries:
+                for entry in entries:
+                    if scanned >= max_entries:
+                        stop_reason = "entry_budget_exhausted"
+                        break
+                    if time.monotonic() - started >= max_seconds:
+                        stop_reason = "time_budget_exhausted"
+                        break
+                    scanned += 1
+                    if _sensitive(entry.name):
+                        sensitive_skipped += 1
+                        continue
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError:
+                        denied += 1
+                        continue
+                    if info.st_dev != mount:
+                        mount_skipped += 1
+                        continue
+                    if stat.S_ISLNK(info.st_mode):
+                        symlinks_skipped += 1
+                        continue
+                    if stat.S_ISDIR(info.st_mode):
+                        if depth >= max_depth:
+                            directories_unscanned += 1
+                        else:
+                            stack.append((Path(entry.path), depth + 1))
+                        continue
+                    if not stat.S_ISREG(info.st_mode):
+                        continue
+                    identity = (info.st_dev, info.st_ino)
+                    if identity in visited:
+                        continue
+                    visited.add(identity)
+                    allocated = max(0, info.st_blocks) * 512
+                    observed_allocated += allocated
+                    if allocated < limit:
+                        continue
+                    large_files_seen += 1
+                    relative = str(Path(entry.path).relative_to(root))
+                    # Path is a display label only, never passed to a shell.
+                    item = (allocated, relative, max(0, int(info.st_size)),
+                            max(0, int(info.st_mtime)))
+                    if len(top) < TOP:
+                        heapq.heappush(top, item)
+                    elif item > top[0]:
+                        heapq.heapreplace(top, item)
+            if stop_reason:
+                break
+        except OSError:
+            denied += 1
+    items = sorted(top, reverse=True)
+    complete = (stop_reason is None and not stack and not denied and
+                not directories_unscanned and not sensitive_skipped and
+                not mount_skipped)
+    return {
+        "schema": SCHEMA,
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "root": str(root),
+        "coverage": "bounded_complete_with_no_private_exclusions" if complete else "partial",
+        "truncation_reason": stop_reason,
+        "scanned_entries": scanned,
+        "observed_allocated_bytes_lower_bound": observed_allocated,
+        "large_files_seen_lower_bound": large_files_seen,
+        "directories_unscanned": directories_unscanned + len(stack),
+        "sensitive_names_skipped": sensitive_skipped,
+        "symlinks_skipped": symlinks_skipped,
+        "other_mounts_skipped": mount_skipped,
+        "unreadable_entries": denied,
+        "top_files": [
+            {"relative_path": name, "allocated_mib": round(n / (1024**2), 1),
+             "logical_mib": round(size / (1024**2), 1),
+             "last_modified_utc": datetime.fromtimestamp(mtime, timezone.utc).isoformat()}
+            for n, name, size, mtime in items
+        ],
+        "deletion_authorized": False,
+        "runner_restart_authorized": False,
+        "queue_claims_changed": False,
+        "file_contents_read": False,
+        "next_step": "Owner must verify each file's active writers, backups, retention and application lease before any separate authorized cleanup.",
+    }
+
+
+def markdown(report):
+    if report.get("schema") != SCHEMA or report.get("deletion_authorized") is not False:
+        raise ValueError("untrusted disk workbench source")
+    lines = [
+        "# zSentinel · VPS schijfruimtewerkbank",
+        "",
+        "**Alleen-lezen. Geen verwijdering, truncate, herstart of vrijgegeven claim.**",
+        "Bron: " + report["observed_at_utc"],
+        "Workspace: " + report["root"].replace("|", "/"),
+        "Dekking: **" + report["coverage"] + "**; ook in volledige dekking geen buiten-root analyse.",
+        "Waargenomen toegewezen ruimte (ondergrens): " +
+        str(round(report["observed_allocated_bytes_lower_bound"] / 1024**3, 2)) + " GiB.",
+        "Beperkt door: " + str(report["truncation_reason"] or "geen tijd-/itemlimiet"),
+        "Extra ongescand: " + str(report["directories_unscanned"]) +
+        " mappen; " + str(report["sensitive_names_skipped"]) +
+        " gevoelige namen bewust weggelaten.",
+        "",
+        "## Grote bestanden · kandidaten voor eigenaarcontrole, GEEN verwijderadvies",
+    ]
+    for item in report["top_files"]:
+        safe = item["relative_path"].replace("\\", "/").replace("`", "'").replace("|", "/")
+        lines.append("- " + str(item["allocated_mib"]) + " MiB toegewezen: `" + safe +
+                     "` · gewijzigd " + item["last_modified_utc"][:10])
+    if not report["top_files"]:
+        lines.append("Geen groot bestand in het onderzochte venster; geen vrijruimtegarantie.")
+    lines += [
+        "",
+        "**Nodige geautoriseerde actie:** eigenaar controleert actieve writers, "
+        "bewaartermijn en herstelback-up vóór een afzonderlijke opruimactie.",
+        "Deze tool kan geen veilige verwijdering, vrije ruimte of herstel bewijzen.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def html(report):
+    from html import escape
+    md = markdown(report)
+    lines = ["<!doctype html><html lang='nl'><meta charset='utf-8'>",
+             "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+             "<title>zSentinel · Schijfruimtewerkbank</title>",
+             "<style>body{font:16px system-ui;line-height:1.5;max-width:950px;"
+             "margin:2rem auto;padding:0 1rem;background:#0f172a;color:#f1f5f9}"
+             "article{border:1px solid #475569;border-radius:14px;padding:1rem;"
+             "margin:.7rem 0;background:#1e293b}small{color:#cbd5e1}"
+             "h1,h2{line-height:1.2}strong{color:#fbbf24}"
+             "code{overflow-wrap:anywhere}</style><main>",
+             "<h1>zSentinel · VPS schijfruimtewerkbank</h1>",
+             "<p><strong>Alleen-lezen. Geen opruimactie uitgevoerd of toegestaan.</strong></p>",
+             "<p>Dekking: " + escape(report["coverage"]) +
+             " · items gezien: " + str(report["scanned_entries"]) +
+             " · reden grens: " + escape(str(report["truncation_reason"] or "geen")) + "</p>",
+             "<p>Waargenomen ruimte (ondergrens): " +
+             str(round(report["observed_allocated_bytes_lower_bound"] / 1024**3,2)) + " GiB; " +
+             str(report["directories_unscanned"]) + " mappen niet bezocht.</p>",
+             "<h2>Bestanden voor eigenaarcontrole</h2>"]
+    for row in report["top_files"]:
+        lines.append("<article><strong>" + str(row["allocated_mib"]) +
+                     " MiB toegewezen</strong><p><code>" +
+                     escape(row["relative_path"]) + "</code></p><small>Laatste wijziging: " +
+                     escape(row["last_modified_utc"][:10]) + "</small></article>")
+    if not report["top_files"]:
+        lines.append("<p>Geen kandidaten in deze begrensde bron, niet per se geen ruimteproblemen.</p>")
+    lines.append("<p><strong>Vereist:</strong> eigenaar verifieert actieve writers, "
+                 "bewaartermijn en back-up vóór afzonderlijk geautoriseerd opruimen.</p></main></html>")
+    return "".join(lines)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Bounded read-only project disk hotspot workbench")
+    parser.add_argument("--root", required=True, type=Path, help="specific existing project workspace")
+    parser.add_argument("--min-mib", type=int, default=64)
+    parser.add_argument("--max-entries", type=int, default=MAX_FILES)
+    parser.add_argument("--max-depth", type=int, default=MAX_DEPTH)
+    parser.add_argument("--max-seconds", type=int, default=MAX_SECONDS)
+    parser.add_argument("--format", choices=("json", "md", "html"), default="md")
+    parser.add_argument("--output", type=Path, help="private create-only .json/.md/.html")
+    args = parser.parse_args()
+    try:
+        report = observe(args.root, min_mib=args.min_mib, max_entries=args.max_entries,
+                         max_depth=args.max_depth, max_seconds=args.max_seconds)
+        content = (json.dumps(report, ensure_ascii=True, indent=2) if args.format == "json"
+                   else html(report) if args.format == "html" else markdown(report))
+        if args.output is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.output, content, args.format)
+            print("Private disk workbench created (exclusive output; nothing deleted).")
+        else:
+            print(content)
+    except (ValueError, OSError, OverflowError) as exc:
+        parser.exit(2, "zSentinel disk observation unavailable or unsafe; no changes made.\n")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
