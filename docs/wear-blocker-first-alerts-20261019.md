@@ -71,3 +71,14 @@ De actuele menselijke escalatiekaart op Wear OS heeft een expliciete gebruikersa
 - De UI is alleen voor incidenten met `humanActionRequired=true` bereikbaar en toont expliciet dat het incident actief blijft. Lokale SharedPreferences zijn appprivé, zonder online synchronisatie.
 
 **Scope/levering:** broncode in de bestaande open [zCloud PR #1561](https://github.com/Zennay/zCloud/pull/1561), geen nieuwe PR of QA-/regressiesuite, geen handmatige CI-rerun, APK-installatie of productie-deploy. Verplichte exacte-head CI, onafhankelijke review, protected-main merge en hardwareacceptatie blijven van kracht.
+
+## 20 oktober · herhaalde statusverversingen veroorzaken geen nieuwe incidentepisode
+
+Eerdere Watch-ontvangstbewijzen koppelden een episode aan `id + ts`. Het bestaande Incident Center vult bij `service_health` soms `detected_at` met de **huidige statusverversingstijd**. Hetzelfde onopgeloste probleem kon daardoor na elke statusverversing als een nieuwe episode worden behandeld. Het product heeft nu een brongebonden, vaste `episode_id`:
+
+- De geauthenticeerde Watch-API gebruikt een SHA-256 identiteit van gecontroleerd incidenttype, bron-ID en severity. Alleen bij `service_health` wordt de onderliggende oorzaak/status opgenomen in plaats van de veranderlijke waarnemingstijd; andere eventtypes gebruiken hun oorspronkelijke detectietijd als episodegrens. De 64-tekens hash onthult geen ruwe oorzaak of vrije technische details. `ts` blijft uitsluitend voor presentatie van waarneming/leeftijd.
+- `ZennayCloudRepository` accepteert uitsluitend een volledig 64-tekens lowercase-hex `episode_id`. De cliënt blijft achterwaarts compatibel met oudere servers: zonder geldige bron-ID wordt het oude `id + ts` gebruikt.
+- `IncidentSnoozeStore` gebruikt dezelfde episode voor één uur lokaal dempen én afgiftebeperking, met migratie van bestaande nog geldige tijdstempel-gebaseerde snoozes. `AlertWorker` migreert oude al-afgeleverde ontvangstbewijzen naar de nieuwe episode voor de actuele lijst. Daardoor wordt een bestaand onopgelost incident tijdens een compatibele upgrade niet onnodig opnieuw gepusht; verdwijnt het werkelijk uit de bron en keert het later terug, dan kan het via de reeds bestaande actuele-incidentroute opnieuw notificeren.
+- De bronvelden zijn **alleen observatie**, geven geen eigenaar-, claim-, merge-, herstel- of deploybevoegdheid. Historische alerts blijven uit notificatie-routing; alleen actuele `human_action_required` incidenten kunnen trillen. Noch de API, noch deze app schrijft naar Notion, queue/SQLite, CI of runners.
+
+**Opleverstatus:** broncode binnen bestaande [PR #1561](https://github.com/Zennay/zCloud/pull/1561), nog niet gemerged of fysiek geaccepteerd op Galaxy Watch 7. Geen nieuwe QA-tests/-suite, workflowdispatch of productie-actie. Exact-head CI, onafhankelijke review, Android-build en bevoegde release blijven vereist.
