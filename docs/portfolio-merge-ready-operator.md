@@ -22,6 +22,28 @@ python3 scripts/zsentinel_merge_first_board.py \
 
 This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft PRs are **included as existing unfinished product work**, with a visible DRAFT / owner-action-required status; they are never treated as merge-ready and never promoted by this read-only tool. Ready PRs lead equally prioritized drafts. Child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 72 exact PR/check/review/workflow GETs. The workbench also stops new reads after a 120-second monotonic source window (an already started bounded GitHub GET may finish afterwards); no unlimited background polling. An empty selection explicitly says it is not evidence that the backlog is empty.
 
+### Closed PR receipts: main delivery is proved, never inferred
+
+For an explicitly selected **closed** PR, both operator entry points now distinguish
+`CLOSED_NOT_MERGED`, `MERGED_INTO_NONDEFAULT_BRANCH` and an unverified
+historical merge from **actually confirmed delivery on main**. A historic
+`merged_at` timestamp alone is not enough: GitHub must still report
+`merged=true`, the PR must target `main`, its merge SHA must be valid,
+and a fresh default-branch read (plus exact ancestor comparison when main has
+advanced) must prove that SHA is contained in the current main lineage.
+
+`scripts/portfolio_merge_ready.py --pr N` reports
+`ALREADY_MERGED_ON_MAIN_VERIFIED` with the exact `main_commit` only upon
+that reconciliation. The private `zsentinel_merge_first_board.py --pr
+Zennay/zCloud#N` uses the same fail-closed principle within its existing
+GitHub GET/time budget; verified cards link the exact commit and report
+`MERGED_ON_MAIN_VERIFIED`. If source evidence changes, becomes unavailable or
+is truncated, status stays unverified, not DONE. This says nothing about a
+live production deployment. The separate, authorized `--merge` route and
+existing independent-review/CI/branch-protection gates remain unchanged.
+Explicit `portfolio_merge_ready.py --pr` inputs are capped at 24 to prevent
+unbounded historical lookups.
+
 The output is a new, exclusive-create, private (0600) responsive standalone HTML file. Without `--output` there is no local write. JSON output is available using `--format json`. The HTML contains no JavaScript, network fetches, tokens, worker credentials or queue identifiers. Never point output at a shared web directory. Existing reports are never overwritten.
 
 The board is intentionally bounded: at most 12 selected PRs, 6 per canonical repository, 3 repositories and 84 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs, legacy statuses and all observed exact-head GitHub Actions workflow runs are checked separately. Queued, pending, incomplete, or failed current applicable workflows cannot be reported as green; optional skipped/neutral completions are tolerated only alongside positive completed workflow evidence. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
