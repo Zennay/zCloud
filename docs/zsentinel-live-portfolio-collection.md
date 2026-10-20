@@ -126,6 +126,19 @@ van de exact ingelezen bronbytes. De eerdere bron moet dezelfde geordende
 canonieke projecten bevatten, dezelfde niet-autoriserende status, een geldige
 oude tijdsperiode en maximaal 162 PR-vermeldingen.
 
+De vergelijker bekijkt naast de globale rapportdatum ook **elke eigen
+projectvensterdatum**. Een globaal nieuwere rapportage kan immers een
+project bevatten dat eerder of op hetzelfde tijdstip is gelezen. Voor zulke
+projecten markeert het rapport
+`current_project_window_not_newer_NO_DELTA_INFERRED`, vergelijkt het geen
+zogenaamd nieuwe HEAD en trekt het ook uit ontbrekende PR-vermeldingen geen
+sluitingsconclusie. Die projectnamen worden apart getoond in HTML en Markdown.
+
+De reviewvolgorde is vervolgens: eerst daadwerkelijk **waargenomen gewijzigde
+PR-HEADs** (actuele CI/review opnieuw opvragen), daarna projectvensters die
+niet nieuwer zijn, daarna andere bronwijzigingen en pas daarna PRs die alleen
+nieuw in een beperkte steekproef verschijnen. Alles blijft human-only.
+
 De drie onderscheiden signalen zijn:
 
 - **Waargenomen PR-HEAD gewijzigd:** een bestaande PR-vermelding heeft in
