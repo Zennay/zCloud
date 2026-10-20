@@ -2619,6 +2619,8 @@ def _portfolio_queue_row(row):
         return None
     item=dict(row)
     item['eligible']=bool(item.get('eligible'))
+    # Never turn an untrusted/legacy scheme into a clickable queue link.
+    item['source_url']=_safe_operator_source_url(item.get('source_url'))
     # Bind read-only operator labels to the actual source JSON BEFORE the
     # legacy API presentation mapping converts malformed JSON to {}.
     if str(item.get('status') or '').lower() == 'queued':
@@ -2870,6 +2872,32 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
         return False
     return True
 
+def _safe_operator_source_url(value):
+    """Only navigate to bounded HTTP(S) sources in operator-facing links.
+
+    HTML attribute escaping prevents markup injection, but cannot make
+    javascript:/data: URL schemes safe. Never mutate legacy stored evidence:
+    hide an unsafe link in a read model instead of rewriting the queue.
+    """
+    if value is None or value == '':
+        return ''
+    if not isinstance(value,str) or len(value)>4096:
+        return ''
+    if any(ord(ch)<33 or ord(ch)==127 or ch=='\\' for ch in value):
+        return ''
+    try:
+        parsed=urlparse(value)
+        if (parsed.scheme not in ('http','https')
+                or not parsed.netloc or parsed.hostname is None
+                or parsed.username is not None or parsed.password is not None):
+            return ''
+        # Force validation of malformed or overflowing URL ports.
+        _=parsed.port
+    except ValueError:
+        return ''
+    return value
+
+
 def portfolio_attention_items(include_resolved=False):
     with connect() as c:
         if include_resolved:
@@ -2880,7 +2908,12 @@ def portfolio_attention_items(include_resolved=False):
             rows=c.execute("""SELECT * FROM portfolio_attention WHERE status='open'
                               ORDER BY CASE severity WHEN 'urgent' THEN 0 WHEN 'attention' THEN 1 ELSE 2 END,
                                        updated_at DESC, attention_id""").fetchall()
-    return [dict(row) for row in rows]
+    items=[]
+    for row in rows:
+        item=dict(row)
+        item['source_url']=_safe_operator_source_url(item.get('source_url'))
+        items.append(item)
+    return items
 
 def portfolio_attention_add(project_id,action,detail='',source_url='',severity='attention',attention_id=None):
     project_id=str(project_id or '').strip().lower()
@@ -2904,7 +2937,7 @@ def portfolio_attention_add(project_id,action,detail='',source_url='',severity='
             project_id=excluded.project_id,action=excluded.action,detail=excluded.detail,
             severity=excluded.severity,source_url=excluded.source_url,status='open',
             updated_at=excluded.updated_at,resolved_at=NULL""",
-            (attention_id,project_id,action,str(detail or '')[:4000],severity,str(source_url or ''),ts,ts))
+            (attention_id,project_id,action,str(detail or '')[:4000],severity,_safe_operator_source_url(source_url),ts,ts))
         row=c.execute('SELECT * FROM portfolio_attention WHERE attention_id=?',(attention_id,)).fetchone()
     return dict(row)
 
@@ -3031,6 +3064,9 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
     # spelled producer IDs must never collapse into one persisted task.
     if not isinstance(queue_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',queue_id):
         raise ValueError('Queue-ID moet een unieke canonieke identiteit van 1-160 tekens zijn')
+    safe_source=_safe_operator_source_url(source_url)
+    if source_url and not safe_source:
+        raise ValueError('Ongeldige taakbron: uitsluitend veilige http(s)-bronlinks toegestaan')
     ts=now()
     with connect() as c:
         # A producer retry must never rewrite a different task, an actively
@@ -3058,7 +3094,7 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
           AND portfolio_queue.claimed_at IS NULL
           AND portfolio_queue.claim_expires IS NULL""",
             (queue_id,project_id,title,priority,'queued',1,str(completion_criteria or ''),
-             str(source_url or ''),ts,ts,parent_queue_id))
+             safe_source,ts,ts,parent_queue_id))
         if inserted.rowcount != 1:
             # An existing claim or completed task is unchanged. A privileged
             # owner must decide whether a new continuation ID is appropriate.
