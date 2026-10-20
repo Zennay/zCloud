@@ -506,6 +506,100 @@ def render_selected_pr_handoff(manifest: dict, receipt: dict,
     return result
 
 
+
+def saved_issue_index(receipt: dict):
+    """Source-linked issue -> already-sampled PRs; never a live issue inventory."""
+    index = {}
+    for repo, row in saved_queue(receipt):
+        for issue_url in row["linked_issue_urls"]:
+            entry = index.setdefault(issue_url, {"repository": repo, "prs": []})
+            if entry["repository"] != repo:
+                raise ValueError("Cross-project saved issue identity")
+            entry["prs"].append(row)
+    rank = {priority: n for n, priority in enumerate(PRIORITY)}
+    return sorted(index.items(), key=lambda pair: (
+        min(rank[item["priority"]] for item in pair[1]["prs"]),
+        pair[1]["repository"], int(pair[0].rsplit("/", 1)[-1])
+    ))
+
+
+def render_selected_issue_handoff(manifest: dict, issue_url: str,
+                                  repository: str, candidates: list) -> str:
+    """Private issue packet keeps all observed candidate PRs together.
+
+    It is not a report that any candidate is open, reviewed, merged or free.
+    """
+    if (type(issue_url) is not str or ISSUE_URL.fullmatch(issue_url) is None
+            or not issue_url.startswith("https://github.com/" + repository + "/issues/")
+            or not candidates or len(candidates) > 300):
+        raise ValueError("Issue handoff source identity invalid")
+    result = [
+        "# Private zSentinel issue-to-PR handoff (saved source, NOT live)",
+        "",
+        "**Not delivery evidence or authorization. Real issue/PR state, active "
+        "claims, exact-head CI, independent review, protected-main rules and "
+        "deployment remain UNKNOWN.**",
+        "",
+        "- Original issue: " + issue_url,
+        "- Repository: " + repository,
+        "- Observed candidate PR references: " + str(len(candidates)),
+        "- Original snapshot UTC: " + str(manifest["latest_observed_at_utc"]),
+        "- Snapshot freshness: " + source_recency_summary(
+            manifest["latest_observed_at_utc"]),
+        "- Missing saved batch windows: " + str(len(manifest["missing_batch_indexes"])),
+        "- Original review manifest SHA256: " +
+          manifest["original_review_manifest_sha256"],
+        "- Original board SHA256: " + manifest["original_board_sha256"],
+        "- ZIP hashes: internally consistent, NOT authenticated GitHub receipts",
+        "- Issue currently open: **NOT VERIFIED**",
+        "- Existing PRs currently open or free: **NOT VERIFIED**",
+        "- Merged on main: **NOT VERIFIED**",
+        "- Live deployed or runner recovered: **NOT VERIFIED**",
+        "",
+        "## Previously observed issue-linked PRs (inspect each actual PR first)",
+    ]
+    for row in candidates[:30]:
+        observed = row.get("gate_observations")
+        sampled = ("no sampled check counters" if observed is None else
+                   str(observed["checks_pending"]) + " pending / " +
+                   str(observed["checks_not_successful"]) + " non-successful " +
+                   "(historical partial counters, NOT exact-head CI proof)")
+        result.extend([
+            "",
+            "- PR: " + row["url"],
+            "  - Historical priority/category: " + row["priority"] +
+              " / " + row["primary_gate"],
+            "  - Receipt coverage: " + row["gate_source"] + "; " + sampled,
+            "  - Human next step: " + _handoff_plain_text(row["next_action"]),
+        ])
+    if len(candidates) > 30:
+        result.extend([
+            "",
+            "**" + str(len(candidates) - 30) +
+            " further source-linked PRs not printed; none are declared closed.**",
+        ])
+    result.extend([
+        "",
+        "## Human-only merge-first triage",
+        "1. Visit the original issue and check whether its source-sampled "
+        "status still applies.",
+        "2. Inspect the existing PRs on GitHub, including new HEAD, actual "
+        "claims, current reviewers, required checks and branch protection.",
+        "3. Integrate an existing free product PR only when the original "
+        "owner and every mandatory gate permit it; otherwise park that PR.",
+        "4. Do not open redundant work while a safe existing product PR "
+        "can be completed. Never infer free ownership from an old ZIP.",
+        "",
+        "This packet does not contact GitHub/Notion or write to a worker, "
+        "queue, CI workflow, runner or deployment.",
+        "",
+    ])
+    packet = "\n".join(result)
+    if len(packet.encode("utf-8")) > 48 * 1024:
+        raise ValueError("Selected issue handoff exceeds private size limit")
+    return packet
+
+
 def _save_private_handoff(destination: Path, content: str) -> None:
     """Atomic create-only Markdown publication under a private operator folder."""
     if not destination.name.endswith(".md") or destination.name in (".", ".."):
@@ -562,6 +656,8 @@ def main(argv=None):
                         help="One previously generated private portfolio-zip")
     parser.add_argument("--show-queue", action="store_true",
                         help="Show human next actions for already-sampled PRs")
+    parser.add_argument("--show-linked-issues", action="store_true",
+                        help="Show source-linked issue inbox with existing PR candidates")
     parser.add_argument("--project", help="Optional canonical source project filter")
     parser.add_argument("--priority", choices=PRIORITY,
                         help="Filter printed sampled PR work, never GitHub")
@@ -573,21 +669,33 @@ def main(argv=None):
                         help="Optional trusted original manifest SHA256 to pin")
     parser.add_argument("--inspect-pr",
                         help="One canonical saved GitHub PR URL to inspect; never live")
+    parser.add_argument("--inspect-issue",
+                        help="One source-linked canonical GitHub issue URL; never live")
     parser.add_argument("--handoff-markdown", type=Path,
-                        help="Create-only private Markdown for --inspect-pr")
+                        help="Create-only private Markdown for selected PR or issue")
     args = parser.parse_args(argv)
     try:
         if (args.expect_review_sha256 is not None
                 and SHA.fullmatch(args.expect_review_sha256) is None):
             raise ValueError("Invalid expected source SHA256")
         if (not 1 <= args.limit <= 50
-                or (args.priority is not None and not args.show_queue)
-                or (args.project is not None and not args.show_queue)
-                or (args.handoff_markdown is not None and args.inspect_pr is None)
-                or (args.inspect_pr is not None and args.extract_to is not None)
+                or (args.priority is not None and
+                    not (args.show_queue or args.show_linked_issues))
+                or (args.project is not None and
+                    not (args.show_queue or args.show_linked_issues))
+                or (args.show_queue and args.show_linked_issues)
+                or (args.inspect_pr is not None and args.inspect_issue is not None)
+                or (args.handoff_markdown is not None and
+                    not (args.inspect_pr or args.inspect_issue))
+                or ((args.inspect_pr is not None or args.inspect_issue is not None)
+                    and (args.extract_to is not None or args.show_queue
+                         or args.show_linked_issues or args.project is not None
+                         or args.priority is not None))
                 or (args.inspect_pr is not None and
-                    (PR_URL.fullmatch(args.inspect_pr) is None or args.show_queue))):
-            raise ValueError("Invalid read-only queue selection")
+                    PR_URL.fullmatch(args.inspect_pr) is None)
+                or (args.inspect_issue is not None and
+                    ISSUE_URL.fullmatch(args.inspect_issue) is None)):
+            raise ValueError("Invalid read-only saved source selection")
         if args.extract_to is None:
             _files, manifest, receipt = open_dossier(args.input)
         else:
@@ -643,6 +751,49 @@ def main(argv=None):
                       " additional source-sampled PRs not displayed (NOT resolved).")
             if not ordered:
                 print("No PRs in this saved filter; current GitHub coverage UNKNOWN.")
+        if args.show_linked_issues:
+            items = saved_issue_index(receipt)
+            if args.project is not None and PROJECT.fullmatch(args.project) is None:
+                raise ValueError("Invalid canonical project filter")
+            items = [(url, info) for url, info in items if (
+                (args.project is None or info["repository"] == args.project)
+                and (args.priority is None or any(
+                    row["priority"] == args.priority for row in info["prs"])))]
+            print("Saved issue-linked PR inbox: " + str(len(items)) +
+                  " source-linked issues; NOT a current GitHub issue inventory.")
+            for url, info in items[:args.limit]:
+                print("  " + url + " · " + str(len(info["prs"])) +
+                      " historical PR candidate(s), none verified open or free")
+                for row in info["prs"][:3]:
+                    print("    " + row["priority"] + " " + row["url"] +
+                          " [" + row["primary_gate"] + "]")
+                if len(info["prs"]) > 3:
+                    print("    " + str(len(info["prs"]) - 3) +
+                          " further saved PR links not displayed")
+            if len(items) > args.limit:
+                print(str(len(items) - args.limit) +
+                      " more saved issue references not displayed")
+            if not items:
+                print("No linked issue in this bounded historical window; "
+                      "current issue/PR coverage UNKNOWN.")
+        if args.inspect_issue is not None:
+            selected = [(url, info) for url, info in saved_issue_index(receipt)
+                        if url == args.inspect_issue]
+            if len(selected) != 1:
+                raise ValueError("Issue not linked to a PR in saved source window")
+            issue_url, info = selected[0]
+            packet = render_selected_issue_handoff(
+                manifest, issue_url, info["repository"], info["prs"])
+            print("Saved issue selected: " + issue_url)
+            print("Source-linked candidate PRs: " + str(len(info["prs"])) +
+                  "; current PR ownership, exact-head CI, merge and deploy UNKNOWN")
+            for row in info["prs"][:args.limit]:
+                print("  " + row["priority"] + " " + row["url"] +
+                      " · " + row["primary_gate"])
+            if args.handoff_markdown is not None:
+                _save_private_handoff(args.handoff_markdown, packet)
+                print("New private issue-to-PR handoff created. "
+                      "Human verification and all gates still required.")
         if args.inspect_pr is not None:
             candidates = saved_queue(receipt)
             selected = [(repo, item) for repo, item in candidates
