@@ -737,9 +737,11 @@ Als de PR in de huidige **dubbel gelezen stabiele** recente product-PR-lijst
 voorkomt, wordt de daar waargenomen HEAD/base gebruikt. Zo niet, voert
 zSentinel een gerichte aparte bronlezing van **exact die expliciet genoemde
 bestaande PR** uit: `selected_source_pr` leest canonieke open-PR metadata en
-de beperkte veranderde-bestandenlijst (maximaal twee extra GitHub GETs).
+de pagineerbare veranderde-bestandenlijst (maximaal vier extra GitHub GETs:
+PR-metadata plus maximaal drie bestandspagina's).
 Alleen een geldige open PR van het gekozen geregistreerde project met
-product-PR-titel en complete bestandslijst (maximaal 80 paden) kan door.
+product-PR-titel en complete bestandslijst (maximaal 240 unieke paden,
+waarbij hernoemde oude paden meetellen) kan door.
 Bij afwezig, QA-only, ongeldige/truncated bron of netwerkfout wordt **alleen
 die gekozen PR** als `direct_selected_pr_unavailable_or_not_product` met
 onbekende HEAD en **geen mergevrijgave** opgenomen. De andere onafhankelijk
@@ -760,9 +762,9 @@ echte Git-mergeconflict of actieve eigenaar. Geen overlap in de beperkte
 steekproef betekent nooit dat de oudere PR geheel conflictvrij is.
 
 De extra gate-API-grens blijft **maximaal vier PR's × vijf GETs** plus
-**maximaal twee afzonderlijke scoped GETs per expliciet gericht opgevraagde
-oudere PR (ook wanneer de bron onbereikbaar blijkt)**, dus maximaal
-**28 extra GETs**. De enige automatische bijwerking bij een mislukte
+**maximaal vier afzonderlijke scoped GETs per expliciet gericht opgevraagde
+oudere PR (één metadata plus maximaal drie filepagina's; ook bij onbereikbare
+bron voor de reservering)**, dus maximaal **36 extra GETs**. De enige automatische bijwerking bij een mislukte
 gerichte bron is een expliciet onbekende operatorregel, niet een
 claim-/merge-/deployactie.
 `current_live_pr_gate_observation.mode` onderscheidt expliciet
@@ -811,9 +813,35 @@ onbedoeld een oude volledig-dekkende PR-lijst worden gecombineerd met
 een nieuw rechtstreeks gevonden PR en vervolgens als compleet verschijnen.
 De werkbank toont de UTC-tijd van de gatebron en blijft bij maximaal
 vier gate-PR's, maximaal 28 aanvullende GETs in directe-PR-modus
-(maximaal 20 in de automatische modus). De file-overlapstatus is
+(maximaal 20 in de automatische modus; direct/gericht maximaal 36). De file-overlapstatus is
 gedeeltelijk, zelfs als nul paden overlappen.
 
 Er worden geen PR's gemerged, geen branchregels of CI overgeslagen,
 geen Notion-/workerclaims genomen en geen workflows of VPS-diensten
 opnieuw gestart.
+
+
+### Uitbreiding: grote gerichte product-PR's zonder onbeperkt GitHub-verkeer
+
+De optionele `--gate-pr`-route heeft een afzonderlijke begrensde bestandslezer
+`changed_paths_focused` gekregen. De gewone single-project- en portfolio-
+bestandsinventarissen houden hun bestaande goedkope limiet: **maximaal
+één bestandspagina per bekeken PR**. Alleen een door een operator expliciet
+gekozen oudere PR kan maximaal **drie filepagina's van elk honderd regels**
+ophalen. De bron wordt afgewezen bij dubbele file-identiteiten, ongeldig
+formaat, meer dan **240 unieke paden**, of een derde pagina met precies
+100 entries (mogelijk onvolledige verdere pagina's). Voor de laatste
+gedeeltelijke pagina is de bron wel volledig; oude en nieuwe namen bij
+hernoemen worden beide als paden geteld.
+
+De operator ziet per direct gelezen PR zowel
+`focused_pr_file_pages_observed` als `focused_pr_paths_observed` in
+de JSON en, wanneer beschikbaar, in HTML en tekst/Markdown. Ook de
+reeds waargenomen **gedeelde paden** met recentere PR's blijven zichtbaar.
+Een git repository buiten de eerder gekozen beperkte open-PR-steekproef
+wordt niet stilzwijgend als geverifieerd beschouwd. Een bron die over het
+vaste pad- of paginabudget gaat blijft **UNKNOWN** en blokkeert alleen
+het betreffende gerichte PR-deel. Tot vier gerichte PR's levert
+maximaal **36 extra GitHub GETs** inclusief de bestaande vijf-GET huidige
+CI-/reviewcollectie per succesvol geselecteerd PR. Er vindt geen
+GitHub-write, claim, merge, workflowrerun of production-deploy plaats.
