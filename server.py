@@ -2688,90 +2688,113 @@ def portfolio_execution_lanes(project_id=None):
     with connect() as c:
         return _portfolio_lane_snapshot_locked(c,ids,now())
 
-def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
+def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None,candidate_cache=None):
     # Sample at most four ordered source pages before creating a final
     # bounded, cross-project candidate window. Stopping after the first 240
     # admissible rows lets one noisy project's P0s hide unrelated projects
     # even when those other projects have free lane/worker capacity. This
     # selection never grants a claim or bypasses existing priority gates.
     preempted={str(value) for value in (preempted or set())}
-    rows=[]
-    for offset in (0,240,480,720):
-        page=connection.execute(
-            """SELECT * FROM portfolio_queue
-               WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-                 AND claimed_at IS NULL AND claim_expires IS NULL
-               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
-                             WHEN 'P2' THEN 2 ELSE 3 END,
-                        created_at,queue_id LIMIT 240 OFFSET ?""",
-            (offset,),
-        ).fetchall()
-        # 17 Oct: skip fresh isolated QA; leave existing claimed/running work
-        # and task leases in place. Preserve original P0/P1 relative ordering.
-        rows.extend(
-            row for row in page
-            if str(row['queue_id']) not in preempted
-            and is_new_product_delivery(dict(row))
-        )
-        if len(page)<240:
-            break
-    # The global 960-row sample can itself be monopolised by one project's
-    # P0 backlog. Boundedly inspect a source slice for each *other* registered
-    # project before reducing the final window to 240 candidates. This cannot
-    # grant a new claim or bypass a project's ordinary execution mode.
-    observed_projects={str(row['project_id'] or '') for row in rows}
-    # Discover only projects that actually have a free queued record, rather
-    # than running an extra SELECT for every registered (possibly idle)
-    # project during each allocator pass.
-    pending_projects=connection.execute(
-        """SELECT DISTINCT project_id FROM portfolio_queue
-           WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
-             AND claimed_at IS NULL AND claim_expires IS NULL
-           ORDER BY project_id LIMIT 24"""
-    ).fetchall()
-    for pending_project in pending_projects:
-        other_project=str(pending_project['project_id'] or '')
-        if other_project in observed_projects or other_project not in PROJECT_INDEX:
-            continue
-        # Older QA-only records can fill the first page for one project.
-        # Search up to four bounded 128-row pages to find actual product
-        # candidates rather than declaring that project empty after QA rows.
-        # No cursor or worker/lease state is persisted by these SELECTs.
-        matches=[]
-        for project_offset in (0,128,256,384):
-            project_page=connection.execute(
+    # Build the expensive global/per-project source window once per
+    # allocation transaction. Every subsequent slot re-reads *live* unclaimed
+    # rows from SQLite and regenerates execution lanes, so claims, caps, and
+    # the queue's current owner state are never inferred from stale samples.
+    cached_ids=(candidate_cache.get('ids') if candidate_cache is not None else None)
+    if cached_ids is not None:
+        if cached_ids:
+            placeholders=','.join('?' for _ in cached_ids)
+            current=connection.execute(
                 """SELECT * FROM portfolio_queue
-                   WHERE project_id=? AND eligible=1 AND status='queued'
-                     AND worker_slot IS NULL AND claimed_at IS NULL
-                     AND claim_expires IS NULL
+                   WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                     AND claimed_at IS NULL AND claim_expires IS NULL
+                     AND queue_id IN (""" + placeholders + ")",
+                cached_ids,
+            ).fetchall()
+            by_id={str(row['queue_id']):row for row in current}
+            rows=[by_id[queue_id] for queue_id in cached_ids
+                  if queue_id in by_id and queue_id not in preempted]
+        else:
+            rows=[]
+    else:
+        rows=[]
+        for offset in (0,240,480,720):
+            page=connection.execute(
+                """SELECT * FROM portfolio_queue
+                   WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                     AND claimed_at IS NULL AND claim_expires IS NULL
                    ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
                                  WHEN 'P2' THEN 2 ELSE 3 END,
-                            created_at,queue_id LIMIT 128 OFFSET ?""",
-                (other_project,project_offset),
+                            created_at,queue_id LIMIT 240 OFFSET ?""",
+                (offset,),
             ).fetchall()
-            matches.extend(
-                row for row in project_page
+            # 17 Oct: skip fresh isolated QA; leave existing claimed/running work
+            # and task leases in place. Preserve original P0/P1 relative ordering.
+            rows.extend(
+                row for row in page
                 if str(row['queue_id']) not in preempted
                 and is_new_product_delivery(dict(row))
             )
-            if len(matches)>=8 or len(project_page)<128:
+            if len(page)<240:
                 break
-        if matches:
-            rows.extend(matches[:8])
-    # Cross-project additions may have higher urgency than older items in
-    # the global sample: restore the canonical SQL priority/creation ordering
-    # before selecting the final 240 candidate rows.
-    priority_order={'P0':0,'P1':1,'P2':2}
-    rows.sort(key=lambda row: (
-        priority_order.get(str(row['priority'] or ''),3),
-        str(row['created_at'] or ''),
-        str(row['queue_id'] or ''),
-    ))
-    # Reserve at most eight candidates per observed project before filling
-    # spare places globally. Final output keeps the source's priority order;
-    # normal lane ownership, hard caps, memory and manual-start gates still
-    # decide whether any of these rows can actually run.
-    rows=portfolio_fair_candidate_window(rows,limit=240,per_project_reserve=8)
+        # The global 960-row sample can itself be monopolised by one project's
+        # P0 backlog. Boundedly inspect a source slice for each *other* registered
+        # project before reducing the final window to 240 candidates. This cannot
+        # grant a new claim or bypass a project's ordinary execution mode.
+        observed_projects={str(row['project_id'] or '') for row in rows}
+        # Discover only projects that actually have a free queued record, rather
+        # than running an extra SELECT for every registered (possibly idle)
+        # project during each allocator pass.
+        pending_projects=connection.execute(
+            """SELECT DISTINCT project_id FROM portfolio_queue
+               WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                 AND claimed_at IS NULL AND claim_expires IS NULL
+               ORDER BY project_id LIMIT 24"""
+        ).fetchall()
+        for pending_project in pending_projects:
+            other_project=str(pending_project['project_id'] or '')
+            if other_project in observed_projects or other_project not in PROJECT_INDEX:
+                continue
+            # Older QA-only records can fill the first page for one project.
+            # Search up to four bounded 128-row pages to find actual product
+            # candidates rather than declaring that project empty after QA rows.
+            # No cursor or worker/lease state is persisted by these SELECTs.
+            matches=[]
+            for project_offset in (0,128,256,384):
+                project_page=connection.execute(
+                    """SELECT * FROM portfolio_queue
+                       WHERE project_id=? AND eligible=1 AND status='queued'
+                         AND worker_slot IS NULL AND claimed_at IS NULL
+                         AND claim_expires IS NULL
+                       ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                                     WHEN 'P2' THEN 2 ELSE 3 END,
+                                created_at,queue_id LIMIT 128 OFFSET ?""",
+                    (other_project,project_offset),
+                ).fetchall()
+                matches.extend(
+                    row for row in project_page
+                    if str(row['queue_id']) not in preempted
+                    and is_new_product_delivery(dict(row))
+                )
+                if len(matches)>=8 or len(project_page)<128:
+                    break
+            if matches:
+                rows.extend(matches[:8])
+        # Cross-project additions may have higher urgency than older items in
+        # the global sample: restore the canonical SQL priority/creation ordering
+        # before selecting the final 240 candidate rows.
+        priority_order={'P0':0,'P1':1,'P2':2}
+        rows.sort(key=lambda row: (
+            priority_order.get(str(row['priority'] or ''),3),
+            str(row['created_at'] or ''),
+            str(row['queue_id'] or ''),
+        ))
+        # Reserve at most eight candidates per observed project before filling
+        # spare places globally. Final output keeps the source's priority order;
+        # normal lane ownership, hard caps, memory and manual-start gates still
+        # decide whether any of these rows can actually run.
+        rows=portfolio_fair_candidate_window(rows,limit=240,per_project_reserve=8)
+        if candidate_cache is not None:
+            candidate_cache['ids']=[str(row['queue_id']) for row in rows]
     if not rows:
         return []
     project_ids={str(row['project_id']) for row in rows}
@@ -3565,7 +3588,12 @@ def portfolio_queue_allocate():
 
         # A Force Start only needs an allocation override when its project is not
         # already resident. Pick one queued force-intent candidate deterministically.
-        force_pairs=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+        # Cache the bounded source shortlist for this SQLite-locked pass.
+        # Only rows, not execution authority, are cached.
+        candidate_cache={}
+        force_pairs=_portfolio_eligible_lane_candidates_locked(
+            c,ts,preempted,candidate_cache=candidate_cache
+        )
         occupied_counts={}
         for occupied in occupied_rows:
             pid=str(occupied['project_id'] or '')
@@ -3655,7 +3683,7 @@ def portfolio_queue_allocate():
             # turnover inside a slot that is already resident. Remember that the
             # slot was occupied before any priority/manual-start preemption below.
             slot_was_occupied = row is not None
-            lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+            lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
             # Do not admit this forced queue item in the wrong global slot.
             if force_pair and force_preferred_slot and slot!=force_preferred_slot:
                 lane_candidates=[pair for pair in lane_candidates
@@ -3685,7 +3713,7 @@ def portfolio_queue_allocate():
                     row=None
                     force_replacement=True
                     lane_candidates=[
-                        pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                        pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
                         if str(pair[0]['queue_id'] or '')==force_queue_id
                     ]
                 else:
@@ -3735,7 +3763,7 @@ def portfolio_queue_allocate():
                                  WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
                     preempted.add(str(row['queue_id']))
                     row=None
-                    lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                    lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
                 else:
                     manual_candidates=[
                         pair for pair in lane_candidates
@@ -3789,7 +3817,7 @@ def portfolio_queue_allocate():
                                      WHERE queue_id=? AND status='claimed'""",(ts,row['queue_id']))
                         preempted.add(str(row['queue_id']))
                         row=None
-                        lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                        lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
             if row:
                 c.execute('UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
                           (lease_until,ts,row['queue_id']))
