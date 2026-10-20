@@ -79,6 +79,10 @@ def observe(repo_key, run_id, job_id, head_sha, token=None):
             state = "not_hosted_runner_route"
             problem = "De exacte job gebruikt self-hosted labels; geen GitHub-hosted billingbewijs."
             action = "Onderzoek GitHub self-hosted assignment en runnergroep separaat."
+        elif route == "unknown":
+            state = "runner_route_unverified"
+            problem = "GitHub-runnerlabels zijn onbekend; hosted billingroute niet bewezen."
+            action = "Controleer de exacte joblabels en provider-admissie bij de bevoegde eigenaar."
         elif status in ("queued", "waiting", "pending"):
             state = "queued_or_approval_not_billing_proof"
             problem = "Job staat nog in wachtrij of approval/concurrency; geen billingfout bewezen."
