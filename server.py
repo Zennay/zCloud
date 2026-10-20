@@ -3993,7 +3993,14 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
     # producer or receipt write fails. Report that boundary explicitly, rather
     # than claiming that the complete project handoff was delivered.
     continuation_status='original_task_requeued' if result=='CONTINUE' else 'not_requested'
-    if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
+    human_gate_active=bool(result=='BLOCKED' and attention)
+    if human_gate_active:
+        # A BLOCKED result requiring human authorization must not silently
+        # spawn dependent worker work. Existing independent queue items may
+        # still be scheduled normally; the source-bound attention remains
+        # the action needed to reopen this gate.
+        continuation_status='held_for_human'
+    elif isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
         continuation_status='requested'
         try:
             child_criteria=str(next_task.get('completion_criteria') or '').strip()
@@ -4069,6 +4076,7 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
         'handoff_complete':receipt_saved and continuation_status in (
             'created','not_requested','original_task_requeued'
         ),
+        'human_approval_required':human_gate_active,
     }
 
 def portfolio_queue_allocation():
