@@ -2718,8 +2718,18 @@ def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
     # project before reducing the final window to 240 candidates. This cannot
     # grant a new claim or bypass a project's ordinary execution mode.
     observed_projects={str(row['project_id'] or '') for row in rows}
-    for other_project in sorted(PROJECT_INDEX)[:24]:
-        if other_project in observed_projects:
+    # Discover only projects that actually have a free queued record, rather
+    # than running an extra SELECT for every registered (possibly idle)
+    # project during each allocator pass.
+    pending_projects=connection.execute(
+        """SELECT DISTINCT project_id FROM portfolio_queue
+           WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+             AND claimed_at IS NULL AND claim_expires IS NULL
+           ORDER BY project_id LIMIT 24"""
+    ).fetchall()
+    for pending_project in pending_projects:
+        other_project=str(pending_project['project_id'] or '')
+        if other_project in observed_projects or other_project not in PROJECT_INDEX:
             continue
         # A source sample is not a full backlog census. Keep this extra
         # project discovery read capped and strictly query-only.
