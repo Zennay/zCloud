@@ -2954,8 +2954,15 @@ def portfolio_queue_current_for_slot(global_slot):
     with connect() as c:
         row=c.execute("""SELECT * FROM portfolio_queue
                          WHERE worker_slot=? AND status IN ('claimed','running','verifying')
-                           AND (claim_expires IS NULL OR claim_expires>?)
-                         ORDER BY updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+                           AND (status IN ('running','verifying')
+                                OR claim_expires IS NULL OR claim_expires>?)
+                         ORDER BY CASE status WHEN 'running' THEN 0
+                                              WHEN 'verifying' THEN 1 ELSE 2 END,
+                                  updated_at DESC LIMIT 1""",(slot,ts)).fetchone()
+    # The allocator retains and renews a running/verifying owner even when
+    # its clock-based lease is temporarily overdue. A separate read path
+    # must not declare that same protected browser assignment absent before
+    # the next scheduler reconciliation.
     return _portfolio_queue_row(row)
 
 def portfolio_queue_has_project_assignment(project_id):
@@ -2963,7 +2970,8 @@ def portfolio_queue_has_project_assignment(project_id):
     with connect() as c:
         row=c.execute("""SELECT 1 FROM portfolio_queue
                          WHERE project_id=? AND status IN ('claimed','running','verifying')
-                           AND (claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
+                           AND (status IN ('running','verifying')
+                                OR claim_expires IS NULL OR claim_expires>?) LIMIT 1""",(project_id,ts)).fetchone()
     return bool(row)
 
 def portfolio_queue_has_eligible_work(exclude_queue_id=None):
