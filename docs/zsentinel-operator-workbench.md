@@ -2097,3 +2097,49 @@ permission. Review required source/owner/CI/security/production gates remain.
 No QA/regression suite was written or run; implementation stays in the
 existing zSentinel PR and does not modify the production dashboard or live
 server.
+
+
+## 20 oktober · Historische issue-continuïteit en gerichte overdracht
+
+De bestaande `scripts/zsentinel_saved_issue_timeline.py` kan nu één
+canonical issue selecteren uit één tot twaalf chronologisch gerangschikte
+privé-ZIP-dossiers. Alle bronbestanden worden vooraf door de bestaande
+strikte ZIP-lezer gecontroleerd. Dit is geen nieuwe live GitHub-bron.
+
+```sh
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./private-older.zip \
+  --source ./private-newer.zip \
+  --inspect-issue https://github.com/Zennay/zCloud/issues/1518 \
+  --format html --output ./private-issue-1518-history.html
+
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./private-older.zip \
+  --source ./private-newer.zip \
+  --inspect-issue https://github.com/Zennay/zCloud/issues/1518 \
+  --format markdown --output ./private-issue-1518-handoff.md
+```
+
+De gerichte menselijk beoordeelde overdracht toont de bestaande
+historisch gekoppelde PRs en hun laatst waargenomen issueverband.
+Zij onderscheidt (1) een PR die helemaal buiten de eindsteekproef is
+gevallen, (2) een PR die nog wel in de laatste steekproef zit maar waarvan
+het issueverband niet opnieuw is gezien, en (3) meerdere bron-PR-kandidaten
+die aparte actuele owner-/bestandsscopecontroles vragen. Afwezige
+PRs of koppelingen bewijzen nooit dat werk is opgelost, gemerged of vrij.
+
+HTML, Markdown en CSV bevatten de originele bronmomenten en volledige
+bronmanifest-SHA256. Ontbrekende batches worden als brononzekerheid
+gemarkeerd. Een niet-canonieke of niet in de bewaarde selectie voorkomende
+issue-URL wordt geweigerd. Bij gerichte selectie worden ongerelateerde PRs
+zonder bronissue niet in het private dossier weergegeven, en mag geen
+tweede prioriteitsfilter of latere pagina worden gecombineerd.
+
+Met slechts één bewaard bronmoment toont het programma alleen de huidige
+historische steekproef, niet een verzonnen verandering. Huidige
+GitHub-status, eigenaar, vereiste CI, reviews, protected-main, merge en
+live deploy blijven onbekend zonder afzonderlijke verse bronverificatie.
+
+Dit is een lokale 0600 create-only operatorfunctie zonder netwerk,
+queue-/claimwijziging, CI-rerun, QA-suite of productieactie. De bestaande
+verplichte CI, onafhankelijke review en releasebevoegdheden gelden onverkort.
