@@ -154,9 +154,16 @@ def sweep(repo, project, args):
         prs = [gh(f"repos/{repo}/pulls/{number}") for number in sorted(set(args.pr))]
     else:
         prs = gh(f"repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=desc")
+        if not isinstance(prs, list):
+            raise ValueError("incomplete PR list")
         if len(prs) == 100:
-            print(json.dumps({"repo": repo, "status": "RESULT_LIMIT_100",
-                              "note": "supply --pr to inspect older PRs"}))
+            print(json.dumps({"repo": repo, "status": "SOURCE_WINDOW_100_PARTIAL",
+                              "note": "older PRs may be absent; supply --pr to inspect them"}))
+        if len(prs) > args.max_prs:
+            print(json.dumps({"repo": repo, "status": "RECENT_PR_LIMIT_PARTIAL",
+                              "observed": len(prs), "selected": args.max_prs,
+                              "note": "only the newest PRs were inspected; supply --pr for others"}))
+        prs = prs[:args.max_prs]
     for item in prs:
         number = item["number"]
         if args.pr and number not in args.pr:
@@ -238,10 +245,14 @@ def main():
     parser.add_argument("--repo", action="append", required=True, metavar="OWNER/REPO")
     parser.add_argument("--project", required=True, help="zCloud project_id for the mainwriter lease")
     parser.add_argument("--pr", action="append", type=int, help="inspect only selected PR numbers")
+    parser.add_argument("--max-prs", type=int, default=12,
+                        help="bounded newest-PR read-only inventory, 1..24 (default 12); explicit --pr unaffected")
     parser.add_argument("--merge", action="store_true", help="execute only with a real exclusive lease")
     parser.add_argument("--claim-key", default="")
     parser.add_argument("--owner-id", default="")
     args = parser.parse_args()
+    if args.max_prs < 1 or args.max_prs > 24:
+        parser.error("--max-prs must be between 1 and 24")
     if args.merge and (len(args.repo) != 1 or len(args.pr or []) != 1
                        or not args.owner_id or not args.claim_key):
         parser.error("--merge needs one --repo, one explicit --pr, --owner-id and --claim-key")
