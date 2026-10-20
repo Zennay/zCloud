@@ -91,7 +91,9 @@ def _observed_overlap_paths(view, pr_url, head, direct_overlaps=None):
             if type(n) is int and 0 < n < 100000000:
                 hinted_issues.add(n)
     for issue in view.get("shown_duplicate_issue_groups", [])[:80]:
-        if any(source.get("url") == pr_url for source in issue.get("shown_pr_sources", [])):
+        if head is not None and any(
+                source.get("url") == pr_url and source.get("head_sha") == head
+                for source in issue.get("shown_pr_sources", [])):
             n = issue.get("issue_number")
             if type(n) is int and 0 < n < 100000000:
                 hinted_issues.add(n)
