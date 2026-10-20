@@ -200,3 +200,32 @@ wordt alleen de eigen nieuw gemaakte inode opgeruimd; een vervangen
 bestandsnaam wordt nooit blind verwijderd. Dit is uitsluitend opslag voor
 uitdrukkelijk gevraagde privébestanden en geeft geen rechten voor andere
 VPS-paden, runner- of productieacties.
+
+### SQLite-wachtrijdruk en claimchurn per bronmoment
+
+De tijdlijn combineert voortaan ook de bestaande, al gevalideerde
+`live_queue_pressure`-waarneming uit dezelfde privé-JSON-bronnen. Er wordt
+geen nieuwe databaseverbinding geopend. Het nieuwe
+`scripts/zsentinel_queue_pressure_timeline.py` vergelijkt uitsluitend
+**aangrenzende bronvensters** waarvan beide wachtrijmetingen op hun
+oorspronkelijke bronmoment volledig en actueel waren. Anders luidt de
+uitkomst `UNKNOWN_source_gap`, nooit nul of opgelost.
+
+Zichtbaar in HTML, JSON, Markdown en tekst: historisch totaal actieve en
+wachtende taken, hoge (3+) en zeer hoge (10+) claimpogingen, verlopen of
+niet-verifieerbare lease-rijen, plus verschillen per bronvenster. **Een
+claimpoging is geen gefaalde uitvoering en geen toestemming voor een retry.**
+Een daling is niet automatisch herstel: records kunnen door andere,
+niet-waargenomen processen verdwijnen of van status veranderen.
+
+Als de oorspronkelijke projectgroepinventaris volledig is, toont de offline
+HTML ook een P0-eerst openklapbaar overzicht per project en prioriteit:
+veranderingen in wachtenden, hoge claimpogingen en verlopen lease-rijen.
+Bij ontbrekende of afgekapt gesamplede projectgroepen wordt niets als nul
+gepresenteerd. Er is geen afleiding van een actuele eigenaarclaim,
+vrijgegeven lease of correct uitgevoerde job.
+
+De module weigert autoriserende bronflags, inconsistenties in totals
+of per-projectgroepen en verwarring tussen originele observatietijd en het
+moment van latere rapportexport. De oorspronkelijke bron-UTC en
+niet-autorisatiestatus blijven bij ieder venster zichtbaar.
