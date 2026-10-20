@@ -1865,3 +1865,58 @@ review of beschermde mainregels. Het **claimt of dispatcht niet** en
 voert geen merge, runnerrestart of productieactie uit. Als een originele
 PR niet bij het issue past, controleer de live bron en eigenaars voordat
 je hem wijzigt.
+
+
+## 20 oktober · Bestaande Product Delivery Workbench toont nu bron-PR's per issue
+
+De **al bestaande interactieve operatorwerkbank**
+`scripts/zsentinel_operator_workbench.py` accepteert nu optioneel één tot
+twaalf reeds opgeslagen, strikte `portfolio-zip`-bronnen. Dit integreert
+de eerdere issue-eerst PR-reusefunctie **direct** naast de bestaande
+issue-interactie en menselijke overdrachten: geen losse vergelijkingspagina
+meer nodig om een issue met zijn eerder gevonden product-PR's te verbinden.
+
+```bash
+python3 scripts/zsentinel_operator_workbench.py \
+  --board ./private-product-delivery-board.json \
+  --pr-dossier ./private-zcloud-pr-snapshot.zip \
+  --output ./private-zsentinel-issue-en-pr-workbench.html
+```
+
+Voor historische PR-bronmomenten kan `--pr-dossier` maximaal twaalf
+keer worden herhaald. Alle ZIPs passeren eerst de bestaande nofollow,
+bronhash-, kanonieke PR-/issue-identiteit- en read-only checks.
+Ze moeten dezelfde projectscope en oplopende niet-overlappende UTC
+bronnen tonen. Originele board- en PR-ZIP-inputs blijven
+**afzonderlijk gewaardeerde bronnen**, er wordt nadrukkelijk niet
+beweerd dat ze afkomstig zijn van één actuele GitHub-scan.
+
+In de interactieve werkbank staat vervolgens een extra bron-PR-paneel
+met exacte koppelingen via de oorspronkelijke **canonieke GitHub
+issue-URL**. Per overeenkomstige bestaande board-issue toont dit
+paneel maximaal twaalf afzonderlijke bestaande PR-links, oude
+bronprioriteit, laatst geobserveerde gateklasse en **het bronmoment
+waarin de specifieke issue-naar-PR-link werkelijk gezien werd**.
+Bijkomende PR's staan als niet getoonde bronkandidaten vermeld, nooit
+als opgelost; andere historische issues en PR's zonder issuekoppeling
+worden apart geteld en zichtbaar gemaakt. Deze gegevens zijn
+uitsluitend historische **aanvullende context**; ze veranderen
+geen bestaande human-handoff-notities, workerclaim, projectscope,
+claimbesluit, merge of deploy.
+
+Met alleen `--board` werkt de bestaande operatorwerkbank
+ongewijzigd. De nieuwe invoer en uitvoer kunnen niet dezelfde
+bestaande bronbestanden zijn. De HTML blijft privé, offline en zonder
+backendwerk; verplichte CI/review/owner-protectieregels blijven
+uitsluitend live te controleren. Een ontbrekende koppeling tussen
+beide bronsoorten is **geen bewijs dat het board-issue geen open PR
+heeft of dat iemand het eigenaarschap mag overnemen**.
+
+Een zichtbare broncorrectie in de issue-eerst module bewaart nu ook
+de juiste individuele waarnemingsmomenten per *specifieke* PR/issue-link.
+Eerder kon PR X bij verschillende gekoppelde issues A en B ten onrechte
+de gezamenlijke historiedatums laten zien. `observed_in_snapshots`
+van issue A en B en de weergegeven `issue_ref_last_seen_snapshot`
+komen voortaan uitsluitend van de bronmomenten waarin die relatie
+zelf werkelijk gezien is. Ook het verdwijnen van de **link**, los van
+het verdwijnen van de PR, betekent nooit dat het issue is gefixt.
