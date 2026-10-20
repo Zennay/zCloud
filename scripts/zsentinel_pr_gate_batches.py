@@ -318,6 +318,21 @@ def html(report):
                " · niet waargenomen " + str(report["unavailable_or_drifted_prs"]) +
                " · verouderd " + str(report["stale_over_15_minutes_prs"]))
     missing = ", ".join(map(str, report["missing_batches"])) or "geen"
+    queue_items = []
+    for action in report["manual_review_queue_preview"]:
+        url = escape(action["url"], quote=True)
+        category = escape(action["historic_gate_category"])
+        step = escape(action["human_next_gate"])
+        queue_items.append("<li><a rel='noopener noreferrer' href='" + url + "'>" +
+                           str(action["manifest_position"]) + ". " + url +
+                           "</a><br><small>" + category + " · " + step +
+                           " · HANDMATIG / GEEN MERGE</small></li>")
+    queue_section = ("<section><h2>Eerst bekijken: menselijke PR-werkbak</h2>"
+                     "<p>Prioriteit volgt het originele reviewmanifest. "
+                     "Controleer actuele HEAD, eigenaar en vereiste rules live.</p><ol>" +
+                     "".join(queue_items) + "</ol><p>" +
+                     str(report["manual_review_queue_hidden_after_24"]) +
+                     " extra PR's buiten de compacte voorvertoning.</p></section>")
     cats = ", ".join(escape(k) + ": " + str(v) for k, v in
                      sorted(report["saved_historic_gate_category_counts"].items()))
     return ('<!doctype html><html lang="nl"><meta charset="utf-8">'
@@ -330,8 +345,13 @@ def html(report):
             'a{overflow-wrap:anywhere}li{margin:.9rem 0}small{color:#41546a}'
             '</style><header><h1>zSentinel · opgeslagen PR-gates</h1><p>' +
             escape(summary) + '</p><p>Ontbrekende batches: ' + escape(missing) +
-            '</p><p>Historische gates: ' + cats + '</p><strong>GEEN merge-, claim-, deploy- of reviewvrijgave. '
-            'Bron is niet live.</strong></header>' + "".join(cards) +
+            '</p><p>Historische gates: ' + cats +
+            '</p><p>Tijdverschil tussen bronbatches: ' +
+            str(report["cross_batch_observation_spread_seconds"]) +
+            ' seconden · binnen tien minuten: ' +
+            str(report["cross_batch_observation_within_10_minutes"]) +
+            '</p><strong>GEEN merge-, claim-, deploy- of reviewvrijgave. '
+            'Bron is niet live.</strong></header>' + queue_section + "".join(cards) +
             '<p>Geen GitHub- of runtime-mutaties uitgevoerd.</p></html>\n')
 
 
