@@ -94,6 +94,7 @@ def render_html(board, max_rows=20):
             "<textarea maxlength='700' rows='2' placeholder='Handmatige afspraak, geen automatische claim'></textarea>"
             "</label></div></article>"
         )
+    visible_issues = {card["issue_url"] for card in cards[:max_rows]}
     grouped = []
     for group in board.get("pr_groups", []):
         pr = group.get("pr_url") if type(group) is dict else None
@@ -107,17 +108,20 @@ def render_html(board, max_rows=20):
                        or url.split("/issues/", 1)[0] != pr.split("/pull/", 1)[0]
                        for url in linked)):
             raise ValueError("untrusted existing PR issue-group evidence")
+        shown_links = [url for url in linked if url in visible_issues]
+        if not shown_links:
+            continue
         refs = "".join("<li><a rel='noopener noreferrer' target='_blank' href='" +
                        escape(url, quote=True) + "'>Issue " +
                        escape(url.rsplit("/", 1)[-1]) + "</a></li>"
-                       for url in linked)
+                       for url in shown_links)
         grouped.append(
             "<li><strong>" + escape(group["highest_priority"]) + "</strong> · "
             "<a rel='noopener noreferrer' target='_blank' href='" +
             escape(pr, quote=True) + "'>PR " +
             escape(pr.rsplit("/", 1)[-1]) + "</a> · " +
-            str(len(linked)) +
-            " gekoppelde issuevermelding(en) in steekproef"
+            str(len(shown_links)) +
+            " gekoppelde issuevermelding(en) in deze beperkte overdracht"
             "<details><summary>Bekijk bronissues (geen fixbewijs)</summary><ul>" +
             refs + "</ul></details></li>"
         )
