@@ -138,7 +138,7 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
               or old.get("current_weight") != actual_weight
               or type(old.get("current_quota")) not in (int, float)
               or not math.isfinite(old["current_quota"])
-              or abs(old["current_quota"] - current_quota) >= 0.2):
+              or abs(old["current_quota"] - current_quota) >= 0.01):
             wait_state = "promotion-reset-policy"
         elif (type(old.get("last_mono")) in (int, float)
               and math.isfinite(old["last_mono"])
@@ -153,7 +153,7 @@ def promotion_policy(recommended_quota, recommended_weight, observed, previous,
             and type(old.get("target_weight")) is int
             and old["target_weight"] == recommended_weight
             and type(old.get("current_quota")) in (int, float)
-            and abs(old["current_quota"] - current_quota) < 0.2
+            and abs(old["current_quota"] - current_quota) < 0.01
             and type(old.get("current_weight")) is int
             and old["current_weight"] == actual_weight
             and type(old.get("started_mono")) in (int, float)
@@ -198,7 +198,7 @@ def _same_cgroup(before, after):
     qa, qb = before.get("quota_seconds"), after.get("quota_seconds")
     return (type(qa) in (int, float) and type(qb) in (int, float)
             and math.isfinite(qa) and math.isfinite(qb)
-            and qa > 0 and qb > 0 and abs(qa - qb) < 0.002
+            and qa > 0 and qb > 0 and abs(qa - qb) < 0.000001
             and type(before.get("weight")) is int
             and before["weight"] == after.get("weight"))
 
