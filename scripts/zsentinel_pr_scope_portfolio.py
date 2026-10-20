@@ -568,6 +568,13 @@ def current_gate_lines(board, markdown=False):
                 if markdown else gate["url"])
         lines.append("- " + gate["project"] + " · " + link)
         if gate["observed_in_recent_pr_collision_sample"] is False:
+            if gate.get("focused_pr_file_pages_observed") is not None:
+                lines.append(
+                    "  Directe PR-filebron: " +
+                    str(gate["focused_pr_file_pages_observed"]) +
+                    " pagina('s), " +
+                    str(gate["focused_pr_paths_observed"]) +
+                    " paden; buiten de rest van de repository onbekend.")
             lines.append(
                 "  DIRECT GELEZEN OUDERE PR: buiten de recente dubbel gelezen "
                 "botsingssteekproef; geen volledig collision- of claimbewijs.")
@@ -777,7 +784,13 @@ def as_html(board):
                         " gedeelde paden (steekproef), o.a. " +
                         escape(", ".join(other["shared_paths_preview"])) + "</li>")
                 source_note = (
-                    "<p><strong>Gericht gelezen oudere PR</strong>: buiten "
+                    "<p><strong>Gericht gelezen oudere PR</strong>: " +
+                    (str(gate["focused_pr_file_pages_observed"]) +
+                     " pagina('s), " + str(gate["focused_pr_paths_observed"]) +
+                     " waargenomen bestandspaden. " if
+                     gate.get("focused_pr_file_pages_observed") is not None
+                     else "Bron onbereikbaar of geen product-PR. ") +
+                    "Buiten "
                     "de recente collisionsteekproef, onvolledige dekking. "
                     "Geen botsing gezien is geen vrijgave.</p><ul>" +
                     "".join(collision_links) + "</ul>" +
@@ -845,8 +858,8 @@ def main(argv=None):
     parser.add_argument("--output", type=Path,
                         help="Create NEW private offline receipt (0600); default stdout")
     parser.add_argument("--gate-pr", action="append", default=[],
-                        help="Optional explicit registered-project#PR target (up to four), "
-                             "must occur in stable sampled product PRs")
+                        help="Explicit project#PR target (max four); older PRs use up to "
+                             "three extra bounded file pages per target")
     parser.add_argument("--inspect-current-pr-gates", action="store_true",
                         help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
                              "in bestaande PR-steekproef (max 20 extra GETs)")
