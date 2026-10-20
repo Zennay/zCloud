@@ -241,6 +241,15 @@ def human_gate_summary(source: dict) -> str:
         "Bronmoment UTC: " + source["observed_at_utc"],
         "Protected main, verplichte CI, onafhankelijke review en eigenaar: NIET vrijgegeven.",
     ]
+    if "source_review_manifest_sha256" in source:
+        lines.extend([
+            "Review-manifest SHA256: " + source["source_review_manifest_sha256"],
+            "Overgenomen bron-board SHA256: " + source["source_review_board_sha256"],
+            "Kandidaat-PRs in opgeslagen bron: " + str(source["source_review_pr_count"]),
+            "Alleen eerste vier P0/P1-prioritaire PRs bekeken: " +
+                ("JA; resterende PRs zijn NIET bekeken" if source["review_only_top_four_observed"]
+                 else "NEE; alle opgeslagen PRs bekeken"),
+        ])
     for item in source["items"]:
         lines.append("")
         lines.append("PR: " + item["url"])
@@ -311,7 +320,8 @@ def read_review_manifest(path: Path):
     seen = set()
     for row in rows:
         if (type(row) is not dict or type(row.get("url")) is not str
-                or row.get("highest_linked_priority") not in priorities
+                or type(row.get("highest_linked_priority")) is not str
+                or row["highest_linked_priority"] not in priorities
                 or row.get("merge_authorized") is not False
                 or type(row.get("observed_issue_refs")) is not list
                 or not row["observed_issue_refs"]):
