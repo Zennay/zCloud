@@ -65,11 +65,30 @@ def listener_pids() -> list[int]:
 
 
 def service_state() -> str:
+    """Read only a *loaded* dedicated unit, checking both systemd managers.
+
+    An unknown unit can report ActiveState=inactive; treating that response
+    as real would hide an active listener in the other manager.
+    """
+    observed = []
     for prefix in (("systemctl", "--user"), ("systemctl",)):
-        rc, output = command(*prefix, "show", RUNNER_UNIT, "--property=ActiveState", "--value", timeout=4)
-        if rc == 0 and output in {"active", "inactive", "failed", "activating", "deactivating"}:
-            return output
-    return "unavailable"
+        rc, output = command(*prefix, "show", RUNNER_UNIT,
+                             "--property=LoadState", "--property=ActiveState", timeout=4)
+        if rc:
+            continue
+        props = {}
+        for line in output.splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key in {"LoadState", "ActiveState"} and key not in props:
+                props[key] = value.strip()
+        if props.get("LoadState") not in {"loaded", "generated", "transient"}:
+            continue
+        state = props.get("ActiveState")
+        if state in {"active", "inactive", "failed", "activating", "deactivating"}:
+            observed.append(state)
+    if len(observed) > 1 and len(set(observed)) > 1:
+        return "ambiguous"
+    return observed[0] if observed else "unavailable"
 
 
 def optional_storage_inventory(root: Path) -> dict:
@@ -329,8 +348,11 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         mark("ZCLOUD_RUNNER_MISSING", "block", "Dedicated zCloud Runner.Listener not observed.")
     if unit in {"failed", "inactive"}:
         mark("RUNNER_UNIT_NOT_ACTIVE", "block", f"zCloud runner unit state: {unit}.")
+    elif unit == "ambiguous":
+        mark("RUNNER_UNIT_AMBIGUOUS", "block",
+             "Dedicated runner differs between system and user systemd managers; owner reconciliation required.")
     elif unit == "unavailable":
-        mark("RUNNER_UNIT_UNOBSERVABLE", "warn", "Unit identity not readable from this context.")
+        mark("RUNNER_UNIT_UNOBSERVABLE", "warn", "No loaded dedicated unit could be verified in either systemd manager.")
 
     memory = meminfo()
     if {"MemTotal", "MemAvailable"} <= memory.keys():
@@ -440,7 +462,7 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         clean_status = "locally_clear"
     add("preserve_checkout", clean_status, "Checkout/working-tree owner",
         "Never overwrite an uncommitted or independently owned change.")
-    if not runner["listener_pids"] or runner["unit_state"] in {"failed", "inactive"}:
+    if not runner["listener_pids"] or runner["unit_state"] in {"failed", "inactive", "ambiguous"}:
         runner_status = "blocked"
     else:
         runner_status = "process_observed_only"
@@ -456,7 +478,7 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         "Capacity measurement does not reserve resources for a future release.")
     if worker is None:
         worker_status = "not_inspected"
-    elif worker["state"] == "active_work_observed":
+    elif worker["state"] not in {"no_active_evidence_unverified"}:
         worker_status = "blocked"
     else:
         worker_status = "owner_gate_required"
