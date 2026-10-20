@@ -168,6 +168,13 @@ def combine_workboards(snapshots, registry, now=None):
             if not progressed:
                 break
             offset += 1
+    # Cross-window merge-first ordering preserves a project's source and
+    # never promotes an uninspected or historical listing into merge proof.
+    gate = "bounded_exact_head_observed_not_authorized"
+    existing_prs.sort(key=lambda row: (
+        row.get("gate_observation") != gate,
+        row["draft"], row["source_window"], row["project_id"], row["url"],
+    ))
     oldest = min(snapshots_at)
     newest = max(snapshots_at)
     counts = {
@@ -198,6 +205,14 @@ def combine_workboards(snapshots, registry, now=None):
         "items": ordered,
         "recent_open_product_prs": existing_prs,
         "recent_open_product_pr_count": len(existing_prs),
+        "merge_first_source_summary": {
+            "sampled_open_product_prs": len(existing_prs),
+            "observed_exact_head_without_merge_authority": sum(
+                pr.get("gate_observation") == gate for pr in existing_prs),
+            "uninspected_or_moved_head": sum(
+                pr.get("gate_observation") != gate for pr in existing_prs),
+            "merge_authorized": False, "owner_claim_verified": False,
+        },
         "source_budget_maximum": sum(
             s.get("source_budget_maximum", 0) for s in snapshots),
         "issue_source_requests": sum(s["issue_source_requests"] for s in snapshots),
