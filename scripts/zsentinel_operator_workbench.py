@@ -216,6 +216,13 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <option value="park-blocker">Parked blocker</option>
 <option value="ready-for-new-product-work">Candidate only · verify live claims</option>
 </select></label>
+<label>Change since earlier board<select id="change" disabled>
+<option value="">All captured issues</option>
+<option value="new-or-changed">New or changed evidence</option>
+<option value="new-observation">Newly observed</option>
+<option value="changed-evidence">Changed observed evidence</option>
+<option value="still-observed">Still observed (not resolved)</option>
+</select></label>
 </div>
 <section class="portfolio" aria-label="Snapshot portfolio triage">
 <h2>Observed product workload</h2>
@@ -296,8 +303,13 @@ function filtered(){
  const p=document.getElementById('priority').value;
  const project=document.getElementById('project').value;
  const decision=document.getElementById('disposition').value;
+ const change=document.getElementById('change').value;
+ const kinds=change&&baseline?new Map(changesSinceBaseline().map(x=>[x.issue,x.kind])):null;
  return board.cards.filter(c=>(!p||p===c.priority)&&(!project||project===c.project)&&
    (!decision||decision===(handoffs.get(c.issue)?.decision||'investigate'))&&
+   (!change||(kinds&&(change==='new-or-changed'?
+     ['new-observation','changed-evidence'].includes(kinds.get(c.issue)):
+     kinds.get(c.issue)===change)))&&
    (!q||(c.issue+' '+c.title+' '+c.project+' '+c.recommended_next_step).toLowerCase().includes(q)));
 }
 function refreshPortfolio(){
@@ -433,6 +445,9 @@ function refreshComparison(){
  const stats=document.getElementById('comparisonStats'),list=document.getElementById('comparisonRows');
  stats.replaceChildren();list.replaceChildren();
  document.getElementById('clearBaseline').disabled=!baseline;
+ const changeSelect=document.getElementById('change');
+ changeSelect.disabled=!baseline;
+ if(!baseline)changeSelect.value='';
  if(!baseline){
   meta.textContent='Only this captured board is loaded; no baseline or live comparison.';
   covLabel.textContent='Current source: bounded; original GitHub issue coverage is never a complete portfolio inventory.';
@@ -596,7 +611,7 @@ function drawDetail(){
  sel.addEventListener('change',()=>{saveSelection();invalidateBrief();drawList()});
  note.addEventListener('input',()=>{saveSelection();invalidateBrief();refreshTriage()});
 }
-['search','priority','project','disposition'].forEach(id=>document.getElementById(id).addEventListener(
+['search','priority','project','disposition','change'].forEach(id=>document.getElementById(id).addEventListener(
  'input',()=>{saveSelection();invalidateBrief();drawList();drawDetail()}));
 document.getElementById('export').onclick=()=>{
  saveSelection();
@@ -622,14 +637,14 @@ document.getElementById('baseline').addEventListener('change',async event=>{
   checked.sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buf)),
     byte=>byte.toString(16).padStart(2,'0')).join('');
   if(checked.sha===boardSha)throw Error('baseline and current board are identical');
-  baseline=checked;invalidateBrief();refreshComparison();refreshTriage();
+  baseline=checked;invalidateBrief();refreshComparison();drawList();drawDetail();
   status.textContent='Earlier bounded source loaded locally. Missing issues are not proven resolved.';
  }catch{
   status.textContent='Previous source rejected: invalid, unsafe, future, or not earlier than this board.';
  }finally{event.currentTarget.value='';}
 });
 document.getElementById('clearBaseline').onclick=()=>{
- baseline=null;invalidateBrief();refreshComparison();refreshTriage();
+ baseline=null;invalidateBrief();refreshComparison();drawList();drawDetail();
  status.textContent='Earlier source comparison cleared.';
 };
 document.getElementById('restore').addEventListener('change',async event=>{
