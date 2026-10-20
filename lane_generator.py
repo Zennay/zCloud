@@ -14,6 +14,36 @@ ACTIVE_STATUSES = frozenset({"claimed", "running", "verifying"})
 PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 PROFILE_LANES = {
+    "portfolio-recovery": (
+        {
+            "id": "release-integration",
+            "keywords": (
+                "merge", "pull request", "pr", "main", "branch",
+                "review", "approval", "integrate", "integration",
+            ),
+        },
+        {
+            "id": "product-remediation",
+            "keywords": (
+                "issue", "issues", "bug", "fix", "repair", "defect",
+                "product", "feature", "ux", "ui", "customer",
+            ),
+        },
+        {
+            "id": "worker-recovery",
+            "keywords": (
+                "worker", "scheduler", "queue", "claim", "browser",
+                "runtime", "memory", "ram", "swap", "crash", "stalled",
+            ),
+        },
+        {
+            "id": "ci-deploy-recovery",
+            "keywords": (
+                "deploy", "workflow", "runner", "vps", "service",
+                "ci", "build", "release", "github actions", "pipeline",
+            ),
+        },
+    ),
     "research-validation": (
         {
             "id": "critical-path",
