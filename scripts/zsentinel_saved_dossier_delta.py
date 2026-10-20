@@ -333,7 +333,7 @@ def render(result, fmt):
                              '<br>Claims/review/main/live: ONBEKEND.' +
                              ('<br>Gekoppelde bronissues: ' + issue_html
                               if issue_links else '') +
-                             '</p></details></li>")
+                             '</p></details></li>')
             panels.append("<section><details" + (" open" if group != "same_in_sample"
                                                    else "") + "><summary>" +
                           e(LABELS[group]) + " (" + str(len(group_rows)) +
