@@ -462,6 +462,18 @@ Een fysieke verandering ná de allerlaatste meting is niet atomair met
 systemd te voorkomen; operationeel blijft de bevoegde eigenaar
 verantwoordelijk voor de releases en de volgende timercyclus.
 
+**Privéstatus zonder directory-race.** De CPU-beslisbon is maximaal
+16 KiB, alleen leesbaar als regulier bestand met eigenaar-gelijk-UID en
+zonder groep/wereldrechten. Niet alleen het bestand maar ook de
+doeldirectory moet daadwerkelijk **eigendom van dezelfde Unix-gebruiker**
+zijn, privé (0700) en geen finale symlink. Beide worden via één open
+directory-FD gecontroleerd; tempbestanden worden exclusief met 0600
+gemaakt en binnen diezelfde directory atomair hernoemd. Bij een
+onbetrouwbare of ontbrekende bestaande bon wordt de promotieperiode
+opnieuw opgebouwd; er wordt geen historische toestemming aangenomen.
+Bij een onveilige schrijfmap weigert de timer de private status te bewaren,
+in plaats van een minder veilige map te gebruiken.
+
 De timer schrijft pas in een toekomstige *geautoriseerde installatie* een
 atomair privé (0600) bronmoment met wachttijd en observatietelling. De
 `--preview`-optie leest dezelfde bronnen, toont de aanbevolen én werkelijk
