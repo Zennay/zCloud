@@ -929,3 +929,25 @@ privé bestand en overschrijft geen eerdere observaties.
 runner- of deploybesluit. Exact-HEAD CI, onafhankelijke review, actuele
 eigenaren en releasegates blijven verplicht. Geen GitHub/Notion/queue-writes,
 workflow dispatch, of actieve herstelacties worden uitgevoerd.
+
+### Hetzelfde bronverschil in de issue- en PR-cockpit
+
+De gecombineerde issue/PR-cockpit hergebruikt exact dezelfde lokale
+vergelijker. Daarmee kan een P0-issuekaart worden bekeken samen met
+recent geobserveerde PR-HEAD-wijzigingen, zonder extra GitHub-requests
+voor historische vergelijking of een tweede eigen herstelcontroller:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --compare-previous /private/zsentinel-pr-earlier.json \
+  --format html > /private/zsentinel-issues-en-pr-delta.html
+```
+
+Voor het aanmaken van een **nieuw 0600-bestand** blijft de portfolio-CLI
+met `--output` de aanbevolen route; voor een redirect naar een privélocatie
+moet de operator de lokale bestandsrechten zelf beschermen.
+De issue-cockpit toont historische wijzigingen apart van actuele P0/P1
+productissues en van afzonderlijk opgevraagde exacte PR-checks.
+De vergelijking verifieert geen huidige Notion-claims, runner-herstel,
+verplichte branchregels of bevoegdheid om te mergen.
