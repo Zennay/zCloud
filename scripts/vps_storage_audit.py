@@ -303,6 +303,47 @@ def hotspot_inventory() -> dict:
 
 
 
+
+def capacity_recovery_plan(local_capacity: dict, review_bytes: int, target_gib: int,
+                           hotspot: dict | None) -> dict:
+    """Explain measurable recovery headroom, never manufacture safe cleanup."""
+    gib = 1024 ** 3
+    free = local_capacity["free_bytes"]
+    total = local_capacity["total_bytes"]
+    target_bytes = target_gib * gib
+    gap = max(0, target_bytes - free)
+    candidate_limit = max(0, review_bytes)
+    hot_bytes = sum(x["bytes"] for x in (hotspot or {}).get("measured", []))
+    if target_bytes > total:
+        reason = "target_exceeds_local_volume_capacity"
+        recommendation = "Disk/storage owner: expand the local volume or revise the goal; relocating files cannot make the requested free-space target fit."
+    elif gap == 0:
+        reason = "target_currently_met"
+        recommendation = "Storage owner: no removal is needed to meet this target; preserve active workloads and watch for new growth."
+    elif candidate_limit < gap:
+        reason = "aged_review_scope_insufficient"
+        recommendation = "Storage owner: plan additional capacity or identify independently-owned, unreferenced old artifacts. Do not clear active cache, runner work, databases or model files based on directory size."
+    else:
+        reason = "aged_review_scope_only_hypothetically_sufficient"
+        recommendation = "Storage/archive owner: assess immutable old candidates one by one, obtain independent recovery proof and authorized retention approval; no automated cleanup permitted."
+    return {
+        "requested_free_gib": target_gib,
+        "requested_free_bytes": target_bytes,
+        "local_total_bytes": total,
+        "local_free_bytes": free,
+        "shortfall_bytes": gap,
+        "reason": reason,
+        "recommended_owner_action": recommendation,
+        "aged_review_upper_bound_bytes": candidate_limit,
+        "hot_directories_observed_bytes": hot_bytes,
+        "hot_directories_reclaimable_proven_bytes": 0,
+        "actually_reclaimed_bytes": 0,
+        "archive_copied_verified": False,
+        "cleanup_authorized": False,
+        "training_restart_authorized": False,
+    }
+
+
 def compare_storage_snapshots(previous_path: Path, current: dict) -> dict:
     """Bounded operator-owned snapshots: compare measurements, not cleanup proofs."""
     try:
@@ -372,6 +413,19 @@ def render_html(report: dict) -> str:
     remaining = pressure["bytes_needed_to_reserve"]
     reserve_state = "Below operational reserve" if remaining else "Reserve currently met"
     archive = report["archive_mount"]
+    plan = report.get("capacity_plan")
+    planning_html = ""
+    if plan is not None:
+        planning_html = (
+            '<section aria-labelledby="capacity-plan"><h2 id="capacity-plan">Capacity recovery plan</h2>'
+            '<p class="metric">' + esc(f'{plan["shortfall_bytes"] / gib:.2f} GiB') +
+            '</p><p>Still needed for ' + esc(plan["requested_free_gib"]) +
+            ' GiB free-space target.</p>'
+            '<p><strong>' + esc(plan["reason"]) + '</strong></p>'
+            '<p>' + esc(plan["recommended_owner_action"]) + '</p>'
+            '<p class="muted">Reviewed aged files are only hypothetical;'
+            ' authorized cleanup and reclaimed bytes: zero.</p></section>'
+        )
     rows = []
     hot = report.get("hotspot_inventory")
     if hot is not None:
@@ -475,7 +529,7 @@ def render_html(report: dict) -> str:
         '<p class="muted">These are live or owner-protected footprints. Size is NOT reclaimable storage.</p>'
         '<table><thead><tr><th>Category</th><th>Size</th><th>Responsible owner</th><th>Disposition</th></tr></thead>'
         '<tbody>' + "".join(rows) + '</tbody></table></section>'
-        + archive_review_html + hint_section + change_section +
+        + planning_html + archive_review_html + hint_section + change_section +
         '<section aria-labelledby="archive"><h2 id="archive">External archive</h2>'
         '<p>Browse mount status: <strong>' + esc(archive["state"]) + '</strong>.</p>'
         '<p class="muted">The existing crypt-backed remote uploader and independent checksum/restore '
@@ -501,6 +555,11 @@ def operator_summary(report: dict) -> str:
     if not report.get("inventory_complete", False):
         lines.append("WARNING: inventory scan incomplete (" + str(report.get("scan_limit_reason")) +
                      "); all observed totals are lower bounds, never proof of complete archival scope.")
+    plan = report.get("capacity_plan")
+    if plan is not None:
+        lines.append(f"Owner planning target: {plan['requested_free_gib']} GiB; "
+                     f"gap: {plan['shortfall_bytes']/gb:.2f} GiB; {plan['reason']}")
+        lines.append("Next step: " + plan["recommended_owner_action"])
     lines.append(
         f"Old-file review rows: {report.get('total_candidate_count', 0)}; "
         f"examples omitted: {report.get('examples_omitted', 0)}; "
@@ -537,6 +596,8 @@ def operator_summary(report: dict) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--older-than-days", type=int, default=MIN_AGE_DAYS)
+    ap.add_argument("--target-free-gib", type=int, default=10,
+                    help="Non-authorizing local free-space goal for owner planning (10..1000 GiB)")
     ap.add_argument("--limit", type=int, default=MAX_LIST)
     ap.add_argument("--previous-report", type=Path, default=None,
                     help="Read-only bounded comparison with a previous private JSON snapshot")
@@ -548,7 +609,7 @@ def main():
     ap.add_argument("--include-release-reviews", action="store_true",
                     help="Also assess old standalone APK exports; never assert superseded or safe to prune")
     args = ap.parse_args()
-    if args.older_than_days < 3 or args.limit < 1 or args.limit > 5000:
+    if args.older_than_days < 3 or args.limit < 1 or args.limit > 5000 or not 10 <= args.target_free_gib <= 1000:
         ap.error("requires at least 3 cold days and 1..5000 displayed candidates")
     cutoff = dt.datetime.now(dt.timezone.utc).timestamp() - args.older_than_days * 86400
     totals, count, examples = {}, {}, []
@@ -574,6 +635,7 @@ def main():
     handle_hints = observe_open_handle_hints(examples[:100]) if args.open_handle_hints else None
     live_filesystem = filesystem()
     total_assessed = sum(totals.values())
+    hot_inventory = hotspot_inventory() if args.hotspot_inventory else None
     result = {
         "schema": "zcloud-storage-tier-plan-v1",
         "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -585,7 +647,9 @@ def main():
         "filesystem": live_filesystem,
         "disk_pressure": disk_pressure(live_filesystem["free_bytes"], total_assessed),
         "archive_mount": archive_mount_status(),
-        "hotspot_inventory": hotspot_inventory() if args.hotspot_inventory else None,
+        "hotspot_inventory": hot_inventory,
+        "capacity_plan": capacity_recovery_plan(live_filesystem, total_assessed,
+                                                 args.target_free_gib, hot_inventory),
         "open_handle_hints": handle_hints,
         "cold_candidate_counts": count,
         "cold_candidate_bytes": totals,
