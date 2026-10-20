@@ -935,11 +935,11 @@ def as_text(board):
         "zSentinel | Portfolio PR-conflictbalie (alleen lezen)",
         "Projecten: " + ", ".join(board["projects"]),
     ]
+    output.extend(attention_lines(board))
     for view in board["project_views"]:
         output.append("")
         output.append("[" + view["project"] + "] " + view["repository"])
         output.extend(summary_lines(view))
-    output.extend(attention_lines(board))
     output.extend(current_gate_lines(board))
     if board.get("historical_gate_episodes"):
         output.extend(["", render_gate_episodes(board["historical_gate_episodes"])])
@@ -964,6 +964,7 @@ def as_markdown(board):
         "**Geen autorisatie:** Notion/workerclaims, PR-loze branches, " +
         "mergeconflicten en releasegates niet geverifieerd.",
     ]
+    lines.extend(attention_lines(board, markdown=True))
     for view in board["project_views"]:
         lines.extend(["", "## " + view["project"], ""])
         if view["source_status"] == "unavailable":
@@ -1008,7 +1009,6 @@ def as_markdown(board):
                 lines.append("- [#" + str(pr["number"]) + "](" + pr["url"] + ")")
         if view.get("source_truncated"):
             lines.append("Bronkaarten afgekapt; inspecteer overige PR's.")
-    lines.extend(attention_lines(board, markdown=True))
     lines.extend(current_gate_lines(board, markdown=True))
     if board.get("historical_gate_episodes"):
         lines.extend(["", render_gate_episodes(board["historical_gate_episodes"], "markdown")])
