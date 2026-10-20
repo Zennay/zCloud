@@ -49,3 +49,12 @@ update both copies of the v2 engine. This is source-only on existing
 that a real browser was restarted, signed, installed or recovered. Required
 exact-head CI, independent reviewer, script-versioned distribution and
 authorized browser rollout remain mandatory. No QA suites were added or run.
+
+
+## 20 October · Quote-safe terminal failure and bounded SPA recovery
+
+The original terminal-error detector scanned all visible `main.innerText`, including ordinary chat messages. A user/assistant discussing the words “conversation not found” could therefore cause an **unrequested New chat action** on a still-healthy conversation. Both identical v2 engine copies now treat the message as a terminal page error **only when** there is no visible composer, no visible conversation turn (`data-message-author-role` / `data-testid=conversation-turn`), and at most 2,000 characters of actual error-screen text. Ambiguous pages fail closed without resetting an active chat. This is a conservative DOM heuristic, not authoritative proof that a failed conversation has been recovered.
+
+When a single same-tab New chat click has already been requested, the existing `resetRoute` barrier previously could remain in `new-chat-transition-pending` forever on a failed SPA transition. It now escalates after the existing 45-second composer grace to `new-chat-transition-operator-action-required` while keeping the same block on prompt dispatch. It **does not** click again, reload, navigate, steal another tab, clear queue leases or send a duplicate prompt. The operator must inspect the original tab and current assignment.
+
+The standalone `public/zcloud-worker-v2-engine.js` and its embedded userscript copy are updated together on this existing PR. This remains **unmerged source**, not a browser rollout or live recovery receipt. Existing exact-head CI, independent review, extension distribution/version contract and serialized release authorization still apply; no QA/regression suites, workflow dispatches or worker interruptions were performed.
