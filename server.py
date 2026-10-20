@@ -2647,6 +2647,7 @@ def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
         page=connection.execute(
             """SELECT * FROM portfolio_queue
                WHERE eligible=1 AND status='queued' AND worker_slot IS NULL
+                 AND claimed_at IS NULL AND claim_expires IS NULL
                ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
                              WHEN 'P2' THEN 2 ELSE 3 END,
                         created_at,queue_id LIMIT 240 OFFSET ?""",
@@ -3039,8 +3040,8 @@ def portfolio_queue_audit(refill=True):
     # Active claimed/running/verifying tasks ALWAYS remain represented, even
     # when their title no longer passes today's producer policy.
     with connect() as c:
-        rows=c.execute("""SELECT project_id,status,worker_slot,title,
-                                 completion_criteria,metadata_json
+        rows=c.execute("""SELECT project_id,status,worker_slot,claimed_at,
+                                 claim_expires,title,completion_criteria,metadata_json
                           FROM portfolio_queue
                           WHERE (eligible=1 AND status='queued')
                              OR status IN ('claimed','running','verifying')""").fetchall()
@@ -3049,6 +3050,8 @@ def portfolio_queue_audit(refill=True):
             if str(row['status']) in ('claimed','running','verifying')
             or (str(row['status'])=='queued'
                 and row['worker_slot'] is None
+                and row['claimed_at'] is None
+                and row['claim_expires'] is None
                 and is_new_product_delivery(dict(row)))
         }
     project_order=sorted(
@@ -3089,7 +3092,8 @@ def portfolio_queue_health():
         # QA-only and therefore intentionally invisible to worker admission.
         # Bounded source-only health must use the same product policy rather
         # than declaring a false healthy queue on old QA backlog density.
-        bounded=c.execute("""SELECT status,worker_slot,title,completion_criteria,metadata_json
+        bounded=c.execute("""SELECT status,worker_slot,claimed_at,claim_expires,
+                                    title,completion_criteria,metadata_json
                              FROM portfolio_queue
                              WHERE eligible=1
                                AND status IN ('queued','claimed','running','verifying')
@@ -3107,7 +3111,8 @@ def portfolio_queue_health():
             # release it based on a newer product-only intake policy.
             product_ready+=1
             continue
-        if row['worker_slot'] is not None:
+        if (row['worker_slot'] is not None or row['claimed_at'] is not None
+                or row['claim_expires'] is not None):
             continue
         decision=product_delivery_classification(dict(row))[0]
         if decision=='product':
