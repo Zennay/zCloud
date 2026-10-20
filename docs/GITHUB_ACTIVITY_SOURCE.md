@@ -173,3 +173,43 @@ additional background sync, live deployment, workflow dispatch, VPS mutation,
 worker-claim acquisition, independent review or protected-main merge implied.
 The exact-head mandatory CI/review, approval and release gates remain intact.
 
+
+## Canonical project source identity and lossless partial imports (20 October)
+
+The existing Activity UI now binds **every imported GitHub Activity and
+P0/P1 issue receipt** to the current canonical project registry. Matching the
+shape of `Zennay/<repo>` is insufficient: its repository must equal the
+GitHub URL registered for the named project. GitHub Activity also checks
+that the requested project set matches the declared project coverage exactly.
+A mismatched, duplicate or unknown scope is rejected as an invalid import
+**before** replacing any current browser observation. These receipts confer
+no owner claim, release permission, CI approval or runtime authority.
+
+A separate source-loss bug affected partial GitHub updates. If a manual
+public read returned one or two of the three PR/Actions/main endpoints, the
+UI formerly placed earlier observations before newly fetched observations
+when merging identical event identities. The older values could therefore
+win. The repaired reducer places **newly observed provider facts first**,
+and keeps only older event IDs not reobserved, tagging each as
+`staleUnverified`. Earlier events never count as newly confirmed facts in
+the 24-hour delivery pulse. They remain accessible as historical references
+in the GitHub evidence panel, combined Activity timeline and Markdown
+handoffs, with the source limitation explicitly visible.
+
+Manually imported offline `zcloud-github-activity-readonly-v1` receipts have
+the same principle: a partial/error or unavailable new source does **not**
+erase previously observed PR/CI events for the affected project. Newly
+observed events supersede matching old identities, while remaining old
+events are marked historical and the project's source coverage is explicitly
+incomplete. A complete newly fetched bounded sample can still replace
+prior project samples; absence from a bounded sample is never proof that
+no GitHub work occurred outside its window.
+
+This is local read-model behavior on existing
+[PR #1550](https://github.com/Zennay/zCloud/pull/1550) for
+[issue #1518](https://github.com/Zennay/zCloud/issues/1518).
+The browser does not fetch additional URLs, mint a claim, bypass GitHub
+provider admission, trigger CI, merge a PR or deploy a worker. Existing
+mandatory exact-head CI/review, branch protection and owner-controlled
+production release remain unchanged.
+
