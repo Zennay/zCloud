@@ -40,8 +40,11 @@ project working directories that the former selector could accidentally
 upload. No existing private, research or unrelated project directory is
 automatically eligible just because it is old.
 
-The bounded scanner refuses symlinks, hard-linked or nonregular files, nested
-filesystems and trees larger than 4 GiB or 100,000 visited inodes. The
+The bounded scanner refuses symlinks, hard-linked or nonregular files,
+unreadable nested directories, non-user-owned or group/world-writable
+files/directories, nested filesystems and trees larger than 4 GiB or
+100,000 visited inodes. It fails closed rather than silently skipping an
+unreadable subtree. Repeated enumeration order is deterministic. The
 selection is limited to 8 directories and 4 GiB per run. Copies are
 checked by **downloading and comparing remote bytes and the entire directory
 content in both directions**. Extra old remote files invalidate the verified
@@ -51,8 +54,11 @@ deleted by the ordinary archive run.
 `plan` is genuinely read-only: it never creates the state/lock directory,
 checks OAuth or changes any data. It prints bounded eligible directory names,
 file/byte counts, whether more than eight eligible candidates were present
-(`candidate_window_truncated`), and explicitly `transfer_performed=false` /
-`cleanup_authorized=false`. The plan also counts unrelated date-named
+(`candidate_window_truncated`), the selected transfer budget
+(`selected_count` / `selected_bytes`), candidates postponed by the 4 GiB
+per-run cap (`deferred_by_batch_budget`), and explicitly
+`transfer_performed=false` / `cleanup_authorized=false`. The real
+mutation modes use that same selection so the plan reflects the actual batch. The plan also counts unrelated date-named
 directories **without listing their names or reading their contents**;
 `unscoped_size_measured=false` means that count is never a claim of
 reclaimable bytes. Those folders require separate, explicit project-owner
@@ -60,7 +66,9 @@ selection and cannot be automatically included by this script. If there are no e
 directories, `run` and `cleanup` report that fact and do **not** try to
 archive unrelated dated directories. Remote authentication failures, by
 contrast, produce a nonzero process exit so enabled timers cannot claim
-successful uploads.
+successful uploads. Remote operations have bounded time budgets; provider
+errors/output are suppressed from scheduler logs to avoid account or token
+disclosure.
 
 The separate weekly cleanup examines directories with no modifications
 **or inode metadata changes** for at least **7 days**. Its selected tree
