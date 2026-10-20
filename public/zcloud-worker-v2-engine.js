@@ -180,7 +180,7 @@
     if(visibleFull&&!saved){
       try{sessionStorage.setItem(initialContextKey,JSON.stringify({queue,conversation:cid}))}catch(_){}
     }
-    const part=/^Werk verder aan ([^.\\n]{2,80})\\./.exec(full)?.[1]||"";
+    const part=/^Werk verder aan ([^.\n]{2,80})\./.exec(full)?.[1]||"";
     const project=part.startsWith("het herstel van ")?"zSentinel":
       (part||String(target?.base_project_id||id.split("::w")[0]));
     return "Ga door met "+project+".";
