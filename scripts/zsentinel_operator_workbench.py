@@ -672,9 +672,9 @@ async function combineSavedGateFiles(manifestFile,batchFiles){
    seenIssues.add(issue.issue);
   }
   return {url:ref.url,rank:weights[ref.highest_linked_priority],
-   repo:path[4],number:Number(path[6])};
+   repo:path[4],number:Number(path[6]),linked_issues:ref.observed_issue_refs};
  }).sort((a,b)=>a.rank-b.rank||(a.repo<b.repo?-1:a.repo>b.repo?1:0)||a.number-b.number);
- const total=Math.ceil(selected.length/4),observed=new Map();
+ const total=Math.ceil(selected.length/4),observed=new Map(),savedRows=new Map();
  let earliest=Infinity,latest=-Infinity;
  for(const file of batchFiles){
   const {data:receipt}=await readJSON(file);
@@ -707,6 +707,20 @@ async function combineSavedGateFiles(manifestFile,batchFiles){
       row.required_branch_checks_and_rules_verified!==false)
     throw Error('Saved PR order or branch gate scope mismatches original review');
    normalized.set(row.url,parseGateRow(row));
+   // Only canonical check/approval observations belong in a portable export.
+   // Unknown input metadata must never become an exported credential field.
+   const fields=['url','status','head_sha_observed',
+    'exact_head_stable_on_second_read','observed_checks_pending',
+    'observed_checks_not_successful','observed_independent_exact_head_approvals',
+    'observed_exact_head_changes_requested','legacy_status_pending_observed',
+    'legacy_status_failure_or_error_observed','observed_checks_completed',
+    'legacy_status_contexts_observed','legacy_status_source_may_be_truncated',
+    'check_runs_page_complete','review_page_may_be_truncated',
+    'human_next_gate_step','required_branch_checks_and_rules_verified',
+    'required_review_policy_verified','mergable_by_automation',
+    'merge_authorized','deployment_authorized','read_only'];
+   savedRows.set(row.url,Object.fromEntries(fields.filter(k=>
+    Object.hasOwn(row,k)).map(k=>[k,row[k]])));
   }
   observed.set(idx,normalized);
  }
@@ -718,6 +732,24 @@ async function combineSavedGateFiles(manifestFile,batchFiles){
     unobserved_pr_urls:selected.slice((batch-1)*4,batch*4).map(x=>x.url)});
   }else for(const [url,item] of observed.get(batch))items.set(url,item);
  }
+ // Produce the SAME browser-import schema as the offline Python bridge, so
+ // one deliberately downloaded file can be reopened without all raw batches.
+ const issueMap=new Map();
+ for(const ref of selected){
+  if(!savedRows.has(ref.url))continue;
+  for(const source of ref.linked_issues){
+   let card=issueMap.get(source.issue);
+   if(!card){
+    if(issueMap.size>=60)throw Error('More than sixty source issue cards');
+    card={issue:source.issue,url:source.url,existing_prs:[]};
+    issueMap.set(source.issue,card);
+   }
+   if(card.url!==source.url||card.existing_prs.length>=5)
+    throw Error('Issue PR source associations exceed original board bounds');
+   card.existing_prs.push({url:ref.url,
+    live_exact_head_review_checks_observation:savedRows.get(ref.url)});
+  }
+ }
  const timestamp=earliest,time=new Date(earliest).toISOString();
  const bridgeCoverage={manifest_sha256:reviewSha,batches:observed.size,
   expected_batches:total,missing_indexes:missing,
@@ -725,8 +757,35 @@ async function combineSavedGateFiles(manifestFile,batchFiles){
   missing_prs:missingPrs,complete:missing.length===0,
   earliest_observed_at_utc:time,latest_observed_at_utc:new Date(latest).toISOString(),
   complete_receipts_not_required_checks:missing.length===0};
- return {time,timestamp,items,kind:'zsentinel-local-saved-review-batch-import-v1',
-  sha256:reviewSha,reviewContext:null,bridgeCoverage};
+ const portable={
+  schema:'zsentinel-integrated-issue-pr-scope-v1',
+  generated_at_utc:time,
+  earliest_observed_at_utc:time,
+  latest_observed_at_utc:new Date(latest).toISOString(),
+  issues:[...issueMap.values()],
+  original_review_manifest_sha256:reviewSha,
+  original_board_sha256:boardSha,
+  observed_batch_count:observed.size,
+  expected_batch_count:total,
+  review_candidate_pr_count:selected.length,
+  missing_batch_count:missing.length,
+  missing_batch_indexes:missing,
+  missing_batch_prs:missingPrs,
+  all_batches_observed_not_all_checks_required_verified:missing.length===0,
+  saved_receipts_not_required_checks_verified:true,
+  claim_authorized:false,merge_authorized:false,deploy_authorized:false,
+  may_take_ownership:false,writes_performed:false
+ };
+ const portableText=JSON.stringify(portable,null,2)+'\\n';
+ if(new TextEncoder().encode(portableText).length>1048576)
+  throw Error('Combined private browser export exceeds one MiB');
+ // Pass the portable file back through the existing single-file importer.
+ // This makes portable output match the same source and ownership constraints.
+ const reimport=acceptGateSource(portable);
+ if(reimport.items.size!==items.size)
+  throw Error('Portable snapshot lost original saved PR observations');
+ return {...reimport,sha256:reviewSha,portableText};
+
 }
 function acceptGateSource(data){
  if(!data||typeof data!=='object'||Array.isArray(data)||
