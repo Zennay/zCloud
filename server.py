@@ -9,7 +9,8 @@ import enhancements
 import project_runtime
 from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
-from scripts.zcloud_product_delivery_policy import (is_new_product_delivery, product_queue_snapshot, product_delivery_classification)
+from scripts.zcloud_product_delivery_policy import (is_new_product_delivery, product_queue_snapshot,
+    product_delivery_classification, portfolio_fair_candidate_window)
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -2686,9 +2687,11 @@ def portfolio_execution_lanes(project_id=None):
         return _portfolio_lane_snapshot_locked(c,ids,now())
 
 def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
-    # Fetch at most four ordered pages. Old QA-only P0/P1 items can otherwise
-    # consume the original global LIMIT 240 and starve a safe product fix at
-    # position 241. This scan is bounded; no queue rows are edited.
+    # Sample at most four ordered source pages before creating a final
+    # bounded, cross-project candidate window. Stopping after the first 240
+    # admissible rows lets one noisy project's P0s hide unrelated projects
+    # even when those other projects have free lane/worker capacity. This
+    # selection never grants a claim or bypasses existing priority gates.
     preempted={str(value) for value in (preempted or set())}
     rows=[]
     for offset in (0,240,480,720):
@@ -2708,9 +2711,13 @@ def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
             if str(row['queue_id']) not in preempted
             and is_new_product_delivery(dict(row))
         )
-        if len(rows)>=240 or len(page)<240:
+        if len(page)<240:
             break
-    rows=rows[:240]
+    # Reserve at most eight candidates per observed project before filling
+    # spare places globally. Final output keeps the source's priority order;
+    # normal lane ownership, hard caps, memory and manual-start gates still
+    # decide whether any of these rows can actually run.
+    rows=portfolio_fair_candidate_window(rows,limit=240,per_project_reserve=8)
     if not rows:
         return []
     project_ids={str(row['project_id']) for row in rows}
