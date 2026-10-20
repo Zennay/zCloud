@@ -59,6 +59,21 @@ python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
 - De zoekresultaten zijn slechts een kandidatenlijst. Alleen expliciete brongebonden issueverwijzingen `fixes #N`, `refs #N` enzovoort op dezelfde repository worden gekoppeld. Maximaal 32 bekeken kandidaten en 4 gekoppelde product-PRs; overige zoekresultaten blijven expliciet `CANDIDATE_WINDOW_32`/UNKNOWN. De laatste exacte issue-opvraag moet nog steeds `open` melden. Een tussentijds gewijzigde PR-body wordt geweigerd, ook als de Git commit ongewijzigd bleef.
 - Alle bronnen en één privé offline HTML worden begrensd door hetzelfde totale 84-GET / 120s budget. De HTML toont het gerichte issue, zoekdekking, PRs met concrete next-gate en de onvolledigheidswaarschuwingen. Geen automatische issueclaim, workflowrestart, PR-merge, deploy of P0-statuswijziging.
 
+### Doorzoeken van oudere PRs + zicht op lokale claims
+
+Gerichte bekende issues ondersteunen opeenvolgende **zoekpagina's van 20 bestaande PR-kandidaten**, zonder de andere pagina's stilzwijgend als verwerkt te beschouwen:
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
+  --candidate-page 1 --format json
+python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
+  --candidate-page 2 --output /private/zsentinel-p0-1326-page2.html
+```
+
+De `--candidate-page`-optie accepteert 1–50 en uitsluitend in combinatie met `--issue`. Elke pagina van maximaal 20 kandidaten herbevestigt het issue, vraagt de werkelijke PR-body/HEAD, gates en reviews op, en meldt het start/eindvenster, het aantal daadwerkelijk bekeken PR's, bronvolledigheid en een eventuele `next_page`. GitHub's native Search heeft een 1000-resultaatgrens en zoekrangschikking kan onderweg verschuiven; afzonderlijke pagina's geven nooit vanzelf een compleet of onbezet portfolio. De bestaande globale bronlimiet (84 GETs / 120 seconden), vier gevonden PRs per pagina en onafhankelijke review-/writer-/releasegates blijven ongewijzigd.
+
+Dezelfde read-only issue-first uitvoer toont voortaan **geanonimiseerde lokale claimwaarnemingen** per gekozen project, uit `history.db` via `scripts/zsentinel_claim_visibility.py` met SQLite `mode=ro`, `PRAGMA query_only`, één snapshot en maximaal 1000 claimrijen. Alleen totalen van waargenomen actieve lokale leases, exclusieve schrijvers en ambigue bronrijen worden opgenomen in console, JSON en privé offline HTML. Geen owner-, worker-, sleutel-, scope-, metadata- of claim-ID wordt geëxporteerd. Ontbrekende of onvolledige bron = UNKNOWN. Zelfs `NO_ACTIVE_LOCAL_CLAIMS_OBSERVED` betekent nadrukkelijk **niet** dat Notion-claims, andere workers of release-eigenaarschap vrij zijn; `owner_free=NOT_INFERABLE`, `authorization=NOT_GRANTED`. Deze observatie doet geen claims en schrijft niets aan SQLite.
+
 ### Huidige CI versus historische of optionele workflows
 
 De merge-helper en offline PR-board gebruiken dezelfde conservatieve status van **actuele voor de PR relevante workflows**. Exacte HEAD-verificatie blijft verplicht. GitHub Actions-workflows voor `pull_request`, `pull_request_target`, `push`, `merge_group` en `workflow_run` worden per workflow/event/branch tot de nieuwste bestaande run gereduceerd; een oudere door een nieuwe run vervangen fout wordt niet als een aparte actieve blokkade voorgesteld. Handmatige/scheduled workflows worden niet als nieuw verzonnen verplicht PR-checks behandeld. `skipped`/neutrale optionele jobs zijn niet noodzakelijk een fout, maar *alleen* overgeslagen workflows zijn geen bewijs van groen. De echte GitHub branch rules, onafhankelijke review, actuele writerclaim en bestaande releaseautorisatie bepalen nog altijd of mergen mag.
