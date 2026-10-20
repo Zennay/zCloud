@@ -293,7 +293,8 @@ def main(argv=None):
                 and SHA.fullmatch(args.expect_review_sha256) is None):
             raise ValueError("Invalid expected source SHA256")
         if (not 1 <= args.limit <= 50
-                or (args.priority is not None and not args.show_queue)):
+                or (args.priority is not None and not args.show_queue)
+                or (args.project is not None and not args.show_queue)):
             raise ValueError("Invalid read-only queue selection")
         if args.extract_to is None:
             _files, manifest, receipt = open_dossier(args.input)
