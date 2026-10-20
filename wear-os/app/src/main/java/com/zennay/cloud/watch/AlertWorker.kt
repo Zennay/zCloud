@@ -40,9 +40,17 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             .sortedWith(compareBy<AlertItem> {
                 if (it.severity.equals("critical", true)) 0 else 1
             }.thenByDescending { it.occurredAt.orEmpty() })
-        // Deduplicate by incident episode, not forever by reusable incident ID.
-        // If an incident disappears from the current feed, its old receipt is
-        // retired; a later recurrence is allowed to notify again.
+        // Migrate a prior delivered receipt when the provider begins
+        // supplying stable episode IDs. A source refresh must not create
+        // another alert for an already delivered unresolved incident.
+        urgent.forEach { alert ->
+            val legacy = IncidentSnoozeStore.legacyEpisodeKey(alert)
+            val stable = IncidentSnoozeStore.episodeKey(alert)
+            if (legacy in delivered) delivered += stable
+        }
+        // Deduplicate by incident episode. When it disappears from the
+        // current source, its suppression expires and a later recurrence can
+        // notify. Timestamp changes within a service outage cannot spam.
         val currentEpisodes = urgent.map { IncidentSnoozeStore.episodeKey(it) }.toSet()
         delivered.retainAll(currentEpisodes)
         val permissionGranted = Build.VERSION.SDK_INT < 33 ||
