@@ -2196,3 +2196,57 @@ authenticiteit van een live GitHub-providerrespons of toestemming om te mergen.
 Er wordt niets aan GitHub, Notion, VPS, browser-workers of productie
 geschreven. Het nieuwe formaat vervangt geen verplichte exacte-head CI,
 onafhankelijke review, eigendomscontrole of beschermde main.
+
+
+## 20 oktober · Bewaarde issue-dossiers veilig opnieuw openen
+
+De `--format zip` issue-overdracht heeft nu ook een bijbehorende
+**offline archieflezer**. Dit is een bedienbare productstap na de export:
+een operator kan de bewaarde bron teruglezen en de oorspronkelijke HTML,
+Markdown, CSV, JSON en checksumgegevens terugzetten als private bestanden.
+
+```sh
+# Bekijk eerder waargenomen issue- en PR-koppelingen; geen live GitHub-actie.
+python3 scripts/zsentinel_saved_issue_archive.py \
+  --input ./private-issue-1518-dossier.zip --limit 10
+
+# Bekijk één exact oorspronkelijk issue in de bewaarde bron.
+python3 scripts/zsentinel_saved_issue_archive.py \
+  --input ./private-issue-1518-dossier.zip \
+  --inspect-issue https://github.com/Zennay/zCloud/issues/1518
+
+# Pak exact de eerder gemaakte volledige private ZIP uit in een NIEUWE map.
+python3 scripts/zsentinel_saved_issue_archive.py \
+  --input ./private-issue-1518-dossier.zip \
+  --extract-to ./private-issue-1518-reopened
+```
+
+De archieflezer gebruikt dezelfde eerder beschikbare private no-follow
+bestandsopening als de oorspronkelijke projectdossierlezer. Hij staat alleen
+een eigen privébestand onder veilige parentmappen toe. De ZIP moet de
+**vijf exacte canonieke leden** bevatten met niet-uitvoerbare 0600-metadata,
+de verwachte vaste schemawaarden, correcte SHA256-matches en begrensde
+uitgeklapte bestanden. Dubbele ZIP-leden of dubbele JSON-veldnamen worden
+geweigerd. De JSON-bron moet expliciet iedere vorm van claim, dispatch,
+main-merge, CI-review-vrijgave of live-herstel ontkennen. Issues en PRs
+moeten canonieke links naar hetzelfde echte bronrepository bevatten;
+een historisch issue met meerdere PRs blijft in de inspectie zichtbaar.
+
+Een expliciet gekozen issue dat niet in dit archief voorkomt wordt niet als
+vrij of gesloten behandeld, maar afgewezen. Gerichte `--inspect-issue`
+mag alleen samen met `--extract-to` worden gebruikt als de ZIP zelf
+al die **ene geselecteerde issuekaart** bevat; anders zou een ogenschijnlijk
+gerichte operatie ongerelateerde privé-issuegegevens uitpakken. De
+uitpakbestemming moet een nieuwe directory zijn (0700) en ieder bestand
+wordt 0600, no-follow en create-only aangemaakt. Er wordt geen origineel
+bronbestand overschreven of aangepast.
+
+Het checksum-manifest bewijst alleen interne consistentie van de bewaarde
+ZIP. Het is **geen providerhandtekening**, en een HTML-dossier is nooit
+huidig GitHub-eigenaarschap, verplichte CI, review, een main-merge of
+productiedeployment. De gebruiker moet deze bronnen zelfstandig live
+controleren voordat hij eventueel bevoegd releasewerk uitvoert.
+
+Deze feature maakt geen test-/QA-suite, netwerkcalls, workflow-retry,
+nieuwe claim, broker-/security-/onderzoeksschrijfactie of production deploy.
+Bestaande beschermde main-, review- en exacte-head CI-gates blijven intact.
