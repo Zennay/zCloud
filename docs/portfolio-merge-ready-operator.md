@@ -22,6 +22,18 @@ python3 scripts/zsentinel_merge_first_board.py \
 
 This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft PRs are **included as existing unfinished product work**, with a visible DRAFT / owner-action-required status; they are never treated as merge-ready and never promoted by this read-only tool. Ready PRs lead equally prioritized drafts. Child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 72 exact PR/check/review/workflow GETs. The workbench also stops new reads after a 120-second monotonic source window (an already started bounded GitHub GET may finish afterwards); no unlimited background polling. An empty selection explicitly says it is not evidence that the backlog is empty.
 
+### Eén samenhangende status boven de operatorwerkbak
+
+De private offline HTML bevat nu bij zowel de losse merge-first ingang
+als de issue-first ingang een actuele, uitsluitend uit de geselecteerde
+PR-bronregels berekende kopregel: **getoonde PRs, exact op main bevestigd,
+review/CI HOLD, alleen waargenomen gates en onbekende bron**. De kopregel
+maakt duidelijk dat dit niet alle bestaande PRs hoeft te dekken; er is
+geen nieuw GitHub-verzoek of service-/queuewrite voor nodig. Groene
+geobserveerde gates zijn nog steeds niet hetzelfde als branch protection,
+review- of mainwriterbevoegdheid. Productie blijft expliciet
+`NIET GECONTROLEERD` tot een apart geautoriseerd releasebewijs bestaat.
+
 ### Consistent delivery truth across JSON, text and private HTML
 
 `zsentinel_merge_first_board.py --pr OWNER/REPO#N` now includes a
