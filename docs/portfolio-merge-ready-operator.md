@@ -104,6 +104,13 @@ deze bronroute kan niet samen met `--candidate-page`, `--auto-pages`,
 `--candidate-offset`, `--expected-page-sha` of
 `--snapshot-output` worden gebruikt. Opgeslagen historische GitHub
 Search-pagina's worden niet door de direct-PR-route geclaimd of gemengd.
+Elke opgegeven PR verschijnt afzonderlijk in `targeted_coverage.candidate_outcomes`
+van JSON en in het HTML-operatorpaneel, inclusief aanklikbare canonieke PR-link
+en een duidelijke status: actuele bestaande PR/HOLD/DRAFT, NOT_ELIGIBLE,
+INVALID_PR_BODY, SOURCE_UNAVAILABLE of nog UNREAD. Bij een niet bevestigd
+issue verandert een eerder gevonden issueverband in UNKNOWN_OR_MOVED.
+Een volledig leesbare PR **zonder** expliciete geverifieerde issueverwijzing
+blijft wel als bestaande PR zichtbaar, niet als gerepareerd issue.
 Deze functie **leest uitsluitend**: geen claim, workflowdispatch, CI-retry,
 automerge of productieactie.
 
