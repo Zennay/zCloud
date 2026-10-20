@@ -161,6 +161,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "owned": 0 if complete else None,
             "high_claim_attempts": 0 if complete else None,
             "expired_owner_leases": 0 if complete else None,
+            "unverifiable_owner_leases": 0 if complete else None,
             "worker_ownership_verified": False,
             "recovery_proven": False, "next_action": "read_only_inspect_current_source",
             "p0_p1_issue_sample_hits": None, "p2_unranked_issue_sample_hits": None,
@@ -187,6 +188,7 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             for source, target in (
                 ("queued", "queued"), ("high_claim_attempts", "high_claim_attempts"),
                 ("expired_owner_lease_rows", "expired_owner_leases"),
+                ("unverifiable_owner_lease_rows", "unverifiable_owner_leases"),
             ):
                 value = entry.get(source)
                 if type(value) is not int or value < 0:
@@ -372,6 +374,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             row["next_action"] = "queue_source_incomplete_owner_must_review"
         elif row["expired_owner_leases"]:
             row["next_action"] = "request_owner_lease_review_never_release"
+        elif row["unverifiable_owner_leases"]:
+            row["next_action"] = "request_unknown_lease_clock_owner_review"
         elif row["high_claim_attempts"]:
             row["next_action"] = "inspect_claim_churn_no_auto_retry"
         elif row["historical_unresolved_sample_hits"]:
@@ -524,6 +528,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             "github_unassigned_job_route_owner_review": "P0: exacte GitHub-job en labels door eigenaar controleren; runnerroute ONBEKEND tot dezelfde job is bevestigd",
             "github_job_unstarted_platform_owner_review": "P1: exacte job startte niet; GitHub-checkannotaties door account-/workfloweigenaar beoordelen (oorzaak onbekend)",
             "request_owner_lease_review_never_release": "Vraag leasebeoordeling; niet vrijgeven",
+            "request_unknown_lease_clock_owner_review": "Leaseklok ontbreekt/ongeldig; eigenaar controleert claim, niet automatisch vrijgeven",
             "inspect_claim_churn_no_auto_retry": "Onderzoek claimchurn; geen retry",
             "github_source_not_scanned_next_window": "GitHub onbekend; volgend venster",
             "historical_incident_source_recheck_owner": "Historische P0/P1-bron via eigenaar verifiëren; GEEN herstelbewijs",
@@ -560,6 +565,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
                       else '≥' + str(row["notion_active_status_min"])) + '</td>'
             '<td>' + _count(row["high_claim_attempts"]) + '</td>'
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
+            '<td>' + _count(row["unverifiable_owner_leases"]) + '</td>'
             '<td>' + escape(github) + '</td>'
             '<td>' + escape(attempt_label) + '</td>'
             '<td>' + phrase_route(row["github_job_runner_route"]) +
@@ -625,6 +631,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '<th scope="col">Wachtend</th><th scope="col">Bezet</th>'
         '<th scope="col">Notion actief (min.)</th>'
         '<th scope="col">Veel claims</th><th scope="col">Lease verlopen?</th>'
+         '<th scope="col">Leaseklok onbekend?</th>'
         '<th scope="col">GitHub-bereik</th><th scope="col">Laatste bronpoging (geen health)</th><th scope="col">Runnerroute</th>'
         '<th scope="col">GitHub-jobs (steekproef)</th>'
         '<th scope="col">P0/P1-issues (min.)</th>'
@@ -1027,10 +1034,11 @@ def main():
             if historic["truncated"]:
                 lines.append("Historische lijst afgekapt, rest NIET opgelost.")
             for row in summary["rows"]:
-                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | P0-P1>=%s | P2-onbekend>=%s | incidents>=%s | Github=%s | route=%s | action=%s" % (
+                lines.append("%s | queued=%s | owned=%s | notion>=%s | churn=%s | lease=%s | lease_onbekend=%s | P0-P1>=%s | P2-onbekend>=%s | incidents>=%s | Github=%s | route=%s | action=%s" % (
                     row["project_id"], _count(row["queued"]), _count(row["owned"]),
                     _count(row["notion_active_status_min"]),
                     _count(row["high_claim_attempts"]), _count(row["expired_owner_leases"]),
+                     _count(row["unverifiable_owner_leases"]),
                     _count(row["p0_p1_issue_sample_hits"]),
                     _count(row["p2_unranked_issue_sample_hits"]),
                     _count(row["incident_sample_hits"]),
