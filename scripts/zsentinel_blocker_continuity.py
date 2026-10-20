@@ -23,12 +23,13 @@ MAX_CARDS = 12
 KINDS = {
     "verified_source_incident_not_runtime_recovery",
     "open_owner_only_issue_not_current_outage_proof",
+    "github_ci_auth_owner_gate_not_runner_outage",
     "read_only_worker_progress_gap_not_proven_outage",
     "queue_pressure_not_proven_outage",
     "existing_product_pr_gate_inspection_only",
     "historical_not_reconciled",
 }
-IDENT = re.compile(r"^(?:[0-9a-f]{32}|pr:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|owner-issue:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|worker:[a-z0-9_-]{1,40}:(?:[1-9]|1[0-6])|queue:[a-z0-9_-]{1,40})$")
+IDENT = re.compile(r"^(?:[0-9a-f]{32}|pr:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|owner-issue:[a-z0-9_-]{1,40}:[1-9][0-9]{0,8}|worker:[a-z0-9_-]{1,40}:(?:[1-9]|1[0-6])|queue:[a-z0-9_-]{1,40}|source-auth:[a-z0-9_-]{1,40})$")
 PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 URL = re.compile(r"^https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/(?:pull/[1-9][0-9]{0,8}|issues/[1-9][0-9]{0,8}|actions/runs/[1-9][0-9]{0,15}/job/[1-9][0-9]{0,15})$")
 PRIORITY = {"P0": 0, "P1": 1}
@@ -100,6 +101,11 @@ def _cards(board):
             raise ValueError("worker identity does not match project")
         if kind == "queue_pressure_not_proven_outage" and key != "queue:" + pid:
             raise ValueError("queue identity does not match project")
+        if (kind == "github_ci_auth_owner_gate_not_runner_outage"
+                and (key != "source-auth:" + pid or row.get("priority") != "P1"
+                     or row.get("requires_human") is not True
+                     or row.get("observed_from") != "bounded_current_github_api_401_source_only")):
+            raise ValueError("GitHub authentication owner-gate identity mismatch")
         if kind in ("historical_not_reconciled", "verified_source_incident_not_runtime_recovery") and not re.fullmatch(r"[0-9a-f]{32}", key):
             raise ValueError("incident identity does not match class")
         urls = []
