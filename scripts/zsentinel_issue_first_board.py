@@ -318,8 +318,9 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
     repo, _ = choices[0]
     issue = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
     if (not isinstance(issue, dict) or issue.get("state") != "open"
-            or issue.get("number") != issue_number or "pull_request" in issue):
-        raise ValueError("target must be a confirmed open issue")
+            or issue.get("number") != issue_number or "pull_request" in issue
+            or type(issue.get("id")) is not int or issue["id"] <= 0):
+        raise ValueError("target must be a confirmed canonical open issue")
     priority = classification(issue)
     target = dict(priority or {
         "number": issue_number, "priority": "UNCLASSIFIED",
@@ -653,9 +654,13 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
         )
         if target_coverage and target_coverage.get("source") == "EXPLICIT_PR_CANONICAL_GET":
             numbers = target_coverage["requested_pr_numbers"]
+            canonical_repo_url = targeted["url"].rsplit("/issues/", 1)[0]
+            selected_links = ", ".join(
+                "<a href='" + esc(canonical_repo_url + "/pull/" + str(number)) +
+                "'>#" + esc(number) + "</a>" for number in numbers)
             target_section += (
                 "<p><strong>Rechtstreeks opgevraagde bestaande PRs:</strong> " +
-                esc(", ".join("#" + str(number) for number in numbers)) +
+                selected_links +
                 ". Actuele PR-HEAD/checks/review waar bron beschikbaar is; "
                 "geen GitHub Search, geen volledige backlogdekking of eigenaarschapsbewijs.</p>"
                 "<p>Gecontroleerde kandidaat-PRs: " +
