@@ -732,6 +732,31 @@ def output_html(report):
                 " · actuele PR-gatebron: " +
                 escape(item["candidate_exact_head_gate_state"]) +
                 " · claims niet geverifieerd</small></td></tr>")
+        pr_group_items = []
+        for group in inbox["pr_groups"]:
+            linked = "".join(
+                "<li><a href='" + escape(url, quote=True) +
+                "' rel='noopener noreferrer'>Issue #" +
+                escape(url.rsplit("/", 1)[-1]) + "</a></li>"
+                for url in group["linked_issue_urls_in_source"])
+            pr_group_items.append(
+                "<li><strong>" + escape(group["highest_priority"]) +
+                "</strong> · <a href='" + escape(group["pr_url"], quote=True) +
+                "' rel='noopener noreferrer'>Bestaande PR #" +
+                escape(group["pr_url"].rsplit("/", 1)[-1]) + "</a> · " +
+                str(group["linked_issue_count_observed"]) +
+                " issuelinks; GEEN fix- of mergebewijs<details>" +
+                "<summary>Bekijk betrokken issues</summary><ul>" +
+                linked + "</ul></details></li>")
+        group_panel = (
+            "<details><summary>Gedeelde PR-opvolging: " +
+            str(inbox["distinct_existing_pr_groups_observed"]) +
+            " verschillende bestaande PRs (" +
+            str(inbox["multi_issue_existing_pr_groups_observed"]) +
+            " met meerdere issuelinks)</summary><p>Een bestaande PR wordt één "
+            "broncluster, niet meerdere onafhankelijke fixes.</p><ol>" +
+            "".join(pr_group_items) + "</ol></details>"
+            if pr_group_items else "")
         work_panel = (
             "<section id='merge-first-inbox' aria-label='P0/P1 merge-eerst werkbak'>"
             "<h2>Merge-eerst · menselijke P0/P1 werkbak</h2><p>" +
@@ -743,7 +768,7 @@ def output_html(report):
             "<div class='scroll'><table><thead><tr><th>Urgentie</th>"
             "<th>Open issue</th><th>PR eerst</th><th>Menselijke actie</th>"
             "</tr></thead><tbody>" + "".join(work_rows) +
-            "</tbody></table></div></section>"
+            "</tbody></table></div>" + group_panel + "</section>"
         )
     signals = []
     for item in report["saved_operational_context"]:
