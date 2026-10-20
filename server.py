@@ -9,7 +9,7 @@ import enhancements
 import project_runtime
 from scripts import worker_scaling_report
 from lane_generator import classify_backlog_item, generate_execution_lanes, scopes_overlap, work_package_rank
-from scripts.zcloud_product_delivery_policy import (is_new_product_delivery, product_queue_snapshot, product_delivery_disposition)
+from scripts.zcloud_product_delivery_policy import (is_new_product_delivery, product_queue_snapshot, product_delivery_classification)
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'history.db'
@@ -2573,7 +2573,7 @@ def _portfolio_queue_row(row):
     # Bind read-only operator labels to the actual source JSON BEFORE the
     # legacy API presentation mapping converts malformed JSON to {}.
     if str(item.get('status') or '').lower() == 'queued':
-        item['delivery_policy_disposition']=product_delivery_disposition(item)
+        (item['delivery_policy_disposition'], item['delivery_policy_reason'])=product_delivery_classification(item)
     metadata=_portfolio_queue_metadata(item)
     item['metadata']=metadata
     item.pop('metadata_json',None)
