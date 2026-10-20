@@ -1396,3 +1396,41 @@ agentclaim, VPS-commandoreeks, automatische broker-/herstelactie of
 deploy. Alle exacte-head verplichte CI, onafhankelijke review,
 branch protection en productie-eigenaarschap moeten nog afzonderlijk
 worden gecontroleerd voordat een echte GitHub-mainmerge kan plaatsvinden.
+
+
+### Machineleesbare overdracht voor een bevoegde runtime-eigenaar
+
+Naast het menselijke HTML-, CSV- en Markdown-bord ondersteunt dezelfde
+brongebonden CLI nu `--format portfolio-json`. Dit maakt een bruikbaar
+machineleesbaar **adviespakket** voor vervolgcoördinatie zonder in een
+bestaande portfolio-queue of Notion-claim te schrijven:
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./gate-batch-1.json \
+  --receipt ./gate-batch-2.json \
+  --format portfolio-json --output ./private-zsentinel-owner-suggestions.json
+```
+
+Schema: `zsentinel-private-portfolio-work-suggestions-v1`.
+De ontvanger krijgt originele bronmanifest-/board-SHA256, exact bewaarde
+bronvenstertijden, batchdekking en ontbrekende batchindexen, plus
+projecten in P0-eerst bronvolgorde. Per project worden oorspronkelijke
+PR-kandidaten, P0/P1-tellingen, hoofd-/gelijktijdige blokkadecategorieën
+en één bestaande PR-link met concrete menselijke vervolgactie geleverd.
+
+De uitvoer is **niet** een dispatch- of mergecontract. Hij meldt
+onomwonden dat de project-/PR-inventaris onvolledig kan zijn:
+`known_complete_project_or_pr_inventory=false`,
+`owner_claim_verified=false`,
+`required_exact_head_ci_verified=false`,
+`independent_reviews_and_branch_rules_verified=false`,
+`worker_dispatch_authorized=false`,
+`queue_mutation_authorized=false`,
+`merge_authorized=false`, `deploy_authorized=false` en
+`worker_recovery_verified=false`. Een bevoegde integrator moet zelf
+actuele leases/owners, exact-head GitHub-gates, de serialized release
+en echte productcontinuïteit opnieuw en onafhankelijk controleren.
+De privacygrens is dezelfde create-only 0600 bronbestandsuitvoer, zonder
+extern netwerk, browserautomatisering, AI-scheduler of nieuwe QA-rondes.
