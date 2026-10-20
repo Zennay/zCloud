@@ -33,6 +33,8 @@ REQUIRED_COLUMNS = frozenset((
 ))
 MAX_PROJECTS = 3
 MAX_SLOTS = 8
+MAX_TIMELINE_EVENTS = 12
+MAX_WORKER_EVENT_LOOKBACK = 240
 
 
 def _age(value, now):
@@ -49,6 +51,78 @@ def _age(value, now):
         return None
     return max(0, int(seconds))
 
+
+
+def _bounded_timeline(con, project, slot, last_id, prompt_id, now):
+    """Minimal indexed worker event chronology, no payloads or ownership claim.
+
+    The recent history is an explicitly bounded window. Fewer observed
+    blocking events is NOT proof of no other failures in the full DB.
+    """
+    rows = con.execute(
+        "SELECT id,ts,event,generating,sending FROM runner_events "
+        "INDEXED BY runner_events_project_worker_id "
+        "WHERE project_id=? AND worker_slot=? AND id<=? "
+        "ORDER BY id DESC LIMIT ?",
+        (project, slot, last_id, MAX_TIMELINE_EVENTS + 1),
+    ).fetchall()
+    truncated = len(rows) > MAX_TIMELINE_EVENTS
+    events = []
+    recent_blocks = 0
+    recent_progress = 0
+    after_prompt_seen = 0
+    for ident, stamp, kind, generating, sending in rows[:MAX_TIMELINE_EVENTS]:
+        if type(ident) is not int or not 1 <= ident <= last_id:
+            raise ValueError("invalid worker timeline event identifier")
+        age = _age(stamp, now)
+        safe_kind = kind if isinstance(kind, str) and kind in SAFE_EVENT else "other_event"
+        after_prompt = prompt_id is not None and ident > prompt_id
+        if after_prompt:
+            after_prompt_seen += 1
+        if safe_kind in BLOCKED and after_prompt and age is not None and age <= 900:
+            recent_blocks += 1
+        if (safe_kind in ("generation-progress", "generation-finished")
+                and after_prompt and age is not None and age <= 900):
+            recent_progress += 1
+        events.append({
+            "event": safe_kind,
+            "age_seconds": age,
+            "after_latest_prompt": bool(after_prompt),
+            "browser_generating": generating == 1,
+            "browser_sending": sending == 1,
+        })
+    return {
+        "recent_events_newest_first": events,
+        "timeline_truncated": truncated,
+        "timeline_scope": "last_12_indexed_events_not_complete_history",
+        "events_after_last_prompt_in_sample": after_prompt_seen,
+        "recent_block_events_after_last_prompt_in_sample": recent_blocks,
+        "recent_progress_events_after_last_prompt_in_sample": recent_progress,
+        "claim_epoch_bound": False,
+        "progress_is_product_delivery_proof": False,
+    }
+
+
+def _safe_followup(state, assignment):
+    """Decision support only; NEVER infer claim/lease/recovery authority."""
+    if state == "allocated_paused_with_claimed_queue_owner_gate":
+        return "owner_check_paused_worker_with_current_queue_lease"
+    if state == "recent_client_block_event_owner_review":
+        return "owner_inspect_current_assignment_and_recent_browser_block"
+    if state in ("generating_but_progress_unverified_or_stale",
+                 "worker_event_stale_or_unknown",
+                 "configured_running_no_event_evidence"):
+        return "owner_verify_current_lease_and_real_worker_progress"
+    if state == "generation_progress_timestamp_observed":
+        return "continue_read_only_observation_without_takeover"
+    if state == "generation_finish_event_observed_not_product_delivery":
+        return "owner_verify_actual_product_commit_or_handoff"
+    if state == "configured_draining_owner_hold":
+        return "respect_draining_owner_hold"
+    if state in ("configured_paused_not_incident",
+                 "configured_not_allocated_not_a_stalled_worker"):
+        return "no_stalled_worker_recovery_from_this_evidence"
+    return "owner_recheck_current_source_without_recovery"
 
 def _active_queue_assignment(con, project, global_slot, now, queue_available):
     """Observe claim/lease state for one actual allocated global slot.
@@ -134,6 +208,28 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "event_source": "indexed_local_runner_events_only",
             "owner_claim_verified": False, "worker_resumed_verified": False,
             "repair_authorized": False,
+            "safe_followup": _safe_followup(
+                "allocated_paused_with_claimed_queue_owner_gate"
+                if paused_with_claim else
+                "configured_running_no_event_evidence"
+                if desired_state == "running" and global_slot is not None else
+                "configured_not_allocated_not_a_stalled_worker"
+                if global_slot is None and desired_state == "running" else
+                "configured_paused_not_incident"
+                if desired_state == "paused" else
+                "configured_draining_owner_hold"
+                if desired_state == "draining" else
+                "desired_state_unknown_no_automatic_action", assignment),
+            "timeline": {
+                "recent_events_newest_first": [],
+                "timeline_truncated": False,
+                "timeline_scope": "no_events_observed",
+                "events_after_last_prompt_in_sample": 0,
+                "recent_block_events_after_last_prompt_in_sample": 0,
+                "recent_progress_events_after_last_prompt_in_sample": 0,
+                "claim_epoch_bound": False,
+                "progress_is_product_delivery_proof": False,
+            },
         }
     last_id, timestamp, event, generating, sending, progress, chars = last
     if type(last_id) is not int or last_id < 1:
@@ -172,6 +268,9 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         and (prompt is None or blocked[0] > prompt[0])
         and block_age is not None and block_age <= 900
     )
+    timeline = _bounded_timeline(
+        con, project, slot, last_id,
+        prompt[0] if prompt is not None else None, now)
     if paused_with_claim:
         state = "allocated_paused_with_claimed_queue_owner_gate"
     elif desired_state == "paused":
@@ -217,6 +316,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "owner_claim_verified": False,
         "worker_resumed_verified": False,
         "repair_authorized": False,
+        "safe_followup": _safe_followup(state, assignment),
+        "timeline": timeline,
     }
 
 
@@ -339,6 +440,9 @@ def operator_text(source):
             f" · current_lease={row['queue_lease_current_from_source']}"
             f" · event_age_s={row['event_age_seconds']}"
             f" · progress_age_s={row['progress_age_seconds']}"
+            f" · last_12_blocks_after_prompt={row['timeline']['recent_block_events_after_last_prompt_in_sample']}"
+            f" · last_12_progress_after_prompt={row['timeline']['recent_progress_events_after_last_prompt_in_sample']}"
+            f" · followup={row['safe_followup']}"
             f" · claim=ONBEKEND")
     for pid in source["unobserved_project_ids"]:
         lines.append(f"  {pid} · GEEN eventbron voor gekozen project, geen bewijs van nul workers.")
