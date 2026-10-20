@@ -2250,3 +2250,38 @@ controleren voordat hij eventueel bevoegd releasewerk uitvoert.
 Deze feature maakt geen test-/QA-suite, netwerkcalls, workflow-retry,
 nieuwe claim, broker-/security-/onderzoeksschrijfactie of production deploy.
 Bestaande beschermde main-, review- en exacte-head CI-gates blijven intact.
+
+
+### Gerichte menselijke overdracht vanuit een heropend dossier
+
+Naast herstel van het complete offline dossier kan dezelfde archieflezer
+nu uit een **exact geselecteerd oorspronkelijk issue** een nieuwe, korte,
+brongebonden en private Markdown-owner-overdracht maken:
+
+```sh
+python3 scripts/zsentinel_saved_issue_archive.py \
+  --input ./private-issue-1518-dossier.zip \
+  --inspect-issue https://github.com/Zennay/zCloud/issues/1518 \
+  --handoff-markdown ./private-issue-1518-owner-handoff.md
+```
+
+De overdracht bevat oorspronkelijke issue- en PR-links, de historisch aan
+dat issue verbonden prioriteit, vroegere HEADs, opgeslagen observatiemomenten,
+oorspronkelijke reviewmanifest-SHA256, ontbrekende batches en vier concrete
+verplichte menselijke verificatiestappen. Vrije tekst uit de bewaarde JSON
+wordt niet als CLI-advies overgenomen; operatorinstructies worden uit
+beperkte gevalideerde bronvelden opgebouwd.
+
+De archieflezer eist chronologische expliciete UTC-bronmomenten en
+weigert ontbrekende, toekomstige of niet-chronologische bronmomenten
+voordat hij een overdracht maakt. Een selectie moet precies één canonical
+bronissue aanwijzen. Er wordt een volledig nieuw 0600-Markdownbestand
+gemaakt met de bestaande private no-clobber writer; een combinatie van
+dit handoff-bestand en de volledige ZIP-extractie in één CLI-run is bewust
+uitgesloten.
+
+Dit document kan door een operator beoordeeld en veilig intern
+doorgegeven worden, maar bewijst **nooit** huidige PR-openstatus,
+actief eigenaarschap, exacte-head CI, onafhankelijke reviews, protected-main
+mergerechten of live productie. De originele source- en releasegates
+blijven verplicht; er vinden geen externe systeemmutaties plaats.
