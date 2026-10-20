@@ -292,6 +292,50 @@ def portfolio_csv(selected, integrated, *, project=None):
 
 
 
+
+
+def portfolio_pr_csv(selected, integrated, *, project=None):
+    """One complete, sorted row per already-observed PR (not one per project).
+
+    A project filter is admissible only after validating the full source.
+    No free-text notes or raw GitHub responses can become CSV formulas.
+    """
+    projects = project_worklist(selected, integrated, project=project)
+    stream = StringIO(newline="")
+    writer = csv.writer(stream, delimiter=";", quotechar='"',
+                        lineterminator="\r\n")
+    writer.writerow([
+        "Oorspronkelijk manifest SHA256", "Oorspronkelijk board SHA256",
+        "Bron oudste UTC", "Bron nieuwste UTC", "Project",
+        "Prioriteit", "Bestaande PR", "Originele PR URL",
+        "Gekoppelde issue URLs", "Bronbatch", "Gatebron",
+        "Hoofdblokkade", "Gelijktijdige blokkades", "Waargenomen HEAD SHA",
+        "Menselijke vervolgactie", "Huidige eigenaar en mainwriter",
+        "Exact-head vereiste CI en review", "Gemerged op main", "Live herstel",
+    ])
+    for item in projects:
+        for candidate in item["candidates"]:
+            writer.writerow([
+                integrated["original_review_manifest_sha256"],
+                integrated["original_board_sha256"],
+                integrated["earliest_observed_at_utc"],
+                integrated["latest_observed_at_utc"],
+                item["repository"], candidate["priority"],
+                candidate["pr_number"], candidate["url"],
+                " | ".join(candidate["linked_issue_urls"]),
+                candidate["batch_index"], candidate["gate_source"],
+                LABELS[candidate["primary_gate"]][0],
+                " | ".join(LABELS[key][0] for key in candidate["concurrent_gates"]),
+                candidate["head_observed"] or "ONBEKEND",
+                candidate["next_action"], "ONBEKEND", "ONBEKEND",
+                "ONBEKEND", "ONBEKEND",
+            ])
+    result = "\ufeff" + stream.getvalue()
+    if len(result.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Private per-PR portfolio CSV exceeds one MiB")
+    return result
+
+
 def portfolio_markdown(selected, integrated, *, project=None):
     """Compact private project-by-project PR queue, without granting ownership.
 
