@@ -432,6 +432,7 @@ def generate_execution_lanes(project, backlog, claims=()):
     ]
 
     active_claims = []
+    unknown_claim_scopes = 0
     for claim in claims or ():
         if str(claim.get("project_id") or project_id).strip().lower() != project_id:
             continue
@@ -443,6 +444,11 @@ def generate_execution_lanes(project, backlog, claims=()):
                 "worker_id": str(claim.get("worker_id") or ""),
                 "scope": scope,
             })
+        elif profile == "portfolio-recovery":
+            # An externally supplied claim is still an owner reservation even
+            # when its scope is absent/invalid. Never silently discard it and
+            # admit another writer to the same unknown file scope.
+            unknown_claim_scopes += 1
 
     lane_items = {}
     for lane_def in lane_defs:
@@ -491,14 +497,24 @@ def generate_execution_lanes(project, backlog, claims=()):
         lane_id = candidate["lane_id"]
         if lane_id in chosen_by_lane:
             continue
-        if unknown_active_scopes:
-            # No owner identities or task IDs are needed to explain the hold.
-            blocked_by_lane[lane_id].append({
-                "kind": "queue",
-                "reason": "active_write_scope_not_declared",
-                "ambiguous_active_count": len(unknown_active_scopes),
-                "overlap": {"capabilities": [], "files": []},
-            })
+        if unknown_active_scopes or unknown_claim_scopes:
+            # Existing queue writers and externally supplied claims retain
+            # their ownership; neither an empty scope nor a malformed scope
+            # proves that a new queued writer is independent.
+            if unknown_active_scopes:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "active_write_scope_not_declared",
+                    "ambiguous_active_count": len(unknown_active_scopes),
+                    "overlap": {"capabilities": [], "files": []},
+                })
+            if unknown_claim_scopes:
+                blocked_by_lane[lane_id].append({
+                    "kind": "claim",
+                    "reason": "active_claim_write_scope_not_declared",
+                    "ambiguous_claim_count": unknown_claim_scopes,
+                    "overlap": {"capabilities": [], "files": []},
+                })
             continue
 
         conflicts = []
@@ -552,6 +568,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "active_backlog_count": active_backlog_counts[lane_id],
             "parallel_active_warning": active_backlog_counts[lane_id] > 1,
             "unknown_active_scope_count": len(unknown_active_scopes),
+            "unknown_claim_scope_count": unknown_claim_scopes,
             "blocked_by": blocked_by,
         })
     return results
