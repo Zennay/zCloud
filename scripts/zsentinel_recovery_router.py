@@ -30,6 +30,7 @@ MAX_RECOMMENDATIONS = 5
 SLUG = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SAFE_PATH = re.compile(r"^[a-zA-Z0-9_.@/+ -]{1,220}$")
+BRANCH_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,160}$")
 PRIORITY = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 
@@ -332,7 +333,8 @@ def observed_prless_branch_conflicts(bundle, now):
     receipt = bundle.get("prless_branch_observation")
     if receipt is None:
         return {"supplied": False, "coverage": "not_supplied",
-                "paths": (), "suppress_all": False,
+                "paths": (), "source_branches_for_path": {},
+                "suppress_all": False,
                 "reason": "optional_source_not_supplied", "observed_branches": 0}
     if (type(receipt) is not dict
             or receipt.get("schema") != "zsentinel-recent-unpr-branches-v1"
@@ -352,9 +354,13 @@ def observed_prless_branch_conflicts(bundle, now):
             or type(count) is not int or count != len(rows)):
         raise ValueError("unbounded PR-less ownership source")
     paths = set()
+    path_sources = {}
     truncated = False
     for row in rows:
         if (type(row) is not dict or row.get("owner_verified") is not False
+                or not isinstance(row.get("branch"), str)
+                or BRANCH_REF.fullmatch(row["branch"]) is None
+                or ".." in row["branch"].split("/")
                 or row.get("claim_authorized") is not False
                 or type(row.get("paths")) is not list or len(row["paths"]) > 100
                 or type(row.get("path_count")) is not int
@@ -364,7 +370,9 @@ def observed_prless_branch_conflicts(bundle, now):
             raise ValueError("invalid PR-less branch file scope")
         truncated |= row["paths_truncated_for_view"]
         for item in row["paths"]:
-            paths.add(bounded_path(item))
+            path = bounded_path(item)
+            paths.add(path)
+            path_sources.setdefault(path, row["branch"])
     stale = observed > now + timedelta(minutes=2) or now - observed > timedelta(minutes=5)
     uncertain = coverage != "bounded_complete" or stale or truncated
     return {
@@ -372,6 +380,7 @@ def observed_prless_branch_conflicts(bundle, now):
         "coverage": ("stale" if stale else
                      "incomplete" if uncertain else "bounded_complete"),
         "paths": tuple(sorted(paths)),
+        "source_branches_for_path": path_sources,
         "suppress_all": uncertain,
         "reason": ("source_stale" if stale else
                    "source_incomplete_or_paths_truncated" if uncertain else
@@ -381,15 +390,23 @@ def observed_prless_branch_conflicts(bundle, now):
 
 
 def prless_branch_conflict(task, receipt):
+    """Return a source-specific collision, not a claim or reassignment."""
     if not receipt["supplied"] or task.get("project_id") != "cloud":
-        return False
+        return None
     if receipt["suppress_all"]:
-        return True
+        return {"reason": "prless_branch_source_stale_or_incomplete"}
     task_paths = admit_paths(task)
-    return task_paths is None or any(
-        paths_overlap(task_path, branch_path)
-        for task_path in task_paths for branch_path in receipt["paths"]
-    )
+    if task_paths is None:
+        return {"reason": "task_file_scope_unavailable"}
+    for task_path in task_paths:
+        for branch_path in receipt["paths"]:
+            if paths_overlap(task_path, branch_path):
+                return {
+                    "reason": "overlaps_existing_recent_unpr_branch",
+                    "branch_ref": receipt["source_branches_for_path"][branch_path],
+                    "conflicting_path": branch_path,
+                }
+    return None
 
 
 def eligible_tasks(bundle, blocked, now, capacity):
@@ -431,7 +448,8 @@ def eligible_tasks(bundle, blocked, now, capacity):
         # Treat only the canonical cloud project as unavailable for suggestion.
         branch_ownership = {
             "supplied": True, "coverage": "invalid",
-            "paths": (), "suppress_all": True,
+            "paths": (), "source_branches_for_path": {},
+            "suppress_all": True,
             "reason": "invalid_optional_branch_source",
             "observed_branches": 0,
         }
@@ -464,13 +482,12 @@ def eligible_tasks(bundle, blocked, now, capacity):
                any(paths_overlap(p, c) for p in scopes for c in claimed_paths)
                for claimed_pid, claimed_paths in claim_scopes):
             continue
-        if prless_branch_conflict(task, branch_ownership):
+        branch_conflict = prless_branch_conflict(task, branch_ownership)
+        if branch_conflict:
             branch_suppressed.append({
                 "id": ident, "project_id": pid, "priority": tier,
-                "reason": ("prless_branch_source_stale_or_incomplete"
-                           if branch_ownership["suppress_all"]
-                           else "overlaps_existing_recent_unpr_branch"),
-                "next_step": "Inspect existing branch and its current owner before any new work.",
+                **branch_conflict,
+                "next_step": "Inspect the original recent branch and current owner before editing.",
             })
             continue
         # Conservative: a portfolio-level runner outage or hosted billing failure
@@ -1022,6 +1039,8 @@ def operator_text(result):
         for row in branch["suppressed_task_examples"]:
             lines.append("- " + row["priority"] + " " + row["project_id"] +
                          "/" + row["id"] + ": " + row["reason"] +
+                         (" · branch " + row["branch_ref"] + " · " + row["conflicting_path"]
+                          if "branch_ref" in row else "") +
                          "; owner must review original branch.")
         if branch["samples_truncated"]:
             lines.append("Further suppressed branches/tasks omitted from bounded text view.")
