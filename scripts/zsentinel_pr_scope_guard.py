@@ -525,11 +525,34 @@ MAX_CONFLICT_PAIRS = 200
 MAX_SHARED_FILES_PER_PAIR = 24
 MAX_REFERENCED_ISSUES = 32
 MAX_DUPLICATE_ISSUE_GROUPS = 80
+MAX_IDENTITY_LOOKUPS = 8
 MAX_LINKS_PER_DUPLICATE_ISSUE = 8
 
 
+def issue_identity(repo, number, token):
+    """Optional GET-only identity check; never validates PR ownership or fixes."""
+    if not REPO.fullmatch(repo) or type(number) is not int or not 0 < number < 100000000:
+        raise ValueError("invalid issue identity")
+    try:
+        result = github_json(repo, "/issues/" + str(number), token)
+    except ValueError:
+        return "source_unavailable"
+    if (not isinstance(result, dict) or
+            result.get("number") != number or
+            result.get("html_url") !=
+                "https://github.com/" + repo + "/issues/" + str(number)):
+        return "identity_unconfirmed"
+    if "pull_request" in result:
+        return "reference_is_pull_request_not_issue"
+    if result.get("state") == "open":
+        return "confirmed_open_issue_at_observation"
+    if result.get("state") == "closed":
+        return "confirmed_closed_issue_at_observation"
+    return "issue_state_unknown"
+
+
 def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
-                           page_count=1):
+                           page_count=1, resolve_issue_identity=False):
     """Show PR-to-PR file collisions over a bounded, double-read open PR window.
 
     Collision means *shared pathname*, NOT merge conflict, active owner, worker
@@ -539,7 +562,8 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
             or type(open_page) is not int or not 1 <= open_page <= MAX_SEARCH_PAGES
             or type(page_count) is not int or not 1 <= page_count <= MAX_MULTI_PAGES
             or open_page + page_count - 1 > MAX_SEARCH_PAGES
-            or page_count * limit > MAX_MULTI_PRS):
+            or page_count * limit > MAX_MULTI_PRS
+            or type(resolve_issue_identity) is not bool):
         raise ValueError("invalid bounded cross-page graph request")
     # A single-page lookahead skips one PR in a multi-page traversal.
     # Multi-page mode therefore requests an exact contiguous page size.
@@ -595,9 +619,17 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         [(issue, sorted(prs.values(), key=lambda item: item["url"]))
          for issue, prs in by_issue.items() if len(prs) > 1],
         key=lambda row: (-len(row[1]), row[0]))
+    checked_identities = {}
+    if resolve_issue_identity:
+        # Strictly optional and bounded. A body/title '#N' can identify an
+        # actual pull request, not an issue; source evidence distinguishes it.
+        for number, _ in duplicate_issue_groups[:MAX_IDENTITY_LOOKUPS]:
+            checked_identities[number] = issue_identity(repo, number, token)
     duplicate_issue_cards = [{
         "issue_url": "https://github.com/" + repo + "/issues/" + str(issue),
         "issue_number": issue,
+        "identity_status": checked_identities.get(issue, "not_observed"),
+        "identity_lookup_authorizes_fix_or_claim": False,
         "open_pr_mentions_observed": len(prs),
         "shown_pr_sources": prs[:MAX_LINKS_PER_DUPLICATE_ISSUE],
         "source_pr_list_truncated": len(prs) > MAX_LINKS_PER_DUPLICATE_ISSUE,
@@ -663,6 +695,11 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "inspected_pr_heads": observed,
         "open_pr_issue_references_unverified": issue_links,
         "observed_duplicate_issue_groups": len(duplicate_issue_groups),
+        "issue_identity_lookups_requested": bool(resolve_issue_identity),
+        "issue_identity_lookups_performed": len(checked_identities),
+        "issue_identity_lookup_budget": MAX_IDENTITY_LOOKUPS,
+        "issue_identity_lookup_incomplete":
+            len(duplicate_issue_groups) > len(checked_identities),
         "shown_duplicate_issue_groups": duplicate_issue_cards,
         "duplicate_issue_groups_truncated": (
             len(duplicate_issue_groups) > MAX_DUPLICATE_ISSUE_GROUPS),
@@ -998,6 +1035,9 @@ def main(argv=None):
     parser.add_argument("--page-count", type=int, default=1,
                         help="1..3 opeenvolgende pagina's voor --audit-open-prs, "
                              "--source-pr of --path; hoogstens 48 PRs totaal")
+    parser.add_argument("--resolve-issue-identity", action="store_true",
+                        help="Optioneel: GET-only maximaal acht bronissues "
+                             "voor PR-tekstverwijzingsgroepen, nooit claim/merge")
     parser.add_argument("--audit-open-prs", action="store_true",
                         help="Toon een bestandsoverlapkaart voor open PR's zonder handmatige doelpaden.")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
@@ -1011,7 +1051,8 @@ def main(argv=None):
                 raise ValueError("--audit-open-prs cannot be combined with --path/--source-pr")
             report = observe_conflict_graph(repos[args.project],
                                             os.environ.get("GITHUB_TOKEN"), args.max_prs,
-                                            open_page=args.open_page, page_count=args.page_count)
+                                            open_page=args.open_page, page_count=args.page_count,
+                                            resolve_issue_identity=args.resolve_issue_identity)
             if args.format == "json":
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             elif args.format == "html":
@@ -1022,6 +1063,8 @@ def main(argv=None):
                 print(graph_operator_text(report))
             return (2 if report["observed_file_collision_pairs"] else
                     3 if not report["pr_file_scope_sample_complete"] else 0)
+        if args.resolve_issue_identity:
+            raise ValueError("--resolve-issue-identity requires --audit-open-prs")
         report = observe(
             repos[args.project], args.path,
             os.environ.get("GITHUB_TOKEN"), args.max_prs, args.source_pr,
