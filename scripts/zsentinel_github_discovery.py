@@ -44,8 +44,14 @@ def recent_runs(root, canonical_repository, token, status):
     if (not isinstance(result, dict) or not isinstance(result.get("workflow_runs"), list)
             or len(result["workflow_runs"]) > MAX_RUNS):
         raise ValueError("GitHub workflow list shape or bounds invalid")
+    total = result.get("total_count")
+    if total is not None and (type(total) is not int or total < len(result["workflow_runs"])):
+        raise ValueError("invalid GitHub workflow run count")
+    # Both missing pagination totals and omitted runs are coverage gaps;
+    # never turn a sampled list into a complete inventory.
     selected = []
-    partial = False
+    seen_run_ids = set()
+    partial = total is None or total > len(result["workflow_runs"])
     for run in result["workflow_runs"]:
         if not isinstance(run, dict):
             partial = True
@@ -58,7 +64,13 @@ def recent_runs(root, canonical_repository, token, status):
                 or repository.get("full_name") != canonical_repository):
             partial = True
             continue
+        if rid in seen_run_ids:
+            partial = True
+            continue
+        seen_run_ids.add(rid)
         selected.append((rid, sha))
+    if len(selected) > RUN_PAGES_PER_WINDOW:
+        partial = True
     # A busy repository can bury an old stuck queue behind newer workflow
     # runs. Inspect the newest and furthest-back visible run from the *same*
     # bounded GitHub page, not merely the first two. These are samples,
