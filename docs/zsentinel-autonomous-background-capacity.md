@@ -428,6 +428,15 @@ vereist voortaan:
 - minimaal **drie observaties**, met ten minste **45 seconden** ertussen;
 - maximaal **240 seconden** tussen geldige opeenvolgende observaties.
 
+De verhoging gebeurt bovendien in **twee trappen**: een bestaande
+60%-trainer mag na een geslaagde eerste herstelperiode maximaal naar
+**100% CPU / gewicht 40**. Van 100% naar **175% CPU / gewicht 70**
+is pas mogelijk na een **nieuwe**, onafhankelijke periode van vijf
+minuten en drie gespreide stabiele metingen. Het script slaat hiervoor
+alleen de minimumstatus van de daadwerkelijke read-back cgroup op,
+gebonden aan dezelfde Linux boot. Opschalen gebeurt nooit op basis
+van een oud algemeen performanceadvies alleen.
+
 Bij een nieuw runnerproces, hoge systeemdruk of verminderde betrouwbaarheid
 wordt de effectieve CPU- of gewichtstoewijzing **zonder wachttijd verlaagd**.
 Als de coach inactief is start het script niets. Kan een *actieve* coach zijn
