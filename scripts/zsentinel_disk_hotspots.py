@@ -23,7 +23,7 @@ PRIVATE = frozenset({
     ".ssh", ".gnupg", ".aws", ".config", ".git", ".env", ".secrets",
     "secrets", "credentials", "tokens", "private_keys", ".private",
 })
-SENSITIVE_PARTS = ("secret", "credential", "token", "password", "api-key", "apikey", "keypair")
+SENSITIVE_PARTS = ("secret", "credential", "token", "password", "api-key", "apikey", "keypair", "private")
 SENSITIVE_EXT = (".pem", ".key", ".p12", ".pfx", ".jks", ".keystore")
 MAX_FILES = 20000
 MAX_DEPTH = 4
@@ -62,6 +62,8 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         raise ValueError("bounded scan settings required")
     started = time.monotonic()
     mount = root.stat().st_dev
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise ValueError("no-follow directory descriptor support required")
     stack = deque([(root, 0)])
     visited = set()
     scanned = 0
@@ -84,13 +86,15 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         # Breadth-first scan: a busy subproject cannot monopolize all depth
         # slots while other top-level workspaces remain completely unseen.
         directory, depth = stack.popleft()
+        directory_fd = None
         try:
-            listing = os.scandir(directory)
-        except OSError:
-            denied += 1
-            continue
-        try:
-            with listing as entries:
+            directory_fd = os.open(
+                directory, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY |
+                getattr(os, "O_CLOEXEC", 0))
+            if os.fstat(directory_fd).st_dev != mount:
+                mount_skipped += 1
+                continue
+            with os.scandir(directory_fd) as entries:
                 for entry in entries:
                     if scanned >= max_entries:
                         stop_reason = "entry_budget_exhausted"
@@ -117,7 +121,7 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
                         if depth >= max_depth:
                             directories_unscanned += 1
                         else:
-                            stack.append((Path(entry.path), depth + 1))
+                            stack.append((Path(directory, entry.name), depth + 1))
                         continue
                     if not stat.S_ISREG(info.st_mode):
                         continue
@@ -127,14 +131,14 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
                     visited.add(identity)
                     allocated = max(0, info.st_blocks) * 512
                     observed_allocated += allocated
-                    rel_parts = Path(entry.path).relative_to(root).parts
+                    rel_parts = Path(directory, entry.name).relative_to(root).parts
                     folder = rel_parts[0] if len(rel_parts) > 1 else "(workspace root)"
                     directory_bytes[folder] = directory_bytes.get(folder, 0) + allocated
                     directory_files[folder] = directory_files.get(folder, 0) + 1
                     if allocated < limit:
                         continue
                     large_files_seen += 1
-                    relative = str(Path(entry.path).relative_to(root))
+                    relative = str(Path(directory, entry.name).relative_to(root))
                     # Path is a display label only, never passed to a shell.
                     item = (allocated, relative, max(0, int(info.st_size)),
                             max(0, int(info.st_mtime)))
@@ -146,6 +150,9 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
                 break
         except OSError:
             denied += 1
+        finally:
+            if directory_fd is not None:
+                os.close(directory_fd)
     items = sorted(top, reverse=True)
     complete = (stop_reason is None and not stack and not denied and
                 not directories_unscanned and not sensitive_skipped and
