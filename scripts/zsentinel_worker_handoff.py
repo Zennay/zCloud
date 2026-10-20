@@ -25,6 +25,8 @@ STEP = {
         "Een claimregel bestaat maar de lease is verlopen/ongeldig. Laat de bevoegde eigenaar de originele claimstatus handmatig beoordelen; reset of herverdeel niets.",
     "owner_inspect_current_assignment_and_recent_browser_block":
         "Controleer de huidige toewijzing en het recente browserblokkadesignaal bij de eigenaar.",
+    "owner_verify_orphan_browser_block_without_prompt_identity":
+        "Een recent browserfoutsignaal heeft geen waarneembare opdrachtcontext. Verifieer eerst bij eigenaar de echte prompt/toewijzing; geen actuele taakblokkade bewezen.",
     "owner_verify_product_continuation_after_block_signal":
         "Na de blokkade kwam een browser-event; controleer de echte productcontinuïteit bij de eigenaar.",
     "owner_verify_current_lease_and_real_worker_progress":
