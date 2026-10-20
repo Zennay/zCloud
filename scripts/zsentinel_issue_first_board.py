@@ -19,6 +19,8 @@ from zsentinel_issue_merge_priority import (
 )
 
 MAX_PER_PROJECT = 4
+TARGET_CANDIDATES_PER_PAGE = 20
+MAX_TARGET_PAGES = 50
 
 
 def eligible_pr(item):
@@ -106,7 +108,7 @@ def collect(projects, registry, budget):
     return rows, unmatched[:24], partial
 
 
-def collect_targeted(project, issue_number, registry, budget):
+def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
     """Find existing product PRs for an explicit urgent issue, even when old.
 
     The ordinary issue-first inventory sees only the most recently modified
@@ -126,8 +128,14 @@ def collect_targeted(project, issue_number, registry, budget):
     issue_info = level or {"number": issue_number, "priority": "UNCLASSIFIED",
                            "title": str(issue.get("title") or "")[:160]}
     issue_info["url"] = f"https://github.com/{repo}/issues/{issue_number}"
+    if type(candidate_page) is not int or not 1 <= candidate_page <= MAX_TARGET_PAGES:
+        raise ValueError("candidate page outside bounded GitHub Search window")
     query = quote(f"repo:{repo} is:pr is:open {issue_number}", safe="")
-    found = board.bounded_gh(f"search/issues?q={query}&per_page=100", budget)
+    # Each page is independently bounded and can be inspected without scanning
+    # all previous candidates. GitHub Search has a 1000-hit result ceiling.
+    found = board.bounded_gh(
+        f"search/issues?q={query}&sort=updated&order=desc"
+        f"&per_page={TARGET_CANDIDATES_PER_PAGE}&page={candidate_page}", budget)
     if not isinstance(found, dict):
         raise ValueError("invalid issue search source")
     matches = found.get("items")
@@ -135,15 +143,25 @@ def collect_targeted(project, issue_number, registry, budget):
     if (not isinstance(matches, list) or type(total) is not int
             or type(found.get("incomplete_results")) is not bool):
         raise ValueError("incomplete issue search result")
+    window_start = (candidate_page - 1) * TARGET_CANDIDATES_PER_PAGE
+    window_end = window_start + len(matches)
     partial = []
-    if found["incomplete_results"] or total > len(matches):
-        partial.append({"project": project, "reason": "ISSUE_SEARCH_PARTIAL"})
-    # Search can yield unrelated PRs with a coincidental numeric token.
-    # Inspect no more than 32 candidates, and never equate search hits to links.
-    if len(matches) > 32:
-        partial.append({"project": project, "reason": "CANDIDATE_WINDOW_32"})
+    if (found["incomplete_results"] or total > 1000 or total > window_end
+            or window_start > 0):
+        partial.append({"project": project, "reason": "SEARCH_WINDOW_PARTIAL"})
+    if len(matches) > TARGET_CANDIDATES_PER_PAGE:
+        raise ValueError("unbounded search candidate source")
+    # Search can yield unrelated PRs with coincidental numeric tokens. The
+    # actual PR body and current head are the only admitted link evidence.
     rows, examined, unique = [], 0, set()
-    for hit in matches[:32]:
+    for hit in matches:
+        # Reserve calls/time for exact-source PR evidence and final issue
+        # reconciliation; an exhausted source must never masquerade as DONE.
+        if (budget[0] > board.MAX_GETS - 8
+                or time.monotonic() > budget[1] - 10):
+            partial.append({"project": project, "reason": "SOURCE_BUDGET_PARTIAL"})
+            break
+        examined += 1
         if not isinstance(hit, dict) or not isinstance(hit.get("number"), int):
             partial.append({"project": project, "reason": "MALFORMED_SEARCH_ITEM"})
             continue
@@ -181,23 +199,41 @@ def collect_targeted(project, issue_number, registry, budget):
             rows.append(report)
         except (RuntimeError, ValueError, KeyError, TypeError):
             partial.append({"project": project, "reason": "CANDIDATE_SOURCE_UNAVAILABLE"})
-        examined += 1
         if len(rows) >= MAX_PER_PROJECT:
             partial.append({"project": project, "reason": "MAX_FOUR_MATCHING_PRS"})
             break
-    # Issue might close while its PRs are being read. We will not advertise
-    # current open urgency on an issue whose last read no longer corroborates.
-    final_issue = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
-    if (not isinstance(final_issue, dict)
-            or final_issue.get("state") != "open"
-            or final_issue.get("number") != issue_number):
-        partial.append({"project": project, "reason": "ISSUE_SOURCE_MOVED"})
+    # Never advertise a current open issue without an independent end-of-scan
+    # issue read. Failed reconciliation preserves the PR gate observations but
+    # clears purported current issue links and records the source limitation.
+    try:
+        final_issue = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
+        issue_current = (isinstance(final_issue, dict)
+                         and final_issue.get("state") == "open"
+                         and final_issue.get("number") == issue_number
+                         and final_issue.get("id") == issue.get("id"))
+    except (RuntimeError, ValueError, KeyError, TypeError, OSError):
+        issue_current = False
+    if not issue_current:
+        partial.append({"project": project, "reason": "ISSUE_SOURCE_UNVERIFIED"})
         for row in rows:
             row["observed_issue_refs"] = []
             row["issue_reference_source"] = "UNKNOWN_OR_MOVED"
-    return rows, issue_info, partial, {"search_total": total,
-                                      "search_examined": min(len(matches), 32),
-                                      "source": "TARGETED_ISSUE_SEARCH"}
+        issue_info["current_state"] = "UNKNOWN"
+    else:
+        issue_info["current_state"] = "OPEN_RECONFIRMED"
+    next_page = (candidate_page + 1 if
+                 window_end < min(total, 1000) and
+                 candidate_page < MAX_TARGET_PAGES else None)
+    return rows, issue_info, partial, {
+        "search_total": total,
+        "search_examined": examined,
+        "candidate_page": candidate_page,
+        "window_start": window_start,
+        "window_end": window_end,
+        "next_page": next_page,
+        "search_complete": not bool(partial) and window_start == 0
+                           and window_end >= total and examined == len(matches),
+        "source": "TARGETED_ISSUE_SEARCH"}
 
 
 def render_issue_sections(unmatched, partial):
@@ -253,8 +289,24 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
         if target_coverage:
             target_section += (
                 "<p>Search total: " + esc(target_coverage["search_total"]) +
-                " · Maximaal bekeken: " + esc(target_coverage["search_examined"]) +
+                " · Pagina: " + esc(target_coverage["candidate_page"]) +
+                " · Venster: " + esc(target_coverage["window_start"] + 1) +
+                "–" + esc(target_coverage["window_end"]) +
+                " · Daadwerkelijk bekeken: " +
+                esc(target_coverage["search_examined"]) +
                 " · Bron: " + esc(target_coverage["source"]) + "</p>"
+            )
+            if target_coverage["next_page"] is not None:
+                target_section += (
+                    "<p>Volgende zoekpagina: " +
+                    esc(target_coverage["next_page"]) +
+                    " (apart opvragen met --candidate-page; geen automatisch "
+                    "opnieuw starten of eigenaarschap nemen).</p>"
+                )
+            if not target_coverage["search_complete"]:
+                target_section += (
+                    "<p><strong>Brondekking onvolledig.</strong> "
+                    "Onbekende PRs zijn niet automatisch onbezet.</p>"
             )
         target_section += "</section>"
     return raw.replace("<main>", target_section +
@@ -268,6 +320,8 @@ def main():
                      help="canonical project_id (repeat up to three, e.g. cloud, supa)")
     cli.add_argument("--issue", type=int,
                      help="target one known open issue outside the recent PR window; requires one --project")
+    cli.add_argument("--candidate-page", type=int, default=1,
+                     help="continue targeted issue search on page 1–50 of 20 PRs")
     cli.add_argument("--output", help="create new private 0600 offline .html (never overwrite)")
     cli.add_argument("--format", choices=("text", "json"), default="text")
     args = cli.parse_args()
@@ -276,13 +330,18 @@ def main():
         cli.error("select up to three distinct projects")
     if args.issue is not None and (len(args.project) != 1 or not 1 <= args.issue <= 9999999):
         cli.error("--issue requires one project and positive issue number")
+    if not 1 <= args.candidate_page <= MAX_TARGET_PAGES:
+        cli.error("--candidate-page must be between 1 and 50")
+    if args.issue is None and args.candidate_page != 1:
+        cli.error("--candidate-page requires --issue")
     try:
         registry = board.registry()
         budget = [0, time.monotonic() + board.MAX_SECONDS]
         targeted = None
         if args.issue is not None:
             rows, targeted, partial, target_coverage = collect_targeted(
-                args.project[0], args.issue, registry, budget)
+                args.project[0], args.issue, registry, budget,
+                candidate_page=args.candidate_page)
             unmatched = []
         else:
             rows, unmatched, partial = collect(args.project, registry, budget)
@@ -329,6 +388,11 @@ def main():
             if targeted:
                 print(f"TARGET_ISSUE {targeted['priority']} #{targeted['number']} "
                       f"{targeted['url']} (source-only, not resolution proof)")
+                print(f"SEARCH_WINDOW page={target_coverage['candidate_page']} "
+                      f"observed={target_coverage['search_examined']} "
+                      f"total={target_coverage['search_total']} "
+                      f"next_page={target_coverage['next_page']} "
+                      f"complete={target_coverage['search_complete']}")
     except (ValueError, OSError, KeyError, TypeError):
         cli.error("invalid project, source, or private output; no merge/write performed")
 
