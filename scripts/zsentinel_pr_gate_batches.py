@@ -152,10 +152,26 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 or type(item.get("human_next_gate_step")) is not str
             ):
                 raise ValueError("incomplete observed gate evidence")
-            if observed and any(item[k] < 0 for k in (
-                    "observed_checks_pending", "observed_checks_not_successful",
-                    "observed_independent_exact_head_approvals")):
-                raise ValueError("invalid negative observed gate count")
+            if observed:
+                for key in (
+                    "legacy_status_failure_or_error_observed",
+                    "legacy_status_pending_observed",
+                    "observed_exact_head_changes_requested",
+                ):
+                    if type(item.get(key)) is not int or item[key] < 0:
+                        raise ValueError("invalid saved legacy or review gate count")
+                for key in (
+                    "check_runs_page_complete",
+                    "legacy_status_source_may_be_truncated",
+                    "review_page_may_be_truncated",
+                    "draft_at_read",
+                ):
+                    if type(item.get(key)) is not bool:
+                        raise ValueError("invalid saved source-coverage flag")
+                if any(item[k] < 0 for k in (
+                        "observed_checks_pending", "observed_checks_not_successful",
+                        "observed_independent_exact_head_approvals")):
+                    raise ValueError("invalid negative observed gate count")
             rows.append({
                 "url": url,
                 "exact_head_observed": item["head_sha_observed"] if observed else None,
