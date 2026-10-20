@@ -2532,3 +2532,52 @@ geen open fd != veilige vrijgave.
 
 Dit blijft broncode op de nog niet gemergede PR; afzonderlijke CI,
 independent review en bevoegde runtime release blijven nodig.
+
+
+### 20 oktober · Verwijderde maar nog geopende bestanden (tweede ruimtebron)
+
+Een mapscan ziet per definitie geen bestanden meer waarvan de directory-entry
+is verwijderd, zelfs wanneer een Linux-proces de inode nog geopend houdt.
+Daarom heeft de bestaande zSentinel **schijfruimtewerkbank** nu de opt-in
+`scripts/zsentinel_disk_unlinked_open.py`-bron. Deze bemonstert uitsluitend
+`/proc/*/fd/N`-metadata van reguliere files op **hetzelfde filesystem** als
+de expliciet gekozen projectworkspace, met harde maxima van 2.048 processen,
+16.384 descriptors, 8.192 unieke inodes en 2 seconden.
+
+De bron registreert alleen aantallen unieke unlinked inodes, open
+verwijzingen, betrokken procescount en waargenomen toegewezen fileblokken.
+Zij leest geen fd-doelpad, procesargumenten, bestandinhoud of secrets en
+geeft **geen PID, inode-ID, pad, sleutel, bestandsnaam of procescommando**
+in output terug. Publieke HTML/JSON toont dezelfde padvrije minimale
+bron samengevat; besloten create-only 0600 HTML/JSON/Markdown toont
+de uitgebreidere bronstatus. De uitkomsten blijven beperkt tot een
+momentopname; niet-toegankelijke/racende `/proc`-items markeren
+`coverage=partial`, niet "geen probleem".
+
+**Gebruik standalone:**
+```sh
+python3 scripts/zsentinel_disk_hotspots.py \
+  --root /home/ubuntu/zennay-cloud \
+  --inspect-unlinked-files \
+  --format html \
+  --output /home/ubuntu/zennay-cloud/.operator-private/disk-unlinked.html
+```
+De bestaande eenmalige live en portfolio-CLI's gebruiken dezelfde
+`--disk-hotspots-root` + `--disk-hotspots-output` en voegen optioneel
+`--disk-inspect-unlinked-files` toe. Zonder expliciete privé scan en
+output start de /proc-bron niet.
+
+**Uitvoergrenzen:** "zelfde filesystem" impliceert niet "afkomstig uit
+deze projectworkspace". Waargenomen toegewezen blokken zijn ook **GEEN
+gegarandeerd terugwinbare ruimte**. Open fd's bevestigen geen actieve
+schrijvers; niets gevonden bewijst geen afwezigheid. De module autoriseert
+geen fd-close, SIGTERM, service-restart, bestandsherstel, opschoning,
+Notion-claim, workflowrerun of merge/release. Een bevoegde runtime-owner
+moet herkomst, actieve writers, herstelbaarheid en bewaarbeleid zelfstandig
+vaststellen voordat een afzonderlijke operationele ingreep plaatsvindt.
+
+Bron is op bestaande zCloud PR #1563 gecommit, niet op main gemerged.
+Een read-only, exact-head in-memory uitvoering via verbonden zSSH kon
+de private en padvrije operatorrapportage opbouwen. Daarbij stond de
+VPS-mount op circa 93,19% niet-beschikbaar; geen positieve unlinked
+matches binnen **partiële** /proc-dekking. Dit is geen herstelbewijs.
