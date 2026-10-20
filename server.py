@@ -2894,6 +2894,16 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
         raise ValueError('Project is human-gated; gebruik Attention Needed in plaats van de workerqueue')
     if not _portfolio_queue_execution_capable(title,completion_criteria):
         raise ValueError('Alleen uitvoerbare write/build/test/deploy taken mogen in de workerqueue')
+    # Refuse new QA-only work *before* writing or modifying any queue row.
+    # Owner-controlled existing claimed/running/verifying rows are untouched,
+    # and genuine build/repair work keeps all its normal admission gates.
+    decision, reason = product_delivery_classification({
+        'status': 'queued',
+        'title': title,
+        'completion_criteria': str(completion_criteria or ''),
+    })
+    if decision != 'product':
+        raise ValueError('Nieuwe niet-product/QA-only wachtrijtaak geweigerd: '+reason)
     if not queue_id:
         digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
         queue_id=project_id+'-'+digest
