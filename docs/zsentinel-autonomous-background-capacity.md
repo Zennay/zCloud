@@ -17,31 +17,45 @@ move files or bypass a merge/deploy gate.
 
 A process is a job worker only if `/proc/*/comm` is `Runner.Worker` and
 its command line is present. An idle listener alone is not a running job.
-Disappearing processes during the scan are ignored. A failed whole-/proc
-observation selects the conservative band rather than declaring no runners.
+Disappearing processes during the scan are ignored. If a still-running process
+cannot be inspected, or a Runner.Worker has no readable argv, source coverage
+is incomplete and the conservative band applies. A failed whole-/proc
+observation likewise cannot be treated as proof of idle runner capacity.
 The `zcloud_runner_active` field is a **path marker**, not proof that an
 AI browser worker or merge job is active. Load, memory, swap and root disk
 are independent capacity indicators; CPU throttling does not actually free
 swap, disk blocks or repair a runner.
 
-The read-only snapshot and the selected CPU policy are saved **after** a
-successful `systemctl --user set-property --runtime` call in an atomic
-create-only, 0600 temporary file under `$XDG_RUNTIME_DIR`; rename replaces
-the prior state. A pre-existing state symlink is not followed when reading.
-If the property update fails, the timer task fails without publishing a
-false new applied decision. The state contains only numeric capacity and
-boolean runner observations, not process command lines or credentials.
+On each timer invocation, the tuner reads the **actual** user-systemd
+`CPUQuotaPerSecUSec`, `CPUWeight` and `ActiveState`, rather than assuming an
+old saved JSON decision is still installed. If the active service already
+has the selected values, no control write is necessary; otherwise the tuner
+changes only the existing user-scope properties and reads them back before
+claiming `applied_verified=true`. A failed systemctl update or read-back
+never publishes a false verified decision. If the coach is inactive, the
+tuner does not start it: it writes `unit_active=false` and
+`applied_verified=false` for operator visibility. The read-only snapshot and
+selected CPU policy are saved through a private atomic 0600 temporary file
+under `$XDG_RUNTIME_DIR`; rename replaces the prior state. State stores only
+numeric capacity and boolean runner observations, not process command lines,
+full filesystem paths or credentials.
 
 ## Read-only decision preview
 
 On a machine with access to the Python source, `python3
 scripts/zsentinel_background_priority.py --preview` prints a single JSON
 snapshot with root-disk/swap/memory/load observations, conservative mode,
-recommended quota/weight and `"applied": false`. It is safe for observation:
-no user-manager call, service change or state file write, and it does not
-require Ubuntu UID 1000. The bare command remains restricted to that UID
-and applies the policy only to the existing dedicated user unit. A preview
-is **not proof** the timer is deployed or that the recommendation is live.
+recommended quota/weight and `"applied": false`. When a user systemd bus
+is available, the preview additionally makes a **read-only** `systemctl
+--user show` call for the current coach `unit_active`,
+`current_quota_percent`, `current_weight` and
+`recommendation_currently_applied`. Without a user bus it displays
+`unit_observed=false` and null current values, never inventing an active
+setting. It makes no service change or state-file write and does not require
+Ubuntu UID 1000. The bare command remains restricted to that UID and only
+changes the existing dedicated user unit. A preview's observed current
+values **do not prove** this PR source was installed, nor does preview
+validate runner recovery.
 
 ## Operator installation and release boundaries
 
