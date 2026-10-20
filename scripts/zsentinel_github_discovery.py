@@ -156,6 +156,10 @@ def discover(registry, selected, token=None):
                 "verified_receipt": "github_bounded_run_jobs_discovery",
                 "runner_route": route["runner_route"],
                 "route_labels": route["route_labels"],
+                "job_assignment_stage": route["job_assignment_stage"],
+                "assignment_source_complete": route["assignment_source_complete"],
+                "runner_healthy_verified": False,
+                "worker_resumed_verified": False,
             }
             if status == "completed":
                 receipt["conclusion"] = conclusion
