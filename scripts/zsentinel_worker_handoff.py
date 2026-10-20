@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
+import json
 import os
 from pathlib import Path
 import stat
@@ -83,8 +84,147 @@ def _admit(receipt):
     return observed.astimezone(timezone.utc), fragment
 
 
-def render_html(receipt):
+def _unique_worker_rows(receipt):
+    rows = {}
+    for item in receipt["entries"]:
+        key = (item["project_id"], item["worker_slot"])
+        if key in rows:
+            raise ValueError("duplicate worker slot in continuity source")
+        rows[key] = item
+    return rows
+
+
+def compare_worker_snapshots(prior, current):
+    """Conservative bounded before/after signals; never infer task recovery.
+
+    Reused project/window identities are mandatory. A missing current card
+    means 'not in sample', not closed, healthy, released or available.
+    """
+    previous_at, _ = _admit(prior)
+    current_at, _ = _admit(current)
+    if (current_at <= previous_at
+            or (current_at - previous_at).total_seconds() > 30 * 86400
+            or prior.get("selected_projects") != current.get("selected_projects")
+            or type(prior.get("selected_projects")) is not list
+            or not 1 <= len(prior["selected_projects"]) <= MAX_PROJECTS):
+        raise ValueError("worker comparison needs chronological matching project windows")
+    old, new = _unique_worker_rows(prior), _unique_worker_rows(current)
+    combined = sorted(set(old) | set(new))
+    if len(combined) > 2 * MAX_PROJECTS * MAX_SLOTS:
+        raise ValueError("worker comparison exceeds the bounded source window")
+    changes = []
+    for key in combined:
+        before = old.get(key)
+        after = new.get(key)
+        state_before = before["classification"] if before is not None else None
+        state_now = after["classification"] if after is not None else None
+        if before is None:
+            label = "nieuw_in_beperkte_steekproef_niet_nieuwe_claim"
+            next_step = "Controleer actuele toewijzing en eigenaar voordat er iets verandert."
+        elif after is None:
+            label = "ontbreekt_in_recente_steekproef_niet_opgelost"
+            next_step = "Verifieer met eigenaar of slot nog bestaat; GEEN herstelbewijs."
+        elif state_before != state_now:
+            label = "bronclassificatie_gewijzigd_herstel_niet_bewezen"
+            next_step = "Controleer actuele claim-epoch en echte productvoortgang bij eigenaar."
+        else:
+            label = "opnieuw_waargenomen_geen_continuiteitsbewijs"
+            next_step = "Observeer eigenaarclaim en productoutput apart; geen automatische overname."
+        changes.append({
+            "project_id": key[0],
+            "worker_slot": key[1],
+            "previous_classification": state_before,
+            "current_classification": state_now,
+            "interpretation": label,
+            "safe_next_step": next_step,
+            "owner_verified": False,
+            "claim_epoch_bound": False,
+            "recovered_verified": False,
+            "mutations_performed": False,
+        })
+    return {
+        "schema": "zsentinel-worker-handoff-continuity-v1",
+        "prior_observed_at_utc": previous_at.isoformat(timespec="seconds"),
+        "current_observed_at_utc": current_at.isoformat(timespec="seconds"),
+        "same_selected_project_window": True,
+        "history_complete": False,
+        "recovery_verified": False,
+        "worker_claim_identity_verified": False,
+        "writes_performed": False,
+        "observations": changes,
+    }
+
+
+def load_private_previous(path: Path):
+    """Bounded no-symlink JSON input, with duplicate-key rejection."""
+    if not isinstance(path, Path) or not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("secure previous operator receipt path required")
+    fd = os.open(
+        path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK |
+        getattr(os, "O_CLOEXEC", 0))
+    with os.fdopen(fd, "rb") as source:
+        st = os.fstat(source.fileno())
+        if not stat.S_ISREG(st.st_mode) or not 2 <= st.st_size <= 512 * 1024:
+            raise ValueError("prior operator receipt must be bounded regular JSON")
+        raw = source.read(512 * 1024 + 1)
+        if len(raw) != st.st_size or len(raw) > 512 * 1024:
+            raise ValueError("prior operator receipt unstable or exceeds limit")
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key in prior worker source")
+            result[key] = value
+        return result
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("prior worker JSON invalid") from exc
+    _admit(parsed)
+    return parsed
+
+
+def _continuity_html(transition):
+    rows = []
+    for row in transition["observations"]:
+        rows.append(
+            "<li><strong>" + escape(row["project_id"]) + " · worker " +
+            str(row["worker_slot"]) + "</strong> — " +
+            escape(row["interpretation"]) + " · eerder: " +
+            escape(row["previous_classification"] or "ONBEKEND") +
+            " → nu: " + escape(row["current_classification"] or "ONBEKEND") +
+            ". " + escape(row["safe_next_step"]) + "</li>"
+        )
+    return (
+        '<section class="panel warn"><h2>Continuïteit sinds vorige waarneming</h2>'
+        '<p class="banner">Dit is geen herstelbewijs. Eerder niet getoonde'
+        ' of verdwenen workers zijn GEEN nieuwe/vrije/afgeronde claims.'
+        ' Er is geen claimepoch- of productoutput-verificatie.</p>'
+        '<p>Vorige bron (UTC): ' + escape(transition["prior_observed_at_utc"]) +
+        ' · huidige bron: ' + escape(transition["current_observed_at_utc"]) +
+        '</p><ol>' + "".join(rows) + '</ol></section>'
+    )
+
+
+def _continuity_markdown(transition):
+    out = ["## Verschillen sinds vorige bronwaarneming",
+           "Vorige bron (UTC): " + transition["prior_observed_at_utc"],
+           "Nieuwste bron (UTC): " + transition["current_observed_at_utc"],
+           "**NOOIT herstelbewijs:** bronvensters zijn begrensd; claimepoch en productoutput onbekend."]
+    for row in transition["observations"]:
+        out.append(
+            "- " + row["project_id"] + "/worker " + str(row["worker_slot"]) +
+            ": " + row["interpretation"] + " (" +
+            (row["previous_classification"] or "ONBEKEND") + " → " +
+            (row["current_classification"] or "ONBEKEND") +
+            "). " + row["safe_next_step"])
+    return "\n".join(out)
+
+
+def render_html(receipt, previous=None):
     observed, body = _admit(receipt)
+    if previous is not None:
+        body = _continuity_html(compare_worker_snapshots(previous, receipt)) + body
     entries = receipt["entries"]
     inbox = receipt.get("owner_followup_candidates")
     actionable = len(inbox) if isinstance(inbox, list) else None
@@ -128,7 +268,7 @@ of automatische taakovername. Voor echte actie zijn actuele eigenaarclaims,
 vereiste CI, toestemming en deploymentgates verplicht.</p></footer></body></html>"""
 
 
-def render_markdown(receipt):
+def render_markdown(receipt, previous=None):
     observed, _ = _admit(receipt)
     entries = sorted(receipt["entries"], key=_operator_worker_priority)
     inbox = receipt.get("owner_followup_candidates")
@@ -157,6 +297,8 @@ def render_markdown(receipt):
                 str(row["recent_progress_events_after_prompt_in_sample"]) +
                 ". Claim/recovery niet geverifieerd."
             )
+    if previous is not None:
+        lines.extend(["", _continuity_markdown(compare_worker_snapshots(previous, receipt))])
     lines.extend(["", "## Context per geselecteerde worker"])
     for row in entries:
         age = row.get("event_age_seconds")
