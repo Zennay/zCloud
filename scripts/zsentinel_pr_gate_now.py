@@ -7,11 +7,13 @@ full required-check rule set, branch protection, release or merge permission.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 
 from zsentinel_pr_scope_guard import github_json, REPO, SHA
@@ -267,12 +269,81 @@ def human_gate_summary(source: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+
+REVIEW_SCHEMA = "zsentinel-offline-merge-first-review-v1"
+REVIEW_MAX_BYTES = 1024 * 1024
+REVIEW_MAX_PRS = 300
+REVIEW_PR_URL = re.compile(
+    r"^https://github[.]com/(Zennay/[A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]{0,8})$")
+
+
+def read_review_manifest(path: Path):
+    """Bounded read-only handoff selection; no claim or merge permission."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not 2 <= info.st_size <= REVIEW_MAX_BYTES:
+            raise ValueError("review manifest must be a bounded regular JSON file")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(REVIEW_MAX_BYTES + 1)
+    finally:
+        os.close(fd)
+    if len(raw) > REVIEW_MAX_BYTES:
+        raise ValueError("review manifest exceeds one MiB")
+    try:
+        data = json.loads(raw.decode("utf-8", errors="strict"))
+    except (ValueError, UnicodeError):
+        raise ValueError("invalid UTF-8 JSON review manifest") from None
+    if (type(data) is not dict or data.get("schema") != REVIEW_SCHEMA
+            or data.get("claim_authorized") is not False
+            or data.get("merge_authorized") is not False
+            or data.get("deploy_authorized") is not False
+            or data.get("dispatch_authorized") is not False
+            or data.get("evidence_scope") != "bounded_saved_snapshot_not_live"
+            or type(data.get("source_board_sha256")) is not str
+            or re.fullmatch(r"[a-f0-9]{64}", data["source_board_sha256"]) is None):
+        raise ValueError("not a canonical non-authorizing review manifest")
+    rows = data.get("pr_references")
+    if type(rows) is not list or not 1 <= len(rows) <= REVIEW_MAX_PRS:
+        raise ValueError("review manifest has no bounded PR references")
+    priorities = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+    selected = []
+    seen = set()
+    for row in rows:
+        if (type(row) is not dict or type(row.get("url")) is not str
+                or row.get("highest_linked_priority") not in priorities
+                or row.get("merge_authorized") is not False
+                or type(row.get("observed_issue_refs")) is not list
+                or not row["observed_issue_refs"]):
+            raise ValueError("invalid captured PR reference")
+        match = REVIEW_PR_URL.fullmatch(row["url"])
+        if match is None:
+            raise ValueError("PR must be a canonical Zennay GitHub reference")
+        identity = (match.group(1), int(match.group(2)))
+        if identity in seen:
+            raise ValueError("duplicate PR in review manifest")
+        seen.add(identity)
+        selected.append((priorities[row["highest_linked_priority"]], identity))
+    selected.sort(key=lambda row: (row[0], row[1]))
+    return {
+        "prs": [identity for _, identity in selected[:MAX_PRS]],
+        "source_review_manifest_sha256": hashlib.sha256(raw).hexdigest(),
+        "source_review_board_sha256": data["source_board_sha256"],
+        "source_review_pr_count": len(selected),
+        "review_only_top_four_observed": len(selected) > MAX_PRS,
+    }
+
+
 def main(argv=None):
     """Produce one bounded source receipt for the offline merge-first workbench."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--pr", action="append", required=True,
+    selector = parser.add_mutually_exclusive_group(required=True)
+    selector.add_argument(
+        "--pr", action="append",
         help="Canonical Zennay/repository#number (repeat one to four times)")
+    selector.add_argument(
+        "--from-review", type=Path,
+        help="Review-only JSON manifest from the offline Merge-first Workbench")
     parser.add_argument(
         "--format", choices=("json", "text"), default="json",
         help="JSON for offline import (default), or human-readable Dutch gate triage")
@@ -281,17 +352,27 @@ def main(argv=None):
         help="Create NEW private 0600 report; omit to print to stdout")
     args = parser.parse_args(argv)
     try:
-        if not 1 <= len(args.pr) <= MAX_PRS:
-            raise ValueError("choose one to four PR references")
-        refs = []
-        for raw in args.pr:
-            if type(raw) is not str or PR_ARGUMENT.fullmatch(raw) is None:
-                raise ValueError("PR must use Zennay/repository#number")
-            repo, number = raw.rsplit("#", 1)
-            refs.append((repo, int(number)))
-        if len(set(refs)) != len(refs):
-            raise ValueError("duplicate PR reference")
+        review = None
+        if args.from_review is not None:
+            review = read_review_manifest(args.from_review)
+            refs = review["prs"]
+        else:
+            if not 1 <= len(args.pr) <= MAX_PRS:
+                raise ValueError("choose one to four PR references")
+            refs = []
+            for raw in args.pr:
+                if type(raw) is not str or PR_ARGUMENT.fullmatch(raw) is None:
+                    raise ValueError("PR must use Zennay/repository#number")
+                repo, number = raw.rsplit("#", 1)
+                refs.append((repo, int(number)))
+            if len(set(refs)) != len(refs):
+                raise ValueError("duplicate PR reference")
         source = observe_many(refs, token=os.environ.get("GITHUB_TOKEN"))
+        if review is not None:
+            for key in ("source_review_manifest_sha256",
+                        "source_review_board_sha256", "source_review_pr_count",
+                        "review_only_top_four_observed"):
+                source[key] = review[key]
         rendered = (
             json.dumps(source, sort_keys=True, ensure_ascii=True, indent=2) + "\n"
             if args.format == "json" else human_gate_summary(source))
