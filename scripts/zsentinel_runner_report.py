@@ -405,6 +405,9 @@ def timeline_footprint(receipts):
     from zsentinel_runner_snapshot import _unit_states
     failed = {}
     observed = {}
+    failure_results = {}
+    safe_results = {"oom-kill", "exit-code", "signal", "timeout",
+                    "watchdog", "core-dump", "resources"}
     partial = 0
     high_swap = 0
     high_disk = 0
@@ -427,6 +430,11 @@ def timeline_footprint(receipts):
             observed[name] = observed.get(name, 0) + 1
             if state["state"] == "failed":
                 failed[name] = failed.get(name, 0) + 1
+                result = state.get("reason")
+                if result not in safe_results:
+                    result = "unknown"
+                causes = failure_results.setdefault(name, {})
+                causes[result] = causes.get(result, 0) + 1
         cap = receipt.get("capacity")
         if not isinstance(cap, dict) or cap.get("source_complete") is not True:
             unknown_capacity += 1
@@ -463,7 +471,18 @@ def timeline_footprint(receipts):
                  latest_service_rows[name]["state"]
                  if name in latest_service_rows else
                  "unknown_partial" if not latest_service_coverage else
-                 "not_in_latest_sample")}
+                 "not_in_latest_sample"),
+             "last_systemd_result": (
+                 latest_service_rows[name].get("reason")
+                 if name in latest_service_rows
+                 and latest_service_rows[name]["state"] == "failed"
+                 and latest_service_rows[name].get("reason") in safe_results
+                 else "unknown"),
+             "failure_results": [
+                 {"result": result, "sample_count": number}
+                 for result, number in sorted(failure_results.get(name, {}).items(),
+                                              key=lambda item: (-item[1], item[0]))
+             ]}
             for name, count in sorted(failed.items(),
                                       key=lambda pair: (-pair[1], pair[0]))[:20]
         ],
@@ -486,11 +505,21 @@ def timeline_owner_actions(summary, comparisons):
                       for pair in comparisons))
     tasks = []
     if failed_latest and stressed_latest:
+        oom_recent = any(
+            entry.get("unit") in failed_latest
+            and entry.get("last_systemd_result") == "oom-kill"
+            for entry in failed_history
+        )
+        actions_hint = (
+            "De systemd-bron meldt oom-kill: eerst geheugen/swap en "
+            "cgroup-limieten door de eigenaar laten inspecteren. "
+            if oom_recent else
+            "Laat de runtime-eigenaar oorzaak en RAM/swap/disk-headroom bevestigen. "
+        )
         tasks.append((
             "P0 · actuele failed-services bij VPS-druk",
             "De laatste bron toont failed-services EN hoge huidige hostdruk. "
-            "Laat de runtime-eigenaar oorzaak en RAM/swap/disk-headroom bevestigen "
-            "vóór mogelijke herstelbesluiten; geen herstart of nieuwe jobs.",
+            + actions_hint + "Geen herstart of nieuwe jobs.",
             "LAATSTE BRON FAILED · EIGENAAR NODIG",
         ))
     elif failed_latest:
@@ -543,7 +572,11 @@ def render_timeline_footprint(summary):
                     + str(entry["seen_samples"]) + " waarnemingen met "
                     "systemd-status failed; laatst waargenomen: "
                     + escape(entry["last_observed_state"]) +
-                    " (geen aantal afzonderlijke crashes).</li>")
+                    "; geobserveerde systemd-resultaten: "
+                    + escape(", ".join(
+                        item["result"] + " " + str(item["sample_count"]) + "×"
+                        for item in entry["failure_results"]
+                    )) + " (geen aantal afzonderlijke crashes).</li>")
     failed_html = "".join(rows) or (
         "<li>Geen failed-status in waargenomen runnerregels; dit is geen "
         "bewijs dat alle runners gezond zijn.</li>")
@@ -763,6 +796,10 @@ def render_private_handoff(data):
                         + str(entry["failed_samples"]) + " × failed in "
                         + str(entry["seen_samples"]) + " bronobservaties; "
                         + "laatst gezien: " + _handoff_text(entry["last_observed_state"])
+                        + "; systemd-resultaten: "
+                        + _handoff_text(", ".join(
+                            item["result"] + " " + str(item["sample_count"]) + "x"
+                            for item in entry["failure_results"]), 250)
                         + "; niet gelijk aan evenveel crashes.")
     else:
         rows.append("- Geen failed-bronregel aangetroffen; geen bewijs dat alle runners gezond zijn.")
