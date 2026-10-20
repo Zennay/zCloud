@@ -330,7 +330,7 @@ def text_view(data):
     for lane in data["lanes"]:
         extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
         if lane["deferred_qa_packages"]:
-            extra += f" | {lane[\u0027deferred_qa_packages\u0027]} QA-taken uitgesloten"
+            extra += f" | {lane['deferred_qa_packages']} QA-taken uitgesloten"
         if lane["serialized_unscoped_queue_admitted"]:
             extra += " | MAXIMAAL EEN SCHRIJVER ZONDER SCOPE"
         if lane["new_write_admission_held"]:
