@@ -235,3 +235,40 @@ De oorspronkelijk geïntegreerde Product Delivery Workbench gebruikt `validated_
 **Private handoffs:** openbare issuetitels en opgeslagen mensnotities worden in tekst-/Markdown-overdracht tot één inerte regel genormaliseerd en Markdown-metatekens ontsnapt. Ruwe GitHub-issueinhoud of eerdere operatornotities komen daardoor niet als uitvoerbare instructie, HTML of verborgen meerdere regels over.
 
 De directe `--live-issues --focus-issue`-flow blijft strikt read-only: één exact geregistreerd repository/issue, canonical priority/QA-only screening en dezelfde bestaande triagekaart. Onbereikbare, gesloten of QA-only issues worden niet stilzwijgend als opgelost verklaard.
+
+## Meerdere open PR's per issue · eerst bestaand werk benutten (20 oktober)
+
+De bestaande live PR-bestandsscope ontdekt nu ook een TWEEDE type
+productoverlap: twee of meer actuele open PR-bodyteksten in dezelfde
+GitHub-repository verwijzen naar hetzelfde issue-nummer. Twee PR's
+kunnen immers dezelfde bug proberen op te lossen terwijl ze verschillende
+bestanden raken. Dit komt niet naar voren uit bestandsbotsingen alleen.
+
+De uitbreiding werkt in de bestaande productflows:
+
+- scripts/zsentinel_pr_scope_guard.py --audit-open-prs: open-PR
+  bestandsoverlap EN klikbare issue-PR-groepen met exacte head-SHA's.
+- scripts/zsentinel_pr_scope_portfolio.py: beide signalen in maximaal
+  drie onafhankelijk gelezen projecten, met onbekende bron als
+  fail-closed onbeschikbaar en expliciete afkapgrenzen.
+- scripts/zsentinel_issue_scope_cockpit.py --live-issues: bestaande
+  P0/P1 issuekaarten geven bij meerdere open PR-verwijzingen de route
+  'eerst bestaande implementaties bekijken en eigenaar afstemmen',
+  niet automatisch nieuw duplicerend werk maken. Echte bestandscope-
+  overlap blijft eerst; owner-only incidenten houden hun eigenaarroute.
+
+Alle gevonden koppelingen zijn uitsluitend TEXTERVAREN verwijzingen
+in begrensde open PR's. Een PR met dezelfde issue-verwijzing bewijst
+niet dat de PR het issue oplost, geen huidige claim bezit, review
+heeft of mergeklaar is. De bron classificeert
+same_issue_number_unverified_open_pr_body_text_only.
+Bij volle GitHub-pagina, veranderde heads, onleesbare body,
+API-weigering of afgekapt PR-inventarisvenster blijft afwezigheid
+van overlap UNKNOWN in plaats van claimvrij of mergevrij.
+Eigenaarschap, wijzigingen, merges, runneracties en deploys blijven
+ongeautoriseerd. Geen bestaande QA- of regressiesuite veranderd
+of gestart; de oorspronkelijke CI/review/branch-protection en
+bevoegde release-eigenaar blijven vereist.
+
+Broncode op bestaande PR #1567; nog niet gemerged op main of
+live uitgerold.
