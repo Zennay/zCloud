@@ -558,3 +558,39 @@ provenance-bound CSV. All fields use the same quoted, control-normalized,
 formula-safe CSV handling as the single-board export. A UTF-8 BOM aids
 manual spreadsheet import. No QA suite was authored or manually executed;
 normal exact-head review, CI, protected-main and runtime gates remain intact.
+
+
+## 20 October · Merge-first PR desk and unlinked product issue queue
+
+The already saved bounded delivery-board now powers a separate **Merge first**
+section in the same offline HTML workbench. For the operator's currently
+selected project, severity, disposition, follow-up and historical-change filters,
+it groups captured candidate PR links **by canonical URL**, shows each PR
+only once, orders groups by highest linked issue severity (P0 before P1),
+and displays original issue titles, issue links, local human disposition and
+observed missing-evidence text. Multiple issue references to one PR are
+shown explicitly as coordination candidates, **not** proof of duplicated
+implementation, conflict, closure or current PR ownership.
+
+The companion **product issues with no recorded PR reference** section
+makes free-looking backlog visible without falsely implying availability:
+the source is intentionally bounded, and a missing saved candidate does not
+establish that live GitHub has no open PR or that Notion has no active claim.
+No new worker task or branch is automatically created.
+
+**Preview filtered merge-first handoff** produces a source-SHA256-bound
+Markdown snapshot of both groups, including captured UTC time, canonical
+public issue/PR URLs, original priority, missing evidence and the fact that
+current exact-head CI, reviews, branch rules, worker claim and release
+permissions are unknown. **Download exactly this reviewed PR handoff** accepts
+only the unchanged complete preview; adjusting filters or private human
+dispositions invalidates the preview. The output is a local browser download.
+Private personal notes and contact labels are *not* included. No GitHub,
+Notion, browser persistence, queue, runner or production mutation occurs.
+
+The feature reuses existing canonical board validation, URL admissions,
+bounded card/reference lists, DOM text nodes and strict offline CSP. It
+does not infer `merged=true` from a historical PR reference or enable any
+automatic claim, merge, review, dispatch or deploy. Existing mandatory CI
+and independent review gates remain separate. No new QA, regression or
+test suites were written or run.
