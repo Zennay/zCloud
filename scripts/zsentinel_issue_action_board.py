@@ -18,6 +18,7 @@ LABELS = {
     "missing_current_source": "Ververs onvolledige actuele bron",
     "existing_pr_failed_gates": "Bestaande PR: eigenaar repareert falende gates",
     "existing_pr_waits_on_gates": "Bestaande PR: wacht op exacte-HEAD CI/review",
+    "existing_pr_gate_unobserved": "Bestaande PR: actuele CI/reviewbron ontbreekt",
     "existing_pr_scope_overlap": "Bestaande PR: stem bestandsoverlap af",
     "existing_pr_changed": "Bestaande PR: beoordeel nieuwe bronwijziging",
     "existing_pr_owner_review": "Bestaande PR: eigenaarschap en mergegates verifiëren",
@@ -34,8 +35,11 @@ GUIDANCE = {
         "Laat de huidige PR-eigenaar mislukte exacte-HEAD checks of gevraagde "
         "reviewwijzigingen oplossen. Geen gate overslaan."),
     "existing_pr_waits_on_gates": (
-        "Bestaande PR heeft lopende of ontbrekende gatebewijzen. Parkeer alleen "
+        "Bestaande PR heeft lopende gatebewijzen. Parkeer alleen "
         "die PR en pak een onafhankelijk productissue op."),
+    "existing_pr_gate_unobserved": (
+        "Voor deze bestaande PR is geen verifieerbare exacte-HEAD CI/reviewbron "
+        "waargenomen. Eerst bron, eigenaar en verplichte regels controleren."),
     "existing_pr_scope_overlap": (
         "Bestaand werk raakt dezelfde bestanden. Stem de wijziging met "
         "de actuele eigenaren af; geen branch of claim overnemen."),
@@ -133,6 +137,8 @@ def build(report):
                 action = "existing_pr_failed_gates"
             elif pending:
                 action = "existing_pr_waits_on_gates"
+            elif not live:
+                action = "existing_pr_gate_unobserved"
             elif overlap:
                 action = "existing_pr_scope_overlap"
             elif moved:
@@ -142,6 +148,10 @@ def build(report):
         else:
             action = "owner_before_new_product_work"
         chosen_url = selected[1]["url"] if selected else None
+        gate_source = ("not_observed" if selected is None or not selected[2]
+                       else "observed_failed" if selected[3]
+                       else "observed_pending" if selected[4]
+                       else "observed_partial_no_release_permission")
         # A complete-looking positive observation isn't current claim/review
         # authorisation. The human has to verify those in the source app.
         card = {
@@ -152,6 +162,7 @@ def build(report):
             "existing_pr_count_in_sample": len(refs),
             "candidate_existing_pr_url": chosen_url,
             "candidate_pr_observation_only": True if selected else None,
+            "candidate_exact_head_gate_state": gate_source,
             "historic_pr_movement_in_sample": issue.get(
                 "historical_linked_pr_activity_observed") is True,
             "pr_file_scope_sample_complete": scope["pr_sample_complete"],
@@ -220,6 +231,8 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
             str(index) + ". " + item["priority"] + " · " +
             item["project"] + " · " + issue + " · " + title,
             "   " + item["category_nl"],
+            "   Exacte-HEAD gatebron: " + item["candidate_exact_head_gate_state"] +
+            " (nooit zelfstandige vrijgave).",
             "   " + item["human_next_step_nl"],
             "   Brondekking: PR-bestanden " +
             ("compleet in gelezen steekproef" if
