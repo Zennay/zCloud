@@ -355,11 +355,9 @@ retry, servicewijziging, GitHub-actie of portfolio-claim is uitgevoerd.</p></sec
 Alleen bedoeld als privé operatoroverzicht, niet als productie- of releasebewijs.</footer></main></body></html>"""
 
 
-def offline_comparison_report(t0_path, t1_path):
-    """Replay only two owner-private receipts, with no systemd or host probing."""
-    from zsentinel_runner_snapshot import changes, load_private
-    previous = load_private(t0_path)
-    current = load_private(t1_path)
+def offline_comparison_data(previous, current):
+    """Render from the same already-admitted private receipts, without re-reading."""
+    from zsentinel_runner_snapshot import changes
     comparison = changes(previous, current)
     rec = current.get("cpu_recommendation")
     capacity = current.get("capacity")
@@ -391,6 +389,12 @@ def offline_comparison_report(t0_path, t1_path):
     }
 
 
+
+
+def offline_comparison_report(t0_path, t1_path):
+    """Open each private T0/T1 receipt exactly once; never probe live state."""
+    from zsentinel_runner_snapshot import load_private
+    return offline_comparison_data(load_private(t0_path), load_private(t1_path))
 
 
 def timeline_footprint(receipts):
@@ -550,7 +554,7 @@ def offline_timeline_report(paths):
     pairs = [changes(left, right) for left, right in zip(receipts, receipts[1:])]
     # Reuse the existing v1 owner-private offline render contract for the
     # newest observation. This does not read systemd or a GitHub API.
-    data = offline_comparison_report(paths[-2], paths[-1])
+    data = offline_comparison_data(receipts[-2], receipts[-1])
     data["timeline"] = pairs
     data["timeline_observations"] = len(receipts)
     data["timeline_footprint"] = timeline_footprint(receipts)
