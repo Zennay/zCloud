@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import stat
 from zsentinel_background_priority import RUNNER_UNIT
@@ -17,6 +18,18 @@ from zsentinel_runner_report import collect
 SCHEMA = "zsentinel.runner-observation.v1"
 MAX_BYTES = 128 * 1024
 MAX_AGE_HOURS = 72
+
+
+def _boot_fingerprint():
+    """Private per-boot evidence, never a host-identity or restart authority."""
+    try:
+        raw = Path("/proc/sys/kernel/random/boot_id").read_text().strip().lower()
+    except (OSError, UnicodeError):
+        return None
+    if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", raw):
+        return None
+    # Never place the literal Linux boot UUID in operator receipts.
+    return hashlib.sha256(raw.encode("ascii")).hexdigest()[:24]
 
 
 def _iso(dt):
@@ -62,6 +75,7 @@ def packet(report_data):
         "schema": SCHEMA,
         "observation_utc": _iso(datetime.now(timezone.utc)),
         "host": os.uname().nodename,
+        "boot_fingerprint": _boot_fingerprint(),
         "units": report_data["units"],
         "capacity": report_data["host"],
         "coach_state": {
@@ -167,6 +181,11 @@ def changes(previous, current):
     elapsed = (t1 - t0).total_seconds()
     if not (0 < elapsed <= MAX_AGE_HOURS * 3600):
         raise ValueError("Out-of-order or stale receipt")
+    boot_a, boot_b = previous.get("boot_fingerprint"), current.get("boot_fingerprint")
+    valid_boot = lambda value: isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{24}", value))
+    boot_pair_observed = valid_boot(boot_a) and valid_boot(boot_b)
+    same_boot = boot_pair_observed and boot_a == boot_b
+    changed_boot = boot_pair_observed and boot_a != boot_b
     a, b = _unit_states(previous), _unit_states(current)
     coverage_a = previous["units"].get("runner_units_observed") is True and previous["units"].get("runner_units_truncated") is False
     coverage_b = current["units"].get("runner_units_observed") is True and current["units"].get("runner_units_truncated") is False
@@ -184,7 +203,8 @@ def changes(previous, current):
         # Stable per-transition dedup receipt. A hash is not an authorization
         # token and does not prove a successful GitHub runner recovery.
         material = json.dumps(
-            [host_a, name, tag, before, after],
+            [host_a, boot_a if valid_boot(boot_a) else None,
+             boot_b if valid_boot(boot_b) else None, name, tag, before, after],
             ensure_ascii=False, sort_keys=True, separators=(",", ":"),
         ).encode("utf-8")
         result.append({
@@ -194,18 +214,23 @@ def changes(previous, current):
             "github_job_recovered": None,
             "production_restored": None,
             "action_authorized": False,
+            "same_boot_verified": same_boot,
         })
     return {
         "previous_utc": previous["observation_utc"],
         "current_utc": current["observation_utc"],
         "same_host": True,
+        "same_boot_verified": same_boot,
+        "host_reboot_observed": changed_boot if boot_pair_observed else None,
         "complete_service_coverage": coverage_a and coverage_b,
         "elapsed_seconds": int(elapsed),
         "capacity_comparison": capacity_changes(previous, current),
         "transitions": result,
         "interpretation": (
-            "Only bounded systemd observations; even a failed→active transition "
-            "does not prove GitHub assignment, a completed job or a merged PR."
+            "Only bounded systemd observations. A boot change or unknown boot "
+            "identity prevents treating transitions as same-boot continuity; "
+            "even failed→active does not prove GitHub assignment, a completed job "
+            "or a merged PR."
         ),
     }
 
