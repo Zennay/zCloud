@@ -149,6 +149,7 @@ def assemble(registry, selected, jobs, queue_path, token=None,
         "ci_discovery":discovery,
         "github_budget_is_per_invocation_not_global": True,
         "pinned_requested": len(validated_pins),
+        "exact_jobs_pinned_requested": len(jobs),
         "auto_owner_gate_pin_count": auto_added,
     }
     if worker_events_database is not None:
