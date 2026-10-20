@@ -55,6 +55,10 @@ def verified_source_coverage(selected, provenance, bundle):
     ci_rows = ci.get("coverage") if isinstance(ci, dict) else None
     if not isinstance(ci_rows, list):
         ci_rows = []
+    exact = provenance.get("github_jobs")
+    exact_rows = exact.get("refreshed_projects") if isinstance(exact, dict) else None
+    if not isinstance(exact_rows, list):
+        exact_rows = []
     inbox = bundle.get("issue_inbox")
     issue_rows = inbox.get("coverage") if isinstance(inbox, dict) else None
     if not isinstance(issue_rows, list):
@@ -72,10 +76,20 @@ def verified_source_coverage(selected, provenance, bundle):
         # GitHub reported extra unexamined workflow/jobs pages or a sibling
         # window failed. Do not conceal this observed incident simply because
         # another part of the bounded source sample is incomplete.
-        ci_ok = (len(ci_status) == 1 and ci_status[0] in (
-            "selected_one_source_bound_job",
-            "selected_one_source_bound_job_partial_window",
-            "no_actionable_job_in_sampled_windows"))
+        refreshed = [
+            row for row in exact_rows
+            if isinstance(row, dict) and row.get("project_id") == pid
+            and row.get("source") == "github_exact_run_job"
+            and row.get("status") == "refreshed"
+        ]
+        # Explicitly pinned jobs are NOT present in discovery.coverage.
+        # Their exact run/job receipt is stronger partial evidence than an
+        # empty auto-discovery window. Never equate this with full CI health.
+        ci_ok = (len(refreshed) == 1 or
+                 len(ci_status) == 1 and ci_status[0] in (
+                     "selected_one_source_bound_job",
+                     "selected_one_source_bound_job_partial_window",
+                     "no_actionable_job_in_sampled_windows"))
         # GitHub 401/403 can be repository-specific. An unrelated project's
         # denied issue window must not suppress this project's own complete
         # bounded issue/PR receipt. Global rate-limit handling is already
