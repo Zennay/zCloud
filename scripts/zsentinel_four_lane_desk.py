@@ -53,7 +53,7 @@ def collect(database, maximum):
         db.execute("BEGIN")
         queue_rows = db.execute(
             """SELECT queue_id, project_id, title, completion_criteria, priority,
-                      status, created_at, metadata_json
+                      status, created_at, claimed_at, claim_expires, metadata_json
                  FROM portfolio_queue WHERE project_id=?
                    AND lower(status) IN ('queued','claimed','running','verifying')
                  ORDER BY created_at, queue_id LIMIT ?""",
@@ -75,6 +75,16 @@ def collect(database, maximum):
     claims = []
     expired = 0
     ambiguous = 0
+    expired_queue_claims = 0
+    unknown_queue_claim_expiry = 0
+    for item in queue:
+        if str(item.get("status", "")).lower() not in ACTIVE:
+            continue
+        expiry = _utc(item.get("claim_expires"))
+        if expiry is None:
+            unknown_queue_claim_expiry += 1
+        elif expiry <= now:
+            expired_queue_claims += 1
     for row in claim_rows[:maximum]:
         until = _utc(row["lease_until"])
         if until is None:
@@ -131,6 +141,8 @@ def collect(database, maximum):
         "expired_local_leases_observed": expired,
         "ambiguous_local_claims": ambiguous,
         "claims_partial": claims_partial,
+        "expired_in_flight_queue_claims_observed": expired_queue_claims,
+        "unknown_in_flight_queue_expiry_observed": unknown_queue_claim_expiry,
         "claimed_without_local_lease_observation": (
             sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
         ),
@@ -141,6 +153,11 @@ def collect(database, maximum):
         "release_authorized": False,
         "lanes": visible,
         "source_complete": not (queue_partial or claims_partial or ambiguous),
+        "ownership_reconciliation_required": bool(
+            expired_queue_claims or unknown_queue_claim_expiry
+            or ambiguous or queue_partial or claims_partial
+            or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
+        ),
     }
 
 
@@ -162,6 +179,14 @@ def text_view(data):
     )
     if data["claimed_without_local_lease_observation"]:
         out.append("LET OP: claimed wachtrij-items zonder waargenomen lokale lease.")
+    if data["expired_in_flight_queue_claims_observed"]:
+        out.append("VERLOPEN queue-claimtermijnen: "
+                   + str(data["expired_in_flight_queue_claims_observed"])
+                   + " (niet automatisch herclaimen).")
+    if data["unknown_in_flight_queue_expiry_observed"]:
+        out.append("Onbekende queue-claimtermijnen: "
+                   + str(data["unknown_in_flight_queue_expiry_observed"])
+                   + " (controleer eigenaar).")
     if not data["source_complete"]:
         out.append("LET OP: bron deels onvolledig; geen automatische herverdeling.")
     out.append("Geen claim-, merge-, runner- of deployautorisatie.")
@@ -189,6 +214,16 @@ def html_view(data):
     if data["claimed_without_local_lease_observation"]:
         warnings.append(
             "Claimed taken zonder zichtbare lokale lease: niet herclaimen."
+        )
+    if data["expired_in_flight_queue_claims_observed"]:
+        warnings.append(
+            str(data["expired_in_flight_queue_claims_observed"])
+            + " actieve wachtrijclaims hebben een verlopen termijn; alleen eigenaar kan herstellen."
+        )
+    if data["unknown_in_flight_queue_expiry_observed"]:
+        warnings.append(
+            str(data["unknown_in_flight_queue_expiry_observed"])
+            + " actieve wachtrijclaims hebben geen betrouwbaar vervalmoment."
         )
     if not data["source_complete"]:
         warnings.append(
