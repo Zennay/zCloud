@@ -9,8 +9,8 @@
     "phase": "Cross-project open-work recovery",
     "status": "active",
     "priority": "high",
-    "next_step": "Sweep existing merge-ready product PRs first, check exact-head CI and independent review with the zCloud portfolio_merge_ready script, claim the authorized exclusive mainwriter lease, merge and verify default-branch SHA where allowed, then deploy only via existing gates. For any blocked PR, repair CI/conflicts/runner or deliver another free P0/P1 fix; do not create duplicate drafts.",
-    "milestone_revision": "zsentinel-release-first-20261020",
+    "next_step": "Start with existing open product PRs: inspect exact-head required CI, independent review and any conflicts; merge only with an authorized live exclusive mainwriter lease, GitHub permission and verified default-branch commit. For HOLD or unknown-owner work, run the read-only scripts/zsentinel_issue_first_board.py --project cloud (plus up to two independent canonical projects) to prioritize observed P0/P1 issues already referenced by existing non-QA PRs. Treat PR-body references as hints, never proof of a fix or owner vacancy; inspect active Notion/queue claims before touching a task. Repair real CI/conflicts or safely deliver another freely owned P0/P1 fix; never start new QA suites, bypass security/release gates or deploy without owner authority.",
+    "milestone_revision": "zsentinel-issue-first-main-delivery-20261020",
     "milestones": [
       {
         "title": "Actively repair unowned open work across projects",
