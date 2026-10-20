@@ -252,6 +252,87 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1):
         "source": "TARGETED_ISSUE_SEARCH"}
 
 
+def collect_targeted_windows(project, issue_number, registry, budget,
+                             candidate_page=1, auto_pages=1):
+    """Bounded multiple-page read only; no atomic-search or free-owner claim."""
+    if (type(auto_pages) is not int or not 1 <= auto_pages <= 3
+            or candidate_page + auto_pages - 1 > MAX_TARGET_PAGES):
+        raise ValueError("invalid automatic page window")
+    combined, partials, pages = [], [], []
+    observed_candidates, observed_prs = set(), {}
+    target, search_total = None, None
+    for page in range(candidate_page, candidate_page + auto_pages):
+        try:
+            rows, current_issue, partial, coverage = collect_targeted(
+                project, issue_number, registry, budget, candidate_page=page)
+        except (RuntimeError, ValueError, OSError, KeyError, TypeError):
+            if not pages:
+                raise
+            partials.append({"project": project, "reason": "FOLLOW_PAGE_UNAVAILABLE"})
+            break
+        if target is None:
+            target, search_total = current_issue, coverage["search_total"]
+        else:
+            if (current_issue.get("url") != target.get("url")
+                    or current_issue.get("current_state") != "OPEN_RECONFIRMED"):
+                partials.append({"project": project, "reason": "ISSUE_MOVED_BETWEEN_PAGES"})
+            if coverage["search_total"] != search_total:
+                partials.append({"project": project, "reason": "SEARCH_TOTAL_CHANGED"})
+        candidates = coverage.get("candidate_pr_numbers")
+        if not isinstance(candidates, list) or len(candidates) != coverage["search_examined"]:
+            partials.append({"project": project, "reason": "CANDIDATE_IDS_INCOMPLETE"})
+        else:
+            if len(set(candidates)) != len(candidates) or observed_candidates.intersection(candidates):
+                partials.append({"project": project, "reason": "CANDIDATE_OVERLAP_BETWEEN_PAGES"})
+            observed_candidates.update(candidates)
+        for row in rows:
+            identity = (row.get("repo"), row.get("number"))
+            if identity in observed_prs:
+                reason = ("PR_HEAD_CHANGED_BETWEEN_PAGES"
+                          if observed_prs[identity] != row.get("head")
+                          else "PR_REPEATED_BETWEEN_PAGES")
+                partials.append({"project": project, "reason": reason})
+                continue
+            observed_prs[identity] = row.get("head")
+            combined.append(row)
+        partials.extend(partial)
+        pages.append(coverage)
+        if coverage["next_page"] is None:
+            break
+        if budget[0] > board.MAX_GETS - 10 or time.monotonic() > budget[1] - 10:
+            partials.append({"project": project, "reason": "AUTO_PAGE_BUDGET_PARTIAL"})
+            break
+    if not pages:
+        raise ValueError("no observed search window")
+    first, last = pages[0], pages[-1]
+    summary = dict(first)
+    summary.update({
+        "window_end": last["window_end"],
+        "search_examined": sum(p["search_examined"] for p in pages),
+        "next_page": last["next_page"],
+        "auto_pages_requested": auto_pages,
+        "auto_pages_observed": len(pages),
+        "page_windows": [{
+            "candidate_page": p["candidate_page"],
+            "window_start": p["window_start"], "window_end": p["window_end"],
+            "search_examined": p["search_examined"],
+            "next_page": p["next_page"]} for p in pages],
+        "search_complete": False,
+        "cross_page_source": "NONATOMIC_GITHUB_SEARCH",
+    })
+    if len(pages) > 1:
+        partials.append({"project": project, "reason": "NONATOMIC_SEARCH_PAGINATION"})
+    if len(pages) < auto_pages and last["next_page"] is not None:
+        partials.append({"project": project, "reason": "AUTO_PAGE_NOT_FINISHED"})
+    deduped, seen = [], set()
+    for item in partials:
+        k = (item["project"], item["reason"])
+        if k not in seen:
+            deduped.append(item)
+            seen.add(k)
+    return combined, target, deduped, summary
+
+
 def render_issue_sections(unmatched, partial):
     esc = lambda x: html.escape(str(x), quote=True)
     note = (
