@@ -160,7 +160,7 @@ def render(rows, observed):
     cards = []
     if not rows:
         cards.append("<article><h2>Geen recente PRs geselecteerd</h2>"
-                     "<p>Dit bewijst niet dat er geen open productwerk is. "</p>"
+                     "<p>Dit bewijst niet dat er geen open productwerk is.</p>"
                      "<p>Gebruik een gericht --pr voor een ouder of uitgesloten PR.</p></article>")
     for row in rows:
         url = f"https://github.com/{row['repo']}/pull/{row['number']}"
