@@ -2940,6 +2940,9 @@ function combinedProjectCoverageTable(){
 }
 function combinedActivityPanel(){
   const rows=combinedActivityRows();
+  const providerHolds=new Set((IMPORTED_GITHUB_ACTIVITY?.coverage||[])
+    .filter(c=>c.providerAdmission&&c.providerAdmission!=='none')
+    .map(c=>c.project));
   const list=rows.map(row=>{
     const project=DATA.projects.find(p=>p.id===row.project);
     const main=row.url?
@@ -2949,9 +2952,11 @@ function combinedActivityPanel(){
       row.source==='github'?'GitHub '+row.kind.replaceAll('_',' '):
       'Local VPS '+(row.kind||'event');
     const freshness=row.observedAt&&Date.now()-Date.parse(row.observedAt)>6*3600000?' · STALE OBSERVATION':'';
+    const held=(row.source==='github'||row.source==='both')&&providerHolds.has(row.project)
+      ?' · PRIOR GITHUB EVIDENCE; CURRENT PROVIDER READ BLOCKED, NOT RECONFIRMED':'';
     return '<div class="service-row"><div>'+main+'<br><small>'+
       esc(project?.name||row.project)+' · '+esc(source)+
-      ' · '+esc(row.detail)+esc(freshness)+'</small></div><small>'+
+      ' · '+esc(row.detail)+esc(freshness)+esc(held)+'</small></div><small>'+
       esc(date(row.ts,true))+'</small></div>';
   }).join('');
   return '<section class="panel" id="combinedActivityTimeline">'+
