@@ -109,8 +109,16 @@ def collect_workorders(board):
     if (type(live) is not dict or type(live.get("items")) is not list
             or len(live["items"]) > MAX_PRS):
         raise ValueError("missing bounded live gate receipts")
-    gate_sources = {item["url"]: item for item in live["items"]}
+    gate_sources = {}
+    for source in live["items"]:
+        if (type(source) is not dict or type(source.get("url")) is not str or
+                source["url"] in gate_sources or
+                source.get("merge_authorized") is not False):
+            raise ValueError("duplicate, malformed or authorizing gate source")
+        gate_sources[source["url"]] = source
     observed_at = _timestamp(desk.get("observed_at_utc"))
+    if _timestamp(live.get("observed_at_utc")) != observed_at:
+        raise ValueError("inconsistent live gate and action source times")
     cards, seen = [], set()
     for item in desk["items"]:
         if (type(item) is not dict or item.get("merge_authorized") is not False
@@ -134,6 +142,16 @@ def collect_workorders(board):
         live_gate = gate_sources.get(url)
         if live_gate is None:
             raise ValueError("selected PR not in current bounded gate receipt")
+        if (live_gate.get("project") != project or live_gate.get("url") != url
+                or live_gate.get("human_gate_blocker") != item.get("blocker")):
+            raise ValueError("gate and operator action refer to different PR evidence")
+        if pinned:
+            if (live_gate.get("status") != "current_exact_pr_head_and_sample_match"
+                    or live_gate.get("head_sha_observed") != head
+                    or live_gate.get("base_sha_observed") != base):
+                raise ValueError("owner workorder exact-HEAD/base mismatch")
+        elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
+            raise ValueError("current gate receipt lost exact HEAD in workorder")
         paths, paths_cut, related, hints = _observed_overlap_paths(
             projects[project], url, live_gate.get("sampled_file_overlaps_observed"))
         for extra in item.get("observed_file_overlap_prs", [])[:8]:
