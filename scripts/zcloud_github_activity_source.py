@@ -342,10 +342,6 @@ def bounded_events(
             entry["main_merge_evidence"] = "canonical_main_history_exact_sha"
         else:
             entry["main_merge_evidence"] = "not_proven_in_bounded_history"
-    coverage["verified_pr_main_merges_in_window"] = len({
-        entry.get("pr") for entry in events
-        if entry.get("kind") == "pr_merged" and entry.get("main_merged") is True
-    })
     coverage["main_merge_absence_is_unverified"] = True
     # Distinguish a GitHub-reported merge target from a main-history commit.
     # These are different observations and must never count twice as shipped.
@@ -491,6 +487,13 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
         ) not in included_main:
             item["main_merged"] = False
             item["main_merge_evidence"] = "main_sha_not_in_exported_window"
+    for item in coverage:
+        item["verified_pr_main_merges_in_window"] = len({
+            row.get("pr") for row in fair
+            if row["project"] == item["project"] and row["kind"] == "pr_merged"
+            and row.get("main_merged") is True
+        })
+        item["main_merge_absence_is_unverified"] = True
     return {
         "schema": "zcloud-github-activity-readonly-v1",
         "observed_at": stamp(observed),
