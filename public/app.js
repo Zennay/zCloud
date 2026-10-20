@@ -757,6 +757,15 @@ async function controlWorker(workerId,action,button,force=false,globalSlot=null)
 // the local VPS feed, and never grant merge/deploy/worker authority from a file.
 let IMPORTED_GITHUB_ACTIVITY=null,IMPORTED_GITHUB_ERROR='';
 const GITHUB_RECEIPT_KINDS=new Set(['pr_created','pr_updated','pr_merged','pr_closed','ci_run','main_commit']);
+// Bounded, fixed operator text only: never surface a provider response body,
+// token, request URL, or unvalidated imported reason in the dashboard.
+const GITHUB_PROVIDER_ADMISSIONS=Object.freeze({
+  none:'',
+  authentication_required:'GitHub authentication refused; authorized credentials need owner review.',
+  rate_limit_confirmed:'GitHub requested a global rate-limit pause; no extra reads were authorized.',
+  repository_or_secondary_limit_unknown:'GitHub 403 for this repository: access or secondary limit is unknown. Other repositories may still have usable data.',
+  global_admission_denied_prior_project:'Provider reads stopped earlier after authentication or confirmed rate limiting. This project was not fetched.'
+});
 const ZSENTINEL_PORTFOLIO_SOURCE_LIMIT=16; // 13 canonical projects + bounded growth.
 function fairProductIssueHistory(rows,coverage,limit=150){
   // Global P0/P1 priority is preserved while each observed project gets an
@@ -840,8 +849,15 @@ function validateGitHubActivityReceipt(value){
        ||!projects.has(row.project)||sourceByProject.has(row.project)
        ||typeof row.repository!=='string'
        ||!/^Zennay\/[A-Za-z0-9_.-]{1,100}$/.test(row.repository))throw Error('Unexpected project or repository');
+    // Older receipts omit this field. Unknown values fail closed rather than
+    // becoming arbitrary HTML or a false "GitHub healthy" claim.
+    const admission=row.provider_admission===undefined?'none':row.provider_admission;
+    if(typeof admission!=='string'||!Object.hasOwn(GITHUB_PROVIDER_ADMISSIONS,admission))
+      throw Error('Unrecognized provider admission source');
     sourceByProject.set(row.project,row.repository);
-    coverage.push({project:row.project,status:['partial_sources','partial_error','unavailable'].includes(row.status)?row.status:'unavailable',observedAt:value.observed_at});
+    coverage.push({project:row.project,
+      status:['partial_sources','partial_error','unavailable'].includes(row.status)?row.status:'unavailable',
+      observedAt:value.observed_at,providerAdmission:admission});
   }
   // Imported receipts are NOT an authorization to merge or deploy.
   // Correlate source-claimed positive PR main evidence with an exact
