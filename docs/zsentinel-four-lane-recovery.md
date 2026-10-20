@@ -674,3 +674,30 @@ requires existing independent review, mandatory exact-head CI,
 protected-main merge and an authorized release. The code here has
 no authority to edit live contracts, worker modes, claim leases,
 queue rows, browser sessions or services.
+
+
+### Local contract read model, without assuming deployment
+
+The existing four-lane desk can also inspect the local
+`project-contracts.json` beside the selected read-only SQLite file, or
+an explicitly selected `--contracts-file`. The new read model accepts only
+a regular, non-symlink UTF-8 JSON file up to 128 KiB. It exports **only**
+a whitelisted zSentinel profile, bounded worker cap, local observation
+state and match/mismatch status; no credentials, full file content or
+filesystem path enters operator output. Missing, invalid or inaccessible
+files remain `NOT_OBSERVED` or `UNTRUSTED_SOURCE`.
+
+```sh
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --format json
+python3 scripts/zsentinel_four_lane_desk.py --db history.db --contracts-file /AUTHORIZED/READ-ONLY/project-contracts.json
+```
+
+If that verified **local file** disagrees with the proposed
+`portfolio-recovery` profile, prospective four-lane writer admission is
+held with `HOLD_LOCAL_CONTRACT_PROFILE_MISMATCH`; the current owner
+must compare the loaded runtime configuration, active queue leases and
+existing file claims. The read-only file is **not** evidence of which
+configuration the service has actually loaded. The four-lane
+`deployed_four_lane_profile` claim remains `NOT_VERIFIED`.
+An owner-action card makes the discrepancy visible without touching
+production server, SQLite, Notion, browser, runner or billing state.
