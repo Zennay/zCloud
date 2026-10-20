@@ -230,6 +230,30 @@ def product_queue_snapshot(items, max_visible=8):
         str(row.get("created_at") or ""),
         str(row.get("queue_id") or ""),
     ))
+    # Operator-only cross-project view: the normal P0-first candidate ordering
+    # remains untouched; one noisy project cannot hide all other project leads.
+    # This list is NOT used to assign a worker or release a lease.
+    project_leads = {}
+    for item in candidate_rows:
+        project = str(item.get("project_id") or "")[:56]
+        if not project:
+            continue
+        lead = project_leads.get(project)
+        if lead is None:
+            project_leads[project] = {
+                "project_id": project,
+                "product_candidates_visible": 1,
+                "first_queue_id": str(item.get("queue_id") or "")[:160],
+                "highest_priority": str(item.get("priority") or "")[:4],
+            }
+        else:
+            lead["product_candidates_visible"] += 1
+    project_shortlist = list(project_leads.values())
+    project_shortlist.sort(key=lambda row: (
+        priorities.get(str(row["highest_priority"]).upper(), 4),
+        -row["product_candidates_visible"], row["project_id"],
+    ))
+    project_shortlist_limit = min(16, max_visible)
     return {
         "policy": "product-delivery-2026-10-17",
         "source_coverage": "visible_api_rows_only_not_full_queue",
@@ -245,6 +269,10 @@ def product_queue_snapshot(items, max_visible=8):
         "queued_product_candidates": len(candidate_rows),
         "candidate_priority_counts": priority_counts,
         "candidate_list_truncated": len(candidate_rows) > max_visible,
+        "distinct_projects_with_visible_product_work": len(project_leads),
+        "project_shortlist_truncated": len(project_shortlist) > project_shortlist_limit,
+        "project_shortlist_is_advisory_only": True,
+        "project_shortlist": project_shortlist[:project_shortlist_limit],
         "candidates": [
             {
                 "project_id": str(item.get("project_id") or "")[:56],
