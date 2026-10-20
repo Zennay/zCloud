@@ -363,3 +363,30 @@ All changes remain private in-memory state until the human chooses a
 local export. No background polling, calendar service, source/queue writes,
 notification, production mutation, test/QA suite or privilege escalation
 was added; the original GitHub, Notion, CI, security and release gates remain.
+
+## 20 October · Unsaved private decisions guard
+
+Private notes, human contact/date assignments, manually closed follow-ups
+and reviewed prior-board carry-forward are deliberately held in memory,
+never browser localStorage or a remote database. Because closing a tab
+could silently discard user work, the operator page now shows whether its
+private human annotations have unexported changes. Browsers supporting
+the native before-unload confirmation warn before the user leaves a tab
+with local changes. The browser controls the actual prompt wording and
+may suppress the prompt in some situations; the banner remains the
+authoritative visible indication to export.
+
+Use **Download private human handoff** to request a locally saved
+source-SHA-bound v3 JSON backup, then verify the file actually arrived.
+Edits after that action mark the page dirty again. Selecting an exact-board
+handoff to restore prompts for explicit confirmation before replacing
+unexported annotations; cancelling preserves all current edits. Importing
+the original exact-board snapshot resets the local edited marker only when
+validated replacement succeeded. Carrying prior annotations forward marks
+the work as unsaved again.
+
+The Markdown briefing or iCalendar export is NOT a full private JSON
+backup and does not clear the pending-unsaved warning. No automatic
+persistence, cloud save, network requests, worker notifications or
+privileged recovery actions are introduced. No QA/regression suites
+were added or manually run; all CI, review and security gates remain.
