@@ -97,67 +97,68 @@ def _lane_value(value):
     return re.sub(r"[\s_/]+", "-", value.strip().casefold())
 
 
-def product_delivery_disposition(item):
-    """Classify new work as product, qa_only or invalid, without claiming it.
+def product_delivery_classification(item):
+    """Explain a potential *new* worker admission, without granting a claim.
 
-    This is a policy filter, not a GitHub/Notion lease or worker admission
-    receipt. Unknown structure must not be silently relabelled as product.
+    Only fixed reason codes are emitted. This decision never alters an active
+    lease, human gate, reviewer requirement or protected release.
     """
     if not isinstance(item, dict):
-        return "invalid"
+        return "invalid", "invalid_row"
     if str(item.get("status") or "").strip().casefold() != "queued":
-        return "invalid"
+        return "invalid", "not_queued"
     try:
         metadata = _metadata(item)
     except (ValueError, TypeError, UnicodeError):
-        return "invalid"
+        return "invalid", "invalid_metadata"
     for key in ("lane", "lane_id", "focus", "work_type", "lane_focus",
                 "workstream"):
         value = metadata.get(key)
         if value is not None and not isinstance(value, str):
-            return "invalid"
+            return "invalid", "invalid_lane_metadata"
         if _lane_value(value) in QA_LANES:
-            return "qa_only"
+            return "qa_only", "explicit_qa_lane"
     execution_lane = metadata.get("execution_lane")
     if execution_lane is not None:
         if isinstance(execution_lane, str):
             if _lane_value(execution_lane) in QA_LANES:
-                return "qa_only"
+                return "qa_only", "explicit_qa_lane"
         elif isinstance(execution_lane, dict):
             for key in ("lane_id", "focus", "work_type"):
                 value = execution_lane.get(key)
                 if value is not None and not isinstance(value, str):
-                    return "invalid"
+                    return "invalid", "invalid_lane_metadata"
                 if _lane_value(value) in QA_LANES:
-                    return "qa_only"
+                    return "qa_only", "explicit_qa_lane"
         else:
-            return "invalid"
+            return "invalid", "invalid_lane_metadata"
     title = item.get("title")
     criteria = item.get("completion_criteria")
     if not isinstance(title, str) or not title.strip() or len(title) > 2000:
-        return "invalid"
+        return "invalid", "invalid_title"
     if criteria is None:
         criteria = ""
     if not isinstance(criteria, str) or len(criteria) > 32768:
-        return "invalid"
+        return "invalid", "invalid_completion_criteria"
     title = title.strip()
     if EXPLICIT_QA_ONLY_TITLE.match(title):
-        return "qa_only"
-    # Keep an actual code repair, including Dutch wording, even if a legacy
-    # ticket title begins with "Test". Explicit QA metadata always wins.
+        return "qa_only", "explicit_qa_title"
     if (QA_TITLE.match(title) and not _positive_delivery(title)
             and not _positive_delivery(criteria)):
-        return "qa_only"
-    # Legacy neutral-title QA work is held when nothing asks to deliver
-    # product functionality. Negated release phrases cannot override this.
+        return "qa_only", "qa_title_without_delivery"
     if not _positive_delivery(title) and re.search(
         r"\b(?:test suite|regression suite|qa round|quality.validation|"
         r"test(?:en|suite)?|regressie(?:test|ronde)|"
         r"kwaliteitscontrole|validatieronde)\b", criteria,
         flags=re.IGNORECASE,
     ) and not _positive_delivery(criteria):
-        return "qa_only"
-    return "product"
+        return "qa_only", "qa_criteria_without_delivery"
+    return "product", "product_candidate"
+
+
+def product_delivery_disposition(item):
+    """Backward-compatible pure yes/no classification for new admission."""
+    return product_delivery_classification(item)[0]
 
 
 def is_new_product_delivery(item):
