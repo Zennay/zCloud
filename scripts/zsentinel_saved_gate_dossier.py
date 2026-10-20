@@ -155,25 +155,40 @@ def extract_dossier(path: Path, destination: Path, *, expected_manifest_sha=None
     if (expected_manifest_sha is not None and
             manifest["original_review_manifest_sha256"] != expected_manifest_sha):
         raise ValueError("Dossier manifest SHA256 differs from operator pin")
-    if destination.exists() or destination.is_symlink():
-        raise ValueError("Destination already exists; refusing overwrite")
-    destination.mkdir(mode=0o700, parents=False, exist_ok=False)
-    created = []
+    # Retain the parent-directory handle for the entire extraction. Refuse
+    # parent symlinks and never resolve an attacker-replaced destination path.
+    if not destination.name or destination.name in (".", ".."):
+        raise ValueError("Invalid private destination name")
+    parentfd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY |
+                       os.O_NOFOLLOW)
     try:
-        for name in FILES:
-            target = destination / name
-            fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
-                         getattr(os, "O_NOFOLLOW", 0), 0o600)
-            created.append(target)
-            with os.fdopen(fd, "wb") as sink:
-                sink.write(files[name])
-                sink.flush()
-                os.fsync(sink.fileno())
-    except BaseException:
-        for target in created:
-            target.unlink(missing_ok=True)
-        destination.rmdir()
-        raise
+        os.mkdir(destination.name, 0o700, dir_fd=parentfd)
+        childfd = None
+        created = []
+        try:
+            childfd = os.open(destination.name, os.O_RDONLY |
+                              os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parentfd)
+            for name in FILES:
+                fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                             os.O_NOFOLLOW, 0o600, dir_fd=childfd)
+                created.append(name)
+                with os.fdopen(fd, "wb") as sink:
+                    sink.write(files[name])
+                    sink.flush()
+                    os.fsync(sink.fileno())
+            os.fsync(childfd)
+        except BaseException:
+            if childfd is not None:
+                for name in created:
+                    os.unlink(name, dir_fd=childfd)
+            os.rmdir(destination.name, dir_fd=parentfd)
+            raise
+        finally:
+            if childfd is not None:
+                os.close(childfd)
+        os.fsync(parentfd)
+    finally:
+        os.close(parentfd)
     return manifest, receipt
 
 
