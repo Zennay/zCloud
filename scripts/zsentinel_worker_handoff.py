@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from html import escape
+import os
+from pathlib import Path
+import stat
 
 from zsentinel_worker_progress_observer import (
     MAX_PROJECTS, MAX_SLOTS, PROJECT, _operator_worker_priority,
@@ -191,3 +194,57 @@ def render_markdown(receipt):
         "product-geslaagdverklaring. Actuele claims en gates apart verifiëren.",
         ""])
     return "\n".join(lines)
+
+
+def write_private_handoff(path: Path, content: str, *, format: str) -> None:
+    """Create-only, owner-private operator report under an existing private directory.
+
+    Never overwrite a ledger, DB, symlink or another operator's report.
+    Uses O_EXCL against existing destination and O_NOFOLLOW for final path.
+    Does not touch production service/queue or GitHub/Notion state.
+    """
+    if type(path) is not Path or format not in ("html", "markdown"):
+        raise ValueError("handoff output must be an explicit private path and format")
+    ext = ".html" if format == "html" else ".md"
+    if path.name in ("", ".", "..") or not path.name.endswith(ext):
+        raise ValueError("operator report must use matching .html or .md suffix")
+    payload = content.encode("utf-8")
+    if not 0 < len(payload) <= 512 * 1024:
+        raise ValueError("operator report exceeds 512 KiB")
+    parent = path.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise ValueError("operator report directory must already exist without symlink")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("secure nofollow file opening required")
+    dirfd = os.open(
+        parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+        getattr(os, "O_CLOEXEC", 0))
+    created = False
+    try:
+        folder = os.fstat(dirfd)
+        if (not stat.S_ISDIR(folder.st_mode) or folder.st_uid != os.geteuid()
+                or stat.S_IMODE(folder.st_mode) & 0o077):
+            raise ValueError("operator directory must be private and owned (0700)")
+        # Do not allow path traversal or an accidental replacement. Resolve
+        # the file relative to the already-opened private directory fd.
+        if "/" in path.name or "\\" in path.name:
+            raise ValueError("unsafe operator report basename")
+        fd = os.open(
+            path.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW |
+            getattr(os, "O_CLOEXEC", 0),
+            0o600, dir_fd=dirfd)
+        created = True
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "wb") as dest:
+                dest.write(payload)
+                dest.flush()
+                os.fsync(dest.fileno())
+        except BaseException:
+            # Only the exclusive newly created inode belongs to this call.
+            os.unlink(path.name, dir_fd=dirfd)
+            created = False
+            raise
+    finally:
+        os.close(dirfd)
