@@ -354,6 +354,12 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "observed_checks_not_successful": gate["observed_checks_not_successful"],
                 "observed_legacy_pending": gate["legacy_status_pending_observed"],
                 "legacy_contexts_observed": gate["legacy_status_contexts_observed"],
+                "legacy_status_superseded_attempts_observed":
+                    gate["legacy_status_superseded_attempts_observed"],
+                "observed_actionable_legacy_contexts":
+                    gate["observed_actionable_legacy_contexts"],
+                "observed_actionable_legacy_contexts_hidden":
+                    gate["observed_actionable_legacy_contexts_hidden"],
                 "legacy_status_source_may_be_truncated":
                     gate["legacy_status_source_may_be_truncated"],
                 "observed_legacy_failure_or_error":
@@ -646,6 +652,15 @@ def current_gate_lines(board, markdown=False):
         if gate["observed_actionable_check_runs_hidden"]:
             lines.append("  Extra niet-groene checks verborgen: " +
                          str(gate["observed_actionable_check_runs_hidden"]))
+        lines.append("  Eerdere legacy-statuspogingen genegeerd: " +
+                     str(gate["legacy_status_superseded_attempts_observed"]))
+        for status in gate["observed_actionable_legacy_contexts"]:
+            link = ("[" + status["context"] + "](" + status["url"] + ")"
+                    if markdown else status["context"] + " · " + status["url"])
+            lines.append("  LEGACY " + link + " · " + status["state"])
+        if gate["observed_actionable_legacy_contexts_hidden"]:
+            lines.append("  Extra niet-groene legacy statussen verborgen: " +
+                         str(gate["observed_actionable_legacy_contexts_hidden"]))
         if (not gate["check_page_complete"]
                 or gate["review_page_may_be_truncated"]
                 or gate["legacy_status_source_may_be_truncated"]):
@@ -851,6 +866,12 @@ def as_html(board):
                                        escape(check["name"]) + "</a> · " +
                                        escape(check["state"]) + " · " +
                                        escape(check["conclusion"] or "geen conclusie") + "</li>")
+                for status in gate["observed_actionable_legacy_contexts"]:
+                    check_items.append("<li>Legacy status: <a href=\'" +
+                                       escape(status["url"], quote=True) +
+                                       "\' rel=\'noopener noreferrer\'>" +
+                                       escape(status["context"]) + "</a> · " +
+                                       escape(status["state"]) + "</li>")
                 check_note = (
                     "<details><summary>Actuele checkjobs: " +
                     str(gate["check_runs_latest_attempts_observed"]) +
@@ -859,6 +880,10 @@ def as_html(board):
                     ("".join(check_items) or "<li>Geen niet-groene jobs waargenomen.</li>") +
                     "</ul><p>Niet-getoonde jobs: " +
                     str(gate["observed_actionable_check_runs_hidden"]) +
+                    " · vorige legacy-statuspogingen genegeerd: " +
+                    str(gate["legacy_status_superseded_attempts_observed"]) +
+                    " · verborgen legacy-blokkades: " +
+                    str(gate["observed_actionable_legacy_contexts_hidden"]) +
                     " · branchregels blijven onbekend.</p></details>")
             source_note = ""
             if gate["observed_in_recent_pr_collision_sample"] is False:
