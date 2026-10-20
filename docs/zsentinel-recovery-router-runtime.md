@@ -2996,3 +2996,32 @@ actie, geen QA-suite of workflow-dispatch.
 De bestaande CI, branch protection, review en geserialiseerde
 VPS/productie release-toestemming blijven verplicht.
 
+
+### Eén privé-archiefshortlist over meerdere projectmappen
+
+Met de nieuwe stand-alone portfolio-runner hoeft een operator geen losse
+schijfrapporten per project meer samen te voegen. Een run behandelt maximaal
+vier expliciet gekozen workspaces **onafhankelijk**; een ontoegankelijke map
+wordt als onbekend vastgelegd en onderdrukt de andere bronnen niet.
+
+    python3 scripts/zsentinel_archive_portfolio.py \
+      --workspace /home/ubuntu/zennay-cloud \
+      --workspace /home/ubuntu/Haxlab \
+      --archive-root /home/ubuntu/VPS-Archief \
+      --max-entries 2000 --max-depth 2 --max-seconds 2 \
+      --format html \
+      --output /path/to/existing/private/archive-portfolio-20261020.html
+
+Het werkbord is privé (create-only 0600); bronpaden en mogelijke bestandsnamen
+worden NOOIT naar stdout of een openbaar dashboard gekopieerd. Het publieke,
+bronarme summary-model bevat alleen aantallen en meldt expliciet
+files_copied_or_deleted=false / source_disk_space_reclaimed=false.
+
+Directe echte zSSH-read-only observatie op twee bovengenoemde projectmappen
+en een beperkte scan op huidige exact bronhead: twee bronnen toegankelijk,
+geen archiefkandidaten in het onderzochte, **gedeeltelijke** venster.
+Dat betekent nadrukkelijk NIET dat er nergens koude replays of models staan.
+Zelfstandig aanpassen aan een ander vrij projectpad of langer (maximaal
+5 seconden per workspace) read-only inventariseren is mogelijk. Een
+feitelijke overdracht/verwijdering is NIET geautoriseerd of ingebouwd.
+
