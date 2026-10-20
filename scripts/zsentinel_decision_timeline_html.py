@@ -84,6 +84,7 @@ $("stats").append(
  stat("Bronvensters",data.source_count),
  stat("Unieke incidenten in steekproef",data.unique_incidents_sampled),
  stat("Meerdere keren gezien",data.multi_window_observed),
+ stat("Verdween en later opnieuw gezien",data.disappeared_then_reobserved),
  stat("Niet in laatste steekproef: opvolgen",data.not_observed_in_final_sample_needs_reconciliation),
  stat("Getoonde kaarten",data.visible_incidents),
  stat("Afgekapt",data.rows_truncated?"JA, onzichtbare incidenten bestaan":"nee")
@@ -91,7 +92,9 @@ $("stats").append(
 for(const source of data.sources){
  $("sources").append(line("Venster "+source.index,
  source.observed_at_utc+" · "+source.observed_incident_count+
- " incidenten in gedeeltelijke steekproef · SHA256(normalized) "+source.normalized_source_sha256));
+ " in gedeeltelijke steekproef (P0 "+source.observed_p0_count+
+ ", P1 "+source.observed_p1_count+", menselijke actie "+source.observed_human_only_count+
+ ") · SHA256(normalized) "+source.normalized_source_sha256));
 }
 function render(){
  const q=$("search").value.trim().toLowerCase(),s=$("severity").value,
@@ -111,9 +114,14 @@ function render(){
   chips.append(
    el("span","chip",row.last_priority),el("span","chip",row.project),
    el("span","chip",row.observed_in_final_sample?"In laatst gelezen bron":"Niet gezien: herstel ONBEKEND"));
+  if(row.highest_observed_priority!==row.last_priority){
+   chips.append(el("span","chip","Historisch "+row.highest_observed_priority));
+  }
   article.append(chips,el("h2",null,row.problem),
    line("Incident",row.id),line("Gelezen momenten",row.observed_windows+"/"+data.source_count),
    line("Bronstatus",row.last_status),line("Eigenaarlabel, niet geverifieerd",row.last_owner_label_unverified),
+   line("Verdwenen en opnieuw gezien (bronhiaten)",row.disappeared_and_reappeared_sample_gaps+
+      " · geen bewijs dat het probleem tussentijds hersteld was"),
    line("Vervolgadvies",row.last_action_advisory),
    line("Beoordelingsdoel uit bron",row.last_original_review_target));
   const details=el("details"),summary=el("summary",null,"Toon bronhistorie / veranderingen");
