@@ -125,10 +125,53 @@ def recovery_priorities(data):
     return actions
 
 
+def render_comparison(comparison):
+    """Visible T0/T1 changes without implying a healed CI workflow."""
+    if comparison is None:
+        return ""
+    observed_complete = comparison.get("complete_service_coverage") is True
+    heading = "Beide servicelijsten volledig binnen de bronlimiet" if observed_complete else (
+        "Onvolledige bron: ontbrekende runner mag niet als hersteld tellen"
+    )
+    labels = {
+        "newly_observed": "Nieuw waargenomen",
+        "no_longer_observed": "Niet meer waargenomen",
+        "service_state_changed": "Systemd-toestand gewijzigd",
+    }
+    rows = []
+    for entry in comparison.get("transitions", [])[:40]:
+        before = entry.get("previous") or {}
+        after = entry.get("current") or {}
+        first = before.get("state", "niet gezien")
+        second = after.get("state", "niet gezien")
+        label = labels.get(entry.get("change"), "Onzekere wijziging")
+        rows.append(
+            '<li class="transition"><strong>' + escape(label) + '</strong> · '
+            + escape(str(entry.get("unit", "")))
+            + '<br><span class="muted">' + escape(str(first)) + ' → '
+            + escape(str(second)) + '</span><br>'
+            + '<small>Incidentcode: ' + escape(str(entry.get("incident_key", "")))
+            + '</small></li>'
+        )
+    items = "".join(rows) if rows else "<li>Geen verandering waargenomen in het beperkte bronbereik.</li>"
+    return (
+        '<section class="panel"><h2>Verandering sinds privé T0</h2>'
+        '<p><strong>Van:</strong> ' + escape(comparison["previous_utc"])
+        + ' · <strong>Tot:</strong> ' + escape(comparison["current_utc"])
+        + '</p><p><strong>Brontoestand:</strong> ' + escape(heading)
+        + ' · ' + escape(str(comparison["elapsed_seconds"])) + ' seconden</p>'
+        '<ul class="transitions">' + items + '</ul>'
+        '<p class="warning">Dit toont alleen waargenomen systemd-statusverschillen. '
+        'Ook failed→active bewijst geen toegewezen GitHub-job, geslaagde CI, merge '
+        'of live herstel. Niet gezien ≠ opgelost; geen automatische herstart.</p></section>'
+    )
+
+
 def render(data):
     host = data["host"]
     units = data["units"]
     coach = data["coach"]
+    history = render_comparison(data.get("comparison"))
     cards = []
     if not units["runner_units_observed"]:
         cards.append('<p class="warning">Runner-services konden niet worden uitgelezen. Geen bewijs van herstel.</p>')
@@ -189,6 +232,7 @@ def render(data):
     .warning {padding:1rem;background:#fff5e1;border:1px solid #deb76f;border-radius:8px}
     .unit {font-family:ui-monospace,monospace;overflow-wrap:anywhere;font-size:.86rem}
     .advice {font-weight:600}.metric {font-size:1.15rem}
+    .transitions {padding-left:1.3rem}.transition {margin:.6rem 0;overflow-wrap:anywhere}
     footer {margin-top:2rem;border-top:1px solid #cdd5df;padding:1.5rem 0}
     """
     def box(name, value):
@@ -213,6 +257,7 @@ def render(data):
 <p><strong>Oorzaken:</strong> {escape(reasons)}</p>
 <p>{escape(coach_state)} · {escape(coach_match)}</p>
 <p>De voorbeeldinstellingen zijn niet door dit rapport toegepast.</p></section>
+{history}
 <h2>GitHub-runner-servicestatus</h2><p class="muted">{escape(overview)}</p>
 <div class="grid">{"".join(cards)}</div>
 <section class="panel"><h2>Prioriteit en veilige herstelvolgorde</h2><ol>{plans}</ol>
@@ -259,12 +304,18 @@ def save_private(path, markup):
 def main():
     parser = argparse.ArgumentParser(description="Private one-shot zSentinel runner incident workbench")
     parser.add_argument("--output", required=True, help="NEW private 0600 .html report (never overwritten)")
+    parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
     args = parser.parse_args()
     try:
         data = collect()
+        if args.previous:
+            # Import only for opt-in private previous-receipt comparison.
+            from zsentinel_runner_snapshot import packet, changes, load_private
+            current = packet(data)
+            data["comparison"] = changes(load_private(args.previous), current)
         markup = render(data)
         save_private(args.output, markup)
-    except (OSError, ValueError):
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError):
         # Do not echo report paths, unit command lines or operator-private details.
         parser.exit(1, "Kon geen privé rapport maken; controleer veilige doelmap en rechten.\n")
     print("Privé herstelwerkbank gemaakt (0600, zonder live wijziging).")
