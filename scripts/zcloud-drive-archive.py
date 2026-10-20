@@ -60,11 +60,16 @@ def examine(path, cutoff):
     try:
         device = path.lstat().st_dev
         for current, dirs, files in os.walk(path, followlinks=False):
+            # Metadata-tree fingerprints must not depend on readdir ordering.
+            dirs.sort()
+            files.sort()
             st = os.lstat(current)
             if not stat.S_ISDIR(st.st_mode) or st.st_dev != device:
                 return None
             newest = max(newest, st.st_mtime, st.st_ctime)
             scanned += 1
+            if scanned > MAX_SCAN_NODES:
+                return None
             fingerprint.update(repr((os.path.relpath(current, path), st.st_mode,
                 st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)).encode("utf-8", "surrogateescape"))
             for name in sorted(dirs + files):
@@ -95,6 +100,9 @@ def examine(path, cutoff):
 
 def candidates(age, limit=MAX_CANDIDATES):
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=age)).timestamp()
+    # Never follow a redirected checkout path or silently scan outside root.
+    if ROOT.is_symlink() or not ROOT.is_dir():
+        raise RuntimeError("Canonical zCloud source directory is unavailable")
     results = []
     for path in ROOT.iterdir():
         v = examine(path, cutoff)
