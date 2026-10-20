@@ -186,6 +186,49 @@ def is_new_product_delivery(item):
     return product_delivery_disposition(item) == "product"
 
 
+def portfolio_fair_candidate_window(ordered_rows, limit=240, per_project_reserve=8):
+    """Select a bounded cross-project product window from source-ordered rows.
+
+    This is an *observation/selection* step, never lease authorization. The
+    upstream caller must filter QA/invalid rows, retain current source priority
+    order and apply the usual lane, live-claim, capacity and owner gates after
+    this shortlist. In a noisy queue, reserve a small share for each observed
+    project so one project's first 240 tasks cannot hide independent work.
+    """
+    if type(limit) is not int or not 1 <= limit <= 240:
+        raise ValueError("invalid candidate window limit")
+    if type(per_project_reserve) is not int or not 1 <= per_project_reserve <= limit:
+        raise ValueError("invalid candidate project reserve")
+    rows = list(ordered_rows)
+    if len(rows) <= limit:
+        return rows
+    # Take up to N source-ordered rows per project first; only then top up
+    # remaining capacity in original priority order. Never reclassify a row,
+    # invent ownership, or mutate a SQLite iterator/queue row.
+    seen = {}
+    reserved = []
+    picked = set()
+    for index, row in enumerate(rows):
+        raw = row["project_id"]
+        project = str(raw or "")
+        if not project or seen.get(project, 0) >= per_project_reserve:
+            continue
+        if len(reserved) >= limit:
+            break
+        seen[project] = seen.get(project, 0) + 1
+        reserved.append((index, row))
+        picked.add(index)
+    if len(reserved) < limit:
+        for index, row in enumerate(rows):
+            if index in picked:
+                continue
+            reserved.append((index, row))
+            if len(reserved) >= limit:
+                break
+    # Keep exact source priority/creation ordering for downstream scheduling.
+    return [row for _, row in sorted(reserved, key=lambda entry: entry[0])]
+
+
 # Stable, intentionally path-free codes; safe for the authenticated UI.
 HOLD_REASON_CODES = frozenset({
     "invalid_row", "not_queued", "invalid_metadata", "invalid_lane_metadata",
