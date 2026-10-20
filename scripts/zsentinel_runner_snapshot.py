@@ -176,6 +176,7 @@ def capacity_changes(previous, current):
     labels = (
         ("host_load", False), ("memory_available_gib", False),
         ("swap_used_percent", False), ("disk_unavailable_percent", True),
+        ("root_available_gib", True),
     )
     metrics = []
     for key, is_disk in labels:
