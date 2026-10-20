@@ -329,9 +329,10 @@ def render_html(report: dict) -> str:
         '<section aria-labelledby="candidate-review"><h2 id="candidate-review">Aged file owner review</h2>'
         '<p class="muted">Age does not prove a log is closed, a release superseded,'
         ' an archive transfer verified or a file safe to delete.</p>'
+        + scan_warning +
         '<table><thead><tr><th>Owner review category</th><th>Count</th>'
         '<th>Size</th><th>Disposition</th></tr></thead><tbody>'
-        + scan_warning + review_rows + '</tbody></table>'
+        + review_rows + '</tbody></table>'
         '<p class="fine">Total observed: ' + esc(report.get("total_candidate_count", 0))
         + ' files. Item examples omitted beyond limit: ' + esc(omitted)
         + '. Automatically reclaimable: 0 bytes.</p></section>'
