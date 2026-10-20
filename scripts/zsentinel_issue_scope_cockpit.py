@@ -762,6 +762,8 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append")
     parser.add_argument("--max-prs", type=int, default=10)
+    parser.add_argument("--inspect-pr-gates", action="store_true",
+                        help="Optioneel: current-head checks/reviews van maximaal vier PRs")
     parser.add_argument("--focus-issue",
                         help="Toon slechts één issue die echt in de begrensde bron voorkomt, bv. Zennay/zCloud#1326")
     parser.add_argument("--format", choices=("html", "json", "text", "markdown"),
@@ -769,6 +771,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         canonical = registry(args.registry)
+        if args.inspect_pr_gates and not args.live_issues:
+            raise ValueError("--inspect-pr-gates requires --live-issues")
         if args.live_issues:
             if not args.project or len(args.project) > MAX_PROJECTS:
                 raise ValueError("--live-issues needs 1–3 explicit canonical --project values")
@@ -816,6 +820,55 @@ def main(argv=None):
                                       else "live_readonly_github_issues" if args.live_issues
                                       else "saved_local_snapshot"),
                          focus_issue=args.focus_issue, raw_board=source)
+        if args.inspect_pr_gates:
+            from zsentinel_pr_gate_now import observe_many as live_pr_gate_observe
+            selected_prs = []
+            known = set()
+            for issue in report["issues"]:
+                for candidate in issue["existing_prs"]:
+                    link = candidate["url"]
+                    m = PR.fullmatch(link)
+                    if m is None:
+                        raise ValueError("untrusted live gate candidate PR URL")
+                    identity = ("Zennay/" + m.group(1), int(m.group(2)))
+                    if identity[0] != canonical[issue["project"]]:
+                        raise ValueError("cross-project current head source")
+                    if identity not in known and len(selected_prs) < 4:
+                        known.add(identity)
+                        selected_prs.append(identity)
+            live_gates = (
+                live_pr_gate_observe(selected_prs, os.environ.get("GITHUB_TOKEN"))
+                if selected_prs else {
+                    "schema": "zsentinel-current-pr-gate-observation-v1",
+                    "items": [], "observed_prs": 0,
+                    "merge_authorized": False, "writes_performed": False,
+                    "required_branch_protection_verified": False})
+            if (live_gates.get("schema") != "zsentinel-current-pr-gate-observation-v1"
+                    or live_gates.get("merge_authorized") is not False
+                    or live_gates.get("writes_performed") is not False
+                    or live_gates.get("required_branch_protection_verified") is not False):
+                raise ValueError("unauthorized live PR gate source")
+            by_url = {entry["url"]: entry for entry in live_gates["items"]}
+            for issue in report["issues"]:
+                for candidate in issue["existing_prs"]:
+                    candidate["live_exact_head_review_checks_observation"] = by_url.get(candidate["url"])
+            report["current_head_gate_observations"] = {
+                "mode": "read_only_live_bounded_up_to_four_existing_prs",
+                "observed_prs": live_gates["observed_prs"],
+                "more_existing_prs_uninspected": (
+                    len({p["url"] for row in report["issues"] for p in row["existing_prs"]})
+                    > len(selected_prs)),
+                "required_branch_protection_verified": False,
+                "independent_review_policy_verified": False,
+                "merge_authorized": False,
+                "writes_performed": False}
+        else:
+            report["current_head_gate_observations"] = {
+                "mode": "not_requested", "observed_prs": 0,
+                "more_existing_prs_uninspected": True,
+                "required_branch_protection_verified": False,
+                "independent_review_policy_verified": False,
+                "merge_authorized": False, "writes_performed": False}
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
