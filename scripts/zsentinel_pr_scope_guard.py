@@ -404,6 +404,11 @@ def observe_conflict_graph(repo, token=None, limit=24):
         })
     after = open_prs(repo, token)
     stable = before == after
+    collided = set()
+    for left, right in pairs:
+        collided.add(left)
+        collided.add(right)
+    not_paired = [pr for pr in observed if pr["number"] not in collided]
     fully_sampled = (len(before) < MAX_OPEN_PAGE and len(before) <= limit
                      and not suspicious_lists and stable
                      and len(ordered) <= MAX_CONFLICT_PAIRS)
@@ -417,6 +422,8 @@ def observe_conflict_graph(repo, token=None, limit=24):
         "inspected_pr_heads": observed,
         "observed_file_collision_pairs": len(ordered),
         "shown_file_collision_pairs": cards,
+        "unpaired_open_prs_in_sample_not_claim_verified": not_paired,
+        "unpaired_means_no_shared_paths_in_sample_only": True,
         "collision_cards_truncated": len(ordered) > MAX_CONFLICT_PAIRS,
         "pr_file_lists_truncated": suspicious_lists,
         "open_pr_page_may_be_truncated": len(before) == MAX_OPEN_PAGE,
@@ -457,6 +464,10 @@ def graph_operator_text(report):
             result.append("  " + file)
         if row["shared_files_truncated"]:
             result.append("  Meer bestandspaden niet weergegeven.")
+    if report["unpaired_open_prs_in_sample_not_claim_verified"]:
+        result.append("PR's zonder gedeelde paden IN DEZE STEEKPROEF (geen eigenaarvrijgave):")
+        for pr in report["unpaired_open_prs_in_sample_not_claim_verified"]:
+            result.append("  PR #" + str(pr["number"]) + " | " + pr["url"])
     if report["pr_file_lists_truncated"]:
         result.append("Onvolledige bestandlijsten: " +
                       ", ".join(str(n) for n in report["pr_file_lists_truncated"]))
@@ -487,6 +498,12 @@ def graph_html(report):
     completeness = ("volledig, uitsluitend voor huidige open PR's"
                     if report["pr_file_scope_sample_complete"]
                     else "onvolledig; bron/venster niet stabiel of afgekapt")
+    unpaired = report["unpaired_open_prs_in_sample_not_claim_verified"]
+    isolated_links = "".join(
+        "<li><a rel='noopener noreferrer' href='" +
+        escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
+        "</a> · " + escape(pr["head_sha"][:12]) + "</li>"
+        for pr in unpaired)
     return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>zSentinel PR-conflictenkaart</title>"
@@ -509,7 +526,11 @@ def graph_html(report):
             " geverifieerd. Geen automatische claim of merge.</aside>"
             "<table><thead><tr><th>Open PR's</th><th>Overlap</th>"
             "<th>Gedeelde bestanden</th></tr></thead><tbody>" +
-            "".join(rows) + "</tbody></table><p>Bronmoment: " +
+            "".join(rows) + "</tbody></table><h2>Geen gedeelde paden in de steekproef</h2>"
+            "<p>Dit zijn niet automatisch vrije taken. Raadpleeg actuele claims, "
+            "PR-loze branches, bestandsleases en reviews.</p><ul>" +
+            (isolated_links or "<li>Geen overige open PR's in de steekproef.</li>") +
+            "</ul><p>Bronmoment: " +
             escape(report["observed_at_utc"]) + "</p></html>")
 
 
