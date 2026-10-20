@@ -1434,3 +1434,61 @@ actuele leases/owners, exact-head GitHub-gates, de serialized release
 en echte productcontinuïteit opnieuw en onafhankelijk controleren.
 De privacygrens is dezelfde create-only 0600 bronbestandsuitvoer, zonder
 extern netwerk, browserautomatisering, AI-scheduler of nieuwe QA-rondes.
+
+
+## 20 oktober · Complete project-PR werkrij uit opgeslagen gatebron
+
+De offline portfolio-uitvoer behandelde tot nu toe per project vooral de **eerste**
+PR-kandidaat. Daardoor kon een operator een volgend onafhankelijk, bestaand
+product-PR binnen hetzelfde project missen, ook als dat al in dezelfde
+gevalideerde reviewmanifest-batches stond. De bestaande
+`scripts/zsentinel_saved_gate_batch_bridge.py` toont nu voor **ieder** project
+alle daadwerkelijk geobserveerde PR-kandidaten, in P0/P1/P2/ongecategoriseerd
+en gate-actievolgorde, met batchherkomst, afzonderlijke gelijktijdige
+blokkades, gekoppelde originele issue-URL's en een concrete menselijke
+vervolgstap.
+
+Gebruik dezelfde, reeds lokaal opgeslagen en brongebonden bestanden:
+
+```bash
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review-manifest.json \
+  --receipt ./private-gate-batch-1.json \
+  --receipt ./private-gate-batch-2.json \
+  --allow-partial \
+  --format html \
+  --output ./private-project-desk.html
+```
+
+De kaart **Portfolio · bestaande PR afhandeling** heeft nu per project een
+uitklapbare **volledige bestaande PR-afhandelrij**; `--format portfolio-csv`
+levert naast het eerste PR ook het aantal overige kandidaten en de eerste
+drie canonieke URLs. Een nieuw **kort, maar volledig per-project overdrachtsblad**
+kan afzonderlijk worden gemaakt:
+
+```bash
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review-manifest.json \
+  --receipt ./private-gate-batch-1.json \
+  --receipt ./private-gate-batch-2.json \
+  --allow-partial \
+  --format portfolio-markdown \
+  --output ./private-portfolio-pr-handoff.md
+```
+
+`--format portfolio-json` bevat nu dezelfde per-project
+`candidates`-rij met uitsluitend genormaliseerde, canonieke bronvelden.
+Dat bestand is **niet** een worker-dispatchcontract of hoofdbranchvrijgave.
+Een ontbrekende gate-batch blijft `missing_batch`; een bron zonder stabiele
+HEAD blijft `source_unavailable_or_head_changed`. De link naar een bestaand
+PR is **geen** bewijs van recente eigenaarstoestemming of dat een issue
+opgelost is. De originele manifest-/board-SHA256, UTC-bronmomenten en
+observatiebegrenzing blijven zichtbaar; er wordt niets opnieuw van GitHub
+opgehaald.
+
+Alle outputs lopen door de bestaande maximaal 1 MiB, create-only 0600
+bestandsgrens en weigeren overschrijven. Geen testsuite, QA-run, claim, nieuwe
+PR, service, CI-rerun, GitHub write, workerdispatch of productieactie wordt
+door deze offline functie uitgevoerd. Voor merge eerst *apart* actuele claims,
+exacte-head verplichte CI, onafhankelijke review, branch protection en
+releasebevoegdheid vaststellen; alleen de echte main-SHA en live bewijs tellen.
