@@ -215,6 +215,18 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         if route not in ("self_hosted", "hosted_or_custom", "unknown", "degraded_unknown"):
             raise ValueError("invalid route admission category")
         summary[pid]["github_job_runner_route"] = route
+        if item.get("status") == "refreshed":
+            observed_status = item.get("job_status")
+            if observed_status not in (
+                    "queued", "in_progress", "completed", "waiting", "pending"):
+                raise ValueError("invalid exact GitHub job status")
+            # When this is a manually pinned job there may be no discovery
+            # receipt at all; still show the ONE truly observed exact job.
+            # A discovery source can later replace this minimum with its
+            # independently observed multi-job count.
+            summary[pid]["github_sampled_actionable_jobs"] = 1
+            summary[pid]["github_sampled_queued_self_hosted_jobs_min"] = int(
+                observed_status == "queued" and route == "self_hosted")
         # Refresh only proves the exact selected job; CI-source admission
         # metadata belongs to ci_discovery.coverage, never github_jobs.
     # CI discovery is distinct from exact-job refresh. Read its bounded
