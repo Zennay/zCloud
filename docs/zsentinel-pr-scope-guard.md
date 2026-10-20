@@ -1354,3 +1354,65 @@ human-only vervolgactie apart bij ieder nummer. Een `P0`-kaart
 beweert niet dat een bestaande PR dat issue repareert, de eigenaar
 vrij is, een vereiste check groen is of een veilige productieactie
 is toegestaan. Die autorisatie blijft buiten de scanner.
+
+
+## Veel open PR's: meerdere opgeslagen conflictvensters samenvoegen
+
+De live GitHub-PR-conflictkaart kan bewust maar **maximaal 48 PR's
+per run** scannen. Daardoor zou PR #A op pagina 1 en PR #B op pagina 5
+elkaars gewijzigde bestand nog altijd niet samen in hetzelfde
+live-resultaat kunnen tonen. De nieuwe **privé offline
+cross-window-composer** lost deze bronintegratiekloof op zonder het
+live GitHub-verzoekenbudget, rechten, workers of releaseproces te verhogen.
+
+```sh
+# Privé locatie: de eerdere audit schrijft zelf alleen naar stdout.
+umask 077
+
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --open-page 1 --page-count 3 --max-prs 8 --format json \
+  > ./graph-pages-1-3.private.json
+
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --open-page 4 --page-count 3 --max-prs 8 --format json \
+  > ./graph-pages-4-6.private.json
+
+# Combineren zonder extra GitHub GET of workflow:
+python3 scripts/zsentinel_pr_saved_graph_merge.py \
+  --repo Zennay/zCloud \
+  --input ./graph-pages-1-3.private.json \
+  --input ./graph-pages-4-6.private.json \
+  --format html --output ./private-cross-window-conflicts.html
+```
+
+Met `--format json`, `markdown`, `text` of `html` geeft
+de composer de **nieuwe bestandsparen over verschillende
+opgeslagen vensters**. Botsingen binnen één reeds opgeslagen venster
+staan al in de afzonderlijke graph, en worden daarom niet onnodig
+verdubbeld. HTML bevat canonieke GitHub-links, de werkelijk gedeelde
+bestanden en een waarschuwing dat het geen atomische live waarneming is.
+Er wordt één nieuw bestand met `0600` aangemaakt, bestaande uitvoer
+nooit overschreven.
+
+De invoer is minimaal twee en maximaal zes bestaande privé Graph-JSON
+bestanden uit dezelfde expliciete GitHub-repository, hoogstens 288
+PR's totaal. Per bestand wordt de exacte bronstructuur,
+pagina-afbakening, SHA-identiteit, PR-bestandslijst en stabiele
+voor-/nalezing geëist. Dubbele bronpagina's, dezelfde PR in meerdere
+vensters, veranderende evidence, symlinks, ongeldige JSON, te grote
+bronbestanden en observatiemomenten meer dan tien minuten uiteen
+worden geweigerd; een incomplete PR-bestandslijst blijft zichtbaar
+als **incomplete evidence**. Deze laatste grens voorkomt dat oude
+historische PR-overzichten als één huidig snapshot worden voorgesteld.
+
+**Oplevergrens:** de combinatie is per definitie
+`source_is_atomic_current_snapshot=false` en
+`source_complete_for_all_open_prs=false`. Geen botsing in de
+samengevoegde resultaten betekent dus niet dat een PR vrij is van
+conflicten. Het product voert geen claims, GitHub writes, workflows,
+CI, tests, queue-mutaties, workeracties of merges uit; het is
+uitsluitend een private read-only operatorinventaris. De actuele
+Notion-/GitHub-eigenaarsclaims, beschermde main, verplichte exact-head
+CI, reviews en geautoriseerde deploy blijven onafhankelijke voorwaarden.
