@@ -79,7 +79,7 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "label": "Bestaande eigenaar behouden",
             "next_step": "Controleer actuele claimhouder en voortgang; neem deze taak niet over.",
         }
-    if expired_local_leases and state != "idle":
+    if expired_local_leases:
         return {
             "code": "HOLD_EXPIRED_LOCAL_CLAIM",
             "label": "Verlopen lokale lease(s) aangetroffen",
