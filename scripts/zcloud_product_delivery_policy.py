@@ -85,22 +85,27 @@ def _unique_object(pairs):
 
 
 def _metadata(item):
+    # The persisted raw receipt wins over a separate presentation object.
+    # Otherwise a caller supplying both could shadow corrupt/QA-only raw
+    # metadata with a sanitized {} and convert a hold into a candidate.
+    raw = item.get("metadata_json")
+    if raw is not None and raw != "":
+        if not isinstance(raw, str) or len(raw) > 16384:
+            raise ValueError("unbounded delivery metadata")
+        parsed = json.loads(raw, object_pairs_hook=_unique_object,
+                            parse_constant=lambda _: (_ for _ in ()).throw(
+                                ValueError("invalid nonfinite metadata")))
+        if not isinstance(parsed, dict):
+            raise ValueError("invalid delivery metadata")
+        return parsed
+    if raw is not None and not isinstance(raw, str):
+        raise ValueError("invalid delivery metadata")
     data = item.get("metadata")
     if data is not None:
         if not isinstance(data, dict):
             raise ValueError("invalid delivery metadata object")
         return data
-    raw = item.get("metadata_json")
-    if raw is None or raw == "":
-        return {}
-    if not isinstance(raw, str) or len(raw) > 16384:
-        raise ValueError("unbounded delivery metadata")
-    parsed = json.loads(raw, object_pairs_hook=_unique_object,
-                        parse_constant=lambda _: (_ for _ in ()).throw(
-                            ValueError("invalid nonfinite metadata")))
-    if not isinstance(parsed, dict):
-        raise ValueError("invalid delivery metadata")
-    return parsed
+    return {}
 
 
 def _lane_value(value):
@@ -260,8 +265,23 @@ def product_queue_snapshot(items, max_visible=8):
             continue
         disposition = item.get("delivery_policy_disposition")
         reason = item.get("delivery_policy_reason")
-        if (disposition not in ("product", "qa_only", "invalid")
-                or reason not in HOLD_REASON_CODES | {"product_candidate"}):
+        # A source annotation is one inseparable classification + reason
+        # pair. Accepting an individually valid but mismatched pair (e.g.
+        # product/explicit_qa_lane) would falsely promote held tasks.
+        valid_receipt = (
+            (disposition == "product" and reason == "product_candidate")
+            or (disposition == "qa_only" and reason in {
+                "explicit_qa_lane", "explicit_qa_title",
+                "qa_execution_only_title", "qa_title_without_delivery",
+                "qa_criteria_without_delivery",
+            })
+            or (disposition == "invalid" and reason in {
+                "invalid_row", "not_queued", "invalid_metadata",
+                "invalid_lane_metadata", "invalid_title",
+                "invalid_completion_criteria",
+            })
+        )
+        if not valid_receipt:
             disposition, reason = product_delivery_classification(item)
         if disposition != "product":
             hold_reasons[reason] = hold_reasons.get(reason, 0) + 1
