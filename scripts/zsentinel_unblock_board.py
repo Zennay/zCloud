@@ -638,3 +638,128 @@ def blocker_board_text(board):
     if not board["independent_fallback_inspection"]:
         lines.append("  Geen vrij werk bewezen.")
     return "\n".join(lines)
+
+
+# A confirmation that a GitHub job is merely queued is not a human emergency.
+# The report is a private handoff artifact, never an automated notification.
+HUMAN_BRIEF_KINDS = frozenset({
+    "verified_source_incident_not_runtime_recovery",
+    "open_owner_only_issue_not_current_outage_proof",
+    "github_ci_auth_owner_gate_not_runner_outage",
+    "read_only_worker_progress_gap_not_proven_outage",
+})
+HUMAN_PR_STEPS = frozenset({
+    "finish_existing_draft_with_owner",
+    "resolve_exact_head_review_with_owner",
+    "fix_exact_head_ci_with_owner",
+    "inspect_unlisted_status_contexts_with_owner",
+    "request_independent_review",
+    "resolve_hosted_billing_with_account_owner",
+    "verify_pr_source_with_owner",
+})
+
+
+def _brief_text(value, maximum):
+    """Make one bounded paragraph safe to paste into Markdown/Notion."""
+    if (type(value) is not str or not 1 <= len(value) <= maximum
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+        raise ValueError("unsafe human handoff source")
+    # Never allow arbitrary source prose to become Markdown commands/links.
+    return "".join(("\\" + ch if ch in "\\`*_[]()<>#|!" else ch)
+                   for ch in value)
+
+
+def human_handoff_markdown(board):
+    """Source-only, private P0/P1 human action brief; no automatic escalation.
+
+    The canonical board is a *bounded sample* and missing cards remain unknown.
+    Historical reconciliation, ordinary queued CI, churn and generic worker
+    event gaps must not be transformed into false emergencies.
+    """
+    if (type(board) is not dict
+            or board.get("schema") != "zsentinel-blocker-first-board-v1"
+            or any(board.get(key) is not False for key in (
+                "worker_resumed_verified", "claims_taken", "retries_performed",
+                "deployment_authorized", "writes_performed",
+                "known_complete_blocker_inventory"))
+            or type(board.get("blocker_cards_truncated")) is not bool):
+        raise ValueError("untrusted or authorizing human handoff")
+    cards = board.get("shown_blocker_cards")
+    if type(cards) is not list or len(cards) > 12:
+        raise ValueError("unbounded human escalation sample")
+    selected = []
+    seen = set()
+    for row in cards:
+        if type(row) is not dict:
+            raise ValueError("invalid source escalation card")
+        ident = row.get("id")
+        if (type(ident) is not str or not 1 <= len(ident) <= 120
+                or ident in seen):
+            raise ValueError("invalid or duplicate human handoff identity")
+        seen.add(ident)
+        if (row.get("permission_to_recover") is not False
+                or row.get("worker_resumed_verified") is not False
+                or row.get("owner_claim_verified") is not False
+                or row.get("priority") not in ("P0", "P1")
+                or type(row.get("requires_human")) is not bool):
+            raise ValueError("untrusted human escalation authority")
+        if row["requires_human"] is not True:
+            continue
+        kind = row.get("kind")
+        if (kind not in HUMAN_BRIEF_KINDS and
+                not (kind == "existing_product_pr_gate_inspection_only"
+                     and row.get("next_gate") in HUMAN_PR_STEPS)):
+            continue
+        project = _brief_text(row.get("project_id"), 40)
+        if not PROJECT.fullmatch(project):
+            raise ValueError("invalid human escalation project")
+        problem = _brief_text(row.get("problem"), 600)
+        owner = _brief_text(row.get("owner"), 160)
+        action = _brief_text(row.get("action"), 600)
+        origin = _brief_text(row.get("observed_from"), 120)
+        links = []
+        for field in ("source_owner_issue_url", "source_pr_url"):
+            url = row.get(field)
+            if url is None:
+                continue
+            if (type(url) is not str or not re.fullmatch(
+                    r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}/"
+                    r"(?:issues|pull)/[1-9][0-9]{0,8}", url)):
+                raise ValueError("untrusted human handoff source URL")
+            links.append(url)
+        selected.append({
+            "priority": row["priority"], "project": project,
+            "problem": problem, "owner": owner, "action": action,
+            "source": origin, "links": links,
+        })
+    lines = [
+        "# zSentinel — alleen noodzakelijke menselijke acties",
+        "",
+        "**Privé, alleen-lezen concept.** Geen bericht verzonden, claim overgenomen, "
+        "workflow herstart, runner gerepareerd of release toegestaan.",
+        "Bron: maximaal twaalf blockerkaarten uit één onvolledige momentopname; "
+        "ontbrekende items zijn **ONBEKEND**, nooit opgelost.",
+        "",
+        "Hulpvragen in de zichtbare bron: " + str(len(selected)) + ".",
+    ]
+    if board["blocker_cards_truncated"]:
+        lines += ["**LET OP:** meer blokkades bestaan buiten deze zichtbare twaalf; "
+                  "de briefing is niet volledig."]
+    if not selected:
+        lines += ["", "Geen direct noodzakelijke menselijke actie in deze "
+                  "steekproef bewezen. Dit is geen volledige all-clear."]
+    else:
+        for entry in selected:
+            lines += [
+                "", "## " + entry["priority"] + " — " + entry["project"],
+                "**Probleem:** " + entry["problem"],
+                "**Bevoegde eigenaar:** " + entry["owner"],
+                "**Nodige actie:** " + entry["action"],
+                "**Bron:** " + entry["source"],
+            ]
+            for url in entry["links"]:
+                lines.append("**GitHub-bron:** " + url)
+    lines += ["", "Geen automatische escalatie, workerhervatting, "
+              "mergebevoegdheid of productiedeployment. "
+              "Controleer actuele eigendom en vereiste gates onafhankelijk.", ""]
+    return "\n".join(lines)
