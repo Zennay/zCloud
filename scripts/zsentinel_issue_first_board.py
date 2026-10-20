@@ -945,7 +945,13 @@ def main():
             "local_claims": local_claims,
             "prs": rows,
             "missing_authorization": "EXACT_CI_REVIEW_CLAIM_AND_RELEASE_REQUIRE_SEPARATE_EVIDENCE",
-            "main_merged": False, "live_verified": False,
+            # Legacy top-level flag means this read-only invocation merged
+            # nothing. Never interpret it as a verdict on historical PRs.
+            "main_merged": False,
+            "main_merged_meaning": "THIS_INVOCATION_PERFORMED_NO_MERGE",
+            "main_delivery_scope": "PER_PR_EXACT_SOURCE_ONLY",
+            "main_verified_prs": sum(row.get("main_merged") is True for row in rows),
+            "live_verified": False,
         }
         if args.snapshot_output:
             private_json(args.snapshot_output, payload)
