@@ -137,6 +137,25 @@ for(const delta of queue.adjacent_comparisons){
   ", verlopen lease-rijen "+(changes.expired_owner_lease_rows>=0?"+":"")+changes.expired_owner_lease_rows+
   (delta.owner_review_required ? " · EIGENAAR CONTROLEERT BRON": " · niet gelijk aan herstel")
  ));
+ const details=el("details");
+ details.append(el("summary",null,label+" · per project en prioriteit"));
+ if(delta.project_deltas===null){
+  details.append(el("p",null,"ONBEKEND: projectbron ontbrak of was afgekapte steekproef. Geen nulaantallen."));
+ }else if(!delta.project_deltas.length){
+  details.append(el("p",null,"Geen actieve projectgroepen in twee complete bronmomenten; geen herstelbewijs."));
+ }else{
+  const list=el("ol");
+  for(const group of delta.project_deltas){
+   const signed=n=>(n>=0?"+":"")+n;
+   list.append(el("li",null,
+    group.priority+" · "+group.project_id+" · wachtenden "+signed(group.queued_delta)+
+    " · hoge claimpogingen "+signed(group.high_claim_attempts_delta)+
+    " · verlopen lease-rijen "+signed(group.expired_owner_lease_rows_delta)+
+    " · veranderingen ≠ retries of vrijgegeven taken"));
+  }
+  details.append(list);
+ }
+ $("queueDeltas").append(details);
 }
 for(const source of data.sources){
  $("sources").append(line("Venster "+source.index,
