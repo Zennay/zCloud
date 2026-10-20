@@ -519,15 +519,24 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                     esc(", ".join(str(p["candidate_page"]) for p in target_coverage["page_windows"])) +
                     ". Niet-atomaire GitHub-zoekbron; geen volledig actueel PR-bewijs.</p>")
             if target_coverage.get("next_candidate_offset") is not None:
-                target_section += (
-                    "<p><strong>Deze pagina is niet volledig onderzocht.</strong> "
-                    "Hervat pagina " + esc(target_coverage["candidate_page"]) +
-                    " op kandidaat-offset " + esc(target_coverage["next_candidate_offset"]) +
-                    " met --candidate-offset en --expected-page-sha " +
-                    esc(target_coverage["source_page_sha256"]) +
-                    ". Als de zoekvolgorde wijzigt, weigert het programma "
-                    "de vervolgopdracht.</p>"
-                )
+                resume_offset = target_coverage["next_candidate_offset"]
+                if resume_offset == 0:
+                    target_section += (
+                        "<p><strong>Deze pagina is nog niet onderzocht.</strong> "
+                        "Begin pagina " + esc(target_coverage["candidate_page"]) +
+                        " opnieuw zonder --candidate-offset. Een verlopen "
+                        "bronbudget bewijst geen afwezigheid van PRs.</p>"
+                    )
+                else:
+                    target_section += (
+                        "<p><strong>Deze pagina is niet volledig onderzocht.</strong> "
+                        "Hervat pagina " + esc(target_coverage["candidate_page"]) +
+                        " op kandidaat-offset " + esc(resume_offset) +
+                        " met --candidate-offset en --expected-page-sha " +
+                        esc(target_coverage["source_page_sha256"]) +
+                        ". Als de zoekvolgorde wijzigt, weigert het programma "
+                        "de vervolgopdracht.</p>"
+                    )
             if target_coverage["next_page"] is not None:
                 target_section += (
                     "<p>Volgende zoekpagina: " +
