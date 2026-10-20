@@ -392,6 +392,23 @@ def html_view(decision):
                     or (row["status"] == "selected_one_source_bound_job_partial_window"
                         and not incomplete)):
                 raise ValueError("invalid incomplete workflow window receipt")
+            not_scanned = row.get("not_scanned_windows", [])
+            stop_reason = row.get("repository_stop_reason")
+            stop_descriptions = {
+                None: None,
+                "github_permission_or_rate_limit":
+                    "GitHub weigert toegang of heeft de limiet bereikt; verdere verzoeken aan deze repository overgeslagen.",
+                "repository_inaccessible":
+                    "Repository onbereikbaar; verdere verzoeken aan deze repository overgeslagen.",
+                "github_network_unavailable":
+                    "Netwerkbron onbereikbaar; verdere verzoeken aan deze repository overgeslagen.",
+            }
+            if (type(not_scanned) is not list or len(not_scanned) > 3
+                    or any(x not in labels for x in not_scanned)
+                    or len(set(not_scanned)) != len(not_scanned)
+                    or any(x in incomplete for x in not_scanned)
+                    or stop_reason not in stop_descriptions):
+                raise ValueError("invalid repository stop evidence")
             if row["status"] in ("selected_one_source_bound_job",
                                   "selected_one_source_bound_job_partial_window"):
                 window = row.get("workflow_status_window")
@@ -404,8 +421,13 @@ def html_view(decision):
                 description = "GitHub-venster onbereikbaar; overige jobs en gezondheid ONBEKEND."
             else:
                 description = "Geen kandidaat in dit kleine venster; overige jobs ONBEKEND."
+            if stop_reason is not None:
+                description += " " + stop_descriptions[stop_reason]
+            if not_scanned:
+                description += " Niet doorzocht: " + ", ".join(
+                    labels[x] for x in not_scanned) + "."
             cards.append('<article class="panel read"><h3>' + pid +
-                         '</h3><p>' + phrase(description, 200) + '</p></article>')
+                         '</h3><p>' + phrase(description, 600) + '</p></article>')
         discovery_panel = (
             '<section><h2>GitHub-zoekvensters · alleen een beperkte steekproef</h2>'
             '<p class="muted">Volgorde: wachtende workflows, lopende workflows met '
