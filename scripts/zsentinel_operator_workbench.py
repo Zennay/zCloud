@@ -1217,7 +1217,9 @@ function refreshPrDesk(){
    li.append(link(card.priority+' '+card.issue+' ↗',card.url),
     elem('small',card.title+' · human decision: '+
       (handoffs.get(card.issue)?.decision||'investigate')));
-   inner.append(li);
+   const open=elem('button','View issue in local workbench');open.type='button';
+   open.onclick=()=>openObservedIssue(card.issue);
+   li.append(open);inner.append(li);
   }
   item.append(inner,elem('small',prGateLabel(group.url)),
    elem('small','Source gaps: '+(group.gaps.size?
@@ -1846,7 +1848,7 @@ function drawList(){
    b.setAttribute('aria-current',c.issue===selected?'true':'false');
    b.append(elem('span',c.issue,'issue-id'),elem('span',c.title),
      elem('span',c.priority+' · '+c.project,'meta'));
-   b.onclick=()=>{saveSelection();invalidateBrief();selected=c.issue;drawList();drawDetail()};li.append(b);issueList.append(li);
+   b.onclick=()=>openObservedIssue(c.issue);li.append(b);issueList.append(li);
  });
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
    ' shown · observed '+board.observed_at_utc+' · no active-claim authorization';
@@ -1953,6 +1955,16 @@ function drawDetail(){
  note.addEventListener('input',update);
  owner.addEventListener('input',update);
  due.addEventListener('change',update);
+}
+function openObservedIssue(issue){
+ if(!entries.has(issue)||!filtered().some(card=>card.issue===issue)){
+   status.textContent='Issue is outside current saved-source filters; no current live issue assumed.';
+   return;
+ }
+ saveSelection();selected=issue;invalidateBrief();drawList();drawDetail();
+ detail.scrollIntoView({block:'start',behavior:'smooth'});
+ status.textContent='Opened '+issue+' from saved PR associations. '+
+  'Human notes remain local; live owner and required CI are unverified.';
 }
 function navigateObserved(direction,urgentOnly=false){
  saveSelection();
