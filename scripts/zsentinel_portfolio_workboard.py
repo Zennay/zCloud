@@ -203,13 +203,36 @@ def collect_live_workboards(registry, projects, token=None):
             or any(type(pid) is not str or pid not in registry for pid in projects)):
         raise ValueError("select one to eighteen distinct canonical live projects")
     reports = []
+    provider_budget_exhausted = False
     for start in range(0, len(projects), 3):
         selected = projects[start:start + 3]
-        inbox = collect(registry, selected, token, max_items=MAX_ITEMS_PER_WINDOW)
-        # A confirmed provider-wide limit is not a prompt to retry the next
-        # independent window under the same denied account budget.
-        if inbox.get("stopped_after_rate_or_auth_denial") is True:
-            raise ValueError("GitHub provider rate budget reached; no additional live fetch")
+        if provider_budget_exhausted:
+            # Preserve independently collected earlier windows. For the
+            # windows NOT queried after a confirmed provider-wide rate cap,
+            # emit explicit UNKNOWN source coverage rather than fabricate an
+            # empty GitHub issue/PR backlog or repeat denied requests.
+            inbox = {
+                "schema": "zsentinel-product-issue-inbox-v1",
+                "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "projects": selected,
+                "coverage": [
+                    {"project": pid, "repository": registry[pid],
+                     "oldest_window": "not_fetched_after_confirmed_rate_limit",
+                     "recent_window": "not_fetched_after_confirmed_rate_limit",
+                     "open_pr_window": "not_fetched_after_confirmed_rate_limit",
+                     "status": "unavailable", "active_claims_verified": False,
+                     "provider_admission": "rate_limit_confirmed"}
+                    for pid in selected
+                ],
+                "request_count": 0, "items": [], "suppressed_qa_only": 0,
+                "truncated": True, "stopped_after_rate_or_auth_denial": True,
+                "queue_ownership_known": False, "active_claims_verified": False,
+                "actions_authorized": False, "fully_synchronized": False,
+            }
+        else:
+            inbox = collect(registry, selected, token, max_items=MAX_ITEMS_PER_WINDOW)
+            provider_budget_exhausted = (
+                inbox.get("stopped_after_rate_or_auth_denial") is True)
         report = build_workboard(inbox, registry, token=token)
         if (report.get("projects") != selected
                 or report.get("claims_taken") is not False
