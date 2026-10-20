@@ -25,8 +25,8 @@ MAX_EXPANDED = 4 * MAX_ARCHIVE
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 PROJECT = re.compile(r"Zennay/[A-Za-z0-9_.-]{1,100}\Z")
 
-PR_URL = re.compile(r"https://github\\.com/(Zennay/[A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]{0,8})\\Z")
-ISSUE_URL = re.compile(r"https://github\\.com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}\\Z")
+PR_URL = re.compile(r"https://github\.com/(Zennay/[A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]{0,8})\Z")
+ISSUE_URL = re.compile(r"https://github\.com/Zennay/[A-Za-z0-9_.-]{1,100}/issues/[1-9][0-9]{0,8}\Z")
 PRIORITY = ("P0", "P1", "P2", "Unspecified")
 CATEGORIES = {"source", "failed", "pending", "changes", "partial", "review", "policy"}
 SOURCES = {"missing_batch", "source_unavailable_or_head_changed", "observed_partial_gate_receipt"}
