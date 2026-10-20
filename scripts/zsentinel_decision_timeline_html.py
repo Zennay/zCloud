@@ -40,8 +40,8 @@ header{padding-bottom:1rem}section,article{border-radius:12px;border:1px solid #
 .warning{border-left:5px solid #ffbe6c}.statgrid,.filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.8rem}
 .stat{background:#132236}.stat strong{font-size:1.5rem;display:block}
 label{display:grid;gap:.35rem;font-weight:600}
-input,select{font:inherit;background:#22364e;border:1px solid #708cab;color:inherit;border-radius:8px;padding:.6rem}
-input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #c4f190}
+input,select,button{font:inherit;background:#22364e;border:1px solid #708cab;color:inherit;border-radius:8px;padding:.6rem}button{cursor:pointer;margin:.3rem .4rem .3rem 0}button:disabled{cursor:not-allowed;opacity:.45}
+input:focus-visible,select:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid #c4f190}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,390px),1fr));gap:.8rem}
 .card{border-left:5px solid #8fbbe0}.card.unknown{border-left-color:#ffbe6c}
 .chips{display:flex;gap:.4rem;flex-wrap:wrap}.chip{border:1px solid #8097b3;border-radius:25px;padding:.2rem .55rem;font-size:.8rem}
@@ -62,6 +62,15 @@ Deze werkbak kan geen claim, job, merge of systeemdienst veranderen.</p></sectio
 <label>Prioriteit<select id="severity"><option value="">Alle</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label>
 <label>Laatste steekproef<select id="presence"><option value="">Alle</option><option value="seen">Wel gezien</option><option value="missing">Niet gezien: opvolgen</option></select></label>
 <label>Actietype<select id="human"><option value="">Alle</option><option value="yes">Menselijke actie</option><option value="no">Overig</option></select></label>
+</section>
+<section aria-label="Privé menselijke overdracht">
+<h2>Menselijke opvolgoverdracht uit de geselecteerde bronkaarten</h2>
+<p>Alleen historisch waargenomen P0/P1-acties. Eerst privé voorvertonen,
+daarna handmatig downloaden. Geen verzending, agenda, eigenaar-ACK, claim of herstelactie.</p>
+<button id="preview">Bekijk privéoverdracht</button>
+<button id="download" disabled>Download geselecteerd Markdown</button>
+<p id="feedback" aria-live="polite">Nog geen voorvertoning. Alle bronvensters blijven partieel.</p>
+<pre id="brief" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto"></pre>
 </section>
 <p id="count" aria-live="polite"></p><main id="cards" class="cards"></main>
 <script type="application/json" id="report">__SOURCE_JSON__</script>
@@ -96,15 +105,25 @@ for(const source of data.sources){
  ", P1 "+source.observed_p1_count+", menselijke actie "+source.observed_human_only_count+
  ") · SHA256(normalized) "+source.normalized_source_sha256));
 }
-function render(){
+function filteredItems(){
  const q=$("search").value.trim().toLowerCase(),s=$("severity").value,
        presence=$("presence").value,human=$("human").value;
- const filtered=data.items.filter(r=>
+ return data.items.filter(r=>
    (!s||r.last_priority===s)&&
    (!presence||(presence==="seen" ? r.observed_in_final_sample : !r.observed_in_final_sample))&&
    (!human||(human==="yes" ? r.human_last_observed : !r.human_last_observed))&&
    (!q||[r.id,r.problem,r.project,r.last_owner_label_unverified,r.last_action_advisory]
        .some(v=>v.toLowerCase().includes(q))));
+}
+let lastPreview=null;
+function invalidate(){
+ lastPreview=null;$("download").disabled=true;
+ $("brief").textContent="";
+ $("feedback").textContent="Selectie veranderd. Bekijk eerst opnieuw de privéoverdracht.";
+}
+function render(){
+ const filtered=filteredItems();
+ invalidate();
  $("count").textContent=filtered.length+" kaarten van "+data.visible_incidents+
  " getoonde bronkaarten. Gefilterde of ontbrekende kaarten betekenen nooit opgelost.";
  const frag=document.createDocumentFragment();
@@ -138,6 +157,71 @@ function render(){
  }
  $("cards").replaceChildren(frag);
 }
+function md(value){
+ let result=String(value).replace(/\r/g,"").replace(/\n/g," ");
+ for(const char of ["\\","<",">","[","]","#","*","_","|",String.fromCharCode(96),"!"]){
+  result=result.split(char).join("\\"+char);
+ }
+ return result;
+}
+function scope(){
+ return JSON.stringify({
+  source:data.sources.map(s=>s.normalized_source_sha256),
+  selection:["search","severity","presence","human"].map(id=>$(id).value),
+  cards:filteredItems().map(r=>r.id)
+ });
+}
+function makeBrief(){
+ const selected=filteredItems().filter(r=>r.human_last_observed&&
+  ["P0","P1"].includes(r.highest_observed_priority));
+ if(!selected.length)throw Error("no-human");
+ const out=[
+  "# zSentinel · historisch menselijk hersteloverzicht","",
+  "> NIET ACTUEEL. Geen goedkeuring voor ownerclaims, retries, releases of merges.",
+  "> Ontbrekende bronkaarten zijn niet opgelost. Gedeeltelijke sampling.","",
+  "- Oorspronkelijk eerste bronmoment: "+data.first_source_observed_at_utc,
+  "- Oorspronkelijk laatste bronmoment: "+data.last_source_observed_at_utc,
+  "- Bronidentiteit: "+data.sources.map(s=>s.normalized_source_sha256).join(", "),
+  "- Gebaseerd op "+selected.length+" geselecteerde historische P0/P1 kaarten.",
+  ""
+ ];
+ for(const r of selected){
+  out.push("## "+md(r.highest_observed_priority+" · "+r.project+" · "+r.problem),
+   "- Incident: "+r.id,
+   "- Laatste bronwaarneming: "+r.events[r.events.length-1].source_at,
+   "- Aanwezig in laatst geobserveerde bron: "+(r.observed_in_final_sample?"JA":"NEE, niet opgelost bewezen"),
+   "- Aantal waargenomen bronvensters: "+r.observed_windows,
+   "- Historische bronhiaten: "+r.disappeared_and_reappeared_sample_gaps,
+   "- Eigenaarlabel, niet geverifieerd: "+md(r.last_owner_label_unverified),
+   "- Bronadvies: "+md(r.last_action_advisory),
+   "- Oorspronkelijke beoordelingsdatum: "+r.last_original_review_target,
+   "- Bronstatus: "+md(r.last_status),"");
+ }
+ out.push("Geen verzending, herstelactie, CI-dispatch, claim of merge uitgevoerd.","");
+ const result=out.join("\n");
+ if(new TextEncoder().encode(result).byteLength>300000)throw Error("too-big");
+ return result;
+}
+$("preview").onclick=()=>{
+ try{
+  const content=makeBrief();
+  lastPreview={scope:scope(),content};
+  $("brief").textContent=content;
+  $("download").disabled=false;
+  $("feedback").textContent="Voorvertoning klaar. Controleer de inhoud voordat je privé exporteert.";
+ }catch(_){invalidate();$("feedback").textContent="Geen passende historische menselijke P0/P1 kaarten in dit filter.";}
+};
+$("download").onclick=()=>{
+ try{
+  if(!lastPreview||lastPreview.scope!==scope()||lastPreview.content!==makeBrief())
+   throw Error("stale-preview");
+  const url=URL.createObjectURL(new Blob([lastPreview.content],{type:"text/markdown;charset=utf-8"}));
+  const link=el("a");link.href=url;link.download="zsentinel-historische-menselijke-opvolging.md";
+  document.body.append(link);link.click();link.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  $("feedback").textContent="Privéoverdracht aangeboden. Niets verzonden of goedgekeurd.";
+ }catch(_){invalidate();$("feedback").textContent="Bron of selectie gewijzigd; maak opnieuw een voorvertoning.";}
+};
 for(const id of ["search","severity","presence","human"]){
  $(id).addEventListener(id==="search"?"input":"change",render);
 }
