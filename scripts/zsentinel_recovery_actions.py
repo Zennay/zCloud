@@ -156,8 +156,8 @@ def suggested_actions(packet):
     ]
     priority.sort(key=lambda i: (-_number(i.get("queued_p0")), str(i.get("project", ""))))
     for item in priority[:2]:
-        if len(result) >= MAX_ACTIONS:
-            break
+        # Build eligible P0 cards before the final bounded, safety-aware
+        # selection; otherwise earlier advisory cards can starve open issues.
         name = str(item.get("project", ""))[:32]
         count = _number(item.get("queued_p0"))
         eligible = _number(item.get("eligible_queued_p0"))
@@ -189,4 +189,22 @@ def suggested_actions(packet):
             "Bekijk onafhankelijk productwerk na controle van actuele externe claims en bestandscope.",
             "ADVISORY_NOT_OWNER_FREE",
         ))
-    return result[:MAX_ACTIONS]
+    # Enforce the existing nine-card ceiling after ranking, not while
+    # constructing the list. A verified local worker presence must never
+    # disappear behind generic review/queue messages in a busy incident.
+    protected = {
+        "runner-worker-in-progress",
+        "zcloud-worker-without-listener-observation",
+    }
+    def display_rank(item):
+        identifier = item["id"]
+        if identifier in protected:
+            return 0
+        if item["severity"] == "urgent":
+            return 1
+        if identifier.startswith("p0-project-"):
+            return 2
+        if item["severity"] == "review":
+            return 3
+        return 4
+    return sorted(result, key=display_rank)[:MAX_ACTIONS]
