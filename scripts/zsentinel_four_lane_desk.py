@@ -80,7 +80,7 @@ def collect(database, maximum):
                       length(title) AS title_size,
                       substr(completion_criteria, 1, 3072) AS completion_criteria,
                       length(completion_criteria) AS criteria_size,
-                      priority, status, created_at, claimed_at, claim_expires,
+                      priority, status, eligible, created_at, claimed_at, claim_expires,
                       substr(metadata_json, 1, 8192) AS metadata_json,
                       length(metadata_json) AS metadata_size
                  FROM portfolio_queue WHERE project_id=?
@@ -157,9 +157,13 @@ def collect(database, maximum):
     ambiguous = 0
     expired_queue_claims = 0
     unknown_queue_claim_expiry = 0
+    runtime_shadowed_active = 0
     for item in queue:
         if str(item.get("status", "")).lower() not in ACTIVE:
             continue
+        # The runtime currently filters eligible=1 for all lane inputs.
+        if item.get("eligible") != 1:
+            runtime_shadowed_active += 1
         expiry = _utc(item.get("claim_expires"))
         if expiry is None:
             unknown_queue_claim_expiry += 1
@@ -263,6 +267,7 @@ def collect(database, maximum):
         "truncated_queue_fields_observed": truncated_queue_fields,
         "active_write_scopes_not_declared": unknown_active_scopes,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
+        "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
         "active_local_leases_observed": len(claims),
         "expired_local_leases_observed": expired,
         "ambiguous_local_claims": ambiguous,
@@ -282,13 +287,13 @@ def collect(database, maximum):
         "source_complete": not (
             queue_partial or claims_partial or ambiguous
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
-            or portfolio_partial or unknown_project_groups
+            or runtime_shadowed_active or portfolio_partial or unknown_project_groups
         ),
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
             or ambiguous or queue_partial or claims_partial
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
-            or portfolio_partial or unknown_project_groups
+            or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or any(collision_counts.values())
             or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
@@ -356,6 +361,12 @@ def text_view(data):
         out.append("HOLD: " + str(data["active_claim_scopes_not_declared"])
                    + " lokale claims hebben geen expliciete schrijf-scope; "
                    + "geen nieuwe parallelle toelating.")
+    if data["runtime_active_filtered_by_eligibility"]:
+        out.append(
+            "RUNTIME SOURCEGAP: " + str(data["runtime_active_filtered_by_eligibility"])
+            + " actieve taken met eligible!=1 worden mogelijk door server.py"
+            + " uit de plannerbron gefilterd."
+        )
     if data["truncated_queue_fields_observed"]:
         out.append("LET OP: " + str(data["truncated_queue_fields_observed"])
                    + " te grote bronvelden; geen eigenaarvrijheid afleidbaar.")
@@ -416,6 +427,12 @@ def html_view(data):
             str(data["active_claim_scopes_not_declared"])
             + " actieve lokale claims missen een declaratie van schrijf-scope. "
             "Geen tweede schrijver toelaten zonder bewijs van externe eigenaars."
+        )
+    if data["runtime_active_filtered_by_eligibility"]:
+        warnings.append(
+            str(data["runtime_active_filtered_by_eligibility"])
+            + " actieve taken zijn niet eligible en kunnen in de huidige "
+            "serverplanner ontbreken. Controleer de bron met de runtime-eigenaar."
         )
     if data["truncated_queue_fields_observed"]:
         warnings.append(
