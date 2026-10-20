@@ -108,3 +108,14 @@ The HTML report has three directly usable views: actual free bytes versus the ex
 Connected zSSH direct inspection of the exact immutable source [`6d80e65`](https://github.com/Zennay/zCloud/commit/6d80e65bb19e9219fa2179270b0266f67ac6ecdd) confirmed the current five hot categories render, HTML is self-contained/mobile viewport aware, and the reserve still remains below threshold. The measured local deficit was **962,039,808 bytes** at that later time, demonstrating why scheduled storage comparisons matter. This inspection never wrote a report, copied data, cleared caches, stopped workers or installed a production handler.
 
 Source belongs to **open PR #1569**. Pending exact-HEAD GitHub CI, independent review, branch protection and owned storage/release approvals remain intact. A source commit or preview is not a merged main feature or a live deployment.
+
+
+## Review confidence and bounded candidate count (20 October, continuation)
+
+The inventory previously called three-day-old runner logs `completed-runner-diagnostic`. That was an unsafe conclusion: an old modified timestamp is **not** a proof that a long-running Runner.Listener closed the file descriptor. Existing code now reports `aged-runner-log-owner-review` and `aged-training-report-owner-review` instead, with `no_open_handle_verified=true` and `archive_transfer_approved=false`. Optional older APK rows continue to require independent verification that the release is superseded. All candidate rows retain `can_remove_automatically=false`.
+
+The HTML and text operator reports now show per-class **counts and size**, state that the files require owner/open-handle verification, and disclose the exact number of individual examples omitted after the `--limit` threshold. The JSON separately provides `total_candidate_count`, `examples_limit`, `examples_omitted` and `archive_transfer_attempted=false`. Hence a bounded 12-row operator example page must not look like all local inventory has been examined or approved. No renderer embeds file paths, private titles or remote encryption configuration.
+
+The connected zSSH direct-source read-only inspection of [`57a2cb4`](https://github.com/Zennay/zCloud/commit/57a2cb4ca6be9cb5e6c51f99f56a5f8eb7b7befc) observed **385** older training report files requiring owner review, not 385 completed, safe-to-move files. The subsequent [`e7c528f`](https://github.com/Zennay/zCloud/commit/e7c528fa9a4e2c370315ede6d5b81abcc76f6ce9) updates both privacy-safe HTML and text descriptions. Neither source invocation copied data, modified log handles, wrote cleanup manifests to production, restarted training or executed QA suites.
+
+This is still source in open PR #1569, not shipped on production main; only the existing owner's encrypted remote verification, access rights and separate file-retention approval can authorize later data movement and deletion.
