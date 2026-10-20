@@ -170,6 +170,9 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "github_job_runner_route": "not_scanned",
             "github_ci_source_stop_reason": None,
             "github_ci_windows_not_scanned": [],
+            "github_sampled_actionable_jobs": None,
+            "github_sampled_queued_self_hosted_jobs_min": None,
+            "github_other_jobs_list_truncated": False,
         }
     for entry in groups:
         if not isinstance(entry, dict):
@@ -212,6 +215,26 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         if route not in ("self_hosted", "hosted_or_custom", "unknown", "degraded_unknown"):
             raise ValueError("invalid route admission category")
         summary[pid]["github_job_runner_route"] = route
+        # Refresh only proves the exact selected job; CI-source admission
+        # metadata belongs to ci_discovery.coverage, never github_jobs.
+    # CI discovery is distinct from exact-job refresh. Read its bounded
+    # coverage to surface denied repositories and *all* sampled actionable
+    # jobs without mistaking a GitHub runner assignment for healthy runtime.
+    discovery = (live_sources.get("ci_discovery")
+                 if isinstance(live_sources, dict) else None)
+    rows = (discovery.get("coverage") if isinstance(discovery, dict)
+            and discovery.get("source") == "github_canonical_readonly_bounded_discovery"
+            else [])
+    if type(rows) is not list or len(rows) > 3:
+        raise ValueError("invalid GitHub discovery coverage source")
+    seen_discovery = set()
+    for item in rows:
+        if type(item) is not dict:
+            raise ValueError("invalid GitHub discovery entry")
+        pid = item.get("project_id")
+        if pid not in selected or pid in seen_discovery:
+            raise ValueError("duplicate or unselected CI discovery")
+        seen_discovery.add(pid)
         source_stop = item.get("repository_stop_reason")
         windows_skipped = item.get("not_scanned_windows", [])
         if (source_stop not in (
@@ -220,12 +243,44 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 "github_forbidden_or_rate_limit_unknown",
                 "repository_inaccessible", "github_network_unavailable")
                 or type(windows_skipped) is not list or len(windows_skipped) > 3
-                or any(window not in ("queued", "in_progress", "failure")
-                       for window in windows_skipped)
+                or any(w not in ("queued", "in_progress", "failure")
+                       for w in windows_skipped)
                 or len(set(windows_skipped)) != len(windows_skipped)):
-            raise ValueError("invalid GitHub CI source stop metadata")
+            raise ValueError("invalid canonical GitHub CI stop")
         summary[pid]["github_ci_source_stop_reason"] = source_stop
         summary[pid]["github_ci_windows_not_scanned"] = windows_skipped
+        count = item.get("sampled_actionable_jobs")
+        if count is None:
+            if item.get("additional_job_links"):
+                raise ValueError("untrusted additional CI jobs")
+            continue
+        extras = item.get("additional_job_links", [])
+        cut = item.get("additional_jobs_truncated")
+        if (type(count) is not int or not 1 <= count <= 150
+                or type(extras) is not list or len(extras) > 5
+                or type(cut) is not bool
+                or cut != (count > len(extras) + 1)
+                or item.get("repository") != registry[pid]
+                or item.get("primary_job_status") not in ("queued", "completed")
+                or item.get("primary_runner_route") not in (
+                    "self_hosted", "hosted_or_custom", "unknown")):
+            raise ValueError("untrusted multi-job CI inventory")
+        self_hosted = int(item["primary_job_status"] == "queued"
+                          and item["primary_runner_route"] == "self_hosted")
+        for extra in extras:
+            if (type(extra) is not dict
+                    or extra.get("action_authorized") is not False
+                    or extra.get("observed_only") is not True
+                    or extra.get("work_resumed_verified") is not False
+                    or extra.get("job_status") not in ("queued", "completed")
+                    or extra.get("runner_route") not in (
+                        "self_hosted", "hosted_or_custom", "unknown")):
+                raise ValueError("invalid sampled additional job")
+            self_hosted += int(extra["job_status"] == "queued"
+                               and extra["runner_route"] == "self_hosted")
+        summary[pid]["github_sampled_actionable_jobs"] = count
+        summary[pid]["github_sampled_queued_self_hosted_jobs_min"] = self_hosted
+        summary[pid]["github_other_jobs_list_truncated"] = cut
     # Counts below are lower bounds in the bounded source window,
     # NEVER total open portfolio issue/incident inventory.
     for pid in selected:
