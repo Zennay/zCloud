@@ -2688,3 +2688,57 @@ operatorinformatie nu in HTML, JSON en tekst, én in de afzonderlijke
 privé Markdown-hersteloverdracht (`--format handoff`). Gebruik
 `--observe-local-runner` alleen wanneer de bestaande runtime-DB
 uitdrukkelijk beschikbaar is. Anders de zelfstandige triage-CLI hierboven.
+
+
+### 20 oktober · Eén commando voor exact-job hersteltriage (zonder werkende queue-DB)
+
+Voor [P0 self-hosted runner #1326](https://github.com/Zennay/zCloud/issues/1326)
+is `scripts/zsentinel_runner_triage.py` toegevoegd. Deze haalt met de
+**bestaande** begrensde `zsentinel_recovery_refresh.refresh`-bron maximaal
+één GitHub-run plus één exact GitHub-job op. Daarna volgt de bestaande lokale
+`zsentinel_local_runner_observer` (alleen-lokale `/proc`-informatie).
+De queue-DB of projectserver hoeft dus niet bruikbaar te zijn.
+
+Op de gekoppelde, geautoriseerde VPS:
+```sh
+python3 scripts/zsentinel_runner_triage.py \
+  --run-id <BESTAANDE_RUN_ID> \
+  --job-id <BESTAANDE_JOB_ID> \
+  --head-sha <EXACT_BESTAAND_40_HEX_SHA>
+```
+De standaarduitvoer is een Nederlands drieregels-operatorantwoord.
+Voor een offline, uitsluitend **nieuw** 0600-privébestand:
+`--format html --output /pad/naar/bestaande-prive-map/nieuwe-triage.html`,
+of `--format json --output /pad/naar/bestaande-prive-map/nieuwe-triage.json`.
+De bestaande `zsentinel_private_output` weigert overschrijven/symlinks.
+Er wordt nooit een CI-rerun, runnerherstart of claim uitgegeven. Bronfouten
+worden als onbekend en zonder geheimen in CLI-uitvoer gemeld.
+
+Voor [P0 GitHub-hosted billing/admission #1523](https://github.com/Zennay/zCloud/issues/1523)
+is daarnaast `scripts/zsentinel_hosted_gate_triage.py` op dezelfde PR
+geïmplementeerd. Deze leest alleen één bestaande exacte GitHub-run/job/SHA
+(maximaal twee GET's), met strikt toegestane repository-identiteiten
+`--repository cloud` (`Zennay/zCloud`) of
+`--repository ikea` (`Zennay/ikea-enhanced-app`):
+```sh
+python3 scripts/zsentinel_hosted_gate_triage.py \
+  --repository cloud --run-id <BESTAANDE_RUN_ID> \
+  --job-id <BESTAANDE_JOB_ID> --head-sha <EXACT_BESTAAND_40_HEX_SHA>
+```
+Alleen een **mislukte** terminale hosted/custom job met expliciet
+bevestigde niet-gestarte stappen én zonder runner-toewijzing wordt als
+`completed_without_runner_steps_possible_admission` gemarkeerd.
+Zelfs dit is **geen bewijs dat billing de oorzaak is**; uitsluitend
+een aanwijzing dat de bevoegde accounteigenaar GitHub Actions
+billing/spending, platformannotaties en admissiebeleid moet bekijken.
+Een succesvolle, geannuleerde, nog wachtende of wél uitgevoerde
+job krijgt een andere status. Een self-hosted job wordt nooit ten
+onrechte als GitHub-hosted billingincident aangemerkt.
+
+Ook dit commando ondersteunt uitsluitend drie regels tekst of een
+create-only privaat `--format html|json --output ...`-rapport.
+Geen nieuwe betaalde jobcapaciteit, autorisatieverandering, financiering,
+retries, runnerrestart, deployment of claim is onderdeel van deze tools.
+De enige codewijzigingen zijn op [zCloud PR #1563](https://github.com/Zennay/zCloud/pull/1563)
+gecommit; protected-main, echte exacte-head verplichte CI, onafhankelijke
+review en geserialiseerde release-eigenaar blijven verplicht.
