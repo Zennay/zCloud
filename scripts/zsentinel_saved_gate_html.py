@@ -154,6 +154,37 @@ def _classify(gate):
     return "policy"
 
 
+
+def concurrent_gate_reasons(gate):
+    """All independently observed gate obstacles; primary remains source-first.
+
+    A single displayed category must not conceal simultaneous review feedback,
+    pending CI and incomplete source coverage. The list is observational,
+    not an authorized fix/retry/merge plan.
+    """
+    primary = _classify(gate)
+    if primary == "source":
+        return ("source",)
+    found = []
+    if gate["observed_checks_not_successful"] or gate["legacy_status_failure_or_error_observed"]:
+        found.append("failed")
+    if gate["observed_checks_pending"] or gate["legacy_status_pending_observed"]:
+        found.append("pending")
+    if gate["observed_exact_head_changes_requested"]:
+        found.append("changes")
+    if (not gate["check_runs_page_complete"] or gate["review_page_may_be_truncated"]
+            or gate["legacy_status_source_may_be_truncated"]
+            or not gate["observed_checks_completed"]):
+        found.append("partial")
+    if not gate["observed_independent_exact_head_approvals"]:
+        found.append("review")
+    if not found:
+        found.append("policy")
+    if primary not in found or len(found) > len(REASONS):
+        raise ValueError("Contradictory saved gate classification")
+    return tuple(found)
+
+
 def _historical_html(lines):
     """Turn already provenance-checked bridge differences into static review cards."""
     if lines is None:
@@ -254,6 +285,14 @@ def render_html(selected, integrated, *, historical_change_lines=None):
             head = (gate.get("head_sha_observed") if gate and
                     gate.get("status") == "observed_current_head_partial_gate_evidence" else None)
             sha = '<code>' + n(head[:12]) + '</code>' if head else "HEAD onbekend"
+            reasons = concurrent_gate_reasons(gate)
+            concurrent = [
+                LABELS[code][0] for code in reasons if code != key
+            ]
+            concurrent_note = (
+                '<p class="parallel"><strong>Ook waargenomen:</strong> ' +
+                n(" · ".join(concurrent)) + '</p>' if concurrent else ""
+            )
             details = ""
             if head:
                 details = ('<small>Waargenomen CI: ' +
@@ -269,7 +308,8 @@ def render_html(selected, integrated, *, historical_change_lines=None):
                 n(repo) + ' #' + str(number) + '</strong>' +
                 '<a href="' + n(url) + '" target="_blank" rel="noopener noreferrer">Open PR ↗</a></div>' +
                 '<p>' + sha + ' · ' + n(label) + '</p>' +
-                '<p class="linked">Bronissues: ' + issue_links + '</p>' + details +
+                '<p class="linked">Bronissues: ' + issue_links + '</p>' +
+                concurrent_note + details +
                 '<p class="next">Volgende menselijke actie: ' + n(action) + '</p></article>')
         cards.append('<section id="' + key + '"><details' + (' open' if items else '') +
                      '><summary>' + n(label) + ' (' + str(len(items)) +
@@ -301,6 +341,7 @@ article{background:#1c3047;border:1px solid #496882;border-radius:11px;padding:1
 article p{margin:9px 0}.line{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
 .linked{color:#d4e4f5}.linked a{margin-right:5px}
 .next{color:#b9e8d5;border-top:1px solid #405a72;padding-top:8px}
+.parallel{color:#ffddac;background:#292d3b;padding:7px 9px;border-radius:8px}
 small{display:block;color:#c3d6e6}code{font-size:12px;background:#0b182a;border-radius:5px;padding:3px 6px}
 .provenance{padding-top:18px;border-top:1px solid #405774;color:#b1c6d8;font-size:13px;overflow-wrap:anywhere}
 .changes{padding:6px 20px 20px}.changes ol{padding-left:24px}.changes li{padding:6px 0;overflow-wrap:anywhere}
