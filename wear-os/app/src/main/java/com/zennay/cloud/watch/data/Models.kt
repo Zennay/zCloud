@@ -54,7 +54,10 @@ data class WatchSnapshot(
     val host: HostSummary,
     val warnings: List<WarningItem>,
     val alerts: List<AlertItem>,
-    val projects: List<ProjectSummary>
+    val projects: List<ProjectSummary>,
+    // Legacy servers expose historical alerts only. Never notify those as if
+    // they were current unresolved blockers.
+    val currentBlockerFeedAvailable: Boolean = false
 )
 
 data class ServiceState(
