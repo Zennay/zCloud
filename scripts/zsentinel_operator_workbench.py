@@ -201,6 +201,14 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
         row for row in report["issues"]
         if row["issue_url"] not in visited
     ]
+    unlinked_prs = report["unlinked_prs"]
+    unlinked_links = [
+        '<li><a href="' + e(pr["url"]) +
+        '" target="_blank" rel="noopener noreferrer">' +
+        e(pr["priority"]) + ' · ' + e(pr["url"]) +
+        '</a> · issue relationship UNKNOWN</li>'
+        for pr in unlinked_prs[:30]
+    ]
     unmatched = [
         '<li><a href="' + e(row["issue_url"]) +
         '" target="_blank" rel="noopener noreferrer">Issue #' +
@@ -233,7 +241,11 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
          if len(other_issues) > len(unmatched) else '') +
         '<p>' + str(report["pr_without_source_issue_count"]) +
         ' saved PR(s) have no observed issue link; inspect originals before '
-        'opening a new PR.</p></details></section>'
+        'opening a new PR.</p><ol>' + ''.join(unlinked_links) + '</ol>' +
+        ('<p>' + str(len(unlinked_prs) - len(unlinked_links)) +
+         ' additional unlinked saved PR references not displayed (UNKNOWN).</p>'
+         if len(unlinked_prs) > len(unlinked_links) else '') +
+        '</details></section>'
     )
 
 def html_document(view: dict, board_sha: str, saved_pr_context=None) -> str:
