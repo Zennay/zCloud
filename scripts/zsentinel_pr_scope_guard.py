@@ -283,13 +283,16 @@ def overlaps(wanted, changed):
 
 
 def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
-            expanded_source_files=False, open_page=1):
+            expanded_source_files=False, open_page=1, page_count=1):
     if (not REPO.fullmatch(repo) or not isinstance(wanted, list)
             or len(wanted) > MAX_PATHS or len(set(wanted)) != len(wanted)
             or type(limit) is not int or not 1 <= limit <= MAX_INSPECT
             or not wanted and source_pr_number is None
             or expanded_source_files and source_pr_number is None
-            or type(open_page) is not int or not 1 <= open_page <= MAX_SEARCH_PAGES):
+            or type(open_page) is not int or not 1 <= open_page <= MAX_SEARCH_PAGES
+            or type(page_count) is not int or not 1 <= page_count <= MAX_MULTI_PAGES
+            or open_page + page_count - 1 > MAX_SEARCH_PAGES
+            or page_count * limit > MAX_MULTI_PRS):
         raise ValueError("invalid scope request")
     wanted = [edit_path(path) for path in wanted]
     source = (selected_source_pr(
@@ -300,9 +303,17 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
             raise ValueError("expanded source scope is product-only")
     if source is not None:
         wanted = sorted(set(wanted).union(source["paths"]))
-    page_size = min(MAX_OPEN_PAGE, limit + 1)
-    before = open_prs(repo, token, page_size, page=open_page)
-    selected = before[:limit]
+    page_size = limit if page_count > 1 else min(MAX_OPEN_PAGE, limit + 1)
+    page_numbers = list(range(open_page, open_page + page_count))
+    snapshots_before = [open_prs(repo, token, page_size, page=p) for p in page_numbers]
+    before = [pr for rows in snapshots_before for pr in rows]
+    selected = before if page_count > 1 else before[:limit]
+    duplicate_numbers = len({pr["number"] for pr in before}) != len(before)
+    page_receipts = [{
+        "page": n, "first_position": (n - 1) * page_size + 1,
+        "last_position": (n - 1) * page_size + len(rows),
+        "observed_prs": len(rows),
+    } for n, rows in zip(page_numbers, snapshots_before)]
     hits = []
     truncated_files = []
     for pr in selected:
@@ -318,8 +329,8 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                              "pr_url": pr["url"], "observed_head_sha": pr["head_sha"],
                              "observed_base_sha": pr["base_sha"], "matching_files": matches[:32],
                              "matches_truncated": len(matches) > 32})
-    after = open_prs(repo, token, page_size, page=open_page)
-    snapshot_stable = before == after
+    snapshots_after = [open_prs(repo, token, page_size, page=p) for p in page_numbers]
+    snapshot_stable = not duplicate_numbers and snapshots_before == snapshots_after
     source_stable = True
     if source is not None:
         fresh = github_json(repo, "/pulls/" + str(source["number"]), token)
@@ -332,7 +343,8 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                          and current_head.get("sha") == source["head_sha"]
                          and isinstance(current_base, dict)
                          and current_base.get("sha") == source["base_sha"])
-    complete = (open_page == 1 and source_stable and len(before) < page_size and len(before) <= limit
+    complete = (page_count == 1 and open_page == 1 and source_stable
+                and len(before) < page_size and len(before) <= limit
                 and not truncated_files and snapshot_stable)
     return {
         "schema": "zsentinel-pr-scope-observation-v1",
@@ -351,10 +363,13 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
         "source": "bounded_double_read_current_open_github_prs",
         "observed_open_prs": len(before),
         "open_pr_page_number": open_page,
+        "open_pr_page_count": page_count,
+        "open_pr_page_receipts": page_receipts,
         "open_pr_page_size": page_size,
         "open_pr_window_start": (open_page - 1) * page_size + 1,
         "open_pr_window_end": (open_page - 1) * page_size + len(before),
         "earlier_pages_not_inspected": open_page > 1,
+        "cross_page_duplicate_prs_observed": duplicate_numbers,
         "inspected_prs": sum(pr["number"] != source["number"]
                               for pr in selected) if source is not None else len(selected),
         "open_pr_page_may_be_truncated": len(before) == page_size,
@@ -933,13 +948,11 @@ def main(argv=None):
                 print(graph_operator_text(report))
             return (2 if report["observed_file_collision_pairs"] else
                     3 if not report["pr_file_scope_sample_complete"] else 0)
-        if args.page_count != 1:
-            raise ValueError("--page-count requires --audit-open-prs")
         report = observe(
             repos[args.project], args.path,
             os.environ.get("GITHUB_TOKEN"), args.max_prs, args.source_pr,
             expanded_source_files=args.expanded_source_files,
-            open_page=args.open_page)
+            open_page=args.open_page, page_count=args.page_count)
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
