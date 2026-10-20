@@ -599,6 +599,30 @@ retry GitHub CI, modify a runner or deploy anything. The normal current
 exact-head CI, independent review, branch protection, runtime writer and
 production release requirements remain mandatory.
 
+### PR gesloten zonder merge is geen productoplevering
+
+De onafhankelijke GitHub PR-observer leest `state`, `closed_at` en
+`merged_at` als afzonderlijke bronfeiten. Een gesloten PR zonder
+`merged_at` krijgt de huidige bronstatus `closed_without_merge`; een
+wel-gemergede PR heet `merged`, en een nog open PR `open`.
+Tegenstrijdige GitHub-bronvelden worden afgewezen in plaats van
+geïnterpreteerd als oplevering.
+
+Er komen **geen nieuwe event-types of onverenigbare event-IDs** bij.
+Bestaande `pr_created`, `pr_updated` en `pr_merged` houden hun
+kanonieke IDs; `pr_lifecycle` en `pr_closed_at` zijn optionele extra
+observatievelden. Deze status is nadrukkelijk **de huidige toestand op
+het bronmoment**, niet de historische PR-toestand op de dag van creatie.
+Oudere JSON-bronnen zonder die velden blijven geldig, maar tonen
+`unknown` in plaats van een veronderstelde open toestand.
+
+De offline Markdown-overdracht en HTML-cockpit tonen een gesloten-niet-
+gemergede PR expliciet als **niet geleverd**. Per PR wordt de toestand
+uitsluitend uit de ene waargenomen `pr_updated` bronregel geteld zodat
+creatie en update niet als twee afzonderlijke sluitingen worden gemeld.
+Het bestaande verbod op CI=deploy, PR-merge=productierelese en ontbrekende
+bron=geen activiteit blijft intact.
+
 ## Integration and release
 
 - Backend: [zCloud #1549](https://github.com/Zennay/zCloud/pull/1549) — read-only activity paging and product-only queue admission.
