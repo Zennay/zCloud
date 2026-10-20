@@ -1033,8 +1033,12 @@ def main(argv=None):
             ref["file_scope_state"] == "shared_file_paths_observed"
             for ref in p["existing_prs"]) for p in report["issues"]) else (
             3 if not pr_scope["source_coverage_complete"] else 0)
-    except (OSError, ValueError) as exc:
-        print("zSentinel: source-integration unavailable — " + str(exc), file=sys.stderr)
+    except OSError:
+        # Private input/report paths may occur in an OSError message.
+        print("zSentinel: private source or GitHub request unavailable", file=sys.stderr)
+        return 3
+    except ValueError as exc:
+        print("zSentinel: source-integration refused — " + str(exc), file=sys.stderr)
         return 3
 
 
