@@ -2145,3 +2145,25 @@ claimbesluiten, work-dispatch, CI, merge of deployment. Ook bij een
 volledige opgeslagen connectorrespons retourneert de zelfstandige
 issue-CLI geen volledige live-claimdekking en behoudt deze haar
 degraded/onbevestigde bronstatus.
+
+### Portfolio-overzicht: actief is positief, afwezig is ONBEKEND
+
+Het portfolio-brede scripts/zsentinel_portfolio_overview.py ondersteunt nu
+eveneens --notion-claims-export PRIVATE.json. De optionele snapshot wordt
+alleen gebruikt voor positieve projecttellingen uit dezelfde afgesloten,
+privé opgeslagen bron. Voor een project zonder waargenomen actief Work ID
+wordt de menselijke actieve-statusondergrens expliciet ONBEKEND in plaats
+van het vroegere misleidende getal nul. Dit geldt ook voor de bestaande
+token-gebaseerde Notion-optie. Een ontbrekende telling verleent dus geen
+nieuw werkpakket, filescopeclaim of dispatchrecht.
+
+Voorbeeld voor het huidige canonieke projectvenster:
+    python3 scripts/zsentinel_portfolio_overview.py --github-only \
+      --window auto --skip-ci-discovery --skip-github-issues \
+      --notion-data-source 86e406fd-2c99-4ef5-8058-363c1004b3eb \
+      --notion-claims-export /private/operator-only/notion-query.json \
+      --format text
+
+Ook dit overzicht houdt echte Notion-eigenaars, actieve queueleases en
+workerherstelstatus ONBEKEND. Geen workflowdispatch, bronwrite of runtime
+owner-overname, en alle bestaande CI/review/releasegates blijven vereist.
