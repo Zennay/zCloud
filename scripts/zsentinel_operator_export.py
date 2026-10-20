@@ -101,6 +101,7 @@ def export(source_dir, output_dir):
         "workflow_dispatched": False,
         "production_released": False,
         "external_source_verified": False,
+        "readme_sha256": hashlib.sha256(README.encode("utf-8")).hexdigest(),
     }
     files["MANIFEST.json"] = (json.dumps(
         manifest, sort_keys=True, ensure_ascii=False, indent=2
@@ -198,6 +199,8 @@ def verify(bundle_dir):
             or manifest.get("workflow_dispatched") is not False
             or manifest.get("production_released") is not False
             or manifest.get("external_source_verified") is not False
+            or manifest.get("readme_sha256") != hashlib.sha256(
+                content["LEESMIJ.txt"]).hexdigest()
             or type(manifest.get("files")) is not dict
             or set(manifest["files"]) != set(SOURCES)):
         raise ValueError("unexpected bundle manifest")
