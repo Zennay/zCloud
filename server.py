@@ -3400,6 +3400,21 @@ def portfolio_queue_allocate():
                     force_victim_slot=None
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
+                previous_worker=prior_worker_by_slot.get(slot,'')
+                browser_worker=(previous_worker if previous_worker.startswith(row_project+'::w')
+                                else f'{row_project}::w{used_counts.get(row_project,0)+1}')
+                if browser_worker in busy_worker_keys:
+                    # Status can still say claimed after the browser accepted
+                    # work. A busy owner is not a free slot, regardless of
+                    # priority pressure or a new unrelated Force Start.
+                    c.execute(
+                        'UPDATE portfolio_queue SET claim_expires=?,updated_at=? WHERE queue_id=?',
+                        (lease_until,ts,row['queue_id']),
+                    )
+                    row=c.execute('SELECT * FROM portfolio_queue WHERE queue_id=?',
+                                  (row['queue_id'],)).fetchone()
+                    selected.append(_portfolio_queue_row(row))
+                    continue
                 # Once a browser command is pending, the queue claim is part of an
                 # in-flight handoff. Rebalancing it before Firefox consumes that
                 # command makes the userscript correctly reject the send because its
