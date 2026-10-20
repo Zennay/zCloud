@@ -921,7 +921,7 @@ function currentBrief(){
     '');
  }
  lines.push('No live reassignment, dispatch, queue mutation or production readiness is asserted.','');
- return lines.join('\n');
+ return lines.join('\\n');
 }
 function calendarEscape(value){
  const slash=String.fromCharCode(92);
