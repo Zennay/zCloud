@@ -59,13 +59,22 @@ def examine(path, cutoff):
     newest = 0
     fingerprint = hashlib.sha256()
     try:
-        device = path.lstat().st_dev
-        for current, dirs, files in os.walk(path, followlinks=False):
+        root_stat = path.lstat()
+        device = root_stat.st_dev
+        if root_stat.st_uid != os.geteuid() or root_stat.st_mode & 0o022:
+            return None
+        def reject_unreadable(error):
+            # os.walk normally SKIPS directories it cannot list: a partial
+            # archive must never become eligible for source removal.
+            raise error
+        for current, dirs, files in os.walk(path, followlinks=False,
+                                            onerror=reject_unreadable):
             # Metadata-tree fingerprints must not depend on readdir ordering.
             dirs.sort()
             files.sort()
             st = os.lstat(current)
-            if not stat.S_ISDIR(st.st_mode) or st.st_dev != device:
+            if (not stat.S_ISDIR(st.st_mode) or st.st_dev != device
+                    or st.st_uid != os.geteuid() or st.st_mode & 0o022):
                 return None
             newest = max(newest, st.st_mtime, st.st_ctime)
             scanned += 1
@@ -77,9 +86,10 @@ def examine(path, cutoff):
                 child = Path(current) / name
                 x = child.lstat()
                 scanned += 1
-                if (stat.S_ISLNK(x.st_mode) or x.st_dev != device or
-                        (not stat.S_ISDIR(x.st_mode) and
-                         (not stat.S_ISREG(x.st_mode) or x.st_nlink != 1))):
+                if (stat.S_ISLNK(x.st_mode) or x.st_dev != device
+                        or x.st_uid != os.geteuid() or x.st_mode & 0o022
+                        or (not stat.S_ISDIR(x.st_mode) and
+                            (not stat.S_ISREG(x.st_mode) or x.st_nlink != 1))):
                     return None
                 newest = max(newest, x.st_mtime, x.st_ctime)
                 fingerprint.update(repr((os.path.relpath(child, path), x.st_mode,
