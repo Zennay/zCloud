@@ -4245,7 +4245,10 @@ def watch_incident_episode_id(incident):
     identity = str(incident.get('id') or '')
     if not identity or len(identity) > 256 or not category:
         return None
-    parts = [category, identity, str(incident.get('severity') or '')]
+    # Scope the fingerprint to the project as well. Separate projects can
+    # legitimately reuse an incident's local name or worker identifier.
+    project = str(incident.get('project') or 'cloud')
+    parts = [project[:80], category, identity, str(incident.get('severity') or '')]
     if category == 'service_health':
         parts.append(str(incident.get('cause') or '')[:512])
     else:
