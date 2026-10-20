@@ -1793,3 +1793,16 @@ Een concrete statusclassificatiefout is hersteld: GitHub kan meerdere runs bewar
 Bij een onvolledig, afgekapt of verplaatst Check Run-, legacy-status-, review- of HEAD-bronbewijs blijft de toestand onbekend. Er wordt niet automatisch herstart of gemerged. Alle getoonde URLs worden uit de canonieke GitHub-repository en numerieke ID of exacte commit samengesteld; onbetrouwbare externe details_url en target_url worden niet gevolgd. Labels worden ge-escaped voor HTML en Markdown.
 
 De bestaande grens van maximaal vier expliciete PR-gatelezingen blijft staan. Branchregels, vereiste CI, reviewerbeleid, actuele Notion-claims, eigenaar en releasebevoegdheid blijven afzonderlijk te controleren; deze waarneming autoriseert geen claim, CI-rerun, merge of deploy. Er zijn geen QA-/regressiesuites geschreven of handmatig gestart.
+
+### Zelfde blokkades in een privé-CSV
+
+De bestaande portfolio-CSV-export ondersteunt nu extra rijtypen `current_check_job` en `current_legacy_status` met `check_name`, `check_state`, `check_conclusion` en de veilige canonieke `check_url`. Daardoor kunnen operators de exacte HEAD-checks filteren naast de bestaande PR-bestandsscope, zonder Excel handmatig met losse status-API's te combineren.
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 10 --inspect-current-pr-gates \
+  --gate-pr cloud#1567 --format csv \
+  --output /secure/location/zsentinel-pr-gates.csv
+```
+
+CSV blijft verplicht een exclusief NIEUW privébestand met mode 0600; geen stdout voor CSV. Formule-activerende of controlekarakters worden volgens de bestaande CSV-sanitizer behandeld. Detailrijen verschijnen uitsluitend wanneer de geselecteerde PR-bron en exacte HEAD overeenkomen; verborgen regels krijgen een expliciete waarschuwing. Geen CI/review/lease- of deployvrijgave volgt uit deze export.
