@@ -245,7 +245,8 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
         }),
         "source": "bounded_double_read_current_open_github_prs",
         "observed_open_prs": len(before),
-        "inspected_prs": len(selected),
+        "inspected_prs": sum(pr["number"] != source["number"]
+                              for pr in selected) if source is not None else len(selected),
         "open_pr_page_may_be_truncated": len(before) == MAX_OPEN_PAGE,
         "inspection_limit_reached": len(before) > limit,
         "pr_file_lists_truncated": truncated_files,
@@ -308,6 +309,14 @@ def html_view(report):
     if not rows:
         rows.append("<tr><td colspan='3'>Geen botsing waargenomen in gelezen steekproef; geen vrijgave.</td></tr>")
     coverage = "Volledige huidige open-PR steekproef" if report["pr_file_scope_sample_complete"] else "Onvolledige bron: controleer overige PR's"
+    source = report["selected_source_pr"]
+    source_link = ("<p>Bron-PR: <a rel='noreferrer noopener' href='" +
+                   escape(source["url"], quote=True) + "'>#" +
+                   str(source["number"]) + "</a> — exacte head " +
+                   escape(source["head_sha"][:12]) + "</p>" if source else "")
+    targets = "<ul>" + "".join(
+        "<li><code>" + escape(path) + "</code></li>"
+        for path in report["requested_paths"]) + "</ul>"
     return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>zSentinel • bestandsscope</title>"
@@ -318,7 +327,13 @@ def html_view(report):
             "aside{border-left:3px solid #aaa;padding:1rem;background:#222d3a}</style>"
             "<h1>zSentinel · Live PR-bestandsscope</h1><p>" +
             escape(report["repository"]) + " · " + escape(coverage) +
-            "</p><aside>Dit is uitsluitend gelezen GitHub-PR-bewijs. "
+            "</p>" + source_link +
+            "<details><summary>Bekeken doelpaden (" +
+            str(len(report["requested_paths"])) + ")</summary>" +
+            targets + "</details><p>Geïnspecteerde andere PR's: " +
+            str(report["inspected_prs"]) + " / " +
+            str(report["observed_open_prs"]) + "</p>"
+            "<aside>Dit is uitsluitend gelezen GitHub-PR-bewijs. "
             "Notion-claims, niet-geopende branches en workerleases zijn NIET geverifieerd. "
             "Geen edit-, claim-, merge- of deploytoestemming.</aside>"
             "<h2>Waargenomen bestandsoverlap</h2><table><thead><tr>"
