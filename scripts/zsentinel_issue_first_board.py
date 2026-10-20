@@ -114,7 +114,7 @@ def collect(projects, registry, budget):
 
 
 def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
-                     candidate_offset=0, expected_page_sha=None):
+                     candidate_offset=0, expected_page_sha=None, max_reports=12):
     """Find existing product PRs for an explicit urgent issue, even when old.
 
     The ordinary issue-first inventory sees only the most recently modified
@@ -136,6 +136,8 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
     issue_info["url"] = f"https://github.com/{repo}/issues/{issue_number}"
     if type(candidate_page) is not int or not 1 <= candidate_page <= MAX_TARGET_PAGES:
         raise ValueError("candidate page outside bounded GitHub Search window")
+    if type(max_reports) is not int or not 1 <= max_reports <= board.MAX_PRS:
+        raise ValueError("requested existing PR report limit outside bounded workboard")
     if type(candidate_offset) is not int or not 0 <= candidate_offset < TARGET_CANDIDATES_PER_PAGE:
         raise ValueError("candidate offset outside bounded search page")
     if candidate_offset and (not isinstance(expected_page_sha, str)
@@ -159,8 +161,15 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
     page_numbers = [item.get("number") if isinstance(item, dict)
                     and type(item.get("number")) is int else None
                     for item in matches]
-    page_sha = hashlib.sha256(json.dumps(page_numbers,
-                       separators=(",", ":")).encode("utf-8")).hexdigest()
+    # A resume token binds the *whole GitHub search window*, not only the
+    # numerically ordered candidates. New totals/incompleteness require a
+    # fresh offset-zero scan even if the returned PR numbers happen to match.
+    page_receipt = {"candidate_pr_numbers": page_numbers,
+                    "search_total": total,
+                    "incomplete_results": found["incomplete_results"]}
+    page_sha = hashlib.sha256(json.dumps(
+        page_receipt, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
     if candidate_offset and expected_page_sha != page_sha:
         raise ValueError("GitHub Search candidate order changed; restart from offset zero")
     if candidate_offset and candidate_offset >= len(matches):
@@ -231,8 +240,8 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
             rows.append(report)
         except (RuntimeError, ValueError, KeyError, TypeError):
             partial.append({"project": project, "reason": "CANDIDATE_SOURCE_UNAVAILABLE"})
-        if len(rows) >= MAX_PER_PROJECT:
-            partial.append({"project": project, "reason": "MAX_FOUR_MATCHING_PRS"})
+        if len(rows) >= max_reports:
+            partial.append({"project": project, "reason": "LINKED_PR_REPORT_LIMIT"})
             break
     window_end = window_start + examined
     next_candidate_offset = (candidate_offset + examined
@@ -267,6 +276,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
         "candidate_pr_numbers": candidate_ids,
         "candidate_page": candidate_page,
         "candidate_offset": candidate_offset,
+        "max_linked_prs": max_reports,
         "next_candidate_offset": next_candidate_offset,
         "source_page_sha256": page_sha,
         "window_start": window_start,
