@@ -31,6 +31,9 @@ LANE_NAMES = {
 ACTIVE = {"claimed", "running", "verifying"}
 VALID = ACTIVE | {"queued"}
 MAX_ROWS = 500
+MAX_TITLE = 512
+MAX_CRITERIA = 3072
+MAX_METADATA = 8192
 # Canonical real projects only; zSentinel is a recovery role, not a 14th.
 PORTFOLIO_PROJECTS = {
     "cloud": "zCloud", "zssh": "zSSH", "ftmo": "FTMO",
@@ -65,15 +68,23 @@ def collect(database, maximum):
         db.row_factory = sqlite3.Row
         db.execute("BEGIN")
         queue_rows = db.execute(
-            """SELECT queue_id, project_id, title, completion_criteria, priority,
-                      status, created_at, claimed_at, claim_expires, metadata_json
+            """SELECT queue_id, project_id,
+                      substr(title, 1, 512) AS title,
+                      length(title) AS title_size,
+                      substr(completion_criteria, 1, 3072) AS completion_criteria,
+                      length(completion_criteria) AS criteria_size,
+                      priority, status, created_at, claimed_at, claim_expires,
+                      substr(metadata_json, 1, 8192) AS metadata_json,
+                      length(metadata_json) AS metadata_size
                  FROM portfolio_queue WHERE project_id=?
                    AND lower(status) IN ('queued','claimed','running','verifying')
                  ORDER BY created_at, queue_id LIMIT ?""",
             ("zsentinel", maximum + 1),
         ).fetchall()
         claim_rows = db.execute(
-            """SELECT project_id, lease_until, metadata_json
+            """SELECT project_id, lease_until,
+                      substr(metadata_json, 1, 8192) AS metadata_json,
+                      length(metadata_json) AS metadata_size
                  FROM task_claims WHERE project_id=? LIMIT ?""",
             ("zsentinel", maximum + 1),
         ).fetchall()
@@ -125,6 +136,14 @@ def collect(database, maximum):
         key=lambda v: (-v["queued_p0"], -v["queued_p1"], v["project"]),
     )
     queue = [dict(row) for row in queue_rows[:maximum]]
+    truncated_queue_fields = sum(
+        (item["title_size"] or 0) > MAX_TITLE
+        or (item["criteria_size"] or 0) > MAX_CRITERIA
+        or (item["metadata_size"] or 0) > MAX_METADATA
+        for item in queue
+    )
+    # Oversize metadata cannot be trusted for safe conflict admission.
+    # We still expose bounded observations, but never infer free ownership.
     now = datetime.now(timezone.utc)
     claims = []
     expired = 0
@@ -140,6 +159,9 @@ def collect(database, maximum):
         elif expiry <= now:
             expired_queue_claims += 1
     for row in claim_rows[:maximum]:
+        if (row["metadata_size"] or 0) > MAX_METADATA:
+            ambiguous += 1
+            continue
         until = _utc(row["lease_until"])
         if until is None:
             ambiguous += 1
@@ -213,6 +235,7 @@ def collect(database, maximum):
         "portfolio_priority_partial": portfolio_partial,
         "portfolio_unknown_project_groups": unknown_project_groups,
         "queue_partial": queue_partial,
+        "truncated_queue_fields_observed": truncated_queue_fields,
         "active_local_leases_observed": len(claims),
         "expired_local_leases_observed": expired,
         "ambiguous_local_claims": ambiguous,
@@ -231,12 +254,12 @@ def collect(database, maximum):
         "lanes": visible,
         "source_complete": not (
             queue_partial or claims_partial or ambiguous
-            or portfolio_partial or unknown_project_groups
+            or truncated_queue_fields or portfolio_partial or unknown_project_groups
         ),
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
             or ambiguous or queue_partial or claims_partial
-            or portfolio_partial or unknown_project_groups
+            or truncated_queue_fields or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or any(collision_counts.values())
             or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
@@ -285,6 +308,9 @@ def text_view(data):
         out.append("Onbekende queue-claimtermijnen: "
                    + str(data["unknown_in_flight_queue_expiry_observed"])
                    + " (controleer eigenaar).")
+    if data["truncated_queue_fields_observed"]:
+        out.append("LET OP: " + str(data["truncated_queue_fields_observed"])
+                   + " te grote bronvelden; geen eigenaarvrijheid afleidbaar.")
     if not data["source_complete"]:
         out.append("LET OP: bron deels onvolledig; geen automatische herverdeling.")
     out.append("Geen claim-, merge-, runner- of deployautorisatie.")
@@ -326,6 +352,10 @@ def html_view(data):
         warnings.append(
             str(data["unknown_in_flight_queue_expiry_observed"])
             + " actieve wachtrijclaims hebben geen betrouwbaar vervalmoment."
+        )
+    if data["truncated_queue_fields_observed"]:
+        warnings.append(
+            "Sommige bronvelden overschrijden de grens voor veilig lokaal lezen."
         )
     if not data["source_complete"]:
         warnings.append(
