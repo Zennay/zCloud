@@ -288,6 +288,16 @@ recipient and download destination. It cannot claim, merge, release or contact a
 <button type="button" id="downloadBrief" disabled>Download exactly this private briefing (.md)</button>
 </div>
 </section>
+<section class="brief" aria-label="Manual calendar handoff">
+<h2>Optional private calendar follow-up export</h2>
+<p>Only human-marked issues with a contact label and UTC review date qualify.
+Preview first, then optionally download a local .ics file for manual calendar import.
+All-day dates contain no alarm. Importing is your decision; external calendar defaults may add notifications.
+No calendar, watch or external service is contacted here.</p>
+<button type="button" id="previewCalendar">Preview reviewed calendar events</button>
+<div id="calendarPanel" hidden><pre id="calendarContent"></pre>
+<button type="button" id="downloadCalendar" disabled>Download exactly these all-day events (.ics)</button></div>
+</section>
 <p id="status" role="status" aria-live="polite"></p>
 <footer><small>Offline. No localStorage, analytics, network requests, GitHub writes, or quiet persistence.
 Downloaded notes belong to the operator and are not authorization to act on queues.</small></footer>
@@ -333,7 +343,12 @@ function dueState(info){
 }
 let selected=null;const handoffs=new Map();
 let viewedBrief=null;
+let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
+ viewedCalendar=null;viewedCalendarStamp=null;
+ document.getElementById('calendarPanel').hidden=true;
+ document.getElementById('calendarContent').textContent='';
+ document.getElementById('downloadCalendar').disabled=true;
  viewedBrief=null;
  document.getElementById('briefPanel').hidden=true;
  document.getElementById('briefContent').textContent='';
@@ -632,6 +647,51 @@ function currentBrief(){
  lines.push('No live reassignment, dispatch, queue mutation or production readiness is asserted.','');
  return lines.join('\n');
 }
+function calendarEscape(value){
+ const slash=String.fromCharCode(92);
+ return Array.from(String(value)).map(ch=>
+   ch===slash?slash+slash:
+   ch===','||ch===';'?slash+ch:
+   ch==='\\n'||ch==='\\r'?slash+'n':ch).join('');
+}
+function foldCalendarLine(value){
+ const encoder=new TextEncoder();
+ const lines=[];let current='',size=0;
+ for(const ch of value){
+   const n=encoder.encode(ch).length;
+   if(size+n>75){lines.push(current);current=' ';size=1;}
+   current+=ch;size+=n;
+ }
+ lines.push(current);return lines;
+}
+function calendarSource(stamp){
+ const rows=board.cards.filter(c=>{
+  const info=handoffs.get(c.issue);
+  return manualGateDecisions.has(info?.decision)&&
+   Boolean(info?.owner?.trim()&&info?.due&&validFollowupDate(info.due));
+ }).sort((a,b)=>{
+  const da=handoffs.get(a.issue).due,db=handoffs.get(b.issue).due;
+  return da.localeCompare(db)||a.issue.localeCompare(b.issue);
+ }).slice(0,60);
+ if(!rows.length)return null;
+ const lines=['BEGIN:VCALENDAR','VERSION:2.0',
+  'PRODID:-//zSentinel//Private Manual Followup//EN',
+  'CALSCALE:GREGORIAN','METHOD:PUBLISH'];
+ for(const card of rows){
+  const info=handoffs.get(card.issue);
+  const uid='zsentinel-'+boardSha.slice(0,24)+'-'+
+    card.issue.replace(/[^A-Za-z0-9]/g,'-')+'@local.invalid';
+  const desc='Human review only, not an assigned task or CI/release approval. '+
+    'Original source observed '+board.observed_at_utc+'. Issue: '+card.url+
+    '. Manual contact label: '+info.owner+'. Check original live ownership and gates.';
+  lines.push('BEGIN:VEVENT','UID:'+uid,
+   'DTSTAMP:'+stamp,'DTSTART;VALUE=DATE:'+info.due.replace(/-/g,''),
+   'SUMMARY:'+calendarEscape('Review '+card.issue+' · '+card.title),
+   'DESCRIPTION:'+calendarEscape(desc),'URL:'+card.url,'END:VEVENT');
+ }
+ lines.push('END:VCALENDAR');
+ return lines.flatMap(foldCalendarLine).join('\\r\\n')+'\\r\\n';
+}
 function drawList(){
  const view=filtered();issueList.replaceChildren();
  view.forEach(c=>{
@@ -809,6 +869,30 @@ document.getElementById('downloadBrief').onclick=()=>{
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
  status.textContent='Private Markdown saved locally. It does not authorize any worker action.';
  invalidateBrief();
+};
+document.getElementById('previewCalendar').onclick=()=>{
+ saveSelection();
+ viewedCalendarStamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\\.\\d{3}/,'');
+ viewedCalendar=calendarSource(viewedCalendarStamp);
+ const panel=document.getElementById('calendarPanel');
+ panel.hidden=!viewedCalendar;
+ document.getElementById('calendarContent').textContent=viewedCalendar||'';
+ document.getElementById('downloadCalendar').disabled=!viewedCalendar;
+ status.textContent=viewedCalendar?
+  'Review the private calendar events before choosing manual import. No calendar was contacted.':
+  'No complete human-only follow-up dates to export from this saved board.';
+};
+document.getElementById('downloadCalendar').onclick=()=>{
+ if(!viewedCalendar)return;
+ saveSelection();
+ if(calendarSource(viewedCalendarStamp)!==viewedCalendar){
+  invalidateBrief();status.textContent='Calendar content changed; preview again before exporting.';return;
+ }
+ const uri=URL.createObjectURL(new Blob([viewedCalendar],{type:'text/calendar;charset=utf-8'}));
+ const a=elem('a');a.href=uri;a.download='zsentinel-private-human-followups.ics';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ invalidateBrief();
+ status.textContent='Private all-day calendar file saved. Import manually and review calendar alert defaults.';
 };
 document.getElementById('print').onclick=()=>window.print();
 refreshPortfolio();refreshComparison();drawList();drawDetail();
