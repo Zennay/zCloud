@@ -136,7 +136,8 @@ private fun HomeScreen(
             // stable unique lazy-list keys, and only fresh incident evidence
             // may receive current blocker emphasis.
             val urgent = snapshot.alerts
-                .filter { error == null && !snapshot.stale && it.id.isNotBlank() }
+                .filter { error == null && !snapshot.stale &&
+                          snapshot.currentBlockerFeedAvailable && it.id.isNotBlank() }
                 .filter { it.severity.equals("critical", true) ||
                           it.severity.equals("high", true) ||
                           it.severity.equals("needs_attention", true) }
@@ -162,6 +163,16 @@ private fun HomeScreen(
                             alert.message, color = TextMuted, fontSize = 11.sp,
                             maxLines = 4, overflow = TextOverflow.Ellipsis
                         )
+                    }
+                }
+            }
+            if (!snapshot.currentBlockerFeedAvailable && error == null) {
+                item {
+                    SurfaceCard {
+                        Label("ALLEEN HISTORISCHE MELDINGEN", Warning)
+                        Text("Deze server levert geen bevestigde actuele blokkades. " +
+                             "Urgente meldingen zijn daarom tijdelijk uitgeschakeld.",
+                             color = TextMain, fontSize = 10.sp)
                     }
                 }
             }
