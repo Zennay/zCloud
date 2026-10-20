@@ -622,9 +622,26 @@ function acceptGateSource(data){
       typeof data.review_only_top_four_observed!=='boolean'||
       data.review_only_top_four_observed!==(data.source_review_pr_count>4))
     throw Error('Imported gate proof belongs to another saved board');
+   const total=Math.ceil(data.source_review_pr_count/4);
+   const hasBatch=data.source_review_batch_index!==undefined;
+   if(hasBatch){
+    const idx=data.source_review_batch_index,
+      first=data.source_review_batch_first_pr,
+      count=data.source_review_batch_count;
+    if(!Number.isInteger(idx)||idx<1||idx>total||
+       data.source_review_batches_total!==total||
+       first!==(idx-1)*4+1||
+       count!==Math.min(4,data.source_review_pr_count-first+1))
+     throw Error('Invalid source receipt batch boundaries');
+   }else if(data.source_review_batches_total!==undefined||
+     data.source_review_batch_first_pr!==undefined||
+     data.source_review_batch_count!==undefined)
+    throw Error('Partial source batch provenance');
    reviewContext={manifest_sha256:hash,original_board_sha256:origin,
      candidate_count:data.source_review_pr_count,
-     truncated:data.review_only_top_four_observed};
+     truncated:data.review_only_top_four_observed,
+     batch_index:hasBatch?data.source_review_batch_index:1,
+     batches_total:total};
   }
   else if(data.source_review_board_sha256!==undefined||
     data.review_only_top_four_observed!==undefined||
@@ -837,9 +854,10 @@ function currentPrDesk(){
     '- '+c.url+' · '+line(c.title,180)+' · '+c.priority+
     ' · human disposition '+(handoffs.get(c.issue)?.decision||'investigate')),
    'Review source candidates: '+(prGateImport?.reviewContext?
-    prGateImport.reviewContext.candidate_count+';'+
-     (prGateImport.reviewContext.truncated?
-      ' only first 4 examined':' all considered'):
+    prGateImport.reviewContext.candidate_count+
+    ' · imported batch '+prGateImport.reviewContext.batch_index+'/'+
+    prGateImport.reviewContext.batches_total+
+    ' · other batches not included':
     'not a review-manifest-based observation'),
    'Imported source SHA256: '+(prGateImport?.items.has(group.url)?
     prGateImport.sha256:'not provided or not applicable'),
@@ -1588,8 +1606,9 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
   document.getElementById('prGateStatus').textContent=
    accepted.items.size+' linked PR receipts imported · '+accepted.time+
    (accepted.reviewContext?' · '+accepted.reviewContext.candidate_count+
-    ' candidates in reviewed board; '+
-    (accepted.reviewContext.truncated?'ONLY FIRST FOUR OBSERVED':'all considered'):'')+
+    ' candidates in reviewed board; batch '+
+    accepted.reviewContext.batch_index+'/'+accepted.reviewContext.batches_total+
+    ' examined; other batches NOT inspected by this JSON':'')+
    ' · JSON SHA256 '+accepted.sha256.slice(0,12)+
    (Date.now()-accepted.timestamp>900000?
     ' · STALE saved source':' · recent observation, NOT live ownership')+
