@@ -18,3 +18,13 @@
 2. Existing exact-head CI/build and resulting-main protections. No QA/regression suite authored or run as part of this product slice.
 3. Review `/api/v1/watch` post-deploy with a valid watch token for presence of actual actionable, not resolved, incidents. Do not publish the token or private incident data.
 4. Build/install the Wear OS app and inspect the watch card and notification permission/channel in actual operation before claiming device delivery.
+
+## 20 oktober · stale/offline bronwaarheid en opnieuw geopende incidenten
+
+De Wear OS-productbron houdt cache bij een mislukte verversing beschikbaar, maar toont dan **OFFLINE** in plaats van LIVE, plus een expliciete foutkaart op overzicht en projectdetails. Oude incidenten worden bij verbindingsverlies of server-`stale` niet meer als **actuele urgente** kaarten getoond. Lege of dubbele incident-ID's worden voor de Compose-kaarten uitgefilterd, zodat de lazy list stabiele unieke sleutels behoudt.
+
+`WatchSnapshot.currentBlockerFeedAvailable` onderscheidt de werkelijke `active_blockers`-bron van de oudere `alerts`-historie. Een oudere server blijft leesbaar, maar toont een zichtbare waarschuwing **ALLEEN HISTORISCHE MELDINGEN**; de achtergrondworker verstuurt daaruit **geen** urgente meldingen. Hierdoor wordt een historische alert niet opnieuw voorgesteld als een open, actueel incident.
+
+Voor actuele incidenten worden notificatieontvangstbewijzen op combinatie van ID en detectietijd onthouden. Als een incident uit de huidige bron verdwijnt, vervalt zijn oude suppressiebewijs, zodat een latere terugkeer opnieuw kan melden. Notificaties gebruiken een stabiele stringtag per incident in plaats van alleen de mogelijk botsende numerieke `hashCode`. Maximaal drie nieuwe urgente meldingen per best-effort poll, bestaande gebruikerspermissie en notificatiekanaal blijven gelden.
+
+**Levergrens:** GitHub-broncommits op de bestaande PR, geen gesigneerde APK, toestelinstallatie of live-deviceacceptatie. Vereiste onafhankelijke review, Android-build, protected-main en fysieke Wear OS-acceptatie blijven noodzakelijk; geen QA-suites of handmatige regressierondes toegevoegd of gedraaid.
