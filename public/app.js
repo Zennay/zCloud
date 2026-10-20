@@ -1172,13 +1172,11 @@ async function readVpsGitHubActivity(){
     if(parsed.coverage.length!==1||parsed.coverage[0].project!==project)
       throw Error('Server source project mismatch');
     if(routeVersion!==version||filter!==project)return;
-    const prior=IMPORTED_GITHUB_ACTIVITY||{events:[],coverage:[]};
-    const retained=[...prior.coverage.filter(row=>row.project!==project),...parsed.coverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
-    const projects=new Set(retained.map(row=>row.project));
-    const events=fairPublicGitHubHistory(
-      [...prior.events.filter(row=>row.project!==project&&projects.has(row.project)),...parsed.events],
-      retained);
-    IMPORTED_GITHUB_ACTIVITY={observedAt:new Date().toISOString(),coverage:retained,events};
+    // Share the same non-destructive source contract with local operator
+    // imports. An incomplete trusted-server response must not erase the
+    // project's previous PR/CI history or newer source observations.
+    const prior=IMPORTED_GITHUB_ACTIVITY||null;
+    IMPORTED_GITHUB_ACTIVITY=mergeValidatedZSentinelReceipts(prior,parsed,'github');
     VPS_GITHUB_ERROR='Server GitHub sample loaded for '+project+
       '. Partial PR/CI/main source; no deployment or branch completeness implied.';
   }catch(error){
