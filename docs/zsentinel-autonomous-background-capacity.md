@@ -246,6 +246,17 @@ beschikbare opstartsessie-identiteiten; na reboot wordt niet per ongeluk
 de oude incidentcode als hetzelfde meetmoment behandeld. V1 blijft leesbaar
 en is bewust niet achteraf voorzien van verzonnen bootbewijs.
 
+Nieuw in dezelfde T0/T1-vergelijking is **feitelijk gemeten trainerbeleid**:
+als de bestaande Fuckball-coach op beide momenten actief en uitleesbaar was
+én de Linux-boot hetzelfde is, toont de herstelwerkbank de echte
+`CPUQuota`- en `CPUWeight`-waarden van T0 en T1, inclusief of die
+veranderden. Apart wordt vermeld of de laatst geobserveerde instelling
+overeenkomt met het toenmalige CPU-advies. Een inactieve unit, onbekende
+systemd-bron, oude bon zonder coachwaarden of reboot resulteert juist in
+`same_boot_policy_comparable=false` en **onbekend**; nooit een verzonnen
+instelling, geïnstalleerde update of doorlopende training. Deze uitbreiding
+schrijft niets aan het coach-cgroup en start geen runner.
+
 Het betreft uitsluitend een read-only systeemmeting bij het maken van een
 nieuw privé bronmoment; geen extra systeembrede installatie, reset,
 workerstart, GitHub-dispatch, betaling, merge of deploy. Toestemming en
