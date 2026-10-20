@@ -181,6 +181,25 @@ def build_workboard(inbox, registry, token=None):
 
             raise ValueError("untrusted exact-head PR receipt")
         by_link[entry["url"]] = entry
+    for candidate in pr_cards:
+        # Reuse exact-head evidence ALREADY fetched for issue-linked PRs;
+        # never issue extra API reads just to decorate the shortlist.
+        evidence = by_link.get(candidate["url"])
+        candidate["gate_observation"] = "not_reinspected_exact_head"
+        candidate["owner_next_step"] = (
+            "Controleer eerst actuele PR-HEAD, verplichte CI, review en lease.")
+        if evidence is None:
+            continue
+        if evidence.get("head_sha") != candidate["listed_head_sha"]:
+            candidate["gate_observation"] = "listed_pr_head_changed_or_unknown"
+            candidate["owner_next_step"] = (
+                "PR-bron-HEAD wijkt af van lijst of is onbekend; "
+                "laat de eigenaar opnieuw op actuele HEAD beoordelen.")
+            continue
+        if (evidence.get("coverage") == "bounded_exact_head_review_and_checks"
+                and evidence.get("next_step") in NEXT_ACTION_NL):
+            candidate["gate_observation"] = "bounded_exact_head_observed_not_authorized"
+            candidate["owner_next_step"] = NEXT_ACTION_NL[evidence["next_step"]]
     for row in sampled:
         for link in row["existing_pr_links_unverified"]:
             if link not in by_link:
