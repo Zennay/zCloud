@@ -375,7 +375,10 @@ def public_summary(report):
             report["observed_allocated_bytes_lower_bound"] / (1024**3), 2),
         "large_file_candidates_min": report["large_files_seen_lower_bound"],
         "directories_unscanned": report["directories_unscanned"],
-        "private_report_written": True,
+        # Caller renders this BEFORE any optional create-only output is
+        # written. A direct metadata-only scan must never claim a report.
+        "private_report_written": False,
+        "private_report_creation": "not_verified_at_summary_time",
         "deletion_authorized": False,
         "runner_restart_authorized": False,
         "queue_claims_changed": False,
@@ -402,8 +405,9 @@ def public_summary_html(summary):
         ' grote bestanden. Dekking: ' + escape(summary["coverage"]) +
         '; aanvullende niet-bezochte mappen: ' +
         str(summary["directories_unscanned"]) +
-        '. Bestandsnamen staan uitsluitend in het afzonderlijke'
-        ' aangemaakte privérapport (0600), NIET in deze cockpit.</p>' +
+        '. Bestandsnamen worden bij succesvolle privé-uitvoer uitsluitend'
+        ' naar een afzonderlijk 0600-rapport geschreven, NIET in deze'
+        ' cockpit. Deze momentopname bewijst de bestandsschrijfstatus niet.</p>' +
         ('<p>Gemeten vrije ruimte op dezelfde host/mount veranderde met ' +
          str(summary["mount_free_change_mib_not_cleanup"]) +
          ' MiB (geen bewijs van welke bestanden dit veroorzaakten).</p>'
