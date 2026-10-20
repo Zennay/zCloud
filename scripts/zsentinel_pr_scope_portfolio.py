@@ -514,6 +514,8 @@ def current_gate_lines(board, markdown=False):
         str(observation["direct_explicit_prs_outside_recent_sample"]) +
         "; extra bron-GETs voor die PR-identiteiten: " +
         str(observation["extra_direct_pr_identity_gets"]),
+        "Totaal GitHub GET-budget voor huidige extra gatelezing: " +
+        str(observation["max_additional_github_gets"]),
         "Gatebronnen gezien: " + str(observation["pr_gate_receipts_requested"]) +
         "; QA-only titels bewust niet geselecteerd: " +
         str(observation["qa_only_title_prs_not_inspected"]) +
@@ -754,6 +756,11 @@ def as_html(board):
             ". Expliciet gekozen: " +
             escape(", ".join(live["explicit_selected_prs"]) or
                    "automatisch uit bestaande stable product-PRs") + "</p>"
+            "<p>Gate-bronmoment UTC: " +
+            escape(live["observed_at_utc"]) +
+            " · out-of-window bron onvolledig: " +
+            escape(str(board["source_coverage_limited_by_direct_prs"])) +
+            "</p>"
             "<p>Afzonderlijke read-only waarneming, niet atomair met de "
             "bestandscope. Bronclaims, release en verplichte regels "
             "zijn niet geautoriseerd.</p><ol>" +
