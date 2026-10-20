@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Open an existing private zSentinel project handoff without contacting services.
+
+This is a user-facing offline delivery reader, not a QA tool, worker, CI
+gate, claim verifier, merge authority or proof of GitHub provenance.
+"""
+from __future__ import annotations
+
+import argparse
+from contextlib import closing
+import hashlib
+from io import BytesIO
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import sys
+from zipfile import BadZipFile, ZipFile, ZIP_DEFLATED
+
+FILES = ("project-dossier.html", "project-actions.md",
+         "project-prs.csv", "source-receipt.json", "source-checksums.json")
+MAX_ARCHIVE = 1024 * 1024
+MAX_MEMBER = MAX_ARCHIVE
+MAX_EXPANDED = 4 * MAX_ARCHIVE
+SHA = re.compile(r"[a-f0-9]{64}\Z")
+PROJECT = re.compile(r"Zennay/[A-Za-z0-9_.-]{1,100}\Z")
+
+
+def unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON source field")
+        result[key] = value
+    return result
+
+
+def strict_json(raw: bytes):
+    obj = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=unique_pairs,
+                     parse_constant=lambda _: (_ for _ in ()).throw(
+                         ValueError("Nonfinite source number")))
+    if type(obj) is not dict:
+        raise ValueError("JSON source must be an object")
+    return obj
+
+
+def read_archive(path: Path):
+    """Nofollow, regular-file bounded read with metadata replacement checks."""
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise ValueError("Required local file safety is unavailable")
+    first = path.lstat()
+    if (not stat.S_ISREG(first.st_mode)
+            or first.st_size < 100 or first.st_size > MAX_ARCHIVE):
+        raise ValueError("Source is not a bounded regular archive")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode)
+                or (before.st_dev, before.st_ino, before.st_size) !=
+                   (first.st_dev, first.st_ino, first.st_size)):
+            raise ValueError("Archive changed during safe open")
+        with os.fdopen(os.dup(fd), "rb") as source:
+            raw = source.read(MAX_ARCHIVE + 1)
+        after = os.fstat(fd)
+        if (len(raw) != first.st_size
+                or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
+            raise ValueError("Archive replaced or modified during read")
+        return raw
+    finally:
+        os.close(fd)
+
+
+def open_dossier(path: Path):
+    """Return validated archive payloads; hashes prove consistency, not author."""
+    payload = read_archive(path)
+    with ZipFile(BytesIO(payload), mode="r") as archive:
+        infos = archive.infolist()
+        if len(infos) != len(FILES) or {i.filename for i in infos} != set(FILES):
+            raise ValueError("Unexpected or duplicate project ZIP members")
+        if sum(i.file_size for i in infos) > MAX_EXPANDED:
+            raise ValueError("Expanded project dossier exceeds budget")
+        extracted = {}
+        for info in infos:
+            if (info.filename not in FILES or info.is_dir()
+                    or info.flag_bits & 0x1 or info.compress_type != ZIP_DEFLATED
+                    or not 1 <= info.file_size <= MAX_MEMBER
+                    or not 0 <= info.compress_size <= MAX_ARCHIVE):
+                raise ValueError("Unsafe ZIP member type or limits")
+            # Only regular Unix files are emitted by the package builder.
+            if info.create_system != 3 or (info.external_attr >> 16) != 0o100600:
+                raise ValueError("Noncanonical ZIP member permissions")
+            with archive.open(info, "r") as stream:
+                data = stream.read(MAX_MEMBER + 1)
+            if len(data) != info.file_size:
+                raise ValueError("Archive member changed or exceeded limit")
+            extracted[info.filename] = data
+
+    manifest = strict_json(extracted["source-checksums.json"])
+    receipt = strict_json(extracted["source-receipt.json"])
+    if (manifest.get("schema") != "zsentinel-private-project-dossier-zip-v1"
+            or manifest.get("source") != "offline_saved_manifest_and_gate_batches_not_live"
+            or receipt.get("schema") != "zsentinel-private-portfolio-work-suggestions-v1"
+            or receipt.get("source") != "saved_exact_manifest_gate_batches_not_live"
+            or type(manifest.get("files_sha256")) is not dict
+            or set(manifest["files_sha256"]) != set(FILES[:-1])):
+        raise ValueError("Unrecognized or incomplete source-bound project dossier")
+    for name in FILES[:-1]:
+        checksum = manifest["files_sha256"][name]
+        if type(checksum) is not str or SHA.fullmatch(checksum) is None:
+            raise ValueError("Invalid dossier member SHA256")
+        if hashlib.sha256(extracted[name]).hexdigest() != checksum:
+            raise ValueError("Private project handoff member checksum mismatch")
+    for key in ("original_review_manifest_sha256", "original_board_sha256"):
+        value = manifest.get(key)
+        if (type(value) is not str or SHA.fullmatch(value) is None
+                or value != receipt.get(key)):
+            raise ValueError("Original source identity is inconsistent")
+    for key in ("earliest_observed_at_utc", "latest_observed_at_utc",
+                "missing_batch_indexes", "selected_project_filter"):
+        if manifest.get(key) != receipt.get(key if key !=
+            "earliest_observed_at_utc" else "oldest_observed_at_utc") and not (
+            key == "latest_observed_at_utc" and manifest.get(key) ==
+            receipt.get("latest_observed_at_utc")):
+            raise ValueError("Conflicting private source coverage")
+    project = manifest["selected_project_filter"]
+    if project is not None and (type(project) is not str
+                                or PROJECT.fullmatch(project) is None):
+        raise ValueError("Invalid project handoff scope")
+    if any(manifest.get(flag) is not False for flag in
+           ("claim_authorized", "worker_dispatch_authorized",
+            "required_ci_review_verified", "merge_authorized",
+            "deploy_authorized", "live_verified")):
+        raise ValueError("Project archive claims release authority")
+    if any(receipt.get(flag) is not False for flag in
+           ("owner_claim_verified", "merge_authorized", "deploy_authorized",
+            "worker_dispatch_authorized", "writes_performed",
+            "live_verified")):
+        raise ValueError("Project source claims worker/release authority")
+    return extracted, manifest, receipt
+
+
+def extract_dossier(path: Path, destination: Path, *, expected_manifest_sha=None):
+    """Create a new private directory only after fully verifying the ZIP.
+
+    Never reuses or overwrites a prior directory, file or symlink.
+    """
+    files, manifest, receipt = open_dossier(path)
+    if (expected_manifest_sha is not None and
+            manifest["original_review_manifest_sha256"] != expected_manifest_sha):
+        raise ValueError("Dossier manifest SHA256 differs from operator pin")
+    if destination.exists() or destination.is_symlink():
+        raise ValueError("Destination already exists; refusing overwrite")
+    destination.mkdir(mode=0o700, parents=False, exist_ok=False)
+    created = []
+    try:
+        for name in FILES:
+            target = destination / name
+            fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
+                         getattr(os, "O_NOFOLLOW", 0), 0o600)
+            created.append(target)
+            with os.fdopen(fd, "wb") as sink:
+                sink.write(files[name])
+                sink.flush()
+                os.fsync(sink.fileno())
+    except BaseException:
+        for target in created:
+            target.unlink(missing_ok=True)
+        destination.rmdir()
+        raise
+    return manifest, receipt
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", type=Path, required=True,
+                        help="One previously generated private portfolio-zip")
+    parser.add_argument("--extract-to", type=Path,
+                        help="New, nonexistent private directory; otherwise inspect only")
+    parser.add_argument("--expect-review-sha256",
+                        help="Optional trusted original manifest SHA256 to pin")
+    args = parser.parse_args(argv)
+    try:
+        if (args.expect_review_sha256 is not None
+                and SHA.fullmatch(args.expect_review_sha256) is None):
+            raise ValueError("Invalid expected source SHA256")
+        if args.extract_to is None:
+            _files, manifest, receipt = open_dossier(args.input)
+        else:
+            manifest, receipt = extract_dossier(
+                args.input, args.extract_to,
+                expected_manifest_sha=args.expect_review_sha256)
+        if (args.expect_review_sha256 is not None and
+                manifest["original_review_manifest_sha256"] !=
+                args.expect_review_sha256):
+            raise ValueError("Dossier does not match operator-pinned manifest")
+        print("Source-consistent offline project dossier: " +
+              str(manifest["selected_project_filter"] or "sampled portfolio"))
+        print("Original review manifest SHA256: " +
+              manifest["original_review_manifest_sha256"])
+        print("Source-observed PRs: " + str(receipt["filtered_pr_candidates"]) +
+              " / " + str(receipt["original_source_pr_candidates"]))
+        print("Archive hashes are internally consistent, NOT authenticated; "
+              "no current GitHub owner, CI, merge or live state is established.")
+        if args.extract_to is not None:
+            print("Private dossier extracted into: " + str(args.extract_to))
+        return 0
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError,
+            BadZipFile, OverflowError, EOFError) as exc:
+        print("Refused unsafe, incomplete or mismatched private dossier: " +
+              str(type(exc).__name__), file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
