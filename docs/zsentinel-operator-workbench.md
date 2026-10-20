@@ -972,3 +972,34 @@ GitHub observations; it requires access to the exact original reviewed
 manifest and must respect current GitHub/API and project ownership gates.
 New data can be imported via the same in-browser multi-batch selection.
 No CI retrigger, write to GitHub, claim, merge or deploy is performed.
+
+
+### 20 October · Save and later restore an in-browser combined source
+
+The browser's **Combine original reviewed manifest and saved PR batches**
+path now also produces a *portable offline saved-source snapshot*.
+After successful source-bound import, select **Preview portable, private
+combined JSON**, inspect the exact source (and its non-authorizing
+provenance flags), then **Download exactly this reviewed combined JSON**.
+Nothing is downloaded automatically or transmitted to GitHub, Notion,
+the VPS or another service. The output filename is
+`zsentinel-offline-source-bound-pr-gates.json`.
+
+On another offline session, open the ordinary **Saved PR gate JSON**
+single-file importer and select that saved combined file. It contains
+the same `zsentinel-integrated-issue-pr-scope-v1` schema as the Python
+batch bridge, including source board and manifest hashes, oldest/newest
+saved source timestamps, all/partial coverage and exact missing
+batch indexes/PR links. All check/review rows are restricted to the
+canonical allowlist and explicitly disallow claims, merges, deployments
+and writes. File size is capped at 1 MiB, and the generated combined
+JSON is checked against the workbench's existing single-file importer
+*before* it can replace the current overlay.
+
+Only actual received batches are included. PRs in missing batches remain
+UNKNOWN; saving and restoring a JSON does not turn historical observations
+into live required-check or independent-review evidence. If the reviewed
+download preview or imported source changes, preview is required again.
+The browser never persists personal notes, private gate observations or
+files silently. Python AST and embedded JS syntax were checked on the
+exact pinned branch source (not a QA or regression suite).
