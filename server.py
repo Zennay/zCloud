@@ -2955,7 +2955,9 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
     })
     if decision != 'product':
         raise ValueError('Nieuwe niet-product/QA-only wachtrijtaak geweigerd: '+reason)
-    if not queue_id:
+    # Only omitted IDs are generated. Explicit empty/falsy IDs are invalid,
+    # not an invitation to silently change the producer's task identity.
+    if queue_id is None:
         digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
         queue_id=project_id+'-'+digest
     # Explicit queue identities must remain canonical: two differently
