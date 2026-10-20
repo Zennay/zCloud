@@ -307,6 +307,8 @@ def main(argv=None):
                    help="one through six bounded original JSON files")
     p.add_argument("--collect-live", action="store_true",
                    help="one-shot read-only issue and existing PR scan of canonical project windows")
+    p.add_argument("--previous-portfolio", type=Path,
+                   help="optional private older portfolio JSON for source-bound PR-change summary")
     p.add_argument("--project", action="append",
                    help="optional canonical project selection for --collect-live; defaults to all")
     p.add_argument("--format", choices=("html", "json", "md"), default="html")
@@ -328,6 +330,13 @@ def main(argv=None):
                 raise ValueError("provide one to six private snapshots, without --project")
             snapshots = [load_private_prior(path) for path in args.snapshot]
         board = combine_workboards(snapshots, registry)
+        if args.previous_portfolio is not None:
+            from zsentinel_portfolio_pr_delta import (
+                load_previous_portfolio, compare_portfolio_prs,
+            )
+            older, previous_sha = load_previous_portfolio(args.previous_portfolio)
+            board["pr_delta_since_previous_portfolio"] = compare_portfolio_prs(
+                board, older, registry, previous_sha)
         board["collection_mode"] = (
             "one_shot_live_read_only" if args.collect_live
             else "explicit_saved_private_sources")
