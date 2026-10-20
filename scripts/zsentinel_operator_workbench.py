@@ -297,6 +297,8 @@ Selection does not claim, close or reassign any original GitHub issue.</p>
 <button id="batchPreview" type="button">Preview exact private changes</button>
 <div id="batchPreviewPanel" hidden><pre id="batchPreviewText"></pre>
 <button id="batchApply" type="button" disabled>Confirm these local follow-up changes</button></div>
+<button id="batchUndo" type="button" disabled>Undo last confirmed local bulk action</button>
+<p><small>Undo is refused if any affected private record changed after bulk apply.</small></p>
 <p><small>Human labels, notes, real claims, CI/review gates and issue states remain unchanged.
 Export private JSON separately to preserve these local changes.</small></p>
 </section>
@@ -396,7 +398,10 @@ function dueState(info){
   'due today UTC':'scheduled by operator';
 }
 let selected=null;const handoffs=new Map();
-const batchSelection=new Set();let batchPreview=null;
+const batchSelection=new Set();let batchPreview=null,batchUndo=null;
+function clearBatchUndo(){
+ batchUndo=null;document.getElementById('batchUndo').disabled=true;
+}
 function invalidateBatch(){
  batchPreview=null;
  document.getElementById('batchPreviewPanel').hidden=true;
@@ -1116,7 +1121,7 @@ document.getElementById('carryApply').onclick=()=>{
  }
  const count=carryPreview.eligible.length;
  for(const row of carryPreview.eligible)handoffs.set(row.issue,row.value);
- setUnsaved(true);
+ clearBatchUndo();setUnsaved(true);
  clearCarryPreview('Transferred '+count+' reviewed, human-only annotations. All live owners/gates must be reverified.');
  invalidateBrief();drawList();drawDetail();
  status.textContent='Manually reviewed notes carried forward; no Notion claim or external action performed.';
@@ -1167,7 +1172,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
        followup_changed_at_utc:data.schema_version===3?(v.followup_changed_at_utc||''):''});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
-   setUnsaved(false);invalidateBrief();drawList();drawDetail();
+   clearBatchUndo();setUnsaved(false);invalidateBrief();drawList();drawDetail();
    status.textContent='Own human handoff restored from this exact original board.';
  }catch{
    status.textContent='Handoff not restored: invalid, foreign or from another board snapshot.';
@@ -1268,9 +1273,28 @@ document.getElementById('batchApply').onclick=()=>{
   if(row.from!==row.to)info.followup_changed_at_utc=stamp;
  }
  const updated=plan.rows.length;
+ batchUndo={board:boardSha,rows:plan.rows.map(row=>({
+  issue:row.issue,before:row.before,after:JSON.stringify(handoffs.get(row.issue))}))};
+ document.getElementById('batchUndo').disabled=false;
  invalidateBatch();invalidateBrief();setUnsaved(true);
  batchSelection.clear();drawList();drawDetail();
  status.textContent=updated+' private human follow-ups updated locally. Source issue/owner/CI/release statuses remain unknown. Export private JSON to preserve them.';
+};
+document.getElementById('batchUndo').onclick=()=>{
+ saveSelection();
+ if(!batchUndo||batchUndo.board!==boardSha||
+    !batchUndo.rows.length||batchUndo.rows.some(row=>
+      !entries.has(row.issue)||
+      JSON.stringify(handoffs.get(row.issue))!==row.after)){
+  clearBatchUndo();
+  status.textContent='Undo refused: an affected private record changed. No records were overwritten.';
+  return;
+ }
+ const n=batchUndo.rows.length;
+ for(const row of batchUndo.rows)handoffs.set(row.issue,JSON.parse(row.before));
+ clearBatchUndo();invalidateBatch();invalidateBrief();setUnsaved(true);
+ drawList();drawDetail();
+ status.textContent='Restored '+n+' prior private human annotations. External issue/claim/CI/release states never changed. Export JSON to preserve them.';
 };
 document.getElementById('print').onclick=()=>window.print();
 refreshPortfolio();refreshComparison();drawList();drawDetail();
