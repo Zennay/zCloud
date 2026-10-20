@@ -7,10 +7,11 @@ from html import escape
 import json
 import os
 import re
+import sqlite3
 from pathlib import Path
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 RUNNER_UNIT = "actions.runner.Zennay-zCloud.zcloud-vps-1.service"
 
@@ -159,6 +160,96 @@ def archive_mount_readiness(mount_path: Path = Path("/home/ubuntu/VPS-Archief"))
     outcome["state"] = "mounted_write_unverified"
     return outcome
 
+def worker_safety_snapshot(root: Path) -> dict:
+    """Advisory live workload snapshot from a strictly read-only SQLite handle.
+
+    No attempt is made to correlate browser heartbeat with real text progress.
+    Counts cannot grant safe-idle, drain, service restart or release approval.
+    """
+    evidence = {
+        "state": "unknown", "source": "sqlite_mode_ro", "queued_claims": None,
+        "durable_claims": None, "fresh_generating_slots": None,
+        "fresh_observed_slots": None, "events_sample_complete": False,
+        "safe_idle_verified": False, "worker_interruption_authorized": False,
+        "read_performed": False,
+    }
+    path = root / "history.db"
+    try:
+        if path.is_symlink() or not path.is_file():
+            evidence["state"] = "database_unavailable"
+            return evidence
+        # A separate read-only connection prevents accidental schema setup,
+        # queue reconciliation or mutating GET side effects.
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("PRAGMA busy_timeout=2000")
+            conn.execute("BEGIN")
+            claims = conn.execute(
+                "SELECT COUNT(*) FROM portfolio_queue WHERE status='claimed'"
+            ).fetchone()[0]
+            ownership = conn.execute(
+                "SELECT COUNT(*) FROM task_claims"
+            ).fetchone()[0]
+            recent = conn.execute(
+                "SELECT project_id,worker_slot,ts,generating "
+                "FROM runner_events ORDER BY id DESC LIMIT 301"
+            ).fetchall()
+            conn.execute("ROLLBACK")
+        evidence["read_performed"] = True
+        evidence["queued_claims"] = claims
+        evidence["durable_claims"] = ownership
+        latest = {}
+        now_utc = datetime.now(timezone.utc)
+        for project, slot, event_time, generating in recent[:300]:
+            key = (project, slot)
+            if key in latest:
+                continue
+            if not isinstance(event_time, str):
+                evidence["state"] = "invalid_event_clock"
+                return evidence
+            try:
+                at = datetime.fromisoformat(event_time.replace("Z", "+00:00"))
+                if at.tzinfo is None or at.utcoffset() is None:
+                    raise ValueError("naive")
+                age = (now_utc - at).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                evidence["state"] = "invalid_event_clock"
+                return evidence
+            if age < -30:
+                evidence["state"] = "future_event_clock"
+                return evidence
+            latest[key] = (age, generating)
+        fresh = [v for v in latest.values() if -30 <= v[0] <= 300]
+        evidence["fresh_observed_slots"] = len(fresh)
+        evidence["fresh_generating_slots"] = sum(v[1] == 1 for v in fresh)
+        # A sample is complete only when the first excluded event is old.
+        # Even a complete browser sample cannot prove independent safe idle.
+        if len(recent) <= 300:
+            evidence["events_sample_complete"] = True
+        else:
+            try:
+                oldest_included = datetime.fromisoformat(
+                    recent[299][2].replace("Z", "+00:00"))
+                oldest_excluded = datetime.fromisoformat(
+                    recent[300][2].replace("Z", "+00:00"))
+                evidence["events_sample_complete"] = (
+                    oldest_included.tzinfo is not None
+                    and oldest_excluded.tzinfo is not None
+                    and now_utc - oldest_excluded > timedelta(seconds=300))
+            except (TypeError, ValueError, OverflowError, AttributeError):
+                evidence["events_sample_complete"] = False
+        if not evidence["events_sample_complete"]:
+            evidence["state"] = "event_window_incomplete"
+        elif claims or ownership or evidence["fresh_generating_slots"]:
+            evidence["state"] = "active_work_observed"
+        else:
+            evidence["state"] = "no_active_evidence_unverified"
+        return evidence
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        evidence["state"] = "database_unavailable"
+        return evidence
+
+
 def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     """Human-readable, non-authorizing recovery ordering; never executes the actions."""
     codes = {entry["code"] for entry in findings}
@@ -190,6 +281,10 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("ARCHIVE_ROUTE_OWNER", "VPS archive / storage owner",
                   "An external mount is not proof that writes or safe cleanup are possible.",
                   "Verify encrypted archival destination rights and owner authorization separately; never delete source data before remote checksum verification.")
+    if "ACTIVE_WORK_REQUIRES_DRAIN" in codes or "WORKER_EVIDENCE_INCOMPLETE" in codes:
+        recommend("WORKER_SAFE_IDLE_OWNER", "Serialized zCloud worker/release owner (#580/#1089)",
+                  "Current queue claims or browser-reported generation may still be active, or monitoring is incomplete.",
+                  "Preserve active claims and browser sessions; use existing owner-gated drain and independently confirmed idle evidence before a release. Do not kill workers.")
     if not recommendations:
         recommend("EXTERNAL_RELEASE_GATES", "zCloud release owner",
                   "A local read-only preflight cannot authorize a production release.",
@@ -197,7 +292,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
     return recommendations
 
 
-def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False, archive_readiness: bool = False) -> dict:
+def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: bool = False, archive_readiness: bool = False, worker_safety: bool = False) -> dict:
     findings: list[dict[str, str]] = []
     def mark(code: str, severity: str, detail: str) -> None:
         findings.append({"code": code, "severity": severity, "detail": detail})
@@ -272,6 +367,17 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         else:
             mark("ARCHIVE_COLD_TIER_NOT_READY", "warn",
                  "External archive is missing, read-only or unavailable for verified relocation.")
+    worker_snapshot = worker_safety_snapshot(root) if worker_safety else None
+    if worker_snapshot is not None:
+        if worker_snapshot["state"] == "active_work_observed":
+            mark("ACTIVE_WORK_REQUIRES_DRAIN", "block",
+                 "Claims or fresh browser-reported generation observed. Preserve work and use serialized owner-gated safe idle.")
+        elif worker_snapshot["state"] not in {"no_active_evidence_unverified"}:
+            mark("WORKER_EVIDENCE_INCOMPLETE", "block",
+                 "Current worker/queue observation is incomplete or untrusted; release must remain blocked.")
+        else:
+            mark("WORKER_IDLE_NOT_PROVEN", "warn",
+                 "No active browser/queue evidence in this bounded sample does not establish safe idle.")
     blocked = any(f["severity"] == "block" for f in findings)
     recovery = actionable_recovery(findings)
     return {
@@ -287,6 +393,7 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         "recovery_priorities": recovery,
         "storage_inventory": inventory,
         "archive_readiness": archive,
+        "worker_safety": worker_snapshot,
         "next_step": "Obtain existing owner/release approval; never use this report as deploy authorization.",
     }
 
@@ -388,6 +495,19 @@ def render_html(report: dict) -> str:
             f'{item("Filesystem", val(archive["mount_type"]))}</dl>'
             '<p class="muted">No write probe or transfer was attempted. Archive writes are never authorized by this report.</p></section>'
         )
+    worker = report.get("worker_safety")
+    worker_html = ""
+    if worker is not None:
+        worker_html = (
+            '<section aria-labelledby="worker"><h2 id="worker">Worker protection</h2>'
+            f'<dl>{item("Workload evidence", worker["state"])}'
+            f'{item("Claimed queue entries", val(worker["queued_claims"]))}'
+            f'{item("Durable claims", val(worker["durable_claims"]))}'
+            f'{item("Fresh generating slots", val(worker["fresh_generating_slots"]))}'
+            f'{item("Event-window complete", worker["events_sample_complete"])}</dl>'
+            '<p class="muted">Browser evidence is not independently verified text progress.'
+            ' Never interrupt workers or infer safe-idle from this snapshot.</p></section>'
+        )
     storage = report.get("storage_inventory")
     if storage is None:
         storage_html = ""
@@ -443,6 +563,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {comparison_html}
 {storage_html}
 {archive_html}
+{worker_html}
 <section aria-labelledby="findings"><h2 id="findings">Release blockers and warnings</h2><ul>{findings}</ul></section>
 <section aria-labelledby="recovery"><h2 id="recovery">Owner-gated recovery priorities</h2><ol>{actions}</ol></section>
 <p class="disclaimer"><strong>Not an approval.</strong> This report cannot prove protected-main review,
@@ -459,6 +580,8 @@ def main() -> int:
                         help="Optional bounded read-only du inventory of five known storage categories")
     parser.add_argument("--archive-readiness", action="store_true",
                         help="Read-only external archive mount inspection; never proves write permission")
+    parser.add_argument("--worker-safety", action="store_true",
+                        help="Read-only portfolio queue and browser-event admission snapshot; cannot prove safe idle")
     parser.add_argument("--previous-report", type=Path, default=None,
                         help="Compare with a saved bounded JSON report; never modifies the prior file")
     parser.add_argument("--format", choices=("text", "json", "html"), default="text",
@@ -468,7 +591,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.expected_main_sha and not re.fullmatch(r"[0-9a-f]{40}", args.expected_main_sha):
         parser.error("--expected-main-sha must be a lowercase 40-character Git SHA")
-    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness)
+    report = measure(args.root.resolve(), args.expected_main_sha, args.disk_hotspots, args.archive_readiness, args.worker_safety)
     if args.previous_report is not None:
         try:
             report["comparison"] = compare_snapshot(args.previous_report, report)
@@ -504,6 +627,9 @@ def main() -> int:
         archive = report.get("archive_readiness")
         if archive is not None:
             print(f"External archive: {archive['state']} ({archive['mount_type'] or 'unknown'}); archive writes NOT authorized")
+        worker = report.get("worker_safety")
+        if worker is not None:
+            print(f"Worker protection: {worker['state']}; claimed queue={worker['queued_claims']}; fresh generating={worker['fresh_generating_slots']}; safe idle NOT verified")
         print("Owner-gated recovery priorities:")
         for index, item in enumerate(report["recovery_priorities"], 1):
             print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
