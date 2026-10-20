@@ -91,12 +91,12 @@ not a command to assign new workers or confirm that eight are running.
 python3 scripts/zcloud_worker_progress_history.py \
   --db history.db --project cloud --all-slots --format json
 
-python3 scripts/zcloud_worker_progress_history.py \
+(umask 077; python3 scripts/zcloud_worker_progress_history.py \
   --db history.db --project cloud --all-slots --format html \
-  > /home/ubuntu/private-reports/cloud-worker-slots.html
+  > /home/ubuntu/private-reports/cloud-worker-slots.html)
 ```
 
-The HTML is a self-contained, mobile-friendly dark table showing the
+Create the output folder beforehand with owner-only permissions and use a\nprivate umask as shown. Do not publish this operator report publicly.\n\nThe HTML is a self-contained, mobile-friendly dark table showing the
 last browser-event kind, timestamp, reported prompt, progress and completion
 for **each slot**, plus whether progress was reported after the most recently
 reported prompt. The structured JSON uses
