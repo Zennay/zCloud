@@ -78,10 +78,24 @@ def disk_used_fraction():
         return None
 
 
+def root_volume_identity():
+    """Observe Linux root mount identity/capacity without traversing files."""
+    try:
+        filesystem = os.statvfs("/")
+        device = os.stat("/").st_dev
+        size = filesystem.f_blocks * filesystem.f_frsize
+        if device < 0 or size <= 0:
+            return None, None
+        return str(device), size
+    except (OSError, ValueError, OverflowError):
+        return None, None
+
+
 def snapshot():
     runner, sentinel, proc_ok = workers()
     memory, swap_used = memory_pressure()
     disk_used = disk_used_fraction()
+    root_dev, root_total = root_volume_identity()
     try:
         cores = max(1, len(os.sched_getaffinity(0)))
         load = os.getloadavg()[0]
@@ -94,6 +108,7 @@ def snapshot():
         "cores": cores, "memory_available_gib": round(memory, 2) if memory is not None else None,
         "swap_used_percent": round(swap_used * 100, 1) if swap_used is not None else None,
         "disk_unavailable_percent": round(disk_used * 100, 1) if disk_used is not None else None,
+        "root_mount_device": root_dev, "root_volume_bytes": root_total,
         "source_complete": not unknown,
     }
 
