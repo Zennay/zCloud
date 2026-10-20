@@ -371,7 +371,23 @@ function attentionPanel(projectId=''){
 }
 function archivedPanel(){const list=DATA.archived_projects||[];if(!list.length)return '';return `<div class="archived-panel"><div><strong>Archived</strong><span>Hidden from the dashboard and Watch</span></div><div class="archived-list">${list.map(p=>`<button type="button" data-restore="${esc(p.id)}"><span style="--accent:${p.accent}" class="project-dot"></span>${esc(p.name)}<b>Restore</b></button>`).join('')}</div></div>`}
 function activityItem(a){const p=DATA.projects.find(p=>p.id===a.project);return `<div class="activity-item" style="--accent:${p?.accent||'#aab5c4'}"><span class="activity-symbol">${icon(a.kind==='commit'?'commit':'check')}</span><div class="activity-copy"><p>${esc(a.title)}</p><div class="activity-meta"><strong>${esc(p?.name||a.project)}</strong><span>·</span><time datetime="${esc(a.ts)}" title="${date(a.ts,true)}">${rel(a.ts)}</time><span title="${esc(a.detail)}">${a.kind==='commit'?esc(a.detail):'Project step'}</span></div></div></div>`}
-function activityPanel(pid='',limit=4){const visible=new Set(DATA.projects.map(p=>p.id));const list=ACTIVITY.filter(a=>pid?a.project===pid:visible.has(a.project)).slice(0,limit);return `<div class="panel"><div class="panel-header"><div><h2>Recent local activity</h2><div class="panel-subtitle">VPS-only sample · GitHub PRs and CI not synchronized</div></div>${icon('pulse')}</div><div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local activity in this bounded sample. GitHub progress may still exist.</div>'}</div><div class="panel-footer"><a href="#activity${pid?'?project='+pid:''}" class="text-link">Inspect source coverage ${icon('arrow')}</a></div></div>`}
+function activityPanel(pid='',limit=4){
+  const projects=(DATA?.projects||[]).filter(p=>!pid||p.id===pid);
+  const visible=new Set(projects.map(p=>p.id));
+  const list=(ACTIVITY||[]).filter(a=>visible.has(a.project)).slice(0,limit);
+  const coverage=(IMPORTED_GITHUB_ACTIVITY?.coverage||[]).filter(row=>visible.has(row.project));
+  const observed=new Set(coverage.map(row=>row.project));
+  const stale=coverage.filter(row=>row.staleEvidence===true
+    ||!Number.isFinite(Date.parse(row.observedAt))
+    ||Date.now()-Date.parse(row.observedAt)>6*3600000).length;
+  const ghText='GitHub sampled '+observed.size+'/'+visible.size+' projects'+
+    (stale?' · '+stale+' stale':'')+
+    ' · opt-in only; main merge and live deploy NOT established by this view.';
+  return `<div class="panel"><div class="panel-header"><div><h2>Recent local activity</h2><div class="panel-subtitle">VPS-only sample · GitHub PRs and CI not synchronized automatically</div></div>${icon('pulse')}</div>
+  <p class="detail-note" role="status">${esc(ghText)}</p>
+  <div class="activity-list">${list.map(activityItem).join('')||'<div class="empty">No local activity in this bounded sample. GitHub progress may still exist.</div>'}</div>
+  <div class="panel-footer"><a href="#activity${pid?'?project='+encodeURIComponent(pid):''}" class="text-link">Inspect source coverage ${icon('arrow')}</a></div></div>`;
+}
 function ranges(){return `<div class="range-control" role="group" aria-label="Chart period">${[['24h','24h'],['7d','7d'],['30d','30d'],['all','Alles']].map(([id,title])=>`<button data-range="${id}" class="${range===id?'active':''}" aria-pressed="${range===id}">${title}</button>`).join('')}</div>`}
 function graphPanel(projects){return `<div class="panel"><div class="panel-header"><div><h2>Progress over time</h2><div class="panel-subtitle">Project steps · Amsterdam time</div></div>${ranges()}</div><div class="legend">${projects.map(p=>`<span style="--accent:${p.accent}"><i class="legend-dot"></i>${p.name}</span>`).join('')}</div><div id="progressChart" class="chart-wrap"></div><div class="chart-detail" id="chartDetail">Select a data point for date and progress.</div></div>`}
 function infraStrip(){const h=DATA.host,mem=h.memory.used/h.memory.total*100,disk=h.disk.used/h.disk.total*100;return `<div class="infra-strip"><div class="server-icon">${icon('server')}</div><div class="infra-title"><strong>VPS · OVHcloud</strong><small>${h.cores} vCPU · ${gb(h.memory.total)} RAM</small></div><div class="infra-item">CPU<strong>${h.cpu==null?'First measurement…':num(h.cpu)+'%'}</strong><div class="microbar"><span style="width:${h.cpu||0}%"></span></div></div><div class="infra-item">Memory<strong>${num(mem)}%</strong><div class="microbar"><span style="width:${mem}%"></span></div></div><div class="infra-item">Free storage<strong>${gb(h.disk.free)}</strong><div class="microbar"><span style="width:${disk}%"></span></div></div><a href="#infrastructure" class="text-link" aria-label="View infrastructure">View VPS ${icon('arrow')}</a></div>`}
