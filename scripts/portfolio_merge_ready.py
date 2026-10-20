@@ -94,6 +94,8 @@ def sweep(repo, project, args):
     prs = gh(f"repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=asc")
     for item in prs:
         number = item["number"]
+        if args.pr and number not in args.pr:
+            continue
         head = item["head"]["sha"]
         result = {"repo": repo, "pr": number, "head": head[:12],
                   "base": item["base"]["ref"], "merged": False}
@@ -131,6 +133,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", action="append", required=True, metavar="OWNER/REPO")
     parser.add_argument("--project", required=True, help="zCloud project_id for the mainwriter lease")
+    parser.add_argument("--pr", action="append", type=int, help="inspect only selected PR numbers")
     parser.add_argument("--merge", action="store_true", help="execute only with a real exclusive lease")
     parser.add_argument("--claim-key", default="")
     parser.add_argument("--owner-id", default="")
