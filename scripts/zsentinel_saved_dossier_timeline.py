@@ -67,6 +67,8 @@ def build_timeline(paths):
         tags = set()
         head_changes = 0
         blocker_changes = 0
+        comparable_receipt_changes = 0
+        incomparable_receipt_pairs = 0
         issue_changes = 0
         row_summaries = []
         heads_seen = []
@@ -85,13 +87,26 @@ def build_timeline(paths):
                     tags.add("changed_head")
                     head_changes += 1
                     changed.append("head")
-                if (old["primary_gate"] != d["primary_gate"]
-                        or old["gate_source"] != d["gate_source"]
-                        or old["concurrent_gates"] != d["concurrent_gates"]
-                        or old.get("gate_observations") != d.get("gate_observations")):
+                same_exact_head = (
+                    head is not None and old["observed_head"] == head)
+                category_changed = (
+                    old["primary_gate"] != d["primary_gate"]
+                    or old["gate_source"] != d["gate_source"]
+                    or old["concurrent_gates"] != d["concurrent_gates"])
+                observed_counts_changed = (
+                    old.get("gate_observations") != d.get("gate_observations"))
+                if category_changed or (same_exact_head and observed_counts_changed):
                     tags.add("changed_gate")
                     blocker_changes += 1
                     changed.append("gate")
+                if same_exact_head and observed_counts_changed:
+                    comparable_receipt_changes += 1
+                    changed.append("same_head_receipt_counts")
+                elif not same_exact_head and observed_counts_changed:
+                    # Sampled CI/review numbers belong to different HEADs and
+                    # may not be counted as progress.
+                    incomparable_receipt_pairs += 1
+                    changed.append("incomparable_receipt_counts")
                 if old["linked_issue_urls"] != d["linked_issue_urls"]:
                     tags.add("changed_issues")
                     issue_changes += 1
@@ -143,6 +158,8 @@ def build_timeline(paths):
             "distinct_observed_heads": len(heads_seen),
             "observed_head_changes": head_changes,
             "observed_gate_changes": blocker_changes,
+            "same_exact_head_receipt_changes": comparable_receipt_changes,
+            "incomparable_receipt_observation_pairs": incomparable_receipt_pairs,
             "observed_issue_changes": issue_changes,
             "tags": [tag for tag in TAGS if tag in tags],
             "observations": row_summaries,
@@ -254,7 +271,9 @@ def markdown(report):
             item["url"] + ") — " + str(item["observed_in_snapshots"]) +
             "/" + str(item["total_source_snapshots"]) + " bronmomenten; " +
             str(item["observed_head_changes"]) + " HEAD-wissels, " +
-            str(item["observed_gate_changes"]) + " gatewaarnemingswissels.",
+            str(item["observed_gate_changes"]) + " gatewaarnemingswissels; " +
+            str(item["incomparable_receipt_observation_pairs"]) +
+            " niet-vergelijkbare HEAD-receipts.",
             "  - Laatste bron " + str(item["last_seen_snapshot"]) +
             " (ontbreekt in laatste: " +
             ("JA, GEEN sluitbewijs" if item["missing_from_final_snapshot"]
@@ -282,7 +301,8 @@ def csv_content(report):
         "Project", "Bronprioriteit", "PR URL", "Waarnemingen",
         "Totaal bronmomenten", "Eerste bron", "Laatste bron",
         "Ontbreekt laatste steekproef", "HEAD wijzigingen", "Gate wijzigingen",
-        "Issue wijzigingen", "Laatste gateklasse", "Bronlabels",
+        "Issue wijzigingen", "Zelfde-HEAD ontvangstwaarneming gewijzigd",
+        "Niet vergelijkbare HEAD-receipts", "Laatste gateklasse", "Bronlabels",
         "Menselijke vervolgactie", "Actuele CI/review/owner",
         "Main merge bewezen", "Live bewezen",
     ])
@@ -294,7 +314,10 @@ def csv_content(report):
             "JA, NIET bewezen gemerged" if item["missing_from_final_snapshot"]
             else "NEE",
             item["observed_head_changes"], item["observed_gate_changes"],
-            item["observed_issue_changes"], item["latest_sample_primary_gate"],
+            item["observed_issue_changes"],
+            item["same_exact_head_receipt_changes"],
+            item["incomparable_receipt_observation_pairs"],
+            item["latest_sample_primary_gate"],
             " | ".join(item["tags"]), item["human_next_action"],
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
         ])
@@ -332,6 +355,8 @@ def html_content(report):
             str(item["total_source_snapshots"]) + " · HEAD-wissels: " +
             str(item["observed_head_changes"]) +
             " · Gatewissels: " + str(item["observed_gate_changes"]) +
+            " · Niet-vergelijkbare HEAD-receipts: " +
+            str(item["incomparable_receipt_observation_pairs"]) +
             "</p><p><strong>" + e(item["human_next_action"]) +
             "</strong></p><details><summary>Volledige bronhistorie</summary><ol>" +
             "".join(observations) + "</ol></details></article>")
