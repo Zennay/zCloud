@@ -401,6 +401,9 @@ def text_view(data):
             f"{lane['active_backlog_count']}; conflicten "
             f"{lane['conflicting_claims'] + lane['conflicting_queue_entries']}{extra}"
         )
+        out.append("  Beslissing: " + lane["admission"]["code"] +
+                   " · " + lane["admission"]["label"])
+        out.append("  Volgende stap: " + lane["admission"]["next_step"])
     out.append("Herstelacties (probleem / veilige vervolgactie / status):")
     for item in data["recovery_actions"]:
         out.append("  " + item["problem"])
@@ -491,7 +494,12 @@ def html_view(data):
             + status + "</p><dl><div><dt>Actief waargenomen</dt><dd>"
             + str(lane["active_backlog_count"])
             + "</dd></div><div><dt>Scopeconflicten</dt><dd>"
-            + str(count) + "</dd></div></dl>" + warning + "</article>"
+            + str(count) + "</dd></div></dl>" + warning
+            + "<p class='state' style='font-size:1rem'>"
+            + html.escape(lane["admission"]["label"]) + "</p>"
+            + "<p class='eyebrow'>" + html.escape(lane["admission"]["code"])
+            + "</p><p>" + html.escape(lane["admission"]["next_step"])
+            + "</p></article>"
         )
     warnings = []
     if data["claimed_without_local_lease_observation"]:
@@ -662,6 +670,17 @@ def markdown_view(data):
         "",
         "## Actiekaarten",
     ]
+    for lane in data["lanes"]:
+        lines.extend((
+            "",
+            "### " + lane["name"],
+            "- **Bronstatus:** " + lane["status"],
+            "- **Beslissing:** " + lane["admission"]["code"]
+            + " — " + lane["admission"]["label"],
+            "- **Vervolgactie:** " + lane["admission"]["next_step"],
+            "- **Uitgestelde QA-opdrachten:** " + str(lane["deferred_qa_packages"]),
+        ))
+    lines.extend(("", "## Geprioriteerde herstelacties"))
     for action in data["recovery_actions"]:
         lines.extend((
             "",
