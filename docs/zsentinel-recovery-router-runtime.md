@@ -2123,3 +2123,25 @@ Er zijn geen Notion- of queue-writes, workeracties, CI-dispatches,
 productiemutaties, nieuwe QA/regressiesuites of omzeilde veiligheids- en
 releasegates. Exact-head CI, reviewer, protected-main en P0-runner/billing
 blijven verplicht vóór echte runtime-integratie.
+
+### Ook in het bestaande productissue-werkbord
+
+Dezelfde bewaarde snapshot is nu beschikbaar voor de zelfstandige
+scripts/zsentinel_issue_delivery.py. Daarmee verschijnt het werkelijk
+waargenomen positieve aantal actieve Notion-werkregels naast de actuele
+GitHub-productissues en hun bestaande PR's. Geen project met 0 treffers
+wordt daarom als vrij verklaard.
+
+Voorbeeld (opgeslagen snapshot uit de verbonden query, NIET live):
+    python3 scripts/zsentinel_issue_delivery.py --project cloud \
+      --notion-data-source 86e406fd-2c99-4ef5-8058-363c1004b3eb \
+      --notion-claims-export /private/operator-only/notion-query.json \
+      --format html --output /private/operator-only/zsentinel-productbord.html
+
+Het outputbestand blijft create-only en privé onder de bestaande
+zSentinel-bestandsrechten. De optionele bron beïnvloedt uitsluitend
+statusvermelding en menselijke eigenaarcontrole, nooit automatische
+claimbesluiten, work-dispatch, CI, merge of deployment. Ook bij een
+volledige opgeslagen connectorrespons retourneert de zelfstandige
+issue-CLI geen volledige live-claimdekking en behoudt deze haar
+degraded/onbevestigde bronstatus.
