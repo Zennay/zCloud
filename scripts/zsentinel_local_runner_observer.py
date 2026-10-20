@@ -71,7 +71,7 @@ def observe_local_runner():
                 if len(command) > MAX_CMDLINE_BYTES:
                     unreadable += 1
                     continue
-                first = command.split(b"\\0", 1)[0]
+                first = command.split(b"\0", 1)[0]
                 # Relative argv[0] is normal for GitHub service listeners.
                 # Resolve only known executable names within this root.
                 target = _runner_binary(first, process)
