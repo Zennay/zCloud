@@ -387,6 +387,31 @@ def render(rows, observed):
     for row in rows:
         url = f"https://github.com/{row['repo']}/pull/{row['number']}"
         actions = "".join("<li>" + esc(act) + "</li>" for act in row["actions"])
+        holds_source = row.get("workflow_holds")
+        holds_html = ""
+        if isinstance(holds_source, dict):
+            if holds_source.get("coverage") == "COMPLETE":
+                workflow_cards = []
+                for hold in holds_source.get("items", []):
+                    run_url = ("https://github.com/" + row["repo"] +
+                               "/actions/runs/" + str(hold["run_id"]))
+                    workflow_cards.append(
+                        "<li><a href='" + esc(run_url) + "'>" +
+                        esc(hold["name"]) + "</a> · " +
+                        esc(hold["status"]) + " · " +
+                        esc(hold.get("conclusion") or "nog geen conclusie") +
+                        " · " + esc(hold["next_action"]) + "</li>")
+                if workflow_cards:
+                    holds_html = (
+                        "<details open><summary>Exacte CI-runblokkades (" +
+                        esc(len(workflow_cards)) +
+                        ("+; bronbegrenzing" if holds_source.get("more") else "") +
+                        ")</summary><ul>" + "".join(workflow_cards) +
+                        "</ul></details>")
+            else:
+                holds_html = (
+                    "<p><strong>CI-runbron onvolledig:</strong> geen "
+                    "afleidbare concrete run of toegestane retry.</p>")
         cards.append(
             '<article><h2><a href="' + esc(url) + '">' + esc(row["repo"]) + " #" +
             esc(row["number"]) + '</a></h2><p class="title">' + esc(row["title"]) +
@@ -399,7 +424,7 @@ def render(rows, observed):
                                       '/commit/' + row['main_commit']) + '">' +
              esc(row['main_commit'][:12]) + '</a>' if row.get("status") ==
              "MERGED_ON_MAIN_VERIFIED" and row.get("main_commit") else '') +
-            '</p><ul>' + actions + '</ul></article>'
+            '</p><ul>' + actions + '</ul>' + holds_html + '</article>'
         )
     return ('<!doctype html><html lang="nl"><meta charset="utf-8"><meta name="viewport" '
             'content="width=device-width,initial-scale=1"><title>zSentinel · Merge-first werkbak</title>'
@@ -569,6 +594,17 @@ def main():
                       f" | main_merged={str(row['main_merged']).lower()}"
                       f" | main_commit={row.get('main_commit', 'NOT_VERIFIED')}"
                       f" | live_verified=false | next: {'; '.join(row['actions'])}")
+                holds_source = row.get("workflow_holds")
+                if isinstance(holds_source, dict):
+                    if holds_source.get("coverage") != "COMPLETE":
+                        print(f"  CI_RUN_SOURCE {row['repo']}#{row['number']} UNKNOWN")
+                    else:
+                        for hold in holds_source.get("items", []):
+                            print(f"  CI_HOLD {hold['status']} "
+                                  f"{hold['name']} {hold['url']} "
+                                  f"| next: {hold['next_action']}")
+                        if holds_source.get("more"):
+                            print("  CI_HOLD_MORE incomplete visible selection")
             if not rows:
                 print("No eligible recent product PRs observed; not proof backlog is empty.")
             if args.output:
