@@ -305,6 +305,12 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                     number = pr["number"]
                     if isinstance(number, bool) or number < 1 or number > 100000000:
                         continue
+                    # QA-only PRs are not product merge-first work even when
+                    # an unrelated open P0/P1 issue happens to be mentioned
+                    # in their body. Apply one consistent title/branch/label
+                    # boundary to both the workboard and issue linking.
+                    if explicit_qa_only_pr(pr):
+                        continue
                     title = pr.get("title")
                     pr_head = pr.get("head")
                     head_sha = pr_head.get("sha") if isinstance(pr_head, dict) else None
