@@ -156,7 +156,36 @@ def build_workboard(inbox, registry, token=None):
             "current_exact_head_verified": False,
             "ownership_verified": False, "merge_authorized": False,
         })
-    selected = [] if degraded else prs
+    selected = [] if degraded else list(prs)
+    # Use the existing three-PR exact-head read budget to inspect already
+    # open product PRs not linked to a sampled issue. Otherwise a project
+    # with no issue-body references would show a tempting "merge-first"
+    # list without any actually observed review/CI gate information.
+    # Referenced P0/P1 issue work retains first priority. Non-draft PRs
+    # precede drafts; interleave projects fairly without extra GitHub GETs.
+    if not degraded and len(selected) < MAX_PRS:
+        already = {(row["project_id"], row["pr_number"]) for row in selected}
+        for draft in (False, True):
+            for offset in range(8):
+                for pid in project_names:
+                    candidates = [row for row in pr_cards
+                                  if row["project_id"] == pid and
+                                  row["draft"] is draft]
+                    if offset >= len(candidates):
+                        continue
+                    row = candidates[offset]
+                    number = int(row["url"].rsplit("/", 1)[-1])
+                    key = (pid, number)
+                    if key in already:
+                        continue
+                    selected.append({"project_id": pid, "pr_number": number})
+                    already.add(key)
+                    if len(selected) >= MAX_PRS:
+                        break
+                if len(selected) >= MAX_PRS:
+                    break
+            if len(selected) >= MAX_PRS:
+                break
     inspected = (observe_prs(registry, selected, token=token) if selected
                  else {"schema": "zsentinel-pr-delivery-desk-v1",
                        "items": [], "request_count": 0, "maximum_requests": 12,
