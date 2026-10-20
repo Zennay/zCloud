@@ -23,8 +23,8 @@ CONTROLLER = HOME / "snap/firefox/common/chatgpt-project-extension/worker-contro
 SCRIPT = HOME / "zennay-cloud/public/zcloud-worker.user.js"
 RELOADER = HOME / ".local/libexec/zcloud/zcloud_reload_extension.mjs"
 STATE = HOME / ".local/state/zcloud"
-DONE = STATE / "force-v2-2.0.3-addon-activated"
-LOCK = STATE / "force-v2-2.0.3-addon-activation.lock"
+DONE = STATE / "force-v2-2.0.4-addon-activated"
+LOCK = STATE / "force-v2-2.0.4-addon-activation.lock"
 TIMER = "zcloud-force-v2-idle-activation.timer"
 
 
@@ -81,7 +81,7 @@ def installed():
     userscript = SCRIPT.read_text(encoding="utf-8")
     return ("function forceNewWorkerTab(" in controller and
             'x.action === "force_start"' in controller and
-            "// @version      2.0.3" in userscript and
+            "// @version      2.0.4" in userscript and
             '"force_start"' in userscript and
             'data-zcloud-v2-busy' in userscript)
 
