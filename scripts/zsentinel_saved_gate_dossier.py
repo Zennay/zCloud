@@ -139,10 +139,31 @@ def open_dossier(path: Path):
             "deploy_authorized", "live_verified")):
         raise ValueError("Project archive claims release authority")
     if any(receipt.get(flag) is not False for flag in
-           ("owner_claim_verified", "merge_authorized", "deploy_authorized",
-            "worker_dispatch_authorized", "writes_performed",
-            "live_verified")):
+           ("known_complete_project_or_pr_inventory",
+            "owner_claim_verified", "required_exact_head_ci_verified",
+            "independent_reviews_and_branch_rules_verified",
+            "queue_mutation_authorized", "merge_authorized", "deploy_authorized",
+            "worker_dispatch_authorized", "worker_recovery_verified",
+            "writes_performed", "live_verified")):
         raise ValueError("Project source claims worker/release authority")
+    if manifest.get("read_only") is not True:
+        raise ValueError("Private source archive must be explicitly read-only")
+    # The bundle only contains its own selected source scope. A source-neutral
+    # archive may contain multiple repos, but a project-specific one must not.
+    projects = receipt.get("projects")
+    if (type(projects) is not list or not projects
+            or type(receipt.get("filtered_pr_candidates")) is not int
+            or not 1 <= receipt["filtered_pr_candidates"] <= 300
+            or type(receipt.get("original_source_pr_candidates")) is not int
+            or not 1 <= receipt["original_source_pr_candidates"] <= 300
+            or receipt["filtered_pr_candidates"] >
+               receipt["original_source_pr_candidates"]):
+        raise ValueError("Invalid project inventory in private ZIP")
+    if project is not None and (len(projects) != 1
+                                or type(projects[0]) is not dict
+                                or projects[0].get("repository") != project):
+        raise ValueError("Project-specific ZIP contains foreign project rows")
+    saved_queue(receipt)
     return extracted, manifest, receipt
 
 
@@ -232,9 +253,14 @@ def saved_queue(receipt: dict, *, project=None, priority=None):
                     or row.get("gate_source") not in SOURCES
                     or type(issues) is not list or len(issues) > 60
                     or any(type(i) is not str or
-                           ISSUE_URL.fullmatch(i) is None for i in issues)
+                           ISSUE_URL.fullmatch(i) is None or
+                           not i.startswith("https://github.com/" + repo +
+                                            "/issues/") for i in issues)
+                    or len(set(issues)) != len(issues)
                     or type(row.get("next_action")) is not str
-                    or not 1 <= len(row["next_action"]) <= 300):
+                    or not 1 <= len(row["next_action"]) <= 300
+                    or any(ord(ch) < 32 or ord(ch) == 127
+                           for ch in row["next_action"])):
                 raise ValueError("Untrusted saved PR or issue source")
             seen.add(url)
             if ((project is None or repo == project)
