@@ -196,49 +196,128 @@ def private_write(path, data):
         os.fsync(stream.fileno())
 
 
+def discovery(projects, allowed, budget, max_per_project):
+    """Bounded and deliberately partial portfolio source: recent open PRs only.
+
+    We never infer owner availability, claim rights, merge eligibility or
+    completed delivery from a search result. A 100-item source is partial.
+    """
+    selected = []
+    partial = []
+    for project in projects:
+        matches = [(repo, key) for repo, key in allowed.values() if key == project]
+        if len(matches) != 1:
+            raise ValueError("missing or ambiguous project registry")
+        repo, key = matches[0]
+        inventory = bounded_gh(
+            f"repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=desc",
+            budget)
+        if not isinstance(inventory, list):
+            raise ValueError("incomplete PR inventory")
+        if len(inventory) >= 100:
+            partial.append(repo)
+        count = 0
+        for entry in inventory:
+            if not isinstance(entry, dict):
+                raise ValueError("malformed PR inventory")
+            title = entry.get("title")
+            number = entry.get("number")
+            if (not isinstance(title, str) or not isinstance(number, int)
+                    or number <= 0 or number > 9999999):
+                raise ValueError("untrusted PR inventory entry")
+            # QA-only work is excluded from discovery, not from observed
+            # collision evidence or other workers' authoritative ownership.
+            normalized = title.strip().casefold()
+            if (entry.get("draft") is True
+                    or normalized.startswith(("test(", "test:", "qa(", "qa:", "chore(qa)"))
+                    or "quality-validation" in normalized):
+                continue
+            if entry.get("state") != "open":
+                continue
+            base = entry.get("base")
+            if not isinstance(base, dict) or base.get("ref") != "main":
+                continue
+            selected.append((repo, key, number))
+            count += 1
+            if count >= max_per_project:
+                break
+    return selected, partial
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pr", action="append", required=True, metavar="OWNER/REPO#123",
-                        help="one existing PR, repeat max twelve (max three projects)")
+    parser.add_argument("--pr", action="append", metavar="OWNER/REPO#123",
+                        help="explicit existing PR; max twelve across three repositories")
+    parser.add_argument("--project", action="append", metavar="PROJECT_ID",
+                        help="discover recent open product PRs for this canonical project")
+    parser.add_argument("--max-per-project", type=int, default=4,
+                        help="discovery cap per project (1–4); three-project budget safe")
     parser.add_argument("--output", type=Path, help="new private offline .html file; never overwritten")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args()
-    if len(args.pr) > MAX_PRS:
+    if not args.pr and not args.project:
+        parser.error("provide --pr or --project")
+    if args.pr and args.project:
+        parser.error("choose explicit --pr or discovery --project, not both")
+    if not 1 <= args.max_per_project <= 4:
+        parser.error("--max-per-project must be between 1 and 4")
+    if args.pr and len(args.pr) > MAX_PRS:
         parser.error("maximum twelve PRs")
     try:
         allowed = registry()
-        selected, counts, seen = [], {}, set()
-        for spec in args.pr:
-            match = PR_SPEC.fullmatch(spec)
-            if not match or match.group(1).casefold() not in allowed:
-                raise ValueError("invalid or unregistered PR reference")
-            repo, project = allowed[match.group(1).casefold()]
-            number = int(match.group(2))
+        selected, counts, seen, partial, budget = [], {}, set(), [], [0]
+        if args.project:
+            if len(args.project) > MAX_PROJECTS or len(set(args.project)) != len(args.project):
+                raise ValueError("maximum three distinct projects")
+            selected, partial = discovery(args.project, allowed, budget,
+                                          args.max_per_project)
+        else:
+            for spec in args.pr:
+                match = PR_SPEC.fullmatch(spec)
+                if not match or match.group(1).casefold() not in allowed:
+                    raise ValueError("invalid or unregistered PR reference")
+                repo, project = allowed[match.group(1).casefold()]
+                selected.append((repo, project, int(match.group(2))))
+        for repo, _, number in selected:
             key = (repo.casefold(), number)
             if key in seen:
                 raise ValueError("duplicate PR reference")
             seen.add(key)
             counts[repo] = counts.get(repo, 0) + 1
-            selected.append((repo, project, number))
-        if len(counts) > MAX_PROJECTS or max(counts.values()) > MAX_PER_REPO:
+        if len(counts) > MAX_PROJECTS or (counts and max(counts.values()) > MAX_PER_REPO):
             raise ValueError("maximum three projects and six PRs per repository")
-        budget = [0]
+        if len(selected) > MAX_PRS:
+            raise ValueError("maximum twelve PRs")
         rows = [inspect(repo, number, budget) for repo, _, number in selected]
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         if args.output:
-            private_write(args.output, render(rows, observed))
+            heading = ("<p><strong>Onvolledige recente PR-bron:</strong> "
+                       + html.escape(", ".join(partial), quote=True)
+                       + ". Oudere PRs kunnen ontbreken. Gebruik --pr voor gerichte bron.</p>"
+                       if partial else "")
+            page = render(rows, observed)
+            if heading:
+                page = page.replace("<main>", heading + "<main>", 1)
+            private_write(args.output, page)
         if args.format == "json":
             print(json.dumps({"observed_utc": observed, "github_gets": budget[0],
+                              "discovery_partial_repositories": partial,
+                              "selection": "recent_open_product_only" if args.project else "explicit",
                               "main_merged": False, "live_verified": False,
                               "gate_authorization": "NOT_ASSESSED", "prs": rows},
                              ensure_ascii=False))
         else:
+            if partial:
+                print("PARTIAL RECENT INVENTORY: " + ", ".join(partial)
+                      + " (older open PRs not enumerated)")
             for row in rows:
                 print(f"{row['repo']}#{row['number']} {row['status']} | CI={row['checks']} "
                       f"| review={row['review']} | next: {'; '.join(row['actions'])}")
+            if not rows:
+                print("No eligible recent product PRs observed; not proof backlog is empty.")
             if args.output:
                 print("Private HTML created; no browser network or automatic merge.")
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
         parser.error("invalid source, selection or private output (no changes made)")
 
 
