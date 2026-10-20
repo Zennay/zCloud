@@ -48,7 +48,10 @@ geven een niet-nul afsluitstatus, maar zijn geen lege backlog.
 
 Het productbord toont nu boven de issuekaarten een afzonderlijke lijst met de
 **reeds open product-PR's die de issuecollector toch al ophaalt**: maximaal de
-acht recentst bijgewerkte open PR's per projectvenster (zonder QA-only-titels).
+acht recentst bijgewerkte open PR's per projectvenster. Expliciet QA-only
+werk wordt gefilterd op titelprefix, bekende QA-only labels en
+`qa/`, `test/`, `tests/` of `quality-validation/` als branchprefix. De tool
+wijzigt geen bestaande QA-PR en start geen QA-/regressiewerk.
 Daardoor verdwijnen bestaande PR's niet uit beeld wanneer hun gekoppelde issue
 ouder is dan de begrensde eerste/laatste-issue-steekproef. Dezelfde lijst is
 opgenomen in privé JSON en Markdown, ook bij de bestaande offline-snapshotroute
