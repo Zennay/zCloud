@@ -52,6 +52,27 @@ python3 scripts/zsentinel_live_cockpit.py \
 
 Zonder worker-DB blijft workerstatus `not_requested`; zonder queue-DB blijft queue-status `not_requested_or_unavailable`. Het is dan **niet** bewezen dat er geen claims of lopend werk zijn. Notion-status is hooguit een partiële indicator en bewijst geen actuele file-claim of geldige lease. Bestaande echte CI, onafhankelijke review, exact-head SHA en beschermde main blijven verplicht.
 
+## Gecombineerd portfolio-overzicht: dezelfde P0-eerst actiewerkbak
+
+Dezelfde brongebonden eigenaaroverdracht is nu ook optioneel geïntegreerd in
+`scripts/zsentinel_portfolio_overview.py`, naast het bestaande P0/P1-issuebord,
+PR-gates, broncoverage en workeractiviteit:
+
+```sh
+umask 077
+python3 scripts/zsentinel_portfolio_overview.py \\
+  --github-only --window 0 --show-owner-handoff \\
+  --format html > /private/zsentinel/portfolio-met-owner-handoff.html
+```
+
+Het globale portfolio houdt alle canonieke projecten in het bestaande dashboard,
+maar **de eigenaaroverdracht omvat alleen het geselecteerde GitHub-venster** en
+de werkelijk opt-in gelezen lokale bronnen; andere projecten staan niet
+bewijsbaar op groen. De extra HTML-kaarten gebruiken exact dezelfde reeds
+opgehaalde `decision` en geen extra providerrequests. Er vindt ook hier geen
+claim-, merge-, queue- of releasewrite plaats; het nieuwe opt-in vlagargument
+wordt bij niet-HTML-uitvoer geweigerd.
+
 ## Beveiliging en release
 
 - De samenstelling is lokaal, onveranderlijk, éénmalig en zonder provider-I/O; alle netwerk-GETs komen uitsluitend uit de al bestaande, begrensde live cockpit.
