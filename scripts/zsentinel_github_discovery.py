@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-from zsentinel_product_issue_inbox import bounded_get
+from zsentinel_product_issue_inbox import bounded_get, GithubAdmissionError
 from zsentinel_recovery_router import utc_string
 from zsentinel_runner_route import runner_route
 
@@ -159,6 +159,9 @@ def discover(registry, selected, token=None):
                     # attempt; a 403 may be repository-specific.
                     if status not in incomplete_windows:
                         incomplete_windows.append(status)
+                    if isinstance(exc, GithubAdmissionError):
+                        stop_reason = "github_" + exc.category
+                        break
                     if str(exc) in (
                             "github_permission_or_rate_limit",
                             "repository_inaccessible",
