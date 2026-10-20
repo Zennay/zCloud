@@ -153,6 +153,7 @@ def current_merge_first_gates(board, token=None):
 
     buckets = []
     total_inspected = 0
+    qa_only_skipped = 0
     incomplete_projects = []
     for view in board["project_views"]:
         if (type(view) is not dict or type(view.get("project")) is not str
@@ -170,6 +171,7 @@ def current_merge_first_gates(board, token=None):
         by_num = {}
         for receipt in receipts:
             if (type(receipt) is not dict or type(receipt.get("number")) is not int
+                    or type(receipt.get("product_candidate_based_on_title")) is not bool
                     or type(receipt.get("head_sha")) is not str
                     or type(receipt.get("base_sha")) is not str
                     or type(receipt.get("url")) is not str
@@ -178,22 +180,29 @@ def current_merge_first_gates(board, token=None):
                     view["repository"] + "/pull/" + str(receipt["number"])):
                 raise ValueError("untrusted PR sample identity")
             by_num[receipt["number"]] = receipt
+            if not receipt["product_candidate_based_on_title"]:
+                qa_only_skipped += 1
         order = []
         # Prefer existing source collisions and duplicate issue mentions,
         # then stable existing PR order. This is attention, NOT priority/owner.
         for pair in view.get("shown_collision_pairs", []):
             for side in ("left", "right"):
                 number = pair[side]["number"]
-                if number in by_num and number not in order:
+                if (number in by_num and
+                        by_num[number]["product_candidate_based_on_title"] and
+                        number not in order):
                     order.append(number)
         for group in view.get("shown_duplicate_issue_groups", []):
             for item in group["shown_pr_sources"]:
                 number = next((n for n, pr in by_num.items()
                                if pr["url"] == item["url"]), None)
-                if number is not None and number not in order:
+                if (number is not None and
+                        by_num[number]["product_candidate_based_on_title"] and
+                        number not in order):
                     order.append(number)
         for pr in receipts:
-            if pr["number"] not in order:
+            if (pr["product_candidate_based_on_title"] and
+                    pr["number"] not in order):
                 order.append(pr["number"])
         buckets.append([(view["project"], view["repository"], by_num[n])
                         for n in order])
@@ -209,7 +218,7 @@ def current_merge_first_gates(board, token=None):
         if len(selected) == 4:
             break
     identities = [(repo, pr["number"]) for _, repo, pr in selected]
-    gate_rows = observe_many(identities, token) ["items"] if identities else []
+    gate_rows = observe_many(identities, token)["items"] if identities else []
     output = []
     for (project, repo, captured), gate in zip(selected, gate_rows):
         matched = (
@@ -254,6 +263,7 @@ def current_merge_first_gates(board, token=None):
             "items": output,
             "inspected_stable_sample_prs": total_inspected,
             "pr_gate_receipts_requested": len(selected),
+            "qa_only_title_prs_not_inspected": qa_only_skipped,
             "more_sampled_prs_not_gate_checked": total_inspected > len(selected),
             "source_unavailable_or_changed_projects": incomplete_projects,
             "max_additional_github_gets": len(selected) * 5,
