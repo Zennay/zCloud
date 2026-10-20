@@ -3038,8 +3038,11 @@ def portfolio_queue_audit(refill=True):
     # Active claimed/running/verifying tasks ALWAYS remain represented, even
     # when their title no longer passes today's producer policy.
     with connect() as c:
-        rows=c.execute("""SELECT * FROM portfolio_queue
-                          WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
+        rows=c.execute("""SELECT project_id,status,worker_slot,title,
+                                 completion_criteria,metadata_json
+                          FROM portfolio_queue
+                          WHERE (eligible=1 AND status='queued')
+                             OR status IN ('claimed','running','verifying')""").fetchall()
         represented={
             str(row['project_id']) for row in rows
             if str(row['status']) in ('claimed','running','verifying')
