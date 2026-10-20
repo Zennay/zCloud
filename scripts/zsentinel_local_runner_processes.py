@@ -165,7 +165,7 @@ def render_html(report):
         "<li><code>%s</code>: listeners %d · workers %d · wrappers %d</li>" % (
             escape(group["local_reference"]), group["listeners"],
             group["workers"], group["service_wrappers"])
-        ) for group in r["cwd_association_groups"])
+        for group in r["cwd_association_groups"])
     return (
         '<section class="panel warn">'
         '<h2>Lokale VPS-runnerprocessen · niet hetzelfde als GitHub-runnerstatus</h2>'
