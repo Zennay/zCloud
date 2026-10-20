@@ -713,3 +713,39 @@ bronpaden en actieve mogelijke collisions zichtbaar blijven. Alleen de
 extra maximaal vier GitHub-check/review-GET-kandidaten zijn
 productgericht geselecteerd. De JSON/tekst/HTML toont het aantal
 overgeslagen QA-only titels; elke bron blijft strikt read-only.
+
+
+### Richt de gecombineerde live cockpit op specifieke bestaande PR's
+
+Normaal kiest de operatorfunctie automatisch maximaal vier eerder waargenomen
+product-PR's in een eerlijke portfolioselectie. Voor daadwerkelijk
+**merge-first** opruimen van een bestaande P0/P1-PR kan de gebruiker nu ook
+zelf 1–4 bestaande PR-referenties aanwijzen, zonder extra open-PR-query of
+QA-only-werk te starten:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates \
+  --gate-pr cloud#1567 --gate-pr cloud#1563 \
+  --format html --output ./private-zsentinel-focused-prs.html
+```
+
+`--gate-pr` accepteert uitsluitend een bestaande canonieke
+`project#PRnummer`-referentie bij een van de geselecteerde projecten.
+Deze moet daadwerkelijk voorkomen in de zojuist **dubbel gelezen stabiele**
+open-PR-bestandsbron, met een product-PR-titel. Anders stopt de gecombineerde
+live gatecollectie **vóór** aanvullende GitHub-gate-opvragingen. Het verruimen
+van `--max-prs` kan nodig zijn bij grote backlogvensters, maar maakt de
+bron nog niet volledig of claimvrij. QA-only-titels en PR's die tijdens
+de eerste scope-inventaris niet zijn gezien, worden niet via een andere
+route stilzwijgend geaccepteerd.
+
+De extra gate-API-grens blijft **maximaal vier PR's × vijf GETs**.
+`current_live_pr_gate_observation.mode` onderscheidt expliciet
+gekozen PR's van de automatische beperkte shortlist;
+`explicit_selected_prs` bevat uitsluitend die brongebonden
+project-PR-referenties. Het huidige exacte-head CI/reviewbewijs is
+niet hetzelfde als de vereiste branch protection, onafhankelijke review
+voor merge, een geldige actuele eigenaarclaim of releasebevoegdheid.
+Alle autorisatievelden blijven `false`; er worden géén merges uitgevoerd.
