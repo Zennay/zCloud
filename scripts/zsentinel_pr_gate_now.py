@@ -129,6 +129,22 @@ def _one(repo, number, token):
     check_complete = (len(check_rows) == checks["total_count"] and
                       statuses["pending_observed"] == 0 and
                       statuses["other_observed"] == 0)
+    if legacy_partial or len(check_rows) != checks["total_count"] or len(reviews) == 100:
+        gate_step = "inspect_incomplete_current_head_gate_source"
+    elif (statuses["failure_observed"] or
+          legacy_states["failure"] or legacy_states["error"]):
+        gate_step = "inspect_current_head_failed_checks_with_owner"
+    elif (statuses["pending_observed"] or statuses["other_observed"] or
+          legacy_states["pending"]):
+        gate_step = "wait_for_existing_current_head_checks"
+    elif requested:
+        gate_step = "owner_address_exact_head_review_changes"
+    elif not check_rows and not latest_context:
+        gate_step = "verify_missing_current_head_checks_and_rules"
+    elif not approved:
+        gate_step = "request_independent_current_head_review"
+    else:
+        gate_step = "verify_required_rules_ownership_and_release_separately"
     return {
         "url": "https://github.com/" + repo + "/pull/" + str(number),
         "repository": repo, "number": number,
@@ -149,6 +165,9 @@ def _one(repo, number, token):
             legacy_states["failure"] + legacy_states["error"]),
         "legacy_status_source_may_be_truncated": legacy_partial,
         "legacy_status_and_checks_required_set_verified": False,
+        "human_next_gate_step": gate_step,
+        "legacy_status_sample_complete_and_terminal": (
+            not legacy_partial and legacy_states["pending"] == 0),
         "observed_independent_exact_head_approvals": approved,
         "observed_exact_head_changes_requested": requested,
         "review_page_may_be_truncated": len(reviews) == 100,
