@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+from html import escape
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
 
 SCHEMA = "zsentinel-runtime-owner-handoff-v1"
 MAX_ITEMS = 24
@@ -164,26 +164,75 @@ def build_handoff(decision):
     }
 
 
+def _md(value, limit=MAX_TEXT):
+    """Neutralize untrusted GitHub/worker text inside Markdown handoffs."""
+    value = _short(value, limit)
+    for marker in ("\\", chr(96), "*", "_", "{", "}", "[", "]",
+                   "(", ")", "<", ">", "#", "!", "|"):
+        value = value.replace(marker, "\\" + marker)
+    return value
+
+
+def handoff_html(report):
+    """Script-free P0-first owner strip for the existing live cockpit."""
+    if (not isinstance(report, dict) or report.get("schema") != SCHEMA
+            or report.get("actions_performed") is not False
+            or report.get("owner_and_current_claim_verified") is not False):
+        raise ValueError("untrusted operator handoff")
+    items = report.get("priority_items")
+    if not isinstance(items, list) or len(items) > MAX_ITEMS:
+        raise ValueError("unbounded operator handoff")
+    cards = []
+    for item in items:
+        if (not isinstance(item, dict) or item.get("claim_authorized") is not False
+                or item.get("retry_authorized") is not False
+                or item.get("merge_authorized") is not False
+                or item.get("deploy_authorized") is not False):
+            raise ValueError("authorizing handoff item rejected")
+        url = item.get("issue_url")
+        link = (' <a href="' + escape(url, quote=True) +
+                '" target="_blank" rel="noopener noreferrer">Bestaand issue</a>'
+                if isinstance(url, str) and SAFE_ISSUE.fullmatch(url) else '')
+        cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
+                     ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
+                     escape(_short(item.get("next_step"))) + link + '</li>')
+    coverage = report.get("coverage", {})
+    if not isinstance(coverage, dict) or len(coverage) > 8:
+        raise ValueError("invalid handoff source coverage")
+    sources = " · ".join(
+        escape(_short(name, 20)) + ': ' + escape(_short(value, 75))
+        for name, value in coverage.items())
+    return ('<section class="panel warn" aria-label="Prioritaire eigenaaroverdracht">'
+            '<h2>Nu opvolgen · P0 eerst</h2><p>Actuele, begrensde '
+            'bronwaarneming. GEEN vrijgave voor workerclaim, retry, merge of deploy.</p>'
+            '<p class="small muted">Bronbereik: ' + sources + '</p>' +
+            ('<ol>' + ''.join(cards) + '</ol>' if cards else
+             '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
+            ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
+             if report.get("items_truncated") is True else '') +
+            '</section>')
+
+
 def markdown(report):
     if (not isinstance(report, dict) or report.get("schema") != SCHEMA
             or report.get("actions_performed") is not False
             or report.get("merge_authorized") is not False):
         raise ValueError("invalid handoff report")
     lines = ["# zSentinel · actuele eigenaaroverdracht",
-             "Bronmoment: " + _short(report.get("created_at_utc"), 40),
+             "Bronmoment: " + _md(report.get("created_at_utc"), 40),
              "",
              "**Alleen brongebonden advies.** Geen claim, CI-herstart, merge, "
              "VPS-herstel of deploy uitgevoerd of toegestaan.",
              "",
              "## Bronbereik (nooit volledig)"]
     for label, value in report["coverage"].items():
-        lines.append("- " + _short(label, 24) + ": " + _short(value, 100))
+        lines.append("- " + _md(label, 24) + ": " + _md(value, 100))
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
         lines.append(str(n) + ". **" + card["priority"] + " " +
-                     _short(card["project"]) + "** · " + _short(card["kind"]) +
-                     " · " + _short(card["next_step"]))
+                     _md(card["project"]) + "** · " + _md(card["kind"]) +
+                     " · " + _md(card["next_step"]))
         if card.get("issue_url"):
             lines.append("   Bestaand issue: " + card["issue_url"])
     if not report["priority_items"]:
