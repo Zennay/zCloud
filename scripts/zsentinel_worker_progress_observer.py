@@ -450,6 +450,24 @@ def operator_text(source):
 
 
 
+def _operator_worker_priority(row):
+    """Read-only urgency order, never ownership or recovery authorization."""
+    if row.get("classification") == "allocated_paused_with_claimed_queue_owner_gate":
+        return (0, row.get("project_id", ""), row.get("worker_slot", 0))
+    if (row.get("classification") == "recent_client_block_event_owner_review"
+            and isinstance(row.get("timeline"), dict)
+            and type(row["timeline"].get("recent_block_events_after_last_prompt_in_sample")) is int
+            and row["timeline"]["recent_block_events_after_last_prompt_in_sample"] >= 2):
+        return (1, row.get("project_id", ""), row.get("worker_slot", 0))
+    if row.get("classification") == "recent_client_block_event_owner_review":
+        return (2, row.get("project_id", ""), row.get("worker_slot", 0))
+    if row.get("classification") in (
+            "generating_but_progress_unverified_or_stale",
+            "worker_event_stale_or_unknown", "configured_running_no_event_evidence"):
+        return (3, row.get("project_id", ""), row.get("worker_slot", 0))
+    return (4, row.get("project_id", ""), row.get("worker_slot", 0))
+
+
 def worker_progress_html(source):
     """Script-free, bounded view of index-backed event activity, never claims."""
     if (not isinstance(source, dict)
@@ -478,7 +496,9 @@ def worker_progress_html(source):
         "desired_state_unknown_no_automatic_action": "Gewenste workerstatus onbekend; geen automatische actie",
     }
     rows = []
-    for row in source["entries"]:
+    # Show operator-attention candidates first, without hiding or
+    # reassigning intentionally paused, draining or unallocated workers.
+    for row in sorted(source["entries"], key=_operator_worker_priority):
         pid = row.get("project_id")
         slot = row.get("worker_slot")
         state = row.get("classification")
@@ -604,8 +624,12 @@ def worker_progress_html(source):
     return (
         '<section aria-label="Read-only browserworker voortgang">'
         '<h2>Browserworkers · werkelijk eventbewijs</h2>'
-        '<p>Lokale geïndexeerde SQLite-read-only bron, geen browserstatus-GET,'
-        ' herstart, claim of werkafrondingsbewijs. Stale event != bewezen offline.</p>'
+        '<p>Dringende eigenaarcontrole eerst: gepauzeerd met claim, herhaalde'
+        ' actuele browserblokkades en ontbreken van voortgang. Iedere worker'
+        ' bevat maximaal 12 recente metadata-events en een begrensde'
+        ' vervolgstap. Geen claim-epoch-binding, browserstatus-GET,'
+        ' herstart of werkafrondingsbewijs. Oude of ontbrekende events'
+        ' bewijzen geen daadwerkelijke storing of herstel.</p>'
         '<div class="grid">' + ''.join(rows) + '</div></section>'
     )
 
