@@ -3965,11 +3965,22 @@ def portfolio_queue_finish(global_slot,queue_id,result,evidence='',next_task=Non
         # A rejected attention identity or SQLite failure rolls back both,
         # so no claimed task disappears without its required operator action.
         if result=='BLOCKED' and _blocker_needs_human(evidence):
+            # Preserve a bounded proposed next action for the human operator
+            # WITHOUT admitting it as runnable work. The authenticated
+            # Attention Needed UI displays escaped detail text to the owner.
+            attention_detail=str(evidence or '')[:3600]
+            if isinstance(next_task,dict) and str(next_task.get('title') or '').strip():
+                proposed_title=str(next_task['title']).strip().replace('\\n',' ')
+                proposed_title=proposed_title.replace('\\r',' ')[:200]
+                attention_detail=(
+                    'Voorgestelde vervolgstap na toestemming (NIET ingepland): '
+                    +proposed_title+'\\n'+attention_detail
+                )[:4000]
             attention=_portfolio_attention_add_locked(
                 c,
                 row['project_id'],
                 _attention_action_for_blocker(row['project_id'],row['title'],evidence),
-                str(evidence or '')[:4000],
+                attention_detail,
                 row['source_url'] or (PROJECT_INDEX.get(row['project_id']) or {}).get('notion_url') or '',
                 'urgent' if str(row['priority']).upper()=='P0' else 'attention',
                 attention_id=_queue_attention_id(queue_id),
