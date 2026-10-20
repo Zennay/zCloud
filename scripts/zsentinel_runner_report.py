@@ -318,9 +318,17 @@ def render(data):
                    else "Niet gelijk of niet vastgesteld")
 
     promotion_status = coach.get("promotion_status")
-    if promotion_status == "promotion-waiting":
+    if promotion_status in {
+        "promotion-waiting", "promotion-reset-context",
+        "promotion-reset-policy", "promotion-reset-gap",
+    }:
+        wait_reason = {
+            "promotion-reset-context": "nieuwe runner, andere drukcategorie of reboot",
+            "promotion-reset-policy": "gewijzigde cgroup of nieuwe CPU-hersteltrap",
+            "promotion-reset-gap": "te veel tijd zonder betrouwbare observatie",
+        }.get(promotion_status, "nieuwe observatieperiode")
         cpu_policy = (
-            "Voorzichtige opschaalwachttijd: "
+            "Opschalen tijdelijk uitgesteld (" + wait_reason + "): "
             + _value(coach.get("promotion_remaining_seconds"), " seconden")
             + " resterend; gescheiden vrije bronmetingen: "
             + _value(coach.get("promotion_observations"))
