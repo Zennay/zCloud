@@ -2018,3 +2018,24 @@ Deze read-only observatie **vervangt niet** de nog zelfstandige
 control-plane implementatie van claimgebonden eventhistorie (#1342).
 Voor alle werkelijke wijzigingen blijven actuele runtime-ownerclaims,
 verplichte CI, onafhankelijke review en bestaande VPS/releasegates leidend.
+
+### Actuele eigenaar-inbox, tekst en JSON
+
+Het read-only `zsentinel_worker_progress_observer.py` bronresultaat
+heeft nu een aanvullend `owner_followup_candidates`-venster
+(maximaal 3 × 8 geselecteerde workers). Dat venster wordt op basis van
+waargenomen status en het beperkte eventvenster geordend; het bevat
+alleen project/worker-slot, reden, veilige vervolgrichting, aantal
+recente blokkade-/voortgangssignalen en bestaande lease-indicatie.
+De Live Cockpit toont deze inbox **boven de gedetailleerde
+workereventkaarten**, en de tekstuitvoer zet dezelfde operatoracties
+vooraan. Met `--format json` blijft dit machineleesbaar in
+`worker_progress_observation.owner_followup_candidates`.
+
+Alle voorgestelde acties zijn alleen instructies voor de bevoegde
+eigenaar om de actuele claims, rechten, controlepanelen en echte
+productvoortgang te inspecteren. Nergens wordt `repair_authorized`,
+`recovery_authorized` of `continuation_verified` op `true` gezet.
+Deze beperkte lijst is niet volledig en vervangt geen scheduler,
+automatische recovery, owner review of echte claimgebonden
+control-plane eventhistorie.
