@@ -253,6 +253,8 @@ def main():
     parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
     parser.add_argument("--output", type=Path,
                         help="optional create-only 0600 .html/.json/.ics/.txt report; no stdout dump")
+    parser.add_argument("--agenda-output", type=Path,
+                        help="optional private 0600 .ics calendar from the SAME source moment")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--handoff-output", type=Path,
@@ -306,10 +308,22 @@ def main():
             protected = (args.registry, args.database, args.state,
                          args.worker_events_database, args.notion_claims_export,
                          args.disk_hotspots_previous, args.disk_hotspots_output,
-                         args.desk_output, args.handoff_output)
+                         args.desk_output, args.handoff_output, args.agenda_output)
             if any(path is not None and args.output.resolve() == path.resolve()
                    for path in protected):
                 raise ValueError("--output overlaps an input, ledger or private report")
+        if args.agenda_output is not None:
+            if args.format == "ics":
+                raise ValueError("use --output with --format ics, not duplicate agenda files")
+            if args.agenda_output.suffix != ".ics":
+                raise ValueError("--agenda-output requires a new .ics file")
+            protected = (args.registry, args.database, args.state,
+                         args.worker_events_database, args.notion_claims_export,
+                         args.disk_hotspots_previous, args.disk_hotspots_output,
+                         args.desk_output, args.handoff_output, args.output)
+            if any(path is not None and args.agenda_output.resolve() == path.resolve()
+                   for path in protected):
+                raise ValueError("--agenda-output overlaps a source or private report")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
@@ -494,9 +508,13 @@ def main():
                                      args.handoff_output.suffix.lstrip("."))
             except OSError:
                 raise ValueError("private owner handoff could not be written") from None
-        if args.output is not None:
+        if args.output is not None or args.agenda_output is not None:
             from zsentinel_private_output import write_private_output
-            write_private_output(args.output, rendered, args.format)
+            if args.output is not None:
+                write_private_output(args.output, rendered, args.format)
+            if args.agenda_output is not None:
+                from zsentinel_human_agenda import human_calendar
+                write_private_output(args.agenda_output, human_calendar(decision), "ics")
         if args.state:
             write_json_atomic(args.state, ledger)
         if args.format != "desk" and args.output is None:
