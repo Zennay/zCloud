@@ -79,17 +79,19 @@ python3 scripts/zsentinel_issue_page_bundle.py \
 
 De bronbundelaar controleert vooraf dat **alle** pagina's één canoniek project,
 dezelfde issue-URL en hetzelfde issue-ID beschrijven, met unieke paginanummers,
-start-/eindvensters van exact 20 zoekkandidaten, consistente GitHub Search-totalen
+start-/eindvensters van exact 20 zoekkandidaten, consistente GitHub Search-totalen, exact bekeken PR-kandidaatnummers per pagina
 en maximaal 10 minuten verschil tussen bronmomenten. Maximaal 50 pagina's,
 1 MiB per bestand, 8 MiB totaal; de sourcebestanden moeten private reguliere
-0600-bestanden zijn. Bij ontbrekende of verschoven pagina's, veranderde
-zoektotalen, ononderzochte kandidaten, botsende PR-HEADs of onvolledige externe
-bronnen blijft het resultaat expliciet **PARTIAL_HISTORICAL_SNAPSHOT**.
-De verwachte `SEARCH_WINDOW_PARTIAL` van een individuele pagina kan pas
-vervallen wanneer alle vereiste pagina's coherent bewaard zijn.
-Een complete bundel is **alleen complete historische zoekdekking**, nooit
-bewijs van huidige GitHub-state, eigenaarsvrijheid, geslaagde checks, review,
-merge of deploy. Het originele actuele issue moet voor een vervolgactie opnieuw
+0600-bestanden zijn. Bij ontbrekende of verschoven pagina's, veranderde zoektotalen,
+ononderzochte kandidaten, herhaalde zoekresultaat-ID's tussen pagina's,
+botsende PR-HEADs of onvolledige externe bronnen blijft het resultaat expliciet
+**PARTIAL_HISTORICAL_SNAPSHOT**. De verwachte `SEARCH_WINDOW_PARTIAL` van een
+individuele pagina kan pas vervallen wanneer alle pagina's coherent bewaard
+zijn. Zelfs zonder gedetecteerde overlap is een reeks losse GitHub Search
+opvragingen nooit atomair: de positieve status heet daarom uitsluitend
+**CONTIGUOUS_SAVED_WINDOWS_NONATOMIC**, niet 'complete actuele backlog'.
+Een bundel bewijst geen huidige GitHub-state, eigenaarsvrijheid, geslaagde
+checks, review, merge of deploy. Het originele actuele issue moet voor een vervolgactie opnieuw
 worden opgehaald. Onbekende PRs worden nooit automatisch onbezet verklaard.
 
 HTML is een zelfstandige offline werkbak met bestaande PR-links, bron-HEADs,
