@@ -241,12 +241,22 @@ def html_content(result):
         '">' + e(p["priority"]) + ' · ' + e(p["url"]) + '</a></li>'
         for p in result["unlinked_prs"])
     selection = result["selection"]
+    source_cards = []
+    for item in result["source_snapshots"]:
+        source_cards.append(
+            '<li>Bron ' + str(item["index"]) + ' · ' +
+            e(item["latest_observed_utc"]) + ' · manifest SHA256 ' +
+            '<code>' + e(item["original_review_manifest_sha256"]) +
+            '</code> · ontbrekende batches: ' +
+            str(len(item["missing_batch_indexes"])) +
+            ' (steekproef, niet hele GitHub-inventaris)</li>')
     return ("""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; object-src 'none'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <title>zSentinel · bestaande PRs per issue</title>
 <style>:root{color-scheme:dark;font-family:system-ui}
 body{background:#102034;color:#f2f8ff;margin:0;line-height:1.55}
+code{overflow-wrap:anywhere;font-size:.85rem}
 main{max-width:1100px;margin:auto;padding:clamp(16px,4vw,36px)}
 article,aside{border:1px solid #5c7a98;border-radius:12px;margin:14px 0;
 padding:14px 18px;background:#1b3048}aside{border-color:#efc36c}
@@ -258,7 +268,10 @@ li{margin:8px 0;overflow-wrap:anywhere}details summary{cursor:pointer;padding:10
 <aside><strong>Geen actuele GitHub-issuescan.</strong> Dit zijn alleen de
 historische bronissues die al aan waargenomen bestaande PR's gekoppeld waren.
 Open/closed, actieve eigenaren, verplichte CI/review en merge zijn onbekend.
-Ontbrekende issuekoppelingen mogen geen vrije werkclaim suggereren.</aside><p>
+Ontbrekende issuekoppelingen mogen geen vrije werkclaim suggereren.</aside>
+<details><summary>Bronherkomst · SHA256 en steekproefdekking</summary><ol>""" +
+"".join(source_cards) + """</ol><p>Bron-hashes identificeren opgeslagen
+manifesten, niet de huidige GitHub-status.</p></details><p>
 """ + str(selection["shown_source_issues"]) + " issues getoond van " +
 str(selection["matched_source_issues"]) + " filtersmatches (" +
 str(selection["total_source_issues"]) + " in bron). Pagina " +
@@ -283,7 +296,17 @@ def markdown_content(result):
              "- Bronissues: " + str(sel["total_source_issues"]) +
              ", getoond: " + str(sel["shown_source_issues"]) +
              " / " + str(sel["matched_source_issues"]) +
-             "; pagina " + str(sel["page"]) + "/" + str(sel["total_pages"]), ""]
+             "; pagina " + str(sel["page"]) + "/" + str(sel["total_pages"]), "",
+             "## Bronherkomst en steekproefdekking", ""]
+    for sample in result["source_snapshots"]:
+        lines.append(
+            "- Bron " + str(sample["index"]) + " · " +
+            sample["latest_observed_utc"] + " · manifest SHA256 " +
+            sample["original_review_manifest_sha256"] +
+            " · ontbrekende batches " +
+            str(len(sample["missing_batch_indexes"])) +
+            " (geen complete GitHub-inventaris)")
+    lines.append("")
     for issue in result["issues"]:
         lines.extend([
             "## " + issue["highest_source_priority"] + " [Issue #" +
@@ -337,8 +360,11 @@ def csv_content(result):
         "Menselijke vervolgactie", "Huidige claim/CI/review",
         "Main merge", "Issue status live", "Historische issue triage",
         "Issuekoppeling ontbreekt eindbron", "Meerdere bron-PRs",
-        "Laatste bron mist batches",
+        "Laatste bron mist batches", "Eerste bronmanifest SHA256",
+        "Laatste bronmanifest SHA256",
     ])
+    first_manifest = result["source_snapshots"][0]["original_review_manifest_sha256"]
+    last_manifest = result["source_snapshots"][-1]["original_review_manifest_sha256"]
     for issue in result["issues"]:
         for p in issue["linked_existing_prs"]:
             writer.writerow([
@@ -355,6 +381,7 @@ def csv_content(result):
                 "JA, ONBEKEND" if issue["link_unobserved_in_final_sample"] else "NEE",
                 "JA, verifieer eigenaren" if issue["multiple_candidate_prs_need_owner_review"] else "NEE",
                 "JA, incompleet" if issue["last_snapshot_missing_batches"] else "niet gerapporteerd",
+                first_manifest, last_manifest,
             ])
     for p in result["unlinked_prs"]:
         writer.writerow([
@@ -364,7 +391,7 @@ def csv_content(result):
             "ONBEKEND", "Eerst oorspronkelijke PR/issue-scope live bekijken.",
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
             "Geen betrouwbaar bronissue; inspecteer actuele PR.", "ONBEKEND",
-            "ONBEKEND", "ONBEKEND",
+            "ONBEKEND", "ONBEKEND", first_manifest, last_manifest,
         ])
     return "\ufeff" + source.getvalue()
 
