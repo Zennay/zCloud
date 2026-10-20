@@ -7,6 +7,11 @@ on:
         description: "Paste exact current main commit SHA before using the permanent VPS runner"
         required: true
         type: string
+      inspect_external_archive:
+        description: "Optional read-only cross-project cold-data archive hints; no transfer"
+        required: false
+        type: boolean
+        default: false
       inspect_sqlite_space:
         description: "Optional metadata-only SQLite/WAL owner receipt, no SQL or cleanup"
         required: false
@@ -192,4 +197,32 @@ jobs:
                 mib(row["checkpoint_freelist_bytes_not_reclaim_proof"]))
           print("No paths/records, SQL, DB write, checkpoint, reclaim, restart or claim mutation.")
           print("Verify writer leases, backup and storage headroom before owner-approved maintenance.")
+          PY
+
+      - name: Optional external archive cold-data receipt, no files transferred
+        if: steps.capacity.outputs.run == 'true' && inputs.inspect_external_archive == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          from pathlib import Path
+          from zsentinel_archive_portfolio import observe_many, public_summary_portfolio
+          r = observe_many([
+              Path("/home/ubuntu/zennay-cloud"), Path("/home/ubuntu/Haxlab")
+          ], Path("/home/ubuntu/VPS-Archief"),
+              min_age_days=7, max_entries=1500, max_depth=2, max_seconds=2)
+          if (r.get("files_written_or_transferred") is not False
+                  or r.get("safe_archive_copy_authorized") is not False
+                  or r.get("runner_or_claim_modified") is not False):
+              raise SystemExit("DENY_UNTRUSTED_ARCHIVE_SOURCE")
+          p = public_summary_portfolio(r)
+          if p.get("files_copied_or_deleted") is not False:
+              raise SystemExit("DENY_ARCHIVE_MUTATION")
+          print("### zSentinel · external archive (read-only observation)")
+          print("Known candidate workspaces sampled: " + str(p["observed_workspaces"]))
+          print("Unavailable candidate workspaces: " + str(p["unavailable_workspaces"]))
+          print("Old cold-data filename hints in bounded samples (NOT approved): " +
+                str(p["candidate_hints_not_approved"]))
+          print("Incomplete samples, no private paths, no copy, delete, lease, worker or runner action.")
+          print("Separate authorisation and source writer/rights/backup verification required.")
           PY
