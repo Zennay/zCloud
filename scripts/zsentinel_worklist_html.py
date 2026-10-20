@@ -79,7 +79,9 @@ def render_html(board, max_rows=20):
             "<p>" + h(row["human_next_step_nl"]) + "</p>"
             "<p class='links'>" + pr_link + "</p>"
             "<p class='source'>" + h(note) +
-            " · actuele owner/merge: ONBEKEND</p>"
+            " · actuele CI/review: " +
+                h(row["candidate_exact_head_gate_state"]) +
+                " · actuele owner/merge: ONBEKEND</p>"
             "<div class='controls'><label>Lokale vervolgstatus"
             "<select class='local-state'>"
             "<option value='open'>Nog te bekijken</option>"
