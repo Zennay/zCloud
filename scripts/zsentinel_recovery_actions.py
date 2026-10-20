@@ -32,6 +32,14 @@ def suggested_actions(packet):
             "Herlees de begrensde bron en herstel ontbrekende/ongeldige metadata met de eigenaar.",
             "HOLD_SOURCE_INCOMPLETE",
         ))
+    missing_scope = _number(packet.get("active_write_scopes_not_declared"))
+    if missing_scope:
+        result.append(action(
+            "active-scope-unknown", "urgent",
+            f"{missing_scope} actieve herstelopdrachten missen expliciete bestands- of capabilitiescope.",
+            "Laat hun huidige eigenaren de scopes en PR-overlap vastleggen; start geen nieuwe parallelle lane.",
+            "HOLD_PARALLEL_ADMISSION",
+        ))
     if packet.get("claimed_without_local_lease_observation") is True:
         result.append(action(
             "owner-not-observed", "urgent",
