@@ -240,7 +240,14 @@ python3 scripts/zsentinel_operator_export.py \
   --verify-dir "$HOME/private-recovery/zsentinel-operator-bron"
 ```
 
+De doelbovenmap, bijvoorbeeld `$HOME/private-recovery`, moet
+**vooraf bestaan**, eigendom zijn van dezelfde Unix-gebruiker en zelf
+privé (`0700`) zijn. Anders weigert de exporter het pakket vóór de
+bestemmingsmap wordt gemaakt. Maak deze bovenmap alleen lokaal en met
+toestemming van de runtime-eigenaar; export doet dit nooit automatisch.
+
 De eerste opdracht maakt uitsluitend een **nieuwe** map met mode `0700`
+binnen de reeds geopende privé bovenmap (zonder symlink en via directory-FD)
 en drie Python-modules (ieder `0600`), `LEESMIJ.txt` en
 `MANIFEST.json` met per module SHA-256 en byteomvang. Bij bestaande
 bestemming wordt niet overschreven. De tweede opdracht leest eigenaar-privé
