@@ -330,6 +330,27 @@ def collect_targeted_windows(project, issue_number, registry, budget,
         "cross_page_source": ("SINGLE_GITHUB_SEARCH_PAGE" if len(pages) == 1
                               else "NONATOMIC_GITHUB_SEARCH"),
     })
+    # Multi-page search consists of separate mutable GitHub windows. Recheck
+    # the actual issue after the final window, never trust a prior page's
+    # open-state observation as the state of the combined handoff.
+    if len(pages) > 1:
+        matches = [(repo_name, key) for repo_name, key in registry.values()
+                   if key == project]
+        if len(matches) != 1:
+            issue_reconfirmation_failed = True
+            partials.append({"project": project, "reason": "AMBIGUOUS_FINAL_ISSUE_REPO"})
+        else:
+            try:
+                final = board.bounded_gh(
+                    f"repos/{matches[0][0]}/issues/{issue_number}", budget)
+                if (not isinstance(final, dict) or final.get("state") != "open"
+                        or final.get("number") != issue_number
+                        or "pull_request" in final):
+                    issue_reconfirmation_failed = True
+                    partials.append({"project": project, "reason": "FINAL_ISSUE_NOT_OPEN"})
+            except (RuntimeError, ValueError, OSError, KeyError, TypeError):
+                issue_reconfirmation_failed = True
+                partials.append({"project": project, "reason": "FINAL_ISSUE_SOURCE_UNAVAILABLE"})
     if issue_reconfirmation_failed:
         target["current_state"] = "UNKNOWN"
         for row in combined:
