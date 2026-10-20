@@ -327,7 +327,11 @@
       if(resetRoute!==null){
         if(failedConversation()||!visible(composer())||
            (location.pathname===resetRoute&&/^\/c\//.test(resetRoute))){
-          await blocked("new-chat-transition-pending");return;
+          // Only one in-tab UI transition was requested. Escalate a stale
+          // transition to its operator, without clicking New chat again.
+          await blocked(Date.now()-chatAt>=COMPOSER_IDLE_REPAIR_MS?
+            "new-chat-transition-operator-action-required":"new-chat-transition-pending");
+          return;
         }
         resetRoute=null;
         chatAt=Date.now();sessionStorage.setItem("zcloud-v2-chat-at",String(chatAt));
