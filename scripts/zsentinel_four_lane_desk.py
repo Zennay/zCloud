@@ -16,12 +16,18 @@ import sqlite3
 import stat
 import sys
 
+# Keep normal `python3 scripts/zsentinel_four_lane_desk.py` entrypoints
+# working regardless of the invoking directory. In ordinary script execution
+# sys.path[0] is scripts/, not necessarily the repo containing lane_generator.
+if __name__ == "__main__" and not __package__ and "__file__" in globals():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from lane_generator import (
     classify_backlog_item,
     generate_execution_lanes,
     scopes_overlap,
 )
-from zsentinel_recovery_actions import suggested_actions
+from scripts.zsentinel_recovery_actions import suggested_actions
 
 LANE_NAMES = {
     "release-integration": "PRs naar main",
