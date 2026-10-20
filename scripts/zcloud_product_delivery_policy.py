@@ -200,6 +200,7 @@ def product_queue_snapshot(items, max_visible=8):
     queued_visible = 0
     held_ineligible = 0
     held_slot_occupied = 0
+    held_stale_claim_fields = 0
     skipped_qa = 0
     skipped_invalid = 0
     hold_reasons = {}
@@ -218,12 +219,15 @@ def product_queue_snapshot(items, max_visible=8):
             continue
         queued_visible += 1
         # These are NOT reasons to revoke, force-claim or reassign a task.
-        # Match the SQLite gate (eligible=1 AND worker_slot IS NULL).
+        # Match fresh SQLite admission including absence of old lease markers.
         if type(item.get("eligible")) not in (int, bool) or item["eligible"] != 1:
             held_ineligible += 1
             continue
         if item.get("worker_slot") is not None:
             held_slot_occupied += 1
+            continue
+        if item.get("claimed_at") is not None or item.get("claim_expires") is not None:
+            held_stale_claim_fields += 1
             continue
         disposition = item.get("delivery_policy_disposition")
         reason = item.get("delivery_policy_reason")
@@ -278,6 +282,7 @@ def product_queue_snapshot(items, max_visible=8):
         "queued_rows_visible": queued_visible,
         "queued_ineligible_held": held_ineligible,
         "queued_worker_slot_occupied": held_slot_occupied,
+        "queued_residual_lease_fields_held": held_stale_claim_fields,
         "queued_qa_only_held": skipped_qa,
         "queued_invalid_or_unknown_held": skipped_invalid,
         "queued_hold_reason_counts": dict(sorted(hold_reasons.items())),
