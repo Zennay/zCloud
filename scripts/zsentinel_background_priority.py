@@ -574,7 +574,7 @@ def main():
         # No command shell, no privileged unit and no service restart.
         subprocess.run(
             ["systemctl", "--user", "set-property", "--runtime",
-             UNIT, f"CPUQuota={effective_quota:g}%", f"CPUWeight={effective_weight}"],
+             UNIT, f"CPUQuota={float(effective_quota):g}%", f"CPUWeight={effective_weight}"],
             check=True, timeout=12, stdout=subprocess.DEVNULL,
         )
         actual = installed_cgroup()
@@ -585,7 +585,7 @@ def main():
                          "promotion_status": promotion_status, "promotion": candidate,
                          "mode": mode, "unit_active": True, "applied_verified": True,
                          "reasons": reasons})
-    print(f"{mode}: Fuckball CPUQuota={effective_quota:g}%; "
+    print(f"{mode}: Fuckball CPUQuota={float(effective_quota):g}%; "
           f"CPUWeight={effective_weight}; promotion={promotion_status}; "
           f"active runner={s['runner_active']}; sources complete={s['source_complete']}")
 
