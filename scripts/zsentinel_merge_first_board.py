@@ -20,7 +20,7 @@ from portfolio_merge_ready import PROJECTS, REPO_URL, gh
 MAX_PROJECTS = 3
 MAX_PRS = 12
 MAX_PER_REPO = 6
-MAX_GETS = 72
+MAX_GETS = 84
 MAX_SECONDS = 120
 MAX_OUTPUT = 1024 * 1024
 PR_SPEC = re.compile(r"^([A-Za-z0-9_-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]{0,6})$")
@@ -98,6 +98,26 @@ def observed_checks(checks, legacy):
     return "OBSERVED_GREEN_ONLY"
 
 
+def observed_workflows(receipt, sha):
+    """Source-complete exact-SHA workflow receipts, not merge permission."""
+    if not isinstance(receipt, dict):
+        return "UNKNOWN"
+    records = receipt.get("workflow_runs")
+    total = receipt.get("total_count")
+    if (not isinstance(records, list) or type(total) is not int
+            or len(records) != total or len(records) >= 100):
+        return "INCOMPLETE"
+    if not records:
+        return "NO_WORKFLOW_EVIDENCE"
+    if any(not isinstance(r, dict) or r.get("head_sha") != sha for r in records):
+        return "UNKNOWN"
+    if any(r.get("status") != "completed" for r in records):
+        return "PENDING"
+    if any(r.get("conclusion") != "success" for r in records):
+        return "FAILED_OR_SKIPPED"
+    return "OBSERVED_GREEN_ONLY"
+
+
 def inspect(repo, number, budget, expected_body_digest=None):
     try:
         first = bounded_gh(f"repos/{repo}/pulls/{number}", budget)
@@ -138,6 +158,8 @@ def inspect(repo, number, budget, expected_body_digest=None):
         revs = bounded_gh(f"repos/{repo}/pulls/{number}/reviews?per_page=100", budget)
         runs = bounded_gh(f"repos/{repo}/commits/{sha}/check-runs?per_page=100", budget)
         legacy = bounded_gh(f"repos/{repo}/commits/{sha}/status?per_page=100", budget)
+        workflows = bounded_gh(
+            f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100", budget)
         last = bounded_gh(f"repos/{repo}/pulls/{number}", budget)
         if (not isinstance(last, dict) or not isinstance(last.get("head"), dict)
                 or last["head"].get("sha") != sha or last.get("state") != "open"
@@ -158,20 +180,23 @@ def inspect(repo, number, budget, expected_body_digest=None):
         author = first.get("user", {}).get("login", "") if isinstance(first.get("user"), dict) else ""
         review = latest_approvals(revs, author, sha)
         check = observed_checks(runs, legacy)
+        workflow = observed_workflows(workflows, sha)
         actions = []
         if last.get("mergeable") is not True:
             actions.append("Resolve conflict or wait for GitHub mergeability")
         if review != "EXACT_HEAD_APPROVED":
             actions.append("Obtain independent exact-head approval")
         if check != "OBSERVED_GREEN_ONLY":
-            actions.append("Wait for or repair mandatory exact-head CI")
+            actions.append("Wait for or repair exact-head job/legacy checks")
+        if workflow != "OBSERVED_GREEN_ONLY":
+            actions.append("Wait for or repair pending exact-head workflow runs")
         # Even when all source signals look green, ownership and branch protection
         # have NOT been independently verified. Never label a PR merge-authorized.
         actions.append("Verify branch rules and existing exclusive mainwriter claim")
         return {"repo": repo, "number": number, "title": title, "head": sha,
                 "status": "OBSERVED_GATES_ONLY" if len(actions) == 1 else "HOLD",
-                "review": review, "checks": check, "source": "COMPLETE",
-                "actions": actions}
+                "review": review, "checks": check, "workflows": workflow,
+                "source": "COMPLETE", "actions": actions}
     except (KeyError, TypeError, ValueError, RuntimeError, OSError):
         return {"repo": repo, "number": number, "title": "", "head": None,
                 "status": "SOURCE_UNAVAILABLE", "review": "UNKNOWN", "checks": "UNKNOWN",
@@ -193,6 +218,7 @@ def render(rows, observed):
             esc(row["number"]) + '</a></h2><p class="title">' + esc(row["title"]) +
             '</p><p><strong>' + esc(row["status"]) + '</strong> · CI: ' +
             esc(row["checks"]) + ' · Review: ' + esc(row["review"]) +
+            ' · Workflows: ' + esc(row.get("workflows", "UNKNOWN")) +
             '</p><p class="sub">Bron: ' + esc(row["source"]) + ' · HEAD: ' +
             esc((row["head"] or "unknown")[:12]) + '</p><ul>' + actions + '</ul></article>'
         )
@@ -355,7 +381,8 @@ def main():
                       + " (older open PRs not enumerated)")
             for row in rows:
                 print(f"{row['repo']}#{row['number']} {row['status']} | CI={row['checks']} "
-                      f"| review={row['review']} | next: {'; '.join(row['actions'])}")
+                      f"| review={row['review']} | workflows={row.get('workflows', 'UNKNOWN')}"
+                      f" | next: {'; '.join(row['actions'])}")
             if not rows:
                 print("No eligible recent product PRs observed; not proof backlog is empty.")
             if args.output:
