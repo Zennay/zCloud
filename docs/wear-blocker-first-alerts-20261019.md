@@ -82,3 +82,9 @@ Eerdere Watch-ontvangstbewijzen koppelden een episode aan `id + ts`. Het bestaan
 - De bronvelden zijn **alleen observatie**, geven geen eigenaar-, claim-, merge-, herstel- of deploybevoegdheid. Historische alerts blijven uit notificatie-routing; alleen actuele `human_action_required` incidenten kunnen trillen. Noch de API, noch deze app schrijft naar Notion, queue/SQLite, CI of runners.
 
 **Opleverstatus:** broncode binnen bestaande [PR #1561](https://github.com/Zennay/zCloud/pull/1561), nog niet gemerged of fysiek geaccepteerd op Galaxy Watch 7. Geen nieuwe QA-tests/-suite, workflowdispatch of productie-actie. Exact-head CI, onafhankelijke review, Android-build en bevoegde release blijven vereist.
+
+### 20 oktober · actuele lokale demptijd zonder nieuwe polling
+
+Tijdens een uitgeklapte actuele menselijke incidentkaart ververst alleen de Compose-weergave van de resterende demptijd ongeveer elke 30 seconden. De lifecycle stopt deze tijdelijke UI-coroutine bij het dichtklappen; er komt géén extra HTTP-request, WorkManager-poll of zCloud-taak bij. De kaart leest uitsluitend de bestaande privévoorkeur en houdt de eerder afgedwongen maximaal-één-uur grens aan.
+
+De notificatieworker sorteert bron-`error` en `critical` beide vóór `high` binnen de bestaande begrensde batch. Geen nieuwe urgentiemeldingen worden toegestaan buiten de brongebonden `human_action_required` classificatie.
