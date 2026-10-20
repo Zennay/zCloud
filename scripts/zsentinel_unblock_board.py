@@ -752,6 +752,7 @@ def human_handoff_markdown(board):
             links.append(url)
         selected.append({
             "priority": row["priority"], "project": project,
+            "source_id": _brief_text(ident, 120),
             "problem": problem, "owner": owner, "action": action,
             "source": origin, "links": links,
         })
@@ -776,6 +777,7 @@ def human_handoff_markdown(board):
             lines += [
                 "", "## " + entry["priority"] + " — " + entry["project"],
                 "**Probleem:** " + entry["problem"],
+                "**Bronkaart-ID:** " + entry["source_id"],
                 "**Bevoegde eigenaar:** " + entry["owner"],
                 "**Nodige actie:** " + entry["action"],
                 "**Bron:** " + entry["source"],
