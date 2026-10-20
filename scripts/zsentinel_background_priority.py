@@ -327,8 +327,8 @@ def main():
         parser.error("read-only options require --preview")
     if args.report and args.snapshot:
         parser.error("choose --report or --snapshot (one new private artifact per invocation)")
-    if args.previous and not args.snapshot:
-        parser.error("--previous requires --snapshot")
+    if args.previous and not (args.snapshot or args.report):
+        parser.error("--previous requires --snapshot or --report")
     if not args.preview and os.geteuid() != 1000:
         raise SystemExit("Refusing to alter units outside ubuntu user scope")
     s = snapshot()
@@ -375,6 +375,13 @@ def main():
             try:
                 if args.report:
                     from zsentinel_runner_report import render, save_private
+                    if args.previous:
+                        from zsentinel_runner_snapshot import (
+                            packet, changes, load_private,
+                        )
+                        report_data["comparison"] = changes(
+                            load_private(args.previous), packet(report_data),
+                        )
                     save_private(args.report, render(report_data))
                 else:
                     from zsentinel_runner_snapshot import (
