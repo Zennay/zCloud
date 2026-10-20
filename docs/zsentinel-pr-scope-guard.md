@@ -886,3 +886,46 @@ De CLI drukt bij bronfouten geen ruwe exception met eventuele lokale
 privébestandspaden meer af. Elke bevinding blijft zonder autorisatie:
 verplichte exacte-head CI, onafhankelijke review, actuele Notion-claims,
 branchregels, eigenaar en releasevenster moeten separaat worden gecontroleerd.
+
+
+## 20 oktober · Veranderingen tussen twee private PR-conflictopnamen
+
+De portfolio-PR-conflictenbalie vergelijkt nu twee begrensde, read-only bronopnamen.
+Daarmee worden HEAD/base-wijzigingen van dezelfde bestaande PR zichtbaar,
+zonder eerdere incomplete inventarissen als bewezen opgeloste blokkades te melden.
+
+Schrijf de eerste momentopname als NIEUW lokaal privé JSON-bestand (0600):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --max-prs 10 \
+  --format json --output /private/zsentinel-pr-earlier.json
+```
+
+Vergelijk op een volgend, afzonderlijk gekozen moment met dezelfde projectvolgorde:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --project supa --max-prs 10 \
+  --compare-previous /private/zsentinel-pr-earlier.json \
+  --format html --output /private/zsentinel-pr-delta.html
+```
+
+Ook JSON, Markdown en tekst bevatten nu `historical_pr_delta`.
+De resultaten onderscheiden aantoonbare HEAD/basis-wijzigingen bij stabiele
+open-PR snapshots van PRs die alleen in een steekproef voorkwamen.
+PRs alleen in de vorige steekproef zijn **niet automatisch gesloten**.
+Nieuwe of verdwenen botsende PR-paren worden uitsluitend gemeld als beide
+complete, stabiele GitHub open-PR snapshots bevatten. Als een bron deels
+onbeschikbaar is, toont de output ONVOLLEDIG en geen vals herstelbewijs.
+
+Beide opnamen moeten dezelfde geordende 1–3 geregistreerde projecten bevatten,
+een UTC-tijd hebben, binnen zeven dagen liggen en niet uit de toekomst komen.
+Het historische JSON moet een reguliere 0600-file zijn van dezelfde gebruiker,
+niet een symlink, maximaal 2 MiB. `--output` creëert exclusief een nieuw
+privé bestand en overschrijft geen eerdere observaties.
+
+**Geen autorisatie:** vergelijking is geen claim-, PR-review-, merge-,
+runner- of deploybesluit. Exact-HEAD CI, onafhankelijke review, actuele
+eigenaren en releasegates blijven verplicht. Geen GitHub/Notion/queue-writes,
+workflow dispatch, of actieve herstelacties worden uitgevoerd.
