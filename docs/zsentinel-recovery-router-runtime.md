@@ -2179,3 +2179,34 @@ De portfolio HTML-kop toont nu nadrukkelijk of Notion-werk is:
 Dit onderscheid is ook zichtbaar wanneer een positief projectaantal in de
 portfolio-tabel staat. Afwezige projecten blijven ONBEKEND; geen scheduler,
 lease, worker, CI of productie-autorisatie volgt hieruit.
+
+### 20 oktober · Bezet maar geen verifieerbare leaseklok
+
+De éénmalige, alleen-lezen wachtrij-observer onderscheidt drie toestanden
+voor `claimed` / `running` / `verifying`:
+- **Lease aantoonbaar verstreken**: geldige UTC-vervaltijd op of vóór
+  bronmoment; expliciet `expired_owner_lease_rows`.
+- **Leaseklok niet verifieerbaar**: ontbrekende, lege, niet-UTC of anders
+  ongeldige vervaltijd; aparte `unverifiable_owner_lease_rows`. Dit is
+  géén bewijs van een verlopen lease, vrije claim of ongeldige eigenaar.
+- **Geen waargenomen tijdsprobleem**: leesbare toekomstige vervaltijd;
+  geen uitspraak over bestandseigendom of huidige worker-activiteit.
+
+De onafhankelijke operatorproducten tonen nu de nieuwe toestand in
+`zsentinel_recovery_router.py` (samenvatting/bronvalidatie),
+`zsentinel_recovery_view.py` (gele waarschuwingskaart + tabel),
+`zsentinel_portfolio_overview.py` (per project gescheiden teller en
+volgende stap), en `zsentinel_issue_delivery.py` via de bestaande
+`zsentinel_workboard_queue.py` bronadapter (HTML/Markdown werkbord).
+
+Dit voorkomt dat een bezette rij met ontbrekende leaseklok en weinig
+claimpogingen onzichtbaar blijft in de menselijke opvolging. Verlopen en
+onverifieerbare leaseklokken zijn wederzijds uitsluitend; beide vereisen
+**een geautoriseerde eigenaarcontrole**. De voortgangsrouter mag hierdoor
+**niet** auto-retryen, vrijgeven, herclaimen, workers starten of
+SQLite/Notion/runnerstatus muteren. Broninventaris volledig betekent nog
+steeds niet dat eigendom of herstel geverifieerd is.
+
+Geen QA/regressiesuites toegevoegd of handmatig gedraaid. Bestaande
+exact-head CI, onafhankelijke review, protected-main, P0 runner #1326,
+billing #1523 en serialized runtime release blijven bindend.
