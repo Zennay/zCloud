@@ -59,7 +59,7 @@ def _markdown(value):
     return re.sub(r"([\\\[\]_*\x60<>])", r"\\\1", value)
 
 
-def _observed_overlap_paths(view, pr_url, direct_overlaps=None):
+def _observed_overlap_paths(view, pr_url, head, direct_overlaps=None):
     """Only observed shared filenames, including an older focused PR."""
     paths, related, hinted_issues = set(), set(), set()
     paths_limited = False
@@ -81,6 +81,15 @@ def _observed_overlap_paths(view, pr_url, direct_overlaps=None):
                           source.get("other_pr_file_list_incomplete") is True)
         for path in source.get("shared_paths_preview", [])[:12]:
             paths.add(edit_path(path))
+    # Every title/body issue mention is an operator search hint, even when
+    # no second PR mentions the same issue. Match exact observed PR HEAD to
+    # avoid attaching stale issue text from a changed source branch.
+    for mention in view.get("observed_issue_to_pr_mentions_unverified", [])[:512]:
+        if (type(mention) is dict and mention.get("pr_url") == pr_url
+                and mention.get("pr_head_sha") == head):
+            n = mention.get("issue_number")
+            if type(n) is int and 0 < n < 100000000:
+                hinted_issues.add(n)
     for issue in view.get("shown_duplicate_issue_groups", [])[:80]:
         if any(source.get("url") == pr_url for source in issue.get("shown_pr_sources", [])):
             n = issue.get("issue_number")
@@ -153,7 +162,8 @@ def collect_workorders(board):
         elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
             raise ValueError("current gate receipt lost exact HEAD in workorder")
         paths, paths_cut, related, hints = _observed_overlap_paths(
-            projects[project], url, live_gate.get("sampled_file_overlaps_observed"))
+            projects[project], url, head if pinned else None,
+            live_gate.get("sampled_file_overlaps_observed"))
         for extra in item.get("observed_file_overlap_prs", [])[:8]:
             related.append(_same_repo_url(extra, repo))
         related = sorted(set(related) - {url})[:8]
