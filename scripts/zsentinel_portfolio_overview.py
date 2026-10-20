@@ -68,8 +68,14 @@ def verified_source_coverage(selected, provenance, bundle):
             row.get("status") for row in issue_rows
             if isinstance(row, dict) and row.get("project") == pid
         ]
+        # A valid selected exact job is useful partial evidence even when
+        # GitHub reported extra unexamined workflow/jobs pages or a sibling
+        # window failed. Do not conceal this observed incident simply because
+        # another part of the bounded source sample is incomplete.
         ci_ok = (len(ci_status) == 1 and ci_status[0] in (
-            "selected_one_source_bound_job", "no_actionable_job_in_sampled_windows"))
+            "selected_one_source_bound_job",
+            "selected_one_source_bound_job_partial_window",
+            "no_actionable_job_in_sampled_windows"))
         # GitHub 401/403 can be repository-specific. An unrelated project's
         # denied issue window must not suppress this project's own complete
         # bounded issue/PR receipt. Global rate-limit handling is already
