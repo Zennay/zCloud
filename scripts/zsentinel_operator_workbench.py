@@ -551,6 +551,42 @@ function refreshBatch(){
  document.getElementById('batchCount').textContent=batchSelection.size+
   ' selected of '+cases.length+' saved human-only cases · no external action authorized.';
 }
+function batchPlan(){
+ const action=document.getElementById('batchAction').value;
+ const date=document.getElementById('batchDate').value;
+ if(!['open','local-complete','review-date'].includes(action)||
+    (action==='review-date'&&(!date||!validFollowupDate(date))))
+   return null;
+ const selected=[...batchSelection].sort();
+ if(!selected.length||selected.length>60)return null;
+ const rows=[];
+ for(const issue of selected){
+  const card=entries.get(issue),info=handoffs.get(issue);
+  if(!card||!manualGateDecisions.has(info?.decision))return null;
+  const current=info.followup_status||'open';
+  let to=current,nextDate=info.due||'';
+  if(action==='review-date'){
+   if(current==='local-complete')continue;
+   nextDate=date;
+  }else to=action;
+  if(to===current&&nextDate===(info.due||''))continue;
+  rows.push({issue,project:card.project,priority:card.priority,title:card.title,
+    before:JSON.stringify(info),from:current,to,oldDate:info.due||'',newDate:nextDate});
+ }
+ if(!rows.length)return null;
+ const source={board:boardSha,observed_at:board.observed_at_utc,
+  selected,action,date,rows};
+ const proof=JSON.stringify(source);
+ const preview=['Human-only private bulk follow-up review',
+   'Captured source '+boardSha+' · '+board.observed_at_utc,
+   'No GitHub issue closure, ownership assignment, CI success or release.',
+   'Changes: '+rows.length+' of '+selected.length+' selected cards',
+   ...rows.map(r=>r.priority+' '+r.issue+' · '+line(r.title,180)+
+    ' · '+r.from+' → '+r.to+' · UTC date '+(r.oldDate||'none')+
+    ' → '+(r.newDate||'none')),'',
+   'Confirm only after reviewing each original issue and its required gates.'].join('\\n');
+ return {proof,rows,preview};
+}
 function refreshTriage(){
  const ranks={P0:0,P1:1,P2:2,Unspecified:3};
  const observations=baseline?new Map(changesSinceBaseline().map(c=>[c.issue,c.kind])):null;
@@ -1179,6 +1215,49 @@ document.getElementById('downloadCalendar').onclick=()=>{
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
  invalidateBrief();
  status.textContent='Private all-day calendar file saved. Import manually and review calendar alert defaults.';
+};
+document.getElementById('batchSelectOpen').onclick=()=>{
+ saveSelection();batchSelection.clear();
+ board.cards.filter(c=>manualGateDecisions.has(handoffs.get(c.issue)?.decision)&&
+  handoffs.get(c.issue)?.followup_status!=='local-complete')
+  .slice(0,60).forEach(c=>batchSelection.add(c.issue));
+ invalidateBatch();refreshBatch();
+};
+document.getElementById('batchClear').onclick=()=>{
+ batchSelection.clear();invalidateBatch();refreshBatch();
+};
+['batchAction','batchDate'].forEach(id=>document.getElementById(id).addEventListener(
+ 'input',invalidateBatch));
+document.getElementById('batchPreview').onclick=()=>{
+ saveSelection();
+ const plan=batchPlan();
+ batchPreview=plan?.proof||null;
+ document.getElementById('batchPreviewPanel').hidden=!plan;
+ document.getElementById('batchPreviewText').textContent=plan?.preview||'';
+ document.getElementById('batchApply').disabled=!plan;
+ status.textContent=plan?
+  'Review the complete private bulk changes; no external action performed.':
+  'No valid changed follow-ups in this bounded selection.';
+};
+document.getElementById('batchApply').onclick=()=>{
+ saveSelection();
+ const plan=batchPlan();
+ if(!plan||plan.proof!==batchPreview){
+  invalidateBatch();
+  status.textContent='Selection or private notes changed. Preview the proposed changes again.';
+  return;
+ }
+ const stamp=new Date().toISOString();
+ for(const row of plan.rows){
+  const info=handoffs.get(row.issue);
+  info.followup_status=row.to;
+  info.due=row.newDate;
+  if(row.from!==row.to)info.followup_changed_at_utc=stamp;
+ }
+ const updated=plan.rows.length;
+ invalidateBatch();invalidateBrief();setUnsaved(true);
+ batchSelection.clear();drawList();drawDetail();
+ status.textContent=updated+' private human follow-ups updated locally. Source issue/owner/CI/release statuses remain unknown. Export private JSON to preserve them.';
 };
 document.getElementById('print').onclick=()=>window.print();
 refreshPortfolio();refreshComparison();drawList();drawDetail();
