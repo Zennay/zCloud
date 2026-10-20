@@ -152,6 +152,7 @@ def bounded_events(
 ) -> tuple[list[dict], dict]:
     events: list[dict] = []
     errors: list[str] = []
+    bounded_main_commit_shas: set[str] = set()
     coverage = {
         "project": project,
         "repository": repo,
@@ -206,6 +207,12 @@ def bounded_events(
                 merged_at = pr.get("merged_at")
                 if merged_at is not None and instant(merged_at) is None:
                     raise ValueError("github_timestamp_invalid")
+                merge_sha = pr.get("merge_commit_sha")
+                if merged_at is not None:
+                    if not isinstance(merge_sha, str) or not SHA_RE.fullmatch(merge_sha):
+                        raise ValueError("github_pr_merge_sha_invalid")
+                else:
+                    merge_sha = None
                 # GitHub's PR base ref is the reported target, not proof that
                 # its merge commit is reachable from the current canonical main.
                 base = pr.get("base")
@@ -222,6 +229,8 @@ def bounded_events(
                 fields = {"pr": number, "url": ref, "draft": draft,
                           "pr_head_sha": head_sha,
                           "merged": merged_at is not None, "main_merged": False,
+                          "main_merge_evidence": "not_proven_in_bounded_history",
+                          "merge_commit_sha": merge_sha,
                           "reported_target": target,
                           "reported_main_merge": bool(merged_at is not None and target == "main")}
                 add("pr_created", str(number), pr.get("created_at"), **fields)
@@ -302,6 +311,7 @@ def bounded_events(
                 committer = details.get("committer")
                 if not isinstance(committer, dict):
                     raise ValueError("github_commits_invalid")
+                bounded_main_commit_shas.add(sha)
                 add("main_commit", sha, committer.get("date"),
                     sha=sha, main_merged=True,
                     url=f"https://github.com/{repo}/commit/{sha}",
@@ -319,6 +329,24 @@ def bounded_events(
         if coverage["pages"]["commits"]:
             coverage["github_main_commits"] = "partial"
 
+    # A GitHub-reported PR merge is not proof that its exact merge commit is
+    # reachable from canonical main. A matching SHA in the bounded main
+    # commit history is positive reachability evidence, NOT live deployment.
+    for entry in events:
+        if entry["kind"] not in {"pr_created", "pr_updated", "pr_merged"}:
+            continue
+        if (entry.get("merged") is True
+                and entry.get("reported_target") == "main"
+                and entry.get("merge_commit_sha") in bounded_main_commit_shas):
+            entry["main_merged"] = True
+            entry["main_merge_evidence"] = "canonical_main_history_exact_sha"
+        else:
+            entry["main_merge_evidence"] = "not_proven_in_bounded_history"
+    coverage["verified_pr_main_merges_in_window"] = len({
+        entry.get("pr") for entry in events
+        if entry.get("kind") == "pr_merged" and entry.get("main_merged") is True
+    })
+    coverage["main_merge_absence_is_unverified"] = True
     # Distinguish a GitHub-reported merge target from a main-history commit.
     # These are different observations and must never count twice as shipped.
     coverage["github_pr_target_is_reported"] = True
