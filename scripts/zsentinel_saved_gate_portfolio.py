@@ -102,6 +102,29 @@ def portfolio_html(selected, integrated):
     cards = []
     for p in projects:
         first = p["first_candidate"]
+        queue = []
+        for candidate in p["candidates"]:
+            issue_links = ' · '.join(
+                '<a target="_blank" rel="noopener noreferrer" href="' +
+                e(url) + '">' + e(url.rsplit("/", 1)[-1]) + '</a>'
+                for url in candidate["linked_issue_urls"])
+            combined = ", ".join(LABELS[reason][0]
+                                 for reason in candidate["concurrent_gates"])
+            observation = {
+                "missing_batch": "Gate-batch ontbreekt",
+                "source_unavailable_or_head_changed": "Bron/HEAD niet vastgepind",
+                "observed_partial_gate_receipt": "Gedeeltelijke gatebron",
+            }[candidate["gate_source"]]
+            queue.append(
+                '<li><a href="' + e(candidate["url"]) +
+                '" target="_blank" rel="noopener noreferrer">' +
+                e(candidate["priority"]) + ' · #' +
+                str(candidate["pr_number"]) + '</a> — ' +
+                e(candidate["next_action"]) +
+                '<br><small>' + e(observation) + ' · Batch ' +
+                str(candidate["batch_index"]) + ' · ' + e(combined) +
+                ' · Gekoppelde bronissues: ' + issue_links +
+                '</small></li>')
         counts = " · ".join(
             str(p["primary_categories"][key]) + " " + LABELS[key][0]
             for key in LABELS if p["primary_categories"][key])
@@ -122,7 +145,12 @@ def portfolio_html(selected, integrated):
             e(first["url"]) +
             '" target="_blank" rel="noopener noreferrer">' +
             e(first["priority"]) + ' · #' + str(first["pr_number"]) +
-            '</a> — ' + e(first["next_action"]) + '</p></article>')
+            '</a> — ' + e(first["next_action"]) + '</p>' +
+            '<details><summary>Alle ' + str(len(queue)) +
+            ' bestaande PR-kandidaten en opvolgacties</summary>' +
+            '<p>Alleen opgeslagen gedeeltelijke gatewaarnemingen; '
+            'geen actuele vrijgave of eigendomsbewijs.</p><ol>' +
+            ''.join(queue) + '</ol></details></article>')
     return ('<section class="portfolio-overview" aria-label="zSentinel '
             'portfolio afhandeloverzicht"><h2>Portfolio · bestaande PR '
             'afhandeling</h2><p>Alle aantallen zijn <strong>uitsluitend '
@@ -144,6 +172,7 @@ def portfolio_csv(selected, integrated):
         "PR gatebron onbekend", "Hoofdblokkades bron",
         "Gelijktijdige blokkades bron", "Eerste PR prioriteit",
         "Eerste PR URL", "Vervolgactie mens",
+        "Overige kandidaten bron", "Eerste drie PR URLs bron",
         "Verplichte CI/review bevestigd", "Huidige eigenaar geverifieerd",
         "Main merge bewezen", "Live geverifieerd",
     ])
@@ -159,6 +188,8 @@ def portfolio_csv(selected, integrated):
             p["p1_prs_in_sample"], p["unknown_gate_source_prs"],
             labels("primary_categories"), labels("concurrent_categories"),
             first["priority"], first["url"], first["next_action"],
+            len(p["candidates"]) - 1,
+            " | ".join(candidate["url"] for candidate in p["candidates"][:3]),
             "ONBEKEND", "ONBEKEND", "ONBEKEND", "ONBEKEND",
         ])
     result = "\ufeff" + stream.getvalue()
