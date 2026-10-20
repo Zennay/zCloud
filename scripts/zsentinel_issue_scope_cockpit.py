@@ -187,6 +187,11 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
     except (TypeError, ValueError, OverflowError):
         raise ValueError("invalid source time") from None
     coherent = delta <= 600
+    raw_titles = {}
+    for row in source["cards"][:MAX_ISSUES]:
+        name = row.get("title")
+        if type(name) is str and 0 < len(name) <= 180:
+            raw_titles[row["issue"]] = name
     issue_rows = []
     for card in source["cards"][:MAX_ISSUES]:
         pid = card["project"]
@@ -243,7 +248,11 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         issue_rows.append({
             "priority": card["priority"], "project": pid,
             "issue": card["issue"], "url": card["url"],
+            "title": raw_titles.get(card["issue"], card["issue"]),
             "existing_prs": refs, "next_action": route,
+            "source_recommended_next_step": card["recommended_next_step"],
+            "source_evidence_gaps": card["evidence_gaps"],
+            "project_issue_coverage": card["issue_coverage"],
             "additional_current_pr_mentions_truncated":
                 len(original) + len(additional) > MAX_LINKED_PRS_PER_ISSUE,
             "issue_evidence_stale": not coherent,
@@ -294,7 +303,10 @@ def output_text(report, markdown=False):
         ref = ("[" + row["issue"] + "](" + row["url"] + ")" if markdown
                else row["url"])
         lines.append(row["priority"] + " | " + row["project"] + " | " +
-                     ref + " | " + row["next_action"])
+                     ref + " | " + row["title"] + " | " + row["next_action"])
+        lines.append("  Advies uit bestaande bron: " + row["source_recommended_next_step"])
+        for gap in row["source_evidence_gaps"]:
+            lines.append("  Onbekend: " + gap)
         for pr in row["existing_prs"]:
             link = ("[" + pr["url"] + "](" + pr["url"] + ")" if markdown else pr["url"])
             lines.append("  " + link + " · " + pr["file_scope_state"] +
@@ -343,9 +355,16 @@ def output_html(report):
         cards.append(
             "<article><small>" + escape(row["priority"]) + " · " +
             escape(row["project"]) + "</small><h2><a rel='noopener noreferrer' href='" +
-            escape(row["url"], quote=True) + "'>" + escape(row["issue"]) +
-            "</a></h2><p><strong>Volgende stap:</strong> " +
-            escape(row["next_action"].replace("_", " ")) + "</p>" +
+            escape(row["url"], quote=True) + "'>" + escape(row["title"]) +
+            "</a></h2><p class='meta'>" + escape(row["issue"]) +
+            " · issuebron: " + escape(row["project_issue_coverage"]) +
+            "</p><p><strong>Volgende stap:</strong> " +
+            escape(row["next_action"].replace("_", " ")) +
+            "</p><p>Bronadvies: " + escape(row["source_recommended_next_step"]) +
+            "</p><details><summary>Openstaande bronhiaten (" +
+            str(len(row["source_evidence_gaps"])) + ")</summary><ul>" +
+            "".join("<li>" + escape(gap) + "</li>"
+                    for gap in row["source_evidence_gaps"]) + "</ul></details>" +
             ("<ul>" + "".join(prs) + "</ul>" if prs else
              "<p>Geen bestaande PR-link in het bronissue; eigenaarschap blijft onbekend.</p>") +
             "</article>")
