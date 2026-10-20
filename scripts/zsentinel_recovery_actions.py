@@ -85,10 +85,15 @@ def suggested_actions(packet):
         ))
     missing_scope = _number(packet.get("active_write_scopes_not_declared"))
     if missing_scope:
+        missing_decl = _number(packet.get("active_scope_declarations_missing"))
+        invalid_decl = _number(packet.get("active_scope_declarations_invalid_or_empty"))
         result.append(action(
             "active-scope-unknown", "urgent",
-            f"{missing_scope} actieve herstelopdrachten missen expliciete bestands- of capabilitiescope.",
-            "Laat hun huidige eigenaren de scopes en PR-overlap vastleggen; start geen nieuwe parallelle lane.",
+            f"{missing_scope} actieve herstelopdrachten zonder bewijs van echte bestandscope: "
+            f"{missing_decl} ontbrekend, {invalid_decl} ongeldig of leeg.",
+            "Vraag hun huidige eigenaren zelf concrete bestandsbereiken en PR-overlap "
+            "vast te leggen. Afgeleide lane-capabilities, wildcards en ongeldige "
+            "paden zijn geen bewijs voor een nieuwe parallelle schrijver.",
             "HOLD_PARALLEL_ADMISSION",
         ))
     missing_claim_scope = _number(packet.get("active_claim_scopes_not_declared"))
