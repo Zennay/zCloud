@@ -328,6 +328,18 @@ en kan geen P0-resourceclaim op basis van oude cijfers rechtvaardigen.
 Deze bronbinding is zichtbaar in de privé HTML én de optionele Markdown-
 hersteloverdracht.
 
+De offline reeks neemt eveneens de **werkelijk waargenomen systemd Result-code**
+over, uitsluitend uit een vaste allowlist (`oom-kill`, `exit-code`,
+`signal`, `timeout`, `watchdog`, `core-dump`, `resources`; anders
+`unknown`). Per service staat de verdeling over bronmomenten in privé HTML
+en Markdown. Het blijven getelde momentopnames; drie keer `oom-kill` in
+drie bronsnapshots bewijst niet dat het proces drie afzonderlijke OOM-crashes
+had. Wanneer de laatste bron failed mét hoge actuele resourcepressure én
+`oom-kill` meldt, adviseert de operator expliciet onderzoek naar RAM, swap
+en relevante cgroup-limieten door de bevoegde runtime-eigenaar, niet
+automatisch een herstart. Een onbekende Result-code verleent geen impliciete
+bevoegdheid en wordt nooit als een vertrouwde oorzaak weergegeven.
+
 De weergave laat per opeenvolgende meting zien: servicestatuswijzigingen,
 onvolledige inventarisdekking, dezelfde of veranderde Linux-opstartsessie,
 load/RAM/swap/root-schijfverschil en (uitsluitend waar vergelijkbaar) de
