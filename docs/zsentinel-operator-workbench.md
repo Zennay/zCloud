@@ -2161,3 +2161,38 @@ worden op de historisch gekoppelde issueprioriteit gerangschikt. Dit is
 alleen een getrouwe historische triagevolgorde: een historische P0 is geen
 bewijs van een nu nog open P0, en sluiting, eigenaarschap en merge worden
 nog altijd niet automatisch geclaimd.
+
+
+## 20 oktober · Eén offline issue-dossier als privé-ZIP
+
+De issuegerichte historische hersteloverdracht kan met dezelfde bestaande
+CLI direct als **één privé-ZIP** worden gemaakt. Dit voorkomt dat een operator
+losse HTML-, Markdown-, CSV- en JSON-exporten per ongeluk uit verschillende
+historische bronmomenten samenvoegt:
+
+```sh
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./private-older.zip \
+  --source ./private-newer.zip \
+  --inspect-issue https://github.com/Zennay/zCloud/issues/1518 \
+  --format zip --output ./private-issue-1518-dossier.zip
+```
+
+De ZIP bevat vijf vaste onderdelen: een offline scriptvrij issue-dossier in
+HTML, leesbare menselijke vervolgstappen in Markdown, een PR-matrix in CSV,
+het exacte begrensde JSON-bronresultaat en een SHA256-manifest. Het manifest
+pint de oorspronkelijke reviewmanifest-SHA256 per bronmoment en de exacte
+bestandshashes binnen de ZIP; het verklaart expliciet dat live open-issues,
+actieve claims, vereiste CI/reviews, merge en deploy **niet** geverifieerd zijn.
+
+De bronnen zijn nog steeds strikt bewaarde private ZIPs. Alle uitvoer wordt
+eerst in geheugen gemaakt voordat een nieuw, niet-bestaand lokaal bestand
+met mode 0600 wordt aangemaakt. De ZIP heeft canonieke vaste paden,
+niet-uitvoerbare mode 0600 en maximaal 1 MiB gecomprimeerde uitvoer.
+Een specifiek issue-dossier laat ongerelateerde PRs zonder bronissue weg.
+De SHA256-gegevens controleren interne inhoudsintegriteit, **niet**
+authenticiteit van een live GitHub-providerrespons of toestemming om te mergen.
+
+Er wordt niets aan GitHub, Notion, VPS, browser-workers of productie
+geschreven. Het nieuwe formaat vervangt geen verplichte exacte-head CI,
+onafhankelijke review, eigendomscontrole of beschermde main.
