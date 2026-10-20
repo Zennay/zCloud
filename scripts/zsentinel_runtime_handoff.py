@@ -64,7 +64,9 @@ def _attach_verified_job(card, raw, registry, review_by):
             raise ValueError("invalid incident review deadline") from exc
         if deadline.tzinfo is None or deadline.utcoffset() is None:
             raise ValueError("naive incident review deadline")
-        card["review_by_utc"] = deadline.astimezone(timezone.utc).isoformat(timespec="seconds")
+        due_utc = deadline.astimezone(timezone.utc)
+        card["review_by_utc"] = due_utc.isoformat(timespec="seconds")
+        card["review_overdue_at_export"] = due_utc < datetime.now(timezone.utc)
     if raw is None:
         return card
     if (type(raw) is not dict
@@ -195,6 +197,7 @@ def build_handoff(decision, registry=None):
     order = {"P0": 0, "P1": 1, "P2": 2}
     kind_order = {"fresh_incident": 0, "worker_owner_review": 1, "open_product_issue": 2}
     cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
+                              c.get("review_by_utc", "9999"),
                               0 if c.get("existing_pr_urls") else 1,
                               c["project"], c.get("issue_url", ""), c["next_step"]))
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -282,7 +285,11 @@ def handoff_html(report):
         due = item.get("review_by_utc")
         if due is not None and (type(due) is not str or len(due) > 35):
             raise ValueError("untrusted review deadline")
-        due_label = " · Beoordelen vóór " + escape(due) if due else ""
+        overdue = item.get("review_overdue_at_export")
+        if overdue is not None and type(overdue) is not bool:
+            raise ValueError("untrusted overdue classification")
+        due_label = (" · DEADLINE VERSTREKEN" if overdue else "") + (
+            " · Beoordelen vóór " + escape(due) if due else "")
         cards.append('<li><strong>' + escape(_short(item.get("priority"), 5)) +
                      ' · ' + escape(_short(item.get("project"))) + '</strong> — ' +
                      escape(_short(item.get("next_step"))) + due_label + link + pr_links + verified_links + '</li>')
@@ -327,6 +334,8 @@ def markdown(report):
             lines.append("   Bestaand issue: " + card["issue_url"])
         if card.get("review_by_utc"):
             lines.append("   Uiterlijk beoordelen (UTC): " + _md(card["review_by_utc"], 40))
+            if card.get("review_overdue_at_export") is True:
+                lines.append("   DEADLINE VERSTREKEN volgens exportklok; eigenaar controleren.")
         job = card.get("exact_github_job")
         if job:
             lines.append("   Exacte bron (geen actierecht): run " +
