@@ -10,6 +10,10 @@ EVENTS = {
     "seen_only_previous": "PR alleen in vorige steekproef; niet bewezen gesloten",
     "new_file_overlap": "Nieuw waargenomen gedeeld bestandspad",
     "overlap_not_seen": "Eerdere bestandsoverlap niet meer gezien; geen mergebewijs",
+    "current_overlap_sample_only":
+        "Overlap alleen in huidige onvolledige steekproef; NIET bewezen nieuw",
+    "previous_overlap_sample_only":
+        "Overlap alleen in vorige onvolledige steekproef; NIET bewezen opgelost",
 }
 
 
@@ -55,6 +59,16 @@ def attach(report, delta):
                 ("added_collision_pairs_if_complete", "new_file_overlap"),
                 ("disappeared_collision_pairs_if_complete", "overlap_not_seen")):
             for pair in row[key]:
+                add(pair["left"], kind, pair["right"])
+                add(pair["right"], kind, pair["left"])
+        # Sample-only appearances matter for triage on busy repos, but they
+        # NEVER prove that a collision is genuinely new or resolved.
+        for key, kind in (
+                ("overlap_pairs_only_in_current_sample_not_proven_new",
+                 "current_overlap_sample_only"),
+                ("overlap_pairs_only_in_previous_sample_not_proven_resolved",
+                 "previous_overlap_sample_only")):
+            for pair in row.get(key, []):
                 add(pair["left"], kind, pair["right"])
                 add(pair["right"], kind, pair["left"])
         mapped[project] = (
