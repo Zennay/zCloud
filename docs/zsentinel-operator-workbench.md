@@ -41,6 +41,13 @@ toetsen volledig uitgeschakeld zodat ze het typen nooit verstoren.
 - Volgende/vorige circuleren alleen over de **zichtbare gefilterde**
   momentopname en tonen positie plus bronissue. Geen filterkoppeling of echte
   claim wordt gewijzigd.
+- In de bestaande **PR-desk** kan elke issuekoppeling ook rechtstreeks
+  binnen de lokale werkbank worden geopend via **View issue in local
+  workbench**. De eerdere privé-invoer wordt eerst lokaal bewaard, de
+  zichtbare issuekaart springt in beeld en een oude exportpreview vervalt.
+  De bestaande externe GitHub-issue-/PR-links blijven als aparte,
+  vrijwillige navigatie beschikbaar. Er worden geen nieuwe API-verzoeken
+  uitgevoerd om deze brongebonden koppeling te tonen.
 - De P0/P1-sneltoets in de UI selecteert uitsluitend een urgente,
   **niet lokaal gesloten** menselijke opvolging. Een lokaal gesloten
   follow-up is géén gesloten GitHub-issue en sluit het issue niet uit van de
