@@ -97,17 +97,49 @@ def snapshot():
     }
 
 
+def pressure_reasons(s):
+    """Explain exactly which bounded signals shaped the CPU decision."""
+    urgent = []
+    moderate = []
+    if not s["source_complete"]:
+        urgent.append("incomplete-capacity-source")
+    if s["zcloud_runner_active"]:
+        urgent.append("zcloud-github-job-running")
+    elif s["runner_active"]:
+        moderate.append("other-github-job-running")
+    load = s["host_load"]
+    if load is not None:
+        if load > s["cores"] * 1.35:
+            urgent.append("high-system-load")
+        elif load > s["cores"] * 0.85:
+            moderate.append("elevated-system-load")
+    memory = s["memory_available_gib"]
+    if memory is not None:
+        if memory < 2:
+            urgent.append("low-available-memory")
+        elif memory < 3:
+            moderate.append("limited-available-memory")
+    swap = s["swap_used_percent"]
+    if swap is not None:
+        if swap >= 80:
+            urgent.append("high-swap-use")
+        elif swap >= 60:
+            moderate.append("elevated-swap-use")
+    disk = s["disk_unavailable_percent"]
+    if disk is not None:
+        if disk >= 90:
+            urgent.append("low-root-disk-headroom")
+        elif disk >= 85:
+            moderate.append("limited-root-disk-headroom")
+    return urgent, moderate
+
+
 def admission(s):
     """Fail closed: uncertainty or pressure reduces CPU, never stops training."""
-    if (not s["source_complete"] or s["zcloud_runner_active"] or
-            s["host_load"] > s["cores"] * 1.35 or
-            s["memory_available_gib"] < 2 or
-            s["swap_used_percent"] >= 80 or
-            s["disk_unavailable_percent"] >= 90):
+    urgent, moderate = pressure_reasons(s)
+    if urgent:
         return 60, 25, "yield-to-runners-or-pressure"
-    if (s["runner_active"] or s["host_load"] > s["cores"] * 0.85 or
-            s["memory_available_gib"] < 3 or s["swap_used_percent"] >= 60 or
-            s["disk_unavailable_percent"] >= 85):
+    if moderate:
         return 100, 40, "runner-or-moderate-pressure"
     return 175, 70, "idle-capacity"
 
@@ -183,6 +215,8 @@ def main():
         raise SystemExit("Refusing to alter units outside ubuntu user scope")
     s = snapshot()
     quota, weight, mode = admission(s)
+    urgent, moderate = pressure_reasons(s)
+    reasons = urgent + moderate
     if args.preview:
         try:
             current = installed_cgroup()
@@ -200,12 +234,13 @@ def main():
                         "current_quota_percent": None, "current_weight": None,
                         "recommendation_currently_applied": None}
         print(json.dumps({**s, **observed, "mode": mode, "quota": quota,
-                          "weight": weight, "applied": False}, sort_keys=True))
+                          "weight": weight, "reasons": reasons, "applied": False}, sort_keys=True))
         return
     actual = installed_cgroup()
     if not actual["active"]:
         write_private_state({**s, "quota": quota, "weight": weight, "mode": mode,
-                             "unit_active": False, "applied_verified": False})
+                             "unit_active": False, "applied_verified": False,
+                             "reasons": reasons})
         print("coach-not-active: capacity observed, CPU controls left unchanged")
         return
     if not matches_cgroup(actual, quota, weight):
@@ -219,7 +254,8 @@ def main():
         if not matches_cgroup(actual, quota, weight):
             raise SystemExit("Coach policy not verified after systemd update")
     write_private_state({**s, "quota": quota, "weight": weight,
-                         "mode": mode, "unit_active": True, "applied_verified": True})
+                         "mode": mode, "unit_active": True, "applied_verified": True,
+                         "reasons": reasons})
     print(f"{mode}: Fuckball CPUQuota={quota}%; CPUWeight={weight}; "
           f"active runner={s['runner_active']}; sources complete={s['source_complete']}")
 
