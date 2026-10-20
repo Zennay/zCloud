@@ -94,6 +94,38 @@ def render_html(board, max_rows=20):
             "<textarea maxlength='700' rows='2' placeholder='Handmatige afspraak, geen automatische claim'></textarea>"
             "</label></div></article>"
         )
+    grouped = []
+    for group in board.get("pr_groups", []):
+        pr = group.get("pr_url") if type(group) is dict else None
+        linked = group.get("linked_issue_urls_in_source") if type(group) is dict else None
+        if (type(pr) is not str or PR.fullmatch(pr) is None
+                or group.get("highest_priority") not in ORDER
+                or group.get("fixes_all_linked_issues_verified") is not False
+                or group.get("merge_authorized") is not False
+                or type(linked) is not list or not 1 <= len(linked) <= MAX_CARDS
+                or any(type(url) is not str or ISSUE.fullmatch(url) is None
+                       or url.split("/issues/", 1)[0] != pr.split("/pull/", 1)[0]
+                       for url in linked)):
+            raise ValueError("untrusted existing PR issue-group evidence")
+        refs = "".join("<li><a rel='noopener noreferrer' target='_blank' href='" +
+                       escape(url, quote=True) + "'>Issue " +
+                       escape(url.rsplit("/", 1)[-1]) + "</a></li>"
+                       for url in linked)
+        grouped.append(
+            "<li><strong>" + escape(group["highest_priority"]) + "</strong> · "
+            "<a rel='noopener noreferrer' target='_blank' href='" +
+            escape(pr, quote=True) + "'>PR " +
+            escape(pr.rsplit("/", 1)[-1]) + "</a> · " +
+            str(len(linked)) +
+            " gekoppelde issuevermelding(en) in steekproef"
+            "<details><summary>Bekijk bronissues (geen fixbewijs)</summary><ul>" +
+            refs + "</ul></details></li>"
+        )
+    groups_panel = (
+        "<section class='ticket'><h2>Bestaande PR's als één werkgroep</h2>"
+        "<p>Dezelfde PR kan meerdere issues noemen. Dit is géén bewijs "
+        "dat al deze issues door de PR worden opgelost en geen mergevrijgave.</p>"
+        "<ol>" + "".join(grouped) + "</ol></section>" if grouped else "")
     if len(cards) > max_rows:
         hidden = "<p class='warning'>ONVOLLEDIGE overdracht: " + str(len(cards)-max_rows) + (
             " issues buiten deze begrensde pagina. Gebruik --worklist-limit "
@@ -277,5 +309,5 @@ refresh();
         "accept='.json,application/json'></label></div>"
         "<p id='visible' aria-live='polite'></p>"
         "<p id='session-status' aria-live='polite'></p>" + hidden +
-        "<main>" + "".join(output) + "</main>" + script + "</body></html>"
+        "<main>" + groups_panel + "".join(output) + "</main>" + script + "</body></html>"
     )
