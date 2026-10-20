@@ -107,6 +107,31 @@ def check_state(repo, sha):
         return "LEGACY_STATUS_NOT_GREEN"
     return "GREEN"
 
+def verify_default_contains_merge(repo, merged_sha, observed_head):
+    """Corroborate a reported merge commit against the actual default ref.
+
+    The branch may legitimately have advanced after GitHub accepted the merge.
+    An unrelated head or an unavailable compare endpoint must be UNKNOWN, not
+    reported as delivered on main. This makes no writes or claim changes.
+    """
+    if not (isinstance(merged_sha, str) and isinstance(observed_head, str)
+            and re.fullmatch(r"[0-9a-f]{40}", merged_sha)
+            and re.fullmatch(r"[0-9a-f]{40}", observed_head)):
+        return False
+    if merged_sha == observed_head:
+        return True
+    comparison = gh(f"repos/{repo}/compare/{merged_sha}...{observed_head}")
+    if not isinstance(comparison, dict):
+        return False
+    base = comparison.get("base_commit")
+    ahead = comparison.get("ahead_by")
+    behind = comparison.get("behind_by")
+    return (comparison.get("status") == "ahead" and isinstance(base, dict)
+            and base.get("sha") == merged_sha
+            and isinstance(ahead, int) and ahead > 0
+            and behind == 0)
+
+
 def live_claim(project, claim_key, owner, head_sha):
     if not owner or not claim_key:
         return False
@@ -223,9 +248,14 @@ def sweep(repo, project, args):
                                     observed_head = (default_ref.get("object") or {}).get("sha")
                                     result["default_branch_head_observed"] = observed_head
                                     if (after.get("merged_at")
+                                            and after.get("merged") is True
                                             and after.get("merge_commit_sha") == outcome["sha"]
-                                            and isinstance(observed_head, str)
-                                            and len(observed_head) == 40):
+                                            and isinstance(after.get("base"), dict)
+                                            and after["base"].get("ref") == default
+                                            and isinstance(after.get("head"), dict)
+                                            and after["head"].get("sha") == head
+                                            and verify_default_contains_merge(
+                                                repo, outcome["sha"], observed_head)):
                                         result["merged"] = True
                                         result["main_commit"] = outcome["sha"]
                                         result["status"] = "MERGED"
