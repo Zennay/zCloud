@@ -503,6 +503,15 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
     }
 
 
+def _classic_status_display(legacy):
+    """Differentiate an absent legacy context from a running legacy status."""
+    if not isinstance(legacy, dict):
+        return "onbekend"
+    if legacy.get("implicit_pending_without_contexts") is True:
+        return "geen klassieke statussen (GitHub API: pending zonder context)"
+    return str(legacy.get("combined_observed", "onbekend"))
+
+
 def pr_delivery_html(report):
     if (not isinstance(report, dict)
             or report.get("schema") != "zsentinel-pr-delivery-desk-v1"
@@ -529,7 +538,7 @@ def pr_delivery_html(report):
                   " · fouten ≥" + str(len(ci.get("failed", []))) +
                   " · bezig ≥" + str(len(ci.get("pending", []))) +
                   " · niet-groen/onbeslist ≥" + str(len(ci.get("inconclusive", []))) +
-                  " · klassiek gecombineerd " + str(legacy.get("combined_observed", "onbekend")) +
+                  " · klassiek gecombineerd " + _classic_status_display(legacy) +
                   " · klassieke statusfouten ≥" + str(len(legacy.get("failed", []))) +
                   " · klassieke statussen wachten ≥" + str(len(legacy.get("pending", []))) +
                   " · head-approvals gezien: " +
@@ -739,7 +748,7 @@ def handoff_markdown(report):
             "- **Status:** head `" + sha_label + "`; onafhankelijke review/release niet geautoriseerd.",
             "- **Checks:** waargenomen " + str(ci.get("sampled", "onbekend"))
             + " / " + str(ci.get("total_reported", "onbekend"))
-            + "; klassieke gecombineerd " + _markdown_literal(legacy.get("combined_observed", "onbekend"), 30)
+            + "; klassieke gecombineerd " + _markdown_literal(_classic_status_display(legacy), 90)
             + "; head-approvals gezien " + str(reviews.get("same_head_approvals_seen", "onbekend")) + ".",
         ])
         references = item.get("mentioned_issues_unverified", [])
@@ -862,7 +871,7 @@ def main(argv=None):
                     lines.append("  owner-only: hosted GitHub job start geweigerd (billing/limiet)")
                 if item.get("legacy_status_contexts"):
                     lines.append("  classic-status-combined: " +
-                                 item["legacy_status_contexts"]["combined_observed"])
+                                 _classic_status_display(item["legacy_status_contexts"]))
                 for name in ("failed", "pending"):
                     if item.get("legacy_status_contexts", {}).get(name):
                         lines.append("  status-%s: %s" % (
