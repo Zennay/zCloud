@@ -620,3 +620,41 @@ private input paths, worker claims or source filesystem trees are exported.
 The manifest-based portable operator bundle already includes this updated
 report module. This is a **source PR feature only**, not a deployed feature
 until exact-head CI, independent review and authorized release.
+
+
+## Immediate human-readable owner handoff (live or T0/T1)
+
+An owner can now create a **first-response** Dutch Markdown incident handoff
+from one source read, without first waiting for three saved samples:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --output "$HOME/private-recovery/owner-current.md"
+
+# Replay two previously saved owner-private receipts, with no fresh host read:
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --t0 "$HOME/private-recovery/T0.json" \
+  --t1 "$HOME/private-recovery/T1.json" \
+  --output "$HOME/private-recovery/owner-two-moments.md"
+
+# Original deep historical transfer remains available unchanged:
+python3 scripts/zsentinel_runner_report.py --format markdown \
+  --timeline "$HOME/private-recovery/T0.json" \
+  "$HOME/private-recovery/T1.json" "$HOME/private-recovery/T2.json" \
+  --output "$HOME/private-recovery/owner-history.md"
+```
+
+The new immediate Markdown shares the exact same **bounded, canonical source**
+and owner-action decision as the JSON owner inbox. It includes source provenance
+(current one-shot versus private offline replay), a maximum of three
+prioritized human actions, up to twenty admitted systemd service names/states,
+capacity measurements and optional T0/T1 state transitions. An incomplete
+service source explicitly stays **UNKNOWN**, never a zero-service or
+healthy-runner assertion. Markdown uses a new private 0600 create-only file
+and has no GitHub/network, claim, systemd or queue write authorization.
+A live local systemd observation does not independently establish that a
+GitHub job is assigned, that a worker resumed, or that a PR/release passed.
+
+This source addition is **not deployed** by committing it to the PR branch.
+Exact-head required CI, independent review and authorized integration remain
+necessary before release.
