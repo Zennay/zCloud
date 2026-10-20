@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 
 from zsentinel_pr_scope_guard import (
@@ -546,6 +547,8 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append", required=True)
     parser.add_argument("--max-prs", type=int, default=10)
+    parser.add_argument("--output", type=Path,
+                        help="Create NEW private offline receipt (0600); default stdout")
     parser.add_argument("--inspect-current-pr-gates", action="store_true",
                         help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
                              "in bestaande PR-steekproef (max 20 extra GETs)")
@@ -559,13 +562,37 @@ def main(argv=None):
         if args.inspect_current_pr_gates:
             board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"))
         if args.format == "json":
-            print(json.dumps(board, indent=2, ensure_ascii=False))
+            rendered = json.dumps(board, indent=2, ensure_ascii=False) + "\n"
         elif args.format == "html":
-            print(as_html(board))
+            rendered = as_html(board)
         elif args.format == "markdown":
-            print(as_markdown(board))
+            rendered = as_markdown(board)
         else:
-            print(as_text(board))
+            rendered = as_text(board) + "\n"
+        if args.output is None:
+            sys.stdout.write(rendered)
+        else:
+            # Exclusive local creation. Do not overwrite another worker's
+            # reports and never echo private path or GitHub source in logs.
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(args.output, flags, 0o600)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as sink:
+                    if not stat.S_ISREG(os.fstat(sink.fileno()).st_mode):
+                        raise ValueError("private report output is not a regular file")
+                    sink.write(rendered)
+                    sink.flush()
+                    os.fsync(sink.fileno())
+            except Exception:
+                args.output.unlink(missing_ok=True)
+                raise
+            print("Created new private read-only portfolio dashboard (0600); no remote writes.",
+                  file=sys.stderr)
+        if (args.inspect_current_pr_gates and
+                any(g["status"] != "current_exact_pr_head_and_sample_match"
+                    for g in board["current_live_pr_gate_observation"]["items"])):
+            return 3
         return (2 if board["any_file_overlaps_observed"] else
                 3 if not board["source_coverage_complete"] else 0)
     except (ValueError, OSError):
