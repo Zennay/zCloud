@@ -185,6 +185,14 @@ def capacity_changes(previous, current):
             type(old) in (int, float) and type(new) in (int, float) and
             0 <= old < 1e12 and 0 <= new < 1e12
         )
+        if key in {"swap_used_percent", "disk_unavailable_percent"}:
+            numeric = numeric and old <= 100 and new <= 100
+        if key == "root_available_gib":
+            # A source may be syntactically valid yet claim more free GiB
+            # than its own filesystem can contain. Refuse the bogus delta.
+            max_gib = a["root_volume_bytes"] / (1024 ** 3) if mount_ok else None
+            numeric = (numeric and max_gib is not None
+                       and old <= max_gib + 0.02 and new <= max_gib + 0.02)
         comparable = numeric and (not is_disk or mount_ok)
         metrics.append({
             "metric": key,
