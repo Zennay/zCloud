@@ -575,7 +575,7 @@ def public_summary_html(summary):
         '<p>Mount: ' + str(summary["mount_available_gib_observed"]) +
         ' GiB beschikbaar; ' +
         str(summary["mount_unavailable_percent_observed"]) +
-        '% niet beschikbaar volgens lokaal statvfs. Geen toegang/vrijgavebewijs.</p>'
+        '% niet beschikbaar volgens lokaal statvfs. Geen toegang/vrijgavebewijs.</p>' +
         ('<p>SQLite/WAL-metadata in privé-diskrapport: ' +
          str(summary['sqlite_files_metadata_observed']) +
          ' database(s) waargenomen; interne freelist is geen bewezen'
