@@ -2813,3 +2813,63 @@ queue-retry defect gerepareerd is. De bevoegde runtime-/queue-eigenaar
 moet óf het echte read-only bestaande `portfolio_queue`-bronpad,
 óf twee reeds bestaande, brongebonden 0600-observaties beschikbaar
 stellen. Geen alternatieve DB aangemaakt en geen data vervalst.
+
+
+### 20 oktober · Worker-eventcursors versus heartbeats vergelijken (#1342)
+
+De bestaande `zsentinel_worker_progress_observer.py` kreeg een
+**privé file-identiteit** (dezelfde host, resolved DB-path en inode,
+gehashte 64-hex code; geen DB-path in publieke UI). Op de echte, reeds
+bestaande `history.db` worden geïndexeerde runner-events, workerconfig
+en globale slots uitsluitend gelezen via SQLite `mode=ro` en
+`PRAGMA query_only`. Er worden geen user prompts, tab-URLs of
+eventpayloads geëxporteerd.
+
+Nieuwe `scripts/zsentinel_worker_progress_delta.py` vergelijkt twee
+brongebonden workerobservaties en maakt het verschil zichtbaar tussen:
+- een **stijgende eventcursor én progresscursor**: expliciet
+  generation-progress/finished **eventsig­naal**, geen bewijs van commit,
+  taakafronding of correcte claim-epoch;
+- stijgende gewone eventcursor terwijl de progresscursor onveranderd
+  is: wel nieuwe events/heartbeats, **geen nieuw expliciet progress-event**;
+- **geen eventtoename** tijdens een gemeten >=15-minuten venster voor een
+  aan een globaal slot toegewezen configured-running worker: een
+  reviewkandidaat, **geen automatische stall-/recoveryconclusie**;
+- gepauzeerde of drainerende workers: **eigenaarshold**, geen incident
+  dat zelfstandige overname toestaat;
+- lagere/verdwenen cursor: mogelijk reset/retentie/bronverandering;
+  behoud onzekerheid en vraag de eigenaar om bronreconciliatie.
+
+**Voorbeelden op een bevoegde VPS met bestaande bron:**
+```sh
+python3 scripts/zsentinel_worker_progress_delta.py \
+  --database /home/ubuntu/zennay-cloud/history.db --project cloud \
+  --snapshot-output /bestaande-prive-map/worker-1.json
+
+# Op een later werkelijk bronmoment:
+python3 scripts/zsentinel_worker_progress_delta.py \
+  --database /home/ubuntu/zennay-cloud/history.db --project cloud \
+  --previous /bestaande-prive-map/worker-1.json \
+  --snapshot-output /bestaande-prive-map/worker-2.json \
+  --format html --output /bestaande-prive-map/worker-trend.html
+```
+De CLI ondersteunt ook uitsluitend bestaande private observaties
+(`--previous /.../worker-1.json --current-snapshot /.../worker-2.json`)
+voor offline vergelijking, zolang het hetzelfde exacte host/DB-bestand,
+hetzelfde geselecteerde projectvenster en twee oplopende UTC-tijdstippen
+binnen 72 uur zijn. Alle bestanden zijn expliciet gekozen, create-only
+0600, zonder overschrijving.
+
+Een bestaande portfolio-invocatie kan bovendien met
+`--worker-events-database /home/ubuntu/zennay-cloud/history.db`
+en `--worker-previous /bestaande-prive-map/worker-1.json` een
+geanonimiseerde samenvatting opnemen in HTML, JSON, tekst en
+`--format handoff`. De vergelijking is **opt-in**; een beschadigde
+oude bron maakt uitsluitend dit onderdeel `unavailable`, niet de
+andere onafhankelijke P0/CI/queue-bronnen.
+
+Directe read-only bronuitvoering via de verbonden zSSH op 20 oktober
+vond voor `cloud` twee worker-slotvoorbeelden en één expliciete
+eigenaar-followupkandidaat, zonder workerherstel- of productbewijs.
+**De claim-epoch blijft onbekend; geen claim, pauze, restart, retry,
+dispatch, release of productie-actie is toegestaan door deze functie.**
