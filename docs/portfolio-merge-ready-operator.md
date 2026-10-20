@@ -90,9 +90,14 @@ na afloop opnieuw te bevestigen. Het offline HTML-overzicht bevat de
 bekende geselecteerde PR-nummers en markeert de bron als
 `EXPLICIT_PR_SELECTION_NOT_SEARCH`. Niet-beschikbare, gesloten, QA-only,
 child- of andere niet-geschikte PRs worden expliciet als deelbronbeperking
-zichtbaar, niet stilzwijgend als afwezig bewijs. Als het issue tussentijds
-van status, titel of prioriteit verandert, worden de vermeende actuele
-issuekoppelingen ingetrokken.
+zichtbaar, niet stilzwijgend als afwezig bewijs. Als het gedeelde GitHub-bronbudget
+opraakt voordat alle opgegeven nummers zijn gelezen, bevat de JSON-lijst
+`remaining_pr_numbers` uitsluitend de **nog niet opgevraagde** PR-nummers.
+De HTML-werkbak en terminal tonen dezelfde concrete vervolgkeuze met links.
+De operator kan deze nummers in een nieuwe `--candidate-pr`-opdracht
+opgeven zonder ooit te suggereren dat het eerste overzicht compleet was.
+Als het issue tussentijds van status, titel of prioriteit verandert, worden
+de vermeende actuele issuekoppelingen ingetrokken.
 
 `--candidate-pr` is uitsluitend voor één `--project` met `--issue`;
 deze bronroute kan niet samen met `--candidate-page`, `--auto-pages`,
