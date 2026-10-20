@@ -119,3 +119,14 @@ The HTML and text operator reports now show per-class **counts and size**, state
 The connected zSSH direct-source read-only inspection of [`57a2cb4`](https://github.com/Zennay/zCloud/commit/57a2cb4ca6be9cb5e6c51f99f56a5f8eb7b7befc) observed **385** older training report files requiring owner review, not 385 completed, safe-to-move files. The subsequent [`e7c528f`](https://github.com/Zennay/zCloud/commit/e7c528fa9a4e2c370315ede6d5b81abcc76f6ce9) updates both privacy-safe HTML and text descriptions. Neither source invocation copied data, modified log handles, wrote cleanup manifests to production, restarted training or executed QA suites.
 
 This is still source in open PR #1569, not shipped on production main; only the existing owner's encrypted remote verification, access rights and separate file-retention approval can authorize later data movement and deletion.
+
+
+## Bounded live inventory under heavy VPS load (20 October continuation)
+
+Cold-candidate scanning is now **streaming**, not a Python tuple of every eligible historical log/report. The source iterates over runner diagnostics, completed-age training-report *review* entries, and optional older APK review objects lazily and retains at most the requested number of example rows. It stops when the **8-second** scan budget or **10,000 observed-candidate** ceiling is reached. The full list is never pre-materialized, and the existing five hot-path `du -sx` scans retain their separate per-path deadlines.
+
+The operator view now exposes `inventory_complete`, `scan_limit_reason`, `scan_seconds_budget` and `scan_candidate_limit`. On any budget-exhausted scan it warns that candidate counts and byte totals are only *observed lower bounds*, not a complete archiving inventory. Neither reaching an input row limit nor a runner log being old proves it is safe to archive or delete. The runner directory itself must not be a symlink, even when the contained `_diag` directory appears safe.
+
+Connected zSSH directly inspected and ran the immutable read-only source at [`460d2e5`](https://github.com/Zennay/zCloud/commit/460d2e5f987a46c0c1c2032c4c9a56a434bcb797), without installing it. At that instant the scanner observed **386** age-qualified entries, of which **12** private examples were displayed and **374** explicitly marked omitted; `inventory_complete=true`, `archive_transfer_attempted=false`, `bytes_reclaimed=0`. The self-contained HTML review section was present and no external script was loaded. This was a direct functional source inspection, not a new QA suite or production deploy.
+
+No closed-file verification, crypt upload, checksum, cleanup, claim change or trainer restart was performed. The existing owner-gated transfer/retention sequence is still required, and this PR still needs exact-head GitHub CI and independent approval before main merge.
