@@ -461,8 +461,12 @@ def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]
                is not bool
             or previous["saved_receipts_not_required_checks_verified"] is not True):
         raise ValueError("Earlier bridge is not the same non-authorizing source")
+    previous_first = observed_time(previous.get("earliest_observed_at_utc"))
     before = observed_time(previous.get("latest_observed_at_utc"))
     after = observed_time(current["earliest_observed_at_utc"])
+    current_last = observed_time(current["latest_observed_at_utc"])
+    if previous_first > before or after > current_last:
+        raise ValueError("Saved observation interval is contradictory")
     if before >= after:
         raise ValueError("Previous observations must end before current ones begin")
     if (type(previous.get("issues")) is not list
@@ -475,11 +479,24 @@ def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]
     indexes = previous["missing_batch_indexes"]
     if (len(indexes) > total or
             any(type(n) is not int or n < 1 or n > total for n in indexes)
-            or len(set(indexes)) != len(indexes)):
+            or len(set(indexes)) != len(indexes)
+            or type(previous.get("missing_batch_count")) is not int
+            or previous["missing_batch_count"] != len(indexes)
+            or type(previous.get("observed_batch_count")) is not int
+            or previous["observed_batch_count"] != total - len(indexes)
+            or type(previous.get("review_candidate_pr_count")) is not int
+            or previous["review_candidate_pr_count"] != len(selected)):
         raise ValueError("Prior missing batch coverage is invalid")
     allowed = {item[3]["url"] for item in selected}
-    def inventory(snapshot):
+    known_pairs = {
+        (issue["issue"], row[3]["url"])
+        for row in selected for issue in row[3]["observed_issue_refs"]
+    }
+    batch_of = {row[3]["url"]: position // 4 + 1
+                for position, row in enumerate(selected)}
+    def inventory(snapshot, missing_batches):
         indexed = {}
+        issue_ids = set()
         for issue in snapshot["issues"]:
             if (type(issue) is not dict or type(issue.get("issue")) is not str
                     or ISSUE.fullmatch(issue["issue"]) is None
@@ -488,14 +505,18 @@ def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]
                     or type(issue.get("existing_prs")) is not list
                     or len(issue["existing_prs"]) > 5):
                 raise ValueError("Invalid prior issue identity")
+            if issue["issue"] in issue_ids:
+                raise ValueError("Duplicate saved issue identity")
+            issue_ids.add(issue["issue"])
             for entry in issue["existing_prs"]:
                 if (type(entry) is not dict or entry.get("url") not in allowed
                         or type(entry.get("live_exact_head_review_checks_observation"))
                            is not dict):
                     raise ValueError("Noncanonical prior PR source")
                 url = entry["url"]
-                if issue["issue"].rsplit("#", 1)[0] != PR.fullmatch(url).group(1):
-                    raise ValueError("PR is unrelated to prior issue")
+                if ((issue["issue"], url) not in known_pairs
+                        or batch_of[url] in missing_batches):
+                    raise ValueError("PR/source issue link or coverage is invalid")
                 gate = entry["live_exact_head_review_checks_observation"]
                 if (gate.get("url") != url
                         or gate.get("status") not in ALLOWED_STATUS
@@ -505,15 +526,34 @@ def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]
                     raise ValueError("Prior PR gate receipt cannot be trusted")
                 if gate["status"] == "observed_current_head_partial_gate_evidence":
                     if (type(gate.get("head_sha_observed")) is not str
-                            or HEAD.fullmatch(gate["head_sha_observed"]) is None):
+                            or HEAD.fullmatch(gate["head_sha_observed"]) is None
+                            or gate.get("required_branch_checks_and_rules_verified") is not False):
                         raise ValueError("Prior observed PR HEAD malformed")
+                    for key in ("observed_checks_pending", "observed_checks_not_successful",
+                                "observed_checks_completed",
+                                "observed_independent_exact_head_approvals",
+                                "observed_exact_head_changes_requested",
+                                "legacy_status_pending_observed",
+                                "legacy_status_failure_or_error_observed"):
+                        if type(gate.get(key)) is not int or not 0 <= gate[key] <= 100:
+                            raise ValueError("Invalid prior receipt counter")
+                    for key in ("check_runs_page_complete",
+                                "review_page_may_be_truncated",
+                                "legacy_status_source_may_be_truncated"):
+                        if type(gate.get(key)) is not bool:
+                            raise ValueError("Invalid prior completeness evidence")
                 if url in indexed and indexed[url] != gate:
                     raise ValueError("Inconsistent saved PR receipts")
                 indexed[url] = gate
         return indexed
 
-    old = inventory(previous)
-    new = inventory(current)
+        for url in allowed:
+            if batch_of[url] not in missing_batches and url not in indexed:
+                raise ValueError("Observed batch omitted known linked PR")
+        return indexed
+
+    old = inventory(previous, set(indexes))
+    new = inventory(current, set(current["missing_batch_indexes"]))
     order = {row[3]["url"]: i for i, row in enumerate(selected)}
     affected = []
     for url in allowed:
