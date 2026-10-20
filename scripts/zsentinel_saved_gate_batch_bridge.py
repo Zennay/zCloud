@@ -311,6 +311,42 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
             observed[url] = gate
     missing = set(integrated["missing_batch_indexes"])
     priority_name = ("P0", "P1", "P2", "Unspecified")
+    # Surface blockers before a potentially long 300-PR handoff. Buckets are
+    # only observations; even an apparently ready sample is NOT releasable.
+    groups = {
+        "bron_of_batch_onbekend": [],
+        "checks_niet_geslaagd": [],
+        "checks_nog_lopend": [],
+        "wijzigingen_gevraagd": [],
+        "CI_bron_onvolledig": [],
+        "onafhankelijke_review_niet_gezien": [],
+        "verplichte_regels_en_eigenaarschap_onbekend": [],
+    }
+    for position, (priority, _repo, _number, ref) in enumerate(selected):
+        url = ref["url"]
+        gate = observed.get(url)
+        if (position // 4 + 1 in missing or gate is None or
+                gate.get("status") != "observed_current_head_partial_gate_evidence"):
+            bucket = "bron_of_batch_onbekend"
+        elif (gate["observed_checks_not_successful"] or
+              gate["legacy_status_failure_or_error_observed"]):
+            bucket = "checks_niet_geslaagd"
+        elif gate["observed_checks_pending"] or gate["legacy_status_pending_observed"]:
+            bucket = "checks_nog_lopend"
+        elif gate["observed_exact_head_changes_requested"]:
+            bucket = "wijzigingen_gevraagd"
+        elif (not gate["check_runs_page_complete"] or
+              gate["review_page_may_be_truncated"] or
+              gate["legacy_status_source_may_be_truncated"] or
+              not gate["observed_checks_completed"]):
+            bucket = "CI_bron_onvolledig"
+        elif not gate["observed_independent_exact_head_approvals"]:
+            bucket = "onafhankelijke_review_niet_gezien"
+        else:
+            bucket = "verplichte_regels_en_eigenaarschap_onbekend"
+        groups[bucket].append((priority, url))
+    source_time = datetime.fromisoformat(integrated["earliest_observed_at_utc"])
+    hours_old = max(0, int((datetime.now(timezone.utc) - source_time).total_seconds() // 3600))
     lines = [
         "# zSentinel — private merge-first PR-overdracht",
         "",
@@ -328,9 +364,29 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
         "- Niet bekeken batches: " + (", ".join(map(str, sorted(missing))) or "geen"),
         "- Claims, verplichte branchregels, CI, review en release: **NIET VRIJGEGEVEN**",
         "",
-        "## Prioritaire bestaande PR-kandidaten",
+        "- Leeftijd oudste gate-observatie: " + str(hours_old) + " uur" +
+          (" — **VEROUDERD, eerst live verversen**" if hours_old >= 6 else
+           " — nog steeds slechts een opgeslagen momentopname"),
+        "",
+        "## Eén-scherm merge-first opvolging (observatie, geen autorisatie)",
         "",
     ]
+    for reason, entries in groups.items():
+        lines.append("- **" + reason.replace("_", " ") + "**: " + str(len(entries)))
+        if entries:
+            lines.append("  " + " · ".join(
+                "[" + priority_name[priority] + " " +
+                url.rsplit("/", 2)[-2] + "#" + url.rsplit("/", 1)[-1] +
+                "](" + url + ")" for priority, url in entries[:6]) +
+                (" · … resterend: " + str(len(entries) - 6) if len(entries) > 6 else ""))
+    lines.extend([
+        "",
+        "Deze categorieën zijn uitsluitend prioritering op basis van de "
+        "opgeslagen bronsteekproef. Geen categorie betekent een mergevrijgave.",
+        "",
+        "## Prioritaire bestaande PR-kandidaten",
+        "",
+    ])
     for position, (priority, repo, number, ref) in enumerate(selected):
         url = ref["url"]
         batch = position // 4 + 1
