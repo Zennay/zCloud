@@ -221,6 +221,13 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
             item["project"] + " · " + issue + " · " + title,
             "   " + item["category_nl"],
             "   " + item["human_next_step_nl"],
+            "   Brondekking: PR-bestanden " +
+            ("compleet in gelezen steekproef" if
+             item["pr_file_scope_sample_complete"] else "ONVOLLEDIG") +
+            "; PR-issueverwijzingen " +
+            ("compleet in gelezen steekproef" if
+             item["issue_reference_sample_complete"] else "ONVOLLEDIG") +
+            "; actuele eigenaar/merge UNKNOWN.",
         ])
         if item["candidate_existing_pr_url"]:
             url = item["candidate_existing_pr_url"]
