@@ -6,6 +6,7 @@ counts or missing partial source cannot authorize lease release or recovery.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 FIELDS = ("active_items", "queued_items", "owned_items",
@@ -13,6 +14,12 @@ FIELDS = ("active_items", "queued_items", "owned_items",
           "expired_owner_lease_rows", "unverifiable_owner_lease_rows",
           "invalid_record_rows", "max_claim_attempts")
 MAX_VALUE = 10**9
+GROUP_FIELDS = ("queued", "claimed", "running", "verifying",
+                "high_claim_attempts", "ten_plus_claim_attempts",
+                "expired_owner_lease_rows", "unverifiable_owner_lease_rows",
+                "max_claim_attempts")
+PROJECT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+PRIORITIES = ("P0", "P1", "P2", "P3")
 
 
 def _moment(raw):
@@ -49,7 +56,8 @@ def observed_queue(decision, source_time):
         return {
             "coverage": coverage, "sampled_at_utc": None,
             "totals": None, "sample_is_complete": False,
-            "project_groups_complete": False, "claim_authorized": False,
+            "project_groups_complete": False, "project_groups": [],
+            "claim_authorized": False,
         }
     sampled = _moment(queue.get("observed_at"))
     if sampled > source_time + timedelta(minutes=2):
@@ -77,12 +85,37 @@ def observed_queue(decision, source_time):
         raise ValueError("ambiguous queue source coverage flags")
     if coverage != "current" and groups:
         raise ValueError("noncurrent queue source cannot contain project groups")
+    clean_groups = []
+    seen_groups = set()
+    for entry in groups:
+        if type(entry) is not dict:
+            raise ValueError("invalid historical queue group")
+        pid, priority = entry.get("project_id"), entry.get("priority")
+        if (type(pid) is not str or not PROJECT_ID.fullmatch(pid)
+                or priority not in PRIORITIES or (pid, priority) in seen_groups):
+            raise ValueError("invalid or duplicated queue group identity")
+        seen_groups.add((pid, priority))
+        counts = {}
+        for field in GROUP_FIELDS:
+            value = entry.get(field)
+            if type(value) is not int or not 0 <= value <= MAX_VALUE:
+                raise ValueError("invalid queue project aggregate")
+            counts[field] = value
+        active = sum(counts[f] for f in ("queued", "claimed", "running", "verifying"))
+        if (counts["high_claim_attempts"] > active
+                or counts["ten_plus_claim_attempts"] > counts["high_claim_attempts"]
+                or counts["expired_owner_lease_rows"] +
+                    counts["unverifiable_owner_lease_rows"] >
+                    active - counts["queued"]):
+            raise ValueError("incoherent historical queue group")
+        clean_groups.append({"project_id": pid, "priority": priority, **counts})
     return {
         "coverage": coverage,
         "sampled_at_utc": sampled.isoformat(),
         "totals": clean,
         "sample_is_complete": sample_complete,
         "project_groups_complete": not truncated and coverage == "current",
+        "project_groups": clean_groups,
         "source_fresh_when_saved": source_fresh_when_saved,
         "claim_authorized": False,
     }
@@ -106,7 +139,7 @@ def summarize_queue_windows(source_windows):
             comparisons.append({
                 "from_window": before["index"], "to_window": after["index"],
                 "comparison": "UNKNOWN_source_gap",
-                "deltas": None, "claim_authorized": False,
+                "deltas": None, "project_deltas": None, "claim_authorized": False,
                 "owner_review_required": True,
             })
             continue
@@ -114,10 +147,41 @@ def summarize_queue_windows(source_windows):
             field: right["totals"][field] - left["totals"][field]
             for field in FIELDS
         }
+        # Project evidence is independently complete only when the original
+        # canonical report did not truncate any project+priority group.
+        # An absent group in a COMPLETE sample means no active tasks there,
+        # but still does not prove a previously observed task was resolved.
+        project_deltas = None
+        if left["project_groups_complete"] and right["project_groups_complete"]:
+            left_groups = {
+                (g["project_id"], g["priority"]): g for g in left["project_groups"]
+            }
+            right_groups = {
+                (g["project_id"], g["priority"]): g for g in right["project_groups"]
+            }
+            project_deltas = []
+            for pid, priority in sorted(
+                    set(left_groups) | set(right_groups),
+                    key=lambda key: (PRIORITIES.index(key[1]), key[0])):
+                old, current = left_groups.get((pid, priority), {}), right_groups.get((pid, priority), {})
+                project_deltas.append({
+                    "project_id": pid,
+                    "priority": priority,
+                    "queued_delta": current.get("queued", 0) - old.get("queued", 0),
+                    "high_claim_attempts_delta": (
+                        current.get("high_claim_attempts", 0)
+                        - old.get("high_claim_attempts", 0)),
+                    "expired_owner_lease_rows_delta": (
+                        current.get("expired_owner_lease_rows", 0)
+                        - old.get("expired_owner_lease_rows", 0)),
+                    "task_recovery_verified": False,
+                    "owner_claim_verified": False,
+                })
         comparisons.append({
             "from_window": before["index"], "to_window": after["index"],
             "comparison": "observed_aggregate_delta_not_task_recovery",
             "deltas": differences,
+            "project_deltas": project_deltas,
             "claim_authorized": False,
             "owner_review_required": (
                 differences["high_claim_attempt_items"] > 0
