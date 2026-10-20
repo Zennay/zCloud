@@ -1257,3 +1257,21 @@ geen bewijs dat de PR is gemerged, ingetrokken of afgerond.
 De HTML ontsluit alleen het reeds opgeslagen bronsignaal; dezelfde
 privacygrenzen, no-script-CSP, create-only 0600 output en vereiste
 verse GitHub-/Notion-/releasebevoegdheden blijven intact.
+
+
+### Projectoverzicht en directe PR-sprongen
+
+Het HTML-product heeft nu ook een **projectnavigatie** zonder JavaScript:
+iedere waargenomen repository toont zijn eigen begrensde lijst met
+bestaande PR-kandidaten in P0/P1/P2-volgorde. Vanuit die lijst springt
+de operator direct naar de betrokken PR-kaart in de al geopende
+blokkeringsgroep, zonder eerst door tientallen irrelevante kaarten
+te scrollen. De geselecteerde kaart wordt zichtbaar gemarkeerd.
+De oorspronkelijke GitHub-PR en bronissues blijven afzonderlijk
+klikbaar voor vrijwillige actuele hercontrole.
+
+De index is uitsluitend afgeleid van dezelfde maximaal 300 valide
+bronmanifestkandidaten; de broninventaris moet één-op-één overeenkomen
+met de getoonde kaarten. Een lege index of een historische PR-link
+is geen eigendoms- of mergebewijs. Er wordt geen nieuwe API-bron
+bevraagd en de HTML blijft offline, scriptvrij en niet-autoriseren.
