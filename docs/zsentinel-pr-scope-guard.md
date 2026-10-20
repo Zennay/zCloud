@@ -764,3 +764,48 @@ project-PR-referenties. Het huidige exacte-head CI/reviewbewijs is
 niet hetzelfde als de vereiste branch protection, onafhankelijke review
 voor merge, een geldige actuele eigenaarclaim of releasebevoegdheid.
 Alle autorisatievelden blijven `false`; er worden géén merges uitgevoerd.
+
+
+### Live gate-cockpit: volledige blokkade-informatie en bronmoment
+
+De samengevoegde optionele live-workbench geeft naast de oorspronkelijke
+`human_next_gate_step` ook een **Nederlandstalige actuele blokkadecategorie**
+`human_gate_blocker` per PR terug. De operator ziet nu afzonderlijk:
+
+- Onbereikbare of tijdens twee waarnemingen gewijzigde HEAD/base;
+- Ontbrekende, niet volledige of afgekorte Check Runs, legacy commit-statussen
+  en reviews;
+- Expliciet mislukte Check Runs **of legacy statuscontexten** (die anders
+  onzichtbaar bleven wanneer alleen Check Runs werden getoond);
+- `github_mergeable_boolean_observed=false` als waargenomen
+  GitHub-mergeconflict, `null` als nog niet berekende mergeability;
+- Draft-PR's, op de exacte HEAD gevraagde wijzigingen en lopende
+  checks/legacy-statussen;
+- **Geen enkel waargenomen Check Run of legacy statuscontext** als
+  onbekende verplichte CI, niet als groene CI;
+- Ontbrekende onafhankelijke actuele-HEAD-approval;
+- Als laatste de **altijd afzonderlijk te verifiëren** branchregels,
+  huidige eigenaar/claim en releasebevoegdheid.
+
+De bron levert `observed_gate_blocker_counts`, expliciete
+`check_runs_total_observed`, `observed_legacy_failure_or_error`,
+`observed_exact_head_changes_requested` en `draft_at_read`.
+De HTML/text/Markdown-uitvoer toont deze indicatoren daadwerkelijk per PR
+en onderstreept dat het géén automatische mergebeslissing is.
+
+Oudere rechtstreeks opgehaalde `--gate-pr` PR's krijgen bovendien
+`observed_in_recent_pr_collision_sample=false`, een afzonderlijke
+lijst van **positief waargenomen** `sampled_file_overlaps_observed` en
+`complete_file_collision_coverage_verified=false`. Het overkoepelende
+`source_coverage_complete` wordt bij iedere uit-het-venster afkomstige
+PR uitdrukkelijk `false`; de CLI geeft dan statuscode 3. Zo kan nooit
+onbedoeld een oude volledig-dekkende PR-lijst worden gecombineerd met
+een nieuw rechtstreeks gevonden PR en vervolgens als compleet verschijnen.
+De werkbank toont de UTC-tijd van de gatebron en blijft bij maximaal
+vier gate-PR's, maximaal 28 aanvullende GETs in directe-PR-modus
+(maximaal 20 in de automatische modus). De file-overlapstatus is
+gedeeltelijk, zelfs als nul paden overlappen.
+
+Er worden geen PR's gemerged, geen branchregels of CI overgeslagen,
+geen Notion-/workerclaims genomen en geen workflows of VPS-diensten
+opnieuw gestart.
