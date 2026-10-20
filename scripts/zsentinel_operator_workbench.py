@@ -612,8 +612,24 @@ function acceptGateSource(data){
  if(!data||typeof data!=='object'||Array.isArray(data)||
     data.merge_authorized!==false||data.writes_performed!==false)
   throw Error('Source attempts privileged action');
- let rows,time;
+ let rows,time,reviewContext=null;
  if(data.schema==='zsentinel-current-pr-gate-observation-v1'){
+  if(data.source_review_manifest_sha256!==undefined){
+   const hash=data.source_review_manifest_sha256,origin=data.source_review_board_sha256;
+   if(typeof hash!=='string'||!/^[a-f0-9]{64}$/.test(hash)||
+      origin!==boardSha||!Number.isInteger(data.source_review_pr_count)||
+      data.source_review_pr_count<1||data.source_review_pr_count>300||
+      typeof data.review_only_top_four_observed!=='boolean'||
+      data.review_only_top_four_observed!==(data.source_review_pr_count>4))
+    throw Error('Imported gate proof belongs to another saved board');
+   reviewContext={manifest_sha256:hash,original_board_sha256:origin,
+     candidate_count:data.source_review_pr_count,
+     truncated:data.review_only_top_four_observed};
+  }
+  else if(data.source_review_board_sha256!==undefined||
+    data.review_only_top_four_observed!==undefined||
+    data.source_review_pr_count!==undefined)
+   throw Error('Incomplete imported review provenance');
   if(data.deployment_authorized!==false||
      data.required_branch_protection_verified!==false||
      data.current_review_and_check_samples_only!==true||
@@ -647,7 +663,7 @@ function acceptGateSource(data){
   items.set(gate.url,gate);
  }
  if(!items.size)throw Error('No PR receipt matches this captured source board');
- return {time,timestamp,items,kind:data.schema};
+ return {time,timestamp,items,kind:data.schema,reviewContext};
 }
 function gateState(url){
  const row=prGateImport?.items.get(url);
@@ -776,6 +792,7 @@ function currentPrManifest(){
    optional_imported_observation:prGateImport?.items.get(g.url)?
     {source_kind:prGateImport.kind,source_observed_at_utc:prGateImport.time,
      imported_source_sha256:prGateImport.sha256,
+     original_review_manifest:prGateImport.reviewContext,
      stale_at_export:Date.now()-prGateImport.timestamp>900000,
      receipt:prGateImport.items.get(g.url),
      current_pr_head_verified:false,mandatory_branch_rules_verified:false,
@@ -819,6 +836,11 @@ function currentPrDesk(){
    ...group.issues.map(c=>
     '- '+c.url+' · '+line(c.title,180)+' · '+c.priority+
     ' · human disposition '+(handoffs.get(c.issue)?.decision||'investigate')),
+   'Review source candidates: '+(prGateImport?.reviewContext?
+    prGateImport.reviewContext.candidate_count+';'+
+     (prGateImport.reviewContext.truncated?
+      ' only first 4 examined':' all considered'):
+    'not a review-manifest-based observation'),
    'Imported source SHA256: '+(prGateImport?.items.has(group.url)?
     prGateImport.sha256:'not provided or not applicable'),
    'Imported PR gate observation (non-authorizing): '+line(prGateLabel(group.url),650),
@@ -1565,6 +1587,9 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
   document.getElementById('prGateClear').disabled=false;
   document.getElementById('prGateStatus').textContent=
    accepted.items.size+' linked PR receipts imported · '+accepted.time+
+   (accepted.reviewContext?' · '+accepted.reviewContext.candidate_count+
+    ' candidates in reviewed board; '+
+    (accepted.reviewContext.truncated?'ONLY FIRST FOUR OBSERVED':'all considered'):'')+
    ' · JSON SHA256 '+accepted.sha256.slice(0,12)+
    (Date.now()-accepted.timestamp>900000?
     ' · STALE saved source':' · recent observation, NOT live ownership')+
