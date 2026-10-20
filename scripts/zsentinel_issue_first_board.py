@@ -7,13 +7,15 @@ Observed references in PR descriptions are *not* evidence of fixes.
 import argparse
 import datetime as dt
 import hashlib
+from urllib.parse import quote
 import html
 import json
 import time
 
 import zsentinel_merge_first_board as board
 from zsentinel_issue_merge_priority import (
-    issue_inventory, link_candidates, priority_rank, unaddressed_urgent
+    issue_inventory, link_candidates, priority_rank, unaddressed_urgent,
+    classification, references
 )
 
 MAX_PER_PROJECT = 4
@@ -104,6 +106,100 @@ def collect(projects, registry, budget):
     return rows, unmatched[:24], partial
 
 
+def collect_targeted(project, issue_number, registry, budget):
+    """Find existing product PRs for an explicit urgent issue, even when old.
+
+    The ordinary issue-first inventory sees only the most recently modified
+    100 PRs. This targeted route uses a bounded native GitHub search to reach
+    older still-open PRs, then verifies the canonical issue and PR descriptions
+    from their actual repository sources. Search text is never ownership proof.
+    """
+    choices = [(repo, key) for repo, key in registry.values() if key == project]
+    if len(choices) != 1:
+        raise ValueError("ambiguous canonical issue project")
+    repo, _ = choices[0]
+    issue = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
+    if (not isinstance(issue, dict) or issue.get("number") != issue_number
+            or issue.get("state") != "open" or "pull_request" in issue):
+        raise ValueError("issue does not exist as an open issue")
+    level = classification(issue)
+    issue_info = level or {"number": issue_number, "priority": "UNCLASSIFIED",
+                           "title": str(issue.get("title") or "")[:160]}
+    issue_info["url"] = f"https://github.com/{repo}/issues/{issue_number}"
+    query = quote(f"repo:{repo} is:pr is:open {issue_number}", safe="")
+    found = board.bounded_gh(f"search/issues?q={query}&per_page=100", budget)
+    if not isinstance(found, dict):
+        raise ValueError("invalid issue search source")
+    matches = found.get("items")
+    total = found.get("total_count")
+    if (not isinstance(matches, list) or type(total) is not int
+            or type(found.get("incomplete_results")) is not bool):
+        raise ValueError("incomplete issue search result")
+    partial = []
+    if found["incomplete_results"] or total > len(matches):
+        partial.append({"project": project, "reason": "ISSUE_SEARCH_PARTIAL"})
+    # Search can yield unrelated PRs with a coincidental numeric token.
+    # Inspect no more than 32 candidates, and never equate search hits to links.
+    if len(matches) > 32:
+        partial.append({"project": project, "reason": "CANDIDATE_WINDOW_32"})
+    rows, examined, unique = [], 0, set()
+    for hit in matches[:32]:
+        if not isinstance(hit, dict) or not isinstance(hit.get("number"), int):
+            partial.append({"project": project, "reason": "MALFORMED_SEARCH_ITEM"})
+            continue
+        number = hit["number"]
+        if number in unique:
+            partial.append({"project": project, "reason": "DUPLICATE_SEARCH_ITEM"})
+            continue
+        unique.add(number)
+        if not 1 <= number <= 9999999:
+            continue
+        # Search issue's PR-specific listing can be imperfect; source PR GET
+        # is the only admitted current description and exact head.
+        try:
+            record = board.bounded_gh(f"repos/{repo}/pulls/{number}", budget)
+            if eligible_pr(record) is None:
+                continue
+            body = record.get("body") or ""
+            if not isinstance(body, str) or len(body) > 128000:
+                continue
+            if issue_number not in references(body, {issue_number}):
+                continue
+            fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            report = board.inspect(repo, number, budget,
+                                   expected_body_digest=fingerprint)
+            if (report.get("source") == "COMPLETE"
+                    and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY"}
+                    and report.get("head") == (record.get("head") or {}).get("sha")):
+                report["observed_issue_refs"] = [issue_info]
+                report["issue_reference_source"] = "TARGETED_VERIFIED_PR_BODY"
+            else:
+                report["observed_issue_refs"] = []
+                report["issue_reference_source"] = "UNKNOWN_OR_MOVED"
+            report["reference_proves_fix"] = False
+            report["active_claim_status"] = "UNKNOWN_NOT_OWNED"
+            rows.append(report)
+        except (RuntimeError, ValueError, KeyError, TypeError):
+            partial.append({"project": project, "reason": "CANDIDATE_SOURCE_UNAVAILABLE"})
+        examined += 1
+        if len(rows) >= MAX_PER_PROJECT:
+            partial.append({"project": project, "reason": "MAX_FOUR_MATCHING_PRS"})
+            break
+    # Issue might close while its PRs are being read. We will not advertise
+    # current open urgency on an issue whose last read no longer corroborates.
+    final_issue = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
+    if (not isinstance(final_issue, dict)
+            or final_issue.get("state") != "open"
+            or final_issue.get("number") != issue_number):
+        partial.append({"project": project, "reason": "ISSUE_SOURCE_MOVED"})
+        for row in rows:
+            row["observed_issue_refs"] = []
+            row["issue_reference_source"] = "UNKNOWN_OR_MOVED"
+    return rows, issue_info, partial, {"search_total": total,
+                                      "search_examined": min(len(matches), 32),
+                                      "source": "TARGETED_ISSUE_SEARCH"}
+
+
 def render_issue_sections(unmatched, partial):
     esc = lambda x: html.escape(str(x), quote=True)
     note = (
@@ -152,16 +248,27 @@ def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--project", action="append", required=True,
                      help="canonical project_id (repeat up to three, e.g. cloud, supa)")
+    cli.add_argument("--issue", type=int,
+                     help="target one known open issue outside the recent PR window; requires one --project")
     cli.add_argument("--output", help="create new private 0600 offline .html (never overwrite)")
     cli.add_argument("--format", choices=("text", "json"), default="text")
     args = cli.parse_args()
     if (not 1 <= len(args.project) <= 3 or
             len({p.casefold() for p in args.project}) != len(args.project)):
         cli.error("select up to three distinct projects")
+    if args.issue is not None and (len(args.project) != 1 or not 1 <= args.issue <= 9999999):
+        cli.error("--issue requires one project and positive issue number")
     try:
         registry = board.registry()
         budget = [0, time.monotonic() + board.MAX_SECONDS]
-        rows, unmatched, partial = collect(args.project, registry, budget)
+        targeted = None
+        if args.issue is not None:
+            rows, targeted, partial, target_coverage = collect_targeted(
+                args.project[0], args.issue, registry, budget)
+            unmatched = []
+        else:
+            rows, unmatched, partial = collect(args.project, registry, budget)
+            target_coverage = None
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         if args.output:
             board.private_write(board.Path(args.output),
@@ -172,7 +279,10 @@ def main():
             "github_gets": budget[0],
             "source_partial": bool(partial),
             "partial_reasons": partial,
-            "selection": "P0_P1_OBSERVED_PR_LINK_FIRST",
+            "selection": ("TARGETED_OPEN_ISSUE" if args.issue is not None
+                          else "P0_P1_OBSERVED_PR_LINK_FIRST"),
+            "targeted_issue": targeted,
+            "targeted_coverage": target_coverage,
             "observed_unlinked_issues": unmatched,
             "prs": rows,
             "missing_authorization": "EXACT_CI_REVIEW_CLAIM_AND_RELEASE_REQUIRE_SEPARATE_EVIDENCE",
@@ -195,7 +305,10 @@ def main():
                 print("PARTIAL: " + ", ".join(item["project"] + " " + item["reason"]
                                              for item in partial))
             if not rows:
-                print("No product PRs observed; this does not prove the backlog is empty.")
+                print("No linked existing product PRs observed; this does not prove none exist.")
+            if targeted:
+                print(f"TARGET_ISSUE {targeted['priority']} #{targeted['number']} "
+                      f"{targeted['url']} (source-only, not resolution proof)")
     except (ValueError, OSError, KeyError, TypeError):
         cli.error("invalid project, source, or private output; no merge/write performed")
 
