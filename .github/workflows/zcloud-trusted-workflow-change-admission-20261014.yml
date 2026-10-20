@@ -24,7 +24,8 @@ jobs:
     if: >-
       github.repository == 'Zennay/zCloud' &&
       github.event.pull_request.base.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+      && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 7
     steps:
       - name: Checkout trusted immutable main source (executable)

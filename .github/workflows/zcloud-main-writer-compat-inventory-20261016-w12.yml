@@ -9,8 +9,8 @@ permissions:
 jobs:
   source-only:
     # Read-only source tests are not policy approval or release authority.
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.repository == 'Zennay/zCloud'
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.repository == 'Zennay/zCloud') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 10
     steps:
       - name: Checkout exact same-repo PR head
