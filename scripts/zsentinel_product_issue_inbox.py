@@ -186,6 +186,7 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
     observed = datetime.now(timezone.utc)
     records = {}
     coverage = []
+    recent_open_product_prs = []
     calls = 0
     rate_or_auth_denied = False
     admission_denied_projects = 0
@@ -279,6 +280,31 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                     number = pr["number"]
                     if isinstance(number, bool) or number < 1 or number > 100000000:
                         continue
+                    title = pr.get("title")
+                    pr_head = pr.get("head")
+                    head_sha = pr_head.get("sha") if isinstance(pr_head, dict) else None
+                    base = pr.get("base")
+                    base_repo = base.get("repo") if isinstance(base, dict) else None
+                    base_name = base.get("ref") if isinstance(base, dict) else None
+                    if (pr.get("state") == "open"
+                            and type(title) is str and 0 < len(title) <= 256
+                            and not QA.match(title)
+                            and isinstance(head_sha, str)
+                            and re.fullmatch(r"[a-f0-9]{40}", head_sha)
+                            and isinstance(base_repo, dict)
+                            and base_repo.get("full_name") == repo
+                            and type(base_name) is str and 0 < len(base_name) <= 100):
+                        # This is a PR LIST receipt, not re-fetched gate/HEAD
+                        # evidence, and emphatically not an owner lease.
+                        recent_open_product_prs.append({
+                            "project": project, "repository": repo,
+                            "number": number,
+                            "url": "https://github.com/" + repo + "/pull/" + str(number),
+                            "title": title[:180], "draft": pr.get("draft") is True,
+                            "listed_head_sha": head_sha, "listed_base": base_name,
+                            "source": "bounded_recent_open_pr_listing_unverified_current_head",
+                            "ownership_verified": False, "merge_authorized": False,
+                        })
                     body = pr.get("body")
                     if not isinstance(body, str) or len(body) > 32000:
                         continue
@@ -358,6 +384,9 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
         "observed_at": observed.isoformat(timespec="seconds"),
         "projects": names, "coverage": coverage, "request_count": calls,
         "items": result, "suppressed_qa_only": excluded_qa,
+        # Up to eight already-fetched open PRs per canonical repo. No extra
+        # requests and no assumption that a missing issue reference is free.
+        "recent_open_product_prs": recent_open_product_prs,
         # Global stop only for a confirmed provider limit. Repository-local
         # 401/403 is not authority to suppress independently readable repos.
         "stopped_after_rate_or_auth_denial": rate_or_auth_denied,
