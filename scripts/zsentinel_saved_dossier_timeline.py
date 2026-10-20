@@ -339,7 +339,7 @@ def html_content(report):
         "Bron " + str(s["index"]) + ": " + e(s["latest_observed_utc"])
         for s in report["source_snapshots"])
     paging = report["display"]
-    return """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+    return ("""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; object-src 'none'; img-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <title>zSentinel · historisch PR-overzicht</title>
@@ -366,7 +366,7 @@ Niet-getoond is niet opgelost.</p>""" + "".join(cards) + """
 <footer>Controleer de actuele GitHub HEAD, CI, reviews, Notion-eigenaar,
 protected-main en de echte merge-commit voordat een release mag plaatsvinden.
 Geen API-calls, geen automatische claims of dispatch.</footer>
-</main></body></html>"""
+</main></body></html>""")
 
 
 def render(report, fmt):
