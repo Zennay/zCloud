@@ -363,6 +363,18 @@ def bounded_events(
         else:
             entry["main_merge_evidence"] = "not_proven_in_bounded_history"
     coverage["main_merge_absence_is_unverified"] = True
+    # A source denial is an operator action, not evidence of zero activity.
+    # No provider response body, raw URL or authorization header is retained.
+    if "github_authentication_required" in errors:
+        coverage["provider_admission"] = "authentication_required"
+    elif "github_rate_limit_confirmed" in errors:
+        coverage["provider_admission"] = "rate_limit_confirmed"
+    elif "github_forbidden_or_rate_limit_unknown" in errors:
+        coverage["provider_admission"] = "repository_or_secondary_limit_unknown"
+    elif "not_fetched_after_rate_or_auth_denial" in errors:
+        coverage["provider_admission"] = "global_admission_denied_prior_project"
+    else:
+        coverage["provider_admission"] = "none"
     # Distinguish a GitHub-reported merge target from a main-history commit.
     # These are different observations and must never count twice as shipped.
     coverage["github_pr_target_is_reported"] = True
