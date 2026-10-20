@@ -122,6 +122,19 @@ def candidates(age, limit=MAX_CANDIDATES):
     results.sort(key=lambda x: (x["latest_mtime"], x["name"]))
     return results[:limit]
 
+def bounded_batch(items):
+    """Apply the same four-GiB selection in plan and mutation modes."""
+    selected, deferred = [], []
+    used = 0
+    for item in items:
+        if used + item["bytes"] > MAX_BATCH_BYTES:
+            deferred.append(item)
+            continue
+        selected.append(item)
+        used += item["bytes"]
+    return selected, deferred, used
+
+
 def excluded_dated_directory_count():
     """Report an aggregate only; never list or read foreign project contents."""
     if ROOT.is_symlink() or not ROOT.is_dir():
@@ -213,15 +226,18 @@ def main():
     if args.mode == "plan":
         window = candidates(MIN_UPLOAD_DAYS, limit=MAX_CANDIDATES + 1)
         items = window[:MAX_CANDIDATES]
+        selected, deferred, total = bounded_batch(items)
         print(json.dumps({"mode": "read_only", "cold_days": MIN_UPLOAD_DAYS,
             "candidate_count": len(items), "candidate_window_truncated": len(window) > MAX_CANDIDATES,
             "scope": "zcloud-{cold,archive,backup}-YYYYMMDD[-suffix]",
             "max_candidates": MAX_CANDIDATES, "max_batch_bytes": MAX_BATCH_BYTES,
+            "selected_count": len(selected), "selected_bytes": total,
+            "deferred_by_batch_budget": len(deferred),
             "unscoped_dated_directories_excluded": excluded_dated_directory_count(),
             "unscoped_size_measured": False, "manual_owner_selection_required": True,
             "transfer_performed": False, "cleanup_authorized": False,
             "items": [{"name": x["name"], "bytes": x["bytes"], "files": x["files"]}
-                      for x in items]}, indent=2))
+                      for x in selected]}, indent=2))
         return
     STATE.mkdir(parents=True, exist_ok=True)
     lock = open(STATE / "archive.lock", "a+")
@@ -242,17 +258,18 @@ def main():
     if args.mode == "cleanup" and not prune_authorized():
         print("PRUNE_DISABLED: secure the recovery keys and provide a user-owned mode-0600 approval file", file=sys.stderr)
         raise SystemExit(4)
-    total = 0
-    for item in items:
-        if total + item["bytes"] > MAX_BATCH_BYTES:
-            continue
+    batch, deferred, budgeted_bytes = bounded_batch(items)
+    transferred = 0
+    for item in batch:
         try:
             transfer(item, prune=args.mode == "cleanup")
-            total += item["bytes"]
+            transferred += item["bytes"]
         except Exception as e:
             print("FAILED, ORIGINAL PRESERVED:", item["name"], str(e), file=sys.stderr)
             sys.exit(5)
-    print("COMPLETED:", args.mode, "bytes_considered:", total, flush=True)
+    print("COMPLETED:", args.mode, "bytes_verified:", transferred,
+          "budgeted_bytes:", budgeted_bytes, "deferred_by_batch_budget:", len(deferred),
+          flush=True)
 
 if __name__ == "__main__":
     main()
