@@ -92,7 +92,7 @@ def training_reports(cutoff: float, deadline: float | None = None):
             "bytes": stat.st_size,
             "modified_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
             "can_remove_automatically": False,
-            "no_open_handle_verified": True,
+            "no_open_handle_verified": False,
             "archive_transfer_approved": False,
         }
 
@@ -124,7 +124,7 @@ def old_app_release_review(cutoff: float, deadline: float | None = None):
                 "modified_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
                 "release_superseded_verified": False,
                 "can_remove_automatically": False,
-                "no_open_handle_verified": True,
+                "no_open_handle_verified": False,
                 "archive_transfer_approved": False,
             }
 
@@ -174,7 +174,7 @@ def observe_open_handle_hints(rows: list[dict], seconds: float = 2.0) -> dict:
                 break
             scanned_procs += 1
             try:
-                descriptors = list((proc / "fd").iterdir())
+                descriptors = (proc / "fd").iterdir()
             except (OSError, PermissionError):
                 partial = True
                 continue
