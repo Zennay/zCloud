@@ -100,6 +100,54 @@ backlog of geslaagde scan. De CLI eindigt met een niet-successtatus voor
 onvolledige dekking. Ook een recent bronmoment met geweigerde issue-/PR-bron
 zet `all_projects_currently_read` niet op true.
 
+## Vergelijk actuele en eerder opgeslagen PR-bronnen
+
+Gebruik een **zelf opgeslagen private JSON-portfolio** uit dezelfde projectselectie
+om veranderingen in het werkelijke merge-eerstoverzicht terug te vinden. De
+vergelijking is offline, maakt geen GitHub-, Notion-, VPS- of queue-opvragen en
+wijzigt nooit een claim of PR.
+
+```sh
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --collect-live --previous-portfolio ./vorige-prive-portfolio.json \
+  --format html --output ./huidige-portfolio-met-verschillen.html
+
+# Ook bij uitsluitend opgeslagen bronvensters, zonder netwerk:
+python3 scripts/zsentinel_portfolio_workboard.py \
+  --snapshot ./venster-1.json --snapshot ./venster-2.json \
+  --previous-portfolio ./vorige-prive-portfolio.json \
+  --format md --output ./verschillen-handmatig-opvolgen.md
+```
+
+De private vergelijking leest de vorige bron **éénmalig** als begrensd
+regulier bestand met `O_NOFOLLOW`, controleert identiteit vóór en na de
+lezing, weigert dubbele JSON-velden en bindt de vergelijking aan de SHA-256
+van de exact ingelezen bronbytes. De eerdere bron moet dezelfde geordende
+canonieke projecten bevatten, dezelfde niet-autoriserende status, een geldige
+oude tijdsperiode en maximaal 162 PR-vermeldingen.
+
+De drie onderscheiden signalen zijn:
+
+- **Waargenomen PR-HEAD gewijzigd:** een bestaande PR-vermelding heeft in
+  de nieuwere beperkte bron een andere HEAD; exacte-head checks en review
+  moeten opnieuw worden bekeken.
+- **Nu wél in de beperkte steekproef:** dit bewijst NIET dat de PR nieuw is.
+  De vorige bron kan dezelfde PR eenvoudig buiten de acht recente gevonden
+  vermeldingen hebben gelaten.
+- **Eerder gezien maar nu niet gesampled:** dit bewijst uitdrukkelijk NIET
+  dat de PR is gemerged, gesloten, dat een actieve claim vrij is gekomen
+  of dat een runner is hersteld. Bronbereikbaarheid en paginering kunnen
+  zijn veranderd. Bij geweigerde huidige GitHub-bron wordt de status
+  `current_source_unavailable_NO_CLOSURE_EVIDENCE`.
+
+Het verschilrapport zit als `pr_delta_since_previous_portfolio` in de private
+JSON-uitvoer, en als beperkte klikbare bronsectie in HTML/Markdown. De
+volledige lijsten zijn maximaal 162 huidige en 162 historisch verdwenen
+PR-vermeldingen; de lange HTML/Markdown-lijsten zijn ingekort om de
+operatorinterface leesbaar te houden. Geen enkele kaart verleent
+merge-/release-/eigendomsautorisatie. Verplichte huidige CI, onafhankelijke
+review en productie-eigenaar blijven de enige geldige autoriteitsroute.
+
 ## Bewuste grenzen
 - Maximaal **18 canonieke repositories**, in maximaal **zes niet-overlappende
   vensters** van drie projecten; per venster maximaal 24 productissues.
