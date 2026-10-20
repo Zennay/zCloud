@@ -589,3 +589,31 @@ The FTMO autonomous systemd service is root-managed and outside this
 sidecar's authority. Its own owner must resolve the reported inaccessible
 `/home/ubuntu` paths through an authorized privileged release; no blanket
 permissions or zCloud SQLite write access should be granted to work around it.
+
+
+## Structured owner inbox for integration consumers (source-only)
+
+The **same existing** one-shot workbench now exports a bounded JSON inbox,
+without new GitHub calls or permission to restart/claim/merge/deploy:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --format json --output "$HOME/private-recovery/inbox-now.json"
+python3 scripts/zsentinel_runner_report.py --format json --t0 "$HOME/private-recovery/T0.json" --t1 "$HOME/private-recovery/T1.json" --output "$HOME/private-recovery/inbox-pair.json"
+python3 scripts/zsentinel_runner_report.py --format json --timeline "$HOME/private-recovery/T0.json" "$HOME/private-recovery/T1.json" "$HOME/private-recovery/T2.json" --output "$HOME/private-recovery/inbox-history.json"
+```
+
+`zsentinel.runner-owner-inbox.v1` contains a provenance-labelled current/pair/
+timeline observation window, bounded observed service state counts, capacity
+measurements, up to **three** concrete human-owner work items with status,
+explicit partial-source flags and denied action authorities. Missing runner
+source produces `null` counts, never false zero; an old offline pair or
+timeline is **not** a new live observation. Service activity is not GitHub
+assignment, a completed job or production recovery; `github_job_recovered`
+and `production_restored` remain `null`.
+
+JSON is written to a **new** private 0600 `.json` file through the existing
+create-only writer. Like HTML/Markdown, no raw process arguments, credentials,
+private input paths, worker claims or source filesystem trees are exported.
+The manifest-based portable operator bundle already includes this updated
+report module. This is a **source PR feature only**, not a deployed feature
+until exact-head CI, independent review and authorized release.
