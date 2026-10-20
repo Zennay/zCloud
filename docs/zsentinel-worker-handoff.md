@@ -183,3 +183,20 @@ Dit is een echte productmatige observer/recovery-triageverbetering,
 geen vervanging voor de transactionele bounded retry- en
 leasewriter-afspraken uit
 [zCloud #677](https://github.com/Zennay/zCloud/issues/677).
+
+## Browserblok zonder bekende opdrachtcontext
+
+Een recente `send-blocked` of vergelijkbare browser-event mag
+alleen als **blok na de laatste opdracht** worden gepresenteerd als
+de geïndexeerde bron óók een eerdere `prompt-sent` heeft gezien en
+het foutevent een hoger event-ID heeft. Een foutsignaal **zonder**
+waargenomen `prompt-sent` krijgt nu de afzonderlijke categorie
+`recent_browser_block_without_prompt_context_owner_review`.
+Het blijft in de eigenaar-inbox, maar wordt nadrukkelijk
+niet aan een concrete taak, claimepoch, deliverable of actuele
+runnerstoring toegeschreven.
+
+De handoff adviseert dan eerst opdrachtbron/toewijzing bij de
+bevoegde eigenaar te controleren. Het verschil is zichtbaar in
+JSON, tekst, Markdown en HTML; er is geen automatische herstelactie
+en geen muterende browser- of runtimeopvraag nodig.
