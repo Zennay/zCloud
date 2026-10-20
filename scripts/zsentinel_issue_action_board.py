@@ -231,6 +231,9 @@ def build(report):
                 "linked_issue_urls_in_source": [],
                 "primary_issue_urls_in_source": [],
                 "issue_categories_observed": [],
+                "gate_states_observed_in_source": [],
+                "any_file_overlap_observed": False,
+                "any_historical_movement_observed": False,
                 "fixes_all_linked_issues_verified": False,
                 "current_owner_verified": False,
                 "merge_authorized": False,
@@ -238,6 +241,10 @@ def build(report):
             if ORDER[card["priority"]] < ORDER[group["highest_priority"]]:
                 group["highest_priority"] = card["priority"]
             group["linked_issue_urls_in_source"].append(card["issue_url"])
+            if linked["gate_state"] not in group["gate_states_observed_in_source"]:
+                group["gate_states_observed_in_source"].append(linked["gate_state"])
+            group["any_file_overlap_observed"] |= linked["file_overlap_observed"]
+            group["any_historical_movement_observed"] |= linked["source_movement_observed"]
             if pr_url == card["candidate_existing_pr_url"]:
                 group["primary_issue_urls_in_source"].append(card["issue_url"])
             if card["category"] not in group["issue_categories_observed"]:
@@ -248,6 +255,21 @@ def build(report):
     for group in pr_groups:
         group["linked_issue_count_observed"] = len(group["linked_issue_urls_in_source"])
         group["primary_issue_count_observed"] = len(group["primary_issue_urls_in_source"])
+        observations = sorted(group["gate_states_observed_in_source"])
+        group["gate_states_observed_in_source"] = observations
+        group["group_gate_source_state"] = (
+            observations[0] if len(observations) == 1
+            else "inconsistent_existing_pr_gate_sources"
+        )
+        group["human_next_gate_step"] = {
+            "observed_failed": "Eigenaar: herstel falende exacte-HEAD checks of reviewwijzigingen.",
+            "observed_pending": "Wacht op CI; pak intussen ander onafhankelijk productwerk.",
+            "not_observed": "Haal actuele exacte-HEAD check- en reviewbron op.",
+            "observed_partial_no_release_permission":
+                "Controleer verplichte branchregels, onafhankelijke review en eigenaarschap.",
+            "inconsistent_existing_pr_gate_sources":
+                "Bronissues melden verschillende gates voor dezelfde PR: controleer actuele HEAD.",
+        }[group["group_gate_source_state"]]
         group["additional_issues_do_not_prove_fixes"] = True
     totals = Counter(item["category"] for item in cards)
     return {
@@ -319,6 +341,13 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
                          " productissue(s) in deze bron noemen de PR; " +
                          str(primary_visible) +
                          " daarvan hebben deze als primaire reviewkandidaat (geen fixbewijs).")
+            lines.append("  Waargenomen gatebron: " +
+                         group["group_gate_source_state"] + " · " +
+                         group["human_next_gate_step"])
+            if group["any_file_overlap_observed"]:
+                lines.append("  Bestandscope-overlap in bron gezien: stem af met eigenaar.")
+            if group["any_historical_movement_observed"]:
+                lines.append("  Historische PR-bronbeweging gezien: exacte HEAD opnieuw beoordelen.")
             for issue_url in linked_visible:
                 lines.append("  " + ("[Issue](" + issue_url + ")"
                                     if style == "markdown" else issue_url))
