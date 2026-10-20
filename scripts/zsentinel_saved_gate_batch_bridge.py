@@ -634,8 +634,10 @@ def main(argv=None):
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown"), default="json",
+    parser.add_argument("--format", choices=("json", "markdown", "html", "csv", "portfolio-csv", "portfolio-json", "portfolio-markdown", "portfolio-html"), default="json",
                         help="Private browser import, full Markdown, offline HTML, PR/project CSV, project-only Markdown or owner-neutral portfolio JSON")
+    parser.add_argument("--project",
+                        help="Exact source-observed repository (e.g. Zennay/zCloud); only --format portfolio-*")
     parser.add_argument("--previous", type=Path,
                         help="Prior private JSON bridge for same-manifest PR change view (HTML or Markdown)")
     parser.add_argument("--output", type=Path, required=True)
@@ -646,24 +648,34 @@ def main(argv=None):
                                    allow_partial=args.allow_partial)
         if args.previous is not None and args.format not in ("markdown", "html"):
             raise ValueError("Previous observation requires a human-readable handoff")
-        if args.format == "portfolio-markdown":
+        if args.project is not None and not args.format.startswith("portfolio-"):
+            raise ValueError("Project scope is supported only by portfolio output formats")
+        if args.format == "portfolio-html":
+            from zsentinel_saved_gate_portfolio import portfolio_page_html
+            selected, _ = canonical_manifest(review, raw)
+            rendered = portfolio_page_html(
+                selected, result, project=args.project).encode("utf-8")
+        elif args.format == "portfolio-markdown":
             # A compact multi-project PR action handoff with every candidate,
             # not a release authorization, ownership claim or live CI feed.
             from zsentinel_saved_gate_portfolio import portfolio_markdown
             selected, _ = canonical_manifest(review, raw)
-            rendered = portfolio_markdown(selected, result).encode("utf-8")
+            rendered = portfolio_markdown(
+                selected, result, project=args.project).encode("utf-8")
         elif args.format == "portfolio-json":
             # Downstream runtime owners receive only source-bound suggestions,
             # never dispatch/claim/release permission or all-clear evidence.
             from zsentinel_saved_gate_portfolio import portfolio_json
             selected, _ = canonical_manifest(review, raw)
-            rendered = portfolio_json(selected, result).encode("utf-8")
+            rendered = portfolio_json(
+                selected, result, project=args.project).encode("utf-8")
         elif args.format == "portfolio-csv":
             # Project-level work slices must preserve unknown gates and
             # never infer that absent projects have no open product PRs.
             from zsentinel_saved_gate_portfolio import portfolio_csv
             selected, _ = canonical_manifest(review, raw)
-            rendered = portfolio_csv(selected, result).encode("utf-8")
+            rendered = portfolio_csv(
+                selected, result, project=args.project).encode("utf-8")
         elif args.format == "csv":
             # Operators can sort a private PR inventory without accidentally
             # upgrading saved partial CI/ownership into an approval.
