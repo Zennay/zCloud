@@ -100,12 +100,15 @@ def build(report):
         selected = None
         link_count = 0
         linked_candidates = []
+        seen_pr_urls = set()
         for p in refs:
             url = p.get("url") if type(p) is dict else None
             if (type(url) is not str or PR.fullmatch(url) is None
                     or url.split("/pull/", 1)[0] != issue["url"].split("/issues/", 1)[0]
-                    or p.get("merge_authorized") is not False):
-                raise ValueError("untrusted linked PR or authority")
+                    or p.get("merge_authorized") is not False
+                    or url in seen_pr_urls):
+                raise ValueError("untrusted, repeated linked PR or authority")
+            seen_pr_urls.add(url)
             link_count += 1
             live = p.get("live_exact_head_review_checks_observation")
             has_live_gate = type(live) is dict and (
