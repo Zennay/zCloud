@@ -462,6 +462,16 @@ Een fysieke verandering ná de allerlaatste meting is niet atomair met
 systemd te voorkomen; operationeel blijft de bevoegde eigenaar
 verantwoordelijk voor de releases en de volgende timercyclus.
 
+**Redenen voor uitgestelde opschaling zijn zichtbaar.** De operatorweergave
+en privébronmomenten onderscheiden `promotion-waiting` van drie
+herstelde wachttijden: `promotion-reset-context` wanneer er een nieuwe
+runner/drukcategorie/opstartsessie verschijnt, `promotion-reset-policy`
+wanneer de huidige cgroup of gewenste hersteltrap verandert, en
+`promotion-reset-gap` wanneer er meer dan 240 seconden zonder
+bruikbare opvolgmeting verstreken. Bij oudere of onbetrouwbare status
+begint de wachttijd gewoon opnieuw. De bronstatus is een uitlegbaar
+beslisbewijs, **geen** machtiging om de CPU-instelling te veranderen.
+
 **Privéstatus zonder directory-race.** De CPU-beslisbon is maximaal
 16 KiB, alleen leesbaar als regulier bestand met eigenaar-gelijk-UID en
 zonder groep/wereldrechten. Niet alleen het bestand maar ook de
