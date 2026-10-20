@@ -517,6 +517,8 @@ def operator_text(source):
             f" · current_lease={row['queue_lease_current_from_source']}"
             f" · event_age_s={row['event_age_seconds']}"
             f" · progress_age_s={row['progress_age_seconds']}"
+            f" · indexed_event_cursor={row.get('latest_indexed_event_id', 'ONBEKEND')}"
+            f" · indexed_progress_event_cursor={row.get('latest_indexed_progress_event_id', 'ONBEKEND')}"
             f" · last_12_blocks_after_prompt={(row.get('timeline') or {}).get('recent_block_events_after_last_prompt_in_sample', 'ONBEKEND')}"
             f" · last_12_progress_after_prompt={(row.get('timeline') or {}).get('recent_progress_events_after_last_prompt_in_sample', 'ONBEKEND')}"
             f" · followup={row.get('safe_followup', 'owner_recheck_current_source_without_recovery')}"
@@ -780,6 +782,13 @@ def worker_progress_html(source):
             (str(age) + ' sec' if age is not None else 'ONBEKEND') +
             ' · Laatste bronvoortgang: ' +
             (str(progress) + ' sec' if progress is not None else 'ONBEKEND') +
+            ' · Laatste indexcursor/progress-eventcursor: ' +
+            (str(row["latest_indexed_event_id"])
+             if type(row.get("latest_indexed_event_id")) is int else 'ONBEKEND') +
+            ' / ' +
+            (str(row["latest_indexed_progress_event_id"])
+             if type(row.get("latest_indexed_progress_event_id")) is int else 'ONBEKEND') +
+            ' (browsersignaal; geen claimepoch)' +
             ' · Actuele sample: ' +
             ('ONBEKEND (historisch venster)' if legacy_row else
              str(counts[1]) + ' blokkeersignalen, ' +
