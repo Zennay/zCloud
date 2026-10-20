@@ -340,6 +340,10 @@ def main():
             decision["worker_progress_observation"] = bundle["worker_progress_observation"]
         if "notion_claims_observation" in bundle:
             decision["notion_claims_observation"] = bundle["notion_claims_observation"]
+        owner_handoff = None
+        if args.handoff_output is not None:
+            from zsentinel_runtime_handoff import build_handoff
+            owner_handoff = build_handoff(decision)
         disk_private_html = None
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
@@ -374,6 +378,12 @@ def main():
             from zsentinel_pinned_issue import pinned_receipts_html
             from zsentinel_worker_progress_observer import worker_progress_html
             rendered = html_view(decision)
+            if owner_handoff is not None:
+                from zsentinel_runtime_handoff import handoff_html
+                if rendered.count("<main>") != 1:
+                    raise ValueError("incompatible owner handoff HTML base")
+                rendered = rendered.replace("<main>", "<main>" +
+                                            handoff_html(owner_handoff), 1)
             if "disk_pressure_private_report" in decision:
                 from zsentinel_disk_hotspots import public_summary_html
                 if rendered.count("<main>") != 1:
@@ -453,10 +463,9 @@ def main():
             private_desk = rendered if args.format == "desk" else review_html(decision)
             write_private_html(args.desk_output, private_desk)
         if args.handoff_output is not None:
-            from zsentinel_runtime_handoff import build_handoff, serialize
+            from zsentinel_runtime_handoff import serialize
             from zsentinel_private_output import write_private_output
-            handoff = build_handoff(decision)
-            private_content = serialize(handoff, args.handoff_output.suffix)
+            private_content = serialize(owner_handoff, args.handoff_output.suffix)
             try:
                 write_private_output(args.handoff_output, private_content,
                                      args.handoff_output.suffix.lstrip("."))
