@@ -118,6 +118,22 @@ class _NoGithubRedirects(urllib.request.HTTPRedirectHandler):
 _GITHUB_OPENER = urllib.request.build_opener(_NoGithubRedirects())
 
 
+class GithubAdmissionError(ValueError):
+    """Non-secret provider denial category with backwards-compatible error text.
+
+    Caller-visible messages remain intentionally indistinguishable when
+    GitHub's 403 response cannot prove billing, rate limit or repo permission.
+    """
+
+    def __init__(self, category):
+        if category not in (
+                "authentication_required", "rate_limit_confirmed",
+                "forbidden_or_rate_limit_unknown"):
+            raise ValueError("invalid GitHub admission category")
+        super().__init__("github_permission_or_rate_limit")
+        self.category = category
+
+
 def bounded_get(url, token):
     # A redirect is a degraded source result, not permission to forward credentials.
     parsed = urllib.parse.urlsplit(url)
@@ -142,8 +158,17 @@ def bounded_get(url, token):
     except urllib.error.HTTPError as error:
         if error.code == 404:
             raise ValueError("repository_inaccessible") from None
-        if error.code in (401, 403, 429):
-            raise ValueError("github_permission_or_rate_limit") from None
+        if error.code == 401:
+            raise GithubAdmissionError("authentication_required") from None
+        if error.code == 429:
+            raise GithubAdmissionError("rate_limit_confirmed") from None
+        if error.code == 403:
+            # GitHub can report a rate-budget exhaustion as HTTP 403.
+            # Headers only; never copy exception bodies, URLs or credentials.
+            remaining = error.headers.get("X-RateLimit-Remaining")
+            category = ("rate_limit_confirmed" if remaining == "0"
+                        else "forbidden_or_rate_limit_unknown")
+            raise GithubAdmissionError(category) from None
         raise ValueError("github_http_unavailable") from None
     except (TimeoutError, OSError, urllib.error.URLError):
         raise ValueError("github_network_unavailable") from None
