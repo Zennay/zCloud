@@ -48,3 +48,22 @@ De GitHub-bron-PR moet exact bestaan, open zijn en bij het gekozen canonieke pro
 De POSIX-padparser accepteert Unicode en routebestanden zoals `src/app/(dashboard)/page.tsx` en `src/routes/[slug].ts`. Absolute paden, `..`, control-tekens en backslashes worden geweigerd; HTML-links en bestandsnamen worden veilig ge-escaped. Een bestaand bestand met ongebruikelijke naam leidt dus niet automatisch tot een valse GitHub-bronstoring.
 
 GitHub's PR-bestandsscope kan óók veranderen wanneer alleen de doelbranch opschuift. Daarom pint de bron zowel `base_sha` als `head_sha` van alle bekeken PR's. Een afwijkende basis of head bij de tweede inventarislezing (of bij de expliciet geselecteerde PR) wordt als gewijzigde/onvolledige bron behandeld. Het resultaat blijft altijd niet-autoriserend.
+
+
+## Projectbrede open-PR-conflictkaart
+
+Het vorige werk vereiste een geselecteerde PR of bestandspad. Nu is er ook één commando om zonder handmatig invoerwerk de *huidige open PR's binnen één project onderling* te vergelijken:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs --max-prs 48 --format html \
+  > /secure/location/zsentinel-pr-conflictkaart.html
+```
+
+De output toont paren met **dezelfde bestandsnamen**, de links naar beide bestaande PR's, de waargenomen aantallen en maximaal 24 gedeelde bestandspaden per paar. De resultaten worden op het aantal gedeelde bestanden gesorteerd, zodat de operator eerst potentieel grote overlap inspecteert. Dit is **geen Git-mergeconflict-analyse**, geen eigendomsbeslissing en geen automatisch instructie tot sluiting of merge.
+
+De bron is een begrensde GitHub-GET-steekproef: maximaal 48 open PR's worden geïnspecteerd, op elk maximaal 100 bestandspaden, en maximaal 200 botsende PR-paren weergegeven. De bron-HEAD en base-SHA van alle PR's worden in de vóór-/nalezing gepind; padhernoemingen tellen voor zowel oude als nieuwe naam. Een eerste pagina met precies 100 items, de ingestelde limiet, een bestandslijst met precies 100 records, veranderde PR-identiteit of afgekapte paarlijst zijn expliciet onvoldoende voor een volledige open-PR-inventaris. GitHub/Notion/workerclaims worden nooit gewijzigd.
+
+*Exitcode*: `2` betekent zichtbare bestandsoverlap, `3` onvolledige bron zonder overlap, `0` complete stabiele open-PR-steekproef zonder overlap. Ook code `0` geeft geen claim-, edit-, merge- of deployrechten.
+
+Deze conflictkaart maakt de grote open-PR backlog bespreekbaar voordat een worker bestaand werk dupliceert. Eventuele bronbotsingen moeten eerst langs de echte eigenaar/lease- en reviewprocedure. Een oude open PR is nooit op zichzelf bewijs van actuele eigenaarschap.
