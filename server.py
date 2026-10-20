@@ -2969,7 +2969,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
             'Fix blockers, broken workers and open issues across OTHER portfolio projects',
             'P1',
             'PRIORITY 1: pick the highest-impact unowned actionable blocker in one of the 13 real projects. '
-            'Fix the underlying failure with code, tests, runtime verification and scoped permissions. '
+            'Fix the underlying product failure with code, integration, build or direct functional inspection and scoped permissions. Do not write or run QA, regression or test suites; preserve existing mandatory CI and reviewer gates. '
             'Read current Notion HQ/handoff and GitHub issues, PRs, CI, worker claims and deployment evidence '
             'for the affected real project. Do not create a zSentinel product roadmap, '
             'zSentinel QA tasks or zSentinel feature PRs. Do not steal existing ownership or skip gates. '
@@ -2983,7 +2983,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
         'Treat this assignment as a long-running implementation block: identify the highest-value safe unblocked roadmap area, '
         'then complete as many adjacent write-capable steps as can be safely finished in the same lane before yielding. '
         'Completion requires at least three material implementation actions across code/config/workflows/experiments/runtime state '
-        'OR one clearly large end-to-end implementation that spans multiple files/components, plus automated test/build/run evidence. '
+        'OR one clearly large end-to-end implementation that spans multiple files/components, plus build or direct functional inspection evidence. Do not write, extend or run QA, regression or test suites. Existing mandatory CI, security, authorization and release gates remain unchanged. '
         'A single tiny edit, one config tweak, one commit, read-only inspection, audit, status, checklist, documentation-only work, '
         'or evidence collection alone cannot complete this item. After every successful sub-step, immediately continue to the next '
         'safe adjacent roadmap step within the same assignment. Only return DONE when the work package is genuinely exhausted, '
@@ -2994,7 +2994,7 @@ def portfolio_write_continuation(project_id,parent_queue_id=None):
     if project_id=='ftmo':
         criteria += ' FTMO priority rule: keep advancing safe preregistered generations continuously; after one gate is proven, continue to the next safe write-capable generation step instead of yielding the lane to lower-priority projects.'
     if project_id=='zssh':
-        criteria += ' zSSH research-first rule: before architectural, security, authentication, permission, public-review, or UX decisions, research current primary sources and record dated source URLs plus the engineering decision in docs/research or an ADR; then implement and test the decision. Research-only is not completion, but coding without research evidence is also not completion. Optimize every continuation toward a ship-ready public plugin: universal HTTPS MCP endpoint, production OAuth, simple connect website, target pairing/revocation, explicit scoped sudo grants, plugin package/review materials, red-team gates, and production submission-readiness evidence.'
+        criteria += ' zSSH research-first rule: before architectural, security, authentication, permission, public-review, or UX decisions, research current primary sources and record dated source URLs plus the engineering decision in docs/research or an ADR; then implement and inspect the decision directly without new QA or test-suite runs. Research-only is not completion, but coding without research evidence is also not completion. Optimize every continuation toward a ship-ready public plugin: universal HTTPS MCP endpoint, production OAuth, simple connect website, target pairing/revocation, explicit scoped sudo grants, plugin package/review materials, red-team gates, and production submission-readiness evidence.'
     return portfolio_queue_enqueue(
         project_id,
         f'Execute substantial {name} roadmap work package',
