@@ -86,3 +86,26 @@ wordt bij niet-HTML-uitvoer geweigerd.
 - `scripts/zsentinel_runtime_handoff.py` — bronvalidatie, P0/P1-triage en Markdown/JSON-rendering.
 - `scripts/zsentinel_live_cockpit.py` — nieuwe optionele `--handoff-output`, padisolatie, veilige create-only export; bestaande HTML/JSON/tekstworkflow intact.
 - `scripts/zsentinel_private_output.py` — reeds bestaande, hergebruikte private 0600-uitvoer; **niet** aangepast.
+
+## 20 oktober · exacte jobnavigatie en eigenaarstermijn
+
+De P0/P1-incidentkaarten tonen bij een actueel door de router erkend
+github_exact_run_job-bewijs de volledige GitHub-run-ID, job-ID en
+40-tekens HEAD SHA. De live cockpit en portfolio-overview geven hun
+canonieke projects.json-repositorymapping mee aan de kaartopbouw;
+daardoor zijn de Exacte job- en Exacte commit-links direct aanklikbaar
+in de offline HTML en leesbaar in privé-Markdown. JSON bevat dezelfde
+canonieke bronvelden voor handmatige triage. Onbekende jobidentiteit
+blijft afwezig: een projectnaam alleen leidt nooit tot een link.
+
+Een incidentkaart toont ook review_by_utc: de oorspronkelijke
+target_review_by uit de herstelbeslissing, in UTC. Dit is een
+menselijke beoordelingsdeadline, geen herinnering of bewijs van
+acceptatie. Ongetekende of naïeve tijdstempels falen conservatief;
+jobvelden vereisen positieve integer-ID's en een volledige lowercase SHA.
+
+De links zijn uitsluitend navigatie naar bronbewijs. Er is geen
+GitHub-mutatierecht, Notion-claim, VPS-, database- of workeractie
+toegevoegd. Claim/retry/merge/deploy blijven uitdrukkelijk niet
+geautoriseerd. De bestaande PR #1563 vereist vóór levering naar main
+exacte-head verplichte CI, onafhankelijke review en branch protection.
