@@ -160,8 +160,15 @@ def render_html(board, max_rows=20):
             "</label></div></article>"
         )
     visible_issues = {card["issue_url"] for card in cards[:max_rows]}
+    visible_project = {card["issue_url"]: card["project"]
+                       for card in cards[:max_rows]}
+    groups = board.get("pr_groups", [])
+    if (type(groups) is not list or len(groups) > MAX_CARDS * 5):
+        raise ValueError("unbounded existing PR work groups")
     grouped = []
-    for group in board.get("pr_groups", []):
+    group_source = []
+    seen_group_prs = set()
+    for group in groups:
         pr = group.get("pr_url") if type(group) is dict else None
         linked = group.get("linked_issue_urls_in_source") if type(group) is dict else None
         if (type(pr) is not str or PR.fullmatch(pr) is None
@@ -173,6 +180,9 @@ def render_html(board, max_rows=20):
                        or url.split("/issues/", 1)[0] != pr.split("/pull/", 1)[0]
                        for url in linked)):
             raise ValueError("untrusted existing PR issue-group evidence")
+        if pr in seen_group_prs:
+            raise ValueError("duplicated PR group")
+        seen_group_prs.add(pr)
         primary_urls = group.get("primary_issue_urls_in_source", [])
         if (type(primary_urls) is not list
                 or len(primary_urls) > len(linked)
@@ -185,12 +195,22 @@ def render_html(board, max_rows=20):
         if not shown_links:
             continue
         primary_visible = sum(url in visible_issues for url in primary_urls)
+        source_projects = {visible_project[url] for url in shown_links}
+        if len(source_projects) != 1:
+            raise ValueError("PR issue group spans inconsistent local projects")
+        group_project = next(iter(source_projects))
+        group_source.append((
+            pr, group["highest_priority"], tuple(linked), tuple(primary_urls)))
         refs = "".join("<li><a rel='noopener noreferrer' target='_blank' href='" +
                        escape(url, quote=True) + "'>Issue " +
                        escape(url.rsplit("/", 1)[-1]) + "</a></li>"
                        for url in shown_links)
         grouped.append(
-            "<li><strong>" + escape(group["highest_priority"]) + "</strong> · "
+            "<li class='pr-work' data-pr='" + escape(pr, quote=True) +
+            "' data-project='" + escape(group_project, quote=True) +
+            "' data-priority='" + escape(group["highest_priority"], quote=True) +
+            "' data-issues='" + escape(" ".join(shown_links), quote=True) +
+            "'><strong>" + escape(group["highest_priority"]) + "</strong> · "
             "<a rel='noopener noreferrer' target='_blank' href='" +
             escape(pr, quote=True) + "'>PR " +
             escape(pr.rsplit("/", 1)[-1]) + "</a> · " +
@@ -198,10 +218,21 @@ def render_html(board, max_rows=20):
             " gekoppelde issuevermelding(en) in deze beperkte overdracht; " +
             str(primary_visible) + " als primaire reviewkandidaat"
             "<details><summary>Bekijk bronissues (geen fixbewijs)</summary><ul>" +
-            refs + "</ul></details></li>"
+            refs + "</ul></details>"
+            "<div class='pr-controls'><label>Privé PR-opvolging"
+            "<select class='pr-local-state'>"
+            "<option value='open'>Nog te beoordelen</option>"
+            "<option value='review'>Wacht op review/CI</option>"
+            "<option value='owner'>Wacht op huidige eigenaar</option>"
+            "<option value='coordinate'>Afstemming tussen PRs nodig</option>"
+            "<option value='followup'>Opvolging vastgelegd</option>"
+            "</select></label><label>Privé PR-notitie, geen GitHub-commentaar"
+            "<textarea class='pr-note' maxlength='500' rows='2'"
+            " placeholder='Menselijke opvolging; geen merge- of eigenaarvrijgave'></textarea>"
+            "</label></div></li>"
         )
     groups_panel = (
-        "<section class='ticket'><h2>Bestaande PR's als één werkgroep</h2>"
+        "<section class='pr-panel'><h2>Bestaande PR's als één werkgroep</h2>"
         "<p>Iedere bestaande PR-kandidaat staat hier, ook als een andere PR "
         "primair bij het issue werd gekozen. Gedeelde issuevermeldingen zijn "
         "géén fixbewijs, eigenaarschap of mergevrijgave.</p>"
@@ -337,6 +368,7 @@ refresh();
     # to different observations or reordered PR/issue sets.
     source_identity = {
         "issue_time": str(ts_issue), "pr_time": str(ts_pr),
+        "visible_pr_groups": group_source,
         "visible_rows": [
             (row["issue_url"], row["candidate_existing_pr_url"],
              row.get("candidate_exact_head_gate_state"),
