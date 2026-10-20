@@ -49,7 +49,10 @@ data class AlertItem(
     val humanActionRequired: Boolean = false,
     val cause: String? = null,
     val impact: String? = null,
-    val action: String? = null
+    val action: String? = null,
+    // Opaque stable identity for one currently unresolved episode. A changing
+    // provider poll timestamp alone must not re-notify the same condition.
+    val episodeId: String? = null
 )
 
 data class WatchSnapshot(
