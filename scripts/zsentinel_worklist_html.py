@@ -51,8 +51,46 @@ def render_html(board, max_rows=20):
                 type(pr) is not str or PR.fullmatch(pr) is None
                 or pr.split("/pull/", 1)[0] != row["issue_url"].split("/issues/", 1)[0]):
             raise ValueError("cross-repository candidate PR in operator inbox")
+        other_prs = row.get("other_existing_pr_candidates_in_sample", [])
+        if type(other_prs) is not list or len(other_prs) > 4:
+            raise ValueError("unbounded alternative PR candidates")
+        other_seen = set()
+        alt_items = []
+        for other in other_prs:
+            if type(other) is not dict:
+                raise ValueError("invalid alternative PR source")
+            alt_url = other.get("url")
+            gate_state = other.get("gate_state")
+            if (type(alt_url) is not str or PR.fullmatch(alt_url) is None
+                    or alt_url.split("/pull/", 1)[0] != row["issue_url"].split("/issues/", 1)[0]
+                    or alt_url == pr or alt_url in other_seen
+                    or gate_state not in (
+                        "not_observed", "observed_failed", "observed_pending",
+                        "observed_partial_no_release_permission")
+                    or type(other.get("file_overlap_observed")) is not bool
+                    or type(other.get("source_movement_observed")) is not bool
+                    or other.get("merge_authorized") is not False
+                    or other.get("owner_verified") is not False):
+                raise ValueError("untrusted alternative PR gate or authority")
+            other_seen.add(alt_url)
+            alt_items.append((alt_url, gate_state, other))
         def h(value):
             return escape(value, quote=True)
+        alt_html = ""
+        if alt_items:
+            extra = "".join(
+                "<li><a target='_blank' rel='noopener noreferrer' href='" +
+                h(url) + "'>PR " + h(url.rsplit("/", 1)[-1]) + " ↗</a> · " +
+                h(state) +
+                (" · bestandsoverlap" if data["file_overlap_observed"] else "") +
+                (" · bronbeweging" if data["source_movement_observed"] else "") +
+                "</li>"
+                for url, state, data in alt_items
+            )
+            alt_html = ("<details class='other-prs'><summary>Andere bestaande PRs (" +
+                        str(len(alt_items)) +
+                        ") · afzonderlijke eigenaar- en CI-beoordeling</summary><ul>" +
+                        extra + "</ul></details>")
         pr_link = (
             "<a rel='noopener noreferrer' target='_blank' href='" + h(pr) +
             "'>Bestaande PR ↗</a>" if pr else
@@ -79,7 +117,8 @@ def render_html(board, max_rows=20):
             h(row["title"]) + "</a></h2>"
             "<p><strong>" + h(row["category_nl"]) + "</strong></p>"
             "<p>" + h(row["human_next_step_nl"]) + "</p>"
-            "<p class='links'>" + pr_link + "</p>"
+            "<p class='links'>" + pr_link + "</p>" +
+            alt_html +
             "<p class='source'>" + h(note) +
             " · actuele CI/review: " +
                 h(row["candidate_exact_head_gate_state"]) +
@@ -256,8 +295,12 @@ refresh();
     # to different observations or reordered PR/issue sets.
     source_identity = {
         "issue_time": str(ts_issue), "pr_time": str(ts_pr),
-        "visible_rows": [(row["issue_url"], row["candidate_existing_pr_url"])
-                         for row in cards[:max_rows]],
+        "visible_rows": [
+            (row["issue_url"], row["candidate_existing_pr_url"],
+             tuple(candidate["url"]
+                   for candidate in row.get("other_existing_pr_candidates_in_sample", [])))
+            for row in cards[:max_rows]
+        ],
     }
     source_token = hashlib.sha256(json.dumps(
         source_identity, ensure_ascii=True, sort_keys=True,
