@@ -138,22 +138,85 @@ def export(source_dir, output_dir):
     return manifest
 
 
+def verify(bundle_dir):
+    """Read-only provenance check; never executes or installs packaged modules."""
+    if (not isinstance(bundle_dir, Path) or not bundle_dir.is_dir()
+            or bundle_dir.is_symlink()):
+        raise ValueError("private bundle directory required")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("safe nofollow access required")
+    dirfd = os.open(bundle_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        directory = os.fstat(dirfd)
+        if (not stat.S_ISDIR(directory.st_mode)
+                or directory.st_uid != os.geteuid()
+                or stat.S_IMODE(directory.st_mode) & 0o077):
+            raise ValueError("bundle directory not owner-private")
+        required = set(SOURCES) | {"MANIFEST.json", "LEESMIJ.txt"}
+        if set(os.listdir(dirfd)) != required:
+            raise ValueError("unknown or missing bundle entries")
+        content = {}
+        for name in required:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dirfd)
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode)
+                        or info.st_uid != os.geteuid()
+                        or stat.S_IMODE(info.st_mode) & 0o077
+                        or not 0 < info.st_size <= MAX_SOURCE_BYTES):
+                    raise ValueError("not a private regular bundle file")
+                with os.fdopen(fd, "rb", closefd=False) as stream:
+                    content[name] = stream.read(MAX_SOURCE_BYTES + 1)
+                if len(content[name]) > MAX_SOURCE_BYTES:
+                    raise ValueError("bundle file too large")
+            finally:
+                os.close(fd)
+    finally:
+        os.close(dirfd)
+    manifest = json.loads(content["MANIFEST.json"].decode("utf-8"))
+    if (type(manifest) is not dict or manifest.get("schema") != MANIFEST_SCHEMA
+            or manifest.get("preview_only_required_before_authorized_release") is not True
+            or manifest.get("systemd_installed") is not False
+            or manifest.get("workflow_dispatched") is not False
+            or manifest.get("production_released") is not False
+            or manifest.get("external_source_verified") is not False
+            or type(manifest.get("files")) is not dict
+            or set(manifest["files"]) != set(SOURCES)):
+        raise ValueError("unexpected bundle manifest")
+    for name in SOURCES:
+        entry = manifest["files"][name]
+        if (type(entry) is not dict or type(entry.get("bytes")) is not int
+                or entry["bytes"] != len(content[name])
+                or entry.get("sha256") != hashlib.sha256(content[name]).hexdigest()):
+            raise ValueError("operator source digest differs from manifest")
+    return {"verified_modules": len(SOURCES), "release_authorized": False}
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Create private zSentinel operator source bundle without deployment"
+        description="Private, non-deploying zSentinel operator source bundle"
     )
     parser.add_argument("--source-dir", type=Path, default=Path(__file__).parent,
-                        help="Source directory with the three reviewed Python modules")
-    parser.add_argument("--output-dir", required=True, type=Path,
-                        help="NEW private directory; no overwrite, no service operations")
+                        help="Directory with the three reviewed source modules")
+    choice = parser.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--output-dir", type=Path,
+                        help="NEW 0700 bundle folder; no production operations")
+    choice.add_argument("--verify-dir", type=Path,
+                        help="READ ONLY check of an existing owner-private bundle")
     args = parser.parse_args()
     try:
-        receipt = export(args.source_dir, args.output_dir)
-    except (OSError, ValueError, UnicodeError):
-        parser.exit(2, "Privé operatorpakket niet gemaakt; controleer nieuwe map en bron.\n")
-    print("Privé bronpakket gemaakt: "
-          + str(len(receipt["files"])) + " modules; manifest SHA-256 beschikbaar; "
-          + "geen install, dispatch of productiewijziging.")
+        if args.verify_dir is not None:
+            info = verify(args.verify_dir)
+        else:
+            info = export(args.source_dir, args.output_dir)
+    except (OSError, ValueError, UnicodeError, TypeError, KeyError):
+        parser.exit(2, "Privé operatorpakket niet bruikbaar; controleer bron en map.\\n")
+    if args.verify_dir is not None:
+        print("Privé bronpakket herkend: " + str(info["verified_modules"])
+              + " modules stemmen overeen met manifest. Geen releaseautorisatie.")
+    else:
+        print("Privé bronpakket gemaakt: " + str(len(info["files"]))
+              + " modules met bronvingerafdruk; geen productie-ingreep.")
 
 
 if __name__ == "__main__":
