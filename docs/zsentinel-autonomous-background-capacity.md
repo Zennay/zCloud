@@ -117,6 +117,15 @@ niet naar stdout of een portfolio-feed. Een ongeldige naam, bestaand bestand,
 ontoegankelijke doelmap of onvolledige write geeft een fout; gedeeltelijk
 geschreven bestanden worden weer verwijderd.
 
+De privé herstelwerkbank geeft ook een **geprioriteerde herstelvolgorde**:
+bij onvoldoende of hoge RAM/swap/disk/load-capaciteit krijgt eerst
+capaciteitsveiligheid prioriteit en adviseert hij geen extra runner-start.
+Daarna volgen afzonderlijk het bevoegde onderzoek van OOM-gefaalde services,
+eigenaarcontrole voor bewust mogelijk gestopte services en onafhankelijke
+GitHub-toewijzingscontrole voor actieve services. Onvolledige bronnen krijgen
+een aparte waarschuwing. Dit is tekstadvies, geen uitvoerbare herstelactie
+of bevoegdheidsverlening.
+
 De rapportbron komt uit dezelfde **eenmalige** read-only host- en
 service-observaties als de preview. Een afzonderlijke zelfstandige ingang
 `python3 scripts/zsentinel_runner_report.py --output NEW.html`
