@@ -92,18 +92,46 @@ def approvals(repo, number, author, exact_head):
 
 
 def check_state(repo, sha):
+    """Conservatively verify exact-head checks AND associated workflow receipts.
+
+    A completed subset of job check-runs can precede registration of other
+    queued workflows. Never treat that partial view as mandatory CI success.
+    """
     checks = gh(f"repos/{repo}/commits/{sha}/check-runs?per_page=100")
-    runs = checks.get("check_runs") or []
-    legacy = gh(f"repos/{repo}/commits/{sha}/status")
-    statuses = legacy.get("statuses") or []
-    if not runs and not statuses:
+    legacy = gh(f"repos/{repo}/commits/{sha}/status?per_page=100")
+    workflows = gh(f"repos/{repo}/actions/runs?head_sha={sha}&per_page=100")
+    if not all(isinstance(item, dict) for item in (checks, legacy, workflows)):
+        return "CI_SOURCE_UNKNOWN"
+    runs = checks.get("check_runs")
+    statuses = legacy.get("statuses")
+    workflow_runs = workflows.get("workflow_runs")
+    total_checks = checks.get("total_count")
+    total_workflows = workflows.get("total_count")
+    if (not isinstance(runs, list) or not isinstance(statuses, list)
+            or not isinstance(workflow_runs, list)
+            or type(total_checks) is not int or type(total_workflows) is not int):
+        return "CI_SOURCE_UNKNOWN"
+    if (len(runs) != total_checks or len(workflow_runs) != total_workflows
+            or len(runs) >= 100 or len(statuses) >= 100
+            or len(workflow_runs) >= 100):
+        return "CI_SOURCE_TRUNCATED"
+    if (not all(isinstance(record, dict) for record in runs + statuses + workflow_runs)
+            or any(record.get("head_sha") != sha for record in workflow_runs)):
+        return "CI_SOURCE_UNKNOWN"
+    # This repo's existing CI consists of GitHub workflow receipts. A lonely
+    # successful optional check is insufficient proof when workflows are absent.
+    if not runs and not statuses and not workflow_runs:
         return "NO_CI"
-    if len(runs) < checks.get("total_count", len(runs)):
-        return "CHECKS_TRUNCATED"
-    if any(x.get("status") != "completed" or x.get("conclusion") != "success"
-           for x in runs):
+    if not workflow_runs:
+        return "NO_HEAD_WORKFLOW_RECEIPTS"
+    if any(w.get("status") != "completed" for w in workflow_runs):
+        return "HEAD_WORKFLOWS_NOT_FINISHED"
+    if any(w.get("conclusion") != "success" for w in workflow_runs):
+        return "HEAD_WORKFLOWS_NOT_GREEN"
+    if any(r.get("status") != "completed" or r.get("conclusion") != "success"
+           for r in runs):
         return "CHECKS_NOT_GREEN"
-    if legacy.get("state") not in ("success",) and statuses:
+    if statuses and legacy.get("state") != "success":
         return "LEGACY_STATUS_NOT_GREEN"
     return "GREEN"
 
