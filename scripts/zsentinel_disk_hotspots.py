@@ -321,7 +321,8 @@ def html(report):
     if "disk_growth_comparison" in report:
         from zsentinel_disk_trend import as_html
         lines.append(as_html(report["disk_growth_comparison"]))
-    lines.append("<p><strong>Vereist:</strong> eigenaar verifieert actieve writers, "                 "bewaartermijn en back-up vóór afzonderlijk geautoriseerd opruimen.</p></main></html>")
+    lines.append("<p><strong>Vereist:</strong> eigenaar verifieert actieve writers, "
+                 "bewaartermijn en back-up vóór afzonderlijk geautoriseerd opruimen.</p></main></html>")
     return "".join(lines)
 
 
@@ -338,6 +339,15 @@ def public_summary(report):
             or report.get("coverage") not in (
                 "bounded_complete_with_no_private_exclusions", "partial")):
         raise ValueError("untrusted disk hotspot observation")
+    mount = report.get("mount_capacity")
+    if (type(mount) is not dict
+            or mount.get("source") != "same_host_statvfs_observation_not_cleanup_proof"
+            or type(mount.get("filesystem_total_bytes")) is not int
+            or type(mount.get("available_bytes_to_operator")) is not int
+            or not 0 <= mount["available_bytes_to_operator"] <= mount["filesystem_total_bytes"]
+            or type(mount.get("percent_unavailable")) not in (int, float)
+            or not 0 <= mount["percent_unavailable"] <= 100):
+        raise ValueError("invalid mount observation for public capacity summary")
     compare = report.get("disk_growth_comparison")
     if compare is not None:
         from zsentinel_disk_trend import TREND
@@ -347,6 +357,12 @@ def public_summary(report):
             raise ValueError("untrusted private disk change comparison")
     return {
         "schema": "zsentinel-disk-workbench-summary-v1",
+        "mount_available_gib_observed": round(
+            mount["available_bytes_to_operator"] / (1024**3), 2),
+        "mount_unavailable_percent_observed": mount["percent_unavailable"],
+        "mount_free_change_mib_not_cleanup": (
+            round(compare["mount_free_change_bytes_not_cleanup_proof"] / 1048576, 1)
+            if compare is not None else None),
         "observed_change_mib_not_growth": (
             round(compare["observed_allocated_difference_bytes_not_disk_growth"] / 1048576, 1)
             if compare is not None else None),
@@ -376,6 +392,10 @@ def public_summary_html(summary):
     return (
         '<section aria-label="VPS schijfruimtewerkbank">'
         '<h2>VPS · Schijfruimtewerkbank (privé)</h2>'
+        '<p>Mount: ' + str(summary["mount_available_gib_observed"]) +
+        ' GiB beschikbaar; ' +
+        str(summary["mount_unavailable_percent_observed"]) +
+        '% niet beschikbaar volgens lokaal statvfs. Geen toegang/vrijgavebewijs.</p>'
         '<p>Grote-bestanden inventaris uitsluitend lokaal en begrensd,'
         ' ondergrens ' + str(summary["observed_allocated_gib_min"]) +
         ' GiB toegewezen, minstens ' + str(summary["large_file_candidates_min"]) +
@@ -384,6 +404,10 @@ def public_summary_html(summary):
         str(summary["directories_unscanned"]) +
         '. Bestandsnamen staan uitsluitend in het afzonderlijke'
         ' aangemaakte privérapport (0600), NIET in deze cockpit.</p>' +
+        ('<p>Gemeten vrije ruimte op dezelfde host/mount veranderde met ' +
+         str(summary["mount_free_change_mib_not_cleanup"]) +
+         ' MiB (geen bewijs van welke bestanden dit veroorzaakten).</p>'
+         if summary.get("mount_free_change_mib_not_cleanup") is not None else '') +
         ('<p>Vergelijking met vorige privé-scan: ' +
          str(summary["observed_change_mib_not_growth"]) +
          ' MiB verschil in waargenomen toegewezen data (GEEN bewijs van'
