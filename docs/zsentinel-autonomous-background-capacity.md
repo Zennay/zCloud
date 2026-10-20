@@ -604,8 +604,10 @@ python3 scripts/zsentinel_runner_report.py --format json --timeline "$HOME/priva
 
 `zsentinel.runner-owner-inbox.v1` contains a provenance-labelled current/pair/
 timeline observation window, bounded observed service state counts, **validated canonical runner service names**
-with their observed systemd state (maximum 20), capacity measurements, up to
-**three** concrete human-owner work items with status,
+with their observed systemd state (maximum 20), capacity measurements,
+**actual source-bound state changes across private T0/T1 or timeline windows**
+(up to 40 newest named transitions, with omission counts and window coverage),
+and up to **three** concrete human-owner work items with status,
 explicit partial-source flags and denied action authorities. Missing runner
 source produces `null` counts, never false zero; an old offline pair or
 timeline is **not** a new live observation. Service activity is not GitHub
