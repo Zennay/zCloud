@@ -311,3 +311,44 @@ De operator ziet een eerlijk gedeeltelijk snapshot; ontbrekende
 reviews/checks bij niet-toegankelijke GitHub zijn UNKNOWN, geen
 vrijgave of bewezen productherstel. Geen QA-/regressiesuites geschreven
 of gestart. Source slechts op open product-PR #1567, niet live gedeployed.
+
+## Current-head gate triage: Check Runs + legacy statuses (20 October)
+
+The optional `--inspect-pr-gates` feature now reads **both** GitHub Check Runs
+(`/commits/{sha}/check-runs?per_page=100`) and independent **legacy commit
+statuses** (`/commits/{sha}/status?per_page=100`) for the exact observed
+PR HEAD. Some mandatory status contexts are reported only through the older
+commit-status API; previously the current-head cockpit could misleadingly
+show zero failing checks when a legacy context was failing.
+
+For each of at most four already referenced PRs, the Dutch HTML, text,
+Markdown and JSON issue views now distinguish legacy-context success,
+pending and failure/error from Check Run results. Earlier status entries
+on the *same context* are deduplicated by highest observed GitHub status ID,
+so a superseded error is not automatically treated as a current failure.
+A full 100-status page is explicitly **potentially truncated**. Missing,
+unavailable, changing-head, malformed or truncated sources never turn into a
+positive merge conclusion. The request bound increased from **4 to 5 GETs
+per PR** (two PR snapshots, Check Runs, commit statuses and reviews): at most
+20 requests for the four-PR desk, plus the existing separately bounded issue
+and scope collection.
+
+The cockpit also gives an **observation-based, non-authorizing human next
+step**: inspect incomplete sources, fix a current failure with the PR owner,
+wait for existing pending CI, handle changes requested, verify absent check
+evidence, obtain independent exact-head review, or independently verify
+required branch/release rules. No branch-protection API rule inventory or
+independent owner/Notion lease approval is inferred; even all observed green
+checks and one approval do **not** authorize merge, dispatch or deployment.
+
+Example, still strictly read-only:
+
+```sh
+python3 scripts/zsentinel_issue_scope_cockpit.py --live-issues \
+  --project cloud --inspect-pr-gates --max-prs 10 --format html \
+  > zsentinel-live-issue-gates.html
+```
+
+Use normal protected GitHub merge/review gates and owner authorization
+separately. No QA/regression suite, runner workflow dispatch or production
+write is part of this change.
