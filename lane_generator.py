@@ -485,6 +485,7 @@ def generate_execution_lanes(project, backlog, claims=()):
                     "scope": in_flight["scope"],
                 })
 
+    unscoped_queued_writer_reserved = False
     queued = sorted(
         [
             item for item in classified
@@ -515,6 +516,24 @@ def generate_execution_lanes(project, backlog, claims=()):
                     "ambiguous_claim_count": unknown_claim_scopes,
                     "overlap": {"capabilities": [], "files": []},
                 })
+            continue
+
+        candidate_without_scope = (
+            profile == "portfolio-recovery"
+            and not any(_scope_from_item(candidate).values())
+        )
+        if profile == "portfolio-recovery" and (
+            unscoped_queued_writer_reserved
+            or (candidate_without_scope and (occupied_scopes or active_claims))
+        ):
+            # With no declared write scope, cross-lane file independence
+            # cannot be proven. Admit at most one such worker, serialized,
+            # and never alongside known active/scoped work.
+            blocked_by_lane[lane_id].append({
+                "kind": "queue",
+                "reason": "unscoped_queued_writer_must_be_serial",
+                "overlap": {"capabilities": [], "files": []},
+            })
             continue
 
         conflicts = []
@@ -549,6 +568,8 @@ def generate_execution_lanes(project, backlog, claims=()):
             "lane_id": lane_id,
             "scope": candidate["scope"],
         })
+        if candidate_without_scope:
+            unscoped_queued_writer_reserved = True
 
     results = []
     for lane_def in lane_defs:
@@ -569,6 +590,11 @@ def generate_execution_lanes(project, backlog, claims=()):
             "parallel_active_warning": active_backlog_counts[lane_id] > 1,
             "unknown_active_scope_count": len(unknown_active_scopes),
             "unknown_claim_scope_count": unknown_claim_scopes,
+            "serialized_unscoped_queue_admitted": (
+                bool(unscoped_queued_writer_reserved)
+                and chosen is not None and chosen.get("status") == "queued"
+                and not any(_scope_from_item(chosen).values())
+            ),
             "blocked_by": blocked_by,
         })
     return results
