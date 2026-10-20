@@ -16,7 +16,11 @@ import sqlite3
 import stat
 import sys
 
-from lane_generator import generate_execution_lanes
+from lane_generator import (
+    classify_backlog_item,
+    generate_execution_lanes,
+    scopes_overlap,
+)
 
 LANE_NAMES = {
     "release-integration": "PRs naar main",
@@ -107,9 +111,25 @@ def collect(database, maximum):
         if not isinstance(metadata.get("conflict_scope"), dict):
             ambiguous += 1
 
-    lanes = generate_execution_lanes(
-        {"id": "zsentinel", "lane_profile": "portfolio-recovery"}, queue, claims
-    )
+    project = {"id": "zsentinel", "lane_profile": "portfolio-recovery"}
+    lanes = generate_execution_lanes(project, queue, claims)
+    # Diagnostic only. The dispatch path itself remains governed by the
+    # existing lane generator and actual external claim/release gates.
+    active_items = [
+        classify_backlog_item(project, item)
+        for item in queue if str(item.get("status", "")).lower() in ACTIVE
+    ]
+    collision_counts = {lane_id: 0 for lane_id in LANE_NAMES}
+    cross_lane_coverage = len(active_items) <= 64 and not queue_partial
+    if cross_lane_coverage:
+        for index, left in enumerate(active_items):
+            for right in active_items[index + 1:]:
+                if left["lane_id"] == right["lane_id"]:
+                    continue
+                overlap = scopes_overlap(left["scope"], right["scope"])
+                if overlap["capabilities"] or overlap["files"]:
+                    collision_counts[left["lane_id"]] += 1
+                    collision_counts[right["lane_id"]] += 1
     observed = {status: sum(
         str(row.get("status", "")).lower() == status for row in queue
     ) for status in sorted(VALID)}
@@ -123,6 +143,9 @@ def collect(database, maximum):
             "candidate_observed": lane.get("queue_id") is not None,
             "active_backlog_count": lane.get("active_backlog_count", 0),
             "parallel_active_warning": lane.get("parallel_active_warning", False),
+            "active_cross_lane_scope_conflicts": (
+                collision_counts[lane["lane_id"]] if cross_lane_coverage else None
+            ),
             "conflicting_claims": sum(
                 item.get("kind") == "claim" for item in conflicts
             ),
@@ -146,6 +169,7 @@ def collect(database, maximum):
         "claimed_without_local_lease_observation": (
             sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
         ),
+        "active_cross_lane_coverage_complete": cross_lane_coverage,
         "owner_free": "NOT_INFERABLE",
         "external_notion_claims": "NOT_OBSERVED",
         "merge_authorized": False,
@@ -156,6 +180,8 @@ def collect(database, maximum):
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
             or ambiguous or queue_partial or claims_partial
+            or not cross_lane_coverage
+            or any(collision_counts.values())
             or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
         ),
     }
@@ -168,6 +194,10 @@ def text_view(data):
     ]
     for lane in data["lanes"]:
         extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
+        if lane["active_cross_lane_scope_conflicts"]:
+            extra += " | CONFLICT MET ANDERE ACTIEVE BAAN"
+        elif lane["active_cross_lane_scope_conflicts"] is None:
+            extra += " | ACTIEVE SCOPEDEKKING ONVOLLEDIG"
         out.append(
             f"{lane['name']}: {lane['status']}; actieve taken "
             f"{lane['active_backlog_count']}; conflicten "
@@ -202,6 +232,10 @@ def html_view(data):
             if lane["parallel_active_warning"] else ""
         )
         count = lane["conflicting_claims"] + lane["conflicting_queue_entries"]
+        if lane["active_cross_lane_scope_conflicts"]:
+            warning += "<p class='warn'>Actief scopeconflict met andere herstelbaan.</p>"
+        elif lane["active_cross_lane_scope_conflicts"] is None:
+            warning += "<p class='warn'>Actieve scopevergelijking onvolledig.</p>"
         cards.append(
             "<article><div class='eyebrow'>Herstelbaan</div><h2>"
             + html.escape(lane["name"]) + "</h2><p class='state'>"
@@ -229,6 +263,8 @@ def html_view(data):
         warnings.append(
             "Gedeeltelijke of ambigue lokale bron: geen automatische herverdeling."
         )
+    if not data["active_cross_lane_coverage_complete"]:
+        warnings.append("Actieve cross-lane scopevergelijking is beperkt tot 64 taken.")
     warnings.append(
         "Externe Notion-claims en releasegates zijn niet waargenomen; "
         "dit overzicht verleent geen schrijfrechten."
