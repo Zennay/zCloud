@@ -38,7 +38,8 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                       it.humanActionRequired }
             .distinctBy { it.id }
             .sortedWith(compareBy<AlertItem> {
-                if (it.severity.equals("critical", true)) 0 else 1
+                if (it.severity.equals("critical", true) ||
+                    it.severity.equals("error", true)) 0 else 1
             }.thenByDescending { it.occurredAt.orEmpty() })
         // Migrate a prior delivered receipt when the provider begins
         // supplying stable episode IDs. A source refresh must not create
