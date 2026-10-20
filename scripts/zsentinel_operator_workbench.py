@@ -357,6 +357,19 @@ current local observation. Missing batches remain UNKNOWN. No internet calls.</p
 </div>
 </details>
 <p id="prGateStatus" aria-live="polite">No imported source. All current PR gates unknown.</p>
+<details><summary>Compare an older saved PR-gate snapshot with this imported source (offline)</summary>
+<p>Observations only, NOT live CI or merge authority. The older file must
+belong to this exact saved board and have an earlier UTC observation time.</p>
+<label>Older saved PR-gate JSON (maximum 1 MiB)
+<input type="file" id="prGateOlderFile" accept=".json,application/json"></label>
+<p id="prGateDeltaSummary" aria-live="polite">Load a current PR-gate snapshot first.</p>
+<ol id="prGateDeltaRows"></ol>
+<button type="button" id="prGateDeltaPreview" disabled>Preview historical PR gate changes</button>
+<div id="prGateDeltaPanel" hidden>
+<pre id="prGateDeltaText"></pre>
+<button id="prGateDeltaDownload" type="button" disabled>Download reviewed historical changes (.md)</button>
+</div>
+</details>
 <label>Filter saved PR references by observed gate state
 <select id="prGateFocus">
 <option value="">All referenced PRs</option>
@@ -445,7 +458,8 @@ const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
 const baselineSchema = 'zsentinel-product-delivery-triage-v1';
 const issuePattern = /^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
-let baseline=null,carryPreview=null,prGateImport=null;
+let baseline=null,carryPreview=null,prGateImport=null,prGatePrevious=null;
+let gateDeltaPreview=null;
 const issueList=document.getElementById('issues'),detail=document.getElementById('detail');
 const status=document.getElementById('status');
 const entries=new Map(board.cards.map(c=>[c.issue,c]));
@@ -973,6 +987,75 @@ function gateState(url){
  if(row.changes_requested||!row.approvals)return 'review';
  if(!row.observed_checks&&!row.legacy_contexts)return 'unverified';
  return 'observed-no-authority';
+}
+
+// Compare two trusted *saved* observations, never live checks or claims.
+// Replacing the current imported source clears this historical comparison.
+function sourceGateState(row){
+ if(!row)return 'not-observed';
+ if(!row.available)return 'unavailable';
+ if(row.checks_failed||row.legacy_failed)return 'failed';
+ if(row.checks_pending||row.legacy_pending)return 'pending';
+ if(row.incomplete)return 'incomplete';
+ if(row.changes_requested||!row.approvals)return 'review-needed';
+ if(!row.observed_checks&&!row.legacy_contexts)return 'no-checks-observed';
+ return 'sampled-clear-not-authorized';
+}
+function clearGateDelta(){
+ prGatePrevious=null;gateDeltaPreview=null;
+ document.getElementById('prGateDeltaRows').replaceChildren();
+ document.getElementById('prGateDeltaSummary').textContent=
+  'No historical comparison imported; current CI, owner and review UNKNOWN.';
+ document.getElementById('prGateDeltaPreview').disabled=true;
+ document.getElementById('prGateDeltaPanel').hidden=true;
+ document.getElementById('prGateDeltaText').textContent='';
+ document.getElementById('prGateDeltaDownload').disabled=true;
+}
+function currentGateDelta(){
+ const newer=prGateImport,older=prGatePrevious;
+ if(!older||!newer||older.timestamp>=newer.timestamp)
+  throw Error('Current and earlier saved observations are not time ordered');
+ const urls=new Set([...older.items.keys(),...newer.items.keys()]);
+ if(urls.size>300)throw Error('Combined comparison exceeds source bounds');
+ const changes=[];let unchanged=0,headChanged=0;
+ for(const url of [...urls].sort()){
+  const a=older.items.get(url),b=newer.items.get(url);
+  const from=sourceGateState(a),to=sourceGateState(b);
+  const distinctHeads=Boolean(a?.head&&b?.head&&a.head!==b.head);
+  const sameHead=Boolean(a?.head&&b?.head&&a.head===b.head);
+  // Count movement is valid only for the same sampled head and status.
+  const counts=sameHead?['checks_pending','checks_failed','legacy_pending',
+   'legacy_failed','approvals','changes_requested'].filter(k=>a[k]!==b[k]):[];
+  if(from===to&&!distinctHeads&&!counts.length){unchanged++;continue;}
+  if(distinctHeads)headChanged++;
+  changes.push({url,from,to,head_change:distinctHeads,
+   old_head:a?.head||null,new_head:b?.head||null,
+   count_changes:counts.map(k=>({field:k,old:a[k],new:b[k]})),
+   meaning:distinctHeads?'DIFFERENT HEAD: old check counts not comparable':
+    !sameHead?'PARTIAL/ABSENT source: do not infer improvement':
+    'SAME HEAD: saved sample movement only, not required-check approval'});
+ }
+ return {older,newer,changes,unchanged,headChanged,total:urls.size};
+}
+function gateDeltaMarkdown(){
+ const delta=currentGateDelta();
+ return ['# zSentinel · historical saved PR gate differences (human review only)',
+  'Original source board: '+boardSha,
+  'Older saved UTC: '+delta.older.time,
+  'Newer saved UTC: '+delta.newer.time,
+  'Older JSON SHA256: '+delta.older.sha256,
+  'Newer JSON SHA256: '+delta.newer.sha256,
+  'Original PRs union: '+delta.total+'; sample changes: '+delta.changes.length+
+   '; new HEAD observed: '+delta.headChanged+'; unchanged samples: '+delta.unchanged,
+  'IMPORTANT: both snapshots are HISTORICAL; required CI, independent reviewer,',
+  'active claim, current HEAD, protected branch and release permission UNKNOWN.',
+  'This document cannot authorize claim, merge, deploy, retry or dispatch.',
+  '',...delta.changes.flatMap(c=>[
+   '## '+c.url,'Older saved: '+c.from+' · newer saved: '+c.to,
+   c.meaning,
+   ...(c.head_change?['Different sampled HEAD: '+c.old_head+' -> '+c.new_head]:[]),
+   ...c.count_changes.map(x=>x.field+': '+x.old+' -> '+x.new),''
+  ])].join('\\n')+'\\n';
 }
 function gateOverview(groups){
  const counts={failed:0,pending:0,review:0,unverified:0,
