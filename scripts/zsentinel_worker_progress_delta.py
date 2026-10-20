@@ -121,11 +121,25 @@ def compare(previous, current, now=None):
         "indexed_source_reset_or_regression": 0,
         "other_bounded": 0,
     }
-    for project, slot in sorted(old.keys() & new.keys()):
-        before, after = old[(project,slot)], new[(project,slot)]
-        first, last = before["latest"], after["latest"]
-        pfirst, plast = before["progress"], after["progress"]
-        if ((first is not None and last is not None and last < first)
+    # Both sides of the bounded sample matter. Previously only the intersection
+    # was rendered: a worker that disappeared from observation had no private
+    # owner-action row at all, despite appearing in an aggregate counter.
+    # Such a disappearance is NEVER evidence that the task was completed,
+    # the claim was released or its original worker can be replaced.
+    shared = old.keys() & new.keys()
+    for project, slot in sorted(old.keys() | new.keys()):
+        before, after = old.get((project, slot)), new.get((project, slot))
+        first = before["latest"] if before is not None else None
+        last = after["latest"] if after is not None else None
+        pfirst = before["progress"] if before is not None else None
+        plast = after["progress"] if after is not None else None
+        if before is None:
+            stage = "new_in_bounded_sample_not_new_claim"
+            action = "Controleer met eigenaar of dit een bestaande toewijzing is; geen claim of vrije capaciteit bewezen."
+        elif after is None:
+            stage = "missing_in_current_sample_not_resolved"
+            action = "Controleer bij eigenaar waarom de worker niet meer wordt waargenomen; geen herstel of vrijgave bewezen."
+        elif ((first is not None and last is not None and last < first)
                 or (pfirst is not None and plast is not None and plast < pfirst)
                 or (pfirst is not None and plast is None)):
             stage = "indexed_source_reset_or_regression"
@@ -154,10 +168,12 @@ def compare(previous, current, now=None):
                 last is not None and (first is None or last > first)),
             "explicit_progress_cursor_advanced_observed": (
                 plast is not None and (pfirst is None or plast > pfirst)),
-            "current_desired_state": after["desired"],
-            "current_global_slot_observed": after["allocated"],
+            "current_desired_state": after["desired"] if after is not None else "not_observed",
+            "current_global_slot_observed": after["allocated"] if after is not None else None,
             "source_claim_lease_current_but_not_authority":
-                after["claim_lease_current_from_source"],
+                after["claim_lease_current_from_source"] if after is not None else False,
+            "slot_present_in_previous_sample": before is not None,
+            "slot_present_in_current_sample": after is not None,
             "claim_epoch_verified": False,
             "product_delivery_verified": False,
             "worker_recovery_verified": False,
@@ -169,7 +185,7 @@ def compare(previous, current, now=None):
         "current_observed_at_utc": t1.isoformat(),
         "source_coverage": "same_indexed_db_two_bounded_snapshots_not_claim_epoch",
         "source_selected_projects": list(projects1),
-        "shared_worker_slots_observed": len(items),
+        "shared_worker_slots_observed": len(shared),
         "new_worker_slots_unpaired": len(new.keys() - old.keys()),
         "disappeared_worker_slots_unpaired": len(old.keys() - new.keys()),
         "counts": counts,
@@ -202,6 +218,8 @@ def public_summary(report):
         "running_without_new_events": report["counts"]["running_allocated_no_new_event"],
         "owner_paused_or_draining": report["counts"]["paused_or_draining_owner_hold"],
         "source_regressions": report["counts"]["indexed_source_reset_or_regression"],
+        "new_in_sample_not_new_claim": report["new_worker_slots_unpaired"],
+        "missing_in_sample_not_recovered": report["disappeared_worker_slots_unpaired"],
         "product_delivery_verified": False,
         "claim_epoch_verified": False,
         "claims_changed": False,
@@ -218,7 +236,11 @@ def human_text(report):
         str(data["new_event_without_progress"]) +
         " workers met nieuwe events maar geen nieuw progress-event, " +
         str(data["running_without_new_events"]) +
-        " toegewezen workers zonder eventtoename.\n"
+        " toegewezen workers zonder eventtoename; " +
+        str(data["new_in_sample_not_new_claim"]) +
+        " nieuw in steekproef (geen nieuwe claim), " +
+        str(data["missing_in_sample_not_recovered"]) +
+        " niet meer in steekproef (geen herstelbewijs).\n"
         "ACTIE: eigenaar verifieert claim-epoch, lease en echte productoplevering; "
         "geen heartbeat- of eventbewijs voor commit.\n"
         "STATUS: brongebonden eventvergelijking; geen claim-, herstel- of releasebevoegdheid."
@@ -235,6 +257,10 @@ def public_html(report):
         '; alleen andere/heartbeat events: ' + str(data["new_event_without_progress"]) +
         '; toegewezen running zonder nieuwe events: ' +
         str(data["running_without_new_events"]) +
+        '; nieuw in beperkte steekproef (geen nieuwe claim): ' +
+        str(data["new_in_sample_not_new_claim"]) +
+        '; verdwenen uit beperkte steekproef (geen herstel): ' +
+        str(data["missing_in_sample_not_recovered"]) +
         ' (bounded bron; GEEN bewijs van falen of voortgang).</p>'
         '<p>Claim-epoch en concrete productoplevering NIET bewezen; '
         'geen automatische overname of herstart.</p>'
