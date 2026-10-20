@@ -1988,7 +1988,7 @@ umask 077
 python3 scripts/zsentinel_live_cockpit.py \
   --github-only \
   --project cloud \
-  --worker-events-database /private/authorized/portfolio.sqlite \
+  --worker-events-database /private/authorized/history.db \
   --format html > /private/authorized/worker-herstel.html
 ```
 
