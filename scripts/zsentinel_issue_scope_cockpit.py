@@ -7,6 +7,7 @@ the bounded GitHub PR collision observer. No writes, claims, retries or merges.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime, timezone, timedelta
 from html import escape
 import json
@@ -16,6 +17,8 @@ import re
 import sys
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
+from zsentinel_product_issue_inbox import canonical_projects, collect as collect_live_issues
+from zsentinel_product_delivery_board import prepare as prepare_delivery_board
 from zsentinel_pr_scope_guard import ROOT, registry
 from zsentinel_pr_scope_portfolio import collect_portfolio
 
@@ -327,8 +330,11 @@ def output_html(report):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--issue-board", type=Path, required=True,
-                        help="Bestaande privé JSON-export van zsentinel_product_delivery_board.py")
+    source_choice = parser.add_mutually_exclusive_group(required=True)
+    source_choice.add_argument("--issue-board", type=Path,
+                               help="Bestaande privé JSON-export van de Product Delivery Board")
+    source_choice.add_argument("--live-issues", action="store_true",
+                               help="Lees open GitHub productissues nu; alleen met --project (maximaal drie)")
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append")
     parser.add_argument("--max-prs", type=int, default=10)
@@ -336,9 +342,26 @@ def main(argv=None):
                         default="html")
     args = parser.parse_args(argv)
     try:
-        source, sha = read_source_and_sha(args.issue_board)
-        view = validated_view(source)
         canonical = registry(args.registry)
+        if args.live_issues:
+            if not args.project or len(args.project) > MAX_PROJECTS:
+                raise ValueError("--live-issues needs 1–3 explicit canonical --project values")
+            # Reuse the already-merged canonical issue collector and triage
+            # policy, rather than creating a second issue/PR search.
+            live_registry = canonical_projects(args.registry)
+            if canonical != live_registry:
+                raise ValueError("canonical registry disagreement")
+            if args.max_prs > 12:
+                raise ValueError("live issue + PR mode caps --max-prs at 12 per project")
+            inbox = collect_live_issues(canonical, args.project,
+                                        os.environ.get("GITHUB_TOKEN"), max_items=60)
+            source = prepare_delivery_board(inbox, limit=60)
+            raw = json.dumps(source, ensure_ascii=False, sort_keys=True,
+                             separators=(",", ":")).encode("utf-8")
+            sha = hashlib.sha256(raw).hexdigest()
+        else:
+            source, sha = read_source_and_sha(args.issue_board)
+        view = validated_view(source)
         projects = _safe_projects(view, canonical, args.project)
         if not projects:
             raise ValueError("no canonical product-issue projects in the selected issue source")
