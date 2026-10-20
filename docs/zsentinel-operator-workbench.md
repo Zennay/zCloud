@@ -2416,3 +2416,30 @@ protected-main en afzonderlijk toegestane productiehandeling.
 Deze implementatie zit op de reeds bestaande product-PR #1560. Zelfs
 als het offline dashboard werkt, is het **niet op main geleverd of live**
 voordat GitHub daadwerkelijk merged=true en productieherstel bevestigt.
+
+
+### Projectgerichte operatorfilter zonder historische P0's kwijt te raken
+
+In de portfolio-brede issue-inbox kan een operator nu per bronrepository
+filteren, bijvoorbeeld:
+
+```sh
+python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
+  --previous ./older-private-issue-portfolio.zip \
+  --current ./newer-private-issue-portfolio.zip \
+  --repository Zennay/Supa --priority P0 --changed-only \
+  --format html --output ./private-supa-p0-source-changes.html
+```
+
+Het projectveld moet een canonieke `Zennay/repo`-identiteit zijn, geen
+vrije zoekstring. De getoonde historische prioriteit wordt bepaald door
+de **hoogste daadwerkelijk aan het issue gekoppelde prioriteit uit
+beide bronsteekproeven**. Een P0-koppeling in de oudere bron die in de
+latere bron P2 heet, blijft daarom onder de historische P0-waarnemingen
+zichtbaar. De individuele oudere en nieuwere prioriteit blijven naast
+elkaar staan, zodat dit niet wordt verward met een actuele GitHub-P0.
+
+De gewone broninventaris en volledige samenvatting blijven zichtbaar
+ook wanneer de operator maar één project, één prioriteit of één pagina
+bekijkt. Nieuwe PR-claims, automatische werkdispatch en releases worden
+hierdoor **niet** toegestaan.
