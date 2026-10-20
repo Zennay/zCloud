@@ -54,22 +54,24 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             })
             continue
         pairs = source["shown_file_collision_pairs"][:MAX_VISIBLE_PAIRS]
+        display_truncated = (source["collision_cards_truncated"] or
+                             len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS)
+        complete = source["pr_file_scope_sample_complete"] and not display_truncated
         items.append({
             "project": project,
             "repository": repo,
             "source_status": "complete_open_pr_sample_only"
-                             if source["pr_file_scope_sample_complete"]
-                             else "partial_open_pr_sample",
-            "sample_complete": source["pr_file_scope_sample_complete"],
+                             if complete else "partial_open_pr_sample",
+            "sample_complete": complete,
+            "source_sample_complete": source["pr_file_scope_sample_complete"],
             "shown_collision_pairs": pairs,
             "observed_collision_pairs": source["observed_file_collision_pairs"],
             "inspected_open_prs": source["inspected_prs"],
             "observed_open_prs": source["observed_open_prs"],
             "source_observed_at_utc": source["observed_at_utc"],
-            "source_truncated": (
-                source["collision_cards_truncated"] or
-                len(source["shown_file_collision_pairs"]) > MAX_VISIBLE_PAIRS),
-            "reason": "same_filename_does_not_prove_merge_conflict",
+            "source_truncated": display_truncated,
+            "reason": ("display_truncated_inspect_original_prs" if display_truncated
+                       else "same_filename_does_not_prove_merge_conflict"),
         })
     return {
         "schema": "zsentinel-portfolio-pr-collision-board-v1",
@@ -191,6 +193,8 @@ def as_html(board):
             rows = ["<tr><td colspan='3'>Geen overlap zichtbaar in deze "
                     "steekproef; afwezigheid is geen vrijgave.</td></tr>"]
         state = ("Bron onbeschikbaar" if view["source_status"] == "unavailable"
+                 else "bronoverlap > uitvoerlimiet; open PR's zelf voor overige botsingen"
+                 if view.get("source_truncated")
                  else "volledige huidige open-PR-steekproef" if view["sample_complete"]
                  else "onvolledige open-PR-steekproef")
         cards.append(
