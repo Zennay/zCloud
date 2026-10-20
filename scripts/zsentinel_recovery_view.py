@@ -398,6 +398,12 @@ def html_view(decision):
                 None: None,
                 "github_permission_or_rate_limit":
                     "GitHub weigert toegang of heeft de limiet bereikt; verdere verzoeken aan deze repository overgeslagen.",
+                "github_authentication_required":
+                    "GitHub API gaf HTTP 401: bevoegde eigenaar controleert authenticatie. Geen credential wordt weergegeven.",
+                "github_rate_limit_confirmed":
+                    "GitHub heeft rate limiting bevestigd; verzoeken hier gestopt. Herstel niet forceren.",
+                "github_forbidden_or_rate_limit_unknown":
+                    "GitHub API gaf HTTP 403: toegang of limiet onduidelijk. Bevoegde eigenaar controleert bronrechten.",
                 "repository_inaccessible":
                     "Repository onbereikbaar; verdere verzoeken aan deze repository overgeslagen.",
                 "github_network_unavailable":
