@@ -98,7 +98,8 @@ oversized cards, malformed IDs and unsupported evidence. There is no network,
 GitHub poll or persistent storage. Use **Clear comparison** to forget it.
 
 The comparison distinguishes **newly observed** issue cards, cards with a
-changed priority/observed PR set/evidence-gap count, cards still observed,
+changed priority, issue title, recommended investigation, observed PR set or
+exact evidence-gap contents, cards still observed,
 and cards **no longer in the new bounded sample**. The last category is
 explicitly *not resolved*: a changed collector scope, pagination, GitHub
 permissions, rate limit, project selection or stale observation could all
@@ -148,3 +149,22 @@ handoffs. Titles must be nonempty, at most 180 characters and validated
 before the page is generated. UI strings are inserted only as DOM text;
 the Markdown preview uses the same length/control/HTML-delimiter cleaning
 as operator notes. Titles never establish assignee or action authority.
+
+### 20 October · Evidence-aware incident changes
+
+The previous comparison counted missing evidence items rather than their
+actual contents. Replacing an owner/gate blocker with a different one of
+the same count appeared as `still-observed`, so the operator could miss
+an actionable change. The workbench now preserves a bounded, validated copy
+of prior issue title, recommended investigation, referenced PR set and exact
+missing-evidence strings **in memory only**. The historical comparison marks
+changes to any of those fields (plus priority) and names precisely which
+fields moved in the issue list and source-pinned Markdown briefing.
+
+Earlier imports reject blank/overlength titles, overlength recommendations,
+and linked PRs outside the card's original GitHub repository. This avoids
+promoting a foreign link from untrusted offline input. A changed/vanished
+evidence requirement is **not** proof the gate passed, nor does a newly linked
+PR prove completion; every action still requires fresh actual ownership,
+required CI, reviewer and release consent. No QA/regression suite was added
+or run, and nothing contacts or writes to GitHub, Notion, workers or the VPS.
