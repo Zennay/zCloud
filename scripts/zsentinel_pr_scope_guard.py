@@ -24,7 +24,7 @@ from zsentinel_product_issue_inbox import QA as QA_ONLY_TITLE
 ROOT = Path(__file__).resolve().parent.parent
 MAX_REGISTRY_BYTES = 512 * 1024
 MAX_REPLY_BYTES = 1024 * 1024
-MAX_OPEN_PAGE = 100
+MAX_OPEN_PAGE = 48
 MAX_INSPECT = 48
 MAX_PATHS = 12
 MAX_SOURCE_FILES = 80
@@ -121,7 +121,10 @@ def github_json(repo, suffix, token):
 
 
 def open_prs(repo, token):
-    suffix = "/pulls?state=open&per_page=100&page=1&sort=updated&direction=desc"
+    # One fixed 48-PR page bounds long PR descriptions and API reply sizes.
+    # A full page is UNKNOWN, even if this might be the actual last page.
+    suffix = ("/pulls?state=open&per_page=" + str(MAX_OPEN_PAGE) +
+              "&page=1&sort=updated&direction=desc")
     rows = github_json(repo, suffix, token)
     if not isinstance(rows, list) or len(rows) > MAX_OPEN_PAGE:
         raise ValueError("invalid open PR listing")
