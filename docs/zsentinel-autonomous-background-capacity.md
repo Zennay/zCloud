@@ -143,6 +143,42 @@ recovered listener, vrijgevallen Notion-claim of live productieintegratie.
 De optionele `--report`-modus draait nooit vanuit de bestaande
 systemd-timer en voert geen nieuwe `systemctl set-property`-actie uit.
 
+## Privé T0/T1-bronmomenten voor runner-status
+
+Wanneer incidentonderzoek over meerdere tijdstippen gaat, slaat de operator
+twee losse, create-only momentopnamen op. Eén opdracht met de bestaande
+`--preview` verzamelt dezelfde lokale host-, CPU- en systemd-bronnen als
+het private HTML-overzicht:
+
+```bash
+python3 scripts/zsentinel_background_priority.py --preview --snapshot "$HOME/private-recovery/T0.json"
+# Na een volgende echte observatie:
+python3 scripts/zsentinel_background_priority.py --preview --snapshot "$HOME/private-recovery/T1.json" --previous "$HOME/private-recovery/T0.json"
+```
+
+De alternatieve standalone ingang is
+`python3 scripts/zsentinel_runner_snapshot.py --output NEW.json --previous OLD.json`.
+Elk doel is een **nieuw** bestand (`0600`, `O_CREAT|O_EXCL|O_NOFOLLOW`),
+met maximaal 128 KiB. Bestaande snapshots worden niet aangepast.
+Voor T0/T1 is het vorige bestand een door dezelfde Unix-eigenaar beheerde
+reguliere file zonder groep-/wereldrechten en zonder finale symlink.
+De vergelij­king vereist schema `zsentinel.runner-observation.v1`,
+**dezelfde host**, strikt oplopende UTC-bronmomenten en maximaal 72 uur
+verschil. Onvolledige of afgekorte runner-bronnen blijven zichtbaar als
+`complete_service_coverage=false`.
+
+De `comparison.transitions` onderscheiden `newly_observed`,
+`no_longer_observed` en `service_state_changed`. **Zelfs een overgang van
+`failed` naar `active` is géén bewijs dat een GitHub-job, PR of deploy
+hersteld is**; de velden `github_job_recovered` en
+`production_restored` blijven daarom `null`.
+Iedere bron draagt expliciet `claim_authorized=false`,
+`service_restart_authorized=false`, `merge_authorized=false` en
+`deploy_authorized=false`. Een oude bron wordt nooit als vrijgave
+voor nieuwe werkzaamheden of automatische recovery geïnterpreteerd.
+Zonder `--snapshot` kan `--previous` niet gebruikt worden; `--report`
+en `--snapshot` zijn bewust afzonderlijke create-only uitvoeracties.
+
 ## Operator installation and release boundaries
 
 Code files:
