@@ -10,12 +10,41 @@ import datetime as dt
 import json
 import os
 import sqlite3
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "history.db"
+
+PROJECTS = ROOT / "projects.json"
+REPO_URL = re.compile(r"^https://github\.com/([A-Za-z0-9_-]+)/([A-Za-z0-9_.-]+?)/?$")
+
+
+def repo_is_registered_for_project(project, repo):
+    """Reject cross-repository use of a real mainwriter claim.
+
+    A live claim for Supa does not grant release rights to a different repo.
+    Fail closed on absent, ambiguous or malformed canonical registry entries.
+    """
+    try:
+        records = json.loads(PROJECTS.read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            return False
+        matches = [item for item in records
+                   if isinstance(item, dict) and item.get("id") == project]
+        if len(matches) != 1:
+            return False
+        url = matches[0].get("repo_url")
+        match = REPO_URL.fullmatch(url) if isinstance(url, str) else None
+        if not match:
+            return False
+        actual = match.group(1) + "/" + match.group(2)
+        return actual.casefold() == repo.casefold()
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return False
+
 
 def gh(path, method="GET", fields=None):
     argv = ["gh", "api", "-H", "Accept: application/vnd.github+json"]
@@ -86,6 +115,8 @@ def live_claim(project, claim_key, owner, head_sha):
         return False
 
 def sweep(repo, project, args):
+    if args.merge and not repo_is_registered_for_project(project, repo):
+        raise ValueError("project/repository mainwriter scope mismatch")
     info = gh(f"repos/{repo}")
     default = info["default_branch"]
     if default != "main":
@@ -151,8 +182,9 @@ def main():
     parser.add_argument("--claim-key", default="")
     parser.add_argument("--owner-id", default="")
     args = parser.parse_args()
-    if args.merge and (len(args.repo) != 1 or not args.owner_id or not args.claim_key):
-        parser.error("--merge needs exactly one --repo plus --owner-id and --claim-key")
+    if args.merge and (len(args.repo) != 1 or len(args.pr or []) != 1
+                       or not args.owner_id or not args.claim_key):
+        parser.error("--merge needs one --repo, one explicit --pr, --owner-id and --claim-key")
     for repo in args.repo:
         if repo.count("/") != 1 or any(not p.replace("-", "").replace("_", "").isalnum()
                                        for p in repo.split("/")):
