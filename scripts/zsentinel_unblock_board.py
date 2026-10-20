@@ -599,6 +599,11 @@ def blocker_board_html(board):
         ' · wachtrijdruk: ' + str(board["queue_pressure_observations"]) +
         (' · meer kaarten niet getoond' if board["blocker_cards_truncated"] else '') +
         '</p><div class="grid">' + ''.join(cards) + '</div>'
+        '<details><summary>Privébriefing · alleen menselijke interventie (kopieerbaar)</summary>'
+        '<p class="muted">Handmatige briefing uit deze begrensde bron.'
+        ' Geen bericht of automatische escalatie verzonden.</p>'
+        '<pre style="white-space:pre-wrap;overflow-wrap:anywhere">' +
+        escape(human_handoff_markdown(board)) + '</pre></details>'
         '<h2>2 · Ondertussen onafhankelijk productwerk</h2>'
         '<p>Alleen na actuele PR-, bestandspad-, eigenaar- en vereiste CI-controle.'
         ' Geen claims of achtergrondtaken uitgezet.</p><ul>' +
