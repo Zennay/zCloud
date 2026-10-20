@@ -648,8 +648,31 @@ def html_view(decision):
             or capacity.get("state") not in
             ("unavailable", "stale", "overloaded", "advisory_headroom")):
         raise ValueError("unverified VPS capacity summary")
-    vps_state = phrase(capacity["state"], 32)
-    vps_reason = phrase(capacity.get("reason"), 100)
+    vps_state = phrase({
+        "unavailable": "BRON ONBEKEND",
+        "stale": "BRON VEROUDERD",
+        "overloaded": "OVERBELAST: GEEN NIEUW WERK",
+        "advisory_headroom": "GEEN GEMETEN GRENSOVERSCHRIJDING",
+    }[capacity["state"]], 70)
+    explanations = {
+        "no_vps_observation": "Geen lokale VPS-bron",
+        "vps_observation_outdated": "VPS-meting niet actueel",
+        "load_above_conservative_capacity": "CPU-belasting hoger dan veilige capaciteit",
+        "memory_headroom_low": "Te weinig beschikbare RAM",
+        "swap_headroom_low": "Te weinig vrije swap",
+        "disk_headroom_low": "Minder dan 2 GiB schijfruimte beschikbaar",
+        "disk_unavailable_at_least_90_percent": "Schijf minstens 90% niet beschikbaar",
+        "thresholds_met_not_release_authorization":
+            "Beperkte drempels niet overschreden; geen start- of deployrecht",
+        "old_snapshot_disk_occupancy_unknown_not_release_authorization":
+            "Schijfbezetting onbekend in oudere meting; geen startrecht",
+    }
+    raw_reason = capacity.get("reason")
+    if type(raw_reason) is not str or len(raw_reason) > 240:
+        raise ValueError("invalid VPS admission reason")
+    vps_reason = phrase(" · ".join(
+        explanations.get(name, name) for name in raw_reason.split(",")
+    ), 350)
     vps_origin = (live.get("vps_capacity", "unknown_not_sampled")
                   if isinstance(live, dict) else "external_observation")
     if vps_origin not in ("unknown_not_sampled", "same_host_readonly_opt_in",
