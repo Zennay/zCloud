@@ -60,7 +60,8 @@ class ZennayCloudRepository(
             // Legacy servers only expose an historical feed under "alerts".
             alerts = (if (root.has("active_blockers")) root.optJSONArray("active_blockers")
                       else root.optJSONArray("alerts"))?.mapObjects(::parseAlert).orEmpty(),
-            projects = root.getJSONArray("projects").mapObjects(::parseSummary)
+            projects = root.getJSONArray("projects").mapObjects(::parseSummary),
+            currentBlockerFeedAvailable = root.optJSONArray("active_blockers") != null
         )
     }
 
