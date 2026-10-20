@@ -1540,3 +1540,12 @@ Elk cluster vermeldt de bron-PR-links en waargenomen exact-head/base-SHA's, dire
 Clusters worden uit **alle geobserveerde PR-paren** opgebouwd voordat de bestaande 200-parenpresentatie wordt begrensd. Daardoor blijft het binnen de geobserveerde steekproef samenhangende beeld bewaard, ook wanneer de losse kaart is afgekapt. Alleen exact gedeelde bestandsnamen vormen edges; een gedeelde map, issuehint of parallelle branch telt niet als bewezen collision.
 
 Onvolledige GitHub-bestandenlijsten, veranderde inventarissen en niet bekeken zoekpagina's blijven expliciet onbekend. Bestandscope geeft nooit bewijs van een Git-mergeconflict, actuele Notion-claim, vrije eigenaar, werkdir-lease of CI-/releasevrijgave. Het overzicht voert uitsluitend read-only GitHub-verzoeken uit: geen claims, herstarts, workflow-reruns, merges, productie- of beveiligingsacties.
+
+
+### Dezelfde bestandsgroepen direct in de portfolio-workbench
+
+Ook het bestaande multi-projectcommando (tot drie canoniek geregistreerde repositories) toont de verbonden PR-groepen, zonder een extra GitHub-query toe te voegen:
+
+    python3 scripts/zsentinel_pr_scope_portfolio.py --project cloud --project supa --max-prs 10 --format html > /secure/location/zsentinel-portfolio-clusters.html
+
+De portfolioresultaten bevatten per project het aantal waargenomen groepen en de brongebonden clusterkaarten, in tekst, privé-Markdown, offline HTML en JSON. Wanneer één project niet bereikbaar is, blijft de groepwaarde daarvan ONBEKEND en blijven de onafhankelijke projectresultaten beschikbaar. De bestaande beperking van 80 zichtbare losse botsingsparen verandert niet hoeveel geobserveerde edges worden gebruikt om de clusters te vormen. Alle resultaten zijn uitsluitend observaties; er is geen claim- of main-mergeautorisatie.
