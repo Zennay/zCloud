@@ -323,10 +323,22 @@ def html_view(decision):
             href = ("https://github.com/" + repository + "/actions/runs/" +
                     str(run_id) + "/job/" + str(job_id))
             route_description = {
-                "self_hosted": "Self-hosted jobroute bevestigd; oningedeelde queue kan runner/label-toegang vereisen.",
+                "self_hosted": "Self-hosted jobroute bevestigd; runnergezondheid niet bewezen.",
                 "hosted_or_custom": "Geen self-hosted-label op deze job; geen bewijs van VPS-runnerstoring.",
                 "unknown": "Vereiste runnerlabels onbekend; geen bewijs van VPS-runnerstoring.",
             }[row["runner_route"]]
+            if (row["runner_route"] == "self_hosted"
+                    and stage == "queued_without_runner_assignment"):
+                route_description = (
+                    "Self-hosted job wacht zonder toegewezen runner. "
+                    "Bevoegde eigenaar controleert online status, labels en repositorytoegang; "
+                    "geen automatische serviceherstart.")
+            elif (row["runner_route"] == "self_hosted"
+                  and stage in ("job_with_runner_assignment",
+                                "terminal_with_runner_assignment")):
+                route_description = (
+                    "Runner-ID waargenomen voor deze specifieke self-hosted job. "
+                    "Geen bewijs van actuele listenergezondheid, veilige idle-status of herstel.")
             runner_route_cards.append(
                 '<article class="panel read"><h3><a target="_blank" rel="noopener noreferrer" '
                 'href="' + escape(href, quote=True) + '">' + phrase(row.get("project_id"), 80) +
