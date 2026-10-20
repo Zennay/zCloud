@@ -297,6 +297,26 @@ def render_html(report: dict) -> str:
                         "<td>Unknown</td><td>Owner to inspect</td><td>Incomplete scan</td></tr>")
     else:
         rows.append("<tr><td colspan='4'>Optional hot-path inventory not requested.</td></tr>")
+
+    review_rows = "".join(
+        "<tr><th scope='row'>" + esc(kind) + "</th>"
+        "<td>" + esc(report["cold_candidate_counts"].get(kind, 0)) + "</td>"
+        "<td>" + esc(f'{size / (1024 ** 2):.2f} MiB') + "</td>"
+        "<td>Open-handle / owner review required</td></tr>"
+        for kind, size in sorted(report["cold_candidate_bytes"].items())
+    ) or "<tr><td colspan='4'>No aged file candidates observed.</td></tr>"
+    omitted = report.get("examples_omitted", 0)
+    archive_review_html = (
+        '<section aria-labelledby="candidate-review"><h2 id="candidate-review">Aged file owner review</h2>'
+        '<p class="muted">Age does not prove a log is closed, a release superseded,'
+        ' an archive transfer verified or a file safe to delete.</p>'
+        '<table><thead><tr><th>Owner review category</th><th>Count</th>'
+        '<th>Size</th><th>Disposition</th></tr></thead><tbody>'
+        + review_rows + '</tbody></table>'
+        '<p class="fine">Total observed: ' + esc(report.get("total_candidate_count", 0))
+        + ' files. Item examples omitted beyond limit: ' + esc(omitted)
+        + '. Automatically reclaimable: 0 bytes.</p></section>'
+    )
     change = report.get("storage_change")
     change_section = ""
     if change is not None:
@@ -348,7 +368,7 @@ def render_html(report: dict) -> str:
         '<p class="muted">These are live or owner-protected footprints. Size is NOT reclaimable storage.</p>'
         '<table><thead><tr><th>Category</th><th>Size</th><th>Responsible owner</th><th>Disposition</th></tr></thead>'
         '<tbody>' + "".join(rows) + '</tbody></table></section>'
-        + change_section +
+        + archive_review_html + change_section +
         '<section aria-labelledby="archive"><h2 id="archive">External archive</h2>'
         '<p>Browse mount status: <strong>' + esc(archive["state"]) + '</strong>.</p>'
         '<p class="muted">The existing crypt-backed remote uploader and independent checksum/restore '
@@ -371,6 +391,14 @@ def operator_summary(report: dict) -> str:
         f"Assessed old files: {report['total_candidate_bytes'] / gb:.3f} GiB (NOT safe-to-delete proof)",
         f"Archive browse mount: {report['archive_mount']['state']} (upload NOT authorized)",
     ]
+    lines.append(
+        f"Old-file review rows: {report.get('total_candidate_count', 0)}; "
+        f"examples omitted: {report.get('examples_omitted', 0)}; "
+        "open-handle or owner release NOT verified")
+    for kind in sorted(report["cold_candidate_counts"]):
+        lines.append(
+            f"  {kind}: {report['cold_candidate_counts'][kind]} entries, "
+            f"{report['cold_candidate_bytes'][kind]/gb:.4f} GiB (owner review)")
     hotspots = report.get("hotspot_inventory")
     if hotspots is not None:
         lines.append("Large local hot paths: owner review required, NOT reclaimable-by-default")
