@@ -5,7 +5,7 @@ globalThis.ZCLOUD_SINGLE_TAB_CONTROLLER_V2 = true;
 if (!globalThis.ZCLOUD_SINGLE_TAB_CONTROLLER_V2) {
 const API = "http://127.0.0.1:8765/api";
 const VIOLENTMONKEY_PRIMARY_RUNNER = true;
-const VIOLENTMONKEY_REQUIRED_VERSION = "2.0.3";
+const VIOLENTMONKEY_REQUIRED_VERSION = "2.0.4";
 const violentmonkeyReadyProjects = new Set();
 const violentmonkeyFallbackProbeAt = new Map();
 const VIOLENTMONKEY_FALLBACK_REPROBE_MS = 120000;
