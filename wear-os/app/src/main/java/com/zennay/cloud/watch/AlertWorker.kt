@@ -64,7 +64,8 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL, "Critical project blockers", NotificationManager.IMPORTANCE_HIGH)
             )
-            urgent.asSequence()
+            try {
+                urgent.asSequence()
                 .filter { IncidentSnoozeStore.episodeKey(it) !in delivered }
                 // User snoozes an episode locally. This does not remove the
                 // current incident from the read-only status page.
@@ -108,7 +109,11 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 // must still be eligible at the next scheduled poll.
                 delivered += IncidentSnoozeStore.episodeKey(alert)
             }
-            prefs.edit().putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet()).apply()
+            } finally {
+                // Persist all earlier successfully posted receipts even if a
+                // later notification fails and WorkManager retries this poll.
+                prefs.edit().putStringSet("delivered_ids", delivered.toList().takeLast(200).toSet()).apply()
+            }
         }
         Result.success()
     } catch (_: Exception) {
