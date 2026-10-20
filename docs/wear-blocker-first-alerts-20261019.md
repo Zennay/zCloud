@@ -88,3 +88,11 @@ Eerdere Watch-ontvangstbewijzen koppelden een episode aan `id + ts`. Het bestaan
 Tijdens een uitgeklapte actuele menselijke incidentkaart ververst alleen de Compose-weergave van de resterende demptijd ongeveer elke 30 seconden. De lifecycle stopt deze tijdelijke UI-coroutine bij het dichtklappen; er komt géén extra HTTP-request, WorkManager-poll of zCloud-taak bij. De kaart leest uitsluitend de bestaande privévoorkeur en houdt de eerder afgedwongen maximaal-één-uur grens aan.
 
 De notificatieworker sorteert bron-`error` en `critical` beide vóór `high` binnen de bestaande begrensde batch. Geen nieuwe urgentiemeldingen worden toegestaan buiten de brongebonden `human_action_required` classificatie.
+
+### 20 oktober · projectgescheiden notificaties en incidentnavigatie
+
+Een lokale incident-ID is niet noodzakelijk wereldwijd uniek tussen zCloud-projecten. De nieuwe `episode_id` wordt daarom berekend over **project, incidenttype, bron-ID, ernst en echte episode-evidence**. Twee projecten met dezelfde lokale incidentnaam delen daardoor geen snoozestatus of afgiftebeperking.
+
+De Wear-app gebruikt de canonieke project-ID samen met de incidenteigen ID voor zowel de Android-notificatietag, de expliciete projectgebonden interne pending intent als de Compose-kaartsleutel. De `MainActivity` accepteert een notificatienavigatie alleen als **beide** waarden aanwezig en begrensd zijn; de kaart vraagt vervolgens een actuele serverwaarneming op en opent alleen een werkelijk overeenkomstig project/incident. Onbekende legacy navigation zonder project wordt niet verkeerd gerouteerd. Dit is uitsluitend navigatie, geen claim, autorisatie of herstelactie.
+
+De private dempfunctie verwijdert uitsluitend de Android-notificatie met **dezelfde projectspecifieke tag** die de worker gebruikte. Andere projectmeldingen blijven intact, ook als hun incident-ID gelijk is. De wijziging schrijft geen serverdata, claims, lease, workflows of services.
