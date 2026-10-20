@@ -7,6 +7,7 @@ approval, or deployment request. Selected PRs are a bounded sample.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from html import escape
 import hashlib
 import json
 import re
@@ -276,6 +277,115 @@ def collect_workorders(board):
     }
     receipt["source_digest_sha256"] = _digest(receipt)
     return receipt
+
+
+
+def render_html(bundle):
+    """One-file, script-free private owner desk; never a live merge console."""
+    if (type(bundle) is not dict or bundle.get("schema") != SCHEMA
+            or type(bundle.get("items")) is not list
+            or len(bundle["items"]) > MAX_PRS
+            or any(bundle.get(k) is not False for k in (
+                "claim_authorized", "merge_authorized",
+                "deploy_authorized", "writes_performed"))):
+        raise ValueError("invalid private owner desk")
+    def e(value):
+        return escape(str(value), quote=True)
+
+    parts = [
+        "<!doctype html><html lang=\"nl\"><head><meta charset=\"utf-8\">",
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">",
+        "<title>zSentinel · private PR werkopdrachten</title>",
+        "<style>body{font:16px/1.5 system-ui,sans-serif;background:#f8f9fb;"
+        "color:#17202b;max-width:960px;margin:auto;padding:1.25rem}"
+        "article{background:white;border:1px solid #cbd2dc;border-radius:12px;"
+        "padding:1.2rem;margin:1.1rem 0;overflow-wrap:anywhere}"
+        "a{color:#17529b}a:focus-visible{outline:3px solid #17529b}"
+        "h1,h2,h3{line-height:1.25}ul{padding-left:1.4rem}"
+        "code{overflow-wrap:anywhere}.notice{border-left:5px solid #606b7b;"
+        "padding:.7rem 1rem;background:#e9ecf0;margin:1rem 0}"
+        ".warning{border-left-color:#a34c20;background:#fff0df}"
+        ".meta{color:#425063;font-size:.92rem}</style></head><body>",
+        "<header><h1>zSentinel · private PR-werkopdrachten</h1>",
+        "<p class=\"meta\">Waargenomen (UTC): " + e(bundle["source_observed_at_utc"]) +
+        " · SHA256: <code>" + e(bundle["source_digest_sha256"]) + "</code></p>",
+        "<p class=\"notice\">Alle acties zijn handmatig. Dit offline dossier bewijst "
+        "geen huidige eigenaar, vereiste CI, onafhankelijke review of merge- en "
+        "deployrecht.</p></header>",
+    ]
+    if bundle.get("source_observation_stale") is True:
+        parts.append("<p class=\"notice warning\"><strong>HISTORISCHE BRON "
+                     "(&gt;6 uur).</strong> HEAD, reviews en CI opnieuw bekijken; "
+                     "geen actuele status bewezen.</p>")
+    if bundle.get("selection_is_not_full_open_pr_backlog") is True:
+        parts.append("<p class=\"notice warning\">ONVOLLEDIGE SELECTIE: "
+                     "meer open PRs en bestandsbotsingen mogelijk.</p>")
+    for card in bundle["items"]:
+        repo = card["repository"]
+        url = _same_repo_url(card["url"], repo)
+        files = url + "/files"
+        parts += [
+            "<article><h2>" + e(card["project"]) + " · <a target=\"_blank\" "
+            "rel=\"noopener noreferrer\" href=\"" + e(url) + "\">PR #" +
+            e(card["number"]) + "</a></h2>",
+            "<p><strong>Blokkade:</strong> " + e(card["blocker"]) + "<br>"
+            "<strong>Menselijke vervolgstap:</strong> " +
+            e(card["human_next_step"]) + "</p>",
+            "<p class=\"meta\">Categorie: " + e(card["category"]) +
+            " · HEAD bij observatie: <code>" + e(card["head_sha"] or "ONBEKEND") +
+            "</code><br>Doelbasis: <code>" + e(card["base_sha"] or "ONBEKEND") +
+            "</code> · <a target=\"_blank\" rel=\"noopener noreferrer\" "
+            "href=\"" + e(files) + "\">Bestandswijzigingen</a></p>",
+        ]
+        if card.get("check_links"):
+            parts.append("<h3>Niet-groene checkbronnen</h3><ul>")
+            for check in card["check_links"]:
+                link = check["url"]
+                # The collector admits only canonical check-run or pinned
+                # commit-check links. Recheck before HTML interpolation.
+                if not (re.fullmatch(
+                        re.escape("https://github.com/" + repo + "/runs/") +
+                        r"[1-9][0-9]*", link) or
+                        (card["head_sha"] and link ==
+                         "https://github.com/" + repo + "/commit/" +
+                         card["head_sha"] + "/checks")):
+                    raise ValueError("unsafe private check link")
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(link) + "\">" + e(check["name"]) +
+                             "</a> · " + e(check["state"]) + "</li>")
+            parts.append("</ul>")
+        if card.get("related_prs"):
+            parts.append("<h3>Gerelateerde bron-PRs (geen mergeconflictbewijs)</h3><ul>")
+            for related in card["related_prs"]:
+                parts.append("<li><a target=\"_blank\" rel=\"noopener noreferrer\" "
+                             "href=\"" + e(_same_repo_url(related, repo)) +
+                             "\">" + e(related) + "</a></li>")
+            parts.append("</ul>")
+        if card.get("overlap_paths"):
+            parts.append("<h3>Waargenomen gedeelde paden</h3><ul>")
+            for path in card["overlap_paths"]:
+                parts.append("<li><code>" + e(path) + "</code></li>")
+            parts.append("</ul>")
+        if card.get("unverified_issue_hints"):
+            parts.append("<p>Ongeverifieerde issuevermeldingen: " +
+                         ", ".join("#" + str(n) for n in
+                                   card["unverified_issue_hints"]) + "</p>")
+        if card.get("source_warnings"):
+            parts.append("<h3>Bronwaarschuwingen</h3><ul>")
+            for warning in card["source_warnings"]:
+                parts.append("<li>" + e(warning) + "</li>")
+            parts.append("</ul>")
+        parts.append("<p class=\"meta\">Geen claim, workflowherstart, merge of "
+                     "deploy geautoriseerd.</p></article>")
+    if not bundle["items"]:
+        parts.append("<p>Geen geselecteerde brongebonden PR-werkopdrachten.</p>")
+    parts.append("</body></html>\n")
+    output = "".join(parts)
+    if len(output.encode("utf-8")) > 512 * 1024:
+        raise ValueError("private workorder HTML exceeds limit")
+    return output
 
 
 def render_markdown(bundle):
