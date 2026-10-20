@@ -447,3 +447,39 @@ Bestaande automatische CI, onafhankelijke review, protected main, actieve claims
 en productie-eigenaarschap blijven ongewijzigd. Er zijn geen QA-/regressiesuites
 gecreëerd of handmatig uitgevoerd, geen VPS- of live SQLite-writes verricht en
 er wordt geen merge, workerrecovery of live productherstel geclaimd.
+
+
+## 20 oktober · Projecteerlijke wachtrijselectie zonder P0-verdringing
+
+De werkelijke allocator `_portfolio_eligible_lane_candidates_locked()` las
+voorheen wel maximaal vier bronpagina's, maar stopte zodra de **eerste 240**
+policy-toegestane rijen waren gevonden. Daardoor kon bijvoorbeeld een project
+met 240 P0-producttaken een ander vrij project vanaf bronpositie 241
+verbergen. Zijn eigen hard/soft worker-cap kon vervolgens verhinderen dat
+voldoende werk startte, terwijl de andere projecten niet eens als kandidaten
+werden geclassificeerd.
+
+De bestaande runtime-PR herstelt nu het samenhangende gedrag via
+`portfolio_fair_candidate_window` uit de reeds gebruikte policy-module:
+
+- Scan maximaal vier opeenvolgende vensters van 240 nog niet geclaimde,
+  leasevrije bronrijen; QA-only en corrupte metadata blijven uitgesloten.
+- Binnen die **waargenomen** geldige productrijen reserveert de selectie maximaal
+  acht kandidaten per onderscheiden project, en vult resterende plaatsen aan
+  met de oorspronkelijk hoogst geprioriteerde overgebleven rijen.
+- Het eindvenster bevat maximaal 240 rijen en behoudt exact de bestaande
+  P0/P1/P2/P3- en `created_at/queue_id`-bronvolgorde. De latere planner
+  blijft dus P0 eerst behandelen; het venster kan wel andere projecten meenemen
+  wanneer de eerste P0-projecten hun huidige worker-cap bereikt hebben.
+- De bestaande `generate_execution_lanes`, actieve scope/claim-inventaris,
+  hard/soft projectcaps, beschikbare geheugenruimte, busy-browserstatus,
+  Force Start, lease- en releasecontrole worden niet overgeslagen.
+- Als ook de 960 onderzochte bronrijen geen werk uit een ander project bevatten,
+  pretendeert de bron niet dat de rest van de onbeperkte queue gecontroleerd is.
+  Er worden geen bestaande claims vrijgemaakt om kunstmatige capaciteit te
+  creëren. Geen automatische scheduler-/VPS-activatie binnen deze PR.
+
+Dit is een **functionele allocatorwijziging** en niet een nieuwe audit of
+QA-implementatie. De vereiste automatische CI op exact de nieuwe PR-head,
+onafhankelijke review en geserialiseerde runtime-release moeten voor main/live
+nog plaatsvinden. Geen testsuites geschreven, uitgebreid of handmatig gestart.
