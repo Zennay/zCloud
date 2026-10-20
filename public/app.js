@@ -2813,6 +2813,9 @@ function combinedProjectCoverageRows(){
   const observations=IMPORTED_GITHUB_ACTIVITY?.coverage||[];
   const current=Date.now(),rows=[];
   for(const id of projectIds.slice(0,24)){
+    const project=(DATA?.projects||[]).find(item=>item.id===id);
+    const canonicalRepo=/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]{1,100}\/?$/.test(project?.repo_url||'')
+      ?(project.repo_url||'').replace(/\/$/,''):null;
     const localCache=ACTIVITY_LOCAL_PROJECT_CACHE.get(id);
     const localFailed=ACTIVITY_LOCAL_PROJECT_ERRORS.has(id);
     const localSourceAt=localCache?.observedAt||null;
@@ -2834,7 +2837,7 @@ function combinedProjectCoverageRows(){
     const status=!ghCoverage?'not observed':ghCoverage.status==='unavailable'
       ?'unavailable':!ghFresh||ghCoverage.staleEvidence?'stale/partial':
       ghCoverage.status||'partial';
-    rows.push({project:id,localLast,localStatus,localSourceAt,
+    rows.push({project:id,canonicalRepo,localLast,localStatus,localSourceAt,
       localCount:localCache?.rows.length??null,localLimited:localCache?.limited===true,
       ghLast,syncAt,status});
   }
@@ -2859,6 +2862,10 @@ function combinedProjectCoverageTable(){
       '</small></div><small>GitHub '+esc(row.status)+'<br>'+
       (row.syncAt?'observed '+esc(date(row.syncAt,true)):'not fetched')+
       (row.ghLast?'<br>latest sampled event '+esc(date(row.ghLast,true)):'')+
+      (row.canonicalRepo?'<br><a href="'+esc(row.canonicalRepo+'/pulls')+
+        '" target="_blank" rel="noopener noreferrer">Current PRs ↗</a> · <a href="'+
+        esc(row.canonicalRepo+'/actions')+
+        '" target="_blank" rel="noopener noreferrer">Current CI ↗</a>':'')+
       '</small></div>').join('')+
     '</div><p class="detail-note">Source observation time and last event time are separate. A scoped read returning zero events is not proof of no commits; a fallback global list is not project coverage. GitHub samples, PRs and checks never authorize a merge or deployment.</p></details>';
 }
