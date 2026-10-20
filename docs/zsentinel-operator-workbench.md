@@ -1318,3 +1318,24 @@ blijft uitsluitend voor `markdown` en `html` beschikbaar,
 zodat een historisch CSV-importbestand niet als actuele mergevrijgave
 kan worden geïnterpreteerd. Er wordt geen QA-suite aangemaakt of
 gestart, geen werk overgenomen en geen CI, claim, queue of VPS gewijzigd.
+
+
+### Meer dan één gelijktijdige PR-blokkade blijft zichtbaar
+
+Een GitHub PR kan in hetzelfde bronmoment **tegelijk** een falende
+check, wachtende CI, gevraagde reviewwijzigingen, ontbrekende
+onafhankelijke goedkeuring en onvolledige bronpagina's hebben.
+De eerder aanwezige ene prioritaire categorie blijft bestaan voor
+de hoofdgroepering. De actuele HTML-kaart toont nu daarnaast alle
+andere waargenomen blokkades onder **Ook waargenomen**. De CSV-kolom
+`Gelijktijdige blokkades` bewaart dezelfde volledige begrensde lijst,
+zonder onbetrouwbare providerteksten.
+
+Dit voorkomt dat een operator uitsluitend op CI-wachten stuurt
+terwijl een onafhankelijke review- of eigenaaractie al nodig is.
+Het is uitsluitend **waargenomen werkopvolging**: één bronsteekproef
+bewijst geen volledige verplicht-checklijst, eigenaar, fix,
+`merged=true`, productieherstel of vrijgave. Alle bestaande
+code-eigenaar-, CI-, security-, release- en Notion-claimgates
+blijven ongewijzigd; er is geen automatische actielus,
+workerclaim of test/QA-run toegevoegd.
