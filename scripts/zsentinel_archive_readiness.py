@@ -13,13 +13,13 @@ import stat
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
-from zsentinel_disk_hotspots import observe as scan_disk, _root, SCHEMA as DISK_SCHEMA
+from zsentinel_disk_hotspots import (observe as scan_disk, _root,
+                                     SCHEMA as DISK_SCHEMA, ARCHIVE_SUFFIX_HINTS)
 from zsentinel_private_output import write_private_output
 
 SCHEMA = "zsentinel-external-archive-readiness-v1"
 # Candidate hints only. Some of these files may still be actively used or private.
-COLD_SUFFIXES = (".hbr2", ".parquet", ".arrow", ".npz", ".safetensors",
-                 ".onnx", ".webm", ".mp4", ".tar.gz", ".zip")
+COLD_SUFFIXES = ARCHIVE_SUFFIX_HINTS
 MIN_AGE_DAYS = 7
 
 def observe(report: dict, destination: Path, *, min_age_days=MIN_AGE_DAYS):
@@ -57,8 +57,11 @@ def observe(report: dict, destination: Path, *, min_age_days=MIN_AGE_DAYS):
         os.close(fd)
     now = datetime.now(timezone.utc)
     candidates = []
+    cold_rows = report.get("cold_candidates_sample", report["top_files"])
+    if type(cold_rows) is not list or len(cold_rows) > 15:
+        raise ValueError("untrusted bounded cold-data sample")
     omitted = {"unsupported_or_suspect": 0, "too_recent": 0, "invalid_metadata": 0}
-    for item in report["top_files"]:
+    for item in cold_rows:
         if (type(item) is not dict or type(item.get("relative_path")) is not str
                 or type(item.get("allocated_mib")) not in (float, int)
                 or type(item.get("last_modified_utc")) is not str):
@@ -103,6 +106,8 @@ def observe(report: dict, destination: Path, *, min_age_days=MIN_AGE_DAYS):
         "candidate_age_days_minimum": min_age_days,
         "candidate_files": candidates,
         "candidate_count": len(candidates),
+        "cold_extension_hints_seen_in_source_lower_bound": report.get(
+            "archive_suffix_candidates_seen_lower_bound"),
         "candidate_bytes_lower_bound": round(
             sum(x["observed_allocated_mib"] for x in candidates) * 1048576),
         "candidate_omitted": omitted,
@@ -133,6 +138,8 @@ def public_summary(data):
         "schema": "zsentinel-external-archive-summary-v1",
         "archive_separate_mount_observed": True,
         "archive_available_gib_estimate": data["archive_available_gib_estimate"],
+        "cold_extension_hints_seen_in_source_lower_bound": data.get(
+            "cold_extension_hints_seen_in_source_lower_bound"),
         "candidate_count_sampled_not_transferable": data["candidate_count"],
         "candidate_gib_lower_bound_not_savings": round(
             data["candidate_bytes_lower_bound"]/1024**3, 2),
@@ -199,7 +206,7 @@ def main():
     p.add_argument("--output", required=True, type=Path)
     args = p.parse_args()
     try:
-        report = scan_disk(args.root, max_entries=args.max_entries,
+        report = scan_disk(args.root, min_mib=1, max_entries=args.max_entries,
                            max_depth=args.max_depth, max_seconds=args.max_seconds)
         plan = observe(report,args.archive_root,min_age_days=args.min_age_days)
         value = (json.dumps(plan, ensure_ascii=True, sort_keys=True, indent=2)
