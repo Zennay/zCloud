@@ -125,6 +125,8 @@ vijf menselijke historische hercontrolekandidaten. Tot nu ontbraken die in
 de **eigenaaroverdracht**, waardoor de operator buiten de speciale
 historische cockpit onbedoeld een incompleet actueel actielijstje zag.
 
+Ook de standaard offline incidentcockpit geeft historische kaarten nu directe links naar de oude exacte GitHub-job en commit, mits de historische projectidentiteit, veilige run/job/SHA en canonieke repositorymapping allemaal overeenkomen. De kop blijft nadrukkelijk HISTORISCH · GEEN ACTUELE BRON; klikken is uitsluitend bekijken en vormt geen runner-, job- of bronherstelbewijs.
+
 De bestaande --handoff-output en --show-owner-handoff nemen vanaf nu
 **zonder extra providerlezingen of dispatch** een tweede, gescheiden
 sectie op met historische, nog niet gereconcilieerde hercontroles.
