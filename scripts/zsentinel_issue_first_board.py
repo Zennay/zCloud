@@ -300,6 +300,120 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
         "source": "TARGETED_ISSUE_SEARCH"}
 
 
+def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
+    """Read exact existing PRs without GitHub Search; never infer entire backlog.
+
+    Explicit PR numbers may originate from Notion, a known GitHub URL or an
+    operator handoff. Even a matching title/body hint is not ownership or
+    proof of fixing the selected issue. Up to ten PRs share the same budget.
+    """
+    if (not isinstance(pr_numbers, list) or not 1 <= len(pr_numbers) <= 10
+            or any(type(number) is not int or not 1 <= number <= 9999999
+                   for number in pr_numbers)
+            or len(set(pr_numbers)) != len(pr_numbers)):
+        raise ValueError("expected 1–10 distinct existing PR numbers")
+    choices = [(repo, key) for repo, key in registry.values() if key == project]
+    if len(choices) != 1:
+        raise ValueError("ambiguous canonical project")
+    repo, _ = choices[0]
+    issue = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
+    if (not isinstance(issue, dict) or issue.get("state") != "open"
+            or issue.get("number") != issue_number or "pull_request" in issue):
+        raise ValueError("target must be a confirmed open issue")
+    priority = classification(issue)
+    target = dict(priority or {
+        "number": issue_number, "priority": "UNCLASSIFIED",
+        "title": str(issue.get("title") or "")[:160]})
+    target["url"] = f"https://github.com/{repo}/issues/{issue_number}"
+    rows, limitations, examined = [], [], 0
+    for number in pr_numbers:
+        # Each full detailed PR receipt takes up to 7 bounded GETs. Reserve
+        # source budget for a final independent canonical issue observation.
+        if budget[0] > board.MAX_GETS - 9 or time.monotonic() > budget[1] - 10:
+            limitations.append({"project": project, "reason": "EXPLICIT_PR_BUDGET_PARTIAL"})
+            break
+        examined += 1
+        try:
+            pr = board.bounded_gh(f"repos/{repo}/pulls/{number}", budget)
+            if eligible_pr(pr) is None:
+                limitations.append({"project": project,
+                                    "reason": f"EXPLICIT_PR_NOT_ELIGIBLE_{number}"})
+                continue
+            body = pr.get("body") or ""
+            title = pr["title"]
+            if not isinstance(body, str) or len(body) > 128000:
+                limitations.append({"project": project,
+                                    "reason": f"EXPLICIT_PR_BODY_UNAVAILABLE_{number}"})
+                continue
+            digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+            title_digest = hashlib.sha256(title.encode("utf-8")).hexdigest()
+            report = board.inspect(repo, number, budget,
+                                   expected_body_digest=digest,
+                                   expected_title_digest=title_digest)
+            has_ref = issue_number in reference_hints(
+                title, body, {issue_number}, repo=repo)
+            trustworthy = (report.get("source") == "COMPLETE"
+                           and report.get("status") in {
+                               "HOLD", "OBSERVED_GATES_ONLY", "DRAFT"}
+                           and report.get("head") == (pr.get("head") or {}).get("sha"))
+            report["observed_issue_refs"] = [target] if has_ref and trustworthy else []
+            report["issue_reference_source"] = (
+                "EXPLICIT_PR_VERIFIED_REFERENCE" if has_ref and trustworthy
+                else "EXPLICIT_PR_NO_CURRENT_VERIFIED_REFERENCE")
+            report["reference_proves_fix"] = False
+            report["active_claim_status"] = "UNKNOWN_NOT_OWNED"
+            rows.append(report)
+            if not has_ref:
+                limitations.append({"project": project,
+                                    "reason": f"PR_{number}_ISSUE_LINK_NOT_OBSERVED"})
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError):
+            limitations.append({"project": project,
+                                "reason": f"EXPLICIT_PR_SOURCE_UNAVAILABLE_{number}"})
+    if examined < len(pr_numbers):
+        limitations.append({"project": project, "reason": "EXPLICIT_PR_SELECTION_UNREAD"})
+    try:
+        final = board.bounded_gh(f"repos/{repo}/issues/{issue_number}", budget)
+        final_class = classification(final) if isinstance(final, dict) else None
+        final_priority = (final_class["priority"] if final_class
+                          else "UNCLASSIFIED")
+        current = (isinstance(final, dict)
+                   and final.get("state") == "open"
+                   and final.get("number") == issue_number
+                   and final.get("id") == issue.get("id")
+                   and "pull_request" not in final
+                   and str(final.get("title") or "")[:160] == target["title"]
+                   and final_priority == target["priority"])
+    except (RuntimeError, ValueError, KeyError, TypeError, OSError):
+        current = False
+    target["current_state"] = "OPEN_RECONFIRMED" if current else "UNKNOWN"
+    if not current:
+        limitations.append({"project": project, "reason": "FINAL_ISSUE_SOURCE_UNVERIFIED"})
+        for report in rows:
+            report["observed_issue_refs"] = []
+            report["issue_reference_source"] = "UNKNOWN_OR_MOVED"
+    limitations.append({"project": project, "reason": "EXPLICIT_PR_SELECTION_NOT_SEARCH"})
+    coverage = {
+        "source": "EXPLICIT_PR_CANONICAL_GET",
+        "candidate_pr_numbers": pr_numbers[:examined],
+        "requested_pr_numbers": pr_numbers,
+        "search_examined": examined,
+        "search_total": None,
+        "candidate_page": None,
+        "next_page": None,
+        "next_candidate_offset": None,
+        "source_page_sha256": None,
+        "window_start": None,
+        "window_end": None,
+        "search_complete": False,
+        "max_linked_prs": len(pr_numbers),
+        "linked_prs_observed": len(rows),
+        "auto_pages_requested": 0,
+        "auto_pages_observed": 0,
+        "page_windows": [],
+    }
+    return rows, target, limitations, coverage
+
+
 def collect_targeted_windows(project, issue_number, registry, budget,
                              candidate_page=1, auto_pages=1, candidate_offset=0,
                              expected_page_sha=None, max_linked_prs=12):
