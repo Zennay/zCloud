@@ -387,6 +387,15 @@ Geen workflow, GitHub-write, calendar push, Notion-write, lease of deploy.</p>
 geen huidige incidenten, watch-alerts of nieuwe taakclaims. Controleer exact bronbewijs
 met een bevoegde eigenaar; er worden nooit retries of herstelacties gestart.</p>
 <p id="historyCount" class="meta"></p><div id="historical" class="scroll"></div>
+<div class="controls"><h3>Historische P0/P1 · alleen menselijke bronherbeoordeling</h3>
+<p>Dit zijn geen actuele notificaties. Bekijk de privé-overdracht met de
+oorspronkelijke jobidentiteit en bronhash vóór je zelf de bevoegde eigenaar benadert.</p>
+<p id="ownerRecheckCount" class="meta"></p>
+<div class="row"><button id="previewOwnerRecheck" type="button">Historische owner-briefing bekijken</button>
+<button id="downloadOwnerRecheck" type="button" disabled>Download privébriefing (.md)</button></div>
+<pre id="ownerRecheckPreview" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto"></pre>
+<p id="ownerRecheckStatus" class="meta" aria-live="polite">Nog geen historische briefing voorbereid.</p>
+</div>
 </section>
 __BRANCH_PANEL__
 <section class="panel" aria-label="Human escalation overview"><h2>Wie heeft actie nodig?</h2>
