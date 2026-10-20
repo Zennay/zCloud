@@ -492,6 +492,10 @@ def current_gate_lines(board, markdown=False):
         if markdown else "Huidige PR-gates (maximaal vier; GEEN mergevrijgave)",
         "Selectie: " + observation["mode"] + "; expliciet gekozen: " +
         (", ".join(observation["explicit_selected_prs"]) or "automatische beperkte shortlist"),
+        "Oudere expliciete PR's met afzonderlijke broncontrole: " +
+        str(observation["direct_explicit_prs_outside_recent_sample"]) +
+        "; extra bron-GETs voor die PR-identiteiten: " +
+        str(observation["extra_direct_pr_identity_gets"]),
         "Gatebronnen gezien: " + str(observation["pr_gate_receipts_requested"]) +
         "; QA-only titels bewust niet geselecteerd: " +
         str(observation["qa_only_title_prs_not_inspected"]) +
@@ -504,6 +508,22 @@ def current_gate_lines(board, markdown=False):
         link = ("[" + gate["url"] + "](" + gate["url"] + ")"
                 if markdown else gate["url"])
         lines.append("- " + gate["project"] + " · " + link)
+        if gate["observed_in_recent_pr_collision_sample"] is False:
+            lines.append(
+                "  DIRECT GELEZEN OUDERE PR: buiten de recente dubbel gelezen "
+                "botsingssteekproef; geen volledig collision- of claimbewijs.")
+            for collision in gate["sampled_file_overlaps_observed"]:
+                other = ("[" + collision["other_pr_url"] + "](" +
+                         collision["other_pr_url"] + ")" if markdown
+                         else collision["other_pr_url"])
+                lines.append(
+                    "  WAARGENOMEN gedeelde paden met " + other + ": " +
+                    str(collision["shared_file_count_observed"]) + " (" +
+                    ", ".join(collision["shared_paths_preview"]) + ")")
+            if gate["sampled_file_overlaps_hidden"]:
+                lines.append(
+                    "  Extra overlaplinks buiten de beperkte voorvertoning: " +
+                    str(gate["sampled_file_overlaps_hidden"]))
         lines.append("  Actuele blokkade: " + BLOCKER_DESCRIPTIONS[
             gate["human_gate_blocker"]])
         if gate["status"] != "current_exact_pr_head_and_sample_match":
@@ -684,11 +704,30 @@ def as_html(board):
             detail = (
                 "BLOKKADE: " + escape(BLOCKER_DESCRIPTIONS[
                     gate["human_gate_blocker"]]) + " · " + detail)
+            source_note = ""
+            if gate["observed_in_recent_pr_collision_sample"] is False:
+                collision_links = []
+                for other in gate["sampled_file_overlaps_observed"]:
+                    other_url = escape(other["other_pr_url"], quote=True)
+                    collision_links.append(
+                        "<li><a href='" + other_url +
+                        "' rel='noopener noreferrer'>" + other_url +
+                        "</a>: " + str(other["shared_file_count_observed"]) +
+                        " gedeelde paden (steekproef), o.a. " +
+                        escape(", ".join(other["shared_paths_preview"])) + "</li>")
+                source_note = (
+                    "<p><strong>Gericht gelezen oudere PR</strong>: buiten "
+                    "de recente collisionsteekproef, onvolledige dekking. "
+                    "Geen botsing gezien is geen vrijgave.</p><ul>" +
+                    "".join(collision_links) + "</ul>" +
+                    ("<p>Extra links niet getoond: " +
+                     str(gate["sampled_file_overlaps_hidden"]) + "</p>"
+                     if gate["sampled_file_overlaps_hidden"] else ""))
             pr_cards.append(
                 "<li><a href='" + url + "' rel='noopener noreferrer'>" +
                 escape(gate["project"]) + " · " + url +
                 "</a><br><small>" + detail +
-                " · geen mergevrijgave</small></li>")
+                " · geen mergevrijgave</small>" + source_note + "</li>")
         gate_panel = (
             "<section><h2>Actuele PR-gates · maximaal vier</h2>"
             "<p>Bronselectie: " + escape(live["mode"]) +
@@ -702,7 +741,9 @@ def as_html(board):
             "</ol><p>" +
             ("Overige PR-gates NIET waargenomen. " if
              live["more_sampled_prs_not_gate_checked"] else "") +
-            "QA-only titels niet voor product-gatecontrole gekozen: " +
+            "Oudere gerichte PR's rechtstreeks gelezen: " +
+            str(live["direct_explicit_prs_outside_recent_sample"]) +
+            ". QA-only titels niet voor product-gatecontrole gekozen: " +
             str(live["qa_only_title_prs_not_inspected"]) +
             ". Maximaal " + str(live["max_additional_github_gets"]) +
             " extra GitHub GETs in deze optionele opname.</p></section>"
