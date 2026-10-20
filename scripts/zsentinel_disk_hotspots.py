@@ -154,6 +154,10 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         "schema": SCHEMA,
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
         "root": str(root),
+        "scan_parameters": {
+            "min_mib": min_mib, "max_entries": max_entries,
+            "max_depth": max_depth, "max_seconds": max_seconds,
+        },
         "coverage": "bounded_complete_with_no_private_exclusions" if complete else "partial",
         "truncation_reason": stop_reason,
         "scanned_entries": scanned,
@@ -164,6 +168,16 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
             for name, total in sorted(directory_bytes.items(),
                                       key=lambda item: (-item[1], item[0]))[:15]
         ],
+        # Private, bounded comparison data. The current operator view still
+        # shows only 15 groups; disappearing entries outside the top 128
+        # must remain UNKNOWN, not be inferred as freed disk.
+        "workspace_groups_sample": [
+            {"relative_group": name, "observed_allocated_bytes_min": total,
+             "files_observed": directory_files[name]}
+            for name, total in sorted(directory_bytes.items(),
+                                      key=lambda item: (-item[1], item[0]))[:128]
+        ],
+        "workspace_groups_truncated": len(directory_bytes) > 128,
         "large_files_seen_lower_bound": large_files_seen,
         "directories_unscanned": directories_unscanned + len(stack),
         "sensitive_names_skipped": sensitive_skipped,
