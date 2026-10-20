@@ -957,8 +957,14 @@ def graph_operator_text(report):
                 "  PR #" + str(pr["number"]) + " · " +
                 str(pr["other_prs_with_shared_files_observed"]) +
                 " verbindingen | " + pr["url"] + " @ " + pr["head_sha"][:12])
-        for path in cluster["shared_files_sample"]:
-            result.append("  gedeeld bestand: " + path)
+        for file_row in cluster["shared_file_pr_matrix"]:
+            result.append("  gedeeld bestand: " + file_row["path"])
+            for pr in file_row["touching_prs"]:
+                result.append("    PR #" + str(pr["number"]) + " | " +
+                              pr["url"] + " @ " + pr["head_sha"][:12] +
+                              " (bronbestandslijst " +
+                              ("volledig" if pr["source_file_list_complete"] else "gedeeltelijk") +
+                              ")")
         if cluster["shared_files_sample_truncated"]:
             result.append("  Meer gedeelde paden; weergave ingekort.")
         result.append("  Alleen waargenomen bestandspaden; geen eigenaar of mergevolgorde.")
@@ -1064,8 +1070,17 @@ def graph_html(report):
             "</code> · " + str(pr["other_prs_with_shared_files_observed"]) +
             " directe bestandsverbindingen</li>"
             for pr in cluster["participating_prs"])
-        samples = "".join("<li><code>" + escape(path) + "</code></li>"
-                          for path in cluster["shared_files_sample"])
+        samples = "".join(
+            "<li><code>" + escape(file_row["path"]) + "</code><ul>" +
+            "".join(
+                "<li><a rel='noopener noreferrer' href='" +
+                escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
+                "</a> · HEAD <code>" + escape(pr["head_sha"][:12]) +
+                "</code> · " +
+                ("volledige" if pr["source_file_list_complete"] else "gedeeltelijke") +
+                " bestandslijst</li>"
+                for pr in file_row["touching_prs"]) + "</ul></li>"
+            for file_row in cluster["shared_file_pr_matrix"])
         cluster_cards.append(
             "<li><h3>Connectiegroep " + str(cluster["component_number"]) +
             " · " + str(cluster["pr_count_observed"]) + " open PRs</h3>" +
@@ -1227,8 +1242,13 @@ def graph_markdown(report):
                          ") · HEAD " + pr["head_sha"][:12] + " · " +
                          str(pr["other_prs_with_shared_files_observed"]) +
                          " directe bestandsverbindingen")
-        for path in cluster["shared_files_sample"]:
-            lines.append("  - Gedeeld bestand: " + repr(path))
+        for file_row in cluster["shared_file_pr_matrix"]:
+            lines.append("  - Gedeeld bestand: " + repr(file_row["path"]))
+            for pr in file_row["touching_prs"]:
+                lines.append("    - [PR #" + str(pr["number"]) + "](" + pr["url"] +
+                             ") · HEAD " + pr["head_sha"][:12] +
+                             (" · gedeeltelijke bronbestandslijst"
+                              if not pr["source_file_list_complete"] else ""))
         if cluster["shared_files_sample_truncated"]:
             lines.append("  - Extra gedeelde bestanden niet afgebeeld.")
     if not report["linked_pr_collision_clusters"]:
