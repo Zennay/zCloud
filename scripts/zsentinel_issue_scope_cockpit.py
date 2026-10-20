@@ -557,6 +557,13 @@ def output_text(report, markdown=False):
              "Issue-bron SHA256: " + report["product_issue_source_sha256"],
              "Bronmomenten ≤10 min uiteen: " +
              ("ja" if report["source_clocks_within_10_minutes"] else "NEE — oude bron is geen live claim")]
+    if report.get("saved_gate_batch_reconciliation"):
+        b = report["saved_gate_batch_reconciliation"]
+        lines.append("Opgeslagen gatebatches: " + str(b["observed_prs"]) + "/" +
+                     str(b["total_manifest_prs"]) + " PRs; ontbrekende batches: " +
+                     str(b["missing_batches"]) + "; bron >15 min: " +
+                     str(b["stale_over_15_minutes_prs"]) +
+                     "; HEADs vandaag niet opnieuw geverifieerd; geen mergetoestemming.")
     for pid in report["github_scope_by_project"]:
         lines.append(pid["project"] + ": PR-bron " + pid["source_status"] +
                      ", waargenomen gedeelde padenparen " +
@@ -624,6 +631,14 @@ def output_text(report, markdown=False):
                         "Volledige actuele bron of bevoegde eigenaar ontbreekt."))
                 else:
                     lines.append("    Actuele PR-bron onbekend of HEAD veranderd; geen mergebesluit.")
+            bundle_gate = pr.get("saved_reconciled_gate_observation")
+            if bundle_gate is not None:
+                lines.append("    OPGENOMEN SAVED gate-batch: [" +
+                             bundle_gate["historic_gate_category"] + "] " +
+                             bundle_gate["next_human_gate"] +
+                             " · bron oud: " +
+                             str(bundle_gate["saved_source_stale_over_15_minutes"]) +
+                             " · HEAD niet live bevestigd; merge NEE")
             gates = pr["saved_exact_head_gates"]
             if gates is not None:
                 lines.append("    Historische exacte HEAD " + gates["observed_exact_head_sha"] +
@@ -669,6 +684,18 @@ def output_html(report):
         "</tr></thead><tbody>" + "".join(signals) +
         "</tbody></table></div>" + branch_note + "</section>"
     )
+    bundle_summary = ""
+    if report.get("saved_gate_batch_reconciliation"):
+        b = report["saved_gate_batch_reconciliation"]
+        bundle_summary = (
+            "<section><h2>Opgeslagen PR-gatebatches</h2><p>Brongebonden " +
+            str(b["observed_prs"]) + "/" + str(b["total_manifest_prs"]) +
+            " PRs · ontbrekende batches: " +
+            escape(str(b["missing_batches"])) + " · verouderd: " +
+            str(b["stale_over_15_minutes_prs"]) +
+            ". Alle HEADs en verplichte branchregels moeten live opnieuw worden "
+            "gecontroleerd vóór merge. Geen claim- of mergevrijgave.</p></section>"
+        )
     cards = []
     for row in report["issues"]:
         prs = []
@@ -705,6 +732,15 @@ def output_html(report):
                 live_gate.get("status") == "observed_current_head_partial_gate_evidence"
                 else "<p>Actuele PR-bron onbereikbaar of HEAD gewijzigd; geen mergebesluit.</p>"
                 if live_gate is not None else "")
+            bundle_gate = pr.get("saved_reconciled_gate_observation")
+            batch_note = (
+                "<p>Gecombineerde opgeslagen gatebatch: <strong>" +
+                escape(bundle_gate["historic_gate_category"]) + "</strong>" +
+                " · " + escape(bundle_gate["next_human_gate"]) +
+                " · verouderd: " +
+                escape(str(bundle_gate["saved_source_stale_over_15_minutes"])) +
+                ". Deze HEAD is NIET live bevestigd; geen mergevrijgave.</p>"
+                if bundle_gate is not None else "")
             gates = pr["saved_exact_head_gates"]
             gate_note = ("<p>Opgeslagen HEAD " +
                          escape(gates["observed_exact_head_sha"][:12]) +
@@ -721,7 +757,7 @@ def output_html(report):
                 escape(pr["url"], quote=True) + "'>" + escape(pr["url"]) +
                 "</a> · " + escape(pr["file_scope_state"]) +
                 " · " + escape(pr["issue_link_source"]) +
-                gate_note + live_note +
+                gate_note + batch_note + live_note +
                 ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
         cards.append(
             "<article data-priority='" + escape(row["priority"], quote=True) +
@@ -824,7 +860,7 @@ update();
             "<p>Actuele PR-review/checkbron: " +
             escape(report["current_head_gate_observations"]["mode"]) +
             " · verplichte rules en eigenaarrechten blijven onbekend.</p>" +
-            signals_html + filter_bar + "<main>" + "".join(cards) + "</main>" +
+            signals_html + bundle_summary + filter_bar + "<main>" + "".join(cards) + "</main>" +
             offline_script + "<footer><small>Issue SHA256 " +
             escape(report["product_issue_source_sha256"]) + "</small></footer></html>")
 
@@ -841,6 +877,10 @@ def main(argv=None):
     parser.add_argument("--max-prs", type=int, default=10)
     parser.add_argument("--inspect-pr-gates", action="store_true",
                         help="Optioneel: current-head checks/reviews van maximaal vier PRs")
+    parser.add_argument("--from-review", type=Path,
+                        help="Bestaand reviewmanifest voor opgeslagen PR-gate-batches")
+    parser.add_argument("--saved-gate-receipt", action="append", type=Path,
+                        help="Opgeslagen private gatebatch-bon, herhaal tot 32 keer")
     parser.add_argument("--focus-issue",
                         help="Toon slechts één issue die echt in de begrensde bron voorkomt, bv. Zennay/zCloud#1326")
     parser.add_argument("--format", choices=("html", "json", "text", "markdown"),
@@ -850,6 +890,15 @@ def main(argv=None):
         canonical = registry(args.registry)
         if args.inspect_pr_gates and not args.live_issues:
             raise ValueError("--inspect-pr-gates requires --live-issues")
+        if bool(args.from_review) != bool(args.saved_gate_receipt):
+            raise ValueError("--from-review and --saved-gate-receipt must be supplied together")
+        if args.inspect_pr_gates and args.saved_gate_receipt:
+            raise ValueError("choose live four-PR inspection OR historical saved batches")
+        saved_bundle = None
+        if args.from_review:
+            # Local only, strict manifest identity and bounded receipt validation.
+            from zsentinel_pr_gate_batches import reconcile
+            saved_bundle = reconcile(args.from_review, args.saved_gate_receipt)
         if args.live_issues:
             if not args.project or len(args.project) > MAX_PROJECTS:
                 raise ValueError("--live-issues needs 1–3 explicit canonical --project values")
@@ -897,6 +946,34 @@ def main(argv=None):
                                       else "live_readonly_github_issues" if args.live_issues
                                       else "saved_local_snapshot"),
                          focus_issue=args.focus_issue, raw_board=source)
+        if saved_bundle is not None:
+            saved_entries = {
+                row["url"]: row for batch in saved_bundle["batches"]
+                for row in batch["prs"]
+            }
+            for issue in report["issues"]:
+                for candidate in issue["existing_prs"]:
+                    # This is intentionally historical, not a current-head gate.
+                    candidate["saved_reconciled_gate_observation"] = saved_entries.get(
+                        candidate["url"])
+            report["saved_gate_batch_reconciliation"] = {
+                "source_manifest_sha256": saved_bundle["source_review_manifest_sha256"],
+                "source_board_sha256": saved_bundle["source_review_board_sha256"],
+                "observed_prs": saved_bundle["observed_prs"],
+                "total_manifest_prs": saved_bundle["total_manifest_prs"],
+                "missing_batches": saved_bundle["missing_batches"],
+                "stale_over_15_minutes_prs": saved_bundle["stale_over_15_minutes_prs"],
+                "unavailable_or_drifted_prs": saved_bundle["unavailable_or_drifted_prs"],
+                "saved_historic_gate_category_counts":
+                    saved_bundle["saved_historic_gate_category_counts"],
+                "current_heads_revalidated": False,
+                "merge_authorized": False,
+                "claim_authorized": False,
+                "deploy_authorized": False,
+                "writes_performed": False,
+            }
+        else:
+            report["saved_gate_batch_reconciliation"] = None
         if args.inspect_pr_gates:
             from zsentinel_pr_gate_now import observe_many as live_pr_gate_observe
             selected_prs = []
