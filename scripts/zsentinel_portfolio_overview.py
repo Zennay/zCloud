@@ -145,6 +145,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             "historical_unresolved_sample_hits": 0,
             "notion_active_status_min": None,
             "github_job_runner_route": "not_scanned",
+            "github_ci_source_stop_reason": None,
+            "github_ci_windows_not_scanned": [],
         }
     for entry in groups:
         if not isinstance(entry, dict):
@@ -187,6 +189,17 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         if route not in ("self_hosted", "hosted_or_custom", "unknown", "degraded_unknown"):
             raise ValueError("invalid route admission category")
         summary[pid]["github_job_runner_route"] = route
+        source_stop = item.get("repository_stop_reason")
+        windows_skipped = item.get("not_scanned_windows", [])
+        if (source_stop not in (None, "github_permission_or_rate_limit",
+                                "repository_inaccessible", "github_network_unavailable")
+                or type(windows_skipped) is not list or len(windows_skipped) > 3
+                or any(window not in ("queued", "in_progress", "failure")
+                       for window in windows_skipped)
+                or len(set(windows_skipped)) != len(windows_skipped)):
+            raise ValueError("invalid GitHub CI source stop metadata")
+        summary[pid]["github_ci_source_stop_reason"] = source_stop
+        summary[pid]["github_ci_windows_not_scanned"] = windows_skipped
     # Counts below are lower bounds in the bounded source window,
     # NEVER total open portfolio issue/incident inventory.
     for pid in selected:
@@ -244,6 +257,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             row["next_action"] = "github_unassigned_job_route_owner_review"
         elif row["project_id"] in unstarted_job_projects:
             row["next_action"] = "github_job_unstarted_platform_owner_review"
+        elif row["github_ci_source_stop_reason"] is not None:
+            row["next_action"] = "github_ci_source_denied_no_retry_owner_review"
         elif not complete:
             row["next_action"] = "queue_source_incomplete_owner_must_review"
         elif row["expired_owner_leases"]:
@@ -404,6 +419,8 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             "github_source_not_scanned_next_window": "GitHub onbekend; volgend venster",
             "historical_incident_source_recheck_owner": "Historische P0/P1-bron via eigenaar verifiëren; GEEN herstelbewijs",
             "github_source_unavailable_no_all_clear": "Bronfout: opnieuw via geautoriseerde route",
+            "github_ci_source_denied_no_retry_owner_review":
+                "GitHub CI-bron geweigerd of netwerk onbereikbaar; geen herhaalde retries. Bevoegde API-/repo-eigenaar controleert toegang.",
             "branch_overlap_needs_owner": "RECENTE BRANCHOVERLAP: eigenaar + PR-scope controleren",
             "branch_inventory_partial": "PR-loze branchbron onvolledig: geen vrijgave",
             "branch_scope_not_provided": "Geen actuele padscope: overlap onbekend",
@@ -432,7 +449,12 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             '<td>' + _count(row["expired_owner_leases"]) + '</td>'
             '<td>' + escape(github) + '</td>'
             '<td>' + escape(attempt_label) + '</td>'
-            '<td>' + phrase_route(row["github_job_runner_route"]) + '</td>'
+            '<td>' + phrase_route(row["github_job_runner_route"]) +
+            ('<br><small>CI-BRON GESTOPT: ' +
+             escape(row["github_ci_source_stop_reason"]) +
+             ' · niet onderzocht: ' +
+             escape(", ".join(row["github_ci_windows_not_scanned"]) or "geen") +
+             '</small>' if row["github_ci_source_stop_reason"] else '') + '</td>'
             '<td>' + ('ONBEKEND' if row["p0_p1_issue_sample_hits"] is None
                       else '≥' + str(row["p0_p1_issue_sample_hits"])) + '</td>'
             '<td>' + ('ONBEKEND' if row["p2_unranked_issue_sample_hits"] is None
