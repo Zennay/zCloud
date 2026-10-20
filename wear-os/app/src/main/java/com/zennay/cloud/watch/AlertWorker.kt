@@ -34,7 +34,7 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
         val urgent = snapshot.alerts
             // Do not interrupt for generic high severity. Only the server
             // can assert that the known incident requires a human decision.
-            .filter { it.id.isNotBlank() && it.isUrgent() &&
+            .filter { it.id.isNotBlank() && it.id.length <= 256 && it.isUrgent() &&
                       it.humanActionRequired }
             .distinctBy { it.id }
             .sortedWith(compareBy<AlertItem> {
