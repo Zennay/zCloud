@@ -26,6 +26,8 @@ python3 scripts/zsentinel_live_cockpit.py \
   --format html > /private/zsentinel/cockpit-20261020.html
 ```
 
+Bij `--format html` verschijnt dezelfde P0-eerst-werkbak bovendien **boven in de bestaande offline cockpit**, met directe links naar canonieke bestaande productissues. De privé-export en de HTML-kop delen exact dezelfde in-memory bronbeslissing: er komt geen tweede GitHub-, Notion- of SQLite-lezing bij. Onbetrouwbare titels, notities en actietekst worden HTML-geëscaped en bij Markdown ook letterlijk gecodeerd, zodat externe brontekst niet als opmaak, HTML of actieve link kan worden geïnterpreteerd.
+
 De HTML-redirect is een expliciete shellhandeling van de **operator** en krijgt alleen private permissies wanneer de operator zelf een private `umask`/map gebruikt. Voor de **door het programma geschreven** handoff gelden onafhankelijk `O_EXCL | O_NOFOLLOW`, reguliere 0600-bestandspermissies en een bestaande oudermap. De handoff weigert een bestaande bestemming en een pad dat samenvalt met een SQLite-bron, lokale dedup-ledger, opgeslagen Notion-export, vorige privéscan of andere privé-uitvoer.
 
 Machineleesbare uitvoer is ook mogelijk:
