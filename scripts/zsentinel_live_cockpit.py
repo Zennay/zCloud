@@ -255,6 +255,8 @@ def main():
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--handoff-output", type=Path,
                         help="opt-in private .md/.json P0-first owner handoff; create-only, no dispatch")
+    parser.add_argument("--show-owner-handoff", action="store_true",
+                        help="insert P0-first owner action strip into offline HTML without writing a handoff file")
     args = parser.parse_args()
     ledger_lock = None
     try:
@@ -301,6 +303,8 @@ def main():
             if any(item is not None and args.desk_output.resolve() == item.resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
+        if args.show_owner_handoff and args.format != "html":
+            raise ValueError("--show-owner-handoff requires --format html")
         if args.handoff_output is not None:
             if args.handoff_output.suffix not in (".md", ".json"):
                 raise ValueError("private owner handoff must end in .md or .json")
@@ -341,7 +345,7 @@ def main():
         if "notion_claims_observation" in bundle:
             decision["notion_claims_observation"] = bundle["notion_claims_observation"]
         owner_handoff = None
-        if args.handoff_output is not None:
+        if args.handoff_output is not None or args.show_owner_handoff:
             from zsentinel_runtime_handoff import build_handoff
             owner_handoff = build_handoff(decision)
         disk_private_html = None
