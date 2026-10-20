@@ -91,7 +91,15 @@ def sweep(repo, project, args):
     if default != "main":
         print(json.dumps({"repo": repo, "result": "SKIPPED_NON_MAIN", "default": default}))
         return
-    prs = gh(f"repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=asc")
+    # A selected PR must never be missed just because the repository has >100
+    # older open pull requests. Without --pr, report the newest 100 explicitly.
+    if args.pr:
+        prs = [gh(f"repos/{repo}/pulls/{number}") for number in sorted(set(args.pr))]
+    else:
+        prs = gh(f"repos/{repo}/pulls?state=open&per_page=100&sort=updated&direction=desc")
+        if len(prs) == 100:
+            print(json.dumps({"repo": repo, "status": "RESULT_LIMIT_100",
+                              "note": "supply --pr to inspect older PRs"}))
     for item in prs:
         number = item["number"]
         if args.pr and number not in args.pr:
