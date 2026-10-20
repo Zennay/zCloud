@@ -59,6 +59,45 @@ python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
 - De zoekresultaten zijn slechts een kandidatenlijst. Alleen expliciete brongebonden issueverwijzingen `fixes #N`, `refs #N` in de body, óf expliciete `#N` in de PR-titel op dezelfde repository worden gekoppeld. De oorspronkelijke én laatste titel en beschrijving moeten allebei ongewijzigd zijn tegenover de eerste huidige PR-bron. Maximaal 32 bekeken kandidaten en 4 gekoppelde product-PRs; overige zoekresultaten blijven expliciet `CANDIDATE_WINDOW_32`/UNKNOWN. De laatste exacte issue-opvraag moet nog steeds `open` melden. Een tussentijds gewijzigde PR-body **of titel** wordt geweigerd, ook als de Git commit ongewijzigd bleef.
 - Alle bronnen en één privé offline HTML worden begrensd door hetzelfde totale 84-GET / 120s budget. De HTML toont het gerichte issue, zoekdekking, PRs met concrete next-gate en de onvolledigheidswaarschuwingen. Geen automatische issueclaim, workflowrestart, PR-merge, deploy of P0-statuswijziging.
 
+### Meerdere zoekpagina's bewaren en samenvoegen (offline)
+
+Een gerichte P0/P1-zoekopdracht kan meer dan twintig bestaande PR-kandidaten hebben.
+Bewaar afzonderlijke pagina's als **nieuwe private JSON-bronbestanden**; voeg ze
+later lokaal samen zonder GitHub opnieuw te bevragen en zonder enige writer-actie:
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
+  --candidate-page 1 --snapshot-output /private/issue-1326-page1.json
+python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
+  --candidate-page 2 --snapshot-output /private/issue-1326-page2.json
+
+python3 scripts/zsentinel_issue_page_bundle.py \
+  --page /private/issue-1326-page1.json \
+  --page /private/issue-1326-page2.json \
+  --format html --output /private/issue-1326-combined.html
+```
+
+De bronbundelaar controleert vooraf dat **alle** pagina's één canoniek project,
+dezelfde issue-URL en hetzelfde issue-ID beschrijven, met unieke paginanummers,
+start-/eindvensters van exact 20 zoekkandidaten, consistente GitHub Search-totalen
+en maximaal 10 minuten verschil tussen bronmomenten. Maximaal 50 pagina's,
+1 MiB per bestand, 8 MiB totaal; de sourcebestanden moeten private reguliere
+0600-bestanden zijn. Bij ontbrekende of verschoven pagina's, veranderde
+zoektotalen, ononderzochte kandidaten, botsende PR-HEADs of onvolledige externe
+bronnen blijft het resultaat expliciet **PARTIAL_HISTORICAL_SNAPSHOT**.
+De verwachte `SEARCH_WINDOW_PARTIAL` van een individuele pagina kan pas
+vervallen wanneer alle vereiste pagina's coherent bewaard zijn.
+Een complete bundel is **alleen complete historische zoekdekking**, nooit
+bewijs van huidige GitHub-state, eigenaarsvrijheid, geslaagde checks, review,
+merge of deploy. Het originele actuele issue moet voor een vervolgactie opnieuw
+worden opgehaald. Onbekende PRs worden nooit automatisch onbezet verklaard.
+
+HTML is een zelfstandige offline werkbak met bestaande PR-links, bron-HEADs,
+review/CI-observaties en bronbeperkingen; `--format json` of `text` kan naar
+stdout of een nieuw 0600-bestand. De export schrijft nooit bestaande bestanden
+over en verricht geen netwerk-, queue-, workflow-, claim- of GitHub-writes.
+De privacy-JSON-export is alleen bij expliciet `--issue` beschikbaar.
+
 ### Doorzoeken van oudere PRs + zicht op lokale claims
 
 Gerichte bekende issues ondersteunen opeenvolgende **zoekpagina's van 20 bestaande PR-kandidaten**, zonder de andere pagina's stilzwijgend als verwerkt te beschouwen:
