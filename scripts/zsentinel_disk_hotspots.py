@@ -263,9 +263,16 @@ def markdown(report):
     for item in report["top_files"]:
         safe = item["relative_path"].replace("\\", "/").replace("`", "'").replace("|", "/")
         lines.append("- " + str(item["allocated_mib"]) + " MiB toegewezen: `" + safe +
-                     "` · gewijzigd " + item["last_modified_utc"][:10])
+                     "` · gewijzigd " + item["last_modified_utc"][:10] +
+                     (" · open verwijzingen waargenomen: " + str(item["open_references_observed"])
+                      + " (geen bewezen actieve schrijver of veilige verwijdering)"
+                      if "open_references_observed" in item else ""))
     if not report["top_files"]:
         lines.append("Geen groot bestand in het onderzochte venster; geen vrijruimtegarantie.")
+    if "file_open_reference_observation" in report:
+        from zsentinel_disk_file_activity import private_markdown
+        lines.extend(["", "## Open bestandsverwijzingen (optionele alleen-lezen bron)",
+                      private_markdown(report["file_open_reference_observation"])])
     lines += [
         "",
         "**Nodige geautoriseerde actie:** eigenaar controleert actieve writers, "
@@ -315,9 +322,18 @@ def html(report):
         lines.append("<article><strong>" + str(row["allocated_mib"]) +
                      " MiB toegewezen</strong><p><code>" +
                      escape(row["relative_path"]) + "</code></p><small>Laatste wijziging: " +
-                     escape(row["last_modified_utc"][:10]) + "</small></article>")
+                     escape(row["last_modified_utc"][:10]) +
+                     (" · Open verwijzingen in steekproef: " + str(row["open_references_observed"])
+                      + "; schrijver ONBEKEND, geen toestemming tot verwijdering"
+                      if "open_references_observed" in row else "") +
+                     "</small></article>")
     if not report["top_files"]:
         lines.append("<p>Geen kandidaten in deze begrensde bron, niet per se geen ruimteproblemen.</p>")
+    if "file_open_reference_observation" in report:
+        from zsentinel_disk_file_activity import private_markdown
+        lines.append("<article><h2>Open verwijzingen</h2><p>" +
+                     escape(private_markdown(report["file_open_reference_observation"])) +
+                     "</p></article>")
     if "disk_growth_comparison" in report:
         from zsentinel_disk_trend import as_html
         lines.append(as_html(report["disk_growth_comparison"]))
@@ -355,8 +371,19 @@ def public_summary(report):
                 or compare.get("disk_freed_verified") is not False
                 or compare.get("cleanup_authorized") is not False):
             raise ValueError("untrusted private disk change comparison")
+    activity = report.get("file_open_reference_observation")
+    if activity is not None and (type(activity) is not dict
+            or activity.get("schema") != "zsentinel-disk-open-references-v1"
+            or activity.get("safe_to_delete") is not False
+            or activity.get("process_identifiers_disclosed") is not False
+            or type(activity.get("files_with_observed_open_references")) is not int
+            or not 0 <= activity["files_with_observed_open_references"] <= len(report["top_files"])):
+        raise ValueError("untrusted private open-reference evidence")
     return {
         "schema": "zsentinel-disk-workbench-summary-v1",
+        "files_with_open_references_observed": (
+            activity["files_with_observed_open_references"] if activity else None),
+        "open_reference_coverage": activity["coverage"] if activity else "not_observed",
         "mount_available_gib_observed": round(
             mount["available_bytes_to_operator"] / (1024**3), 2),
         "mount_unavailable_percent_observed": mount["percent_unavailable"],
@@ -408,6 +435,11 @@ def public_summary_html(summary):
         '. Bestandsnamen worden bij succesvolle privé-uitvoer uitsluitend'
         ' naar een afzonderlijk 0600-rapport geschreven, NIET in deze'
         ' cockpit. Deze momentopname bewijst de bestandsschrijfstatus niet.</p>' +
+        ('<p>Optioneel /proc: ' + str(summary['files_with_open_references_observed']) +
+         ' grote-bestandkandidaten met aangetroffen open verwijzingen; ' +
+         'bron ' + escape(summary['open_reference_coverage']) +
+         '. Geen verwijzing gezien is GEEN bewijs van vrijgegeven schrijvers.</p>'
+         if summary.get('files_with_open_references_observed') is not None else '') +
         ('<p>Gemeten vrije ruimte op dezelfde host/mount veranderde met ' +
          str(summary["mount_free_change_mib_not_cleanup"]) +
          ' MiB (geen bewijs van welke bestanden dit veroorzaakten).</p>'
@@ -435,6 +467,8 @@ def main():
     parser.add_argument("--max-depth", type=int, default=MAX_DEPTH)
     parser.add_argument("--max-seconds", type=int, default=MAX_SECONDS)
     parser.add_argument("--format", choices=("json", "md", "html"), default="md")
+    parser.add_argument("--inspect-open-handles", action="store_true",
+                        help="optional bounded /proc fd metadata only; no PID or writer proof")
     parser.add_argument("--previous", type=Path,
                         help="private preceding .json disk snapshot of SAME workspace, max 72h ago")
     parser.add_argument("--output", type=Path, required=True,
@@ -445,6 +479,15 @@ def main():
             raise ValueError("previous and new private output cannot overlap")
         report = observe(args.root, min_mib=args.min_mib, max_entries=args.max_entries,
                          max_depth=args.max_depth, max_seconds=args.max_seconds)
+        if args.inspect_open_handles:
+            from zsentinel_disk_file_activity import observe_open_references
+            activity = observe_open_references(_root(args.root), report["top_files"])
+            for index, row in enumerate(report["top_files"]):
+                row["open_references_observed"] = activity["per_candidate"][index]["open_descriptors_observed"]
+                row["file_reidentified"] = activity["per_candidate"][index]["file_reidentified"]
+            report["file_open_reference_observation"] = {
+                key: value for key, value in activity.items() if key != "per_candidate"
+            }
         if args.previous is not None:
             from zsentinel_disk_trend import load_previous, compare
             report["disk_growth_comparison"] = compare(load_previous(args.previous), report)
