@@ -112,6 +112,50 @@ def load_private(path):
     return obj
 
 
+def capacity_changes(previous, current):
+    """Report observed capacity differences without asserting resource recovery."""
+    a, b = previous.get("capacity"), current.get("capacity")
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return {"source_complete": False, "root_comparable": False,
+                "metrics": [], "explanation": "Capacity source unavailable"}
+    mount_ok = (
+        isinstance(a.get("root_mount_device"), str) and
+        a.get("root_mount_device") == b.get("root_mount_device") and
+        type(a.get("root_volume_bytes")) is int and
+        a["root_volume_bytes"] > 0 and
+        a["root_volume_bytes"] == b.get("root_volume_bytes")
+    )
+    labels = (
+        ("host_load", False), ("memory_available_gib", False),
+        ("swap_used_percent", False), ("disk_unavailable_percent", True),
+    )
+    metrics = []
+    for key, is_disk in labels:
+        old, new = a.get(key), b.get(key)
+        numeric = (
+            type(old) in (int, float) and type(new) in (int, float) and
+            0 <= old < 1e12 and 0 <= new < 1e12
+        )
+        comparable = numeric and (not is_disk or mount_ok)
+        metrics.append({
+            "metric": key,
+            "previous": old if numeric else None,
+            "current": new if numeric else None,
+            "comparable": comparable,
+            "difference": round(new - old, 2) if comparable else None,
+        })
+    return {
+        "source_complete": a.get("source_complete") is True
+                           and b.get("source_complete") is True,
+        "root_comparable": mount_ok,
+        "metrics": metrics,
+        "explanation": (
+            "Observed host capacity difference only; no proof of recovered "
+            "files, runner performance or successful model training."
+        ),
+    }
+
+
 def changes(previous, current):
     """Report only observed service state transitions; never infer global recovery."""
     if previous.get("schema") != SCHEMA or current.get("schema") != SCHEMA:
@@ -157,6 +201,7 @@ def changes(previous, current):
         "same_host": True,
         "complete_service_coverage": coverage_a and coverage_b,
         "elapsed_seconds": int(elapsed),
+        "capacity_comparison": capacity_changes(previous, current),
         "transitions": result,
         "interpretation": (
             "Only bounded systemd observations; even a failed→active transition "
