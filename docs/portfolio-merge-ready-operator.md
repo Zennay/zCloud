@@ -12,9 +12,19 @@ python3 scripts/zsentinel_merge_first_board.py \
   --format text --output /private/new-zsentinel-merge-board.html
 ```
 
+Alternatively, discover up to four recent non-draft product PRs per canonical project without knowing their numbers:
+
+```sh
+python3 scripts/zsentinel_merge_first_board.py \
+  --project cloud --project supa --project haxlab \
+  --max-per-project 4 --output /private/new-merge-first-worklist.html
+```
+
+This **read-only discovery** prioritizes P0/fix-labelled product titles within each project's most recent 100 open PRs. The result is a triage hint, not a claim or a complete backlog enumeration. Draft, child and QA-only PRs are not automatically selected. If a repository fails or has 100+ open PRs, it is separately flagged as incomplete; the other projects remain visible. A specific older PR is inspected with `--pr` and does not depend on the recent discovery window. The discovery budget is 3 list GETs + up to 60 exact PR/check/review GETs.
+
 The output is a new, exclusive-create, private (0600) responsive standalone HTML file. Without `--output` there is no local write. JSON output is available using `--format json`. The HTML contains no JavaScript, network fetches, tokens, worker credentials or queue identifiers. Never point output at a shared web directory. Existing reports are never overwritten.
 
-The board is intentionally bounded: at most 12 explicitly selected PRs, 6 per canonical repository, 3 repositories and 64 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs and legacy statuses are checked separately. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
+The board is intentionally bounded: at most 12 selected PRs, 6 per canonical repository, 3 repositories and 64 GitHub GETs. All PRs are read again after their observed reviews and check-runs; an unstable head/base/draft becomes `SOURCE_MOVED`, not a false pass. A missing or oversized evidence page is UNKNOWN. Exact-head independent approvals distinguish changes requested from no approval; recent Check Runs and legacy statuses are checked separately. A successful observed set is labeled **OBSERVED_GREEN_ONLY** because the board cannot grant required-context coverage or protected-branch authorization.
 
 Operators can quickly select an independent unblocked product PR while other PRs wait on reviewer, CI, claim or release rights. For any actual merge, the **separate** single-PR `portfolio_merge_ready.py --merge` owner-claim preconditions and GitHub server-side protection still apply. Nothing in the board's HTML or JSON is a merge permit; `main_merged=false` and `live_verified=false` remain conservative snapshot indicators, not assertions about the actual GitHub state.
 
