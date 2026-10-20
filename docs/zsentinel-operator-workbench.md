@@ -2360,3 +2360,59 @@ geen actieve claims overgenomen en geen release- of VPS-systeem aangepast.
 De actuele eigenaar, vereiste exacte-head CI, onafhankelijke review,
 branch protection, main-merge en live deploy blijven afzonderlijk te
 verifiëren vóór een geautoriseerde levering.
+
+
+## 20 oktober · Portfolio-brede bronwijzigingen in één visuele herstel-inbox
+
+Een operator hoeft niet langer iedere oude GitHub-issuekoppeling apart te
+vergelijken. De bestaande privé-opslagroute heeft nu een **portfolio-brede
+issue→PR delta-inbox** als complete uitvoerbare CLI en offline HTML-weergave:
+
+```sh
+python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
+  --previous ./older-private-issue-portfolio.zip \
+  --current ./newer-private-issue-portfolio.zip \
+  --changed-only --format html \
+  --output ./private-portfolio-issue-changes.html
+
+python3 scripts/zsentinel_saved_issue_portfolio_delta.py \
+  --previous ./older-private-issue-portfolio.zip \
+  --current ./newer-private-issue-portfolio.zip \
+  --priority P0 --format markdown \
+  --output ./private-p0-issue-handoff.md
+```
+
+De twee originele privé-ZIP-bestanden worden volledig ingelezen via de
+bestaande strikte archieflezer; chronologie, portfolioscope, gedeelde
+bronmanifesten en eventuele overlap worden met dezelfde admissionregels
+gecontroleerd als de reeds gebouwde issuegerichte delta-CLI.
+
+De inbox sorteert historisch waargenomen P0/P1/P2 eerst en onderscheidt:
+- **Nieuw waargenomen issues** in het latere begrensde bronvenster; dit
+  bewijst niet dat het issue werkelijk nieuw is geopend.
+- **Issues niet meer in de latere steekproef**; dit bewijst zeker niet
+  dat het issue is gesloten, dat de PR gemerged is of dat de eigenaar vrij is.
+- **Gewijzigde issue→PR-relaties** waaronder oude bron-HEAD, blokkades,
+  verschoven links en historisch issuegebonden prioriteit.
+- **Ongewijzigde waargenomen bronrelaties**; dit blijft historische
+  bronsamenhang, géén actuele succesvolle CI of merge.
+
+De HTML bevat scriptvrije, responsieve PR-kaarten met directe canonieke
+GitHub-bronlinks en per issue uitklapbare details. De CLI ondersteunt
+`--priority`, `--changed-only`, `--page` en `--page-size`. De totale
+broninventaris en filtermatches blijven vermeld, zodat paginering niet
+per ongeluk 'opgelost' suggereert. Verwerking is bewust begrensd op 200
+distincte historische issues en maximaal 60 zichtbare kaarten per pagina.
+De originele SHA256-bronmanifesten, observatietijdstippen en ontbrekende
+bronbatches staan bovenaan beide operatorformaten.
+
+Uitvoer is alleen een **nieuw 0600 privé HTML- of Markdownbestand**.
+In deze route vinden geen live GitHub-/Notion-/VPS-schrijfoperaties,
+workflow-reruns, claims, QA-suites, merges of deployments plaats. Iedere
+echte release blijft vereisen: huidige issue- en PR-status, actuele
+eigenaar/claims, exact-head verplichte CI, onafhankelijke review,
+protected-main en afzonderlijk toegestane productiehandeling.
+
+Deze implementatie zit op de reeds bestaande product-PR #1560. Zelfs
+als het offline dashboard werkt, is het **niet op main geleverd of live**
+voordat GitHub daadwerkelijk merged=true en productieherstel bevestigt.
