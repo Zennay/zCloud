@@ -633,7 +633,7 @@ def graph_html(report):
             "<p>Positieve PR-tekstvermeldingen, geen bewezen fix of mergevrijgave.</p><ul>" +
             ("".join(duplicate_cards) or
              "<li>Geen dubbele verwijzingen in het onderzochte bronvenster.</li>") +
-            "</ul><h2>Geen gedeelde paden in de steekproef</h2>
+            "</ul><h2>Geen gedeelde paden in de steekproef</h2>"
             "<p>Dit zijn niet automatisch vrije taken. Raadpleeg actuele claims, "
             "PR-loze branches, bestandsleases en reviews.</p><ul>" +
             (isolated_links or "<li>Geen overige open PR's in de steekproef.</li>") +
