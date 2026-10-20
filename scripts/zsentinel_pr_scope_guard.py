@@ -133,14 +133,16 @@ def open_prs(repo, token):
         head = row.get("head")
         base_repo = base.get("repo") if isinstance(base, dict) else None
         head_sha = head.get("sha") if isinstance(head, dict) else None
+        base_sha = base.get("sha") if isinstance(base, dict) else None
         if (type(n) is not int or not 0 < n < 100000000 or n in seen
                 or not isinstance(base_repo, dict)
                 or base_repo.get("full_name") != repo
-                or not isinstance(head_sha, str) or not SHA.fullmatch(head_sha)):
+                or not isinstance(head_sha, str) or not SHA.fullmatch(head_sha)
+                or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)):
             raise ValueError("incomplete PR identity")
         seen.add(n)
         result.append({"number": n, "head_sha": head_sha,
-                       "url": "https://github.com/" + repo + "/pull/" + str(n)})
+                       "base_sha": base_sha, "url": "https://github.com/" + repo + "/pull/" + str(n)})
     return result
 
 
@@ -174,16 +176,19 @@ def selected_source_pr(repo, number, token):
     head = receipt.get("head")
     base_repo = base.get("repo") if isinstance(base, dict) else None
     sha = head.get("sha") if isinstance(head, dict) else None
+    base_sha = base.get("sha") if isinstance(base, dict) else None
     if (receipt.get("number") != number or receipt.get("state") != "open"
             or not isinstance(base_repo, dict)
             or base_repo.get("full_name") != repo
-            or not isinstance(sha, str) or not SHA.fullmatch(sha)):
+            or not isinstance(sha, str) or not SHA.fullmatch(sha)
+            or not isinstance(base_sha, str) or not SHA.fullmatch(base_sha)):
         raise ValueError("selected PR is not a canonical open project PR")
     files, truncated = changed_paths(repo, number, token)
     if truncated or not 1 <= len(files) <= MAX_SOURCE_FILES:
         raise ValueError("source PR file scope is incomplete or exceeds 80 paths")
     return {"number": number, "url": "https://github.com/" + repo +
-            "/pull/" + str(number), "head_sha": sha, "paths": files}
+            "/pull/" + str(number), "head_sha": sha,
+            "base_sha": base_sha, "paths": files}
 
 
 def overlaps(wanted, changed):
@@ -217,7 +222,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
             if matches:
                 hits.append({"path": candidate, "pr_number": pr["number"],
                              "pr_url": pr["url"], "observed_head_sha": pr["head_sha"],
-                             "matching_files": matches[:32],
+                             "observed_base_sha": pr["base_sha"], "matching_files": matches[:32],
                              "matches_truncated": len(matches) > 32})
     after = open_prs(repo, token)
     snapshot_stable = before == after
@@ -227,9 +232,12 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
         if not isinstance(fresh, dict):
             raise ValueError("selected source PR freshness unavailable")
         current_head = fresh.get("head")
+        current_base = fresh.get("base")
         source_stable = (fresh.get("state") == "open"
                          and isinstance(current_head, dict)
-                         and current_head.get("sha") == source["head_sha"])
+                         and current_head.get("sha") == source["head_sha"]
+                         and isinstance(current_base, dict)
+                         and current_base.get("sha") == source["base_sha"])
     complete = (source_stable and len(before) < MAX_OPEN_PAGE and len(before) <= limit
                 and not truncated_files and snapshot_stable)
     return {
@@ -240,6 +248,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
         "selected_source_pr": (None if source is None else {
             "url": source["url"], "number": source["number"],
             "head_sha": source["head_sha"],
+            "base_sha": source["base_sha"],
             "source_head_stable": source_stable,
             "source_file_count": len(source["paths"])
         }),
