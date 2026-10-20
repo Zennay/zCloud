@@ -365,6 +365,10 @@ def main(argv=None) -> int:
     parser.add_argument("--limit", type=int, default=24)
     parser.add_argument("--format", choices=("json", "html"), default="json")
     args = parser.parse_args(argv)
+    # An invalid oversized limit must not be silently accepted because
+    # the eight-slot overview samples fewer rows per slot.
+    if not 1 <= args.limit <= MAX_ROWS:
+        parser.error("limit must be between 1 and 40")
     try:
         data = (read_project_progress(args.db, args.project, min(args.limit, 8))
                 if args.all_slots else
