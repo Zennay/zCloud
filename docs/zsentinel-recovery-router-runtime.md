@@ -1863,3 +1863,35 @@ automatisch oplosbare codefout, een gewone draft-PR en historische
 onzekerheid worden niet als onmiddellijke menselijke interventie
 aangemerkt. P0/P1 owner-only issuegates en concrete auth-/leaseconflicten
 behouden hun bestaande brongebonden plaats.
+
+
+### 20 oktober · exacte bestaande GitHub-job buiten het automatische venster
+
+Een bekend vastgelopen workflowjob hoeft niet meer te wachten totdat de
+kleine GitHub-runs-steekproef hem automatisch vindt. De portfolio-CLI
+accepteert dezelfde streng begrensde **exacte run/job/SHA-pin** als de
+bestaande live cockpit, en toont dat bronbewijs in het volledige
+blocker-first bord (maximaal drie unieke geselecteerde projecten):
+
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --github-only --window 0 \
+  --job 'cloud:RUN_ID:JOB_ID:40_LOWERCASE_HEX_HEAD_SHA' \
+  --format html > /private/operator-only/zsentinel-exact-job.html
+```
+
+Vervang de voorbeeldvelden uitsluitend door de daadwerkelijk op GitHub
+waargenomen numerieke run-/job-ID's en de volledige 40-karakter lowercase
+commit-SHA. Kies het portfolio-bronvenster waar `cloud` in staat,
+anders wordt het bronverzoek vóór de GitHub-call geweigerd.
+De input wordt verder via de bestaande `parse_jobs` en canonieke
+`refresh` geverifieerd: repository, identieke run/job-koppeling,
+HEAD-SHA, labelroute en runnerassignment. Geen job wordt opnieuw
+gestart en er vindt geen claim of queue-write plaats.
+
+Een exact succesvol gelezen pin telt nu mee als **beperkte**
+GitHub-waarneming op de portfolio-rij, ook wanneer die job niet in de
+automatische discovery-lijst voorkomt. De operatorpagina en tekstmodus
+tonen hoeveel expliciete jobs zijn gepind. Andere, niet opgevraagde
+CI-/reviewchecks blijven onbekend; zelfs een toegewezen runner-ID
+bewijst geen actuele listenergezondheid, werkhervatting of releaserecht.
