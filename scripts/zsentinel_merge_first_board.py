@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 from portfolio_merge_ready import PROJECTS, REPO_URL, gh
 
@@ -19,6 +20,7 @@ MAX_PROJECTS = 3
 MAX_PRS = 12
 MAX_PER_REPO = 6
 MAX_GETS = 64
+MAX_SECONDS = 120
 MAX_OUTPUT = 1024 * 1024
 PR_SPEC = re.compile(r"^([A-Za-z0-9_-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]{0,6})$")
 ALLOWED_STATES = {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
@@ -44,8 +46,8 @@ def registry():
 
 
 def bounded_gh(path, budget):
-    if budget[0] >= MAX_GETS:
-        raise ValueError("github request budget exceeded")
+    if budget[0] >= MAX_GETS or time.monotonic() >= budget[1]:
+        raise ValueError("github request/time budget exceeded")
     budget[0] += 1
     return gh(path)
 
@@ -156,6 +158,10 @@ def inspect(repo, number, budget):
 def render(rows, observed):
     esc = lambda x: html.escape(str(x), quote=True)
     cards = []
+    if not rows:
+        cards.append("<article><h2>Geen recente PRs geselecteerd</h2>"
+                     "<p>Dit bewijst niet dat er geen open productwerk is. "</p>"
+                     "<p>Gebruik een gericht --pr voor een ouder of uitgesloten PR.</p></article>")
     for row in rows:
         url = f"https://github.com/{row['repo']}/pull/{row['number']}"
         actions = "".join("<li>" + esc(act) + "</li>" for act in row["actions"])
@@ -279,7 +285,7 @@ def main():
         parser.error("maximum twelve PRs")
     try:
         allowed = registry()
-        selected, counts, seen, partial, budget = [], {}, set(), [], [0]
+        selected, counts, seen, partial, budget = [], {}, set(), [], [0, time.monotonic() + MAX_SECONDS]
         if args.project:
             if len(args.project) > MAX_PROJECTS or len(set(args.project)) != len(args.project):
                 raise ValueError("maximum three distinct projects")
