@@ -87,13 +87,15 @@ def observe(path, now=None):
     groups = defaultdict(lambda: {
         "queued": 0, "claimed": 0, "running": 0, "verifying": 0,
         "high_claim_attempts": 0, "ten_plus_claim_attempts": 0,
-        "expired_owner_lease_rows": 0, "max_claim_attempts": 0,
+        "expired_owner_lease_rows": 0, "unverifiable_owner_lease_rows": 0,
+        "max_claim_attempts": 0,
     })
     samples = []
     totals = {
         "active_items": 0, "queued_items": 0, "owned_items": 0,
         "high_claim_attempt_items": 0, "ten_plus_claim_attempt_items": 0,
-        "expired_owner_lease_rows": 0, "invalid_record_rows": 0,
+        "expired_owner_lease_rows": 0, "unverifiable_owner_lease_rows": 0,
+        "invalid_record_rows": 0,
         "max_claim_attempts": 0,
     }
     for row in rows:
@@ -123,12 +125,19 @@ def observe(path, now=None):
             bucket["ten_plus_claim_attempts"] += 1
         expiry = _stamp(row["claim_expires"]) if row["claim_expires"] else None
         expired = status in OWNED and expiry is not None and expiry <= moment
+        # A claimed/running/verifying row with no parsable lease clock is NOT
+        # proof that a lease expired or was safely released. It still needs a
+        # separate owner review, even when its attempt counter is low.
+        unverifiable = status in OWNED and expiry is None
         if expired:
             totals["expired_owner_lease_rows"] += 1
             bucket["expired_owner_lease_rows"] += 1
+        if unverifiable:
+            totals["unverifiable_owner_lease_rows"] += 1
+            bucket["unverifiable_owner_lease_rows"] += 1
         # A subset of rows is visible to the operator, but raw queue_id,
         # freeform criteria, worker names and claim tokens never leave SQLite.
-        if high or expired:
+        if high or expired or unverifiable:
             title = row["title"]
             safe_title = (" ".join(title.split())[:MAX_BYTES_PER_TEXT]
                           if isinstance(title, str) else "Unlabeled queue item")
@@ -138,14 +147,18 @@ def observe(path, now=None):
                 "title": safe_title,
                 "claim_attempts": attempts,
                 "owner_lease_expired_observed": expired,
+                "owner_lease_unverifiable_observed": unverifiable,
                 "action": (
                     "Request authorized lease review; do not remove an active claim."
                     if expired else
+                    "Lease clock missing or invalid: ask owner to verify claim; never release automatically."
+                    if unverifiable else
                     "Inspect repeated claim churn; attempts are NOT failures, no auto-retry."
                 ),
             })
     samples.sort(key=lambda row: (
-        0 if row["owner_lease_expired_observed"] else 1,
+        0 if row["owner_lease_expired_observed"] else
+        1 if row["owner_lease_unverifiable_observed"] else 2,
         -row["claim_attempts"], PRIORITY[row["priority"]],
         row["project_id"], row["queue_ref"],
     ))
