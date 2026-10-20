@@ -91,14 +91,33 @@ def _source(source):
                 or name in mapping):
             raise ValueError("invalid folder identity or count")
         mapping[name] = (size, count)
-    return root, params, _utc(source.get("observed_at_utc")), total, mapping
+    mount = source.get("mount_capacity")
+    if (type(mount) is not dict
+            or mount.get("source") != "same_host_statvfs_observation_not_cleanup_proof"
+            or type(mount.get("host")) is not str
+            or not 1 <= len(mount["host"]) <= 255
+            or any(not (c.isascii() and (c.isalnum() or c in ".-_"))
+                   for c in mount["host"])
+            or type(mount.get("mount_device")) is not int
+            or not 0 <= mount["mount_device"] <= 10**10
+            or type(mount.get("filesystem_total_bytes")) is not int
+            or not 1 <= mount["filesystem_total_bytes"] <= 10**15
+            or type(mount.get("available_bytes_to_operator")) is not int
+            or not 0 <= mount["available_bytes_to_operator"] <= mount["filesystem_total_bytes"]
+            or type(mount.get("percent_unavailable")) not in (int, float)
+            or not 0 <= mount["percent_unavailable"] <= 100):
+        raise ValueError("missing or untrusted same-host capacity evidence")
+    return root, params, _utc(source.get("observed_at_utc")), total, mapping, mount
 
 
 def compare(previous, current):
-    root1, params1, time1, total1, groups1 = _source(previous)
-    root2, params2, time2, total2, groups2 = _source(current)
+    root1, params1, time1, total1, groups1, mount1 = _source(previous)
+    root2, params2, time2, total2, groups2, mount2 = _source(current)
     if root1 != root2 or params1 != params2:
         raise ValueError("same exact workspace and scanner settings required")
+    if any(mount1[key] != mount2[key] for key in
+           ("host", "mount_device", "filesystem_total_bytes")):
+        raise ValueError("same workspace path is not enough; host and filesystem must match")
     if not timedelta(0) < time2 - time1 <= timedelta(hours=72):
         raise ValueError("two strictly ordered observations within 72 hours required")
     common = sorted(set(groups1) & set(groups2))
@@ -117,6 +136,12 @@ def compare(previous, current):
         "any_partial_snapshot": previous["coverage"] == "partial" or current["coverage"] == "partial",
         "any_truncated_groups": previous["workspace_groups_truncated"] or current["workspace_groups_truncated"],
         "observed_allocated_difference_bytes_not_disk_growth": total2 - total1,
+        "mount_free_previous_bytes": mount1["available_bytes_to_operator"],
+        "mount_free_current_bytes": mount2["available_bytes_to_operator"],
+        "mount_free_change_bytes_not_cleanup_proof": (
+            mount2["available_bytes_to_operator"] - mount1["available_bytes_to_operator"]),
+        "mount_unavailable_previous_percent": mount1["percent_unavailable"],
+        "mount_unavailable_current_percent": mount2["percent_unavailable"],
         "shared_groups": len(common),
         "unmatched_previous_groups": len(groups1) - len(common),
         "unmatched_current_groups": len(groups2) - len(common),
@@ -144,6 +169,12 @@ def as_html(trend):
         str(round(trend["observed_allocated_difference_bytes_not_disk_growth"] / 1048576, 1)) +
         ' MiB. Dit is GEEN bewijs van vrijgemaakt volume of extra ruimtegebruik.'
         ' Gesamplede groepen veranderen ook door afkapping en actieve schrijvers.</p>'
+        '<p>Beschikbaar op dezelfde host/mount: ' +
+        str(round(trend["mount_free_previous_bytes"] / (1024**3), 2)) +
+        ' GiB → ' + str(round(trend["mount_free_current_bytes"] / (1024**3), 2)) +
+        ' GiB. Verschil: ' +
+        str(round(trend["mount_free_change_bytes_not_cleanup_proof"] / (1024**2), 1)) +
+        ' MiB (statvfs; GEEN bewijs van veilig opgeschoonde bestanden).</p>'
         '<p>Dezelfde groepen: ' + str(trend["shared_groups"]) +
         '; alleen eerder gezien: ' + str(trend["unmatched_previous_groups"]) +
         '; alleen recent gezien: ' + str(trend["unmatched_current_groups"]) +
@@ -161,6 +192,10 @@ def as_markdown(trend):
              "**Verschil in gesamplede blokken: " +
              str(round(trend["observed_allocated_difference_bytes_not_disk_growth"] / 1048576, 1)) +
              " MiB. Geen bewijs van vrijgekomen of nieuw verbruik.**",
+             "Op dezelfde host/mount vrij volgens statvfs: " +
+             str(round(trend["mount_free_previous_bytes"] / (1024**3), 2)) + " → " +
+             str(round(trend["mount_free_current_bytes"] / (1024**3), 2)) +
+             " GiB; andere processen kunnen dit beïnvloeden.",
              "Gemeenschappelijke groepen: " + str(trend["shared_groups"]) +
              "; alleen oud: " + str(trend["unmatched_previous_groups"]) +
              "; alleen recent: " + str(trend["unmatched_current_groups"]) + "."]
