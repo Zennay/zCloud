@@ -16,8 +16,9 @@ RUNNER_MARKER = "/actions-runner-zcloud/"
 
 
 def workers():
-    """Observe running GitHub jobs, never infer workers from idle listeners."""
+    """Observe running job processes, treating denied process reads as unknown."""
     any_runner = sentinel = False
+    complete = True
     try:
         entries = Path("/proc").iterdir()
         for directory in entries:
@@ -28,16 +29,22 @@ def workers():
                     continue
                 cmd = (directory / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
                 if not cmd.strip():
+                    # Empty argv on an extant process cannot prove no active job.
+                    complete = False
                     continue
                 any_runner = True
                 sentinel |= RUNNER_MARKER in cmd
-            except (OSError, PermissionError):
-                # Processes may exit mid-observation; do not kill/retry them.
+            except FileNotFoundError:
+                # A process exited between its directory listing and inspection.
                 continue
+            except (OSError, PermissionError):
+                # A still-existing process was unreadable: fail closed.
+                if directory.exists():
+                    complete = False
     except OSError:
         # A broken /proc observation must never license a high CPU quota.
         return False, False, False
-    return any_runner, sentinel, True
+    return any_runner, sentinel, complete
 
 
 def memory_pressure():
