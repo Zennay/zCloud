@@ -99,3 +99,17 @@ De single-project-conflictkaart en de nieuwe portfolio-overzichten tonen óók e
 Deze vermelding is **niet** gelijk aan "vrij", "claimbaar", "goed voor merge" of "geen git-mergeconflict". De volgende bewijzen ontbreken nog altijd: Notion en SQLite claim/lease-eigenaar, ongeregistreerde PR-loze branches, uncommitted work, upstream veranderingen, verplichte CI, onafhankelijke review en release-autorisatie. Zelfs bij `source_coverage_complete=true` blijven autorisatievelden false.
 
 Als een portfolio-uitvoer meer botsingskaarten oplevert dan de begrensde zichtbare selectie, toont de UI nu expliciet **"bronoverlap > uitvoerlimiet"** in plaats van een volledig verslag te suggereren. Andere projecten blijven leesbaar wanneer één GitHub-repository een fout retourneert.
+
+
+## Directe, brongebonden Markdown-overdracht
+
+Alle drie de ingangen ondersteunen nu `--format markdown`. Deze schrijft een operatorleesbare handoff op stdout met echte GitHub-PR-links, bronmoment, geobserveerde bestandsbotsingen, brononzekerheid en expliciete geen-autorisatie-waarschuwingen. Bijvoorbeeld:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 --format markdown
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs --format markdown
+```
+
+De handoff hoeft niet als JSON aan een eigenaar te worden uitgelegd. De tekst veroorzaakt geen issue-comment, Notion-update, claim, GitHub-merge, betaalde job of VPS-mutatie. Alle bestandsvergelijkingen blijven read-only; bij onvolledige GitHub-overzichten worden suggesties van ogenschijnlijk disjuncte PR's **onderdrukt**.
