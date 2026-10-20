@@ -116,6 +116,7 @@ def compare(previous, current, now=None):
     counts = {
         "generation_progress_signal_observed": 0,
         "new_events_without_indexed_progress": 0,
+        "first_cursor_observed_not_delta": 0,
         "running_allocated_no_new_event": 0,
         "paused_or_draining_owner_hold": 0,
         "indexed_source_reset_or_regression": 0,
@@ -135,6 +136,18 @@ def compare(previous, current, now=None):
         last = after["latest"] if after is not None else None
         pfirst = before["progress"] if before is not None else None
         plast = after["progress"] if after is not None else None
+        # A previously missing cursor is not zero. A progress event only
+        # advanced when the prior progress cursor increased, or when the
+        # new progress event is newer than the previous *last event* cursor.
+        # This preserves real new generation events without treating first
+        # observation or bounded event-retention gaps as new work.
+        progress_advanced = (
+            plast is not None and (
+                (pfirst is not None and plast > pfirst)
+                or (pfirst is None and first is not None and plast > first)
+            )
+        )
+        event_advanced = first is not None and last is not None and last > first
         if before is None:
             stage = "new_in_bounded_sample_not_new_claim"
             action = "Controleer met eigenaar of dit een bestaande toewijzing is; geen claim of vrije capaciteit bewezen."
@@ -149,12 +162,15 @@ def compare(previous, current, now=None):
         elif after["desired"] in ("paused", "draining"):
             stage = "paused_or_draining_owner_hold"
             action = "Respecteer actuele pauze-/drainstatus en bestaande eigenaar."
-        elif plast is not None and (pfirst is None or plast > pfirst):
+        elif progress_advanced:
             stage = "generation_progress_signal_observed"
             action = "Controleer echte codecommit of taakoplevering; event is geen productbewijs."
-        elif last is not None and (first is None or last > first):
+        elif event_advanced:
             stage = "new_events_without_indexed_progress"
             action = "Er kwamen events bij, maar geen nieuw expliciet progress-event; inspecteer eigenaarstatus."
+        elif (first is None and last is not None):
+            stage = "first_cursor_observed_not_delta"
+            action = "De eventcursor is voor het eerst zichtbaar; controleer bronretentie en eigenaar voordat voortgang wordt aangenomen."
         elif (after["desired"] == "running" and after["allocated"] is not None
               and t1 - t0 >= timedelta(minutes=15)):
             stage = "running_allocated_no_new_event"
@@ -166,10 +182,8 @@ def compare(previous, current, now=None):
         items.append({
             "project_id": project, "worker_slot": slot,
             "stage": stage, "owner_action": action,
-            "event_cursor_advanced_observed": (
-                last is not None and (first is None or last > first)),
-            "explicit_progress_cursor_advanced_observed": (
-                plast is not None and (pfirst is None or plast > pfirst)),
+            "event_cursor_advanced_observed": event_advanced,
+            "explicit_progress_cursor_advanced_observed": progress_advanced,
             "current_desired_state": after["desired"] if after is not None else "not_observed",
             "current_global_slot_observed": after["allocated"] if after is not None else None,
             "source_claim_lease_current_but_not_authority":
@@ -217,6 +231,7 @@ def public_summary(report):
         "shared_worker_slots": report["shared_worker_slots_observed"],
         "progress_signals_observed": report["counts"]["generation_progress_signal_observed"],
         "new_event_without_progress": report["counts"]["new_events_without_indexed_progress"],
+        "first_cursor_seen_not_delta": report["counts"]["first_cursor_observed_not_delta"],
         "running_without_new_events": report["counts"]["running_allocated_no_new_event"],
         "owner_paused_or_draining": report["counts"]["paused_or_draining_owner_hold"],
         "source_regressions": report["counts"]["indexed_source_reset_or_regression"],
@@ -237,6 +252,8 @@ def human_text(report):
         " expliciete voortgangssignalen, " +
         str(data["new_event_without_progress"]) +
         " workers met nieuwe events maar geen nieuw progress-event, " +
+        str(data["first_cursor_seen_not_delta"]) +
+        " voor het eerst zichtbare eventcursors zonder delta-bewijs, " +
         str(data["running_without_new_events"]) +
         " toegewezen workers zonder eventtoename; " +
         str(data["new_in_sample_not_new_claim"]) +
@@ -257,6 +274,8 @@ def public_html(report):
         '<p>Nieuwe expliciete generatiesignalen: ' +
         str(data["progress_signals_observed"]) +
         '; alleen andere/heartbeat events: ' + str(data["new_event_without_progress"]) +
+        '; voor het eerst zichtbare eventcursors (geen delta): ' +
+        str(data["first_cursor_seen_not_delta"]) +
         '; toegewezen running zonder nieuwe events: ' +
         str(data["running_without_new_events"]) +
         '; nieuw in beperkte steekproef (geen nieuwe claim): ' +
