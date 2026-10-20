@@ -391,3 +391,24 @@ No GitHub issue, pull request, workflow, Notion task, queue, lease,
 runner, SSH target or live production application is modified by this
 one-shot source generator. No QA suite, regression or CI rerun is created
 or invoked.
+
+
+### Direct Dutch triage without exporting JSON
+
+The same bounded CLI supports `--format text` for an immediately readable
+Dutch summary of each explicitly chosen PR:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --pr 'Zennay/zCloud#1560' --pr 'Zennay/zCloud#1567' \
+  --format text
+```
+
+Each record shows the observed exact commit, modern and legacy pending/failed
+contexts, independent current-head approval count, whether any page was
+truncated, and the next **human** gate action. It states explicitly that
+protected-main/owner/release permission has not been established. `--format
+json` remains the default for source-bound import into the workbench; the
+optional `--output` still uses exclusive private 0600 creation in either
+format. The command never merges, retries or deploys and is not a
+substitute for GitHub's live mandatory rules.
