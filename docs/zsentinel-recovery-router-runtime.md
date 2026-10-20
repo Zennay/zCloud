@@ -2922,3 +2922,24 @@ Nieuwe bron van PR #1563 moet de oorspronkelijke onafhankelijke review,
 exact-head verplichte CI en protected-main eigenaar-releasepoort
 doorlopen. Er is geen runtime deployment of zelfherstellende runner.
 
+### Optionele SQLite-header in bestaande bewaakte VPS audit
+
+De al bestaande handmatige `.github/workflows/zsentinel-vps-owner-reviewed.yml`
+biedt naast het reeds verplichte exacte **current main** commitbevestiging,
+actor Zennay, permanente runner-identitycheck, read-only GitHub-permissies
+en resource-admission nu een standaard **uitgeschakelde** boolean
+`inspect_sqlite_space`. De eigenaar kan die pas na normale code-review,
+CI en protected-main integratie bewust kiezen bij het bestaande
+`workflow_dispatch`-formulier. Niet in deze PR-branch starten.
+
+Alleen bij `inspect_sqlite_space=true` én geslaagde bestaande
+capaciteitsgate volgt één extra read-only header-/WAL-statting van de al
+bekende `history.db`. In `GITHUB_STEP_SUMMARY` staan uitsluitend
+anonieme MiB-tellingen, header-dekking en expliciet dat interne
+freelistpagina's GEEN veilig vrijmaakbare bytes bewijzen.
+De workflow schrijft geen nieuw rapportbestand of databasegegevens
+naar artifacts; geen SQL, checkpoint, VACUUM, bestandsverwijdering,
+workflowretry, claimwijziging of serviceherstart. De bestaande
+VPS-bescherming, eerste-keer event-/SHA-pin en begrensde runtijd
+blijven ongewijzigd. Bij onbetrouwbare bron weigert de extra stap
+afgesloten in plaats van herstel te claimen.
