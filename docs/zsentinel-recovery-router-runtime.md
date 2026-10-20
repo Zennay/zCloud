@@ -3321,3 +3321,72 @@ bedoelde runner toegewezen zijn en de vereiste uitvoering is bevestigd.
 
 De bron is code op de bestaande open product-PR, niet geïnstalleerd als
 VPS-service of scheduler. Geen extra testsuites, jobs of release-hooks.
+
+
+## 20 oktober 2026 · Historische P0/P1-blokkades blijven als menselijke opvolging zichtbaar
+
+De bestaande herstelrouter behield incidenten terecht als
+`not_observed_needs_reconciliation` wanneer een later GitHub-/Notionvenster
+te beperkt was om dezelfde run, job of eigenaar opnieuw te vinden.
+De **actuele** `watch_alert_candidates` bevat bewust uitsluitend vers
+bewezen menselijke blokkades. Daardoor kon een eerder vastgesteld P0
+echter uit de menselijke opvolgfeed verdwijnen, hoewel het lokale
+incidentledger het nog niet als opgelost zag.
+
+Deze productwijziging voegt daarom een **strikt gescheiden**,
+maximaal vijf regels grote `historical_owner_recheck_candidates`-feed toe
+met incident-ID, laatst geobserveerde P0/P1-classificatie, oorspronkelijke
+project-/job-/HEAD-bron waar beschikbaar en de concrete vervolgstap:
+bevoegde eigenaar moet de **huidige** exacte job, issue en gates opnieuw
+controleren. De bestaande `historical_unresolved`-inventaris blijft de
+autoritatieve bron; meer dan vijf menselijke regels of meer dan dertig
+historische zichtbare bronregels krijgen een expliciet truncatievlag.
+
+Ieder historisch voorstel draagt:
+`current_source_observed=false`,
+`notifier_delivery_authorized=false`,
+`recovery_action_authorized=false` en
+`owner_confirmation_required=true`.
+Deze regels worden **niet** in de actuele notificatiefeed,
+automatische werkverdeling of incidente-remediatie opgenomen. Geen
+actuele runneruitval, herstel, claim, review, merge of deploy wordt uit
+historische afwezigheid afgeleid.
+
+De bestaande menselijke tekstoverdracht en read-only HTML-herstelcockpit
+tonen de afzonderlijke historische owner-rechecks vóór de volledige
+historische incidentlijst. De HTML-controle bindt iedere getoonde
+owner-recheck terug aan het corresponderende bronrecord in hetzelfde
+beslisresultaat; afwijkende of verzonnen rows worden geweigerd.
+
+### Expliciet privé-agenda-export, nooit automatisch verstuurd
+
+De gewone `--format ics` blijft **ongewijzigd** en bevat alleen de
+bestaande actuele menselijke actiekaarten. Voor een *bewust gekozen*,
+uitsluitend lokale kalenderexport die ook nog niet gereconcilieerde
+historische menselijke blokkades toont, gebruik:
+
+```bash
+python3 scripts/zsentinel_recovery_router.py \
+  /private/zsentinel-current-bundle.json \
+  --state /private/zsentinel-private-ledger.json \
+  --format ics --ics-include-historical-owner-rechecks \
+  > /private/zsentinel-owner-review.ics
+```
+
+De operator beheert privébron- en outputpaden volgens bestaande
+toegangsregels; deze CLI verstuurt **geen** agenda-uitnodiging of
+notificatie, voert geen CI-retry uit, herclaimt geen werk en wijzigt
+geen remote calendar. Historische ICS-items dragen
+`X-ZSENTINEL-HISTORICAL-SOURCE:TRUE`, een unieke stabiele UID,
+`STATUS:TENTATIVE` en `CLASS:PRIVATE`.
+Hun `DTSTART` blijft de **oorspronkelijke** P0/P1-reviewtermijn
+(2 respectievelijk 12 uur na de eerste bronwaarneming), die reeds in
+het verleden kan liggen. Er wordt **geen** nieuwe deadline en geen
+`VALARM` voor deze oude regels bedacht. De bronvalidatie vergelijkt
+incident-ID, project, reden, ernst, originele waarnemingsdatum en
+exacte GitHub-referentie vóór opname. Onvolledige historie blijft
+als onvolledige steekproef gelabeld.
+
+Alle wijzigingen zijn enkel broncode op de bestaande open product-PR.
+Verplichte onafhankelijke review, exacte HEAD-CI, branches en
+releasebevoegdheid blijven nodig voordat main of productie verandert.
