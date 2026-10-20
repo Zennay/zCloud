@@ -280,10 +280,10 @@ def collect_targeted_windows(project, issue_number, registry, budget,
                     or current_issue.get("current_state") != "OPEN_RECONFIRMED"):
                 issue_reconfirmation_failed = True
                 partials.append({"project": project, "reason": "ISSUE_MOVED_BETWEEN_PAGES"})
-            if current_issue.get("current_state") != "OPEN_RECONFIRMED":
-            issue_reconfirmation_failed = True
-        if coverage["search_total"] != search_total:
+            if coverage["search_total"] != search_total:
                 partials.append({"project": project, "reason": "SEARCH_TOTAL_CHANGED"})
+        if current_issue.get("current_state") != "OPEN_RECONFIRMED":
+            issue_reconfirmation_failed = True
         candidates = coverage.get("candidate_pr_numbers")
         if not isinstance(candidates, list) or len(candidates) != coverage["search_examined"]:
             partials.append({"project": project, "reason": "CANDIDATE_IDS_INCOMPLETE"})
