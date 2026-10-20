@@ -30,6 +30,32 @@ Most importantly: **no claim, merge, release, queue retry or deployment can be p
 
 No QA, regression or test suites were authored or manually run as part of this feature. The existing repository/owner/production gates stay independent.
 
+## Snelle offline triage: navigeren zonder claims
+
+De bestaande private Workbench heeft nu direct onder de filters een vaste
+**Vorige issue / Volgende issue / Volgende open P0/P1-opvolging** bediening.
+Met **J** (volgende) en **K** (vorige) kan de operator dezelfde gefilterde,
+brongebonden issues doorlopen. In tekstvelden, selecties en notities zijn die
+toetsen volledig uitgeschakeld zodat ze het typen nooit verstoren.
+
+- Volgende/vorige circuleren alleen over de **zichtbare gefilterde**
+  momentopname en tonen positie plus bronissue. Geen filterkoppeling of echte
+  claim wordt gewijzigd.
+- De P0/P1-sneltoets in de UI selecteert uitsluitend een urgente,
+  **niet lokaal gesloten** menselijke opvolging. Een lokaal gesloten
+  follow-up is géén gesloten GitHub-issue en sluit het issue niet uit van de
+  gewone lijst.
+- Bij elke overgang worden eventuele handmatig ingevoerde notities eerst
+  in het bestaande **lokale handoff-geheugen** bewaard en wordt een eerder
+  gemaakte privé-exportpreview ongeldig. Voor definitieve bewaring blijft
+  expliciete JSON/Markdown-export nodig; geen browserstorage of autosave.
+- Als een filter geen kandidaten meer toont, blijven huidige GitHub-status,
+  actief eigenaarschap, verplichte CI, review en releaseautoriteit onbekend.
+  Geen automatische bronopvraag, taakclaim, workeractie of merge.
+
+De nieuwe navigatie is expliciet **lees- en bedieningsfunctionaliteit voor
+het bestaande lokale product**, geen scheduler en geen QA- of testsuite.
+
 ## Portable offline project briefing (19 October product extension)
 
 The Workbench now shows a **portfolio observation panel** calculated solely from the
