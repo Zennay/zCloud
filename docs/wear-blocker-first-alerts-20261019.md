@@ -96,3 +96,12 @@ Een lokale incident-ID is niet noodzakelijk wereldwijd uniek tussen zCloud-proje
 De Wear-app gebruikt de canonieke project-ID samen met de incidenteigen ID voor zowel de Android-notificatietag, de expliciete projectgebonden interne pending intent als de Compose-kaartsleutel. De `MainActivity` accepteert een notificatienavigatie alleen als **beide** waarden aanwezig en begrensd zijn; de kaart vraagt vervolgens een actuele serverwaarneming op en opent alleen een werkelijk overeenkomstig project/incident. Onbekende legacy navigation zonder project wordt niet verkeerd gerouteerd. Dit is uitsluitend navigatie, geen claim, autorisatie of herstelactie.
 
 De private dempfunctie verwijdert uitsluitend de Android-notificatie met **dezelfde projectspecifieke tag** die de worker gebruikte. Andere projectmeldingen blijven intact, ook als hun incident-ID gelijk is. De wijziging schrijft geen serverdata, claims, lease, workflows of services.
+
+
+## 20 oktober · begrensde Wear OS API-respons en redirect-beveiliging
+
+De bestaande `ZennayCloudRepository.request()` las voorheen elke HTTP-body onbegrensd in geheugen, zelfs bij foutantwoorden. Een onverwacht groot of eindeloos doorgestuurd API-antwoord kon zo onnodige geheugendruk op het horloge veroorzaken. De client weigert nu niet-2xx antwoorden **vóór** het lezen van foutinhoud en verwerkt succesvolle JSON-streams alleen tot maximaal **512 KiB**, ook als een `Content-Length` ontbreekt of onbetrouwbaar is. Bij overschrijding sluit de bestaande `finally` de verbinding; de bestaande repositoryfout wordt door de UI als offline/degraded weergegeven. De response bevat nooit rechten voor een herstelactie.
+
+Geauthenticeerde GET-verzoeken volgen bovendien geen HTTP-redirects meer automatisch. Een onverwachte 3xx gaat naar de bestaande foutafhandeling in plaats van een bearer-tokenrequest naar een andere bestemming te laten volgen. Het bestaande `API_BASE`, leesrechtenmodel, 5-seconden netwerkdeadlines, incidentclassificatie en notificatie-toestemmingsgates blijven intact.
+
+Dit is **source-only** in de bestaande [PR #1561](https://github.com/Zennay/zCloud/pull/1561). Geen nieuwe QA-/regressiesuite of handmatige workflow uitgevoerd; geen signing, APK-publicatie, Watch-installatie, queue/claim, live server of VPS aangepast. Onafhankelijke review, verplichte exact-head CI, geautoriseerde app-release en fysieke toestelbevestiging zijn nog nodig vóór productielevering.
