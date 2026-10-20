@@ -503,7 +503,7 @@ def phrase_route(value):
     }.get(value) or "ONBEKEND"
 
 
-def portfolio_html(summary, decision, window_index, windows, branch_inventory=None, problem_inbox=None, pr_desk=None, unblock=None):
+def portfolio_html(summary, decision, window_index, windows, branch_inventory=None, problem_inbox=None, pr_desk=None, unblock=None, registry=None):
     if (not isinstance(summary, dict)
             or summary.get("schema") != "zsentinel-portfolio-overview-v1"
             or summary.get("actions_performed") is not False
@@ -658,7 +658,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         '</code>. Eén run scant nooit stiekem alle repositories via GitHub.</p>'
         '</section>'
     )
-    raw = html_view(decision)
+    raw = html_view(decision, registry=registry)
     if raw.count("<main>") != 1:
         raise ValueError("incompatible underlying offline operator view")
     queue_warning = (
@@ -1081,7 +1081,7 @@ def main():
         if args.format == "html":
             rendered = portfolio_html(summary, decision, window_index, windows,
                                       branch_inventory=branches, problem_inbox=problem_inbox,
-                                      pr_desk=pr_desk, unblock=unblock)
+                                      pr_desk=pr_desk, unblock=unblock, registry=registry)
             if owner_handoff is not None:
                 from zsentinel_runtime_handoff import handoff_html
                 if rendered.count("<main>") != 1:
