@@ -962,6 +962,9 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
       description,firstSeen:false});
   };
   try{
+    const commits=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
+    const sampledMainShas=new Set(commits.slice(0,15).filter(commit=>typeof commit.sha==='string'
+      &&/^[a-f0-9]{40}$/.test(commit.sha)).map(commit=>commit.sha));
     const prs=outcomes[0].status==='fulfilled'&&Array.isArray(outcomes[0].value)?outcomes[0].value:[];
     for(const pr of prs.slice(0,20)){
       if(!Number.isSafeInteger(pr.number)||pr.number<=0||!pr.head||typeof pr.head.sha!=='string'||
@@ -982,8 +985,15 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
           'PR #'+pr.number+' · Updated'+(draft?' · draft':'')+' · head '+head);
       }
       if(valid(merged)){
+        // Positive proof only: a PR's reported target is not the same as
+        // an exact merge SHA found in the canonical main history.
+        const mergeSha=typeof pr.merge_commit_sha==='string'?pr.merge_commit_sha:'';
+        const mainMatched=pr.base?.ref==='main'&&/^[a-f0-9]{40}$/.test(mergeSha)
+          &&sampledMainShas.has(mergeSha);
         push('pr_merged',pr.merged_at,link,'PR #'+pr.number+
-          ' · GitHub reports merged · head '+head+' · deployment not verified');
+          (mainMatched?' · exact merge SHA in sampled GitHub main':
+           ' · GitHub reports merged; main reachability unverified')+
+          ' · head '+head+' · deployment not verified');
       }else if(pr.state==='closed'&&valid(closed)){
         push('pr_closed',pr.closed_at,link,'PR #'+pr.number+
           ' · Closed without merge · head '+head);
@@ -997,7 +1007,6 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
       push('ci_run',run.updated_at||run.created_at,'https://github.com/Zennay/'+repo+'/actions/runs/'+run.id,
         'GitHub Actions #'+run.id+' · '+status+' / '+conclusion+' · no deploy claim');
     }
-    const commits=outcomes[2].status==='fulfilled'&&Array.isArray(outcomes[2].value)?outcomes[2].value:[];
     for(const commit of commits.slice(0,15)){
       if(typeof commit.sha!=='string'||!/^[a-f0-9]{40}$/i.test(commit.sha))continue;
       push('main_commit',commit.commit?.committer?.date||commit.commit?.author?.date,
