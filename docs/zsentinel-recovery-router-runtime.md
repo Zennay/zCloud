@@ -2970,8 +2970,10 @@ De bron bouwt voort op de bestaande begrensde grote-bestanden
 inventaris; accepteert alleen een al bestaande, niet-gesymlinkte externe
 directory op een fysiek anders geïdentificeerde mount. Candidate hints
 komen uitsluitend van bestandsextensies van oudere grote data-/model- en
-replaybestanden; de 15 grootste entries van de gedeeltelijke scan vormen
-GEEN complete inventaris. In privésamenvatting staan bestandsnamen en
+replaybestanden; de maximaal 15 grootste **apart van algemene grote
+bestanden** verzamelde koude-extensiehits (vanaf 64 KiB) vormen GEEN
+complete inventaris. Zo wordt een archiefshortlist niet door een groot
+actief SQLite-bestand verdrongen. In privésamenvatting staan bestandsnamen en
 eigenaarcontrole; publieke dashboards tonen alleen aantallen,
 waargenomen opslagcapaciteit, scanbeperkingen en expliciet
 files_transferred_or_removed=false.
@@ -3024,4 +3026,20 @@ Dat betekent nadrukkelijk NIET dat er nergens koude replays of models staan.
 Zelfstandig aanpassen aan een ander vrij projectpad of langer (maximaal
 5 seconden per workspace) read-only inventariseren is mogelijk. Een
 feitelijke overdracht/verwijdering is NIET geautoriseerd of ingebouwd.
+
+### Bronwaarneming na afzonderlijke koude-file inventaris (20 oktober)
+
+De bestaande disk metadata-wandeling verzamelt nu behalve de top-15 grote
+bestanden ook een **eigen** top-15 voor archiefextensies vanaf 64 KiB. De
+archiefwerkbank gebruikt uitsluitend die aparte steekproef bij recent
+aangepaste bron en geen enkele lijst is volledigheids- of kopieerbewijs.
+De publieke archiefsamenvatting weigert onbegrensde, niet-numerieke of
+onjuiste capaciteit voordat die in HTML wordt getoond.
+
+Echte alleen-lezen VPS-bron (twee bestaande workspaces) op exacte
+branchtip: 2 van 2 bereikbaar, 2.811 entries gezien, 1.419 directoryslots
+niet onderzocht, geen ouder-dan-7-dagen archiefkandidaat binnen het
+begrensde venster. Nul in deze onvolledige sample betekent NIET dat er
+geen koude data op andere opslagplaatsen is. Geen bestand verplaatst,
+gekopieerd, verwijderd, noch claim of runner gewijzigd.
 
