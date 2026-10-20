@@ -203,3 +203,46 @@ Changing the filter invalidates an older briefing preview; only a fresh,
 reviewed preview can be downloaded. This remains an offline, read-only human
 workflow without queue ownership or release permission. No testsuites were
 written or run for this source feature.
+
+## 20 October · Private human follow-up board (product delivery)
+
+The Workbench now has a **Human follow-up · private, manual only** panel for
+issues explicitly marked **Coordinate owner** or **Parked blocker**. Operators
+may add a human contact **label** (80 characters maximum) and a UTC calendar
+**review date** on the issue detail. These values are strictly local human
+annotations, **not** verified Notion/GitHub assignees, task leases, delegated
+authority, workflow permissions or actual delivery acknowledgements.
+
+The follow-up panel groups human-marked cases by their operator-selected
+dates and shows an explicit count of missing contact/date and overdue review
+dates. "Overdue" only means that the UTC date has passed, **not** that GitHub
+CI, a runner, a human owner or production failed after the observation. The
+priority queue keeps P0 before P1 while surfacing overdue manual follow-ups
+within a given priority. Its source card still requires fresh owner/CI/review
+checks. There is no push/email/calendar/watch notification or automatic claim.
+
+Use the **Follow-up status** filter to focus on: past review dates, missing
+contact/date, due today UTC or scheduled later. The same selection applies
+to issue navigation, blocker queue and private Markdown briefing. The
+unfiltered private follow-up panel remains a comprehensive view of *manual*
+human annotations for all bounded cards on the current source board.
+
+Private handoff JSON has **schema_version 2** for contact labels and UTC
+review dates. Older schema_version 1 handoffs still restore with empty
+contact/date fields; neither version is accepted unless its original source
+SHA-256 and observation timestamp match this exact offline board. Imported
+v2 dates must be real calendar dates in 2020–2099 and contact labels must
+remain bounded without control characters or unsafe HTML delimiters.
+The UI sanitizes locally typed contact labels before export. Markdown
+previews show the manually selected contact/date and distinguish escalation
+from ordinary issues; all text is locally sanitized and the export must be
+reviewed again after any edit/filter change.
+
+Contact labels and notes can include private information. Keep exported
+JSON/Markdown private and share only through an intentional human action.
+No external webhook, browser API call, service, new database, automated
+watch, worker dispatch, runner retry, QA suite or security gate change was
+introduced. Source-level browser JavaScript was syntax-inspected without
+running a QA/regression suite. Integration still requires original exact-head
+automatic CI, independent review when required and protected-main/release
+authorization. No source merge or production deployment is implied.
