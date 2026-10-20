@@ -390,3 +390,7 @@ backup and does not clear the pending-unsaved warning. No automatic
 persistence, cloud save, network requests, worker notifications or
 privileged recovery actions are introduced. No QA/regression suites
 were added or manually run; all CI, review and security gates remain.
+
+### Private follow-up status is never issue closure
+
+Only an explicit human-only blocker decision (coordinate-owner or park-blocker) can carry a locally completed follow-up. Changing the human disposition to a non-escalation decision resets the local follow-up state to open. Imported v3 handoffs, including older-board carry-forward, reject forged locally closed states attached to unrelated issues. This prevents the local completion marker from impersonating real GitHub issue resolution or a released claim. These are changes to the operator's private data model only: original issue visibility, current live ownership verification and release gates remain unaffected.
