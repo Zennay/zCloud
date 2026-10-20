@@ -1608,3 +1608,15 @@ De CSV bevat per project een bronstatusrij; daarnaast verschijnen aparte typecod
 **Privacy:** CSV vereist expliciet `--output`, zodat de cross-project bronmetadata niet onbedoeld op standaarduitvoer belandt. De bestaande uitvoerwriter creëert slechts een nieuw 0600-bestand en overschrijft geen bestaand document; CSV is begrensd op 2 MiB en 2.500 records. Formuleprefixen en onzichtbare/ASCII-besturingstekens worden in spreadsheetvelden veilig weergegeven. Bronpaden of PR-teksten kunnen gevoelig zijn en mogen niet zonder controle worden gedeeld.
 
 **Geen autorisatie:** Een cluster, ongepaarde PR, status of groen waargenomen check is nooit op zichzelf bewijs van vrije code-eigendom, geverifieerde claims, goedgekeurde branchregels, alle verplichte CI, onafhankelijk review, veilige merge of productie-release. Bronstatus en afgekorte voorbeeldlijsten zijn zichtbaar. De tool blijft read-only en voert zelf geen claim, CI-dispatch, merge of deploy uit.
+
+### Directe privé-CSV uit één live PR-conflictenkaart
+
+De **directe** PR-conflictenkaart (scripts/zsentinel_pr_scope_guard.py) kan nu zonder tussenliggende snapshot of andere werkbank een bestandsmatrix naar een nieuw privé-CSV-bestand maken. Voorbeeld:
+
+    python3 scripts/zsentinel_pr_scope_guard.py --project cloud --audit-open-prs --max-prs 24 --format csv --output /secure/directe-pr-kaart.csv
+
+Met de bestaande argumenten `--open-page`, `--page-count` en optioneel `--resolve-issue-identity` kan de operator ook een expliciet, begrensd GitHub-venster kiezen. In het CSV staan de exacte per-bestand PR-link/SHA-bronnen, directe botsingsparen, eventueel meerdere PR-tekstverwijzingen naar hetzelfde nummer met de werkelijk waargenomen issueidentiteitsstatus en PRs zonder gedeelde bestandsnamen in de steekproef. Ongepaard betekent **niet** claimvrij. Extra PRs, onvolledige bestandslijsten en afgekorte rapportonderdelen blijven UNKNOWN en zichtbaar als bronwaarschuwing.
+
+**Expliciet nieuw bestand vereist:** de CLI accepteert `--format csv` alleen samen met `--audit-open-prs --output /pad/nieuw.csv`. De schrijfactie creëert exclusief één lokaal 0600-bestand met een UTC-/brongebonden privacybericht, nooit stdout en nooit een al bestaand bestand; bij exportfout blijft geen bruikbaar halve CSV achter. Maximaal 2 MiB en 2500 records, UTF-8-BOM, gestandaardiseerde CSV-quoting en veilige zichtbare weergave van controlbytes en spreadsheetformuleprefixen. De code voert geen live claim, runneractie, merge, workflowtrigger of deploy uit.
+
+De bronvormen zijn nu complementair: directe single-project CSV uit de live PR-kaart; gecombineerde multi-project CSV uit de portfolio-workbench; en over-paginagrenzen CSV uit de private saved/live graph workbench. Alle drie zijn nonauthoriserende snapshots; controleer de actuele Notion/workerclaims, onafhankelijk review, volledige vereiste CI, branch protection en ownerrechten steeds apart.
