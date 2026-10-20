@@ -288,6 +288,7 @@ for(const pair of workers.adjacent_comparisons){
   for(const worker of pair.entries){
    list.append(el("li",null,worker.project_id+" · slot "+worker.worker_slot+
     " · "+worker.classification+" · bronactie: "+worker.later_owner_followup+
+    (worker.assignment_context_same_observed?"":" · ASSIGNMENT/LEASE GEWIJZIGD: ONBEKEND")+
     (worker.worker_state_changed?" · laatste classificatie veranderd, niet bewezen hersteld":"")+
     " · geen claim- of mergeautorisatie"));
   }
