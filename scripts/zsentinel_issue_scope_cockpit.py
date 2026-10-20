@@ -32,6 +32,7 @@ from zsentinel_issue_pr_history import attach as attach_history
 from zsentinel_issue_action_board import (
     build as build_human_work_inbox, render_compact_inbox,
 )
+from zsentinel_worklist_html import render_html as render_private_worklist_html
 
 MAX_PROJECTS = 3
 MAX_ISSUES = 60
@@ -1037,7 +1038,7 @@ def main(argv=None):
                         help="Rows in compact worklist output, maximum 60")
     parser.add_argument("--format", choices=("html", "json", "text", "markdown",
                                              "worklist-markdown", "worklist-text",
-                                             "worklist-json"),
+                                             "worklist-json", "worklist-html"),
                         default="html")
     args = parser.parse_args(argv)
     try:
@@ -1203,6 +1204,9 @@ def main(argv=None):
             rendered = json.dumps(trimmed, ensure_ascii=False, indent=2) + "\n"
         elif args.format == "html":
             rendered = output_html(report) + "\n"
+        elif args.format == "worklist-html":
+            rendered = render_private_worklist_html(report["human_work_inbox"],
+                                                    args.worklist_limit) + "\n"
         elif args.format in ("worklist-markdown", "worklist-text"):
             rendered = render_compact_inbox(
                 report["human_work_inbox"],
