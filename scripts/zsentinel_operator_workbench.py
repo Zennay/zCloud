@@ -330,6 +330,19 @@ recipient and download destination. It cannot claim, merge, release or contact a
 <button type="button" id="downloadBrief" disabled>Download exactly this private briefing (.md)</button>
 </div>
 </section>
+<section class="brief" aria-label="Offline CSV triage export">
+<h2>Offline spreadsheet triage · reviewed CSV</h2>
+<p>Export exactly the currently filtered saved issues, including observed PR links,
+evidence gaps and local human dispositions. Every row says claim, merge and deploy
+remain unauthorized. This is a captured snapshot, not a live issue tracker.</p>
+<label><input type="checkbox" id="csvIncludePrivate">
+Explicitly include private operator contact labels and notes (off by default)</label>
+<p><small>Spreadsheet and cloud-sync applications may copy this CSV to another account.
+Cells are quoted and formula-prefixed values are escaped. Verify your destination.</small></p>
+<button type="button" id="previewCsv">Preview filtered offline CSV</button>
+<div id="csvPanel" hidden><pre id="csvContent"></pre>
+<button type="button" id="downloadCsv" disabled>Download exactly this reviewed CSV</button></div>
+</section>
 <section class="brief" aria-label="Manual calendar handoff">
 <h2>Optional private calendar follow-up export</h2>
 <p>Only human-marked issues with a contact label and UTC review date qualify.
@@ -419,9 +432,13 @@ window.addEventListener('beforeunload',event=>{
  if(!unsavedLocal)return;
  event.preventDefault();event.returnValue='';
 });
-let viewedBrief=null;
+let viewedBrief=null,viewedCsv=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
+ viewedCsv=null;
+ document.getElementById('csvPanel').hidden=true;
+ document.getElementById('csvContent').textContent='';
+ document.getElementById('downloadCsv').disabled=true;
  viewedCalendar=null;viewedCalendarStamp=null;
  document.getElementById('calendarPanel').hidden=true;
  document.getElementById('calendarContent').textContent='';
@@ -1205,6 +1222,62 @@ document.getElementById('downloadBrief').onclick=()=>{
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
  status.textContent='Private Markdown saved locally. It does not authorize any worker action.';
  invalidateBrief();
+};
+// A reviewed, local-only export. It must never be mistaken for fresh claims.
+function csvCell(value){
+ let cell=String(value??'').replace(/[\\x00-\\x1f\\x7f]/g,' ').trim();
+ // Quoting alone cannot prevent spreadsheet formula evaluation.
+ if(/^[=+@-]/.test(cell))cell="'"+cell;
+ return '"'+cell.replace(/"/g,'""')+'"';
+}
+function csvSource(){
+ const privateFields=document.getElementById('csvIncludePrivate').checked;
+ const columns=['source_board_sha256','source_observed_at_utc','priority','project',
+  'issue','original_issue_url','issue_title','observed_pr_candidates',
+  'observed_evidence_gaps','recommended_next_step','human_disposition',
+  'private_followup_status','human_review_date_utc','claim_authorized',
+  'merge_authorized','deploy_authorized',
+  ...(privateFields?['private_contact_label','private_operator_note']:[])];
+ const rows=filtered().map(c=>{
+  const v=handoffs.get(c.issue);
+  return [boardSha,board.observed_at_utc,c.priority,c.project,c.issue,c.url,
+   c.title,c.open_pr_candidates.join(' | '),c.evidence_gaps.join(' | '),
+   c.recommended_next_step,v?.decision||'investigate',
+   v?.followup_status||'open',v?.due||'',
+   'false','false','false',...(privateFields?[v?.owner||'',v?.note||'']:[])];
+ });
+ if(!rows.length)return null;
+ return [columns,...rows].map(r=>r.map(csvCell).join(',')).join('\\r\\n')+'\\r\\n';
+}
+document.getElementById('csvIncludePrivate').addEventListener('change',()=>{
+ invalidateBrief();
+ status.textContent='CSV privacy selection changed. Preview again before downloading.';
+});
+document.getElementById('previewCsv').onclick=()=>{
+ saveSelection();
+ viewedCsv=csvSource();
+ document.getElementById('csvPanel').hidden=!viewedCsv;
+ document.getElementById('csvContent').textContent=viewedCsv||'';
+ document.getElementById('downloadCsv').disabled=!viewedCsv;
+ status.textContent=viewedCsv?
+  'Review CSV columns, source and rows. No spreadsheet service was contacted.':
+  'No issues match the filters; no CSV generated.';
+};
+document.getElementById('downloadCsv').onclick=()=>{
+ if(!viewedCsv)return;
+ saveSelection();
+ if(csvSource()!==viewedCsv){
+  invalidateBrief();
+  status.textContent='CSV rows or private annotations changed. Preview again.';
+  return;
+ }
+ const project=document.getElementById('project').value.replace(/[^a-z0-9-]/gi,'-').slice(0,50);
+ const uri=URL.createObjectURL(new Blob(['\\ufeff',viewedCsv],{type:'text/csv;charset=utf-8'}));
+ const a=elem('a');a.href=uri;
+ a.download='zsentinel-observed-'+(project||'portfolio')+'.csv';a.click();
+ setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ invalidateBrief();
+ status.textContent='Reviewed CSV saved locally. Original issue, CI and release states remain unverified.';
 };
 document.getElementById('calendarIncludeContact').addEventListener('change',()=>{
  invalidateBrief();
