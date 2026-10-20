@@ -3200,7 +3200,9 @@ def portfolio_queue_allocate():
                             else f'{row_project}::w{local_slot}')
                 status=str(occupied['status'] or '')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
-                if status=='verifying' or project_priority=='system':
+                # Running/verifying work is owned, not an idle slot to
+                # recycle. Only an unstarted claim may be considered.
+                if status!='claimed' or project_priority=='system':
                     continue
                 if worker_key in busy_worker_keys:
                     continue
@@ -3208,7 +3210,6 @@ def portfolio_queue_allocate():
                 if 0 < local_slot <= handoff_floor:
                     continue
                 relief_candidates.append((
-                    0 if status=='claimed' else 1,
                     -_portfolio_priority_rank(occupied['priority']),
                     -project_protection.get(project_priority,2),
                     str(occupied['updated_at'] or ''),
@@ -3221,7 +3222,7 @@ def portfolio_queue_allocate():
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                        WHERE queue_id=? AND worker_slot=?
-                         AND status IN ('claimed','running')""",
+                         AND status='claimed'""",
                     (ts,relief_queue_id,relief_slot),
                 )
                 if relief_update.rowcount:
@@ -3297,7 +3298,9 @@ def portfolio_queue_allocate():
                 worker_key=(previous_key if previous_key.startswith(row_project+'::w')
                             else f'{row_project}::w{local_slot}')
                 project_priority=str((PROJECT_INDEX.get(row_project) or {}).get('priority') or 'normal').lower()
-                if row_project==force_project or project_priority=='system':
+                # Force Start must not revoke running or verifying tasks.
+                if (str(occupied['status'] or '')!='claimed'
+                        or row_project==force_project or project_priority=='system'):
                     continue
                 if worker_key in busy_worker_keys:
                     continue
@@ -3348,8 +3351,8 @@ def portfolio_queue_allocate():
                 c.execute(
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                       WHERE queue_id=? AND status IN ('claimed','running','verifying')""",
-                    (ts,previous_queue_id),
+                       WHERE queue_id=? AND worker_slot=? AND status='claimed'""",
+                    (ts,previous_queue_id,slot),
                 )
                 preempted.add(previous_queue_id)
                 row=None
