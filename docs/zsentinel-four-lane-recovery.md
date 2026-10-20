@@ -560,3 +560,57 @@ The current read-only source preserves existing queue and claim records.
 Updated source commit: [8a77d3a](https://github.com/Zennay/zCloud/commit/8a77d3aac00710bdfdbbd7b36a5bd78366d78bd6).
 Still not released until exact-head protected-main review/CI and
 separate authorized deploy proof.
+
+
+## 20 October · actual scope declaration is mandatory for parallel writers
+
+A real product-integrity risk was fixed in the existing planner: ordinary
+scope normalization converts arbitrary JSON values to strings. With
+`portfolio-recovery`, a malformed entry such as `null`, a wildcard
+(`scripts/*.py`) or an absolute/path-traversal string previously risked
+being treated as a valid explicit scope. A single syntactically valid
+capability alongside an invalid file could also hide the missing file
+boundary. The zSentinel-only strict parser now rejects the **entire**
+declaration unless every value is a bounded, explicit canonical string.
+
+For **cross-project recovery code writers** an owner declaration must
+include at least one concrete **relative repository file/directory path**;
+capability-only labels (including generated `execution_lane.scope`) are
+never accepted as proof that unrelated lanes can edit safely. Files cannot
+use wildcards, absolute paths, `..`, backslashes or empty segments.
+Invalid declarations count as ambiguous, exactly like missing ones: active
+work retains its original owner and blocks new parallel admission. A
+queued task without an acceptable declaration stays restricted to the
+existing serial-only pathway; there is no automatic owner-claim repair.
+
+An example of an *owner-provided* declaration, **not** a queue patch:
+
+```json
+{
+  "conflict_scope": {
+    "files": ["scripts/zsentinel_four_lane_desk.py"],
+    "capabilities": ["zsentinel:operator-desk"]
+  }
+}
+```
+
+The real owner must replace this illustrative file with **every actual
+file/directory intended for writes**, check overlap with other open PRs
+and record it through the existing authorized queue process. No script
+may synthesize that declaration from a lane label or push it into the
+production SQLite. The connected live queue currently has three
+zSentinel tasks with generated `execution_lane.scope` but without such
+explicit `conflict_scope` declarations; those tasks are **not** assumed
+free or safe to parallelize.
+
+The read-only operator desk now reports aggregate missing versus malformed
+or empty scope declarations, and a human `HOLD_PARALLEL_ADMISSION` action
+specifying what the current owners need to supply. It never returns raw
+queue identities, owner IDs or file names. The strict policy is limited
+to zSentinel's `portfolio-recovery` profile and leaves other project's
+preexisting lane logic unchanged.
+
+Source: [aab2ecfa](https://github.com/Zennay/zCloud/commit/aab2ecfa88fa9688d4cfb399777d9482a47617d5)
+on existing PR #1572. It is **not** merged or deployed until ordinary
+independent review, exact-head mandatory CI, protected-main merge and
+authorized live verification complete.
