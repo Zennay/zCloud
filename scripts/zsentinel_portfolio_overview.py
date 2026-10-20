@@ -697,6 +697,8 @@ def main():
                         help="private saved connector active-status snapshot, not live ownership")
     parser.add_argument("--disk-hotspots-root", type=Path)
     parser.add_argument("--disk-hotspots-output", type=Path)
+    parser.add_argument("--disk-hotspots-previous", type=Path,
+                        help="private older JSON with same workspace and scanner parameters")
     parser.add_argument("--observe-vps-capacity", action="store_true")
     parser.add_argument("--observe-local-runner", action="store_true",
                         help="read-only bounded Linux /proc inspection of canonical zCloud listener/worker processes")
@@ -731,6 +733,8 @@ def main():
     try:
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk scan requires both root and private HTML output")
+        if args.disk_hotspots_previous is not None and args.disk_hotspots_root is None:
+            raise ValueError("previous disk snapshot requires fresh private disk scan")
         if args.disk_hotspots_root is not None and args.format not in ("html", "json", "text"):
             raise ValueError("disk scan supports html, json, text only")
         if args.disk_hotspots_output is not None and args.disk_hotspots_output.suffix != ".html":
@@ -760,10 +764,16 @@ def main():
             raise ValueError('at most seven distinct chronological previous reports')
         sources = [args.state, args.window_state, args.database,
                    args.worker_events_database, args.desk_output,
-                   args.disk_hotspots_output]
+                   args.disk_hotspots_output, args.disk_hotspots_previous]
         if any(p.resolve() == q.resolve() for p in history_files
                for q in sources if q is not None):
             raise ValueError('compare sources must differ from live state')
+        if args.disk_hotspots_previous is not None and any(
+                args.disk_hotspots_previous.resolve() == p.resolve()
+                for p in [args.state, args.window_state, args.database,
+                          args.worker_events_database, args.desk_output,
+                          args.output, *history_files] if p is not None):
+            raise ValueError("previous disk snapshot overlaps a live source or output")
         if args.disk_hotspots_output is not None and any(
                 args.disk_hotspots_output.resolve() == p.resolve()
                 for p in [args.state, args.window_state, args.database,
@@ -955,6 +965,10 @@ def main():
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
             disk_report = disk_observe(args.disk_hotspots_root)
+            if args.disk_hotspots_previous is not None:
+                from zsentinel_disk_trend import compare, load_previous
+                disk_report["disk_growth_comparison"] = compare(
+                    load_previous(args.disk_hotspots_previous), disk_report)
             disk_private_html = disk_html(disk_report)
             decision["disk_pressure_private_report"] = public_summary(disk_report)
         if args.format == "html":
