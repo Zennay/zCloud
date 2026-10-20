@@ -315,6 +315,46 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
                 "owner_claim_verified": False,
             })
             worker_gap_count += 1
+    # Fresh GitHub HTTP 401 is an account-access gate, not runner failure.
+    # It merits human-only triage without claiming an outage or ownership.
+    auth_gate_count = 0
+    live_sources = decision.get("live_sources")
+    ci_source = (live_sources.get("ci_discovery")
+                 if isinstance(live_sources, dict) else None)
+    if (isinstance(ci_source, dict)
+            and ci_source.get("source") == "github_canonical_readonly_bounded_discovery"
+            and ci_source.get("jobs_restarted") is False
+            and ci_source.get("runner_mutations") is False):
+        observed_rows = ci_source.get("coverage", [])
+        if not isinstance(observed_rows, list) or len(observed_rows) > 3:
+            raise ValueError("invalid bounded GitHub source coverage")
+        seen_ci = set()
+        for source_row in observed_rows:
+            if not isinstance(source_row, dict):
+                raise ValueError("invalid CI source row")
+            pid = source_row.get("project_id")
+            if pid not in known or pid in seen_ci:
+                raise ValueError("unknown or duplicated project source")
+            seen_ci.add(pid)
+            if source_row.get("repository_stop_reason") != "github_authentication_required":
+                continue
+            if source_row.get("status") not in (
+                    "degraded_unavailable",
+                    "selected_one_source_bound_job_partial_window"):
+                raise ValueError("invalid current GitHub 401 source")
+            cards.append({
+                "kind": "github_ci_auth_owner_gate_not_runner_outage",
+                "id": "source-auth:" + pid, "project_id": pid, "priority": "P1",
+                "problem": "GitHub CI-bron weigert authenticatie (HTTP 401); werkstatus ONBEKEND",
+                "owner": "authorized_github_repository_access_owner",
+                "action": "Bevoegde eigenaar controleert API-token en repo-toegang. Niet aan runner, CI, billing, queue of claims komen; ga met vrij productwerk door.",
+                "observed_from": "bounded_current_github_api_401_source_only",
+                "requires_human": True,
+                "next_gate": "authorized_github_access_review",
+                "worker_resumed_verified": False, "permission_to_recover": False,
+                "owner_claim_verified": False,
+            })
+            auth_gate_count += 1
     # A private old incident is not a currently active outage, but still must
     # remain visible before ordinary work; missing from a window != resolved.
     for row in backlog["shown"]:
@@ -362,7 +402,7 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
             "owner_claim_verified": False,
         })
     historical_count = (len(cards) - live_observed_count - pr_gate_count
-                        - issue_gate_count - worker_gap_count)
+                        - issue_gate_count - worker_gap_count - auth_gate_count)
     # A historical incident may reference a project removed from today's
     # canonical registry. Do not crash the whole workboard or silently mark
     # that earlier incident recovered; surface it as unmapped source debt.
@@ -404,10 +444,11 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
     order = {
         "verified_source_incident_not_runtime_recovery": 0,
         "open_owner_only_issue_not_current_outage_proof": 1,
-        "read_only_worker_progress_gap_not_proven_outage": 2,
-        "queue_pressure_not_proven_outage": 3,
-        "existing_product_pr_gate_inspection_only": 4,
-        "historical_not_reconciled": 5,
+        "github_ci_auth_owner_gate_not_runner_outage": 2,
+        "read_only_worker_progress_gap_not_proven_outage": 3,
+        "queue_pressure_not_proven_outage": 4,
+        "existing_product_pr_gate_inspection_only": 5,
+        "historical_not_reconciled": 6,
     }
     cards.sort(key=lambda c: (
         PRIORITY[c["priority"]],
@@ -460,7 +501,8 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
         "existing_pr_gate_observations": pr_gate_count,
         "owner_only_open_issue_observations": issue_gate_count,
         "worker_event_gap_observations": worker_gap_count,
-        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count - issue_gate_count - worker_gap_count,
+        "github_ci_auth_owner_gates": auth_gate_count,
+        "queue_pressure_observations": len(cards) - live_observed_count - historical_count - pr_gate_count - issue_gate_count - worker_gap_count - auth_gate_count,
         "shown_blocker_cards": shown,
         "blocker_cards_truncated": len(cards) > len(shown),
         "independent_fallback_inspection": fallback[:5],
@@ -548,6 +590,7 @@ def blocker_board_html(board):
         str(board["live_incident_observations"]) +
         ' · eigenaargebonden P0/P1 issues: ' + str(board["owner_only_open_issue_observations"]) +
         ' · worker-eventgaten: ' + str(board["worker_event_gap_observations"]) +
+        ' · GitHub-authentificatiegates: ' + str(board.get("github_ci_auth_owner_gates", 0)) +
         ' · bestaande PR-gates: ' + str(board["existing_pr_gate_observations"]) +
         ' · historisch te hercontroleren: ' +
         str(board["historical_not_reconciled"]) +
