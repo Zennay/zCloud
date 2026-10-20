@@ -253,6 +253,18 @@ source coverage, permissions or filters may have changed.</p>
 <p id="comparisonMeta" aria-live="polite">Only this captured board is loaded; no baseline or live comparison.</p>
 <p id="comparisonCoverage" aria-live="polite">Coverage: current bounded source only.</p>
 <dl id="comparisonStats" class="portfolio"></dl><ol id="comparisonRows"></ol>
+<div class="brief">
+<h3>Reviewed human follow-up carry-forward</h3>
+<p>After loading the earlier source board, select its exact private handoff JSON.
+Only matching canonical human-blocker issues can be carried to the current board.
+Existing current annotations are never overwritten. Preview first; explicitly
+confirm the transfer. Transferred labels/dates are stale human notes, NOT current ownership.</p>
+<label>Earlier private human handoff (.json)
+<input id="carryFile" type="file" accept=".json,application/json"></label>
+<p id="carrySummary" aria-live="polite">Load an earlier board first; nothing imported.</p>
+<ol id="carryRows"></ol>
+<button type="button" id="carryApply" disabled>Confirm carry-forward of reviewed human follow-ups</button>
+</div>
 </section>
 <section class="escalations" aria-label="Human follow-up schedule">
 <h2>Human follow-up · private, manual only</h2>
@@ -306,7 +318,7 @@ const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
 const baselineSchema = 'zsentinel-product-delivery-triage-v1';
 const issuePattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
-let baseline=null;
+let baseline=null,carryPreview=null;
 const issueList=document.getElementById('issues'),detail=document.getElementById('detail');
 const status=document.getElementById('status');
 const entries=new Map(board.cards.map(c=>[c.issue,c]));
@@ -590,6 +602,72 @@ function refreshComparison(){
   });
  }
 }
+function emptyManual(entry){
+ return !entry||(entry.decision==='investigate'&&!entry.note&&!entry.owner&&
+  !entry.due&&!entry.carried_from);
+}
+function clearCarryPreview(message){
+ carryPreview=null;
+ document.getElementById('carryRows').replaceChildren();
+ document.getElementById('carryApply').disabled=true;
+ document.getElementById('carrySummary').textContent=
+  message||'No reviewed carry-forward is pending. Nothing imported.';
+}
+function previewCarry(data){
+ if(!baseline)throw Error('Earlier source board required');
+ if(!data||Array.isArray(data)||![1,2].includes(data.schema_version)||
+    data.kind!=='zsentinel-private-human-delivery-handoff'||
+    data.source_board_sha256!==baseline.sha||
+    data.source_observed_at_utc!==baseline.observed_at_utc||
+    data.authorizes_claim!==false||data.authorizes_merge!==false||
+    data.authorizes_deploy!==false||!Array.isArray(data.entries)||
+    data.entries.length>60)throw Error('Earlier private handoff does not match exact earlier source');
+ const seen=new Set(),proposed=[],missing=[];
+ for(const record of data.entries){
+  if(!record||Array.isArray(record)||typeof record.issue!=='string'||
+     seen.has(record.issue)||!baseline.items.has(record.issue)||
+     !permitted.has(record.decision)||typeof record.note!=='string'||
+     record.note.length>1000||new TextEncoder().encode(record.note).length>4000||
+     [...record.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t')||
+     (data.schema_version===2&&(
+      typeof record.owner!=='string'||record.owner.length>80||
+      [...record.owner].some(ch=>ch.codePointAt(0)<32||ch==='<'||ch==='>')||
+      !validFollowupDate(record.due)||
+      (record.carried_from!==undefined&&
+       (typeof record.carried_from!=='string'||
+        (record.carried_from!==''&&!/^[a-f0-9]{64}$/.test(record.carried_from)))))))
+    throw Error('Untrusted prior handoff item');
+  seen.add(record.issue);
+  if(!manualGateDecisions.has(record.decision))continue;
+  const now=entries.get(record.issue);
+  if(!now||now.project!==baseline.items.get(record.issue).project){
+    missing.push(record.issue);continue;
+  }
+  proposed.push({issue:record.issue,
+   value:{decision:record.decision,note:record.note,
+    owner:data.schema_version===2?record.owner:'',
+    due:data.schema_version===2?record.due:'',
+    carried_from:baseline.sha}});
+ }
+ const eligible=proposed.filter(x=>emptyManual(handoffs.get(x.issue)));
+ carryPreview={sha:baseline.sha,eligible};
+ const list=document.getElementById('carryRows');list.replaceChildren();
+ const preserved=proposed.length-eligible.length;
+ document.getElementById('carrySummary').textContent=
+  eligible.length+' manual annotations ready for explicit import · '+
+  preserved+' already edited on current board (will remain unchanged) · '+
+  missing.length+' no longer matched by current project/issue identity. No live claim is assumed.';
+ for(const row of eligible){
+  const c=entries.get(row.issue),li=elem('li');
+  li.append(elem('strong',row.issue+' · '),elem('span',c.title),
+   elem('small',' · '+row.value.decision+' · Human contact: '+
+    (row.value.owner||'unknown')+' · UTC review date: '+(row.value.due||'unknown')+
+    ' · current owner/CI must be reverified'));
+  list.append(li);
+ }
+ if(!eligible.length)list.append(elem('li','No safe, unedited matching human follow-ups to carry.'));
+ document.getElementById('carryApply').disabled=!eligible.length;
+}
 function line(value,limit=500){
  return String(value??'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/[<>\x60]/g,'').slice(0,limit).trim();
 }
@@ -806,15 +884,43 @@ document.getElementById('baseline').addEventListener('change',async event=>{
   checked.sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',buf)),
     byte=>byte.toString(16).padStart(2,'0')).join('');
   if(checked.sha===boardSha)throw Error('baseline and current board are identical');
-  baseline=checked;invalidateBrief();refreshComparison();drawList();drawDetail();
+  baseline=checked;clearCarryPreview('Earlier source loaded. Select its matching private handoff to preview carry-forward.');
+  invalidateBrief();refreshComparison();drawList();drawDetail();
   status.textContent='Earlier bounded source loaded locally. Missing issues are not proven resolved.';
  }catch{
   status.textContent='Previous source rejected: invalid, unsafe, future, or not earlier than this board.';
  }finally{event.currentTarget.value='';}
 });
 document.getElementById('clearBaseline').onclick=()=>{
- baseline=null;invalidateBrief();refreshComparison();drawList();drawDetail();
+ baseline=null;clearCarryPreview('Earlier source cleared; no pending carry-forward.');
+  invalidateBrief();refreshComparison();drawList();drawDetail();
  status.textContent='Earlier source comparison cleared.';
+};
+document.getElementById('carryFile').addEventListener('change',async event=>{
+ const file=event.currentTarget.files?.[0];if(!file)return;
+ clearCarryPreview('Reviewing private prior handoff.');
+ try{
+  if(!baseline||file.size<4||file.size>65536)throw Error('source or file bounds');
+  const data=JSON.parse(await file.text());
+  previewCarry(data);
+  status.textContent='Inspect prior human-only annotations, then explicitly confirm if appropriate.';
+ }catch{
+  clearCarryPreview('Earlier handoff rejected: incorrect source, malformed values or unauthorized provenance.');
+  status.textContent='Carry-forward refused without exact earlier source and validated human-only handoff.';
+ }finally{event.currentTarget.value='';}
+});
+document.getElementById('carryApply').onclick=()=>{
+ if(!carryPreview||!baseline||carryPreview.sha!==baseline.sha){
+  clearCarryPreview('Earlier board changed; load matching prior handoff again.');return;
+ }
+ if(carryPreview.eligible.some(x=>!emptyManual(handoffs.get(x.issue)))){
+  clearCarryPreview('Current annotations changed; preview again. Existing work preserved.');return;
+ }
+ const count=carryPreview.eligible.length;
+ for(const row of carryPreview.eligible)handoffs.set(row.issue,row.value);
+ clearCarryPreview('Transferred '+count+' reviewed, human-only annotations. All live owners/gates must be reverified.');
+ invalidateBrief();drawList();drawDetail();
+ status.textContent='Manually reviewed notes carried forward; no Notion claim or external action performed.';
 };
 document.getElementById('restore').addEventListener('change',async event=>{
  const file=event.currentTarget.files?.[0];if(!file)return;
