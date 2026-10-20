@@ -196,7 +196,7 @@ def build_handoff(decision, registry=None, queue_trend=None):
     # The portfolio already compared exact-private, read-only queue snapshots.
     # Its owner handoff MUST use that already-observed comparison, never run
     # a second provider/SQLite read, and never invent a lease-release right.
-    conflict_total = 0
+    conflict_total = None  # UNKNOWN unless an exact private comparison was supplied.
     conflict_truncated = False
     if queue_trend is not None:
         from zsentinel_queue_churn import (
@@ -494,10 +494,24 @@ def handoff_html(report):
     sources = " · ".join(
         escape(_short(name, 20)) + ': ' + escape(_short(value, 75))
         for name, value in coverage.items())
+    compared = report.get("queue_claim_comparison_supplied")
+    count = report.get("queue_claim_conflict_total_observed")
+    truncated = report.get("queue_claim_conflicts_sample_truncated")
+    if (type(compared) is not bool or type(truncated) is not bool
+            or (compared and (type(count) is not int or not 0 <= count <= 2500))
+            or (not compared and count is not None)):
+        raise ValueError("untrusted queue comparison handoff provenance")
+    queue_line = ("Claimleasevergelijking niet aangeleverd; conflictstatus ONBEKEND."
+                  if not compared else
+                  str(count) + " tegenstrijdige leasevensters in de begrensde bron; "
+                  "alleen handmatige eigenaarverificatie.")
+    if truncated:
+        queue_line += " Bron niet volledig; niet-getoonde conflicten blijven ONBEKEND."
     return ('<section class="panel warn" aria-label="Prioritaire eigenaaroverdracht">'
             '<h2>Nu opvolgen · P0 eerst</h2><p>Actuele, begrensde '
             'bronwaarneming. GEEN vrijgave voor workerclaim, retry, merge of deploy.</p>'
             '<p class="small muted">Bronbereik: ' + sources + '</p>' +
+            '<p class="small muted">Queue #677: ' + escape(queue_line) + '</p>' +
             ('<ol>' + ''.join(cards) + '</ol>' if cards else
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
@@ -519,6 +533,20 @@ def markdown(report):
              "## Bronbereik (nooit volledig)"]
     for label, value in report["coverage"].items():
         lines.append("- " + _md(label, 24) + ": " + _md(value, 100))
+    lines.append("")
+    queue_known = report.get("queue_claim_comparison_supplied")
+    queue_count = report.get("queue_claim_conflict_total_observed")
+    queue_partial = report.get("queue_claim_conflicts_sample_truncated")
+    if (type(queue_known) is not bool or type(queue_partial) is not bool
+            or (queue_known and (type(queue_count) is not int
+                                 or not 0 <= queue_count <= 2500))
+            or (not queue_known and queue_count is not None)):
+        raise ValueError("unsafe queue source status in Markdown")
+    lines.append("Queue #677: " + (
+        str(queue_count) + " tegenstrijdige leasevensters in begrensde bron."
+        if queue_known else "geen bronvergelijking; leaseconflicten ONBEKEND."))
+    if queue_partial:
+        lines.append("Queuebron niet volledig; verborgen leaseconflicten ONBEKEND.")
     lines.append("")
     lines.append("## Prioritaire opvolging")
     for n, card in enumerate(report["priority_items"], 1):
