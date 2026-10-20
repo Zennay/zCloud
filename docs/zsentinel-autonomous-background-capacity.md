@@ -58,6 +58,8 @@ values **do not prove** this PR source was installed, nor does preview
 validate runner recovery.
 
 
+Voor operators zonder JSON is er daarnaast `python3 scripts/zsentinel_background_priority.py --preview --human`: een Nederlandstalig één-scherms overzicht van het CPU-advies, de concrete oorzaken (actieve GitHub-jobs, systeemload, swap en schijfruimte), huidige systemd-quota/gewicht waar uitleesbaar, en de expliciete melding dat de preview niets heeft gewijzigd. `--human` zonder `--preview` wordt geweigerd. Beide weergaven lezen alleen; geen periodieke controle wordt gestart.
+
 ## Why the CPU band was selected
 
 The preview and private on-host state now include a bounded array of
