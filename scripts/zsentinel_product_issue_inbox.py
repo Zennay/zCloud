@@ -415,9 +415,9 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
         "observed_at": observed.isoformat(timespec="seconds"),
         "projects": names, "coverage": coverage, "request_count": calls,
         "items": result, "suppressed_qa_only": excluded_qa,
-        # Up to eight already-fetched open PRs per canonical repo. No extra
-        # requests and no assumption that a missing issue reference is free.
+        # One-page PR listing, never exhaustive or proof of active ownership.
         "recent_open_product_prs": recent_open_product_prs,
+        "merge_first_open_product_prs": merge_first_board(recent_open_product_prs, records, names),
         # Global stop only for a confirmed provider limit. Repository-local
         # 401/403 is not authority to suppress independently readable repos.
         "stopped_after_rate_or_auth_denial": rate_or_auth_denied,
@@ -429,6 +429,60 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
         "actions_authorized": False,
         "fully_synchronized": False,
     }
+
+def merge_first_board(open_prs, all_issues, projects, limit=45):
+    """Build an advisory, round-robin merge-first queue from observed PRs.
+
+    Only already-sampled, text-referenced issues influence priority. Nothing
+    here proves branch ownership, fixes, review, required CI, or merge access.
+    """
+    by_url = {}
+    for issue in all_issues.values():
+        for reference in issue.get("related_open_prs", []):
+            links = by_url.setdefault(reference["url"], [])
+            if len(links) < 12:
+                links.append({
+                    "url": issue["url"], "number": issue["number"],
+                    "priority": issue["priority"],
+                    "relationship": reference["relationship"],
+                })
+    ranks = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
+    grouped = defaultdict(list)
+    for pr in open_prs:
+        links = sorted(by_url.get(pr["url"], []),
+                       key=lambda item: (ranks[item["priority"]], item["number"]))
+        grouped[pr["project"]].append({
+            **pr, "sampled_issue_priority": links[0]["priority"] if links else "Unspecified",
+            "sampled_issue_references": links[:5],
+            "review_state": "not_observed",
+            "exact_head_ci": "not_observed",
+            "active_claim": "not_verified",
+            "ready_to_merge": False,
+        })
+    for rows in grouped.values():
+        rows.sort(key=lambda row: (ranks[row["sampled_issue_priority"]],
+                                  row["draft"], row["number"]))
+    result = []
+    for severity in ("P0", "P1", "P2", "Unspecified"):
+        offsets = {project: 0 for project in projects}
+        while len(result) < limit:
+            advanced = False
+            for project in projects:
+                rows = grouped.get(project, [])
+                i = offsets[project]
+                while i < len(rows) and ranks[rows[i]["sampled_issue_priority"]] < ranks[severity]:
+                    i += 1
+                if i < len(rows) and rows[i]["sampled_issue_priority"] == severity:
+                    result.append(rows[i])
+                    i += 1
+                    advanced = True
+                offsets[project] = i
+                if len(result) >= limit:
+                    break
+            if not advanced:
+                break
+    return result
+
 
 STYLE = """
 :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111923;color:#edf4ff}
@@ -477,6 +531,35 @@ def html_view(data):
                         + " sampled issues</h2>" +
                         ("".join(lines) or "<p class='muted'>No sampled issues in this class. Coverage is not exhaustive.</p>")
                         + "</section>")
+    pr_rows = []
+    for pr in data.get("merge_first_open_product_prs", []):
+        hints = []
+        for issue in pr["sampled_issue_references"]:
+            hints.append("<a href='" + escape(issue["url"], quote=True) +
+                         "' target='_blank' rel='noopener noreferrer'>" +
+                         escape(issue["priority"]) + " issue #" +
+                         str(issue["number"]) + " (text reference)</a>")
+        pr_rows.append(
+            "<div class='issue'><a class='issue-title' href='" +
+            escape(pr["url"], quote=True) +
+            "' target='_blank' rel='noopener noreferrer'>" +
+            escape(pr["title"]) + "</a><span class='tag'>" +
+            escape(pr["project"]) + "</span><span class='tag'>" +
+            escape("DRAFT" if pr["draft"] else "OPEN") +
+            "</span><span class='tag'>" +
+            escape(pr["sampled_issue_priority"]) +
+            " sampled link</span><p class='muted'><small>" +
+            (" · ".join(hints) if hints else "No priority issue in bounded sample") +
+            " · listed HEAD only; current CI, review and claim unknown." +
+            " Not authorized to merge.</small></p></div>")
+    pr_section = (
+        "<section><h2>Merge eerst: bestaande product-PR’s · " +
+        str(len(pr_rows)) + " in bounded view</h2>"
+        "<p>Bestaande product-PR’s vóór nieuw werk. Prioriteit uit enkel "
+        "waargenomen issue-verwijzingen; geen huidige gate of eigenaar bewezen. "
+        "Ontbrekende PR’s kunnen buiten het beperkte bronvenster vallen.</p>" +
+        ("".join(pr_rows) or "<p class='muted'>No open PRs in the bounded source window.</p>") +
+        "</section>")
     coverage = []
     source_denials = {
         "authentication_required":
@@ -511,7 +594,7 @@ def html_view(data):
             "Observed " + escape(data["observed_at"]) + " · requests " +
             str(data["request_count"]) + " · QA-only excluded " +
             str(data["suppressed_qa_only"]) + "</p></header><main>" +
-            "".join(sections) +
+            pr_section + "".join(sections) +
             "<section><details><summary>GitHub source coverage by project</summary>"
             "<ul>" + "".join(coverage) + "</ul></details></section></main>"
             "<footer>All external links open GitHub. Read-only, no tracking or remote scripts. "
