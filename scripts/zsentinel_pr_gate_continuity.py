@@ -35,6 +35,8 @@ GATE_KEYS = (
     "check_runs_total_observed", "check_runs_latest_attempts_observed",
     "check_runs_superseded_attempts_observed",
     "legacy_contexts_observed", "legacy_status_superseded_attempts_observed",
+    "human_next_gate_step", "check_runs_evidence_sha256",
+    "legacy_status_evidence_sha256", "exact_head_review_evidence_sha256",
 )
 
 
@@ -154,6 +156,15 @@ def _gate_rows(board, repos):
                 val = row.get(key)
                 if type(val) is not int or not 0 <= val <= 1000000:
                     raise ValueError("invalid check/review count")
+            # Existing old snapshots can lack source identities. They are
+            # allowed for comparison, but must NEVER qualify as unchanged.
+            for field in ("check_runs_evidence_sha256",
+                          "legacy_status_evidence_sha256",
+                          "exact_head_review_evidence_sha256"):
+                val = row.get(field)
+                if val is not None and (type(val) is not str or
+                                        SHA.fullmatch(val) is None):
+                    raise ValueError("malformed pinned source fingerprint")
             for key in ("check_page_complete", "review_page_may_be_truncated",
                         "legacy_status_source_may_be_truncated",
                         "check_runs_sample_complete_and_terminal"):
@@ -187,6 +198,11 @@ def _changed_non_green(past, now):
         job = new_jobs[job_id]
         changes.append({"kind": "non_green_job_newly_observed",
                         "label": job["name"], "url": job["url"]})
+    for job_id in sorted(old_jobs.keys() & new_jobs.keys()):
+        old_job, new_job = old_jobs[job_id], new_jobs[job_id]
+        if old_job != new_job:
+            changes.append({"kind": "non_green_job_state_or_conclusion_changed",
+                            "label": new_job["name"], "url": new_job["url"]})
     for job_id in sorted(old_jobs.keys() - new_jobs.keys()):
         job = old_jobs[job_id]
         changes.append({"kind": "previous_non_green_job_not_in_current_sample",
@@ -248,6 +264,11 @@ def compare_gate_episodes(previous, current):
             and row.get("legacy_status_source_may_be_truncated") is False
             and row.get("observed_actionable_check_runs_hidden") == 0
             and row.get("observed_actionable_legacy_contexts_hidden") == 0
+            and all(type(row.get(key)) is str
+                    and SHA.fullmatch(row[key]) is not None for key in (
+                        "check_runs_evidence_sha256",
+                        "legacy_status_evidence_sha256",
+                        "exact_head_review_evidence_sha256"))
             for row in (past, now))
         if past is None:
             change = "newly_selected_in_current_sample_not_new_pr"
@@ -260,10 +281,19 @@ def compare_gate_episodes(previous, current):
         else:
             change = "gate_receipt_changed_same_head"
         movements, hidden = _changed_non_green(past, now) if exact else ([], 0)
+        source_evidence_changes = []
+        if exact and fully_sampled:
+            for field, human_label in (
+                    ("check_runs_evidence_sha256", "Nieuwe Check Run poging of conclusie"),
+                    ("legacy_status_evidence_sha256", "Legacy context of statuspoging gewijzigd"),
+                    ("exact_head_review_evidence_sha256", "Individuele reviewbon gewijzigd")):
+                if past[field] != now[field]:
+                    source_evidence_changes.append(human_label)
         rows.append({
             "url": url, "project": now["project"],
             "observed_changed_non_green_checks": movements,
             "observed_changed_non_green_checks_hidden": hidden,
+            "observed_changed_gate_evidence_categories": source_evidence_changes,
             "previous_head": old_head if type(old_head) is str and SHA.fullmatch(old_head) else None,
             "current_head": head if type(head) is str and SHA.fullmatch(head) else None,
             "previous_base": old_base if type(old_base) is str and SHA.fullmatch(old_base) else None,
@@ -287,6 +317,7 @@ def compare_gate_episodes(previous, current):
             "current_base": None,
             "observed_changed_non_green_checks": [],
             "observed_changed_non_green_checks_hidden": 0,
+            "observed_changed_gate_evidence_categories": [],
             "change": "not_selected_now_not_evidence_of_merge_or_closure",
             "previous_blocker": old["human_gate_blocker"],
             "current_blocker": None,
@@ -342,6 +373,9 @@ def render_gate_episodes(report, style="text"):
             "<li><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>" + escape(row["url"]) +
             "</a>: " + escape(LABELS[row["change"]]) +
+            ("<p>Gewijzigd bronbewijs: " +
+             escape("; ".join(row["observed_changed_gate_evidence_categories"])) +
+             "</p>" if row["observed_changed_gate_evidence_categories"] else "") +
             ("<ul>" + "".join(
                 "<li>" + escape(item["kind"]) + ": <a rel='noopener noreferrer' href='" +
                 escape(item["url"], quote=True) + "'>" + escape(item["label"]) +
@@ -375,6 +409,9 @@ def render_gate_episodes(report, style="text"):
         link = ("[Open PR](" + row["url"] + ")" if style == "markdown" else row["url"])
         lines.append("- " + link + " · " + LABELS[row["change"]] +
                      (" · HEAD " + row["current_head"][:12] if row["current_head"] else ""))
+        if row["observed_changed_gate_evidence_categories"]:
+            lines.append("  Gewijzigd bronbewijs: " +
+                         "; ".join(row["observed_changed_gate_evidence_categories"]))
         for detail in row["observed_changed_non_green_checks"]:
             label = detail["label"].replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
             detail_link = ("[" + label + "](" + detail["url"] + ")"
