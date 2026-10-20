@@ -87,3 +87,39 @@ waarop de kalender opnieuw werd opgeslagen. Een bron uit de toekomst of met
 kalenderitem geen runner-, release-, claim- of mergebevoegdheid is.
 Dit bronmoment kan historisch zijn; controleer issue, eigenaar en gates
 altijd opnieuw voordat een menselijke actie volgt.
+
+## Later opnieuw openen zonder netwerk of queue-herlezing
+
+Nieuw: `scripts/zsentinel_saved_operator_replay.py`. Een eerder met
+`--format json --output /private/source.json` opgeslagen cockpitbron
+kan maximaal 30 dagen later opnieuw worden weergegeven, **zonder GitHub,
+Notion, VPS, SQLite, runner of andere externe provider te benaderen**.
+Bron en bestemming worden expliciet gekozen. Alleen een regulier
+enkelvoudig owner-owned 0600 JSON-bestand (max. 6 MiB) wordt geaccepteerd;
+de bronreader gebruikt dezelfde no-follow/same-inode/duplicate-key-weigering
+als de bestaande router. Autoriserende/muterende bronvlaggen en onbekende
+broncontext worden geweigerd. De bestaande daadwerkelijke operatorrenderers
+worden hergebruikt, inclusief de gebonden menselijke agenda.
+
+```bash
+python3 scripts/zsentinel_saved_operator_replay.py \
+  --snapshot /private/source.json --format html \
+  --output /private/historisch-bord.html
+
+python3 scripts/zsentinel_saved_operator_replay.py \
+  --snapshot /private/source.json --format ics \
+  --output /private/historische-mensenagenda.ics
+
+python3 scripts/zsentinel_saved_operator_replay.py \
+  --snapshot /private/source.json --format md \
+  --output /private/historische-handoff.md
+```
+
+Daarnaast zijn `--format text --output NIEUW.txt` en
+`--format desk --output NIEUW.html` beschikbaar. De HTML- en
+tekst-/Markdown-overdracht bevatten een zichtbare historische
+bronwaarschuwing; ICS bewaart het daadwerkelijke originele bronmoment.
+Ook wanneer het opgeslagen bestand gisteren is gemaakt, ontstaat
+**geen nieuwe CI- of eigenaarswaarneming**. Alleen de operator kan de
+eventuele oude herinnering bewust importeren. Source-only branchfunctie:
+geen scheduler, claim, auto-deploy of live service-activering.
