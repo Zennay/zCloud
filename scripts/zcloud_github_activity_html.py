@@ -56,12 +56,12 @@ def event_link(event: dict, repo: str) -> tuple[str, str]:
     if event.get("draft") is True:
         suffix += " · draft"
     # Current PR state, not a claim about its state at creation time.
-    if event.get("pr_lifecycle") == "closed_without_merge":
-        suffix += " · NOW CLOSED WITHOUT MERGE (not delivered)"
+    if kind == "pr_closed":
+        suffix += " · CLOSED WITHOUT MERGE at source time; NOT DELIVERED"
+    elif event.get("pr_lifecycle") == "closed_without_merge":
+        suffix += " · now closed without merge; not delivered"
     elif event.get("pr_lifecycle") == "open":
         suffix += " · currently open"
-    if kind == "pr_closed":
-        suffix += " · closed at provider source time; NOT DELIVERED"
     if kind == "pr_merged":
         target = event.get("reported_target") or "unknown"
         suffix += (" · reported target " + target
@@ -91,8 +91,7 @@ def html_page(data: dict) -> str:
                   ("ci_run", "Workflow runs"))
         chips = "".join("<span>" + escape(name) + ": <b>" + str(counts.get(key, 0)) +
                         "</b></span>" for key, name in labels)
-        chips += ("<span>Closure receipts (NOT delivered): <b>" +
-                  str(closed_unmerged) + "</b></span>")
+
         main_target_merges = sum(e["kind"] == "pr_merged" and
                                  e.get("reported_main_merge") is True for e in rows)
         chips += ("<span>PR merges reporting main target: <b>" +
