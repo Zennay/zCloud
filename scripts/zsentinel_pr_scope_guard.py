@@ -120,13 +120,15 @@ def github_json(repo, suffix, token):
         raise ValueError("github_payload_invalid") from None
 
 
-def open_prs(repo, token):
-    # One fixed 48-PR page bounds long PR descriptions and API reply sizes.
-    # A full page is UNKNOWN, even if this might be the actual last page.
-    suffix = ("/pulls?state=open&per_page=" + str(MAX_OPEN_PAGE) +
+def open_prs(repo, token, page_size=MAX_OPEN_PAGE):
+    # Fetch one beyond the requested inspection count when possible.
+    # A full page is UNKNOWN, even if it may be the actual final page.
+    if type(page_size) is not int or not 1 <= page_size <= MAX_OPEN_PAGE:
+        raise ValueError("invalid open-PR page size")
+    suffix = ("/pulls?state=open&per_page=" + str(page_size) +
               "&page=1&sort=updated&direction=desc")
     rows = github_json(repo, suffix, token)
-    if not isinstance(rows, list) or len(rows) > MAX_OPEN_PAGE:
+    if not isinstance(rows, list) or len(rows) > page_size:
         raise ValueError("invalid open PR listing")
     result = []
     seen = set()
@@ -228,7 +230,8 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
               if source_pr_number is not None else None)
     if source is not None:
         wanted = sorted(set(wanted).union(source["paths"]))
-    before = open_prs(repo, token)
+    page_size = min(MAX_OPEN_PAGE, limit + 1)
+    before = open_prs(repo, token, page_size)
     selected = before[:limit]
     hits = []
     truncated_files = []
@@ -245,7 +248,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
                              "pr_url": pr["url"], "observed_head_sha": pr["head_sha"],
                              "observed_base_sha": pr["base_sha"], "matching_files": matches[:32],
                              "matches_truncated": len(matches) > 32})
-    after = open_prs(repo, token)
+    after = open_prs(repo, token, page_size)
     snapshot_stable = before == after
     source_stable = True
     if source is not None:
@@ -259,7 +262,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
                          and current_head.get("sha") == source["head_sha"]
                          and isinstance(current_base, dict)
                          and current_base.get("sha") == source["base_sha"])
-    complete = (source_stable and len(before) < MAX_OPEN_PAGE and len(before) <= limit
+    complete = (source_stable and len(before) < page_size and len(before) <= limit
                 and not truncated_files and snapshot_stable)
     return {
         "schema": "zsentinel-pr-scope-observation-v1",
@@ -277,7 +280,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
         "observed_open_prs": len(before),
         "inspected_prs": sum(pr["number"] != source["number"]
                               for pr in selected) if source is not None else len(selected),
-        "open_pr_page_may_be_truncated": len(before) == MAX_OPEN_PAGE,
+        "open_pr_page_may_be_truncated": len(before) == page_size,
         "inspection_limit_reached": len(before) > limit,
         "pr_file_lists_truncated": truncated_files,
         "open_pr_snapshot_stable": snapshot_stable,
@@ -386,7 +389,8 @@ def observe_conflict_graph(repo, token=None, limit=24):
     """
     if not REPO.fullmatch(repo) or type(limit) is not int or not 1 <= limit <= MAX_INSPECT:
         raise ValueError("invalid graph request")
-    before = open_prs(repo, token)
+    page_size = min(MAX_OPEN_PAGE, limit + 1)
+    before = open_prs(repo, token, page_size)
     chosen = before[:limit]
     file_owners = {}
     suspicious_lists = []
@@ -434,13 +438,13 @@ def observe_conflict_graph(repo, token=None, limit=24):
             "merge_conflict_verified": False,
             "same_active_owner_verified": False,
         })
-    after = open_prs(repo, token)
+    after = open_prs(repo, token, page_size)
     stable = before == after
     collided = set()
     for left, right in pairs:
         collided.add(left)
         collided.add(right)
-    fully_sampled = (len(before) < MAX_OPEN_PAGE and len(before) <= limit
+    fully_sampled = (len(before) < page_size and len(before) <= limit
                      and not suspicious_lists and stable
                      and len(ordered) <= MAX_CONFLICT_PAIRS)
     # An unpaired PR is a useful independent-work candidate ONLY after the
@@ -466,7 +470,7 @@ def observe_conflict_graph(repo, token=None, limit=24):
         "unpaired_hidden_because_source_incomplete": not fully_sampled,
         "collision_cards_truncated": len(ordered) > MAX_CONFLICT_PAIRS,
         "pr_file_lists_truncated": suspicious_lists,
-        "open_pr_page_may_be_truncated": len(before) == MAX_OPEN_PAGE,
+        "open_pr_page_may_be_truncated": len(before) == page_size,
         "open_pr_snapshot_stable": stable,
         "pr_file_scope_sample_complete": fully_sampled,
         "source_result": ("collisions_observed" if ordered else
