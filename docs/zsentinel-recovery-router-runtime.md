@@ -2243,3 +2243,64 @@ Rechtstreekse verbonden zSSH read-only waarneming op 20 oktober:
 waarneming bewijst geen bestaande scheduleractivatie; exacte-head
 CI, onafhankelijke review, protected-main en bevoegd runtime-eigendom
 blijven vereist. Geen QA-/regressiesuites geschreven of handmatig gedraaid.
+
+### 20 oktober · geïntegreerde privé schijfruimtewerkbank bij VPS-druk
+
+Een **nieuwe uitvoerbare operatorfunctie** `scripts/zsentinel_disk_hotspots.py`
+brengt op verzoek grote daadwerkelijke toegewezen schijfblokken onder één
+expliciet gekozen bestaande projectworkspace in kaart. Ze helpt de P0
+runner-/capaciteitsbeheerder concrete overmaatbronnen te vinden voordat
+die een eventuele, afzonderlijk geautoriseerde opruimactie besluit.
+
+Werking:
+- Alleen Linux-bestandsmetadata via `os.scandir` en
+  `stat(follow_symlinks=False)`. Geen file-content-reads, shell, symlink
+  traversal, andere mounts, service-, worker-, queue- of GitHub-writes.
+- Standaard hard begrensd op 20.000 entries, diepte 4, 5 seconden,
+  bestanden van minstens 64 MiB, vijftien grootste kandidaten;
+  hardlinks tellen één keer. Het resultaat bevat toegewezen ruimte,
+  niet alleen de misleidende logische bestandsgrootte.
+- Gevoelige namen (.ssh/.git/.env/secrets/token/password/etc.) worden niet
+  betreden of in kandidaatnamen getoond. Onvolledige coverage
+  (afgekapt, diepte, ontbrekende toegang, uitgesloten privénamen) is
+  expliciet **partial**; observatiebytes zijn uitsluitend ondergrenzen.
+- Het losse HTML-rapport is uitsluitend te schrijven met de bestaande
+  create-only private `write_private_output` (mode 0600, nooit overwrite).
+  Ook een oud of groot bestand is **geen bewijs** dat verwijderen veilig is.
+  Er bestaat geen delete-, truncate- of automatisch herstartpad.
+
+Eénmalig standalone:
+```sh
+python3 scripts/zsentinel_disk_hotspots.py \
+  --root /home/ubuntu/zennay-cloud \
+  --format html \
+  --output /home/ubuntu/zennay-cloud/.operator-private/disk-report.html
+```
+De operator maakt de besloten, bestaande uitvoermap zélf vooraf aan.
+De opdracht schrijft alleen het nieuwe HTML-rapport; bij bestaande
+bestandsnaam, verkeerde rechten of ongeldige bron stopt ze.
+
+**Ook geïntegreerd in de bestaande zSentinel live cockpit**:
+```sh
+python3 scripts/zsentinel_live_cockpit.py \
+  --database /path/to/existing/portfolio_queue.db \
+  --project cloud \
+  --disk-hotspots-root /home/ubuntu/zennay-cloud \
+  --disk-hotspots-output /home/ubuntu/zennay-cloud/.operator-private/disk-report.html \
+  --format html > /private/existing-operator-location/cockpit.html
+```
+Daar verschijnt **alleen een padvrije brongebonden samenvatting**:
+gevonden minimumruimte, aantal grootbestandkandidaten, dekking en
+niet-doorzochte mappen. De bestandsnamen/absolute workspace blijven
+uitsluitend in het aparte privérapport; ook JSON en text bevatten geen
+bestandspaden. Dit is geen autonome cleanup of runnerfix. De job draait
+niet vanzelf en mag geen actieve claims of geserialiseerde releases raken.
+
+Directe verbonden zSSH observatie op 20 oktober: `/dev/sda1` 94% bezet
+met 6.6 GiB vrije ruimte; top-level `history.db` ongeveer 656 MiB;
+dit laat nadrukkelijk **niet** zien dat die database veilig weg kan of
+een P0 runnerincident daardoor is opgelost. Alleen besloten eigenaar-
+inspectie kan een daadwerkelijke live-retentie- of schrijversituatie
+vaststellen. Bestaande exact-head CI, onafhankelijke review,
+protected-main, P0 #1326 en billing #1523 blijven bindend.
+Geen QA/regressiesuites geschreven of handmatig gestart.
