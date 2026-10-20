@@ -7,6 +7,7 @@ reviews, merge, dispatch, production recovery or deployment.
 from __future__ import annotations
 
 import csv
+import json
 from html import escape
 from io import StringIO
 
@@ -155,3 +156,39 @@ def portfolio_csv(selected, integrated):
     if len(result.encode("utf-8")) > 1024 * 1024:
         raise ValueError("Portfolio handoff over one MiB")
     return result
+
+
+def portfolio_json(selected, integrated):
+    """Offline source-bound owner suggestions, never a worker-dispatch contract.
+
+    Clients MUST verify fresh actual owner leases, protected-main policy and
+    exact current PR HEADs independently before any authorized action. No
+    statement in this report can turn unknown coverage into availability.
+    """
+    projects = project_worklist(selected, integrated)
+    source = {
+        "schema": "zsentinel-private-portfolio-work-suggestions-v1",
+        "source": "saved_exact_manifest_gate_batches_not_live",
+        "original_review_manifest_sha256": integrated["original_review_manifest_sha256"],
+        "original_board_sha256": integrated["original_board_sha256"],
+        "oldest_observed_at_utc": integrated["earliest_observed_at_utc"],
+        "latest_observed_at_utc": integrated["latest_observed_at_utc"],
+        "observed_batch_count": integrated["observed_batch_count"],
+        "expected_batch_count": integrated["expected_batch_count"],
+        "missing_batch_indexes": sorted(integrated["missing_batch_indexes"]),
+        "known_complete_project_or_pr_inventory": False,
+        "owner_claim_verified": False,
+        "required_exact_head_ci_verified": False,
+        "independent_reviews_and_branch_rules_verified": False,
+        "worker_dispatch_authorized": False,
+        "queue_mutation_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "worker_recovery_verified": False,
+        "writes_performed": False,
+        "projects": projects,
+    }
+    content = json.dumps(source, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    if len(content.encode("utf-8")) > 1024 * 1024:
+        raise ValueError("Private project evidence JSON exceeds one MiB")
+    return content
