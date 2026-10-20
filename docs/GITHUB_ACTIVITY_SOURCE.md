@@ -140,3 +140,36 @@ protected-main merge proof and all existing release gates are unchanged.
 This PR is source-only until normal exact-head CI, independent review,
 protected-main merge and authorized VPS deployment; no runtime activation is
 claimed.
+
+## GitHub provider holds stay visible across Activity screens (20 October)
+
+The read-only GitHub source may return a bounded `coverage[].provider_admission`
+enum in its JSON receipt. The Activity browser importer accepts only the
+following safe known values: `none`, `authentication_required`,
+`rate_limit_confirmed`, `repository_or_secondary_limit_unknown` and
+`global_admission_denied_prior_project`. Older valid receipts without the
+field remain importable and default to `none`. An unknown value is rejected
+instead of rendered as arbitrary operator text.
+
+A repository-specific 403 with no confirmed provider cooldown cannot erase
+independent project evidence. A global admission stop after 401, 429, or an
+explicit primary quota exhaustion / `Retry-After` is **not** interpreted as a
+healthy read of later projects. These are GitHub source facts only: the
+dashboard does not retry, bypass provider limits or grant itself credentials.
+
+The per-project **GitHub evidence** panel, **Project timeline → Project source
+coverage**, zSentinel Markdown product handoff and **Export timeline .md** all
+show a safe fixed description of the exact observed provider hold. The
+dashboard's recent-source coverage summary never treats a provider-blocked
+read as complete. Earlier events retained from a blocked project carry the
+explicit **prior evidence, not re-confirmed** label, even if their original
+event timestamp is recent. A provider hold is not proof that the project had
+no work or that a worker stopped; source absence remains **UNKNOWN**.
+
+This is a product UI improvement in existing
+[PR #1550](https://github.com/Zennay/zCloud/pull/1550), associated with
+[#1518](https://github.com/Zennay/zCloud/issues/1518). There is no
+additional background sync, live deployment, workflow dispatch, VPS mutation,
+worker-claim acquisition, independent review or protected-main merge implied.
+The exact-head mandatory CI/review, approval and release gates remain intact.
+
