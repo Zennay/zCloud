@@ -441,6 +441,33 @@ Markdown-overdracht. Bestaande claims blijven intact: geen vervaltijd,
 queue-row, actieve worker, Notion-claim, GitHub job of runtimeconfiguratie
 wordt gewijzigd. De integratie is alleen broncode in de bestaande PR.
 
+### Bestaande writer beschermen bij een onbetrouwbare actieve lease
+
+De werkelijk aangeroepen pure `lane_generator.py` voor profiel
+`portfolio-recovery` bewaart nu alle bestaande `claimed/running/verifying`
+taken als huidig bezet werk, maar **laat geen nieuwe queued schrijver toe**
+wanneer een actieve taak zijn begin- en vervaltijd niet kan bewijzen:
+ontbrekend/onjuist tijdformaat, toekomstige start, verval vóór of gelijk aan
+start, of een inmiddels verlopen vervaltermijn. Het resultaat krijgt
+`active_queue_lease_untrusted` en
+`untrusted_active_lease_count`; geen bestaande taak wordt geannuleerd
+of teruggezet. Overige projectprofielen behouden hun bestaande toelating.
+
+De read-only privé herstelbalie neemt dit concrete schedulerbesluit over,
+inclusief `new_write_admission_held` op betrokken lanes,
+`untrusted_active_leases_observed` in JSON en menselijke HTML/tekst/
+Markdown, plus de urgente kaart `HOLD_NEW_RECOVERY_WRITERS`.
+De claimeigenaar moet zijn werk en de werkelijke lease repareren voordat
+een tweede schrijver wordt toegelaten. De afwezigheid van een lokale claim
+bewijst niet dat Notion of een andere worker vrij is.
+
+Directe, alleen-lezen SQLite-observatie via de verbonden VPS op 20 oktober
+vond bij de drie geobserveerde huidige in-flight zSentinel-taken **drie
+betrouwbare, niet-verlopen bronvensters**, nul verlopen en nul foutieve
+datums. Dit is een bronmoment, geen release- of claimtoestemming.
+De aangepaste schedulerbron is uitsluitend op deze open PR beschikbaar;
+de VPS-database, lopende jobs, service en main-branch blijven onaangeraakt.
+
 ### Remaining release gate
 
 The feature is source-only in the open existing PR #1572. Do not call it
