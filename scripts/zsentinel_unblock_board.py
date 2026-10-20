@@ -450,13 +450,30 @@ def blocker_first_board(summary, decision, issues, pr_desk=None):
         "existing_product_pr_gate_inspection_only": 5,
         "historical_not_reconciled": 6,
     }
+    # Preserve P0 before P1 and verified/source-holder gates ahead of
+    # generic queue pressure. Within the *same* urgency and blocker class,
+    # rotate projects rather than letting one noisy repository fill all
+    # twelve operator slots. No owner or recovery action is selected here.
     cards.sort(key=lambda c: (
-        PRIORITY[c["priority"]],
-        order[c["kind"]],
-        c["project_id"],
-        c["id"],
-    ))
-    # No unbounded operator page; the *counts* retain the truth of truncation.
+        PRIORITY[c["priority"]], order[c["kind"]], c["project_id"], c["id"]))
+    fair_cards = []
+    for priority in ("P0", "P1"):
+        for kind in sorted(order, key=order.get):
+            groups = {}
+            for card in cards:
+                if card["priority"] == priority and card["kind"] == kind:
+                    groups.setdefault(card["project_id"], []).append(card)
+            if not groups:
+                continue
+            projects = sorted(groups)
+            while any(groups[pid] for pid in projects):
+                for pid in projects:
+                    if groups[pid]:
+                        fair_cards.append(groups[pid].pop(0))
+    if len(fair_cards) != len(cards):
+        raise ValueError("blocker fair selection lost canonical incident")
+    cards = fair_cards
+    # No unbounded operator page; counts retain the truth of truncation.
     shown = cards[:12]
     fallback = []
     for row in suggestions:
