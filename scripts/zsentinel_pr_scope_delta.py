@@ -106,6 +106,31 @@ def _pairs(view, repo):
     return pairs
 
 
+def _connected_pr_sets(pairs):
+    """Compute complete observed pair components, not claim/merge rights."""
+    adjacency = {}
+    for left, right in sorted(pairs):
+        adjacency.setdefault(left, set()).add(right)
+        adjacency.setdefault(right, set()).add(left)
+    visited = set()
+    groups = []
+    for start in sorted(adjacency):
+        if start in visited:
+            continue
+        todo = [start]
+        group = set()
+        while todo:
+            node = todo.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            group.add(node)
+            todo.extend(adjacency[node] - visited)
+        if len(group) > 1:
+            groups.append(tuple(sorted(group)))
+    return sorted(groups, key=lambda group: (-len(group), group))
+
+
 def compare(previous, current):
     """Positive source observations only; incomplete snapshots cannot prove removal."""
     if (type(previous) is not dict or type(current) is not dict
@@ -159,6 +184,15 @@ def compare(previous, current):
         new_seen_pairs = _pairs(new, repo) if new_stable else set()
         old_pairs = old_seen_pairs if both_complete else set()
         new_pairs = new_seen_pairs if both_complete else set()
+        old_clusters = set(_connected_pr_sets(old_pairs))
+        new_clusters = set(_connected_pr_sets(new_pairs))
+        def linked_groups(groups):
+            return [{
+                "pr_numbers_observed": list(members),
+                "pr_urls": [f"https://github.com/{repo}/pull/{number}"
+                            for number in members],
+                "not_proof_of_owner_or_merge": True,
+            } for members in sorted(groups, key=lambda group: (-len(group), group))[:24]]
         def describe(pairs):
             return [{"left": f"https://github.com/{repo}/pull/{a}",
                      "right": f"https://github.com/{repo}/pull/{b}"}
@@ -176,6 +210,14 @@ def compare(previous, current):
                  for n in sorted(old_pins.keys() - new_pins.keys())] if stable else []),
             "added_collision_pairs_if_complete": describe(new_pairs - old_pairs),
             "disappeared_collision_pairs_if_complete": describe(old_pairs - new_pairs),
+            "connected_cluster_comparison_complete": both_complete,
+            "current_connected_clusters_if_complete": (
+                linked_groups(new_clusters) if both_complete else []),
+            "connected_clusters_only_in_current_full_inventory": (
+                linked_groups(new_clusters - old_clusters) if both_complete else []),
+            "connected_clusters_only_in_previous_full_inventory": (
+                linked_groups(old_clusters - new_clusters) if both_complete else []),
+            "cluster_changes_prove_merges_or_owner_free": False,
             "overlap_pairs_only_in_current_sample_not_proven_new": (
                 describe(new_seen_pairs - old_seen_pairs)
                 if stable and not both_complete else []),
