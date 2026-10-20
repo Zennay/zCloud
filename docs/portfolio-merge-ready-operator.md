@@ -81,6 +81,26 @@ python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
 - De zoekresultaten zijn slechts een kandidatenlijst. Alleen expliciete brongebonden issueverwijzingen `fixes #N`, `refs #N` in de body, óf expliciete `#N` in de PR-titel op dezelfde repository worden gekoppeld. De oorspronkelijke én laatste titel en beschrijving moeten allebei ongewijzigd zijn tegenover de eerste huidige PR-bron. Maximaal 32 bekeken kandidaten en 4 gekoppelde product-PRs; overige zoekresultaten blijven expliciet `CANDIDATE_WINDOW_32`/UNKNOWN. De laatste exacte issue-opvraag moet nog steeds `open` melden. Een tussentijds gewijzigde PR-body **of titel** wordt geweigerd, ook als de Git commit ongewijzigd bleef.
 - Alle bronnen en één privé offline HTML worden begrensd door hetzelfde totale 84-GET / 120s budget. De HTML toont het gerichte issue, zoekdekking, PRs met concrete next-gate en de onvolledigheidswaarschuwingen. Geen automatische issueclaim, workflowrestart, PR-merge, deploy of P0-statuswijziging.
 
+### Ook gesloten product-PRs herkennen bij een nog open issue
+
+De directe `--candidate-pr`-route laat nu ook een **expliciet genoemde,
+gesloten product-PR** zien wanneer het GitHub-issue nog open staat.
+In tegenstelling tot de automatische P0/P1-zoekroute blijft deze gerichte
+historische bron niet onzichtbaar als `NOT_ELIGIBLE`. Dezelfde exact-brongebonden
+mergecontrole uit de merge-first werkbak bepaalt of de PR gesloten zonder
+merge, alleen in een niet-standaardbranch gemerged, of aantoonbaar op
+`main` geïntegreerd is. Bij een geslaagde controle bevat de kaart een
+immutable GitHub-maincommitlink. Een historische PR met een geverifieerde
+issueverwijzing krijgt `HISTORICAL_PR_REFERENCE_NOT_FIX_PROOF`, **nooit**
+automatisch de conclusie dat het open issue is opgelost. Ontbrekende of
+veranderende bron blijft onbekend; na een gewijzigde issue-identiteit of
+prioriteit worden vermeende actuele issuekoppelingen ingetrokken.
+
+De route blijft beperkt tot tien expliciete bestaande PRs, binnen het
+bestaande gezamenlijke 84-GET/120-secondenbudget en één finale
+issue-herbevestiging. Er is geen automatische claim, replay, CI-rerun,
+issue-sluiting, PR-merge of productieactie.
+
 ### Rechtstreeks naar bekende bestaande PRs zonder zoekindex
 
 Als een ouder P0/P1-issue al concrete bestaande product-PR-nummers heeft
