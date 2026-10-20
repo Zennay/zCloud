@@ -586,7 +586,8 @@ function parseGateRow(row){
   throw Error('Untrusted current-head observation');
  const fields=['observed_checks_pending','observed_checks_not_successful',
    'observed_independent_exact_head_approvals','observed_exact_head_changes_requested',
-   'legacy_status_pending_observed','legacy_status_failure_or_error_observed'];
+   'legacy_status_pending_observed','legacy_status_failure_or_error_observed',
+   'observed_checks_completed','legacy_status_contexts_observed'];
  if(fields.some(k=>!Number.isInteger(row[k])||row[k]<0||row[k]>100)||
     typeof row.legacy_status_source_may_be_truncated!=='boolean'||
     typeof row.check_runs_page_complete!=='boolean'||
@@ -601,6 +602,8 @@ function parseGateRow(row){
    legacy_failed:row.legacy_status_failure_or_error_observed,
    approvals:row.observed_independent_exact_head_approvals,
    changes_requested:row.observed_exact_head_changes_requested,
+   observed_checks:row.observed_checks_completed,
+   legacy_contexts:row.legacy_status_contexts_observed,
    incomplete:row.legacy_status_source_may_be_truncated||
      !row.check_runs_page_complete||row.review_page_may_be_truncated,
    next:row.human_next_gate_step};
@@ -650,8 +653,10 @@ function gateState(url){
  const row=prGateImport?.items.get(url);
  if(!row||!row.available)return 'unverified';
  if(row.checks_failed||row.legacy_failed)return 'failed';
- if(row.checks_pending||row.legacy_pending||row.incomplete)return 'pending';
+ if(row.checks_pending||row.legacy_pending)return 'pending';
+ if(row.incomplete)return 'unverified';
  if(row.changes_requested||!row.approvals)return 'review';
+ if(!row.observed_checks&&!row.legacy_contexts)return 'unverified';
  return 'observed-no-authority';
 }
 function prGateLabel(url){
@@ -665,7 +670,9 @@ function prGateLabel(url){
   ' · checks pending '+row.checks_pending+' / failed '+row.checks_failed+
   ' · legacy pending '+row.legacy_pending+' / failed '+row.legacy_failed+
   ' · observed independent approvals '+row.approvals+
-  (row.incomplete?' · SOURCE INCOMPLETE':'')+' · next: '+row.next+
+  (row.incomplete?' · SOURCE INCOMPLETE':'')+
+  (!row.observed_checks&&!row.legacy_contexts?' · NO CHECK CONTEXT SEEN':'')+
+  ' · next: '+row.next+
   ' · CURRENT OWNER, BRANCH RULES AND MERGE AUTHORITY UNVERIFIED.';
 }
 function prDeskGroups(){
