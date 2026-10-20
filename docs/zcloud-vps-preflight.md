@@ -75,3 +75,24 @@ When live claims or recently reported generation exist, the preflight returns `A
 **No observation can grant safe-idle:** even zero claims and zero generating events returns `no_active_evidence_unverified` and `safe_idle_verified=false`. The original production safe-idle gate, claim ownership, exact-main provenance, review, CI, device/security gates and serialized human release authorization remain mandatory. An operator must not kill workers, reset queue claims, restart runners, unmount archives, or promote source using this read-only report.
 
 Current production `history.db` can be large and active; each invocation uses a bounded read-only transaction, a short SQLite busy timeout, and only recent event identities. Do not run it in a high-frequency polling loop or infer the absence of activity when SQLite access fails.
+
+
+## Combined release decision board — all ownership gates in one view
+
+In addition to the individual detailed sections, every text, JSON and HTML report now has an ordered `release_gates` decision board. It distinguishes **local observations** from gates that this utility cannot decide:
+
+| Gate | Evidence scope | Release authority |
+| --- | --- | --- |
+| `exact_main_checkout` | checked-out SHA compared with independently supplied GitHub main SHA | Never |
+| `preserve_checkout` | tracked/untracked checkout modifications | Never |
+| `runner_identity` | listener process / local service observation | Never; GitHub assigned-job evidence required |
+| `host_capacity` | live RAM, swap and disk headroom | Never; capacity isn't reserved |
+| `worker_safe_idle` | opt-in read-only queue claims and recent browser reports | Never; actual independent idle/lease confirmation required |
+| `external_archive` | optional FUSE mount presence / known explicit read-only modes | Never; encrypted remote transfer authorizations separate |
+| `required_exact_head_ci` | always `external_gate_required` | Existing exact-HEAD GitHub checks |
+| `independent_review` | always `external_gate_required` | Existing human independent approval |
+| `serialized_release` | always `external_gate_required` | Existing protected-main, writer lock and human-approved runtime release |
+
+The board does not fetch GitHub secrets or run any mutating command. No single green local row means the release is approved; **every row** has `authorizes_release=false` and the top-level `release_authorized=false`. The HTML version stays self-contained and script-free; the JSON can be handed off privately to an authorized deployment owner. Active workers and a dirty checkout should be reconciled through their original owners, not forcibly stopped or reset.
+
+The board ships as part of the already-open PR #1540 and remains inactive on production until normal exact-head required checks, independent review and protected-main merge. This source update is not a claim of deployment.
