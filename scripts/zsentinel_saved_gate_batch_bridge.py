@@ -88,15 +88,26 @@ def canonical_manifest(source: dict, raw: bytes):
         if url in seen:
             raise ValueError("Duplicate PR reference")
         seen.add(url)
+        match = PR.fullmatch(url)
+        repository = match.group(1)
+        linked_issues = set()
+        if len(ref["observed_issue_refs"]) > 60:
+            raise ValueError("Too many observed issues for one saved PR")
         for item in ref["observed_issue_refs"]:
             if (type(item) is not dict or type(item.get("issue")) is not str
                     or ISSUE.fullmatch(item["issue"]) is None
                     or item.get("url") != "https://github.com/" +
                     item["issue"].replace("#", "/issues/")):
                 raise ValueError("Invalid canonical issue-to-PR relationship")
-        match = PR.fullmatch(url)
+            # A saved manifest is untrusted input. Never display unrelated
+            # repository issues as the repair target of this PR: the real
+            # board admits only in-repository PR links, so preserve it here.
+            issue_repo = item["issue"].rsplit("#", 1)[0]
+            if issue_repo != repository or item["issue"] in linked_issues:
+                raise ValueError("Foreign or duplicate issue-to-PR association")
+            linked_issues.add(item["issue"])
         selected.append((priorities[ref["highest_linked_priority"]],
-                         match.group(1), int(match.group(2)), ref))
+                         repository, int(match.group(2)), ref))
     selected.sort(key=lambda row: (row[0], row[1], row[2]))
     return selected, hashlib.sha256(raw).hexdigest()
 
@@ -189,13 +200,14 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path]):
     if set(indexed) != set(range(1, total + 1)):
         raise ValueError("Some gate batches are absent: no complete import generated")
     issue_map = {}
-    for _, _, _, ref in selected:
+    for position, (_, _, _, ref) in enumerate(selected):
         url = ref["url"]
-        idx = 1 + next(i for i, selected_row in enumerate(selected)
-                       if selected_row[3]["url"] == url) // 4
+        idx = position // 4 + 1
         gate = indexed[idx][url]
         for item in ref["observed_issue_refs"]:
             identity = item["issue"]
+            if identity not in issue_map and len(issue_map) >= 60:
+                raise ValueError("More than sixty issue cards; browser importer bound exceeded")
             issue = issue_map.setdefault(identity, {
                 "issue": identity, "url": item["url"], "existing_prs": []})
             if issue["url"] != item["url"]:
@@ -204,8 +216,6 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path]):
                 "url": url, "live_exact_head_review_checks_observation": gate})
             if len(issue["existing_prs"]) > 5:
                 raise ValueError("One issue links more than five PRs; cannot import safely")
-    if len(issue_map) > 60:
-        raise ValueError("More than sixty issue cards; browser importer bound exceeded")
     return {
         "schema": OUTPUT_SCHEMA,
         # Browser imports use generated_at_utc for stale warnings: use the
