@@ -128,7 +128,9 @@ class ZennayCloudRepository(
         humanActionRequired = o.optBoolean("human_action_required", false),
         cause = o.optNullableString("cause"),
         impact = o.optNullableString("impact"),
-        action = o.optNullableString("action")
+        action = o.optNullableString("action"),
+        episodeId = o.optNullableString("episode_id")
+            ?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
     )
 }
 
