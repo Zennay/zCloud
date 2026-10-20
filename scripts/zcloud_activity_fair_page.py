@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 SLUG = re.compile(r"[a-z][a-z0-9_-]{0,55}\Z")
+# Local event IDs serve as keyset cursors and are also returned to the client.
+# Refuse freeform/control-character IDs instead of leaking malformed metadata.
+EVENT_ID = re.compile(r"[A-Za-z0-9_.:/-]{1,256}\Z")
 MAX_PROJECTS = 32
 MAX_PAGE = 80
 MAX_EVENT_ID = 256
@@ -43,7 +46,7 @@ def _timestamp(value: object) -> datetime:
 
 def _key(ts: object, eid: object) -> tuple[str, str]:
     _timestamp(ts)
-    if not isinstance(eid, str) or not 1 <= len(eid) <= MAX_EVENT_ID:
+    if not isinstance(eid, str) or len(eid) > MAX_EVENT_ID or not EVENT_ID.fullmatch(eid):
         raise ValueError("invalid event id")
     return ts, eid
 
