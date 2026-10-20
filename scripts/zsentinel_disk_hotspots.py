@@ -68,6 +68,8 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
     large_files_seen = 0
     observed_allocated = 0
     top = []
+    directory_bytes = {}
+    directory_files = {}
     limit = min_mib * 1024 * 1024
     stop_reason = None
     while stack:
@@ -118,6 +120,10 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
                     visited.add(identity)
                     allocated = max(0, info.st_blocks) * 512
                     observed_allocated += allocated
+                    rel_parts = Path(entry.path).relative_to(root).parts
+                    folder = rel_parts[0] if len(rel_parts) > 1 else "(workspace root)"
+                    directory_bytes[folder] = directory_bytes.get(folder, 0) + allocated
+                    directory_files[folder] = directory_files.get(folder, 0) + 1
                     if allocated < limit:
                         continue
                     large_files_seen += 1
@@ -145,6 +151,12 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         "truncation_reason": stop_reason,
         "scanned_entries": scanned,
         "observed_allocated_bytes_lower_bound": observed_allocated,
+        "top_workspace_groups": [
+            {"relative_group": name, "observed_allocated_mib_min": round(total / 1024**2, 1),
+             "files_observed": directory_files[name]}
+            for name, total in sorted(directory_bytes.items(),
+                                      key=lambda item: (-item[1], item[0]))[:15]
+        ],
         "large_files_seen_lower_bound": large_files_seen,
         "directories_unscanned": directories_unscanned + len(stack),
         "sensitive_names_skipped": sensitive_skipped,
@@ -181,6 +193,15 @@ def markdown(report):
         "Extra ongescand: " + str(report["directories_unscanned"]) +
         " mappen; " + str(report["sensitive_names_skipped"]) +
         " gevoelige namen bewust weggelaten.",
+        "",
+        "## Grootste workspace-onderdelen (gemeten ondergrenzen, geen schoonmaakadvies)",
+    ]
+    for group in report["top_workspace_groups"]:
+        label = group["relative_group"].replace("\\", "/").replace("`", "'").replace("|", "/")
+        lines.append("- " + str(group["observed_allocated_mib_min"]) +
+                     " MiB waargenomen: `" + label + "` · " +
+                     str(group["files_observed"]) + " bestanden in begrensde scan")
+    lines += [
         "",
         "## Grote bestanden · kandidaten voor eigenaarcontrole, GEEN verwijderadvies",
     ]
@@ -220,7 +241,14 @@ def html(report):
              "<p>Waargenomen ruimte (ondergrens): " +
              str(round(report["observed_allocated_bytes_lower_bound"] / 1024**3,2)) + " GiB; " +
              str(report["directories_unscanned"]) + " mappen niet bezocht.</p>",
-             "<h2>Bestanden voor eigenaarcontrole</h2>"]
+             "<h2>Grote projectonderdelen (alleen waargenomen ondergrens)</h2>"]
+    for group in report["top_workspace_groups"]:
+        lines.append("<article><strong>" + str(group["observed_allocated_mib_min"]) +
+                     " MiB waargenomen</strong><p><code>" +
+                     escape(group["relative_group"]) + "</code></p><small>" +
+                     str(group["files_observed"]) + " gevonden bestanden · " +
+                     "geen bewijs dat ze ongebruikt zijn</small></article>")
+    lines.append("<h2>Grote bestanden voor eigenaarcontrole</h2>")
     for row in report["top_files"]:
         lines.append("<article><strong>" + str(row["allocated_mib"]) +
                      " MiB toegewezen</strong><p><code>" +
