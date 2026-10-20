@@ -600,6 +600,17 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
         'Niet opgevraagd of mislukt betekent niet gezond. Laatste bronpoging '
         'komt alleen uit de optionele privécursor en bewijst nooit actuele CI/gezondheid.'
     )
+    notion_mode = sources.get("notion") if isinstance(sources, dict) else None
+    if notion_mode == "private_connector_snapshot_unverified_origin":
+        caption += (" NOTION HANDMATIGE SNAPSHOT: niet live, bronherkomst NIET "
+                    "geverifieerd; positieve actieve projectwaarnemingen "
+                    "zijn GEEN actuele lease-, claim- of werkvrijgave.")
+    elif notion_mode == "claim_status_observed_no_file_ownership":
+        caption += (" NOTION LIVE STATUS: beperkte actieve werkregels; "
+                    "geen bestandsscope, owner- of dispatchautorisatie.")
+    elif notion_mode == "degraded_unavailable_no_claim_authority":
+        caption += (" NOTION ONBESCHIKBAAR: afwezige regels zijn ONBEKEND, "
+                    "niet nul actieve claims.")
     coverage = (
         "Huidige wachtrijmomentopname is volledig binnen de observerlimiet; "
         "maar er is GEEN geverifieerd bestandseigendom."
