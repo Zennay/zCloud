@@ -208,7 +208,11 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path]):
         raise ValueError("More than sixty issue cards; browser importer bound exceeded")
     return {
         "schema": OUTPUT_SCHEMA,
-        "generated_at_utc": datetime.fromtimestamp(latest, timezone.utc).isoformat(),
+        # Browser imports use generated_at_utc for stale warnings: use the
+        # OLDEST observed batch, never newest, to avoid disguising aged rows.
+        "generated_at_utc": datetime.fromtimestamp(earliest, timezone.utc).isoformat(),
+        "earliest_observed_at_utc": datetime.fromtimestamp(earliest, timezone.utc).isoformat(),
+        "latest_observed_at_utc": datetime.fromtimestamp(latest, timezone.utc).isoformat(),
         "issues": list(issue_map.values()),
         "original_review_manifest_sha256": digest,
         "original_board_sha256": manifest["source_board_sha256"],
