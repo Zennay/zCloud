@@ -44,7 +44,8 @@ def observe_local_runners(proc_root="/proc"):
     if /proc access is absent, denied, or traversal was truncated.
     """
     seen = {
-        family: {"listeners": 0, "workers": 0, "argv0_only": 0}
+        family: {"listeners": 0, "workers": 0, "argv0_only": 0,
+                 "listener_argv0_only": 0, "worker_argv0_only": 0}
         for family in sorted(set(KNOWN_RUNNER_DIRS.values()))
     }
     observation = {
@@ -114,6 +115,10 @@ def observe_local_runners(proc_root="/proc"):
                 seen[family]["listeners" if role == "Runner.Listener" else "workers"] += 1
                 if lower_assurance:
                     seen[family]["argv0_only"] += 1
+                    seen[family][
+                        "listener_argv0_only" if role == "Runner.Listener"
+                        else "worker_argv0_only"
+                    ] += 1
         if denied:
             observation["source_warnings"].append("procfs_processes_inaccessible")
         observation["source_complete"] = (
@@ -125,8 +130,9 @@ def observe_local_runners(proc_root="/proc"):
         # Only a process presence signal. Never label it "online" or "healthy".
         values["local_observation"] = (
             "PROCESS_ARGV0_SEEN_NOT_VERIFIED"
-            if values["listeners"] and values["argv0_only"]
+            if values["listeners"] and values["listener_argv0_only"]
             else "EXECUTABLE_VERIFIED" if values["listeners"]
+            else "WORKER_SEEN_LISTENER_NOT_OBSERVED" if values["workers"]
             else "ABSENCE_NOT_VERIFIED" if not observation["source_complete"]
             else "NOT_SEEN_IN_SNAPSHOT"
         )
@@ -141,6 +147,10 @@ def text_report(data):
                 f"  {family}: listener {item['listeners']}; "
                 f"worker {item['workers']}; {item['local_observation']}"
             )
+    if any(v["workers"] and not v["listeners"]
+           for v in data["families"].values()):
+        lines.append("  Worker zonder waargenomen listener: behoud bestaande job; "
+                     "controleer de listener onafhankelijk.")
     if not any(v["listeners"] or v["workers"] for v in data["families"].values()):
         lines.append("  Geen herkenbare runnerprocessen waargenomen.")
     if not data["source_complete"]:
