@@ -247,12 +247,13 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 continue
             # An older PR can fall outside the 16 newest entries. Pin its
             # exact head/base directly instead of declaring it nonexistent.
-            # This two-GET direct observation does not verify its conflicts
+            # This bounded four-GET direct observation does not verify conflicts
             # with PRs outside the ordinary capped collision inventory.
             repo = source_projects[project]
             direct_attempt_count += 1
             try:
-                direct = selected_source_pr(repo, int(number_text), token)
+                direct = selected_source_pr(repo, int(number_text), token,
+                                            expanded_files=True)
                 if direct["product_candidate_based_on_title"] is not True:
                     raise ValueError("QA-only or non-product selected PR")
             except (OSError, ValueError):
@@ -326,6 +327,11 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                     captured.get("sampled_file_overlaps_observed", []),
                 "sampled_file_overlaps_hidden":
                     captured.get("sampled_file_overlaps_hidden", 0),
+                "focused_pr_file_pages_observed":
+                    captured.get("source_file_pages_observed"),
+                "focused_pr_paths_observed":
+                    len(captured.get("paths", [])) if
+                    captured.get("direct_explicit_source_only") else None,
                 "status": "current_exact_pr_head_and_sample_match",
                 "draft_at_read": gate["draft_at_read"],
                 "github_mergeable_boolean_observed": gate["github_mergeable_boolean_observed"],
@@ -398,7 +404,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             "pr_gate_receipts_requested": len(selected),
             "direct_explicit_prs_outside_recent_sample": fallback_count,
             "direct_explicit_pr_lookup_failed_or_not_product": len(unavailable_targets),
-            "extra_direct_pr_identity_gets": direct_attempt_count * 2,
+            "extra_direct_pr_identity_gets": direct_attempt_count * 4,
             "observed_gate_blocker_counts": {
                 category: sum(row["human_gate_blocker"] == category for row in output)
                 for category in sorted({row["human_gate_blocker"] for row in output})
@@ -408,7 +414,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             "more_sampled_prs_not_gate_checked": (
                 total_inspected > len(selected) - fallback_count),
             "source_unavailable_or_changed_projects": incomplete_projects,
-            "max_additional_github_gets": len(selected) * 5 + direct_attempt_count * 2,
+            "max_additional_github_gets": len(selected) * 5 + direct_attempt_count * 4,
             "file_scope_and_gate_reads_are_atomic": False,
             "required_branch_protection_verified": False,
             "notion_claims_verified": False,
@@ -418,7 +424,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             "writes_performed": False,
         },
         "maximum_github_gets": (board["maximum_github_gets"] + len(selected) * 5
-                                + direct_attempt_count * 2),
+                                + direct_attempt_count * 4),
         "claim_authorized": False,
         "merge_authorized": False,
         "deploy_authorized": False,
