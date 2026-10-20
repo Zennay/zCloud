@@ -75,3 +75,15 @@ elkaar, een queue-ledger of een andere privé-uitvoer overschrijven.
 Als een van meerdere afzonderlijke bestandsaanmaken faalt, kan een eerder
 aangemaakt privérapport behouden blijven. De CLI meldt de fout en verzint
 nooit een complete transactie of geslaagde menselijke kalenderimport.
+
+## Verifieerbaar historisch bronmoment in de agenda
+
+Iedere ICS-export bewaart `X-ZSENTINEL-SOURCE-UTC` in de kalenderkop.
+Elk menselijk actie-item toont daarnaast het **daadwerkelijke
+observatietijdstip van de oorspronkelijke routerbeslissing**, niet de tijd
+waarop de kalender opnieuw werd opgeslagen. Een bron uit de toekomst of met
+`ci_retried=true` wordt geweigerd. De kalender bevat
+`X-ZSENTINEL-NO-AUTHORITY:TRUE` om vast te leggen dat een ontvangen
+kalenderitem geen runner-, release-, claim- of mergebevoegdheid is.
+Dit bronmoment kan historisch zijn; controleer issue, eigenaar en gates
+altijd opnieuw voordat een menselijke actie volgt.
