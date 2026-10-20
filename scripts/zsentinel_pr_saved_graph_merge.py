@@ -27,6 +27,8 @@ MAX_PRS = 288
 MAX_PAIRS = 200
 MAX_FILES_PER_PR = 100
 MAX_SHARED_PATHS = 24
+MAX_CROSS_ISSUES = 80
+MAX_ISSUE_LINKS = 8
 MAX_SECONDS_APART = 600
 MAX_REPORT_BYTES = 2 * 1024 * 1024
 
@@ -139,26 +141,59 @@ def inspect_source(data, repository):
         }
         if pr["file_list_complete"] is False:
             incomplete.append(number)
-    return observed, pages, found, incomplete
+    # The current graph's body/title references are unverified hints only.
+    # They may point to a pull request with the same number, not an issue.
+    raw_links = data.get("open_pr_issue_references_unverified")
+    if type(raw_links) is not list or len(raw_links) > 48 * 32:
+        raise ValueError("invalid issue-reference inventory")
+    refs = []
+    seen_refs = set()
+    for link in raw_links:
+        if type(link) is not dict:
+            raise ValueError("invalid issue reference")
+        number, url = link.get("issue_number"), link.get("pr_url")
+        if type(number) is not int or not 0 < number < 100000000:
+            raise ValueError("invalid referenced issue number")
+        if type(url) is not str or not url.startswith(
+                "https://github.com/" + repository + "/pull/"):
+            raise ValueError("foreign issue-to-PR hint")
+        tail = url.rsplit("/", 1)[-1]
+        if not tail.isascii() or not tail.isdecimal() or int(tail) not in found:
+            raise ValueError("unobserved PR referenced by issue hint")
+        pr = found[int(tail)]
+        origin = link.get("mentioned_in")
+        if (pr["url"] != url or link.get("pr_head_sha") != pr["head_sha"]
+                or link.get("owner_verified") is not False
+                or link.get("fix_verified") is not False
+                or type(origin) is not list or not origin
+                or len(origin) > 2 or len(set(origin)) != len(origin)
+                or any(v not in ("title", "body") for v in origin)
+                or (number, url) in seen_refs):
+            raise ValueError("inconsistent issue-link provenance")
+        seen_refs.add((number, url))
+        refs.append({"number": number, "url": url, "head_sha": pr["head_sha"],
+                     "mentioned_in": origin})
+    return observed, pages, found, incomplete, refs
 
 
 def combine(paths, repository):
     if not REPO.fullmatch(repository) or not 2 <= len(paths) <= MAX_INPUTS:
         raise ValueError("supply two to six private graph snapshots for one repository")
-    times, all_pages, all_prs, partial_prs = [], set(), {}, []
+    times, all_pages, all_prs, partial_prs, all_issue_refs = [], set(), {}, [], []
     total_bytes = 0
     for index, path in enumerate(paths):
         data, size = read_bounded(path)
         total_bytes += size
         if total_bytes > MAX_TOTAL_BYTES:
             raise ValueError("combined sources exceed bounded size")
-        seen_at, pages, prs, incomplete = inspect_source(data, repository)
+        seen_at, pages, prs, incomplete, refs = inspect_source(data, repository)
         if any(page in all_pages for page in pages):
             raise ValueError("overlapping source pages cannot be combined")
         all_pages.update(pages)
         times.append(seen_at)
         partial_prs.extend({"pr": number, "snapshot": index + 1}
                            for number in incomplete)
+        all_issue_refs.extend({**ref, "snapshot": index + 1} for ref in refs)
         for number, pr in prs.items():
             if number in all_prs:
                 # A PR moving between dated pages breaks cross-window
@@ -170,6 +205,29 @@ def combine(paths, repository):
         raise ValueError("saved PR snapshots are too far apart in time")
     if len(all_prs) > MAX_PRS:
         raise ValueError("too many combined PR identities")
+
+    # Detect NEW possible duplicate work when two PR windows mention the
+    # same #N. We deliberately do not reuse saved 'issue verified' flags:
+    # the whole aggregate is historical, non-atomic and nonauthorizing.
+    by_issue = {}
+    for item in all_issue_refs:
+        by_issue.setdefault(item["number"], {})[item["url"]] = item
+    cross_issue_groups = sorted(
+        [(number, sorted(links.values(), key=lambda link: link["url"]))
+         for number, links in by_issue.items()
+         if len({link["snapshot"] for link in links.values()}) > 1],
+        key=lambda item: (-len(item[1]), item[0]))
+    issue_cards = [{
+        "number": number,
+        "unverified_reference_url":
+            "https://github.com/" + repository + "/issues/" + str(number),
+        "observed_distinct_prs": len(links),
+        "shown_prs": links[:MAX_ISSUE_LINKS],
+        "pr_list_truncated": len(links) > MAX_ISSUE_LINKS,
+        "actual_issue_identity_verified": False,
+        "fix_verified": False,
+        "merge_authorized": False,
+    } for number, links in cross_issue_groups[:MAX_CROSS_ISSUES]]
 
     owners = {}
     for pr in all_prs.values():
@@ -210,6 +268,10 @@ def combine(paths, repository):
             for t in (min(times), max(times))],
         "cross_snapshot_file_collision_pairs_observed": len(collisions),
         "shown_collision_pairs": rows,
+        "cross_snapshot_issue_number_hints_observed": len(cross_issue_groups),
+        "shown_issue_number_hints": issue_cards,
+        "issue_hint_groups_truncated": len(cross_issue_groups) > MAX_CROSS_ISSUES,
+        "issue_identity_verified_for_aggregate": False,
         "collision_pairs_truncated": len(collisions) > MAX_PAIRS,
         "prs_with_partial_file_scope": partial_prs[:48],
         "partial_file_scope_list_truncated": len(partial_prs) > 48,
