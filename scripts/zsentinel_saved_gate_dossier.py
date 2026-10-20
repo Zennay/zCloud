@@ -449,10 +449,16 @@ def render_selected_pr_handoff(manifest: dict, receipt: dict,
         "- Sampled main blocker category: " + row["primary_gate"],
         "- Gate source coverage: " + row["gate_source"],
         "- Original snapshot UTC: " + str(manifest["latest_observed_at_utc"]),
+        "- Snapshot age: " + source_recency_summary(
+            manifest["latest_observed_at_utc"]),
+        "- Source batch coverage: " +
+          (str(len(manifest["missing_batch_indexes"])) +
+           " saved batches unavailable; PR sampling may be incomplete"),
         "- Original review manifest SHA256: " +
           manifest["original_review_manifest_sha256"],
         "- Original board SHA256: " + manifest["original_board_sha256"],
         "- ZIP consistency checks: internally passed, **not authenticated**",
+        "- Project inventory coverage: only the stored bounded discovery window; absent PRs may exist",
         "- PR HEAD / current branch: **UNKNOWN FROM THIS SAVED DOSSIER**",
         "- Active owner/lease: **UNKNOWN**",
         "- Required exact-head CI/review/branch rules: **UNKNOWN**",
@@ -578,6 +584,7 @@ def main(argv=None):
                 or (args.priority is not None and not args.show_queue)
                 or (args.project is not None and not args.show_queue)
                 or (args.handoff_markdown is not None and args.inspect_pr is None)
+                or (args.inspect_pr is not None and args.extract_to is not None)
                 or (args.inspect_pr is not None and
                     (PR_URL.fullmatch(args.inspect_pr) is None or args.show_queue))):
             raise ValueError("Invalid read-only queue selection")
