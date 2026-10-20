@@ -116,6 +116,12 @@ remain explicitly unobserved rather than silently treated as idle.
 
 Each project shows the bounded local source read time and event cap separately
 from the GitHub read time, GitHub source status, and latest GitHub sample event.
+When the project registry contains a canonical, validated
+`https://github.com/Zennay/<repo>` URL, the coverage table also offers direct
+**Current PRs** and **Current CI** links. They open GitHub's current pages
+outside the stale local snapshot; no GitHub API call, token, automatic refresh,
+new task or worker claim is performed by rendering those links. Arbitrary
+registry URLs are not accepted as links.
 The combined timeline's **Export timeline .md** now includes bounded
 per-project GitHub provider coverage, observed timestamps and stale/unavailable
 states, in addition to the existing scoped local VPS section. The export
