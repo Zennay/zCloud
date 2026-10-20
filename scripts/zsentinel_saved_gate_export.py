@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import csv
 from io import StringIO
-from zsentinel_saved_gate_html import _admit, _observed_gate, _classify, LABELS, PRIORITIES
+from zsentinel_saved_gate_html import (_admit, _observed_gate, _classify, concurrent_gate_reasons, LABELS, PRIORITIES)
 
 COLUMNS = (
     "Bronmoment oudste UTC", "Bronmoment nieuwste UTC",
     "Reviewmanifest SHA256", "Board SHA256",
     "Prioriteit", "Repository", "PR nummer", "PR URL",
     "Bronissue URLs", "Waargenomen PR HEAD",
-    "Blokkadecategorie", "Waargenomen blokkade", "Menselijke vervolgactie",
+    "Blokkadecategorie", "Waargenomen blokkade", "Gelijktijdige blokkades", "Menselijke vervolgactie",
     "Batch status", "Checks afgerond waargenomen",
     "Checks lopend waargenomen", "Checks niet succesvol waargenomen",
     "Onafhankelijke approvals waargenomen",
@@ -70,7 +70,7 @@ def render_csv(selected, integrated):
             integrated["original_board_sha256"],
             PRIORITIES[priority], repository, number, url,
             " | ".join(linked), head or "ONBEKEND",
-            category, label, action,
+            category, label, " | ".join(LABELS[reason][0] for reason in concurrent_gate_reasons(gate)), action,
             ("NIET WAARGENOMEN" if position // 4 + 1 in missing
              else "BRON ONBESCHIKBAAR" if gate is None or not head
              else "GEDEELTELIJK WAARGENOMEN"),
