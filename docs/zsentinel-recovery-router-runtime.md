@@ -3064,3 +3064,71 @@ of archiefpaden). Geen nieuwe runner-temp export, GitHub-artifact,
 SQL, kopie, verplaatsing of delete. Actor en normale CI/review-protecties
 blijven ongewijzigd.
 
+
+## Bevoegd archiefkopie-product: eerst SHA-plan, dan expliciete COPY, nooit DELETE
+
+Een eigenaar kan **na main-merge, permissions en onafhankelijk geverifieerd
+project-/dataset-eigenaarschap** daadwerkelijk een door hem/haar geselecteerd
+koud bestand eenmalig naar de externe opslag KOPIËREN. Er is bewust geen
+automatische scan-naar-kopie, massamigratie, bron-verwijdering, workerstop,
+databasecheckpoint of move/rename. Deze afzonderlijke tool is broncode op
+zSentinel PR #1563, **niet** geïnstalleerd en **niet** op de live VPS gestart.
+
+Eerst maakt de eigenaar lokaal één brongebonden SHA-256-plan in een expliciet
+bestaande besloten rapportmap (dit leest de bestandsinhoud alleen in dit
+expliciet gekozen geval, in tegenstelling tot de metadatascanners):
+
+    python3 scripts/zsentinel_archive_copy.py \
+      --mode plan \
+      --root /home/ubuntu/Haxlab \
+      --file 'gekozen-project/bestand.hbr2' \
+      --output /path/to/existing/private/copy-plan-01.json
+
+Daarna: geef het exacte gemeten bron-SHA-256 op, verifieer **onafhankelijk**
+of het bestand niet in gebruik is, of licentie/retentie/privacy/back-up en
+doelopslag dit toestaan, en maak als eigenaar zelf een bestaande private
+archiefdirectory aan (eigendom van huidige UID en mode 0700) op een
+**andere mount**. De archiefroot kan een bestaande FUSE/remote mount of een
+subdirectory daarop zijn, maar schrijfbaarheid en duurzame opslag worden
+niet afgeleid uit statvfs.
+
+    python3 scripts/zsentinel_archive_copy.py \
+      --mode copy \
+      --root /home/ubuntu/Haxlab \
+      --file 'gekozen-project/bestand.hbr2' \
+      --archive-root /home/ubuntu/VPS-Archief/eigenaar-goedgekeurd \
+      --archive-filename 'bestand.hbr2' \
+      --expected-sha256 '<exacte-64-tekens-sha256-uit-prive-plan>' \
+      --owner-confirm I_APPROVE_ARCHIVE_COPY_NO_SOURCE_DELETE \
+      --output /path/to/existing/private/copy-receipt-01.json
+
+Deze voorbeeldnamen zijn **niet** door de scanner als vrijgegeven files
+bewezen. De tool vereist één expliciet relatief bronbestand, toegestane
+koude-datasuffix, minstens zeven dagen oude owner-controlled regular file
+van 64KiB tot 4GiB met een enkele hardlink, veilige nofollow-padcomponenten,
+aparte mount, bestaande doelmap zonder groeps-/wereldtoegang,
+voldoende gerapporteerde headroom en een **nieuwe** exclusieve doelnaam.
+Er is geen batch, geen automatische goedkeuring van scanresultaten, en
+er worden nooit brondata gewist. De operator krijgt na een geslaagde
+kopie bron-SHA, byteomvang en onafhankelijke leesback-SHA van het
+archiefbestand in een create-only 0600 JSON-receipt. Deze readback
+bewijst niet dat de remote provider de bytes op lange termijn duurzaam
+bewaart of dat een restore werkt.
+
+De exacte approval-tekst is een **expliciete gebruikersbevestiging**, geen
+cryptografische identiteit of vervanging van organisatie-/datatoestemming.
+Bij gewijzigde source-identity, SHA-mismatch, onvolledige FUSE-write,
+onveilige permissies of gewijzigde doel-identiteit weigert de tool. Alleen
+de door deze uitvoering exclusief aangemaakte mislukte doelkopie mag hij
+opruimen; een reeds bestaand doel en het bronbestand nooit. Als de
+kopie mogelijk klaar is maar opslaan van het privé-receipt mislukt,
+geeft de CLI expliciet aan NIET blind opnieuw te proberen: inspecteer
+doelbestand en oorspronkelijke bron zelfstandig.
+
+Een kopie levert **geen** vrijgemaakte VPS-schijfruimte op. Voor eventueel
+bronopruimen, worker-/datasetomschakeling, herstelproef of live servicewijziging
+blijven een **afzonderlijk** bevoegd onderhouds-/releasebesluit, back-ups,
+eigenaarclaim, verplichte CI en protected-main gates gelden. De
+zSentinel-observers, GitHub workflows en scheduler roepen dit nieuwe
+copy-pad **nooit automatisch** aan.
+
