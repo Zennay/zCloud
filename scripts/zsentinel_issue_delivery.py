@@ -12,7 +12,7 @@ import os
 from html import escape
 from pathlib import Path
 
-from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect, observed_time
+from zsentinel_product_issue_inbox import ROOT, QA, canonical_projects, collect, observed_time
 from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs, _classic_status_display
 from zsentinel_issue_progress import load_private_prior, progress_since
 
@@ -200,6 +200,38 @@ def build_workboard(inbox, registry, token=None):
                 and evidence.get("next_step") in NEXT_ACTION_NL):
             candidate["gate_observation"] = "bounded_exact_head_observed_not_authorized"
             candidate["owner_next_step"] = NEXT_ACTION_NL[evidence["next_step"]]
+    listed_urls = {candidate["url"] for candidate in pr_cards}
+    for selected_pr in selected:
+        # If an old PR was found through an issue reference and its exact
+        # HEAD was independently inspected, reuse it in the merge-first
+        # inbox even when it is outside the latest-eight listing.
+        url = ("https://github.com/" + registry[selected_pr["project_id"]] +
+               "/pull/" + str(selected_pr["pr_number"]))
+        evidence = by_link.get(url)
+        if url in listed_urls or evidence is None:
+            continue
+        title = evidence.get("title")
+        sha = evidence.get("head_sha")
+        if (evidence.get("coverage") != "bounded_exact_head_review_and_checks"
+                or type(title) is not str or not 0 < len(title) <= 180
+                or QA.match(title) or type(sha) is not str
+                or len(sha) != 40 or any(ch not in "0123456789abcdef" for ch in sha)
+                or type(evidence.get("draft")) is not bool
+                or evidence.get("next_step") not in NEXT_ACTION_NL):
+            continue
+        pr_cards.append({
+            "project_id": selected_pr["project_id"], "url": url,
+            "title": title, "draft": evidence["draft"],
+            "listed_head_sha": sha,
+            "listed_base": "niet-in-recente-lijst",
+            "referenced_by_sampled_issue": True,
+            "source_kind": "existing_issue_link_exact_head_not_recent_pr_listing",
+            "current_exact_head_verified": False,
+            "ownership_verified": False, "merge_authorized": False,
+            "gate_observation": "bounded_exact_head_observed_not_authorized",
+            "owner_next_step": NEXT_ACTION_NL[evidence["next_step"]],
+        })
+        listed_urls.add(url)
     for row in sampled:
         for link in row["existing_pr_links_unverified"]:
             if link not in by_link:
