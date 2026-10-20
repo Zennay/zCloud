@@ -8,6 +8,7 @@ claims, work queues, workflows, or production state.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import hashlib
 import os
@@ -64,6 +65,7 @@ def _validate_receipt(report, manifest):
     if type(snapshots) is not list or not 1 <= len(snapshots) <= 12:
         raise ValueError("Invalid source snapshot count")
     actual_hashes = []
+    previous_end = None
     for index, sample in enumerate(snapshots, 1):
         if type(sample) is not dict or sample.get("index") != index:
             raise ValueError("Invalid ordered source snapshot")
@@ -74,6 +76,23 @@ def _validate_receipt(report, manifest):
                 or any(type(n) is not int or not 1 <= n <= 300 for n in missing)
                 or len(set(missing)) != len(missing)):
             raise ValueError("Invalid source hash or incomplete-batch receipt")
+        start_text = sample.get("earliest_observed_utc")
+        end_text = sample.get("latest_observed_utc")
+        if (type(start_text) is not str or type(end_text) is not str
+                or not 20 <= len(start_text) <= 48
+                or not 20 <= len(end_text) <= 48):
+            raise ValueError("Missing canonical bounded source time")
+        try:
+            first = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+            last = datetime.fromisoformat(end_text.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("Noncanonical saved source time") from None
+        if (first.utcoffset() != timedelta(0)
+                or last.utcoffset() != timedelta(0)
+                or first > last or last > datetime.now(timezone.utc)
+                or (previous_end is not None and first <= previous_end)):
+            raise ValueError("Unordered, future or contradictory source times")
+        previous_end = last
         actual_hashes.append(digest)
     if actual_hashes != manifest.get("original_manifest_sha256"):
         raise ValueError("Source snapshot manifest mismatch")
