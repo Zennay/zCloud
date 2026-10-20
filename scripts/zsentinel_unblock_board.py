@@ -618,6 +618,30 @@ def blocker_board_html(board):
         basis = escape(str(row["observed_from"])[:90])
         job_link = row.get("source_job_url_historical_only")
         pr_link = row.get("source_pr_url")
+        secondary_link = row.get("source_secondary_job_url")
+        secondary_pin = row.get("source_secondary_job_pin")
+        secondary_source = ""
+        if secondary_link is not None or secondary_pin is not None:
+            pid = row.get("project_id")
+            match = (re.fullmatch(
+                r"([a-z][a-z0-9_-]{0,39}):([1-9][0-9]{0,15}):"
+                r"([1-9][0-9]{0,15}):([0-9a-f]{40})",
+                secondary_pin) if type(secondary_pin) is str else None)
+            if (row.get("kind") != "secondary_queued_self_hosted_job_needs_exact_read"
+                    or match is None or match.group(1) != pid
+                    or not isinstance(secondary_link, str)
+                    or not re.fullmatch(
+                        r"https://github[.]com/Zennay/[A-Za-z0-9_.-]{1,100}"
+                        r"/actions/runs/[1-9][0-9]{0,15}/job/[1-9][0-9]{0,15}",
+                        secondary_link)):
+                raise ValueError("untrusted secondary job follow-up link")
+            secondary_source = (
+                '<p><a target="_blank" rel="noopener noreferrer" href="' +
+                escape(secondary_link, quote=True) +
+                '">Open extra wachtende GitHub-job</a> · nog niet exact herlezen.'
+                '</p><p class="small">Read-only opvolgen: '
+                '<code style="overflow-wrap:anywhere">--job ' +
+                escape(secondary_pin) + '</code></p>')
         owner_issue_link = row.get("source_owner_issue_url")
         owner_issue_source = (
             '<p><a href="' + escape(owner_issue_link, quote=True) +
@@ -650,7 +674,8 @@ def blocker_board_html(board):
             action + '</p><p class="muted">Eigenaar: ' + owner +
             ' · bron: ' + basis +
             ' · worker/runner hervat: NIET bewezen.</p>' +
-            historical_source + owner_issue_source + pr_source + gate_preview + '</article>')
+            historical_source + owner_issue_source + pr_source +
+            secondary_source + gate_preview + '</article>')
     if not cards:
         cards = ['<p class="empty">Geen actuele blockerkaart in deze begrensde'
                  ' bron. Dat bewijst GEEN gezonde werknemers of complete backlog.</p>']
@@ -712,6 +737,10 @@ def blocker_board_text(board):
         if item.get("source_owner_issue_url"):
             lines.append("    eigenaar-only bronissue: " + item["source_owner_issue_url"] +
                          " · geen actuele outage bewezen")
+        if item.get("source_secondary_job_pin"):
+            lines.append("    exact bestaande GitHub-job opnieuw lezen: --job " +
+                         item["source_secondary_job_pin"] +
+                         " · dit is GEEN bewezen runneruitval of herstartopdracht")
         if item.get("observed_check_gates"):
             lines.append("    exacte HEAD " +
                          str(item.get("source_pr_head") or "UNKNOWN")[:12] +
