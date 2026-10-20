@@ -22,3 +22,30 @@ This version keeps the existing `2.0.3` userscript/Firefox-extension version con
 The PR does **not** include test files, trigger manual QA, touch production SQLite, run browser tabs, dispatch GitHub jobs, restart services or alter the VPS. Existing mandatory exact-head CI and secure serialized deployment requirements remain unchanged.
 
 Original source owner [PR #948](https://github.com/Zennay/zCloud/pull/948) is left intact and must be reconciled as superseded **only after** this v2-based implementation has been accepted by the maintainer.
+
+## 20 October · Terminal conversation-load failure before composer recovery
+
+On the live v2 route an explicit terminal **conversation could not be loaded**
+message can render while the composer is absent. The earlier missing-composer
+preflight returned early on this condition and could prevent the existing,
+separately guarded `failedConversation()` branch in `poll()` from running.
+This stranded a known broken conversation even though its recovery rule had
+already been implemented.
+
+The embedded engine and its standalone v2 source now **yield to the existing
+terminal-error handler** when the explicit load-failure message is present.
+The normal safety constraints remain: current queue assignment and worker
+identity must be ready, no active generating/sending session is interrupted,
+and `newChat()` performs only the existing in-tab UI click, never a reload
+or a forced second tab. A missing composer without that explicit error still
+uses the normal 45-second bounded grace and one-shot/manual escalation flow.
+No new permission, claim, queue retry or server-initiated browser command is
+created.
+
+Source commits [01fe678](https://github.com/Zennay/zCloud/commit/01fe6783d0b018e3c4ba37988bb4ca39c8835c3e)
+and [a92e887](https://github.com/Zennay/zCloud/commit/a92e88716c5ccf5d38c95f6a4be1a87a73f42352)
+update both copies of the v2 engine. This is source-only on existing
+[PR #1552](https://github.com/Zennay/zCloud/pull/1552), **not** evidence
+that a real browser was restarted, signed, installed or recovered. Required
+exact-head CI, independent reviewer, script-versioned distribution and
+authorized browser rollout remain mandatory. No QA suites were added or run.
