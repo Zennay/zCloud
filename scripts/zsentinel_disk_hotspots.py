@@ -13,6 +13,7 @@ import json
 import os
 import stat
 import time
+from collections import deque
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
@@ -61,7 +62,7 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         raise ValueError("bounded scan settings required")
     started = time.monotonic()
     mount = root.stat().st_dev
-    stack = [(root, 0)]
+    stack = deque([(root, 0)])
     visited = set()
     scanned = 0
     sensitive_skipped = 0
@@ -80,7 +81,9 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         if time.monotonic() - started >= max_seconds:
             stop_reason = "time_budget_exhausted"
             break
-        directory, depth = stack.pop()
+        # Breadth-first scan: a busy subproject cannot monopolize all depth
+        # slots while other top-level workspaces remain completely unseen.
+        directory, depth = stack.popleft()
         try:
             listing = os.scandir(directory)
         except OSError:
