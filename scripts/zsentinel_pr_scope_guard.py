@@ -655,8 +655,9 @@ def graph_operator_text(report):
         " · posities " + str(report["open_pr_window_start"]) + "–" +
         str(report["open_pr_window_end"]) +
         (" · eerdere pagina's NIET bekeken" if report["earlier_pages_not_inspected"] else ""),
-        "Gelezen open PR's op deze pagina: " + str(report["inspected_prs"]) +
-        " / gezien " + str(report["observed_open_prs"]),
+        "Gelezen open PR's in venster: " + str(report["inspected_prs"]) +
+        " / gezien " + str(report["observed_open_prs"]) +
+        " · opeenvolgende pagina's: " + str(report["open_pr_page_count"]),
         "Gedeelde-bestandparen: " + str(report["observed_file_collision_pairs"]),
         "Meerdere open PR-tekstverwijzingen naar hetzelfde issue: " +
         str(report["observed_duplicate_issue_groups"]) +
@@ -664,6 +665,13 @@ def graph_operator_text(report):
         "Bron volledig: " + ("ja" if report["pr_file_scope_sample_complete"]
                                else "NEE (steekproef of veranderde bron)"),
     ]
+    for receipt in report["open_pr_page_receipts"]:
+        result.append("BRONPAGINA " + str(receipt["page"]) + " · posities " +
+                      str(receipt["first_position"]) + "–" +
+                      str(receipt["last_position"]) + " · gezien " +
+                      str(receipt["observed_prs"]))
+    if report["cross_page_duplicate_prs_observed"]:
+        result.append("WAARSCHUWING: PR dubbel op pagina's; bron mogelijk verschoven.")
     for row in report["shown_file_collision_pairs"]:
         a, b = row["left"], row["right"]
         result.append("PR #" + str(a["number"]) + " ↔ PR #" + str(b["number"]) +
@@ -717,6 +725,11 @@ def graph_html(report):
                     if report["pr_file_scope_sample_complete"]
                     else "onvolledig; bron/venster niet stabiel of afgekapt")
     unpaired = report["unpaired_open_prs_in_sample_not_claim_verified"]
+    page_rows = "".join(
+        "<li>Pagina " + str(r["page"]) + " · posities " +
+        str(r["first_position"]) + "–" + str(r["last_position"]) +
+        " · " + str(r["observed_prs"]) + " PRs</li>"
+        for r in report["open_pr_page_receipts"])
     duplicate_cards = []
     for group in report["shown_duplicate_issue_groups"]:
         mentioned = "".join(
@@ -756,7 +769,8 @@ def graph_html(report):
             str(report["open_pr_page_number"]) + " · posities " +
             str(report["open_pr_window_start"]) + "–" +
             str(report["open_pr_window_end"]) +
-            " · geen oordeel over andere pagina's.</p><aside>Bron: " + escape(completeness) +
+            " · geen oordeel over andere pagina's.</p><ul>" + page_rows +
+            "</ul><aside>Bron: " + escape(completeness) +
             ". Gedeelde bestandspaden betekenen niet automatisch Git-mergeconflict."
             " Geen Notion-claim, eigenaar, bestandslease of PR-loze branch"
             " geverifieerd. Geen automatische claim of merge.</aside>"
@@ -848,6 +862,15 @@ def graph_markdown(report):
         "",
         "## Gedeelde bestandsnamen",
     ]
+    lines.extend(["", "## Waargenomen GitHub-pagina's", ""])
+    for receipt in report["open_pr_page_receipts"]:
+        lines.append("- Pagina " + str(receipt["page"]) + " · posities " +
+                     str(receipt["first_position"]) + "–" +
+                     str(receipt["last_position"]) + " · " +
+                     str(receipt["observed_prs"]) + " PRs.")
+    if report["cross_page_duplicate_prs_observed"]:
+        lines.append("**ONSTABIEL:** dezelfde PR op meerdere pagina's.")
+    lines.extend(["", "## Bestandsbotsingen (ook over paginagrenzen)", ""])
     for row in report["shown_file_collision_pairs"]:
         left, right = row["left"], row["right"]
         lines.append("- [#" + str(left["number"]) + "](" + left["url"] +
