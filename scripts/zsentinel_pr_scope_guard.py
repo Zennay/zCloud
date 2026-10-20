@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MAX_REGISTRY_BYTES = 512 * 1024
 MAX_REPLY_BYTES = 1024 * 1024
 MAX_OPEN_PAGE = 48
+MAX_SEARCH_PAGES = 50
 MAX_INSPECT = 48
 MAX_PATHS = 12
 MAX_SOURCE_FILES = 80
@@ -120,13 +121,14 @@ def github_json(repo, suffix, token):
         raise ValueError("github_payload_invalid") from None
 
 
-def open_prs(repo, token, page_size=MAX_OPEN_PAGE):
+def open_prs(repo, token, page_size=MAX_OPEN_PAGE, page=1):
     # Fetch one beyond the requested inspection count when possible.
     # A full page is UNKNOWN, even if it may be the actual final page.
-    if type(page_size) is not int or not 1 <= page_size <= MAX_OPEN_PAGE:
-        raise ValueError("invalid open-PR page size")
+    if (type(page_size) is not int or not 1 <= page_size <= MAX_OPEN_PAGE
+            or type(page) is not int or not 1 <= page <= MAX_SEARCH_PAGES):
+        raise ValueError("invalid bounded open-PR page")
     suffix = ("/pulls?state=open&per_page=" + str(page_size) +
-              "&page=1&sort=updated&direction=desc")
+              "&page=" + str(page) + "&sort=updated&direction=desc")
     rows = github_json(repo, suffix, token)
     if not isinstance(rows, list) or len(rows) > page_size:
         raise ValueError("invalid open PR listing")
@@ -279,12 +281,13 @@ def overlaps(wanted, changed):
 
 
 def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
-            expanded_source_files=False):
+            expanded_source_files=False, open_page=1):
     if (not REPO.fullmatch(repo) or not isinstance(wanted, list)
             or len(wanted) > MAX_PATHS or len(set(wanted)) != len(wanted)
             or type(limit) is not int or not 1 <= limit <= MAX_INSPECT
             or not wanted and source_pr_number is None
-            or expanded_source_files and source_pr_number is None):
+            or expanded_source_files and source_pr_number is None
+            or type(open_page) is not int or not 1 <= open_page <= MAX_SEARCH_PAGES):
         raise ValueError("invalid scope request")
     wanted = [edit_path(path) for path in wanted]
     source = (selected_source_pr(
@@ -296,7 +299,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
     if source is not None:
         wanted = sorted(set(wanted).union(source["paths"]))
     page_size = min(MAX_OPEN_PAGE, limit + 1)
-    before = open_prs(repo, token, page_size)
+    before = open_prs(repo, token, page_size, page=open_page)
     selected = before[:limit]
     hits = []
     truncated_files = []
@@ -313,7 +316,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                              "pr_url": pr["url"], "observed_head_sha": pr["head_sha"],
                              "observed_base_sha": pr["base_sha"], "matching_files": matches[:32],
                              "matches_truncated": len(matches) > 32})
-    after = open_prs(repo, token, page_size)
+    after = open_prs(repo, token, page_size, page=open_page)
     snapshot_stable = before == after
     source_stable = True
     if source is not None:
@@ -327,7 +330,7 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
                          and current_head.get("sha") == source["head_sha"]
                          and isinstance(current_base, dict)
                          and current_base.get("sha") == source["base_sha"])
-    complete = (source_stable and len(before) < page_size and len(before) <= limit
+    complete = (open_page == 1 and source_stable and len(before) < page_size and len(before) <= limit
                 and not truncated_files and snapshot_stable)
     return {
         "schema": "zsentinel-pr-scope-observation-v1",
@@ -345,6 +348,11 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
         }),
         "source": "bounded_double_read_current_open_github_prs",
         "observed_open_prs": len(before),
+        "open_pr_page_number": open_page,
+        "open_pr_page_size": page_size,
+        "open_pr_window_start": (open_page - 1) * page_size + 1,
+        "open_pr_window_end": (open_page - 1) * page_size + len(before),
+        "earlier_pages_not_inspected": open_page > 1,
         "inspected_prs": sum(pr["number"] != source["number"]
                               for pr in selected) if source is not None else len(selected),
         "open_pr_page_may_be_truncated": len(before) == page_size,
@@ -462,16 +470,17 @@ MAX_DUPLICATE_ISSUE_GROUPS = 80
 MAX_LINKS_PER_DUPLICATE_ISSUE = 8
 
 
-def observe_conflict_graph(repo, token=None, limit=24):
+def observe_conflict_graph(repo, token=None, limit=24, open_page=1):
     """Show PR-to-PR file collisions over a bounded, double-read open PR window.
 
     Collision means *shared pathname*, NOT merge conflict, active owner, worker
     claim, or proof that either PR must be rejected.
     """
-    if not REPO.fullmatch(repo) or type(limit) is not int or not 1 <= limit <= MAX_INSPECT:
+    if (not REPO.fullmatch(repo) or type(limit) is not int or not 1 <= limit <= MAX_INSPECT
+            or type(open_page) is not int or not 1 <= open_page <= MAX_SEARCH_PAGES):
         raise ValueError("invalid graph request")
     page_size = min(MAX_OPEN_PAGE, limit + 1)
-    before = open_prs(repo, token, page_size)
+    before = open_prs(repo, token, page_size, page=open_page)
     chosen = before[:limit]
     file_owners = {}
     suspicious_lists = []
@@ -549,7 +558,7 @@ def observe_conflict_graph(repo, token=None, limit=24):
     for left, right in pairs:
         collided.add(left)
         collided.add(right)
-    fully_sampled = (len(before) < page_size and len(before) <= limit
+    fully_sampled = (open_page == 1 and len(before) < page_size and len(before) <= limit
                      and not suspicious_lists and stable
                      and len(ordered) <= MAX_CONFLICT_PAIRS)
     # An unpaired PR is a useful independent-work candidate ONLY after the
@@ -563,6 +572,11 @@ def observe_conflict_graph(repo, token=None, limit=24):
         "repository": repo,
         "source": "bounded_double_read_current_open_github_prs_and_files",
         "observed_open_prs": len(before),
+        "open_pr_page_number": open_page,
+        "open_pr_page_size": page_size,
+        "open_pr_window_start": (open_page - 1) * page_size + 1,
+        "open_pr_window_end": (open_page - 1) * page_size + len(before),
+        "earlier_pages_not_inspected": open_page > 1,
         "inspected_prs": len(chosen),
         "inspected_pr_heads": observed,
         "open_pr_issue_references_unverified": issue_links,
@@ -571,7 +585,7 @@ def observe_conflict_graph(repo, token=None, limit=24):
         "duplicate_issue_groups_truncated": (
             len(duplicate_issue_groups) > MAX_DUPLICATE_ISSUE_GROUPS),
         "duplicate_issue_group_coverage_complete": (
-            len(before) < page_size and len(before) <= limit
+            open_page == 1 and len(before) < page_size and len(before) <= limit
             and stable and not any(
                 not pr["issue_reference_body_covered"] for pr in chosen)
             and len(duplicate_issue_groups) <= MAX_DUPLICATE_ISSUE_GROUPS),
@@ -821,6 +835,9 @@ def main(argv=None):
                         help="Optioneel: alleen voor expliciet gekozen product-PR "
                              "tot drie bestandspagina's/240 paden ophalen")
     parser.add_argument("--max-prs", type=int, default=24)
+    parser.add_argument("--open-page", type=int, default=1,
+                        help="Selecteer 1..50 van maximaal 48 open PRs per sorteerpagina; "
+                             "oudere pagina's zijn altijd gedeeltelijk, nooit vrijgave")
     parser.add_argument("--audit-open-prs", action="store_true",
                         help="Toon een bestandsoverlapkaart voor open PR's zonder handmatige doelpaden.")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
@@ -833,7 +850,8 @@ def main(argv=None):
             if args.path or args.source_pr is not None or args.expanded_source_files:
                 raise ValueError("--audit-open-prs cannot be combined with --path/--source-pr")
             report = observe_conflict_graph(repos[args.project],
-                                            os.environ.get("GITHUB_TOKEN"), args.max_prs)
+                                            os.environ.get("GITHUB_TOKEN"), args.max_prs,
+                                            open_page=args.open_page)
             if args.format == "json":
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             elif args.format == "html":
@@ -847,7 +865,8 @@ def main(argv=None):
         report = observe(
             repos[args.project], args.path,
             os.environ.get("GITHUB_TOKEN"), args.max_prs, args.source_pr,
-            expanded_source_files=args.expanded_source_files)
+            expanded_source_files=args.expanded_source_files,
+            open_page=args.open_page)
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
