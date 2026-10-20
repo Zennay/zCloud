@@ -61,6 +61,8 @@ def gh(path, method="GET", fields=None):
 
 def approvals(repo, number, author, exact_head):
     """Only independently approved exact-source reviews; ambiguity denies."""
+    if not isinstance(author, str):
+        return False
     records = gh(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
     # A truncated review history is not evidence that older changes requests
     # have been resolved. Fail closed rather than guessing review chronology.
@@ -123,12 +125,19 @@ def live_claim(project, claim_key, owner, head_sha):
         if expiration <= dt.datetime.now(dt.timezone.utc):
             return False
         meta = json.loads(row["metadata_json"] or "{}")
-        scope = meta.get("conflict_scope") or {}
-        capabilities = scope.get("capabilities") or []
-        if "mainwriter" not in capabilities and "main-merge" not in capabilities:
+        if not isinstance(meta, dict):
+            return False
+        scope = meta.get("conflict_scope")
+        if not isinstance(scope, dict):
+            return False
+        capabilities = scope.get("capabilities")
+        if (not isinstance(capabilities, list)
+                or not all(isinstance(cap, str) for cap in capabilities)):
+            return False
+        if not any(cap in {"mainwriter", "main-merge"} for cap in capabilities):
             return False
         return meta.get("sha") == head_sha
-    except (OSError, ValueError, sqlite3.Error, TypeError, KeyError):
+    except (OSError, ValueError, sqlite3.Error, TypeError, KeyError, AttributeError):
         return False
 
 def sweep(repo, project, args):
