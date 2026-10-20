@@ -288,7 +288,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
-    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE"}:
+    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS"}:
         recommend("RUNNER_OWNER", "zCloud Actions runner owner (#1326)",
                   "The dedicated listener/registered runner may be unavailable independently of other project runners.",
                   "Inspect the dedicated service and assigned jobs with the authorized runner owner. Restore only under the existing idle and account-identity gates; independently confirm a job was assigned.")
@@ -464,6 +464,8 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         "Never overwrite an uncommitted or independently owned change.")
     if not runner["listener_pids"] or runner["unit_state"] in {"failed", "inactive", "ambiguous"}:
         runner_status = "blocked"
+    elif runner["unit_state"] == "unavailable":
+        runner_status = "unit_unverified"
     else:
         runner_status = "process_observed_only"
     add("runner_identity", runner_status, "zCloud Actions runner owner (#1326)",
