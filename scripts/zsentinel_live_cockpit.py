@@ -253,6 +253,8 @@ def main():
     parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
+    parser.add_argument("--handoff-output", type=Path,
+                        help="opt-in private .md/.json P0-first owner handoff; create-only, no dispatch")
     args = parser.parse_args()
     ledger_lock = None
     try:
@@ -299,6 +301,17 @@ def main():
             if any(item is not None and args.desk_output.resolve() == item.resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
+        if args.handoff_output is not None:
+            if args.handoff_output.suffix not in (".md", ".json"):
+                raise ValueError("private owner handoff must end in .md or .json")
+            # A handoff is an independent immutable artifact, never a source,
+            # active ledger, private disk scan, or incident-desk overwrite.
+            guarded = (args.state, args.desk_output, args.disk_hotspots_output,
+                       args.disk_hotspots_previous, args.notion_claims_export,
+                       args.database, args.worker_events_database)
+            if any(p is not None and args.handoff_output.resolve() == p.resolve()
+                   for p in guarded):
+                raise ValueError("handoff destination overlaps an input or output")
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         registry = canonical_projects(args.registry)
@@ -439,6 +452,16 @@ def main():
             from zsentinel_incident_desk import write_private_html, review_html
             private_desk = rendered if args.format == "desk" else review_html(decision)
             write_private_html(args.desk_output, private_desk)
+        if args.handoff_output is not None:
+            from zsentinel_runtime_handoff import build_handoff, serialize
+            from zsentinel_private_output import write_private_output
+            handoff = build_handoff(decision)
+            private_content = serialize(handoff, args.handoff_output.suffix)
+            try:
+                write_private_output(args.handoff_output, private_content,
+                                     args.handoff_output.suffix.lstrip("."))
+            except OSError:
+                raise ValueError("private owner handoff could not be written") from None
         if args.state:
             write_json_atomic(args.state, ledger)
         if args.format != "desk":
