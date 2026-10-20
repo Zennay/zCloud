@@ -429,6 +429,71 @@ const choices=["nog-niet-beoordeeld","eigenaar-benaderen","in-behandeling-bij-ei
 const notes=Object.create(null);
 let selected=null;
 const el=(tag,txt,cls)=>{const n=document.createElement(tag);if(txt!==undefined)n.textContent=txt;if(cls)n.className=cls;return n};
+let lastHistoricalBrief=null;
+function historicalOwnerBrief(){
+ const rows=source.owner_rechecks;
+ if(!Array.isArray(rows)||rows.length>5||!rows.length)
+  throw Error("Geen brongebonden historische owner-rechecks beschikbaar");
+ if(!/^[0-9a-f]{64}$/.test(source.owner_rechecks_sha256))
+  throw Error("Historische bronhash ontbreekt");
+ const lines=["# zSentinel · historische menselijke eigenaarherbeoordeling","",
+  "> Niet actueel. Geen bevestigde storing, ownerclaim, herstel, CI-rerun, merge of deploy.",
+  "> Deze privéoverdracht is handmatig en doet geen notificatie.","",
+  "- Bron UTC: "+source.observed_at,
+  "- Historische bron SHA256: "+source.owner_rechecks_sha256,
+  "- Actuele incidentbron SHA256: "+source.fingerprint,
+  "- Historische ownerrechecks getoond: "+rows.length,
+  "- Historische bronselectie afgekapt: "+(source.owner_rechecks_truncated?"JA":"nee"),""];
+ for(const row of rows){
+  if(row.current_source_observed!==false||row.action_authorized!==false)
+   throw Error("Historische owner-briefing bevat autorisatie");
+  lines.push("## HISTORISCH "+mdText(row.priority+" · "+row.project+" · "+row.problem),
+   "- Incidentbron: "+row.id,
+   "- Laatst gezien: "+mdText(row.last),
+   "- Benodigde stap: bevoegde eigenaar controleert oorspronkelijke job/issue en huidige gates.",
+   "- Actuele bron waargenomen: NEE; eigenaarschap en herstel NIET bevestigd.");
+  const job=row.exact_github_job;
+  if(job)lines.push("- Eerdere GitHub-run: "+job.run_id+
+   " · job "+job.job_id+" · exact SHA "+job.head_sha);
+  else lines.push("- Eerdere exacte GitHub-job: ONBEKEND.");
+  lines.push("");
+ }
+ lines.push("---","Geen automatische melding, claimovername, runneractie of productierelease.","");
+ const data=lines.join("\n");
+ if(new TextEncoder().encode(data).byteLength>120000)
+  throw Error("Historische privébriefing te groot");
+ return data;
+}
+$("ownerRecheckCount").textContent=source.owner_rechecks.length+
+ " historische ownerrechecks in de begrensde bron; geen nieuwe alarmen."+
+ (source.owner_rechecks_truncated?" Er zijn meer verborgen historische bronnen.":"");
+$("previewOwnerRecheck").onclick=()=>{
+ try{
+  const body=historicalOwnerBrief();lastHistoricalBrief=body;
+  $("ownerRecheckPreview").textContent=body;
+  $("downloadOwnerRecheck").disabled=false;
+  $("ownerRecheckStatus").textContent="Privévoorvertoning gereed; niets verstuurd.";
+ }catch(_){
+  lastHistoricalBrief=null;$("ownerRecheckPreview").textContent="";
+  $("downloadOwnerRecheck").disabled=true;
+  $("ownerRecheckStatus").textContent="Geen veilige historische owner-briefing beschikbaar.";
+ }
+};
+$("downloadOwnerRecheck").onclick=()=>{
+ try{
+  if(!lastHistoricalBrief||historicalOwnerBrief()!==lastHistoricalBrief)
+   throw Error("Historische privévoorvertoning verlopen");
+  const url=URL.createObjectURL(new Blob([lastHistoricalBrief],
+    {type:"text/markdown;charset=utf-8"}));
+  const a=el("a");a.href=url;a.download="zsentinel-historical-owner-rechecks.md";
+  document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  $("ownerRecheckStatus").textContent="Privébriefing aangeboden; geen melding verstuurd.";
+ }catch(_){
+  $("downloadOwnerRecheck").disabled=true;
+  $("ownerRecheckStatus").textContent="De bron/voorvertoning is niet meer geldig.";
+ }
+};
 function incidentLabel(x){return x.priority+" · "+x.project+" · "+x.problem}
 function isFresh(){
  const delta=Date.now()-Date.parse(source.observed_at);
