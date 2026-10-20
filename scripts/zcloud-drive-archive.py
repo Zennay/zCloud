@@ -29,9 +29,13 @@ MAX_BATCH_BYTES = 4 * 1024 ** 3
 MAX_CANDIDATES = 8
 MAX_SCAN_NODES = 100000
 
-def command(*args, capture=False):
-    p = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else None,
-                       stderr=subprocess.PIPE if capture else None)
+def command(*args, capture=False, timeout=3600):
+    try:
+        p = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else None,
+                           stderr=subprocess.PIPE if capture else None, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        # Never include command arguments or upstream output in an error.
+        raise RuntimeError("Archive command exceeded its bounded time budget") from exc
     if p.returncode:
         # Upstream stderr may contain tokens or private provider details.
         raise RuntimeError("Archive command failed (exit code %d)" % p.returncode)
@@ -101,28 +105,53 @@ def candidates(age, limit=MAX_CANDIDATES):
 
 def connected():
     try:
-        command(str(BIN), "lsd", "gdrive:", "--max-depth", "1", capture=True)
+        command(str(BIN), "lsd", "gdrive:", "--max-depth", "1", capture=True, timeout=25)
         return True
     except Exception:
         return False
 
 def active_process(path):
-    # A working-directory reference is a definite block; checks cannot prove all files closed.
+    """Fail closed when an open file or an unobservable process may own a tree.
+
+    A process holding a file descriptor can keep writing even when its cwd
+    is elsewhere. An unreadable /proc entry never proves the tree is idle.
+    """
     prefix = str(path) + "/"
-    proc = Path("/proc")
-    for item in proc.iterdir():
-        if not item.name.isdecimal():
-            continue
-        try:
-            cwd = os.readlink(item / "cwd")
-            if cwd == str(path) or cwd.startswith(prefix):
+    def inside(link):
+        target = link.removesuffix(" (deleted)")
+        return target == str(path) or target.startswith(prefix)
+    try:
+        for item in Path("/proc").iterdir():
+            if not item.name.isdecimal():
+                continue
+            try:
+                for attribute in ("cwd", "exe"):
+                    if inside(os.readlink(item / attribute)):
+                        return True
+                for descriptor in (item / "fd").iterdir():
+                    if inside(os.readlink(descriptor)):
+                        return True
+            except FileNotFoundError:
+                # Process exited during inspection; it cannot own new writes.
+                continue
+            except (OSError, PermissionError):
+                # This shared host contains unrelated processes. Without
+                # visibility, destructive pruning is not independently safe.
                 return True
-            exe = os.readlink(item / "exe")
-            if exe == str(path) or exe.startswith(prefix):
-                return True
-        except (OSError, PermissionError):
-            pass
+    except (OSError, PermissionError):
+        return True
     return False
+
+
+def prune_authorized():
+    """Honor only an actual user-owned 0600 file, never a symlink or directory."""
+    marker = HOME / ".config/zcloud-drive/allow-prune"
+    try:
+        info = marker.lstat()
+    except OSError:
+        return False
+    return (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+            and info.st_mode & 0o077 == 0)
 
 def transfer(item, prune=False):
     src = item["path"]
@@ -133,7 +162,7 @@ def transfer(item, prune=False):
     # Compare actual remote bytes, not only size or a copy exit status.
     command(str(BIN), "check", str(src), dst, "--one-way", "--download", *common)
     if prune:
-        if not (HOME / ".config/zcloud-drive/allow-prune").is_file():
+        if not prune_authorized():
             raise RuntimeError("Pruning requires the offline-key-backup approval file")
         old = examine(src, (dt.datetime.now(dt.timezone.utc) -
                             dt.timedelta(days=MIN_PRUNE_DAYS)).timestamp())
@@ -172,7 +201,7 @@ def main():
     if not connected():
         print("NOT_CONNECTED: authorize Google Drive for the gdrive remote first", file=sys.stderr)
         return
-    if args.mode == "cleanup" and not (HOME / ".config/zcloud-drive/allow-prune").exists():
+    if args.mode == "cleanup" and not prune_authorized():
         print("PRUNE_DISABLED: back up recovery keys off VPS and explicitly approve", file=sys.stderr)
         return
     total = 0
