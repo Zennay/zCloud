@@ -12,7 +12,7 @@ from html import escape
 import re
 import sys
 
-from zcloud_github_activity_digest import safe_receipt, digest
+from zcloud_github_activity_digest import safe_receipt, digest, PROVIDER_ADMISSIONS
 
 
 CSS = """
@@ -103,7 +103,18 @@ def html_page(data: dict) -> str:
             states += " · PR branch SHAs observed (partial)"
         else:
             states += " · branches not synchronized"
-        warning = "<p class='warning'>Partial source coverage. More events may exist than the displayed bounded window. Missing data is unknown, not zero.</p>"
+        admission = coverage.get("provider_admission", "none")
+        # The strict digest() above already rejects unknown admission values.
+        blocker = (
+            "<p class='warning' role='alert'><b>GitHub bronblokkade:</b> " +
+            escape(PROVIDER_ADMISSIONS[admission]) + "</p>"
+            if admission != "none" else ""
+        )
+        warning = (
+            blocker +
+            "<p class='warning'>Partial source coverage. More events may exist "
+            "than the displayed bounded window. Missing data is unknown, not zero.</p>"
+        )
         table = []
         for item in rows:
             label, url = event_link(item, repo)
