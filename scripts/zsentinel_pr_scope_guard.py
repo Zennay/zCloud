@@ -166,8 +166,10 @@ def selected_source_pr(repo, number, token):
     if type(number) is not int or not 0 < number < 100000000:
         raise ValueError("invalid selected source PR")
     receipt = github_json(repo, "/pulls/" + str(number), token)
-    base = receipt.get("base") if isinstance(receipt, dict) else None
-    head = receipt.get("head") if isinstance(receipt, dict) else None
+    if not isinstance(receipt, dict):
+        raise ValueError("selected source PR metadata unavailable")
+    base = receipt.get("base")
+    head = receipt.get("head")
     base_repo = base.get("repo") if isinstance(base, dict) else None
     sha = head.get("sha") if isinstance(head, dict) else None
     if (receipt.get("number") != number or receipt.get("state") != "open"
@@ -220,7 +222,9 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
     source_stable = True
     if source is not None:
         fresh = github_json(repo, "/pulls/" + str(source["number"]), token)
-        current_head = fresh.get("head") if isinstance(fresh, dict) else None
+        if not isinstance(fresh, dict):
+            raise ValueError("selected source PR freshness unavailable")
+        current_head = fresh.get("head")
         source_stable = (fresh.get("state") == "open"
                          and isinstance(current_head, dict)
                          and current_head.get("sha") == source["head_sha"])
