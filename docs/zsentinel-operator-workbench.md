@@ -1563,3 +1563,44 @@ bestandsgrens; ongeldige bronnen/filternamen krijgen geen output. Opgeslagen
 beschikbare bronkandidaten vormen nooit een complete GitHub PR-inventaris,
 actueel eigenaarsbewijs, leasevrijgave, benodigde review of merge-autorisatie.
 Deze functie neemt niets over en verstuurt/dispatcht/retryt/merget/deployt niets.
+
+
+## 20 oktober · Eén privé ZIP-projectdossier, zonder meerdere exports
+
+Een volledig offline pakket met project-PR-rij, HTML, Markdown en veilige
+bronidentiteit is nu met **één** bestaand CLI-commando te maken:
+
+```bash
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review-manifest.json \
+  --receipt ./private-gate-batch-1.json \
+  --receipt ./private-gate-batch-2.json \
+  --allow-partial \
+  --project Zennay/zCloud \
+  --format portfolio-zip \
+  --output ./private-zcloud-handoff.zip
+```
+
+In het ZIP-bestand staan vaste, veilige namen:
+`project-dossier.html` (zelfstandige CSP-gebonden offline werkpagina),
+`project-actions.md` (alle bron-PRs en menselijke vervolgstappen),
+`project-prs.csv` (volledige per-PR-tabel),
+`source-receipt.json` (niet-autoriseren, met oorspronkelijke SHA256 en
+getoonde scope) en `source-checksums.json` (SHA256 van elk van de vier
+bronexports, tijdvenster, ontbrekende batches en expliciete `false` voor
+claim/dispatch/review/merge/deploy/live).
+
+Alle vier productweergaven worden uit **dezelfde al gevalideerde** opgeslagen
+manifest/batches gebouwd, voordat het ZIP-bestand geschreven wordt.
+Maximaal 1 MiB per entry, 4 MiB ongecomprimeerd totaal, en maximaal 1 MiB
+opgeslagen ZIP. De bestaande create-only outputwrite (0600, O_EXCL,
+O_NOFOLLOW) maakt óf één compleet bestand óf weigert, zonder bestaande
+bestanden te overschrijven. De ZIP bevat geen uitvoerbare code, ZIP
+path-traversal, ruwe GitHub-responses of extra externe data.
+
+De inhoud is privé: verspreid hem niet in publieke GitHub-issues.
+De bronstatus is **historisch en gedeeltelijk**, ook als alle opgeslagen
+batches aanwezig zijn. Een aangevinkt of in ZIP vermeld PR is NOOIT
+bewijs van actuele HEAD, vereiste CI, zelfstandige review, vrij eigenaarschap,
+main-merge of productieherstel. Voor iedere echte merge of deploy blijven
+de bestaande actuele eigenaar-, security-, branch-, CI- en releasegates vereist.
