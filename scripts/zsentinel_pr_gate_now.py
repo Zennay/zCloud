@@ -136,6 +136,17 @@ def _one(repo, number, token):
     for row in latest_context.values():
         legacy_states[row["state"]] += 1
     legacy_partial = len(legacy["statuses"]) == 100
+    # Show the latest failing/pending legacy contexts as actionable source,
+    # without trusting unbounded provider target_url or exposing credentials.
+    legacy_actionable_all = [
+        {"context": row["context"], "state": row["state"],
+         "url": "https://github.com/" + repo + "/commit/" + head + "/checks"}
+        for row in latest_context.values() if row["state"] != "success"
+    ]
+    legacy_actionable_all.sort(key=lambda row: (
+        row["state"] not in ("failure", "error"), row["context"]))
+    legacy_actionable_hidden = max(0, len(legacy_actionable_all) - 12)
+    legacy_actionable = legacy_actionable_all[:12]
     reviews = github_json(repo, prefix + "/reviews?per_page=100", token)
     if type(reviews) is not list or len(reviews) > 100:
         raise ValueError("bounded reviews source unavailable")
@@ -206,6 +217,10 @@ def _one(repo, number, token):
         "observed_checks_not_successful": statuses["failure_observed"],
         "observed_checks_unknown": statuses["other_observed"],
         "legacy_status_contexts_observed": len(latest_context),
+        "legacy_status_superseded_attempts_observed":
+            len(legacy["statuses"]) - len(latest_context),
+        "observed_actionable_legacy_contexts": legacy_actionable,
+        "observed_actionable_legacy_contexts_hidden": legacy_actionable_hidden,
         "legacy_status_success_observed": legacy_states["success"],
         "legacy_status_pending_observed": legacy_states["pending"],
         "legacy_status_failure_or_error_observed": (
