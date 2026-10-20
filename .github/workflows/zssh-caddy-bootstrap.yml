@@ -20,7 +20,8 @@ concurrency:
 jobs:
   retired:
     name: Use canonical DNS-gated public ingress bootstrap
-    runs-on: ubuntu-latest
+    if: ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 2
     steps:
       - name: Confirm legacy bootstrap is retired

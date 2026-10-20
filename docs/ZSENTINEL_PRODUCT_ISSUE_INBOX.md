@@ -27,6 +27,6 @@ GitHub source identity comes **only** from the existing canonical projects.json 
 
 ## Ownership and integration
 
-This is a standalone **read-only operator product**, independent of the already claimed central server/eventstream/dashboards and of the separately authorized GitHub PR/main-commit activity collector. It can help choose a candidate *only after* a fresh canonical Notion queue, SQLite `task_claims` / lease and GitHub owner PR check. The handoff/claim/merge/deployment authority stays entirely outside this tool.
+This is a standalone **read-only operator product**, independent of the already claimed central server/eventstream/dashboards and of zCloud PR #1538 (GitHub PR/main-commit activity). It can help choose a candidate *only after* a fresh canonical Notion queue, SQLite `task_claims` / lease and GitHub owner PR check. The handoff/claim/merge/deployment authority stays entirely outside this tool.
 
 This feature does not merge anything and does not mark Notion `Eligible=YES`. Existing reviewer, mandatory CI, security, production and rights gates still apply. No QA suite was written/run for this feature under the 17 October instruction.

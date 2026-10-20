@@ -23,8 +23,8 @@ concurrency:
 
 jobs:
   preflight:
-    if: github.run_attempt == 1 && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
-    runs-on: ubuntu-latest
+    if: (github.run_attempt == 1 && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     outputs:
       deploy: ${{ steps.production_status.outputs.deploy }}
     steps:
@@ -1048,8 +1048,8 @@ jobs:
 
   finalize-production-status:
     needs: deploy
-    if: always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != ''
-    runs-on: ubuntu-latest
+    if: (always() && needs.deploy.outputs.pending_marked == 'true' && needs.deploy.outputs.deploy_sha != '') && ((github.event_name != 'pull_request' && github.event_name != 'pull_request_target') || (github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'Zennay'))
+    runs-on: [self-hosted, zcloud, vps]
     timeout-minutes: 5
     steps:
       - name: Publish production deploy result
