@@ -1769,3 +1769,28 @@ Wijzigingen zijn uitsluitend broncode op open PR #1563.
 Er zijn geen nieuwe QA-/regressiesuites geschreven of handmatig gestart.
 Exacte-head verplichte CI, zelfstandige review en release-ownership
 blijven ongewijzigd.
+
+
+### 20 oktober · Auth-gate in blocker-first productwerkbord
+
+Een geobserveerde GitHub API **401** op een geselecteerde actuele
+CI-bron wordt nu als brongebonden P1-kaart zichtbaar in
+`scripts/zsentinel_unblock_board.py`. De kaart noemt uitsluitend de
+bevoegde GitHub repository-/toegangseigenaar, geen systemd/runner,
+betaling, workflowretry, workerclaim of release. Het is bewijs van een
+**API-authenticatieprobleem bij die bron**, niet van een product- of
+runnerstoring. De andere projecten blijven beschikbaar voor vrij
+productwerk. Een onduidelijke 403 of bevestigde rate-limit krijgt
+geen onterechte menselijke auth-claim: daarvoor gelden de eigen
+gedegradeerde bronlabels en het portfolio-advies.
+
+De offline blocker-continuity adapter bewaart de canonieke
+`source-auth:<project>`-identiteit tussen twee expliciete momentopnames,
+zonder een eerdere bronfout als opgelost te markeren wanneer een nieuwe
+GitHub-steekproef onvolledig is. Er wordt niets automatisch verstuurd
+naar horloge, account of externe service. De lokale operator kan eerst
+bronbewijs en autorisatie controleren.
+
+De zelfstandige productissue-inbox toont bovendien per repository
+401/403/rate-limit-dekking en maakt niet langer de onjuiste claim dat
+iedere 403 alle latere projectrequests onderbreekt.
