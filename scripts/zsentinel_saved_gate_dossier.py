@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 import json
 import os
@@ -372,6 +373,29 @@ def saved_queue(receipt: dict, *, project=None, priority=None):
     return queue
 
 
+def source_recency_summary(source_observed_at: object) -> str:
+    """Human-only freshness label; never infer GitHub/claim/CI current state."""
+    if type(source_observed_at) is not str or not 20 <= len(source_observed_at) <= 40:
+        return "Snapshot freshness UNKNOWN: missing or malformed source timestamp"
+    try:
+        observed = datetime.fromisoformat(
+            source_observed_at.replace("Z", "+00:00")
+        )
+    except ValueError:
+        return "Snapshot freshness UNKNOWN: invalid source timestamp"
+    if observed.tzinfo is None or observed.utcoffset() != timedelta(0):
+        return "Snapshot freshness UNKNOWN: timestamp is not explicit UTC"
+    now = datetime.now(timezone.utc)
+    age = now - observed
+    if age < timedelta(minutes=-5):
+        return "Snapshot freshness UNKNOWN: source clock appears in the future"
+    if age < timedelta(0):
+        return "Snapshot freshness UNCERTAIN: small source/local clock difference"
+    if age > timedelta(hours=6):
+        return "Snapshot STALE (>6 hours): refresh owner and CI evidence before action"
+    return "Snapshot recent within 6 hours: still NOT proof of current GitHub state"
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True,
@@ -412,6 +436,9 @@ def main(argv=None):
               manifest["original_review_manifest_sha256"])
         print("Source-observed PRs: " + str(receipt["filtered_pr_candidates"]) +
               " / " + str(receipt["original_source_pr_candidates"]))
+        print("Original observation UTC: " +
+              str(manifest.get("latest_observed_at_utc", "UNKNOWN")))
+        print(source_recency_summary(manifest.get("latest_observed_at_utc")))
         print("Archive hashes are internally consistent, NOT authenticated; "
               "no current GitHub owner, CI, merge or live state is established.")
         if args.show_queue:
