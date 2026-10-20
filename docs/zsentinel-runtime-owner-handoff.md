@@ -26,6 +26,17 @@ python3 scripts/zsentinel_live_cockpit.py \
   --format html > /private/zsentinel/cockpit-20261020.html
 ```
 
+Het P0-eerst-overzicht is ook **zonder** aparte export direct in de offline HTML op te vragen:
+
+```sh
+umask 077
+python3 scripts/zsentinel_live_cockpit.py \\
+  --github-only --project cloud \\
+  --show-owner-handoff --format html > /private/zsentinel/p0-werkbak.html
+```
+
+Dit creëert geen eigen handoff-file vanuit Python; de HTML-redirect is een bewuste operatorhandeling naar een al bestaande besloten map. De bronverzameling blijft dezelfde eenmalige, begrensde GitHub-only read; queue- en actieve claimstatus blijven in deze variant ONBEKEND. `--show-owner-handoff` vereist expliciet `--format html`.
+
 Bij `--format html` verschijnt dezelfde P0-eerst-werkbak bovendien **boven in de bestaande offline cockpit**, met directe links naar canonieke bestaande productissues. De privé-export en de HTML-kop delen exact dezelfde in-memory bronbeslissing: er komt geen tweede GitHub-, Notion- of SQLite-lezing bij. Onbetrouwbare titels, notities en actietekst worden HTML-geëscaped en bij Markdown ook letterlijk gecodeerd, zodat externe brontekst niet als opmaak, HTML of actieve link kan worden geïnterpreteerd.
 
 De HTML-redirect is een expliciete shellhandeling van de **operator** en krijgt alleen private permissies wanneer de operator zelf een private `umask`/map gebruikt. Voor de **door het programma geschreven** handoff gelden onafhankelijk `O_EXCL | O_NOFOLLOW`, reguliere 0600-bestandspermissies en een bestaande oudermap. De handoff weigert een bestaande bestemming en een pad dat samenvalt met een SQLite-bron, lokale dedup-ledger, opgeslagen Notion-export, vorige privéscan of andere privé-uitvoer.
