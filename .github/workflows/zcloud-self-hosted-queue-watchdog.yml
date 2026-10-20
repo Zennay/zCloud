@@ -64,11 +64,18 @@ jobs:
 
           now=datetime.now(timezone.utc)
           queued=get(f"/repos/{repo}/actions/runs?status=queued&per_page=100").get("workflow_runs") or []
+          # Provider windows may be truncated. Never report an empty sample
+          # as proof the entire GitHub queue is empty.
+          observed=queued[:16]
+          complete=len(queued)<100 and len(queued)<=16
           candidates=[]
-          for run in queued:
+          partial_jobs=False
+          for run in observed:
               created=datetime.fromisoformat(str(run["created_at"]).replace("Z","+00:00"))
               age=(now-created).total_seconds()
               jobs=get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?filter=latest&per_page=100").get("jobs") or []
+              if len(jobs)>=100:
+                  partial_jobs=True
               for job in jobs:
                   if job.get("status") != "queued":
                       continue
@@ -78,22 +85,34 @@ jobs:
                   candidates.append({
                       "run_id":run["id"],
                       "job_id":job.get("id"),
-                      "name":run.get("name"),
-                      "path":run.get("path"),
-                      "job":job.get("name"),
-                      "age_s":int(age),
-                      "labels":sorted(labels),
+                      "age_s":max(0,int(age)),
                   })
 
           # Read-only observation: never cancel a queued run or replay an
           # Actions workflow without explicit owner authorization.
           remaining=[x for x in candidates if x["age_s"] >= 180]
           evidence={
-              "queued_self_hosted_jobs":candidates,
-              "stale_self_hosted_jobs":remaining,
-              "count":len(remaining),
+              "queued_self_hosted_jobs_in_sample":len(candidates),
+              "stale_self_hosted_jobs_in_sample":len(remaining),
+              "runs_inspected":len(observed),
+              "runs_not_inspected_lower_bound":len(queued)-len(observed),
+              "coverage_complete":bool(complete and not partial_jobs),
+              "max_stale_age_s":max((item["age_s"] for item in remaining),default=None),
+              "cancel_performed":False,
+              "restart_performed":False,
+              "recovery_authorized":False,
           }
           print("stale_detected=" + ("true" if remaining else "false"))
           print("evidence=" + json.dumps(evidence,separators=(",",":")))
+          summary=os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary,"a",encoding="utf-8") as output:
+                  output.write("## zCloud queued self-hosted work (observation only)\\n\\n")
+                  output.write(f"- Inspected queued runs: {len(observed)}; provider window complete: {str(evidence['coverage_complete']).lower()}\\n")
+                  output.write(f"- Queued self-hosted jobs in sampled runs: {len(candidates)}\\n")
+                  output.write(f"- Older than 3 minutes: {len(remaining)}\\n")
+                  output.write(f"- Uninspected queued runs (at least): {len(queued)-len(observed)}\\n")
+                  output.write("- No cancel, restart, dispatch or new claim authorized or performed.\\n")
+                  output.write("- Recovery requires the existing resource/owner and release gates.\\n")
           PY
 
