@@ -320,3 +320,43 @@ nog niet gemerged of deployed. Geen QA-, regressie- of testsuites
 geschreven/gestart; geen claims, wachtrij- of runnerwijzigingen.
 Verplichte exacte-head CI, onafhankelijke review en toestemming
 voor productie-inzet blijven intact.
+
+## 20 oktober · eigenaaroverdracht in alle bestaande portfolio-uitvoerformaten
+
+Het bestaande portfolio-commando accepteert `--show-owner-handoff`
+nu niet alleen bij `--format html` maar óók bij
+`--format handoff`, `--format text` en `--format json`.
+De source-bound `build_handoff` is éénmaal opgebouwd nadat
+de queue-vergelijking (indien beschikbaar) en de actuele
+SQLitestatus al bekend zijn; formats renderen **hetzelfde**
+read-only advies en voeren geen extra observaties of mutaties uit.
+
+- **HTML**: bestaande optionele eigenaarpaneel boven de actuele cockpit.
+- **handoff (Markdown)**: complete afzonderlijke centrale
+  eigenaarsbriefing vóór de bestaande blocker-first briefing.
+- **text**: dezelfde veilige eigenaarsbriefing vóór de
+  bestaande compacte console-portfolioinformatie.
+- **JSON**: expliciet `owner_handoff`-veld met geobserveerde
+  actieve leases, optionele historische/private trends, bronbereik
+  en per-item `claim_authorized=false`,
+  `retry_authorized=false`, `merge_authorized=false`,
+  `deploy_authorized=false`. Zonder opt-in is het veld `null`.
+
+De formaten `ics` en `desk` blijven uitgesloten van deze
+optie. Het oorspronkelijke bron-/outputbeleid blijft gelden:
+uitsluitend geautoriseerde privérapportlocaties, geen verzending,
+workerclaim, automatische issue-sluiting, retry, merge of deploy.
+Een ontbrekende `--queue-previous` blijft expliciet **ONBEKEND**,
+terwijl de eerste-run-actuele leasebron wel al zichtbaar kan zijn.
+
+Voorbeeld voor een private handmatige overdracht:
+```sh
+python3 scripts/zsentinel_portfolio_overview.py \
+  --database /pad/naar/bestaande/history.db \
+  --show-owner-handoff --format handoff \
+  --output /eigenaar/prive/zsentinel-overdracht.md
+```
+
+Alles is broncode op de reeds bestaande
+[PR #1563](https://github.com/Zennay/zCloud/pull/1563).
+Geen nieuwe QA-suite, workflow, procesgate of productieactie.
