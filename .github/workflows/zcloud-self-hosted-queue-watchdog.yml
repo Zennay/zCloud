@@ -107,12 +107,12 @@ jobs:
           summary=os.environ.get("GITHUB_STEP_SUMMARY")
           if summary:
               with open(summary,"a",encoding="utf-8") as output:
-                  output.write("## zCloud queued self-hosted work (observation only)\\n\\n")
-                  output.write(f"- Inspected queued runs: {len(observed)}; provider window complete: {str(evidence['coverage_complete']).lower()}\\n")
-                  output.write(f"- Queued self-hosted jobs in sampled runs: {len(candidates)}\\n")
-                  output.write(f"- Older than 3 minutes: {len(remaining)}\\n")
-                  output.write(f"- Uninspected queued runs (at least): {len(queued)-len(observed)}\\n")
-                  output.write("- No cancel, restart, dispatch or new claim authorized or performed.\\n")
-                  output.write("- Recovery requires the existing resource/owner and release gates.\\n")
+                  output.write("## zCloud queued self-hosted work (observation only)\n\n")
+                  output.write(f"- Inspected queued runs: {len(observed)}; provider window complete: {str(evidence['coverage_complete']).lower()}\n")
+                  output.write(f"- Queued self-hosted jobs in sampled runs: {len(candidates)}\n")
+                  output.write(f"- Older than 3 minutes: {len(remaining)}\n")
+                  output.write(f"- Uninspected queued runs (at least): {len(queued)-len(observed)}\n")
+                  output.write("- No cancel, restart, dispatch or new claim authorized or performed.\n")
+                  output.write("- Recovery requires the existing resource/owner and release gates.\n")
           PY
 
