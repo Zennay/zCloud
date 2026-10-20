@@ -21,7 +21,7 @@ MAX_ITEMS = 4
 MAX_CHECKS = 12
 
 GATE_KEYS = (
-    "status", "human_gate_blocker", "draft_at_read",
+    "status", "human_gate_blocker", "draft_at_read", "base_sha_observed",
     "observed_checks_pending", "observed_checks_unknown",
     "observed_checks_not_successful", "observed_legacy_pending",
     "observed_legacy_failure_or_error",
@@ -98,8 +98,10 @@ def _gate_rows(board, repos):
             raise ValueError("invalid gate blocker")
         if status == "current_exact_pr_head_and_sample_match":
             head = row.get("head_sha_observed")
-            if type(head) is not str or not SHA.fullmatch(head):
-                raise ValueError("missing pinned exact HEAD")
+            base = row.get("base_sha_observed")
+            if (type(head) is not str or not SHA.fullmatch(head)
+                    or type(base) is not str or not SHA.fullmatch(base)):
+                raise ValueError("missing pinned exact HEAD or base")
             for key in ("observed_actionable_check_runs",
                         "observed_actionable_legacy_contexts"):
                 val = row.get(key)
@@ -230,11 +232,16 @@ def compare_gate_episodes(previous, current):
     for url, now in new_rows.items():
         past = old_rows.get(url)
         old_head = past.get("head_sha_observed") if past else None
+        old_base = past.get("base_sha_observed") if past else None
         head = now.get("head_sha_observed")
-        same_head = type(head) is str and head == old_head and SHA.fullmatch(head) is not None
+        base = now.get("base_sha_observed")
+        same_ref = (
+            type(head) is str and SHA.fullmatch(head) is not None
+            and type(base) is str and SHA.fullmatch(base) is not None
+            and head == old_head and base == old_base)
         exact = (past is not None and
                  past["status"] == now["status"] ==
-                 "current_exact_pr_head_and_sample_match" and same_head)
+                 "current_exact_pr_head_and_sample_match" and same_ref)
         fully_sampled = exact and all(
             row.get("check_page_complete") is True
             and row.get("review_page_may_be_truncated") is False
@@ -244,7 +251,7 @@ def compare_gate_episodes(previous, current):
             for row in (past, now))
         if past is None:
             change = "newly_selected_in_current_sample_not_new_pr"
-        elif not same_head:
+        elif not same_ref:
             change = "head_changed_or_source_uncertain"
         elif not fully_sampled:
             change = "gate_source_incomplete_no_stability_claim"
@@ -259,6 +266,8 @@ def compare_gate_episodes(previous, current):
             "observed_changed_non_green_checks_hidden": hidden,
             "previous_head": old_head if type(old_head) is str and SHA.fullmatch(old_head) else None,
             "current_head": head if type(head) is str and SHA.fullmatch(head) else None,
+            "previous_base": old_base if type(old_base) is str and SHA.fullmatch(old_base) else None,
+            "current_base": base if type(base) is str and SHA.fullmatch(base) else None,
             "change": change,
             "previous_blocker": past.get("human_gate_blocker") if past else None,
             "current_blocker": now["human_gate_blocker"],
@@ -274,6 +283,8 @@ def compare_gate_episodes(previous, current):
             "url": url, "project": old["project"],
             "previous_head": old.get("head_sha_observed"),
             "current_head": None,
+            "previous_base": old.get("base_sha_observed"),
+            "current_base": None,
             "observed_changed_non_green_checks": [],
             "observed_changed_non_green_checks_hidden": 0,
             "change": "not_selected_now_not_evidence_of_merge_or_closure",
@@ -305,7 +316,7 @@ def compare_gate_episodes(previous, current):
 
 LABELS = {
     "newly_selected_in_current_sample_not_new_pr": "Nieuw in selectie; geen bewijs van nieuwe PR",
-    "head_changed_or_source_uncertain": "HEAD gewijzigd of bron onzeker; huidige eigenaar controleren",
+    "head_changed_or_source_uncertain": "PR-HEAD/doelbasis gewijzigd of bron onzeker; huidige eigenaar controleren",
     "gate_source_incomplete_no_stability_claim": "Onvolledige gatebron; geen stabiel-hold bewijs",
     "same_exact_head_and_gate_receipts_at_two_observations":
         "Zelfde HEAD en gatebewijs op beide bronmomenten; geen ongewijzigde tussenperiode bewezen",
