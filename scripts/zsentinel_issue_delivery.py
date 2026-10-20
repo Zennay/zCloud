@@ -13,7 +13,7 @@ from html import escape
 from pathlib import Path
 
 from zsentinel_product_issue_inbox import ROOT, canonical_projects, collect, observed_time
-from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs
+from zsentinel_pr_delivery import NEXT_ACTION_NL, observe_prs, _classic_status_display
 from zsentinel_issue_progress import load_private_prior, progress_since
 
 MAX_PROJECTS = 3
@@ -162,7 +162,7 @@ def build_workboard(inbox, registry, token=None):
                 "coverage": evidence.get("coverage") if complete else "source_incomplete",
                 "action": NEXT_ACTION_NL[evidence["next_step"]] if complete
                           else "Onvolledige/gewijzigde PR-bron: eigenaar moet opnieuw controleren.",
-                "combined_legacy_status": legacy.get("combined_observed", "unknown"),
+                "combined_legacy_status": _classic_status_display(legacy),
                 "ci_attention": flagged[:16],
                 "issue_fixed": False, "owner_verified": False,
                 "merge_authorized": False,
