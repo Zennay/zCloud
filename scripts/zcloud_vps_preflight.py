@@ -186,6 +186,10 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("SOURCE_PROVENANCE", "zCloud release owner",
                   "Exact remote-main provenance has not been established for this host.",
                   "Obtain a fresh independent protected-main SHA and compare. Require existing exact-head CI, review and release admission before deployment.")
+    if "ARCHIVE_COLD_TIER_NOT_READY" in codes or "ARCHIVE_WRITE_UNVERIFIED" in codes:
+        recommend("ARCHIVE_ROUTE_OWNER", "VPS archive / storage owner",
+                  "An external mount is not proof that writes or safe cleanup are possible.",
+                  "Verify encrypted archival destination rights and owner authorization separately; never delete source data before remote checksum verification.")
     if not recommendations:
         recommend("EXTERNAL_RELEASE_GATES", "zCloud release owner",
                   "A local read-only preflight cannot authorize a production release.",
@@ -256,16 +260,20 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         disk_free_pct = None
         mark("DISK_UNOBSERVABLE", "warn", "Cannot read filesystem space.")
 
-    blocked = any(f["severity"] == "block" for f in findings)
-    recovery = actionable_recovery(findings)
     inventory = optional_storage_inventory(root) if disk_hotspots else None
     if inventory is not None and inventory["incomplete"]:
         mark("STORAGE_TRIAGE_PARTIAL", "warn",
              "Some bounded disk summaries timed out or were unavailable; do not infer zero usage.")
     archive = archive_mount_readiness() if archive_readiness else None
-    if archive is not None and archive["state"] != "mounted_write_unverified":
-        mark("ARCHIVE_NOT_WRITABLE_VERIFIED", "warn",
-             "Archive is unavailable, read-only or unverified; never assume relocation is possible.")
+    if archive is not None:
+        if archive["state"] == "mounted_write_unverified":
+            mark("ARCHIVE_WRITE_UNVERIFIED", "warn",
+                 "External mount exists, but actual archive write permission is not proven.")
+        else:
+            mark("ARCHIVE_COLD_TIER_NOT_READY", "warn",
+                 "External archive is missing, read-only or unavailable for verified relocation.")
+    blocked = any(f["severity"] == "block" for f in findings)
+    recovery = actionable_recovery(findings)
     return {
         "schema": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
         "mode": "read_only", "release_authorized": False,
@@ -342,6 +350,9 @@ def render_html(report: dict) -> str:
     def item(text: str, value: object) -> str:
         return f"<dt>{esc(text)}</dt><dd>{esc(value)}</dd>"
 
+    def val(value: object) -> str:
+        return "Not measured" if value is None else str(value)
+
     findings = "".join(
         f'<li class="finding"><strong>{esc(f["code"])}</strong>'
         f' <span class="{esc(f["severity"])}">{esc(f["severity"].upper())}</span>'
@@ -394,8 +405,6 @@ def render_html(report: dict) -> str:
     checkout = report["checkout"]
     runner = report["runner"]
     resources = report["resources"]
-    def val(value: object) -> str:
-        return "Not measured" if value is None else str(value)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light"><title>zCloud VPS release preflight</title>
