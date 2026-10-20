@@ -7,6 +7,8 @@ sample NEVER grants claim, edit, merge, release, or worker authority.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 from datetime import datetime, timezone
 from html import escape
 import json
@@ -14,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import stat
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -1294,6 +1297,109 @@ def graph_markdown(report):
 
 
 
+MAX_GRAPH_CSV_RECORDS = 2500
+MAX_GRAPH_CSV_BYTES = 2 * 1024 * 1024
+
+
+def graph_private_csv(report):
+    """Source-linked private single-project PR/file report, not permission."""
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, dialect="excel", lineterminator="\r\n")
+    header = (
+        "record_type", "repository", "source_page", "source_complete",
+        "cluster_number", "shared_filename", "pr_number", "pr_url",
+        "pr_head_sha", "related_pr_url", "related_pr_head_sha",
+        "shared_files_observed", "unverified_issue_number",
+        "owner_verified", "merge_authorized", "operator_notice"
+    )
+    writer.writerow(header)
+    count = 0
+    def safe(value):
+        raw = "".join("\\u%04x" % ord(c) if ord(c) < 32 or ord(c) == 127
+                      else c for c in str(value))
+        if raw.lstrip(" \u200b\u200c\u200d\u2060\ufeff").startswith(("=", "+", "-", "@")):
+            return "'" + raw
+        return raw
+
+    def row(kind, **values):
+        nonlocal count
+        if not set(values).issubset(header):
+            raise ValueError("unknown CSV observation field")
+        count += 1
+        if count > MAX_GRAPH_CSV_RECORDS:
+            raise ValueError("private PR CSV observation too large")
+        base = {
+            "record_type": kind, "repository": report["repository"],
+            "source_page": report["open_pr_page_number"],
+            "source_complete": ("true" if report["pr_file_scope_sample_complete"]
+                                else "false"),
+            "owner_verified": "false", "merge_authorized": "false",
+            **values,
+        }
+        writer.writerow([safe(base.get(col, "")) for col in header])
+        if output.tell() > MAX_GRAPH_CSV_BYTES:
+            raise ValueError("private PR CSV byte count too large")
+
+    row("source_summary", operator_notice=(
+        "Partial or non-atomic GitHub PR sample; claims, owner and merge gates UNKNOWN."))
+    for cluster in report["linked_pr_collision_clusters"]:
+        for file_row in cluster["shared_file_pr_matrix"]:
+            for pr in file_row["touching_prs"]:
+                row("shared_file_exact_pr",
+                    cluster_number=cluster["component_number"],
+                    shared_filename=file_row["path"],
+                    pr_number=pr["number"], pr_url=pr["url"],
+                    pr_head_sha=pr["head_sha"],
+                    operator_notice=("Exact PR path observation; owner NOT verified. " +
+                        ("PR source files partial." if not pr["source_file_list_complete"]
+                         else "PR file sample complete.")))
+        if cluster["shared_files_sample_truncated"]:
+            row("source_warning", cluster_number=cluster["component_number"],
+                operator_notice="Additional paths beyond bounded cluster sample UNKNOWN.")
+    for pair in report["shown_file_collision_pairs"]:
+        row("shared_file_pr_pair", pr_number=pair["left"]["number"],
+            pr_url=pair["left"]["url"],
+            pr_head_sha=pair["left"]["head_sha"],
+            related_pr_url=pair["right"]["url"],
+            related_pr_head_sha=pair["right"]["head_sha"],
+            shared_files_observed=pair["shared_file_count_observed"],
+            operator_notice="Same filename is NOT a proven merge conflict.")
+    for group in report["shown_duplicate_issue_groups"]:
+        for pr in group["shown_pr_sources"]:
+            row("unverified_issue_number", pr_url=pr["url"],
+                pr_head_sha=pr["head_sha"],
+                unverified_issue_number=group["issue_number"],
+                operator_notice="PR text hint; issue identity/fix unverified.")
+    if report["collision_cards_truncated"] or report["duplicate_issue_groups_truncated"]:
+        row("source_warning", operator_notice=(
+            "Some file collision pairs or issue hints are beyond the output cap."))
+    if not report["pr_file_scope_sample_complete"]:
+        row("source_warning", operator_notice=(
+            "Other PRs, source files or GitHub pages not established; "
+            "absence of conflicts cannot be inferred."))
+    return "\ufeff" + output.getvalue()
+
+
+def save_graph_private_csv(report, path):
+    """Create a single new private CSV. Never echo its content to stdout."""
+    if not isinstance(path, Path) or not hasattr(os, "O_NOFOLLOW"):
+        raise ValueError("private CSV needs an explicit new output pathname")
+    data = graph_private_csv(report).encode("utf-8")
+    if len(data) > MAX_GRAPH_CSV_BYTES:
+        raise ValueError("private CSV exceeds actual UTF-8 byte bound")
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as destination:
+            if not stat.S_ISREG(os.fstat(destination.fileno()).st_mode):
+                raise ValueError("private CSV destination must be a regular file")
+            destination.write(data)
+            destination.flush()
+            os.fsync(destination.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
@@ -1315,10 +1421,17 @@ def main(argv=None):
                              "voor PR-tekstverwijzingsgroepen, nooit claim/merge")
     parser.add_argument("--audit-open-prs", action="store_true",
                         help="Toon een bestandsoverlapkaart voor open PR's zonder handmatige doelpaden.")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv"), default="text")
+    parser.add_argument("--output", type=Path,
+                        help="Only for --audit-open-prs --format csv: NEW private 0600 file")
     args = parser.parse_args(argv)
     try:
         repos = registry(args.registry)
+        if (args.format == "csv" and
+                (not args.audit_open_prs or args.output is None)):
+            raise ValueError("private CSV requires --audit-open-prs and --output")
+        if args.output is not None and args.format != "csv":
+            raise ValueError("--output is reserved for private CSV")
         if args.project not in repos:
             raise ValueError("unknown canonical project")
         if args.audit_open_prs:
@@ -1328,7 +1441,11 @@ def main(argv=None):
                                             os.environ.get("GITHUB_TOKEN"), args.max_prs,
                                             open_page=args.open_page, page_count=args.page_count,
                                             resolve_issue_identity=args.resolve_issue_identity)
-            if args.format == "json":
+            if args.format == "csv":
+                save_graph_private_csv(report, args.output)
+                print("Created NEW private file-scope CSV; no claim or merge authority.",
+                      file=sys.stderr)
+            elif args.format == "json":
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             elif args.format == "html":
                 print(graph_html(report))
