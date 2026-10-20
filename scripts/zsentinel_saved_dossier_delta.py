@@ -240,7 +240,7 @@ def csv_handoff(result):
     """One spreadsheet-safe observational row per saved PR."""
     output = StringIO(newline="")
     writer = csv.writer(output, delimiter=";", quotechar='"',
-                        lineterminator="\\r\\n")
+                        lineterminator="\r\n")
     writer.writerow([
         "Vorige bronmanifest SHA256", "Nieuwe bronmanifest SHA256",
         "Vorig bronmoment UTC", "Nieuw bronmoment UTC",
@@ -272,7 +272,7 @@ def csv_handoff(result):
             item["human_follow_up"],
             "ONBEKEND", "ONBEKEND", "ONBEKEND",
         ])
-    return "\\ufeff" + output.getvalue()
+    return "\ufeff" + output.getvalue()
 
 def render(result, fmt):
     if fmt == "json":
