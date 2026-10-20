@@ -7,6 +7,8 @@ review, merge, incident-recovery or deployment source. No network or claims.
 from __future__ import annotations
 
 import argparse
+import csv
+from io import StringIO
 from datetime import datetime, timezone
 from html import escape
 import json
@@ -233,11 +235,52 @@ def markdown(result):
     return "\n".join(rows)
 
 
+
+def csv_handoff(result):
+    """One spreadsheet-safe observational row per saved PR."""
+    output = StringIO(newline="")
+    writer = csv.writer(output, delimiter=";", quotechar='"',
+                        lineterminator="\\r\\n")
+    writer.writerow([
+        "Vorige bronmanifest SHA256", "Nieuwe bronmanifest SHA256",
+        "Vorig bronmoment UTC", "Nieuw bronmoment UTC",
+        "Bronproject", "Prioriteit bron", "PR URL", "Veranderklasse",
+        "Waargenomen verschillen", "PR HEAD vorige bron", "PR HEAD nieuwe bron",
+        "Gatebron vorige bron", "Gatebron nieuwe bron",
+        "Gateklasse vorige bron", "Gateklasse nieuwe bron",
+        "Menselijke vervolgactie", "Actuele claim/CI/review bevestigd",
+        "Gemerged op main bewezen", "Live bewezen",
+    ])
+    for item in result["items"]:
+        old = item["before"] or {}
+        new = item["after"] or {}
+        writer.writerow([
+            result["before"]["review_manifest_sha256"],
+            result["after"]["review_manifest_sha256"],
+            result["before"]["latest_observed_utc"],
+            result["after"]["earliest_observed_utc"],
+            item["repository"], item["priority"], item["url"],
+            item["category"],
+            " | ".join(REASONS[k] for k in item["changed_fields"]
+                       if k in REASONS) or "STEEKPROEF_VERANDERD",
+            old.get("observed_head") or "ONBEKEND",
+            new.get("observed_head") or "ONBEKEND",
+            old.get("gate_source") or "ONBEKEND",
+            new.get("gate_source") or "ONBEKEND",
+            old.get("primary_gate") or "ONBEKEND",
+            new.get("primary_gate") or "ONBEKEND",
+            item["human_follow_up"],
+            "ONBEKEND", "ONBEKEND", "ONBEKEND",
+        ])
+    return "\\ufeff" + output.getvalue()
+
 def render(result, fmt):
     if fmt == "json":
         body = json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     elif fmt == "markdown":
         body = markdown(result)
+    elif fmt == "csv":
+        body = csv_handoff(result)
     else:
         e = lambda x: escape(str(x), quote=True)
         source = result["before"]
@@ -297,7 +340,7 @@ def main(argv=None):
                         help="Previously saved private project ZIP")
     parser.add_argument("--after", type=Path, required=True,
                         help="Later saved private project ZIP, same project selection")
-    parser.add_argument("--format", choices=("html", "markdown", "json"),
+    parser.add_argument("--format", choices=("html", "markdown", "json", "csv"),
                         default="html")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
