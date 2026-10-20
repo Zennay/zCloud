@@ -3,17 +3,17 @@
     "id": "zsentinel",
     "name": "zSentinel · Vliegende keep",
     "eyebrow": "PORTFOLIO RECOVERY WORKER",
-    "goal": "Clear highest-impact open P0/P1 issues, finish inherited product pull requests through protected main, and recover blocked release/runner flows across the whole portfolio.",
+    "goal": "Finish already-open product PRs on main with the existing CI/review/ownership gates, then restore stalled workers and blocked delivery routes across canonical projects without displacing active claims.",
     "repo_url": "https://github.com/Zennay/zCloud",
     "notion_url": "https://app.notion.com/p/3fb9e19ac95581f2b686f01ed9e4dee0",
-    "phase": "Cross-project open-work recovery",
+    "phase": "Merge-first delivery · blocked worker recovery",
     "status": "active",
     "priority": "high",
     "next_step": "Start with existing open product PRs: inspect exact-head required CI, independent review and any conflicts; merge only with an authorized live exclusive mainwriter lease, GitHub permission and verified default-branch commit. For HOLD or unknown-owner work, run the read-only scripts/zsentinel_issue_first_board.py --project cloud (plus up to two independent canonical projects) to prioritize observed P0/P1 issues already referenced by existing non-QA PRs. Treat PR-body references as hints, never proof of a fix or owner vacancy; inspect active Notion/queue claims before touching a task. Repair real CI/conflicts or safely deliver another freely owned P0/P1 fix; never start new QA suites, bypass security/release gates or deploy without owner authority.",
     "milestone_revision": "zsentinel-issue-first-main-delivery-20261020",
     "milestones": [
       {
-        "title": "Actively repair unowned open work across projects",
+        "title": "Deliver owned product PRs and restore blocked project execution",
         "done": false,
         "progress": 0
       }
