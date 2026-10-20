@@ -402,6 +402,26 @@ runner-labels, claimrechten en CI-status niet bewezen. Het is een read-only
 productcorrectie op deze bestaande branch; geen herstelactie, merge of
 productie-activatie.
 
+### Veilige prioriteit in de begrensde herstelagenda
+
+De privé herstelbalie laat maximaal negen advieskaarten tegelijk zien.
+Voorheen konden vroeg toegevoegde, minder urgente kaarten de plaats van
+een later waargenomen actieve Runner.Worker innemen. Bovendien stopte de
+P0-issuekaartgenerator wanneer de lijst al negen kaarten telde, nog vóór
+een betekenisvolle prioriteitsselectie.
+
+De balie bepaalt nu eerst de kleine begrensde kandidatenlijst en
+selecteert pas daarna maximaal negen kaarten in vaste volgorde:
+**bestaande jobs beschermen**, echte urgenties en bron-/claim-HOLDs,
+brongebonden lokale P0-productissues, overige menselijke reviews, en
+pas daarna informatie over een vrije lane. De onderliggende aparte
+queue- en runner-tabellen blijven zichtbaar, ook wanneer niet elke
+advieskaart in de shortlist past.
+
+Dit wijzigt alleen het getoonde advies. Geen kaart verleent
+claimrechten, toestemming voor runnerherstart, CI-dispatch, merge of
+deploy en geen job, runtimeproces of lokale SQLite-rij is gewijzigd.
+
 ### Remaining release gate
 
 The feature is source-only in the open existing PR #1572. Do not call it
