@@ -63,7 +63,7 @@ def _utc(value):
         return None
 
 
-def operator_admission(lane, source_complete, cross_lane_complete, collision_count):
+def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases):
     """Map a local lane observation to human-only admission guidance.
 
     This deliberately never claims a task and is not an admission token.
@@ -78,6 +78,12 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "code": "ACTIVE_OWNER_PROTECTED",
             "label": "Bestaande eigenaar behouden",
             "next_step": "Controleer actuele claimhouder en voortgang; neem deze taak niet over.",
+        }
+    if expired_local_leases and state != "idle":
+        return {
+            "code": "HOLD_EXPIRED_LOCAL_CLAIM",
+            "label": "Verlopen lokale lease(s) aangetroffen",
+            "next_step": "Laat de bestaande claimeigenaar de daadwerkelijke taakstatus vergelijken; niet opnieuw claimen.",
         }
     if not source_complete or not cross_lane_complete:
         return {
@@ -301,7 +307,7 @@ def collect(database, maximum, include_runner_processes=False):
         conflicts = lane.get("blocked_by") or []
         admission = operator_admission(
             lane, source_complete, cross_lane_coverage,
-            collision_counts[lane["lane_id"]],
+            collision_counts[lane["lane_id"]], expired,
         )
         visible.append({
             "id": lane["lane_id"],
@@ -362,7 +368,7 @@ def collect(database, maximum, include_runner_processes=False):
         "lanes": visible,
         "source_complete": source_complete,
         "ownership_reconciliation_required": bool(
-            expired_queue_claims or unknown_queue_claim_expiry
+            expired or expired_queue_claims or unknown_queue_claim_expiry
             or inconsistent_queue_claim_windows or untrusted_active_leases
             or ambiguous or queue_partial or claims_partial
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
@@ -428,6 +434,9 @@ def text_view(data):
     )
     if data["claimed_without_local_lease_observation"]:
         out.append("LET OP: claimed wachtrij-items zonder waargenomen lokale lease.")
+    if data["expired_local_leases_observed"]:
+        out.append("HOLD: " + str(data["expired_local_leases_observed"])
+                   + " verlopen lokale leases waargenomen; eigenaarstatus handmatig controleren.")
     if data["expired_in_flight_queue_claims_observed"]:
         out.append("VERLOPEN queue-claimtermijnen: "
                    + str(data["expired_in_flight_queue_claims_observed"])
@@ -502,6 +511,11 @@ def html_view(data):
             + "</p></article>"
         )
     warnings = []
+    if data["expired_local_leases_observed"]:
+        warnings.append(
+            str(data["expired_local_leases_observed"])
+            + " verlopen lokale leases waargenomen; controleer de bestaande eigenaar voordat er nieuw werk start."
+        )
     if data["claimed_without_local_lease_observation"]:
         warnings.append(
             "Claimed taken zonder zichtbare lokale lease: niet herclaimen."
