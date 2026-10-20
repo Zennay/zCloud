@@ -618,3 +618,61 @@ dispatch/release instruction. Only an independently authorized operator or
 worker may later inspect a candidate using live ownership, CI and release
 evidence. No automatic workflow, background scheduler, claim or PR mutation
 was installed.
+
+
+## 20 October · Saved live GitHub gate source overlay for merge-first triage
+
+The workbench now optionally imports a **single saved, bounded JSON GitHub
+PR gate observation** and attaches it to *only* canonical PR URLs already
+linked from the validated, offline delivery board. This bridges the local
+Merge-first operator view with the source created by the separate zSentinel
+live issue/PR scope cockpit in [PR #1567](https://github.com/Zennay/zCloud/pull/1567).
+It does not merge either pending PR and does not make the offline tool
+into a GitHub client.
+
+### Workflow (once both source PRs have passed required integration gates)
+
+Produce a saved read-only report using the authorized operator's own local
+GitHub credentials and the **existing** command in the PR #1567 cockpit:
+
+```sh
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --inspect-pr-gates \
+  --max-prs 10 --format json > saved-github-pr-observation.json
+```
+
+The output can be imported into the already-open local Product Delivery
+Workbench through **Import GitHub PR-gate snapshot**; it requires no browser
+network access, token, service, Notion claim or background scheduler. A direct
+saved `zsentinel-current-pr-gate-observation-v1` JSON receipt is also
+accepted. The file must be under 1 MiB, use a supported versioned schema,
+contain the source's explicit non-authorizing flags, have a valid nonfuture
+UTC observation timestamp and match at least one original board PR link.
+Malformed, foreign, conflicting, changed-head or unavailable evidence never
+promotes a PR to merge-ready. One failed import keeps the previous overlay
+unchanged. The overlay is memory-only and can be cleared explicitly.
+
+The optional **PR gate focus** narrows *only the grouped PR references* to
+observed failing CI, pending CI, review changes/missing approvals, missing or
+incomplete receipt, or apparently completed observed checks. An observed
+green group still says **NOT MERGE AUTHORITY**: the real current PR HEAD,
+required branch rules, independent review and owner/release consent are
+not established by this saved JSON. Within priority order, failed and
+pending observations are shown first. The independent list of product
+issues without captured PR links remains visible and never becomes a
+claimable queue.
+
+Imported observations show the saved HEAD prefix, modern and legacy
+pending/failed check counts, independent review count, source completeness,
+explicit human next gate and age. Receipts older than 15 minutes are labeled
+**STALE**; newer receipts remain *observational*, not live authority. The
+exact imported source bytes are SHA-256 pinned. The reviewed Markdown and
+JSON handoffs include that hash, their observed source time and explicitly
+false authorization flags, never raw credentials, private contacts or notes.
+All downloads require a preview of the *current* filters/imported source,
+and modifying the overlay invalidates existing previews.
+
+The feature writes no issue, PR, Notion page, queue, worker lease, runner,
+workflow, VPS service or deployment. It performs no merge/restart/dispatch
+and adds or manually invokes no QA/regression suite. Current protected
+main, mandatory CI, review and release rules apply independently.
