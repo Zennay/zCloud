@@ -253,9 +253,13 @@ def render_html(board, max_rows=20):
 (function(){
 'use strict';
 const tickets=Array.from(document.querySelectorAll('article.ticket[data-issue]'));
+const prs=Array.from(document.querySelectorAll('.pr-work[data-pr]'));
 const search=document.getElementById('q'), priority=document.getElementById('priority');
 const project=document.getElementById('project'), state=document.getElementById('state');
-const visible=document.getElementById('visible');
+const visible=document.getElementById('visible'), prState=document.getElementById('pr-state');
+const prLabels={open:'Nog te beoordelen',review:'Wacht op review/CI',
+ owner:'Wacht op huidige eigenaar',coordinate:'Afstemming tussen PRs nodig',
+ followup:'Opvolging vastgelegd'};
 const labels={open:'Nog te bekijken',owner:'Wacht op bevoegde eigenaar',
   coordination:'Afstemming nodig',followup:'Opvolging genoteerd'};
 function refresh(){
@@ -313,11 +317,16 @@ document.getElementById('session-save').addEventListener('click',function(){
   status:t.querySelector('.local-state').value,
   note:t.querySelector('textarea').value.slice(0,700)
  };});
+ const prRows=prs.map(function(p){return {
+  pr:p.dataset.pr,
+  status:p.querySelector('.pr-local-state').value,
+  note:p.querySelector('.pr-note').value.slice(0,500)
+ };});
  const data=JSON.stringify({
-  schema:'zsentinel-local-handoff-v1',
+  schema:'zsentinel-local-handoff-v2',
   source_token:document.body.dataset.sourceToken,
   saved_at:new Date().toISOString(),
-  entries:rows,
+  entries:rows, pr_entries:prRows,
   merge_authorized:false,claim_authorized:false,remote_writes_performed:false
  },null,2);
  const blob=new Blob([data+'\n'],{type:'application/json;charset=utf-8'});
@@ -329,13 +338,14 @@ document.getElementById('session-import').addEventListener('change',async functi
  const input=event.currentTarget, file=input.files&&input.files[0];
  if(!file)return;
  try{
-  if(file.size>65536||file.size<10)throw new Error('Privébestand is ongeldig of te groot');
+  if(file.size>524288||file.size<10)throw new Error('Privébestand is ongeldig of te groot');
   const restored=JSON.parse(await file.text());
-  if(!restored||restored.schema!=='zsentinel-local-handoff-v1'||
+  if(!restored||restored.schema!=='zsentinel-local-handoff-v2'||
      restored.source_token!==document.body.dataset.sourceToken||
      restored.merge_authorized!==false||restored.claim_authorized!==false||
      restored.remote_writes_performed!==false||
-     !Array.isArray(restored.entries)||restored.entries.length!==tickets.length)
+     !Array.isArray(restored.entries)||restored.entries.length!==tickets.length||
+     !Array.isArray(restored.pr_entries)||restored.pr_entries.length!==prs.length)
     throw new Error('Deze sessie hoort niet bij dezelfde bronopname');
   const allowed=new Set(Object.keys(labels));
   for(let i=0;i<tickets.length;i++){
@@ -344,9 +354,20 @@ document.getElementById('session-import').addEventListener('change',async functi
        typeof item.note!=='string'||item.note.length>700)
       throw new Error('Sessie bevat geen betrouwbare handmatige opvolging');
   }
+  const prAllowed=new Set(Object.keys(prLabels));
+  for(let i=0;i<prs.length;i++){
+    const item=restored.pr_entries[i];
+    if(!item||item.pr!==prs[i].dataset.pr||!prAllowed.has(item.status)||
+       typeof item.note!=='string'||item.note.length>500)
+      throw new Error('Sessie bevat ongeldige PR-opvolging');
+  }
   for(let i=0;i<tickets.length;i++){
     tickets[i].querySelector('.local-state').value=restored.entries[i].status;
     tickets[i].querySelector('textarea').value=restored.entries[i].note;
+  }
+  for(let i=0;i<prs.length;i++){
+    prs[i].querySelector('.pr-local-state').value=restored.pr_entries[i].status;
+    prs[i].querySelector('.pr-note').value=restored.pr_entries[i].note;
   }
   refresh();
   document.getElementById('session-status').textContent=
