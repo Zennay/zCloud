@@ -274,6 +274,14 @@ python3 scripts/zsentinel_runner_report.py --output herstelverloop.html \
   --timeline T0.json T1.json T2.json
 ```
 
+Het rapport telt daarnaast, over de hele opgegeven reeks, per werkelijk
+geobserveerde service hoeveel meetmomenten een `failed`-status bevatten,
+hoe vaak hoge swapdruk (≥80%), kritieke rootschijfdruk (≥90%) en hoge
+systeemload (>1,35× CPU-affinity-cores) zijn **waargenomen**, plus hoeveel
+bronnen onvolledig waren. Een telling is nadrukkelijk **niet** het aantal
+nieuwe crashes, retries, downminuten of daadwerkelijk toegewezen GitHub-jobs.
+Bij ontbrekende metingen worden er geen nulmeting of herstelde service verzonnen.
+
 De weergave laat per opeenvolgende meting zien: servicestatuswijzigingen,
 onvolledige inventarisdekking, dezelfde of veranderde Linux-opstartsessie,
 load/RAM/swap/root-schijfverschil en (uitsluitend waar vergelijkbaar) de
