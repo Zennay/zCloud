@@ -119,7 +119,8 @@ def observed_workflows(receipt, sha):
     return state
 
 
-def inspect(repo, number, budget, expected_body_digest=None):
+def inspect(repo, number, budget, expected_body_digest=None,
+            expected_title_digest=None):
     try:
         first = bounded_gh(f"repos/{repo}/pulls/{number}", budget)
         if not isinstance(first, dict) or not isinstance(first.get("head"), dict):
@@ -130,7 +131,19 @@ def inspect(repo, number, budget, expected_body_digest=None):
             raise ValueError("invalid PR source commit")
         if not isinstance(base, dict) or not isinstance(base.get("ref"), str):
             raise ValueError("invalid PR base")
-        title = str(first.get("title") or "")[:160]
+        first_title = first.get("title")
+        if not isinstance(first_title, str) or len(first_title) > 5000:
+            raise ValueError("untrusted PR title")
+        title = first_title[:160]
+        if expected_title_digest is not None:
+            if (not isinstance(expected_title_digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", expected_title_digest)):
+                raise ValueError("invalid PR title fingerprint")
+            if hashlib.sha256(first_title.encode("utf-8")).hexdigest() != expected_title_digest:
+                return {"repo": repo, "number": number, "title": title, "head": sha,
+                        "status": "PR_TITLE_CHANGED", "review": "UNKNOWN",
+                        "checks": "UNKNOWN", "source": "CHANGED",
+                        "actions": ["Refresh current issue references"]}
         if expected_body_digest is not None:
             if not isinstance(expected_body_digest, str) or not re.fullmatch(
                     r"[0-9a-f]{64}", expected_body_digest):
@@ -169,6 +182,15 @@ def inspect(repo, number, budget, expected_body_digest=None):
             return {"repo": repo, "number": number, "title": title, "head": sha,
                     "status": "SOURCE_MOVED", "review": "UNKNOWN",
                     "checks": "UNKNOWN", "source": "CHANGED", "actions": ["Refresh exact-head evidence"]}
+        if expected_title_digest is not None:
+            final_title = last.get("title")
+            if (not isinstance(final_title, str) or len(final_title) > 5000
+                    or hashlib.sha256(final_title.encode("utf-8")).hexdigest()
+                    != expected_title_digest):
+                return {"repo": repo, "number": number, "title": title, "head": sha,
+                        "status": "PR_TITLE_CHANGED", "review": "UNKNOWN",
+                        "checks": "UNKNOWN", "source": "CHANGED",
+                        "actions": ["Refresh current issue references"]}
         if expected_body_digest is not None:
             latest_body = last.get("body") or ""
             if (not isinstance(latest_body, str) or len(latest_body) > 128000
