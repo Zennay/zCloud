@@ -111,6 +111,8 @@ def _safe_followup(state, assignment):
         return "owner_reconcile_stale_queue_claim_without_claim_transfer"
     if state == "recent_client_block_event_owner_review":
         return "owner_inspect_current_assignment_and_recent_browser_block"
+    if state == "recent_browser_block_without_prompt_context_owner_review":
+        return "owner_verify_orphan_browser_block_without_prompt_identity"
     if state == "post_block_progress_signal_owner_verification_required":
         return "owner_verify_product_continuation_after_block_signal"
     if state in ("generating_but_progress_unverified_or_stale",
@@ -201,6 +203,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "progress_age_seconds": None, "assistant_character_count": None,
             "browser_generating": False, "browser_sending": False,
             "recent_block_event_after_last_prompt": False,
+            "recent_block_event_without_prompt_context": False,
             "later_progress_signal_after_recent_block": False,
             "classification": (
                 "allocated_paused_with_claimed_queue_owner_gate"
@@ -287,9 +290,15 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "AND worker_slot=? AND event IN (?,?,?,?) ORDER BY id DESC LIMIT 1",
         args + BLOCKED).fetchone()
     block_age = _age(blocked[1], now) if blocked is not None else None
+    # No prior prompt is NOT evidence of a post-prompt failure. Keep
+    # orphaned browser errors visible but do not attribute them to a task.
     blocked_after_prompt = bool(
-        blocked is not None
-        and (prompt is None or blocked[0] > prompt[0])
+        blocked is not None and prompt is not None
+        and blocked[0] > prompt[0]
+        and block_age is not None and block_age <= 900
+    )
+    unbound_recent_block = bool(
+        blocked is not None and prompt is None
         and block_age is not None and block_age <= 900
     )
     # A later progress/finish event is NOT product delivery, but an old
@@ -335,6 +344,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         state = "post_block_progress_signal_owner_verification_required"
     elif blocked_after_prompt:
         state = "recent_client_block_event_owner_review"
+    elif unbound_recent_block:
+        state = "recent_browser_block_without_prompt_context_owner_review"
     elif (generating and event_age is not None and event_age <= 180
           and progress_age is not None and progress_age <= 180):
         state = "generation_progress_timestamp_observed"
@@ -363,6 +374,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "browser_generating": bool(generating),
         "browser_sending": bool(sending),
         "recent_block_event_after_last_prompt": blocked_after_prompt,
+        "recent_block_event_without_prompt_context": unbound_recent_block,
         "later_progress_signal_after_recent_block": newer_signal,
         "classification": state,
         "event_source": "indexed_local_runner_events_only",
@@ -463,6 +475,7 @@ def observe_worker_progress(database, projects, *, now=None):
         "allocated_paused_with_claimed_queue_owner_gate",
         "allocated_queue_claim_expired_or_invalid_owner_recheck",
         "recent_client_block_event_owner_review",
+        "recent_browser_block_without_prompt_context_owner_review",
         "post_block_progress_signal_owner_verification_required",
         "generating_but_progress_unverified_or_stale",
         "worker_event_stale_or_unknown",
@@ -557,6 +570,8 @@ def _operator_worker_priority(row):
         return (1, row.get("project_id", ""), row.get("worker_slot", 0))
     if row.get("classification") == "recent_client_block_event_owner_review":
         return (2, row.get("project_id", ""), row.get("worker_slot", 0))
+    if row.get("classification") == "recent_browser_block_without_prompt_context_owner_review":
+        return (3, row.get("project_id", ""), row.get("worker_slot", 0))
     if row.get("classification") == "post_block_progress_signal_owner_verification_required":
         return (3, row.get("project_id", ""), row.get("worker_slot", 0))
     if row.get("classification") in (
@@ -636,7 +651,9 @@ def worker_progress_html(source):
         + "</aside>"
     )
     status = {
-        "recent_client_block_event_owner_review": "Recent browserblokkadesignaal; eigenaarcontrole",
+        "recent_client_block_event_owner_review": "Recent browserblokkadesignaal na opdracht; eigenaarcontrole",
+        "recent_browser_block_without_prompt_context_owner_review":
+            "Recent browserfoutsignaal zonder zichtbare prompt; opdrachttoewijzing ONBEKEND",
         "post_block_progress_signal_owner_verification_required":
             "Na eerdere blokkade een nieuwer generatie-event; herstel niet bewezen",
         "generation_progress_timestamp_observed": "Recente generatievoortgang waargenomen",
@@ -735,6 +752,8 @@ def worker_progress_html(source):
                 "Claimstatus bestaat maar lease is verlopen/ongeldig; laat bevoegde eigenaar handmatig toestand reconciliëren, zonder overname.",
             "owner_inspect_current_assignment_and_recent_browser_block":
                 "Open de recente browserblokkade bij de bevoegde workereigenaar.",
+            "owner_verify_orphan_browser_block_without_prompt_identity":
+                "Recent browserfoutsignaal maar geen opdrachtbron; verifieer eerst huidige prompt/toewijzing bij eigenaar.",
             "owner_verify_product_continuation_after_block_signal":
                 "Ná blokkade is een nieuwer generatie-event gezien; laat eigenaar productcontinuïteit verifiëren.",
             "owner_verify_current_lease_and_real_worker_progress":
