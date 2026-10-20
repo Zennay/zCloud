@@ -129,3 +129,33 @@ VPS-releasegates daadwerkelijk zijn gepasseerd. Er zijn
 geen QA-/regressiesuites geschreven of gestart, geen workflow
 herstart, geen Notion-/VPS-claim gewijzigd en geen producer
 op productie gedeployed.
+
+
+### 20 oktober · Resterende leasevelden en veilige nieuwe werktoewijzing
+
+Een historisch `queued`-record met `worker_slot=NULL` is nog niet
+automatisch vrij wanneer `claimed_at` of `claim_expires` een
+vorig, niet-afgesloten claimspoor bevat. De bestaande echte
+`_portfolio_eligible_lane_candidates_locked()`-selectie eist
+voortaan ook dat **beide leasevelden NULL** zijn voordat een
+nieuwe browser-worker dit werk kan ontvangen.
+
+Diezelfde vrije-claimregel is op drie bestaande paden
+consequent doorgevoerd: het project-refill-overzicht (geen
+schijnbare actieve productvoorraad), de private read-only
+queue-health (`product_delivery_ready_observed` telt het
+record niet) en het bestaande operator-overzicht
+`product_queue_snapshot()` (`queued_residual_lease_fields_held`
+als aparte categorie). De classificatie wordt nooit gebruikt
+om oude leasevelden automatisch schoon te maken of een
+eigenaar te vervangen. Een bevoegde queue-owner dient
+de werkelijke claimstatus te onderzoeken en zo nodig via
+het normale bestaande proces vrij te geven.
+
+Bewijsgrenzen: deze wijziging geldt **na** reguliere merge
+en bevoegde serialized productiedeploy. Het veranderen van
+GitHub-broncode is geen feitelijke terugname van een claim
+of live runnerreparatie. De ongewijzigde veiligheids-,
+CI-, review- en eigenaargates blijven verplicht. Er is
+geen QA-/regressiesuite aangemaakt of gedraaid en geen
+zSSH-schrijfactie of live queue-mutatie uitgevoerd.
