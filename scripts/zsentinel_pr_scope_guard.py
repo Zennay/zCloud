@@ -278,15 +278,21 @@ def overlaps(wanted, changed):
     return changed.startswith(wanted) if wanted.endswith("/") else changed == wanted
 
 
-def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
+def observe(repo, wanted, token=None, limit=24, source_pr_number=None,
+            expanded_source_files=False):
     if (not REPO.fullmatch(repo) or not isinstance(wanted, list)
             or len(wanted) > MAX_PATHS or len(set(wanted)) != len(wanted)
             or type(limit) is not int or not 1 <= limit <= MAX_INSPECT
-            or not wanted and source_pr_number is None):
+            or not wanted and source_pr_number is None
+            or expanded_source_files and source_pr_number is None):
         raise ValueError("invalid scope request")
     wanted = [edit_path(path) for path in wanted]
-    source = (selected_source_pr(repo, source_pr_number, token)
-              if source_pr_number is not None else None)
+    source = (selected_source_pr(
+        repo, source_pr_number, token, expanded_files=expanded_source_files)
+        if source_pr_number is not None else None)
+    if source is not None and expanded_source_files:
+        if source["product_candidate_based_on_title"] is not True:
+            raise ValueError("expanded source scope is product-only")
     if source is not None:
         wanted = sorted(set(wanted).union(source["paths"]))
     page_size = min(MAX_OPEN_PAGE, limit + 1)
@@ -333,7 +339,9 @@ def observe(repo, wanted, token=None, limit=24, source_pr_number=None):
             "head_sha": source["head_sha"],
             "base_sha": source["base_sha"],
             "source_head_stable": source_stable,
-            "source_file_count": len(source["paths"])
+            "source_file_count": len(source["paths"]),
+            "source_file_pages_observed": source["source_file_pages_observed"],
+            "expanded_source_file_pages_requested": bool(expanded_source_files),
         }),
         "source": "bounded_double_read_current_open_github_prs",
         "observed_open_prs": len(before),
@@ -792,7 +800,10 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", required=True)
     parser.add_argument("--path", action="append", default=[])
-    parser.add_argument("--source-pr", type=int, help="Gebruik alle gewijzigde paden van deze open PR als doel; sla PR zelf over.")
+    parser.add_argument("--source-pr", type=int, help="Gebruik gewijzigde paden van één bestaande open PR als doel.")
+    parser.add_argument("--expanded-source-files", action="store_true",
+                        help="Optioneel: alleen voor expliciet gekozen product-PR "
+                             "tot drie bestandspagina's/240 paden ophalen")
     parser.add_argument("--max-prs", type=int, default=24)
     parser.add_argument("--audit-open-prs", action="store_true",
                         help="Toon een bestandsoverlapkaart voor open PR's zonder handmatige doelpaden.")
@@ -803,7 +814,7 @@ def main(argv=None):
         if args.project not in repos:
             raise ValueError("unknown canonical project")
         if args.audit_open_prs:
-            if args.path or args.source_pr is not None:
+            if args.path or args.source_pr is not None or args.expanded_source_files:
                 raise ValueError("--audit-open-prs cannot be combined with --path/--source-pr")
             report = observe_conflict_graph(repos[args.project],
                                             os.environ.get("GITHUB_TOKEN"), args.max_prs)
@@ -817,8 +828,10 @@ def main(argv=None):
                 print(graph_operator_text(report))
             return (2 if report["observed_file_collision_pairs"] else
                     3 if not report["pr_file_scope_sample_complete"] else 0)
-        report = observe(repos[args.project], args.path,
-                         os.environ.get("GITHUB_TOKEN"), args.max_prs, args.source_pr)
+        report = observe(
+            repos[args.project], args.path,
+            os.environ.get("GITHUB_TOKEN"), args.max_prs, args.source_pr,
+            expanded_source_files=args.expanded_source_files)
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
