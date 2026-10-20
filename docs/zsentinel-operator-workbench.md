@@ -784,3 +784,31 @@ and independently verify its current exact head, required branch
 protection, independent review and authorization. No QA/regression
 suite, CI rerun, paid runner, live worker or production action is
 initiated by this bridge.
+
+
+### 20 October · Trustworthy saved PR triage and strict input admission
+
+The original offline Merge-first Desk now displays one **saved PR gate triage
+overview** for its current human-selected filter: failed observations, pending
+checks, review required, unavailable/incomplete source and the explicitly
+non-authorizing category of apparently clear sampled checks. It always labels
+these as saved observations. The private Markdown handoff includes the same
+overview. A structured `saved_gate_triage` section in the reviewed JSON
+manifest makes the observed categories available to a subsequent *human*
+operator without turning them into a worker assignment or merge command.
+All live exact-head required checks, current claim, branch rules, independent
+reviews and owner/release permissions remain `false`/unverified.
+
+The companion `zsentinel_saved_gate_batch_bridge.py` additionally refuses
+cross-repository or duplicate issue-to-PR links in saved manifests, even when
+their individual URLs are syntactically valid. Untrusted JSON is now admitted
+through a single bounded no-follow/nonblocking **regular-file descriptor**;
+the file identity and size are compared before/after the read. Duplicate
+JSON keys (including a second `merge_authorized` field), nonfinite numbers,
+replaced/symlinked paths, nonregular files and visibly changing bytes are
+rejected before any import is written. The source limit, UTC bounds,
+all-batches-required rule and private output permissions remain unchanged.
+
+These are product changes on the **existing open PR #1560**, not a
+standalone QA initiative. Source-acceptance and optional normal mandatory
+CI remain separate from authorization to merge or deploy.
