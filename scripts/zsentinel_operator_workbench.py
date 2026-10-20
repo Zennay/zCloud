@@ -378,7 +378,7 @@ Downloaded notes belong to the operator and are not authorization to act on queu
 const board = """ + records + """;
 const boardSha = """ + json.dumps(board_sha) + """;
 const baselineSchema = 'zsentinel-product-delivery-triage-v1';
-const issuePattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
+const issuePattern = /^[A-Za-z0-9_.-]+\\/[A-Za-z0-9_.-]+#[1-9][0-9]{0,8}$/;
 let baseline=null,carryPreview=null;
 const issueList=document.getElementById('issues'),detail=document.getElementById('detail');
 const status=document.getElementById('status');
