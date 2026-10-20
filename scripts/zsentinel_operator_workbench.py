@@ -577,6 +577,9 @@ function currentBrief(){
     'Original: '+card.url,
     'Original issue title: '+line(card.title,180),
     'Human disposition: '+line(human?.decision||'investigate',40)+' (not an owner claim)',
+    'Manual follow-up contact: '+line(human?.owner||'not entered',80)+' (label only, not a GitHub or Notion assignee)',
+    'Manual UTC review date: '+(human?.due||'not entered')+' · '+
+      (manualGateDecisions.has(human?.decision)?dueState(human):'not a human escalation'),
     'Claim context: '+line(card.claim_context,100),
     'Observed PRs: '+(card.open_pr_candidates.length?
       card.open_pr_candidates.join(' | '):'none in bounded snapshot'),
@@ -687,8 +690,9 @@ function drawDetail(){
 document.getElementById('export').onclick=()=>{
  saveSelection();
  const rows=[...handoffs].filter(([id,v])=>entries.has(id)&&permitted.has(v.decision))
- .map(([issue,value])=>({issue,decision:value.decision,note:value.note.slice(0,1000)}));
- const payload={schema_version:1,kind:'zsentinel-private-human-delivery-handoff',
+ .map(([issue,value])=>({issue,decision:value.decision,note:value.note.slice(0,1000),
+   owner:value.owner||'',due:value.due||''}));
+ const payload={schema_version:2,kind:'zsentinel-private-human-delivery-handoff',
    source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
    authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false,entries:rows};
  const uri=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\\n'],{type:'application/json'}));
@@ -723,7 +727,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
  try{
    if(file.size<4||file.size>65536)throw Error('size');
    const data=JSON.parse(await file.text());
-   if(!data||Array.isArray(data)||data.schema_version!==1||
+   if(!data||Array.isArray(data)||![1,2].includes(data.schema_version)||
       data.kind!=='zsentinel-private-human-delivery-handoff'||
       data.source_board_sha256!==boardSha||
       data.source_observed_at_utc!==board.observed_at_utc||
@@ -736,8 +740,14 @@ document.getElementById('restore').addEventListener('change',async event=>{
          next.has(v.issue)||!permitted.has(v.decision)||
          typeof v.note!=='string'||v.note.length>1000||
          new TextEncoder().encode(v.note).length>4000||
-         [...v.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t'))throw Error('malformed note');
-     next.set(v.issue,{decision:v.decision,note:v.note});
+         [...v.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t')||
+         (data.schema_version===2&&(
+          typeof v.owner!=='string'||v.owner.length>80||
+          [...v.owner].some(ch=>ch.codePointAt(0)<32||ch==='<'||ch==='>')||
+          !validFollowupDate(v.due))))throw Error('malformed note/follow-up');
+     next.set(v.issue,{decision:v.decision,note:v.note,
+       owner:data.schema_version===2?v.owner:'',
+       due:data.schema_version===2?v.due:''});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
    invalidateBrief();drawList();drawDetail();
