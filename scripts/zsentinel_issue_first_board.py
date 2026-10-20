@@ -368,7 +368,13 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
         examined += 1
         try:
             pr = board.bounded_gh(f"repos/{repo}/pulls/{number}", budget)
-            if eligible_pr(pr) is None:
+            # Explicit known PRs can be historical: a closed source PR may
+            # already be on main while its linked issue remains open. Never
+            # let open-only discovery hide that independently checked receipt.
+            closed_product = (pr.get("state") == "closed"
+                              and type(pr.get("draft")) is bool
+                              and not explicit_qa_only_pr(pr))
+            if eligible_pr(pr) is None and not closed_product:
                 outcomes.append({"number": number, "status": "NOT_ELIGIBLE",
                                  "issue_reference_source": "NOT_VERIFIED"})
                 limitations.append({"project": project,
@@ -389,13 +395,19 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
                                    expected_title_digest=title_digest)
             has_ref = issue_number in reference_hints(
                 title, body, {issue_number}, repo=repo)
-            trustworthy = (report.get("source") == "COMPLETE"
-                           and report.get("status") in {
-                               "HOLD", "OBSERVED_GATES_ONLY", "DRAFT"}
-                           and report.get("head") == (pr.get("head") or {}).get("sha"))
-            report["observed_issue_refs"] = [target] if has_ref and trustworthy else []
+            source_matches = (report.get("source") == "COMPLETE"
+                              and report.get("head") == (pr.get("head") or {}).get("sha"))
+            trustworthy = (source_matches and report.get("status") in {
+                "HOLD", "OBSERVED_GATES_ONLY", "DRAFT"})
+            historical = (source_matches and closed_product and
+                          report.get("status") in {
+                              "CLOSED_NOT_MERGED", "MERGED_ON_MAIN_VERIFIED",
+                              "MERGED_INTO_NONDEFAULT_BRANCH"})
+            report["observed_issue_refs"] = ([target] if has_ref and
+                                             (trustworthy or historical) else [])
             report["issue_reference_source"] = (
                 "EXPLICIT_PR_VERIFIED_REFERENCE" if has_ref and trustworthy
+                else "HISTORICAL_PR_REFERENCE_NOT_FIX_PROOF" if has_ref and historical
                 else "EXPLICIT_PR_NO_CURRENT_VERIFIED_REFERENCE")
             report["reference_proves_fix"] = False
             report["active_claim_status"] = "UNKNOWN_NOT_OWNED"
@@ -439,7 +451,9 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
             report["observed_issue_refs"] = []
             report["issue_reference_source"] = "UNKNOWN_OR_MOVED"
         for outcome in outcomes:
-            if outcome["issue_reference_source"] == "EXPLICIT_PR_VERIFIED_REFERENCE":
+            if outcome["issue_reference_source"] in {
+                    "EXPLICIT_PR_VERIFIED_REFERENCE",
+                    "HISTORICAL_PR_REFERENCE_NOT_FIX_PROOF"}:
                 outcome["issue_reference_source"] = "UNKNOWN_OR_MOVED"
     limitations.append({"project": project, "reason": "EXPLICIT_PR_SELECTION_NOT_SEARCH"})
     coverage = {
