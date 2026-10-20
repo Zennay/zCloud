@@ -57,7 +57,7 @@ def parse_jobs(raw, names):
 def assemble(registry, selected, jobs, queue_path, token=None,
              include_issues=True, include_ci_discovery=True, observe_vps=False,
              include_notion=False, notion_data_source=None, notion_token=None,
-             notion_registry=ROOT / "projects.json", queue_snapshot=None,
+             notion_registry=ROOT / "projects.json", notion_export_path=None, queue_snapshot=None,
              pinned_issues=None, worker_events_database=None):
     if (not isinstance(selected, list) or not 1 <= len(selected) <= MAX_PROJECTS
             or len(selected) != len(set(selected))
@@ -164,17 +164,22 @@ def assemble(registry, selected, jobs, queue_path, token=None,
             source["worker_progress"] = "unavailable_no_worker_recovery_proof"
     else:
         source["worker_progress"] = "not_requested"
-    if include_notion:
-        # Status visibility only: Notion rows contain no current file-scope
-        # leases and MUST NOT enable the independent task router.
+    if include_notion or notion_export_path is not None:
+        # Positive status hints, never current file-scope lease/owner authority.
         try:
             from zsentinel_notion_claim_observer import observe_claims, project_labels
             labels = project_labels(notion_registry, registry)
-            claims = observe_claims(notion_data_source, notion_token, labels)
+            if notion_export_path is not None:
+                from zsentinel_notion_connector_snapshot import observe_saved_connector
+                claims = observe_saved_connector(
+                    notion_export_path, notion_data_source, labels)
+                source["notion"] = "private_connector_snapshot_unverified_origin"
+            else:
+                claims = observe_claims(notion_data_source, notion_token, labels)
+                source["notion"] = "claim_status_observed_no_file_ownership"
             bundle["notion_claims_observation"] = claims
-            source["notion"] = "claim_status_observed_no_file_ownership"
             source["notion_claim_coverage"] = claims["coverage"]
-        except (ValueError, OSError):
+        except (ValueError, OSError, TypeError):
             source["notion"] = "degraded_unavailable_no_claim_authority"
             source["notion_claim_coverage"] = "unavailable"
     if pins:
@@ -216,6 +221,8 @@ def main():
                         help="read only active Notion work statuses; never prove path ownership")
     parser.add_argument("--notion-data-source",
                         help="Notion queue data source UUID, or NOTION_QUEUE_DATA_SOURCE_ID environment variable")
+    parser.add_argument("--notion-claims-export", type=Path,
+                        help="private saved Notion connector query; no current-claim proof")
     parser.add_argument("--observe-vps-capacity", action="store_true",
                         help="read current Linux host CPU/load/memory and database-mount disk; use ONLY on the intended VPS")
     parser.add_argument("--worker-events-database", type=Path,
@@ -236,6 +243,8 @@ def main():
     try:
         if args.pin_issue and args.skip_github_issues:
             raise ValueError("--pin-issue cannot be combined with --skip-github-issues")
+        if args.read_notion_claims and args.notion_claims_export is not None:
+            raise ValueError("choose either live Notion token or saved connector snapshot")
         if args.github_only:
             if args.database is not None:
                 raise ValueError("--github-only requires omitting --database")
@@ -269,6 +278,7 @@ def main():
                                 os.environ.get("NOTION_QUEUE_DATA_SOURCE_ID")),
             notion_token=os.environ.get("NOTION_TOKEN"),
             notion_registry=args.registry,
+            notion_export_path=args.notion_claims_export,
             queue_snapshot=(explicitly_unobserved_queue()
                             if args.github_only else None),
             pinned_issues=args.pin_issue,
@@ -333,11 +343,16 @@ def main():
                 lines.insert(0, pinned_receipts_text(provenance))
             if args.github_only:
                 lines.insert(0, "QUEUE: NIET WAARGENOMEN (--github-only); claims en werkhervatting ONBEKEND.")
-            if provenance["notion"] == "claim_status_observed_no_file_ownership":
+            if provenance["notion"] in (
+                    "claim_status_observed_no_file_ownership",
+                    "private_connector_snapshot_unverified_origin"):
                 observed = bundle["notion_claims_observation"]
+                warning = (" MANUALLY SAVED SNAPSHOT: origin and current "
+                           "owner/lease NOT VERIFIED." if provenance["notion"] ==
+                           "private_connector_snapshot_unverified_origin" else "")
                 lines.append("NOTION: " + str(observed["active_count"]) +
                              " observed Claimed/Running work items; coverage " +
-                             observed["coverage"] + ".")
+                             observed["coverage"] + "." + warning)
             elif provenance["notion"] == "degraded_unavailable_no_claim_authority":
                 lines.append("NOTION: unavailable. No zero-claim assertion.")
             else:
