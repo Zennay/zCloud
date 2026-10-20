@@ -539,3 +539,38 @@ nieuw aangemaakt privaat bestand met mode 0600. Niets wordt automatisch
 naar GitHub, Notion, VPS, workers, queues of een deployment geschreven.
 De beperking van maximaal 32 bonnen betekent dat zeer grote manifests
 expliciet gedeeltelijk blijven, niet stilzwijgend als afgevinkt verschijnen.
+
+
+### Gatebatchresultaat terugzien in de bestaande interactieve issuecockpit
+
+De nieuwe brongebonden, opgeslagen PR-gategegevens verschijnen ook rechtstreeks
+bij de betreffende **bestaande PR-link per P0/P1-issue** in de
+`zsentinel_issue_scope_cockpit.py`-werkbank. Naast het reeds beschikbare
+live-issue- en bestandscope-overzicht ziet de operator de historische
+gatecategorie, laatst opgeslagen menselijke vervolgactie en expliciete
+bronouderdom. Hierdoor blijft de merge-first-afweging zichtbaar op dezelfde
+plek waar de productissues staan, in plaats van twee losse rapporten naast
+elkaar te moeten lezen.
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --issue-board ./private-product-delivery-board.json \
+  --project cloud --from-review ./merge-first-review.json \
+  --saved-gate-receipt ./private-gates-1.json \
+  --saved-gate-receipt ./private-gates-2.json \
+  --format html > ./private-issue-and-gates.html
+```
+
+`--live-issues --project cloud` mag eveneens als issuebron, maar is dan een
+**andere bronwaarneming**, geen atomische GitHub snapshot. De commandovlag
+`--inspect-pr-gates` (echt live, hooguit vier PR's) is bewust exclusief met
+`--saved-gate-receipt` (opgeslagen, historisch). Het JSON-resultaat toont
+`saved_gate_batch_reconciliation` en per gekoppelde PR optioneel
+`saved_reconciled_gate_observation` zonder de bestaande gescheiden
+`live_exact_head_review_checks_observation` te vervalsen.
+
+Ook bij groene opgeslagen signalen blijft `merge_authorized=false`.
+Onvolledige batches, ontbrekende actuele Notion-claims, niet geverifieerde
+branch protection en release-eigenaarschap kunnen nooit verborgen
+mergetoestemming opleveren. Er wordt geen bestaande review, branch,
+testuitvoering, queue of productiedienst gemuteerd.
