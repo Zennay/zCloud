@@ -21,6 +21,7 @@ DEST = "vpsarchive:zCloud-cold"
 # Shared zCloud checkouts contain dated private/research directories from OTHER projects.
 # A date alone is not permission to upload or prune their contents.
 ARCHIVE_NAME = re.compile(r"^zcloud-(?:cold|archive|backup)-(20\d{6})(?:[-_][A-Za-z0-9_-]{1,80})?$")
+DATED_DIRECTORY = re.compile(r"(?<!\d)(20\d{6})(?!\d)")
 EXCLUDE = {"repos", "worktrees", "scripts", "tests", "public", "deploy", ".git", ".github",
            "node_modules", ".venv", "backups", "dist", "build", "__pycache__"}
 MIN_UPLOAD_DAYS = 2
@@ -111,6 +112,16 @@ def candidates(age, limit=MAX_CANDIDATES):
     results.sort(key=lambda x: (x["latest_mtime"], x["name"]))
     return results[:limit]
 
+def excluded_dated_directory_count():
+    """Report an aggregate only; never list or read foreign project contents."""
+    if ROOT.is_symlink() or not ROOT.is_dir():
+        raise RuntimeError("Canonical zCloud source directory is unavailable")
+    return sum(1 for path in ROOT.iterdir()
+               if path.is_dir() and not path.is_symlink()
+               and DATED_DIRECTORY.search(path.name)
+               and ARCHIVE_NAME.fullmatch(path.name) is None)
+
+
 def connected():
     try:
         command(str(BIN), "lsd", "gdrive:", "--max-depth", "1", timeout=25)
@@ -194,6 +205,8 @@ def main():
         print(json.dumps({"mode": "read_only", "cold_days": MIN_UPLOAD_DAYS,
             "candidate_count": len(items), "scope": "zcloud-{cold,archive,backup}-YYYYMMDD[-suffix]",
             "max_candidates": MAX_CANDIDATES, "max_batch_bytes": MAX_BATCH_BYTES,
+            "unscoped_dated_directories_excluded": excluded_dated_directory_count(),
+            "unscoped_size_measured": False, "manual_owner_selection_required": True,
             "transfer_performed": False, "cleanup_authorized": False,
             "items": [{"name": x["name"], "bytes": x["bytes"], "files": x["files"]}
                       for x in items]}, indent=2))
