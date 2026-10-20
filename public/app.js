@@ -887,6 +887,18 @@ function validateGitHubActivityReceipt(value){
       description='PR #'+entry.pr+' · '+entry.kind.replaceAll('_',' ');
       if(typeof entry.pr_head_sha==='string'&&/^[a-f0-9]{40}$/.test(entry.pr_head_sha))
         description+=' · '+entry.pr_head_sha.slice(0,12);
+      if(entry.kind==='pr_closed'){
+        // Closure is a separately timestamped GitHub source event, never
+        // proof of a merge, deployed change or released worker claim.
+        if(entry.merged!==false||entry.main_merged!==false
+            ||entry.reported_main_merge!==false
+            ||entry.pr_lifecycle!=='closed_without_merge'
+            ||typeof entry.pr_closed_at!=='string'
+            ||!Number.isFinite(Date.parse(entry.pr_closed_at))
+            ||Math.abs(Date.parse(entry.source_at)-Date.parse(entry.pr_closed_at))>1000)
+          throw Error('Invalid closed-unmerged PR evidence');
+        description+=' · closed without merge · NOT delivered';
+      }
       if(entry.kind==='pr_merged'){
         description+=entry.main_merged===true
           ? ' · exact merge SHA also in this imported main history (not live deploy proof)'
