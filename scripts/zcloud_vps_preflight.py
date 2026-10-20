@@ -380,7 +380,7 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
                  "No active browser/queue evidence in this bounded sample does not establish safe idle.")
     blocked = any(f["severity"] == "block" for f in findings)
     recovery = actionable_recovery(findings)
-    return {
+    report = {
         "schema": 1, "observed_at": datetime.now(timezone.utc).isoformat(),
         "mode": "read_only", "release_authorized": False,
         "result": "blocked" if blocked else ("partial" if findings else "preflight_clear"),
@@ -396,6 +396,73 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         "worker_safety": worker_snapshot,
         "next_step": "Obtain existing owner/release approval; never use this report as deploy authorization.",
     }
+    report["release_gates"] = release_gate_matrix(report)
+    return report
+
+
+def release_gate_matrix(report: dict) -> list[dict[str, str]]:
+    """One bounded decision board; local observations never imply deploy approval."""
+    findings = {finding["code"] for finding in report["findings"]}
+    checkout = report["checkout"]
+    runner = report["runner"]
+    resources = report["resources"]
+    worker = report.get("worker_safety")
+    archive = report.get("archive_readiness")
+    rows: list[dict[str, str]] = []
+
+    def add(gate_id: str, status: str, owner: str, explanation: str) -> None:
+        rows.append({"gate": gate_id, "status": status, "owner": owner,
+                     "explanation": explanation, "authorizes_release": False})
+
+    if "CHECKOUT_UNAVAILABLE" in findings or "MAIN_SHA_MISMATCH" in findings:
+        source_status = "blocked"
+    elif "REMOTE_MAIN_UNBOUND" in findings or checkout["expected_main_sha"] is None:
+        source_status = "unknown"
+    else:
+        source_status = "local_match_only"
+    add("exact_main_checkout", source_status, "Production release owner",
+        "Source comparison does not prove signed main protection or approved deployment.")
+    if {"CHECKOUT_STATUS_UNAVAILABLE", "NOT_MAIN", "TRACKED_CHANGES", "UNTRACKED_FILES"} & findings:
+        clean_status = "blocked"
+    else:
+        clean_status = "locally_clear"
+    add("preserve_checkout", clean_status, "Checkout/working-tree owner",
+        "Never overwrite an uncommitted or independently owned change.")
+    if not runner["listener_pids"] or runner["unit_state"] in {"failed", "inactive"}:
+        runner_status = "blocked"
+    else:
+        runner_status = "process_observed_only"
+    add("runner_identity", runner_status, "zCloud Actions runner owner (#1326)",
+        "Listener existence does not prove current GitHub job assignment.")
+    if {"LOW_DISK", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY"} & findings:
+        capacity_status = "blocked"
+    elif None in (resources["available_ram_pct"], resources["disk_free_pct"]):
+        capacity_status = "unknown"
+    else:
+        capacity_status = "locally_observed_only"
+    add("host_capacity", capacity_status, "VPS resource owner",
+        "Capacity measurement does not reserve resources for a future release.")
+    if worker is None:
+        worker_status = "not_inspected"
+    elif worker["state"] == "active_work_observed":
+        worker_status = "blocked"
+    else:
+        worker_status = "owner_gate_required"
+    add("worker_safe_idle", worker_status, "Serialized worker/runtime owner (#580/#1089)",
+        "Browser telemetry cannot independently prove safe idle or authorize interruption.")
+    if archive is None:
+        archive_status = "not_inspected"
+    else:
+        archive_status = "write_not_authorized"
+    add("external_archive", archive_status, "Encrypted archive/storage owner",
+        "Mounted FUSE storage cannot prove transfer rights, hashes or retention permission.")
+    for gate_id, explanation in (
+        ("required_exact_head_ci", "GitHub-hosted and self-hosted required checks must be read separately on the current exact HEAD."),
+        ("independent_review", "An independent authorized reviewer must approve the exact PR HEAD."),
+        ("serialized_release", "Protected-main admission, active claims, exclusive writer and live acceptance are separate controls."),
+    ):
+        add(gate_id, "external_gate_required", "Authorized release/reviewer owner", explanation)
+    return rows
 
 
 def compare_snapshot(path: Path, current: dict) -> dict:
@@ -460,6 +527,16 @@ def render_html(report: dict) -> str:
     def val(value: object) -> str:
         return "Not measured" if value is None else str(value)
 
+    release = report.get("release_gates", [])
+    release_html = (
+        '<section aria-labelledby="gates"><h2 id="gates">Release decision board</h2>'
+        '<p class="muted">A locally clear gate is not permission to deploy.</p><dl>'
+        + "".join(
+            item(row["gate"], row["status"] + " · " + row["owner"])
+            for row in release
+        )
+        + '</dl></section>'
+    )
     findings = "".join(
         f'<li class="finding"><strong>{esc(f["code"])}</strong>'
         f' <span class="{esc(f["severity"])}">{esc(f["severity"].upper())}</span>'
@@ -564,6 +641,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {storage_html}
 {archive_html}
 {worker_html}
+{release_html}
 <section aria-labelledby="findings"><h2 id="findings">Release blockers and warnings</h2><ul>{findings}</ul></section>
 <section aria-labelledby="recovery"><h2 id="recovery">Owner-gated recovery priorities</h2><ol>{actions}</ol></section>
 <p class="disclaimer"><strong>Not an approval.</strong> This report cannot prove protected-main review,
@@ -630,6 +708,9 @@ def main() -> int:
         worker = report.get("worker_safety")
         if worker is not None:
             print(f"Worker protection: {worker['state']}; claimed queue={worker['queued_claims']}; fresh generating={worker['fresh_generating_slots']}; safe idle NOT verified")
+        print("Release decision board (all entries are advisory):")
+        for row in report["release_gates"]:
+            print(f"  {row['gate']}: {row['status']} [{row['owner']}]")
         print("Owner-gated recovery priorities:")
         for index, item in enumerate(report["recovery_priorities"], 1):
             print(f"  {index}. {item['code']} [{item['owner']}]: {item['next_action']}")
