@@ -184,6 +184,12 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .escalations li{padding:7px 0;overflow-wrap:anywhere}
 .escalations button{padding:5px 9px;margin-right:10px;background:#233c55;color:white;border:1px solid #779db8}
 .escalations small{display:block;color:#d6e3f2}
+.batch{border:1px solid #5a8197;border-radius:12px;background:#132437;padding:15px;margin:14px 0}
+.batch ol{list-style:none;padding:0;margin:8px 0;max-height:300px;overflow:auto}
+.batch li{padding:6px 0;border-bottom:1px solid #34485f}
+.batch li label{display:flex;align-items:flex-start;gap:8px;margin:0}
+.batch .toolbar{margin:10px 0}.batch pre{max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.batch button[disabled]{opacity:.55;cursor:not-allowed}
 .comparison{border:1px solid #486f87;border-radius:12px;padding:15px;margin:16px 0;background:#132237}
 .comparison ol{padding-left:25px;max-height:320px;overflow:auto}.comparison li{margin:7px 0;overflow-wrap:anywhere}
 .comparison strong{color:#d7f0ff}
@@ -273,6 +279,26 @@ confirm the transfer. Transferred labels/dates are stale human notes, NOT curren
 <p>Track human-only blockers with a local contact label and UTC review date. Overdue means
 the operator-selected date passed, not that an owner accepted a task or a notification was delivered.</p>
 <p id="followupSummary" aria-live="polite"></p><ol id="followupRows"></ol>
+</section>
+<section class="batch" aria-label="Bulk human follow-up decisions">
+<h2>Bulk human follow-up review · offline only</h2>
+<p>Choose existing human follow-ups. Preview changes before applying to private annotations.
+Selection does not claim, close or reassign any original GitHub issue.</p>
+<div class="toolbar">
+<button id="batchSelectOpen" type="button">Select currently open human follow-ups</button>
+<button id="batchClear" type="button">Clear selection</button></div>
+<p id="batchCount" aria-live="polite">0 selected.</p><ol id="batchRows"></ol>
+<label>Local change only<select id="batchAction">
+<option value="local-complete">Mark human follow-ups locally complete</option>
+<option value="open">Reopen human follow-ups</option>
+<option value="review-date">Change UTC human review date (open cases only)</option>
+</select></label>
+<label>Review date for date changes only <input type="date" id="batchDate" min="2020-01-01" max="2099-12-31"></label>
+<button id="batchPreview" type="button">Preview exact private changes</button>
+<div id="batchPreviewPanel" hidden><pre id="batchPreviewText"></pre>
+<button id="batchApply" type="button" disabled>Confirm these local follow-up changes</button></div>
+<p><small>Human labels, notes, real claims, CI/review gates and issue states remain unchanged.
+Export private JSON separately to preserve these local changes.</small></p>
 </section>
 <section class="triage" aria-label="Human-only priority and blocker queue">
 <h2>Next-action queue · observed evidence only</h2>
@@ -367,6 +393,13 @@ function dueState(info){
   'due today UTC':'scheduled by operator';
 }
 let selected=null;const handoffs=new Map();
+const batchSelection=new Set();let batchPreview=null;
+function invalidateBatch(){
+ batchPreview=null;
+ document.getElementById('batchPreviewPanel').hidden=true;
+ document.getElementById('batchPreviewText').textContent='';
+ document.getElementById('batchApply').disabled=true;
+}
 let unsavedLocal=false;
 function setUnsaved(value){
  unsavedLocal=Boolean(value);
@@ -493,6 +526,30 @@ function refreshFollowups(){
    (info.carried_from?' · Imported from older source; owner must reverify':'')));
   list.append(li);
  });
+}
+function refreshBatch(){
+ const cases=board.cards.filter(c=>manualGateDecisions.has(handoffs.get(c.issue)?.decision))
+  .sort((a,b)=>({P0:0,P1:1,P2:2,Unspecified:3}[a.priority]-
+    {P0:0,P1:1,P2:2,Unspecified:3}[b.priority])||a.issue.localeCompare(b.issue));
+ const eligible=new Set(cases.map(c=>c.issue));
+ for(const id of batchSelection)if(!eligible.has(id))batchSelection.delete(id);
+ const list=document.getElementById('batchRows');list.replaceChildren();
+ for(const card of cases){
+  const li=elem('li'),label=elem('label'),checkbox=elem('input');
+  checkbox.type='checkbox';checkbox.checked=batchSelection.has(card.issue);
+  checkbox.setAttribute('aria-label','Include human follow-up '+card.issue);
+  checkbox.addEventListener('change',()=>{
+   checkbox.checked?batchSelection.add(card.issue):batchSelection.delete(card.issue);
+   invalidateBatch();refreshBatch();
+  });
+  const info=handoffs.get(card.issue);
+  label.append(checkbox,elem('span',card.priority+' '+card.issue+' · '+card.title+
+   ' · '+dueState(info)));
+  li.append(label);list.append(li);
+ }
+ if(!cases.length)list.append(elem('li','No human-only follow-ups have been marked on this bounded board.'));
+ document.getElementById('batchCount').textContent=batchSelection.size+
+  ' selected of '+cases.length+' saved human-only cases · no external action authorized.';
 }
 function refreshTriage(){
  const ranks={P0:0,P1:1,P2:2,Unspecified:3};
@@ -856,7 +913,7 @@ function drawList(){
  document.getElementById('info').textContent=board.cards.length+' bounded issue cards · '+view.length+
    ' shown · observed '+board.observed_at_utc+' · no active-claim authorization';
  if(selected&&!view.some(c=>c.issue===selected)){saveSelection();selected=null;drawDetail()}
- refreshTriage();refreshFollowups()
+ refreshTriage();refreshFollowups();refreshBatch()
 }
 function drawDetail(){
  detail.replaceChildren();
