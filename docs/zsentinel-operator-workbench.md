@@ -812,3 +812,24 @@ all-batches-required rule and private output permissions remain unchanged.
 These are product changes on the **existing open PR #1560**, not a
 standalone QA initiative. Source-acceptance and optional normal mandatory
 CI remain separate from authorization to merge or deploy.
+
+
+### 20 October · Original board membership survives combined import
+
+After importing a complete saved-gate bridge, the browser now checks
+**every reported issue ID and issue URL** against the exact already-open
+validated delivery board. Each reported PR must appear in that original
+issue card's captured PR links. Repeated issue entries, repeated PR links
+for one issue, foreign board issues, and missing gate observations are
+refused before the existing accepted overlay is replaced.
+
+This preserves the intended meaning of the complete historical batch
+indicator. It says *all saved receipt batches for one source-bound
+review manifest were examined*, never that all portfolio PRs were
+examined or that exact-head required CI, branch protection, independent
+review, production safety, current claims or release permissions
+passed. Saved gate categories are also included in the reviewed
+Markdown/JSON operator handoff, with false authorization flags.
+
+Latest implementation on the same existing PR; no owner or active-claim
+transfer, source-only change, no QA suites written or manually executed.
