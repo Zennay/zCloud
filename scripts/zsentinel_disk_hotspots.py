@@ -270,6 +270,17 @@ def attach_open_references(report, root: Path):
     return report
 
 
+def attach_unlinked_open_files(report, root: Path):
+    """Sample currently open unlinked same-filesystem objects; never authorize cleanup."""
+    if (type(report) is not dict or report.get("schema") != SCHEMA
+            or report.get("deletion_authorized") is not False
+            or "unlinked_open_files_observation" in report):
+        raise ValueError("untrusted or already annotated disk report")
+    from zsentinel_disk_unlinked_open import observe_unlinked
+    report["unlinked_open_files_observation"] = observe_unlinked(_root(root))
+    return report
+
+
 def markdown(report):
     if report.get("schema") != SCHEMA or report.get("deletion_authorized") is not False:
         raise ValueError("untrusted disk workbench source")
@@ -324,6 +335,10 @@ def markdown(report):
         "Deze tool kan geen veilige verwijdering, vrije ruimte of herstel bewijzen.",
         "",
     ]
+    if "unlinked_open_files_observation" in report:
+        from zsentinel_disk_unlinked_open import private_markdown
+        lines.extend(["", "## Verwijderde maar nog geopende bestanden",
+                      private_markdown(report["unlinked_open_files_observation"])])
     if "disk_growth_comparison" in report:
         from zsentinel_disk_trend import as_markdown
         lines.extend(["", as_markdown(report["disk_growth_comparison"])])
@@ -380,6 +395,11 @@ def html(report):
         lines.append("<article><h2>Open verwijzingen</h2><p>" +
                      escape(private_markdown(report["file_open_reference_observation"])) +
                      "</p></article>")
+    if "unlinked_open_files_observation" in report:
+        from zsentinel_disk_unlinked_open import private_markdown
+        lines.append("<article><h2>Verwijderd maar nog geopend (zelfde mount)</h2><p>" +
+                     escape(private_markdown(report["unlinked_open_files_observation"])) +
+                     "</p></article>")
     if "disk_growth_comparison" in report:
         from zsentinel_disk_trend import as_html
         lines.append(as_html(report["disk_growth_comparison"]))
@@ -425,8 +445,15 @@ def public_summary(report):
             or type(activity.get("files_with_observed_open_references")) is not int
             or not 0 <= activity["files_with_observed_open_references"] <= len(report["top_files"])):
         raise ValueError("untrusted private open-reference evidence")
+    orphan = report.get("unlinked_open_files_observation")
+    if orphan is not None:
+        from zsentinel_disk_unlinked_open import public_summary as orphan_public
+        orphan_summary = orphan_public(orphan)
+    else:
+        orphan_summary = None
     return {
         "schema": "zsentinel-disk-workbench-summary-v1",
+        "unlinked_open_files": orphan_summary,
         "files_with_open_references_observed": (
             activity["files_with_observed_open_references"] if activity else None),
         "open_reference_coverage": activity["coverage"] if activity else "not_observed",
@@ -481,6 +508,15 @@ def public_summary_html(summary):
         '. Bestandsnamen worden bij succesvolle privé-uitvoer uitsluitend'
         ' naar een afzonderlijk 0600-rapport geschreven, NIET in deze'
         ' cockpit. Deze momentopname bewijst de bestandsschrijfstatus niet.</p>' +
+        ('<p>Verwijderd maar nog geopend op dezelfde mount: ' +
+         str(summary['unlinked_open_files']['unlinked_files_observed']) +
+         ' unieke bestanden in ' +
+         escape(summary['unlinked_open_files']['coverage']) +
+         ' /proc-steekproef; ' +
+         str(summary['unlinked_open_files']['observed_allocated_mib_not_reclaimable']) +
+         ' MiB waargenomen toegewezen blokken, GEEN vrijmaakbaarheidsbewijs. '
+         'Kan buiten projectmap liggen; géén automatische proces- of cleanupactie.</p>'
+         if summary.get('unlinked_open_files') is not None else '') +
         ('<p>Optioneel /proc: ' + str(summary['files_with_open_references_observed']) +
          ' grote-bestandkandidaten met aangetroffen open verwijzingen; ' +
          'bron ' + escape(summary['open_reference_coverage']) +
@@ -513,6 +549,8 @@ def main():
     parser.add_argument("--max-depth", type=int, default=MAX_DEPTH)
     parser.add_argument("--max-seconds", type=int, default=MAX_SECONDS)
     parser.add_argument("--format", choices=("json", "md", "html"), default="md")
+    parser.add_argument("--inspect-unlinked-files", action="store_true",
+                        help="optional private same-mount deleted-but-open file metadata only")
     parser.add_argument("--inspect-open-handles", action="store_true",
                         help="optional bounded /proc fd metadata only; no PID or writer proof")
     parser.add_argument("--previous", type=Path,
@@ -527,6 +565,8 @@ def main():
                          max_depth=args.max_depth, max_seconds=args.max_seconds)
         if args.inspect_open_handles:
             attach_open_references(report, args.root)
+        if args.inspect_unlinked_files:
+            attach_unlinked_open_files(report, args.root)
         if args.previous is not None:
             from zsentinel_disk_trend import load_previous, compare
             report["disk_growth_comparison"] = compare(load_previous(args.previous), report)
