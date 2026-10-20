@@ -79,8 +79,12 @@ nog te bekijken pagina. Veranderende zoektotalen, dubbele kandidaten, inmiddels
 veranderde HEADs, ontbrekende issueverificatie, einde van bronbudget of
 onbeschikbare latere pagina blijven expliciet **PARTIAL**; het onafhankelijke
 PR- en repo-eigenaarschap wordt nooit afgeleid. Multi-page GitHub Search is
-niet atomair, ook niet bij een aansluitende paginareeks. Het programma neemt
-geen claim, dispatch, review, merge of deploy over.
+niet atomair, ook niet bij een aansluitende paginareeks. Bij minimaal twee
+bekeken pagina's leest de werkbak het echte issue bovendien nogmaals na de laatste
+pagina. Is het issue intussen niet meer aantoonbaar open, of is dat laatste
+bronverzoek niet mogelijk binnen het budget, dan worden de eerder gekoppelde
+issue-referenties expliciet ingetrokken en de issue-state UNKNOWN. Het programma
+neemt geen claim, dispatch, review, merge of deploy over.
 
 Een snapshot via `--snapshot-output` is bewust uitsluitend voor **één**
 oorspronkelijke `--candidate-page`; voor meerdere historische pagina's zijn de
