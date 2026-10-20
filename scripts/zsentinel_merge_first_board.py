@@ -289,6 +289,22 @@ def delivery_receipt(row):
 
 def render(rows, observed):
     esc = lambda x: html.escape(str(x), quote=True)
+    # Same summary for standalone and issue-first HTML, derived solely from
+    # source-bound rows. This never labels queued CI as passed.
+    merged_count = sum(row.get("main_merged") is True for row in rows)
+    review_or_ci_hold = sum(row.get("status") == "HOLD" for row in rows)
+    observed_gates = sum(row.get("status") == "OBSERVED_GATES_ONLY" for row in rows)
+    unresolved_source = sum(row.get("source") not in {"COMPLETE"}
+                            for row in rows)
+    summary = (
+        "<p><strong>Geselecteerde bron-PRs:</strong> " + esc(len(rows)) +
+        " · exact op main bevestigd: " + esc(merged_count) +
+        " · review/CI HOLD: " + esc(review_or_ci_hold) +
+        " · alleen geobserveerde gates: " + esc(observed_gates) +
+        " · bron onzeker: " + esc(unresolved_source) +
+        " · live release: NIET GECONTROLEERD.</p>"
+        "<p>Dit betreft uitsluitend de getoonde selectie, niet de volledige "
+        "backlog of bevoegdheid om automatisch te mergen.</p>")
     cards = []
     if not rows:
         cards.append("<article><h2>Geen recente PRs geselecteerd</h2>"
@@ -323,8 +339,8 @@ def render(rows, observed):
             '</style><h1>zSentinel · Merge-first werkbak</h1><p>Opgehaald ' + esc(observed) +
             ' UTC. Alleen momentopname; geen live updates.</p><p>Een groene CI-waarneming is '
             '<strong>geen</strong> mergeautorisatie. Vereiste branch checks, actieve claims, '
-            'review- en releaserechten blijven onafhankelijk.</p><main>' +
-            "".join(cards) + '</main></html>')
+            'review- en releaserechten blijven onafhankelijk.</p>' +
+            summary + '<main>' + "".join(cards) + '</main></html>')
 
 
 def private_write(path, data):
