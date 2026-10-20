@@ -63,7 +63,7 @@ def _utc(value):
         return None
 
 
-def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases):
+def operator_admission(lane, source_complete, cross_lane_complete, collision_count, expired_local_leases, missing_local_claim):
     """Map a local lane observation to human-only admission guidance.
 
     This deliberately never claims a task and is not an admission token.
@@ -84,6 +84,12 @@ def operator_admission(lane, source_complete, cross_lane_complete, collision_cou
             "code": "HOLD_EXPIRED_LOCAL_CLAIM",
             "label": "Verlopen lokale lease(s) aangetroffen",
             "next_step": "Laat de bestaande claimeigenaar de daadwerkelijke taakstatus vergelijken; niet opnieuw claimen.",
+        }
+    if missing_local_claim:
+        return {
+            "code": "HOLD_ACTIVE_OWNER_UNVERIFIED",
+            "label": "Actieve wachtrij zonder lokaal leasebewijs",
+            "next_step": "Vraag de huidige worker-/Notion-eigenaar om de live claim te bevestigen; start geen tweede schrijver.",
         }
     if not source_complete or not cross_lane_complete:
         return {
@@ -302,12 +308,15 @@ def collect(database, maximum, include_runner_processes=False):
         or portfolio_partial or unknown_project_groups
         or inconsistent_queue_claim_windows or untrusted_active_leases
     )
+    missing_local_claim = (
+        sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
+    )
     visible = []
     for lane in lanes:
         conflicts = lane.get("blocked_by") or []
         admission = operator_admission(
             lane, source_complete, cross_lane_coverage,
-            collision_counts[lane["lane_id"]], expired,
+            collision_counts[lane["lane_id"]], expired, missing_local_claim,
         )
         visible.append({
             "id": lane["lane_id"],
@@ -357,7 +366,7 @@ def collect(database, maximum, include_runner_processes=False):
         "unknown_in_flight_queue_expiry_observed": unknown_queue_claim_expiry,
         "inconsistent_in_flight_queue_claim_windows_observed": inconsistent_queue_claim_windows,
         "claimed_without_local_lease_observation": (
-            sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
+            missing_local_claim
         ),
         "active_cross_lane_coverage_complete": cross_lane_coverage,
         "owner_free": "NOT_INFERABLE",
@@ -375,7 +384,7 @@ def collect(database, maximum, include_runner_processes=False):
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or any(collision_counts.values())
-            or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
+            or missing_local_claim
         ),
     }
     packet["runner_processes"] = (
