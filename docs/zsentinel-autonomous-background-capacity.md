@@ -219,6 +219,27 @@ nagevraagd. `--previous T0.json` zonder `--t0/--t1` is de aparte
 nieuwe privé HTML-bestand plaatst. Beide modi zijn afzonderlijk van
 `--snapshot` en van productieactivatie.
 
+## Rootschijfruimte in GiB · 20 oktober 2026
+
+De VPS kan bijna vol zijn terwijl een percentage de omvang van een
+beschikbaar herstelvenster onvoldoende laat zien. De read-only
+capaciteitsobservatie bevat daarom naast het percentage ontoegankelijke
+rootruimte nu ook `root_available_gib`: de actuele, aan de gebruiker
+beschikbare blokken (`statvfs.f_bavail × f_frsize`) in GiB.
+
+- `--preview --human` toont de daadwerkelijk beschikbare rootruimte; een
+  ontbrekende bron wordt als *onbekend* getoond en laat geen CPU-promotie toe.
+- Privé HTML-werkbanken tonen de beschikbare GiB naast het bestaande
+  percentage, swapgebruik en RAM. Nieuwe T0/T1-bronnen vergelijken ook de
+  GiB-verandering, **uitsluitend** bij identiek mount-device en identieke
+  volumeomvang. Oude v1-bonnen zonder deze optionele meting blijven leesbaar
+  maar krijgen *niet vergelijkbaar*, geen verzonnen nulwaarde.
+- Historische HTML-tijdlijnen en Markdown-overdrachten nemen deze delta over;
+  de waarneming is geen bewijs dat bestanden veilig zijn opgeruimd, dat
+  GitHub-jobs hervat zijn of dat een release is uitgevoerd.
+- Geen disk cleaner, extra directory-scan, servicemutatie, runnerrestart,
+  CI-dispatch, queueclaim of productieactivatie is toegevoegd.
+
 ## Bootbewuste runnerherstelvergelijking (privé T0/T1)
 
 Nieuwe `zsentinel_runner_snapshot.py`-bonnen slaan vanaf deze bronversie
