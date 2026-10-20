@@ -2071,3 +2071,55 @@ bewijzen dat een GitHub-commit, codebuild, Notion-afronding, queuelease
 of andere productoutput tot stand is gekomen. Deze nieuwe categorie
 heeft daarom dezelfde read-only/human-review grenzen; hij neemt
 geen enkele claim over en doet geen herstel- of continue-actie.
+
+## 20 oktober · Bestaande Notion-connectorquery als privé snapshotbron
+
+De eenmalige live-cockpit ondersteunt optioneel --notion-claims-export PRIVATE.json,
+naast de bestaande token-gebaseerde Notion-read. Beide tegelijk is verboden.
+Deze modus accepteert uitsluitend een door een operator **bewust lokaal
+opgeslagen** respons uit de verbonden Portfolio Work Queue Notion query,
+en rapporteert positieve actieve statussen als aanwijzingen, NIET als
+echte claims, actuele lease of toestemming om werk over te nemen.
+
+De operator maakt een privébestand met exact deze wrapper:
+- schema: zsentinel-notion-connector-snapshot-v1
+- observed_at_utc: de werkelijke, tijdzonebewuste UTC-verzameltijd
+- data_source_id: 86e406fd-2c99-4ef5-8058-363c1004b3eb
+- response: het ongewijzigde Notion-connectorresponseobject met
+  results (maximaal 100 actieve rijen), has_more=false en
+  data_source_ids=[dezelfde UUID]. Dit is GEEN bewering dat rijen
+  ontbreken. Gebruik nooit een leeg voorbeeld als echte waarneming.
+
+De bronrij bevat de originele Work ID, Status (Claimed/Running) en
+Project-relatie uit de connector. Alleen bestaande canonieke project-URL's
+uit projects.json worden naar projectnamen vertaald. Titels, medewerkers
+en vrije tekst worden niet als eigenaar geïnterpreteerd of weergegeven.
+
+Voorbeeld voor een privé-opgeslagen Notion query uit de connector:
+    umask 077
+    python3 scripts/zsentinel_live_cockpit.py --github-only \
+      --project cloud --skip-ci-discovery --skip-github-issues \
+      --notion-data-source 86e406fd-2c99-4ef5-8058-363c1004b3eb \
+      --notion-claims-export /private/operator-only/notion-query.json \
+      --format html > /private/operator-only/zsentinel-claims.html
+
+De adapter accepteert alleen een reguliere bronfile zonder symlink met
+maximaal 128 KiB, geldige UTF-8/JSON zonder dubbele keys, een exacte
+data-sourceidentiteit, géén onvolledige paginering, maximaal 100 unieke
+positieve Work IDs, uitsluitend actieve statussen en een echte UTC-datum
+niet ouder dan tien minuten of meer dan 60 seconden in de toekomst.
+Onbekende projectrelaties blijven ONBEKEND. Een ongeldige bron degradeert
+alleen de optionele Notion-claimweergave; nooit worden fictieve nulclaims
+of herstelverificatie gerapporteerd.
+
+BELANGRIJK: een privé-JSON-bestand kan handmatig worden vervalst. De cockpit
+merkt de bron aan als user-supplied / origin unverified / not live, toont
+alleen canonieke projectlabels en Work IDs (geen titels, medewerker,
+privétokens of onnodige relationele bronmetadata). Zelfs een positieve
+waarneming bewijst geen huidige claimhouder, file-ownership, volledige
+Notion-dekking, leasevrijgave, runnerherstel of dispatchrecht.
+
+Er zijn geen Notion- of queue-writes, workeracties, CI-dispatches, 
+productiemutaties, nieuwe QA/regressiesuites of omzeilde veiligheids- en
+releasegates. Exact-head CI, reviewer, protected-main en P0-runner/billing
+blijven verplicht vóór echte runtime-integratie.
