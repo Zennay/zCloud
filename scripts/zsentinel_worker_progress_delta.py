@@ -26,6 +26,39 @@ SLUG = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 MAX_ENTRIES = 24
 MAX_HOURS = 72
 
+# Operator priority, not automatic incident severity or scheduler admission.
+# Slots disappearing from the bounded observation demand an owner check
+# before routine activity signals; none of these classes proves recovery.
+OPERATOR_ORDER = {
+    "missing_in_current_sample_not_resolved": 0,
+    "indexed_source_reset_or_regression": 1,
+    "paused_or_draining_owner_hold": 2,
+    "running_allocated_no_new_event": 3,
+    "first_cursor_observed_not_delta": 4,
+    "new_in_bounded_sample_not_new_claim": 5,
+    "new_events_without_indexed_progress": 6,
+    "generation_progress_signal_observed": 7,
+    "other_bounded": 8,
+}
+OPERATOR_LABELS = {
+    "missing_in_current_sample_not_resolved": "Niet meer waargenomen (geen herstel)",
+    "indexed_source_reset_or_regression": "Eventbron mogelijk gereset",
+    "paused_or_draining_owner_hold": "Pauze/drain door eigenaar",
+    "running_allocated_no_new_event": "Running, geen nieuw event gezien",
+    "first_cursor_observed_not_delta": "Eerste cursor, geen voortgangsdelta",
+    "new_in_bounded_sample_not_new_claim": "Nieuw in steekproef (geen claim)",
+    "new_events_without_indexed_progress": "Nieuwe events, geen expliciete voortgang",
+    "generation_progress_signal_observed": "Expliciet progress-event; commit onbekend",
+    "other_bounded": "Geen betrouwbare verandering",
+}
+
+
+def _owner_sort(rows):
+    return sorted(rows, key=lambda row: (
+        OPERATOR_ORDER.get(row.get("stage"), 99),
+        row.get("project_id", ""), row.get("worker_slot", 0),
+    ))
+
 
 def _utc(value):
     if type(value) is not str or not 1 <= len(value) <= 45:
@@ -318,7 +351,7 @@ def private_markdown(report):
         "| Project | Worker-slot | Waarneming | Bevoegde eigenaaractie |",
         "| --- | ---: | --- | --- |",
     ]
-    for row in rows:
+    for row in _owner_sort(rows):
         if (type(row) is not dict
                 or type(row.get("project_id")) is not str
                 or not SLUG.fullmatch(row["project_id"])
@@ -332,7 +365,7 @@ def private_markdown(report):
             raise ValueError("invalid private worker followup")
         # Reject Markdown table injection even though current actions are
         # internally generated and project/slot identities are canonical.
-        label = row["stage"].replace("|", "\\|")
+        label = OPERATOR_LABELS[row["stage"]].replace("|", "\\|")
         action = row["owner_action"].replace("|", "\\|")
         lines.append("| " + row["project_id"] + " | " +
                      str(row["worker_slot"]) + " | " + label +
@@ -346,10 +379,13 @@ def private_markdown(report):
 def private_html(report):
     public_summary(report)
     rows = []
-    for item in report["items"]:
+    for item in _owner_sort(report["items"]):
+        stage = item["stage"]
+        if stage not in OPERATOR_LABELS:
+            raise ValueError("unknown operator worker stage")
         rows.append('<tr><td>' + escape(item["project_id"]) + '</td><td>' +
                     str(item["worker_slot"]) + '</td><td>' +
-                    escape(item["stage"]) + '</td><td>' +
+                    escape(OPERATOR_LABELS[stage]) + '</td><td>' +
                     escape(item["owner_action"]) + '</td></tr>')
     return (
         '<!doctype html><html lang="nl"><meta charset="utf-8">'
