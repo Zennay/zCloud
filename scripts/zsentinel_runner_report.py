@@ -249,6 +249,7 @@ def render(data):
     units = data["units"]
     coach = data["coach"]
     history = render_comparison(data.get("comparison"))
+    timeline_html = render_timeline(data.get("timeline"), data.get("timeline_observations", 0))
     cards = []
     if not units["runner_units_observed"]:
         cards.append('<p class="warning">Runner-services konden niet worden uitgelezen. Geen bewijs van herstel.</p>')
@@ -310,6 +311,8 @@ def render(data):
     .unit {font-family:ui-monospace,monospace;overflow-wrap:anywhere;font-size:.86rem}
     .advice {font-weight:600}.metric {font-size:1.15rem}
     .transitions {padding-left:1.3rem}.transition {margin:.6rem 0;overflow-wrap:anywhere}
+    .timeline-entry {border:1px solid #d8dfe7;border-radius:8px;padding:.7rem;margin:.65rem 0}
+    .timeline-entry summary {cursor:pointer;font-weight:600;overflow-wrap:anywhere}
     footer {margin-top:2rem;border-top:1px solid #cdd5df;padding:1.5rem 0}
     """
     def box(name, value):
@@ -335,6 +338,7 @@ def render(data):
 <p>{escape(coach_state)} · {escape(coach_match)}</p>
 <p>De voorbeeldinstellingen zijn niet door dit rapport toegepast.</p></section>
 {history}
+{timeline_html}
 <h2>GitHub-runner-servicestatus</h2><p class="muted">{escape(overview)}</p>
 <div class="grid">{"".join(cards)}</div>
 <section class="panel"><h2>Prioriteit en veilige herstelvolgorde</h2><ol>{plans}</ol>
@@ -385,6 +389,116 @@ def offline_comparison_report(t0_path, t1_path):
     }
 
 
+
+def offline_timeline_report(paths):
+    """Replay 3–12 owner-private snapshots; never sample current host or services."""
+    from zsentinel_runner_snapshot import changes, load_private, _parsed, MAX_AGE_HOURS
+    if not 3 <= len(paths) <= 12:
+        raise ValueError("Use three to twelve private observations")
+    receipts = [load_private(path) for path in paths]
+    first = _parsed(receipts[0].get("observation_utc"))
+    last = _parsed(receipts[-1].get("observation_utc"))
+    if not 0 < (last - first).total_seconds() <= MAX_AGE_HOURS * 3600:
+        raise ValueError("Timeline must be ordered within 72 hours")
+    pairs = [changes(left, right) for left, right in zip(receipts, receipts[1:])]
+    # Reuse the existing v1 owner-private offline render contract for the
+    # newest observation. This does not read systemd or a GitHub API.
+    data = offline_comparison_report(paths[-2], paths[-1])
+    data["timeline"] = pairs
+    data["timeline_observations"] = len(receipts)
+    return data
+
+
+def render_timeline(pairs, observations):
+    """Show incident continuity and host pressure without claiming job recovery."""
+    if pairs is None:
+        return ""
+    headings = []
+    reboot_count = 0
+    uncertain_count = 0
+    for index, pair in enumerate(pairs, start=1):
+        reboot = pair.get("host_reboot_observed")
+        same_boot = pair.get("same_boot_verified") is True
+        complete = pair.get("complete_service_coverage") is True
+        if reboot is True:
+            reboot_count += 1
+            continuity = "VPS-herstart geobserveerd"
+        elif not same_boot:
+            uncertain_count += 1
+            continuity = "Bootcontinuïteit onbekend"
+        elif not complete:
+            uncertain_count += 1
+            continuity = "Gedeeltelijke runnerbron"
+        else:
+            continuity = "Zelfde boot; servicelijsten volledig"
+        transitions = pair.get("transitions", [])
+        # _unit_states bounds each snapshot to 20 runner services: maximum
+        # 40 transitions in the union. Explicitly flag any display truncation.
+        status_rows = []
+        for transition in transitions[:40]:
+            prior = transition.get("previous") or {}
+            current = transition.get("current") or {}
+            desc = {
+                "service_state_changed": "systemd-status gewijzigd",
+                "newly_observed": "nieuw waargenomen",
+                "no_longer_observed": "niet meer waargenomen",
+                "previous_source_gap": "vorige bron onvolledig",
+                "current_source_gap": "huidige bron onvolledig",
+            }.get(transition.get("change"), "onzekere observatie")
+            status_rows.append(
+                "<li><strong>" + escape(str(transition.get("unit", ""))) + "</strong>: "
+                + escape(desc) + " (" + escape(str(prior.get("state", "onbekend")))
+                + " → " + escape(str(current.get("state", "onbekend"))) + ")</li>"
+            )
+        items = "".join(status_rows) or "<li>Geen geobserveerde servicestatuswijziging.</li>"
+        capacity = pair.get("capacity_comparison") or {}
+        metric_rows = []
+        labels = {
+            "host_load": ("Load", ""),
+            "memory_available_gib": ("RAM beschikbaar", " GiB"),
+            "swap_used_percent": ("Swap", " procentpunt"),
+            "disk_unavailable_percent": ("Root niet beschikbaar", " procentpunt"),
+        }
+        for item in capacity.get("metrics", [])[:4]:
+            name, unit = labels.get(item.get("metric"), ("Andere metric", ""))
+            amount = item.get("difference")
+            if item.get("comparable") is True and type(amount) in (float, int):
+                metric_rows.append(escape(name) + ": " + escape(f"{amount:+g}{unit}"))
+            else:
+                metric_rows.append(escape(name) + ": niet vergelijkbaar")
+        coach = pair.get("coach_comparison") or {}
+        if coach.get("same_boot_policy_comparable") is True:
+            before, after = coach.get("previous") or {}, coach.get("current") or {}
+            cpu = ("Coach CPUQuota " + _value(before.get("quota"), "%") + " → "
+                   + _value(after.get("quota"), "%") + ", CPUWeight "
+                   + _value(before.get("weight")) + " → "
+                   + _value(after.get("weight")))
+        else:
+            cpu = "Coach-CPU niet vergelijkbaar (bron, status of boot onzeker)"
+        headings.append(
+            "<details class='timeline-entry'><summary>Stap " + str(index)
+            + " · " + escape(str(pair.get("previous_utc", ""))) + " → "
+            + escape(str(pair.get("current_utc", ""))) + " · "
+            + escape(continuity) + " · "
+            + str(len(transitions)) + " waargenomen serviceverschillen</summary>"
+            + "<p class='muted'>Capaciteit: " + "; ".join(metric_rows) + "</p>"
+            + "<p>" + cpu + "</p><ul>" + items + "</ul>"
+            + "<p class='muted'>Waarneming, geen bewijs van herstel, "
+            "toewijzing, geslaagde CI of doorlopende modeltraining.</p></details>"
+        )
+    return (
+        "<section class='panel'><h2>Historisch runnerverloop (alleen privébonnen)</h2>"
+        "<p><strong>" + str(observations) + " meetmomenten</strong> · "
+        + str(len(pairs)) + " opeenvolgende vergelijkingen · "
+        + str(reboot_count) + " waargenomen bootwisselingen · "
+        + str(uncertain_count) + " onzekere vergelijkingen</p>"
+        "<p class='warning'>Bronmomenten blijven afzonderlijke systemd-/hostmetingen. "
+        "Ook een actieve runner-service of verbeterde capaciteit bewijst niet "
+        "dat een GitHub-job opnieuw is toegewezen.</p>"
+        + "".join(headings) + "</section>"
+    )
+
+
 def save_private(path, markup):
     target = Path(path)
     if not target.name or target.name in {".", ".."} or target.suffix != ".html":
@@ -420,11 +534,18 @@ def main():
     parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
     parser.add_argument("--t0", help="Offline replay: first owner-private JSON receipt")
     parser.add_argument("--t1", help="Offline replay: later owner-private JSON receipt")
+    parser.add_argument("--timeline", nargs="+", metavar="PRIVATE_JSON",
+                        help="Offline historical view of 3–12 ordered private receipts")
     args = parser.parse_args()
-    if bool(args.t0) != bool(args.t1) or (args.previous and args.t0):
-        parser.error("Use --t0 with --t1, or --previous for a live read-only observation")
+    if (bool(args.t0) != bool(args.t1) or
+            sum(bool(x) for x in (args.previous, args.t0, args.timeline)) > 1):
+        parser.error("Choose one: --t0 and --t1, --previous, or --timeline")
+    if args.timeline and not 3 <= len(args.timeline) <= 12:
+        parser.error("--timeline requires 3–12 chronological private receipts")
     try:
-        if args.t0:
+        if args.timeline:
+            data = offline_timeline_report(args.timeline)
+        elif args.t0:
             data = offline_comparison_report(args.t0, args.t1)
         else:
             data = collect()
