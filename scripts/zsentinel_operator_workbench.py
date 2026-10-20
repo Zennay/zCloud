@@ -334,6 +334,9 @@ recipient and download destination. It cannot claim, merge, release or contact a
 Preview first, then optionally download a local .ics file for manual calendar import.
 All-day dates contain no alarm. Importing is your decision; external calendar defaults may add notifications.
 No calendar, watch or external service is contacted here.</p>
+<label><input type="checkbox" id="calendarIncludeContact">
+Deliberately include private human contact labels in downloaded calendar events (unchecked by default).</label>
+<p><small>Calendars can sync to other devices/accounts. Leave unchecked unless a contact label is needed and the import destination is trusted.</small></p>
 <button type="button" id="previewCalendar">Preview reviewed calendar events</button>
 <div id="calendarPanel" hidden><pre id="calendarContent"></pre>
 <button type="button" id="downloadCalendar" disabled>Download exactly these all-day events (.ics)</button></div>
@@ -910,6 +913,7 @@ function foldCalendarLine(value){
  lines.push(current);return lines;
 }
 function calendarSource(stamp){
+ const includePrivateContacts=document.getElementById('calendarIncludeContact').checked;
  const rows=board.cards.filter(c=>{
   const info=handoffs.get(c.issue);
   return manualGateDecisions.has(info?.decision)&&
@@ -929,7 +933,8 @@ function calendarSource(stamp){
     card.issue.replace(/[^A-Za-z0-9]/g,'-')+'@local.invalid';
   const desc='Human review only, not an assigned task or CI/release approval. '+
     'Original source observed '+board.observed_at_utc+'. Issue: '+card.url+
-    '. Manual contact label: '+info.owner+
+    (includePrivateContacts?'. Manually entered private contact label: '+info.owner:
+     '. Private contact label intentionally omitted')+
     (info.carried_from?'. Imported from earlier source SHA256 '+info.carried_from+
      ' (requires renewed owner review)':'')+
     '. Check original live ownership and gates.';
@@ -1196,6 +1201,10 @@ document.getElementById('downloadBrief').onclick=()=>{
  status.textContent='Private Markdown saved locally. It does not authorize any worker action.';
  invalidateBrief();
 };
+document.getElementById('calendarIncludeContact').addEventListener('change',()=>{
+ invalidateBrief();
+ status.textContent='Calendar privacy choice changed. Review the exact calendar again before downloading.';
+});
 document.getElementById('previewCalendar').onclick=()=>{
  saveSelection();
  viewedCalendarStamp=new Date().toISOString().replace(/[-:]/g,'').replace(/\\.\\d{3}/,'');
