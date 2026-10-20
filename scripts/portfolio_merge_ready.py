@@ -200,6 +200,10 @@ def live_claim(project, claim_key, owner, head_sha):
             if not isinstance(meta, dict):
                 return False
             scope = meta.get("conflict_scope")
+            if scope is None and row["claim_key"] != claim_key:
+                # Ordinary independent task leases with no writer capability
+                # are not exclusive mainwriter competitors.
+                continue
             if not isinstance(scope, dict):
                 return False
             capabilities = scope.get("capabilities")
