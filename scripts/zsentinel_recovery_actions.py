@@ -5,7 +5,7 @@ The three-line operator items derive from observed enums/counts, not task prose.
 """
 from __future__ import annotations
 
-MAX_ACTIONS = 7
+MAX_ACTIONS = 9
 
 def action(identifier, severity, problem, next_step, status):
     return {
