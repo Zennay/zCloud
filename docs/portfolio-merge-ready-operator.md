@@ -252,6 +252,24 @@ Dezelfde read-only issue-first uitvoer toont voortaan **geanonimiseerde lokale c
 
 De merge-helper en offline PR-board gebruiken dezelfde conservatieve status van **actuele voor de PR relevante workflows**. Exacte HEAD-verificatie blijft verplicht. GitHub Actions-workflows voor `pull_request`, `pull_request_target`, `push`, `merge_group` en `workflow_run` worden per workflow/event/branch tot de nieuwste bestaande run gereduceerd; een oudere door een nieuwe run vervangen fout wordt niet als een aparte actieve blokkade voorgesteld. Handmatige/scheduled workflows worden niet als nieuw verzonnen verplicht PR-checks behandeld. `skipped`/neutrale optionele jobs zijn niet noodzakelijk een fout, maar *alleen* overgeslagen workflows zijn geen bewijs van groen. De echte GitHub branch rules, onafhankelijke review, actuele writerclaim en bestaande releaseautorisatie bepalen nog altijd of mergen mag.
 
+### Product-PR-selectie zonder QA-omweg (20 oktober)
+
+De bestaande `scripts/zsentinel_issue_first_board.py` sluit expliciet
+QA-only PR's nu op **drie** bronvelden uit: titel, GitHub-label en head-branch.
+Ondersteund zijn gangbare QA-/regressie-/test-prefixen (ook achter een
+P0/P1-prefix), labels zoals `qa-only`, `quality-validation`,
+`tests-only` en head-branches als `qa/`, `test/` of `regression/`.
+Ontbrekende of ongeldige label-/head-metadata wordt niet als product-PR
+toegelaten. De classificatie wordt gedeeld door het bestaande gewone
+open-PR-venster **én** de gerichte `--issue` zoekroute; zo kan een
+QA-draft niet indirect als open productimplementatie worden geselecteerd.
+
+**Belangrijk:** dit is slechts een brongebonden selectie, géén beperking
+van reeds verplichte CI-, security-, review- of branch-protection-gates.
+Bestaande QA-PRs worden niet bewerkt of gesloten en er worden geen
+testsuites geschreven of gestart. Een product-PR in dit bord is nog geen
+vrijgegeven claim of merge-toestemming.
+
 ## Read-only inventory
 
 ```sh
