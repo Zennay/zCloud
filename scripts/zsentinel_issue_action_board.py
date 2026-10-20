@@ -65,6 +65,14 @@ def build(report):
             or type(report.get("issues")) is not list
             or len(report["issues"]) > MAX_CARDS):
         raise ValueError("untrusted source for merge-first operator work queue")
+    coverage = {}
+    for view in report.get("github_scope_by_project", []):
+        if (type(view) is not dict or type(view.get("project")) is not str
+                or view["project"] in coverage
+                or type(view.get("pr_sample_complete")) is not bool
+                or type(view.get("issue_mention_inventory_complete")) is not bool):
+            raise ValueError("missing per-project collision and issue source coverage")
+        coverage[view["project"]] = view
     cards = []
     seen = set()
     for issue in report["issues"]:
@@ -79,6 +87,9 @@ def build(report):
                 or issue.get("claim_authorized") is not False):
             raise ValueError("untrusted or duplicate source issue")
         seen.add(issue["url"])
+        if issue["project"] not in coverage:
+            raise ValueError("issue has no matching project scope observation")
+        scope = coverage[issue["project"]]
         refs = issue.get("existing_prs")
         if type(refs) is not list or len(refs) > 5:
             raise ValueError("unbounded linked existing PR inventory")
@@ -143,7 +154,10 @@ def build(report):
             "candidate_pr_observation_only": True if selected else None,
             "historic_pr_movement_in_sample": issue.get(
                 "historical_linked_pr_activity_observed") is True,
-            "pr_sample_complete": bool(issue.get("duplicate_mentions_sample_complete")),
+            "pr_file_scope_sample_complete": scope["pr_sample_complete"],
+            "issue_reference_sample_complete": scope["issue_mention_inventory_complete"],
+            "issue_reference_duplicates_sample_complete": (
+                issue.get("duplicate_mentions_sample_complete") is True),
             "source_coherent": report.get("source_clocks_within_10_minutes") is True,
             "live_owner_verified": False, "required_rules_verified": False,
             "exact_head_merge_authorized": False, "claim_authorized": False,
