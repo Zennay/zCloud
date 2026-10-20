@@ -682,6 +682,206 @@ def current_gate_lines(board, markdown=False):
     return lines
 
 
+# Merge-first attention desk: source-bound, at most four selected PRs.
+# This is a useful operator inbox, not a merge queue or owner-admission API.
+ATTENTION_RANK = {
+    "failed_checks_or_legacy_context": 0,
+    "github_merge_conflict_observed": 0,
+    "review_changes_requested": 1,
+    "draft_pr_needs_owner": 1,
+    "source_changed_or_unavailable": 1,
+    "incomplete_github_gate_source": 2,
+    "checks_still_running": 2,
+    "check_source_not_terminal": 2,
+    "no_ci_check_or_legacy_context_seen": 2,
+    "independent_review_not_seen": 3,
+    "github_mergeability_not_determined": 3,
+    "branch_rules_ownership_and_release_not_verified": 4,
+}
+ATTENTION_TITLES = (
+    "CI of mergeconflict vraagt actie", "PR-eigenaar moet actie ondernemen",
+    "Bron/CI onvolledig of nog bezig", "Review/mergeability controleren",
+    "Bescherming, eigenaarschap en release controleren",
+)
+
+
+def merge_first_attention(board):
+    """Bounded operator actions from the current exact-head receipt only."""
+    live = board.get("current_live_pr_gate_observation")
+    if live is None:
+        return None
+    if (type(live) is not dict or type(live.get("items")) is not list
+            or len(live["items"]) > 4 or board.get("merge_authorized") is not False):
+        raise ValueError("invalid read-only PR attention source")
+    snapshots = {view["project"]: view for view in board["project_views"]}
+    rows = []
+    for gate in live["items"]:
+        if (gate["project"] not in snapshots or
+                gate["human_gate_blocker"] not in ATTENTION_RANK or
+                gate.get("merge_authorized") is not False):
+            raise ValueError("uncanonical or authorizing PR gate")
+        view = snapshots[gate["project"]]
+        repo = view["repository"]
+        url = gate["url"]
+        prefix = "https://github.com/" + repo + "/pull/"
+        suffix = url[len(prefix):] if url.startswith(prefix) else ""
+        if re.fullmatch(r"[1-9][0-9]{0,8}", suffix) is None:
+            raise ValueError("invalid canonical PR URL")
+        current = gate["status"] == "current_exact_pr_head_and_sample_match"
+        blockers = []
+        if current:
+            for check in gate["observed_actionable_check_runs"]:
+                blockers.append({
+                    "name": check["name"], "state": check["state"],
+                    "url": check["url"], "kind": "check_run",
+                })
+            for status in gate["observed_actionable_legacy_contexts"]:
+                blockers.append({
+                    "name": status["context"], "state": status["state"],
+                    "url": status["url"], "kind": "legacy_status",
+                })
+        # Collision links are advisory and may cover a different sample/HEAD.
+        # Never interpret absence or a shared filename as merge clearance.
+        overlaps = []
+        for pair in view.get("shown_collision_pairs", [])[:80]:
+            left, right = pair["left"], pair["right"]
+            if left["url"] == url:
+                overlaps.append(right["url"])
+            elif right["url"] == url:
+                overlaps.append(left["url"])
+        for other in gate.get("sampled_file_overlaps_observed", []):
+            overlaps.append(other["other_pr_url"])
+        overlaps = sorted(set(overlaps))[:8]
+        blocker = gate["human_gate_blocker"]
+        rank = ATTENTION_RANK[blocker]
+        rows.append({
+            "project": gate["project"], "repository": repo, "url": url,
+            "number": int(suffix),
+            "head_sha": gate.get("head_sha_observed") if current else None,
+            "base_sha": gate.get("base_sha_observed") if current else None,
+            "blocker": blocker, "blocker_text": BLOCKER_DESCRIPTIONS[blocker],
+            "rank": rank, "attention_group": ATTENTION_TITLES[rank],
+            "human_next_step": (
+                GATE_LABELS.get(gate["human_next_gate_step"],
+                                "Bekijk GitHub-bewijs met de PR-eigenaar.")
+                if current else "Herlees de actuele PR bron, claim geen merge."),
+            "non_green_jobs": blockers[:24],
+            "non_green_jobs_hidden": max(0, len(blockers) - 24) +
+                (gate["observed_actionable_check_runs_hidden"] +
+                 gate["observed_actionable_legacy_contexts_hidden"]
+                 if current else 0),
+            "observed_file_overlap_prs": overlaps,
+            "source_current_head_verified": current,
+            "merge_authorized": False,
+            "owner_claim_verified": False,
+            "required_branch_rules_verified": False,
+        })
+    rows.sort(key=lambda row: (row["rank"], row["project"], row["number"]))
+    return {
+        "source": "bounded_current_exact_head_observation",
+        "observed_at_utc": live["observed_at_utc"],
+        "items": rows, "total": len(rows),
+        "source_not_a_complete_pr_inventory": (
+            live["more_sampled_prs_not_gate_checked"] or
+            not board["source_coverage_complete"]),
+        "merge_authorized": False, "claim_authorized": False,
+        "deploy_authorized": False, "writes_performed": False,
+    }
+
+
+def attention_lines(board, markdown=False):
+    desk = board.get("merge_first_attention")
+    if desk is None:
+        return []
+    lines = ["", ("## Merge-first actielijst (alleen lezen)" if markdown
+                   else "Merge-first actielijst (alleen lezen)"),
+             "Gerangschikt op waargenomen blokkade, niet op bevoegdheid/eigenaarschap."]
+    if desk["source_not_a_complete_pr_inventory"]:
+        lines.append("ONVOLLEDIGE bron: andere open PRs en botsingen kunnen ontbreken.")
+    if not desk["items"]:
+        lines.append("Geen actuele betrouwbare PR-gate geselecteerd.")
+    for row in desk["items"]:
+        link = ("[PR #" + str(row["number"]) + "](" + row["url"] + ")"
+                if markdown else row["url"])
+        lines.append("- " + row["attention_group"] + " · " + row["project"] +
+                     " · " + link + " · " + row["blocker_text"])
+        lines.append("  Actie: " + row["human_next_step"])
+        if row["head_sha"]:
+            lines.append("  HEAD " + row["head_sha"][:12] + " · doelbasis " +
+                         row["base_sha"][:12])
+        for job in row["non_green_jobs"]:
+            detail = ("[" + safe_markdown_label(job["name"]) + "](" +
+                      job["url"] + ")" if markdown else
+                      job["name"] + " · " + job["url"])
+            lines.append("  " + job["kind"] + ": " + detail + " · " + job["state"])
+        if row["non_green_jobs_hidden"]:
+            lines.append("  Extra niet-groene jobs verborgen: " +
+                         str(row["non_green_jobs_hidden"]))
+        for related in row["observed_file_overlap_prs"]:
+            lines.append("  Gedeelde bestandsnamen met: " +
+                         ("[andere PR](" + related + ")" if markdown else related) +
+                         " (geen bevestigd Git-conflict)")
+    lines.append("Geen automatische workerclaim, CI-dispatch, review, merge of deploy.")
+    return lines
+
+
+def attention_html(board):
+    desk = board.get("merge_first_attention")
+    if desk is None:
+        return ""
+    grouped = {}
+    for row in desk["items"]:
+        grouped.setdefault(row["rank"], []).append(row)
+    sections = []
+    for rank, rows in sorted(grouped.items()):
+        cards = []
+        for row in rows:
+            url = escape(row["url"], quote=True)
+            tasks = "".join(
+                "<li>" + escape(job["kind"]) + ": <a href='" +
+                escape(job["url"], quote=True) +
+                "' rel='noopener noreferrer'>" + escape(job["name"]) +
+                "</a> · " + escape(job["state"]) + "</li>"
+                for job in row["non_green_jobs"])
+            related = "".join(
+                "<li><a href='" + escape(other, quote=True) +
+                "' rel='noopener noreferrer'>" + escape(other) +
+                "</a> · alleen overeenkomstige bestandspaden</li>"
+                for other in row["observed_file_overlap_prs"])
+            meta = ("<p>HEAD <code>" + escape(row["head_sha"][:12]) +
+                    "</code> · doelbasis <code>" + escape(row["base_sha"][:12]) +
+                    "</code></p>" if row["head_sha"] else
+                    "<p>HEAD/bron niet veilig bevestigd.</p>")
+            cards.append(
+                "<li><article><strong>" + escape(row["project"]) +
+                " · <a href='" + url + "' rel='noopener noreferrer'>PR #" +
+                str(row["number"]) + "</a></strong><p>" +
+                escape(row["blocker_text"]) + "</p><p><b>Volgende stap:</b> " +
+                escape(row["human_next_step"]) + "</p>" + meta +
+                ("<details><summary>Open problematische CI- en statuslinks (" +
+                 str(len(row["non_green_jobs"])) + ")</summary><ul>" + tasks +
+                 "</ul><p>Extra bronnen verborgen: " +
+                 str(row["non_green_jobs_hidden"]) + "</p></details>"
+                 if tasks or row["non_green_jobs_hidden"] else "") +
+                ("<details><summary>Bestandscope raakt andere PRs (" +
+                 str(len(row["observed_file_overlap_prs"])) +
+                 ")</summary><ul>" + related +
+                 "</ul><p>Bestandsnamen bewijzen geen mergeconflict.</p></details>"
+                 if related else "") + "</article></li>")
+        sections.append("<h3>" + escape(ATTENTION_TITLES[rank]) + "</h3><ol>" +
+                        "".join(cards) + "</ol>")
+    return (
+        "<section id='merge-first-attention'><h2>Merge-first actielijst</h2>"
+        "<p>Maximaal vier exact-HEAD PR-waarnemingen, op blocker geordend. "
+        "Alleen lezen; geen eigenaarschap, checkvereisten of mergeautorisatie.</p>"
+        + ("<p><strong>ONVOLLEDIG:</strong> de overige open PRs kunnen ontbreken.</p>"
+           if desk["source_not_a_complete_pr_inventory"] else "") +
+        ("".join(sections) if sections else
+         "<p>Geen geselecteerde bestaande product-PR met actuele gatebon.</p>") +
+        "<p>Geen CI-rerun, claim, review, merge of deploy uitgevoerd.</p></section>"
+    )
+
+
 def as_text(board):
     output = [
         "zSentinel | Portfolio PR-conflictbalie (alleen lezen)",
@@ -691,6 +891,7 @@ def as_text(board):
         output.append("")
         output.append("[" + view["project"] + "] " + view["repository"])
         output.extend(summary_lines(view))
+    output.extend(attention_lines(board))
     output.extend(current_gate_lines(board))
     if board.get("historical_gate_episodes"):
         output.extend(["", render_gate_episodes(board["historical_gate_episodes"])])
@@ -759,6 +960,7 @@ def as_markdown(board):
                 lines.append("- [#" + str(pr["number"]) + "](" + pr["url"] + ")")
         if view.get("source_truncated"):
             lines.append("Bronkaarten afgekapt; inspecteer overige PR's.")
+    lines.extend(attention_lines(board, markdown=True))
     lines.extend(current_gate_lines(board, markdown=True))
     if board.get("historical_gate_episodes"):
         lines.extend(["", render_gate_episodes(board["historical_gate_episodes"], "markdown")])
@@ -977,7 +1179,8 @@ def as_html(board):
         "<aside>Alleen gedeelde bestandspaden uit een begrensde GitHub-bron. "
         "Dit bewijst geen mergeconflicten, claims of vrije werkscope. "
         "Geen automatische actie, merge of deploy.</aside>" +
-        gate_panel + gate_episode_panel + delta_panel + "".join(cards) + "</html>"
+        attention_html(board) + gate_panel + gate_episode_panel + delta_panel +
+        "".join(cards) + "</html>"
     )
 
 
@@ -1201,6 +1404,8 @@ def main(argv=None):
         if args.inspect_current_pr_gates:
             board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"),
                                              focus_prs=args.gate_pr)
+        if args.inspect_current_pr_gates:
+            board["merge_first_attention"] = merge_first_attention(board)
         if args.compare_previous is not None:
             previous = read_private_previous(args.compare_previous)
             board["historical_pr_delta"] = compare(previous, board)
