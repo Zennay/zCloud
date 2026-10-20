@@ -2470,3 +2470,45 @@ wordt vóór de create-only outputactie geconstrueerd. De HTML legt
 deze herkomstgrens uit en vermeldt geen bestandsnamen.
 Geen QA-/regressietestprogramma gestart; dit was één gerichte
 functionele read-only inspectie met harde bronlimieten.
+
+
+### 20 oktober · Privé open-bestandsverwijzingen vóór een bevoegd schijfherstelbesluit
+
+De bestaande schijfdrukwerkbank heeft nu **optionele open-descriptor-inspectie**.
+Dit is bedoeld om in het besloten hotspotrapport direct te herkennen
+welke van maximaal 15 grote bestandskandidaten door Linux-processen
+open gehouden worden. De extra bron wordt alleen gelezen als een operator
+uitdrukkelijk `--inspect-open-handles` (standalone) of
+`--disk-inspect-open-handles` (live cockpit / portfolio) kiest.
+
+De begrensde `/proc/*/fd`-metadatascan onderzoekt maximaal 2.048
+processen, 16.384 descriptormetingen en 2 seconden. Verwijzingen worden
+gekoppeld op actuele `(st_dev, st_ino)` na no-follow-heridentificatie
+van het pad. Een bestandsnaam wordt uitsluitend in de create-only 0600
+privérapporten getoond; proces-ID's, procesargumenten, omgeving en
+bestandsinhoud worden niet overgenomen. Publieke JSON/HTML krijgen
+alleen het aantal kandidaten met een waargenomen verwijzing en de
+dekkingstatus, nooit namen of PIDs.
+
+**Dit is geen schrijversdetectie of vrijgavebewijs.** Een aangetroffen
+open verwijzing bewijst geen schrijfactie. Nul verwijzingen bewijst nooit
+dat het bestand ongebruikt of veilig verwijderbaar is: /proc-races,
+rechten, externe hosts, nieuwe processen en scanlimieten blijven bestaan.
+Het rapport gebruikt daarom consequent
+`active_writer_verified=false`, `safe_to_delete=false`,
+`files_deleted=false` en `processes_stopped=false`.
+
+Voor de zelfstandige werkbank (nieuwe privé uitvoer, niet stdout):
+```sh
+python3 scripts/zsentinel_disk_hotspots.py \
+  --root /home/ubuntu/zennay-cloud \
+  --inspect-open-handles \
+  --format html \
+  --output /home/ubuntu/zennay-cloud/.operator-private/disk-open-references.html
+```
+De beide geïntegreerde operator-CLI's accepteren naast hun bestaande
+`--disk-hotspots-root` en `--disk-hotspots-output` nu de expliciete
+`--disk-inspect-open-handles`-optie. Zonder root plus privé-output wordt
+de nieuwe bron geweigerd. Alle uitvoer behoudt de bestaande
+GitHub-review, exacte-head CI, beschermde main en runtime-eigenaargates;
+er is **geen** cleanup, claimherverdeling, runnerherstart of release ingevoerd.
