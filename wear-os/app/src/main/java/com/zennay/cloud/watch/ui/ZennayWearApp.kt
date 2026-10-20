@@ -53,6 +53,7 @@ import com.zennay.cloud.watch.data.WatchSnapshot
 import com.zennay.cloud.watch.data.ZennayCloudRepository
 import java.time.Duration
 import java.time.Instant
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val Bg = Color(0xFF05070A)
@@ -110,6 +111,7 @@ private fun HomeScreen(
     val scope = rememberCoroutineScope()
     val appContext = LocalContext.current
     var snoozeVersion by remember { mutableStateOf(0) }
+    var snoozeMinuteTick by remember { mutableStateOf(0) }
     var expandedAlertId by rememberSaveable { mutableStateOf<String?>(null) }
     var disappearedIncidentNotice by rememberSaveable { mutableStateOf(false) }
 
@@ -132,6 +134,17 @@ private fun HomeScreen(
                 expandedAlertId = null
             }
         loading = false
+    }
+    // Refresh only an expanded card's local snooze countdown. Compose
+    // cancels the coroutine on collapse; no extra HTTP requests or background
+    // pollers are created, and incident state is never mutated.
+    LaunchedEffect(expandedAlertId) {
+        if (expandedAlertId != null) {
+            while (true) {
+                delay(30_000L)
+                snoozeMinuteTick++
+            }
+        }
     }
     LaunchedEffect(openIncidentId) {
         // A notification can arrive while the watch is already running.
@@ -277,6 +290,7 @@ private fun HomeScreen(
                                 // Read only on recomposition; local button taps
                                 // bump the version. No remote acknowledgement.
                                 val version = snoozeVersion
+                                val currentTick = snoozeMinuteTick
                                 val remaining = IncidentSnoozeStore.remainingMillis(appContext, alert)
                                 Spacer(Modifier.height(9.dp))
                                 Label("LOKALE MELDINGSINSTELLING", Blue)
