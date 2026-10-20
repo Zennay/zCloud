@@ -65,3 +65,31 @@ The additional scanner is restricted to aged standalone `/home/ubuntu/RaiseAI-v*
 On the live VPS, exact source `0df732b` read-only inspection identified **two** possible manual APK review objects totalling **178,153,114 bytes**. Existing three-day old diagnostics/reports remained **833,723 bytes**. Those figures are **possible review surface**, not crypt-backed remote copies or reclaimable space. Even if both old APK files were independently proven superseded, encrypted-copied, remote-verified, and explicitly cleared by their release owners, this alone would not cover the measured ~823 MB gap to the 10 GiB free-space reserve.
 
 Do not rename/delete these installation artifacts, change the browse mount's access mode, or let the storage inventory silently invoke a transfer. Protect app release/signing owners, backup provenance and the currently running Fuckball/HaxLab pipelines. This code adds **discovery**, not automatic cleanup, storage migration or restart authority.
+
+
+## Hot-path operator view and actual growth tracking (20 October)
+
+For the existing storage issue, the old cold-candidate list is not enough: current logs and stale APK exports are far smaller than the remaining 10 GiB training headroom gap, while live runner/Android/FTMO caches are several GiB. The improved existing audit supports a **single human-readable read-only hot-path inventory**:
+
+```bash
+python3 scripts/vps_storage_audit.py --hotspot-inventory --format text
+```
+
+This inspects **only** five fixed known directories using filesystem-bounded `du -sx` with a four-second deadline per directory. It lists the size and responsible owner of the zCloud Actions worktree, user cache, Gradle cache, RaiseAI build directory, and FTMO runner installation. All are `hot_or_owner_approval_required` with `can_remove_automatically=false` and `bytes_proven_reclaimable=0`. Unknown, inaccessible or timed-out measurements are explicit, never silently zero. The script does not walk the 5 TiB FUSE archive, retrieve credentials, or delete data.
+
+A connected zSSH direct-source inspection of commit [47272422](https://github.com/Zennay/zCloud/commit/47272422e81563d757d1e22819fefea0d7185fcc) observed a total of approximately **8.37 GiB** across the five known hot locations. This total is a *disk footprint*, not a cleanup entitlement; particularly the roughly 2.81 GiB FTMO runner and 2.02 GiB zCloud Actions worktree should remain entirely untouched unless the actual respective owner independently proves an old/unused subpath.
+
+### Compare two observations without claiming reclaimed space
+
+The `--previous-report` option reads only a bounded, schema-checked operator-owned JSON report. It calculates actual change in available local bytes and same-category path size differences; it does not infer that free-space gains represent verified deleted files. The prior report must include an UTC observation timestamp and retain the exact source schema. Do **not** use a shared public webroot for reports; operator storage should be private:
+
+```bash
+python3 scripts/vps_storage_audit.py --limit 20 --hotspot-inventory > /private/path/first.json
+# At a later owner-approved observation window:
+python3 scripts/vps_storage_audit.py --limit 20 --hotspot-inventory \
+  --previous-report /private/path/first.json --format text
+```
+
+The comparison refuses symlinks, oversized/malformed snapshots, impossible clocks, invalid size fields, duplicated categories and non-UTC timestamps. Missing hot-path categories cannot be assumed to have zero bytes. **Neither report writes an archive, prunes a runner or authorizes training restart.** Mandatory encrypted remote integrity and explicit deletion review continue to apply.
+
+The 20 October next-source inspection at [7c0a64c](https://github.com/Zennay/zCloud/commit/7c0a64c756f251dbed2a13905f9471e8f8ddbb68) still found the 10 GiB reserve unmet, with approximately **864 MB** of shortfall at that later instant. This is volatile operational observation, not persistent clearance.
