@@ -46,6 +46,15 @@ def suggested_actions(packet):
             "Herlees de begrensde bron en herstel ontbrekende/ongeldige metadata met de eigenaar.",
             "HOLD_SOURCE_INCOMPLETE",
         ))
+    expired_local = _number(packet.get("expired_local_leases_observed"))
+    if expired_local:
+        result.append(action(
+            "expired-local-claim-owner-review", "urgent",
+            f"{expired_local} lokale zSentinel-taaklease(s) zijn verlopen.",
+            "Verifieer met de oorspronkelijke claimeigenaar en actuele Notion-/queuebron "
+            "welke uitvoering nog loopt; geef geen taak aan een andere schrijver.",
+            "HOLD_EXPIRED_LOCAL_CLAIM",
+        ))
     shadowed = _number(packet.get("runtime_active_filtered_by_eligibility"))
     if shadowed:
         result.append(action(
