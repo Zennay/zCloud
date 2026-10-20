@@ -1720,3 +1720,24 @@ Belangrijk: interne ZIP-checksums zijn geen bewijs van **authentieke afzender**;
 alleen zelfstandig vertrouwde bronpins en actuele GitHub/Notion-autoriteit
 kunnen dat vertrouwen aanvullen. Distributie van deze private rapporten
 vraagt een aparte menselijke beslissing.
+
+
+### Integratie · oude en nieuwe HEAD-cijfers nooit verwarren
+
+De delta-uitvoer toont bij iedere gewijzigde PR-kaart een uitklapbare
+**Vorige / Nieuwe bronwaarden**-weergave met oorspronkelijke geobserveerde
+HEAD, gateklasse, beperkte CI-/reviewtellers en originele issue-URL's.
+`gate_counts_same_exact_head` is uitsluitend waar wanneer **beide**
+bronmomenten dezelfde niet-lege exacte PR-HEAD noemen. Als de HEAD is
+veranderd of niet betrouwbaar bekend is, waarschuwt de operatorwerkbak
+expliciet dat de twee gatecijfers niet als voortgang van dezelfde
+codeversie te vergelijken zijn. Geen aantal voltooide checks is bewijs
+dat de verplichte protected-main workflow groen is.
+
+De zelfstandige `zsentinel_saved_gate_dossier.py --show-queue` laat nu ook
+de begrensde CI-/reviewsteekproef per bron-PR zien en weigert ZIP-inhoud
+waarin **een project of individuele PR zichzelf bevoegd verklaart**
+(`merge_authorized`, `review_and_merge_authorized`,
+`live_verified` of ontbrekende read-only metadata). Ook ongeoorloofde
+of onbeperkte `gate_observations`-velden worden geweigerd. Dit is een
+offline bronintegriteitsgrens, geen extra GitHub-releasegate.
