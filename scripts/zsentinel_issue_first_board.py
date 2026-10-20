@@ -715,6 +715,8 @@ def main():
                      help="canonical project_id (repeat up to three, e.g. cloud, supa)")
     cli.add_argument("--issue", type=int,
                      help="target one known open issue outside the recent PR window; requires one --project")
+    cli.add_argument("--candidate-pr", type=int, action="append",
+                     help="directly inspect 1–10 known open existing PR numbers instead of GitHub Search")
     cli.add_argument("--candidate-page", type=int, default=1,
                      help="continue targeted issue search on page 1–50 of 20 PRs")
     cli.add_argument("--auto-pages", type=int, default=1,
@@ -743,6 +745,15 @@ def main():
         cli.error("--auto-pages must remain inside page 1–50 and be at most 3")
     if args.issue is None and args.auto_pages != 1:
         cli.error("--auto-pages requires --issue")
+    if args.candidate_pr:
+        if (args.issue is None or len(args.candidate_pr) > 10
+                or len(set(args.candidate_pr)) != len(args.candidate_pr)
+                or any(not 1 <= number <= 9999999 for number in args.candidate_pr)):
+            cli.error("--candidate-pr requires --issue and 1–10 unique positive PR numbers")
+        if (args.candidate_page != 1 or args.auto_pages != 1
+                or args.candidate_offset != 0 or args.expected_page_sha
+                or args.snapshot_output or args.max_linked_prs != board.MAX_PRS):
+            cli.error("--candidate-pr is a direct source mode; no search pages, offsets or snapshots")
     if not 1 <= args.max_linked_prs <= board.MAX_PRS:
         cli.error("--max-linked-prs must be 1–12")
     if args.issue is None and args.max_linked_prs != board.MAX_PRS:
@@ -769,12 +780,17 @@ def main():
         budget = [0, time.monotonic() + board.MAX_SECONDS]
         targeted = None
         if args.issue is not None:
-            rows, targeted, partial, target_coverage = collect_targeted_windows(
-                args.project[0], args.issue, registry, budget,
-                candidate_page=args.candidate_page, auto_pages=args.auto_pages,
-                candidate_offset=args.candidate_offset,
-                expected_page_sha=args.expected_page_sha,
-                max_linked_prs=args.max_linked_prs)
+            if args.candidate_pr:
+                rows, targeted, partial, target_coverage = collect_explicit_prs(
+                    args.project[0], args.issue, registry, budget,
+                    args.candidate_pr)
+            else:
+                rows, targeted, partial, target_coverage = collect_targeted_windows(
+                    args.project[0], args.issue, registry, budget,
+                    candidate_page=args.candidate_page, auto_pages=args.auto_pages,
+                    candidate_offset=args.candidate_offset,
+                    expected_page_sha=args.expected_page_sha,
+                    max_linked_prs=args.max_linked_prs)
             unmatched = []
         else:
             rows, unmatched, partial = collect(args.project, registry, budget)
