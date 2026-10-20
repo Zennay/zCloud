@@ -284,6 +284,20 @@ def render_delta(delta, format="text"):
                     links.append("<li>Niet meer waargenomen overlap: " +
                                  link(pair["left"]) + " ↔ " + link(pair["right"]) +
                                  " (geen bewijs van geslaagde merge of release)</li>")
+            if row["connected_cluster_comparison_complete"]:
+                for group in row["connected_clusters_only_in_current_full_inventory"]:
+                    member_links = " · ".join(link(url) for url in group["pr_urls"])
+                    links.append("<li>Nieuwe/gewijzigde connectiegroep in huidige VOLLEDIGE " +
+                                 "inventaris: " + member_links +
+                                 " (geen bewijs van nieuwe bron-PRs of eigenaar)</li>")
+                for group in row["connected_clusters_only_in_previous_full_inventory"]:
+                    member_links = " · ".join(link(url) for url in group["pr_urls"])
+                    links.append("<li>Vorige connectiegroep niet identiek in huidige VOLLEDIGE " +
+                                 "inventaris: " + member_links +
+                                 " (GEEN bewijs van merge, fix of release)</li>")
+            else:
+                links.append("<li>Verandering van verbonden PR-groepen ONBEKEND: " +
+                             "minstens één snapshot was onvolledig.</li>")
             sections.append("<section><h3>" + escape(row["project"]) + "</h3><p>" +
                             ("Twee volledige stabiele open-PR snapshots; claims NIET gecontroleerd."
                              if row["complete_open_pr_inventory_comparable"] else
@@ -318,6 +332,19 @@ def render_delta(delta, format="text"):
                      str(len(row["overlap_pairs_only_in_previous_sample_not_proven_resolved"])) +
                      (" (extra paren verborgen)" if
                       row["overlap_sample_pair_preview_truncated"] else ""))
+        if row["connected_cluster_comparison_complete"]:
+            lines.append("  Verbonden PR-groepen: eerdere/nieuwe volledige bron vergelijkbaar; " +
+                         str(len(row["connected_clusters_only_in_current_full_inventory"])) +
+                         " uitsluitend huidig, " +
+                         str(len(row["connected_clusters_only_in_previous_full_inventory"])) +
+                         " uitsluitend eerder (GEEN bewijs van merge).")
+            for group in row["connected_clusters_only_in_current_full_inventory"]:
+                lines.append("    Huidige connectiegroep: " + " | ".join(group["pr_urls"]))
+            for group in row["connected_clusters_only_in_previous_full_inventory"]:
+                lines.append("    Eerdere connectiegroep: " + " | ".join(group["pr_urls"]) +
+                             " (NIET bewezen opgelost)")
+        else:
+            lines.append("  Connectiegroep-verschillen ONBEKEND: bron onvolledig.")
         for item in row["head_or_base_changed_in_both_samples"]:
             lines.append("  HEAD/basis: " + item["url"] + " " +
                          item["previous_head"][:12] + " → " + item["current_head"][:12])
