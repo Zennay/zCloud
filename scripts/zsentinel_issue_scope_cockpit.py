@@ -32,6 +32,16 @@ OWNER_ONLY = frozenset({
     "https://github.com/Zennay/zCloud/issues/1326",
     "https://github.com/Zennay/zCloud/issues/1523",
 })
+NEXT_ACTIONS_NL = {
+    "authorized_infrastructure_owner_only":
+        "Bevoegde infrastructuur-/billingbeheerder nodig; geen serviceherstart of betaalde capaciteit.",
+    "coordinate_existing_pr_file_overlap_and_owner":
+        "Bekijk de bestaande overlappende PR's en stem af met huidige eigenaar vóór wijzigingen.",
+    "inspect_existing_pr_and_owner_gates_first":
+        "Herbruik bestaande PR; controleer actuele claim, exacte-head CI, review en releasebevoegdheid.",
+    "verify_live_owner_then_product_implementation":
+        "Controleer eerst huidige Notion-claims, open branches en bestandscope vóór productwerk.",
+}
 
 
 def _safe_projects(source, canonical, explicit=None):
@@ -250,6 +260,7 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             "issue": card["issue"], "url": card["url"],
             "title": raw_titles.get(card["issue"], card["issue"]),
             "existing_prs": refs, "next_action": route,
+            "next_action_nl": NEXT_ACTIONS_NL[route],
             "source_recommended_next_step": card["recommended_next_step"],
             "source_evidence_gaps": card["evidence_gaps"],
             "project_issue_coverage": card["issue_coverage"],
@@ -303,7 +314,7 @@ def output_text(report, markdown=False):
         ref = ("[" + row["issue"] + "](" + row["url"] + ")" if markdown
                else row["url"])
         lines.append(row["priority"] + " | " + row["project"] + " | " +
-                     ref + " | " + row["title"] + " | " + row["next_action"])
+                     ref + " | " + row["title"] + " | " + row["next_action_nl"])
         lines.append("  Advies uit bestaande bron: " + row["source_recommended_next_step"])
         for gap in row["source_evidence_gaps"]:
             lines.append("  Onbekend: " + gap)
@@ -361,7 +372,7 @@ def output_html(report):
             "</a></h2><p class='meta'>" + escape(row["issue"]) +
             " · issuebron: " + escape(row["project_issue_coverage"]) +
             "</p><p><strong>Volgende stap:</strong> " +
-            escape(row["next_action"].replace("_", " ")) +
+            escape(row["next_action_nl"]) +
             "</p><p>Bronadvies: " + escape(row["source_recommended_next_step"]) +
             "</p><details><summary>Openstaande bronhiaten (" +
             str(len(row["source_evidence_gaps"])) + ")</summary><ul>" +
