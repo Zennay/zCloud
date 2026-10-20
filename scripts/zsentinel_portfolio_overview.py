@@ -228,7 +228,10 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
                 raise ValueError("invalid active project status counter")
         for pid in summary:
             summary[pid]["notion_active_status_min"] = counts.get(pid, 0)
-    unassigned_hosted_projects = {
+    # The incident means only that one exact GitHub job has no runner.
+    # It cannot establish a self-hosted route: its labels may be unavailable
+    # or a sampled job may differ from the one referenced by the incident.
+    unassigned_job_projects = {
         item.get("project_id") for item in incidents
         if isinstance(item, dict) and item.get("problem") == "github_job_unassigned"
     }
@@ -237,8 +240,8 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         if isinstance(item, dict) and item.get("problem") == "github_job_unstarted"
     }
     for row in summary.values():
-        if row["project_id"] in unassigned_hosted_projects:
-            row["next_action"] = "selfhosted_unassigned_owner_review"
+        if row["project_id"] in unassigned_job_projects:
+            row["next_action"] = "github_unassigned_job_route_owner_review"
         elif row["project_id"] in unstarted_job_projects:
             row["next_action"] = "github_job_unstarted_platform_owner_review"
         elif not complete:
@@ -394,7 +397,7 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             raise ValueError("unsupported GitHub coverage class")
         action_text = {
             "queue_source_incomplete_owner_must_review": "Wachtrij incompleet; bron-/ownercontrole nodig",
-            "selfhosted_unassigned_owner_review": "P0: GitHub runnerlabels, repo-toegang en listener door eigenaar controleren",
+            "github_unassigned_job_route_owner_review": "P0: exacte GitHub-job en labels door eigenaar controleren; runnerroute ONBEKEND tot dezelfde job is bevestigd",
             "github_job_unstarted_platform_owner_review": "P1: exacte job startte niet; GitHub-checkannotaties door account-/workfloweigenaar beoordelen (oorzaak onbekend)",
             "request_owner_lease_review_never_release": "Vraag leasebeoordeling; niet vrijgeven",
             "inspect_claim_churn_no_auto_retry": "Onderzoek claimchurn; geen retry",
