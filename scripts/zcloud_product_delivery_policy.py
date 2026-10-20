@@ -166,28 +166,48 @@ def is_new_product_delivery(item):
 
 
 def product_queue_snapshot(items, max_visible=8):
-    """An advisory, bounded GET-only summary, never an admission receipt."""
+    """Bounded read-only queue pressure summary; never an admission receipt."""
     if type(max_visible) is not int or not 1 <= max_visible <= 20:
         raise ValueError("invalid delivery summary limit")
+    visible = 0
+    malformed_rows = 0
+    active_owner_rows = 0
+    queued_visible = 0
+    held_ineligible = 0
+    held_slot_occupied = 0
     skipped_qa = 0
     skipped_invalid = 0
     candidate_rows = []
+    priorities = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    priority_counts = {"P0": 0, "P1": 0, "P2": 0, "P3": 0, "other": 0}
     for item in items:
         if not isinstance(item, dict):
+            malformed_rows += 1
             continue
-        if (str(item.get("status") or "").lower() != "queued"
-                or not item.get("eligible")
-                or item.get("worker_slot") is not None):
+        visible += 1
+        status = str(item.get("status") or "").strip().casefold()
+        if status in ("claimed", "running", "verifying"):
+            active_owner_rows += 1
+        if status != "queued":
+            continue
+        queued_visible += 1
+        # These are NOT reasons to revoke, force-claim or reassign a task.
+        # Match the SQLite gate (eligible=1 AND worker_slot IS NULL).
+        if type(item.get("eligible")) not in (int, bool) or item["eligible"] != 1:
+            held_ineligible += 1
+            continue
+        if item.get("worker_slot") is not None:
+            held_slot_occupied += 1
             continue
         disposition = product_delivery_disposition(item)
-        if disposition != "product":
-            if disposition == "qa_only":
-                skipped_qa += 1
-            else:
-                skipped_invalid += 1
-            continue
-        candidate_rows.append(item)
-    priorities = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+        if disposition == "qa_only":
+            skipped_qa += 1
+        elif disposition != "product":
+            skipped_invalid += 1
+        else:
+            candidate_rows.append(item)
+            priority = str(item.get("priority") or "").strip().upper()
+            priority_counts[priority if priority in priorities else "other"] += 1
     candidate_rows.sort(key=lambda row: (
         priorities.get(str(row.get("priority") or "").upper(), 4),
         str(row.get("created_at") or ""),
@@ -195,9 +215,18 @@ def product_queue_snapshot(items, max_visible=8):
     ))
     return {
         "policy": "product-delivery-2026-10-17",
+        "source_coverage": "visible_api_rows_only_not_full_queue",
+        "visible_rows": visible,
+        "malformed_nonobject_rows": malformed_rows,
+        "active_claimed_running_verifying_visible": active_owner_rows,
+        "queued_rows_visible": queued_visible,
+        "queued_ineligible_held": held_ineligible,
+        "queued_worker_slot_occupied": held_slot_occupied,
         "queued_qa_only_held": skipped_qa,
         "queued_invalid_or_unknown_held": skipped_invalid,
         "queued_product_candidates": len(candidate_rows),
+        "candidate_priority_counts": priority_counts,
+        "candidate_list_truncated": len(candidate_rows) > max_visible,
         "candidates": [
             {
                 "project_id": str(item.get("project_id") or "")[:56],
