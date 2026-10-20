@@ -98,7 +98,9 @@ def packet(report_data):
             "promotion_status": (
                 report_data["coach"].get("promotion_status")
                 if report_data["coach"].get("promotion_status") in {
-                    "promotion-waiting", "sustained-headroom", "immediate-cpu-yield",
+                    "promotion-waiting", "promotion-reset-context",
+                    "promotion-reset-policy", "promotion-reset-gap",
+                    "sustained-headroom", "immediate-cpu-yield",
                     "immediate-weight-yield", "no-promotion-needed",
                     "inactive-no-action", "source-unavailable",
                     "unreadable-current-cgroup", "current-cgroup-unavailable",
