@@ -7,6 +7,8 @@ release rights, leases, CI status, or permission to edit another worker's work.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 from datetime import datetime, timezone
 from html import escape
 import json
@@ -903,6 +905,120 @@ def as_html(board):
     )
 
 
+MAX_PORTFOLIO_CSV_RECORDS = 2500
+MAX_PORTFOLIO_CSV_BYTES = 2 * 1024 * 1024
+
+
+def as_private_csv(board):
+    """Sorted existing-PR evidence across registered projects, never release authority."""
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, dialect="excel", lineterminator="\r\n")
+    columns = (
+        "record_type", "project", "repository", "source_status",
+        "source_complete_for_sample", "pr_number", "pr_url", "pr_head_sha",
+        "related_pr_url", "related_pr_head_sha", "cluster_number",
+        "shared_filename", "shared_files_observed",
+        "issue_number_hint", "current_exact_head_gate_status",
+        "owner_claim_verified", "merge_authorized", "operator_notice",
+    )
+    writer.writerow(columns)
+    written = 0
+
+    def safe(value):
+        raw = "".join(
+            "\\u%04x" % ord(char) if ord(char) < 32 or ord(char) == 127
+            else char for char in str(value))
+        if raw.lstrip(" \u200b\u200c\u200d\u2060\ufeff").startswith(("=", "+", "-", "@")):
+            return "'" + raw
+        return raw
+
+    def emit(kind, project, repo, source_status, **values):
+        nonlocal written
+        if not set(values).issubset(columns):
+            raise ValueError("unexpected private portfolio CSV column")
+        written += 1
+        if written > MAX_PORTFOLIO_CSV_RECORDS:
+            raise ValueError("private portfolio CSV row limit")
+        fixed = {
+            "record_type": kind, "project": project, "repository": repo,
+            "source_status": source_status, "owner_claim_verified": "false",
+            "merge_authorized": "false", **values,
+        }
+        writer.writerow([safe(fixed.get(column, "")) for column in columns])
+        if output.tell() > MAX_PORTFOLIO_CSV_BYTES:
+            raise ValueError("private portfolio CSV output limit")
+
+    for view in board["project_views"]:
+        project = view["project"]
+        repo = view["repository"]
+        source_status = view["source_status"]
+        summary = {
+            "source_complete_for_sample": "true" if view["sample_complete"] else "false",
+        }
+        emit("project_summary", project, repo, source_status, **summary,
+             operator_notice="Partial non-atomic PR observations; claims and release rules UNKNOWN.")
+        if source_status == "unavailable":
+            continue
+        for group in view["linked_pr_collision_clusters"]:
+            for pr in group["participating_prs"]:
+                emit("shared_file_cluster_pr", project, repo, source_status,
+                     **summary, cluster_number=group["component_number"],
+                     pr_number=pr["number"], pr_url=pr["url"],
+                     pr_head_sha=pr["head_sha"],
+                     shared_files_observed=group["distinct_shared_file_count_observed"],
+                     operator_notice="Observed shared paths, NOT source ownership or merge approval.")
+            for filename in group["shared_files_sample"]:
+                emit("cluster_shared_filename", project, repo, source_status,
+                     **summary, cluster_number=group["component_number"],
+                     shared_filename=filename,
+                     operator_notice="Exact observed filename; other cluster paths may be hidden.")
+            if group["shared_files_sample_truncated"]:
+                emit("source_warning", project, repo, source_status, **summary,
+                     cluster_number=group["component_number"],
+                     operator_notice="More filenames beyond this cluster sample.")
+        for pair in view["shown_collision_pairs"]:
+            emit("shared_file_pr_pair", project, repo, source_status,
+                 **summary, pr_number=pair["left"]["number"],
+                 pr_url=pair["left"]["url"],
+                 pr_head_sha=pair["left"]["head_sha"],
+                 related_pr_url=pair["right"]["url"],
+                 related_pr_head_sha=pair["right"]["head_sha"],
+                 shared_files_observed=pair["shared_file_count_observed"],
+                 operator_notice="Observed common filenames, Git merge conflict NOT verified.")
+        for issue in view["shown_duplicate_issue_groups"]:
+            for pr in issue["shown_pr_sources"]:
+                emit("unverified_issue_number", project, repo, source_status,
+                     **summary, issue_number_hint=issue["issue_number"],
+                     pr_url=pr["url"], pr_head_sha=pr["head_sha"],
+                     operator_notice="Number in PR text only; issue identity and fix UNKNOWN.")
+        for pr in view["unpaired_open_prs_not_claim_verified"]:
+            emit("unpaired_pr_in_sample", project, repo, source_status, **summary,
+                 pr_number=pr["number"], pr_url=pr["url"],
+                 pr_head_sha=pr["head_sha"],
+                 operator_notice="Unpaired in sample only; NOT an unclaimed PR.")
+        if view["source_truncated"] or view["duplicate_issue_groups_truncated"]:
+            emit("source_warning", project, repo, source_status, **summary,
+                 operator_notice="Other PR pairs/issues omitted in the bounded display.")
+    live = board.get("current_live_pr_gate_observation")
+    if live is not None:
+        for item in live["items"]:
+            url = item["url"]
+            project = next((v["project"] for v in board["project_views"]
+                            if url.startswith("https://github.com/" +
+                                             v["repository"] + "/pull/")), None)
+            if project is None:
+                raise ValueError("unexpected outside-repo current gate")
+            view = next(v for v in board["project_views"] if v["project"] == project)
+            emit("current_gate_observation", project, view["repository"],
+                 view["source_status"], pr_url=url,
+                 pr_head_sha=item.get("head_sha_observed") or "",
+                 current_exact_head_gate_status=item["status"],
+                 operator_notice="Observed gate only; branch protection/ownership still unknown.")
+    # The caller checks the true UTF-8 output length and creates a 0600
+    # output exclusively. Never put sensitive cross-project CSV into stdout.
+    return "\ufeff" + output.getvalue()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
@@ -918,7 +1034,7 @@ def main(argv=None):
     parser.add_argument("--inspect-current-pr-gates", action="store_true",
                         help="Optioneel tot vier exacte-head GitHub CI/reviewbonnen "
                              "in bestaande PR-steekproef (max 20 extra GETs)")
-    parser.add_argument("--format", choices=("text", "json", "html", "markdown"),
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown", "csv"),
                         default="text")
     args = parser.parse_args(argv)
     try:
@@ -933,7 +1049,13 @@ def main(argv=None):
         if args.compare_previous is not None:
             board["historical_pr_delta"] = compare(
                 read_private_previous(args.compare_previous), board)
-        if args.format == "json":
+        if args.format == "csv":
+            if args.output is None:
+                raise ValueError("private portfolio CSV requires --output")
+            rendered = as_private_csv(board)
+            if len(rendered.encode("utf-8")) > MAX_PORTFOLIO_CSV_BYTES:
+                raise ValueError("private portfolio CSV output exceeds byte limit")
+        elif args.format == "json":
             rendered = json.dumps(board, indent=2, ensure_ascii=False) + "\n"
         elif args.format == "html":
             rendered = as_html(board)
