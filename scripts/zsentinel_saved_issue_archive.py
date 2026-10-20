@@ -18,8 +18,8 @@ import sys
 from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile
 
 from zsentinel_saved_gate_dossier import (
-    ISSUE_URL, PR_URL, SHA, _open_private_extract_parent, read_archive,
-    source_recency_summary, strict_json,
+    ISSUE_URL, PR_URL, SHA, _open_private_extract_parent, _save_private_handoff,
+    read_archive, source_recency_summary, strict_json,
 )
 
 FILES = ("issue-dossier.html", "issue-actions.md", "issue-prs.csv",
@@ -237,6 +237,54 @@ def extract_private(files, destination: Path):
         os.close(parentfd)
 
 
+
+def human_issue_handoff(manifest, source, issue):
+    """Read-only human handoff from admitted receipt; not a release decision."""
+    if (not canonical_issue(issue["issue_url"]) or
+            manifest.get("selected_issue") not in (None, issue["issue_url"])):
+        raise ValueError("Handoff issue not part of original source scope")
+    lines = [
+        "# zSentinel · private historical issue owner handoff",
+        "",
+        "**SOURCE-BOUND / NOT LIVE: no ownership, required CI, review, "
+        "main merge or deployment authorization.**",
+        "",
+        "- Original GitHub issue: " + issue["issue_url"],
+        "- Historical linked priority: " + issue["highest_source_priority"],
+        "- Saved PR candidates: " + str(len(issue["linked_existing_prs"])),
+        "- Source manifest SHA256 identities (not provider signatures):",
+    ]
+    for item in source["source_snapshots"]:
+        lines.append("  - " + item["original_review_manifest_sha256"] +
+                     " · " + str(item["latest_observed_utc"]) +
+                     " · missing batches " + str(len(item["missing_batch_indexes"])))
+    lines.extend(["", "## Existing sampled PR links"])
+    for pr in issue["linked_existing_prs"][:30]:
+        lines.extend([
+            "- " + pr["pr_url"] + " (issue-linked " +
+            pr["issue_link_priority"] + "; latest general PR " +
+            pr["source_priority"] + "; old HEAD " +
+            (pr["observed_head"] or "UNKNOWN") + ")",
+        ])
+    if len(issue["linked_existing_prs"]) > 30:
+        lines.append("- " + str(len(issue["linked_existing_prs"]) - 30) +
+                     " more saved PR references omitted; NOT free or resolved.")
+    lines.extend([
+        "", "## Mandatory live human follow-up",
+        "1. Check the original issue and each relevant existing PR on GitHub.",
+        "2. Recheck actual owner/worker claims and file-scope collisions.",
+        "3. Recheck exact current PR HEAD, required CI, independent reviewer "
+        "decisions and protected-main policy.",
+        "4. Merge only when the existing GitHub and release authority allow it; "
+        "otherwise hold that PR and continue another free product task.",
+        "",
+        "Absence in saved source never proves resolution, released claim, "
+        "main merge or live recovery. No external action performed.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True,
@@ -246,11 +294,15 @@ def main(argv=None):
                         help="Maximum printed issue groups (1..50)")
     parser.add_argument("--extract-to", type=Path,
                         help="New private directory for original HTML/Markdown/CSV/JSON")
+    parser.add_argument("--handoff-markdown", type=Path,
+                        help="Create-only human issue owner note from one saved issue")
     args = parser.parse_args(argv)
     try:
         if (not 1 <= args.limit <= 50 or
                 (args.inspect_issue is not None and
-                 not canonical_issue(args.inspect_issue))):
+                 not canonical_issue(args.inspect_issue))
+                or (args.extract_to is not None and
+                    args.handoff_markdown is not None)):
             raise ValueError("Invalid issue selection")
         files, manifest, report, issues, samples = read_issue_dossier(args.input)
         if args.inspect_issue:
@@ -289,6 +341,16 @@ def main(argv=None):
             if len(issue["linked_existing_prs"]) > 5:
                 print("    Further saved PR references omitted, NOT resolved")
         print("CURRENT OWNER / REQUIRED CI / REVIEW / MAIN / DEPLOY: UNKNOWN")
+        if args.handoff_markdown is not None:
+            if len(issues) != 1:
+                raise ValueError("Choose exactly one saved issue for handoff")
+            target = args.inspect_issue or manifest["selected_issue"]
+            if target is None or target != issues[0]["issue_url"]:
+                raise ValueError("Private handoff requires one exact saved issue")
+            note = human_issue_handoff(manifest, report, issues[0])
+            _save_private_handoff(args.handoff_markdown, note)
+            print("New private source-bound issue handoff created; "
+                  "no release or owner authority.")
         if args.extract_to is not None:
             # A targeted CLI inspection must not silently extract unrelated
             # private issue cards from a broader saved portfolio archive.
