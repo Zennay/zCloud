@@ -187,28 +187,41 @@ def compare(previous, current):
 
 
 def render_delta(delta, format="text"):
+    """Source-link-first operator delivery: never label sample drift as closure."""
     if not delta:
         return ""
     if format == "html":
+        def link(url):
+            return ("<a rel='noopener noreferrer' href='" +
+                    escape(url, quote=True) + "'>" + escape(url) + "</a>")
         sections = []
         for row in delta["projects"]:
             links = []
             for changed in row["head_or_base_changed_in_both_samples"]:
-                links.append("<li><a rel='noopener noreferrer' href='" +
-                             escape(changed["url"], quote=True) + "'>" +
-                             escape(changed["url"]) + "</a>: HEAD/base gewijzigd</li>")
+                links.append("<li>HEAD/basis gewijzigd: " + link(changed["url"]) +
+                             " (" + escape(changed["previous_head"][:12]) +
+                             " → " + escape(changed["current_head"][:12]) + ")</li>")
+            for url in row["seen_only_in_current_sample_not_proven_new"]:
+                links.append("<li>Alleen huidige steekproef: " + link(url) +
+                             " (niet bewezen nieuw)</li>")
+            for url in row["seen_only_in_previous_sample_not_proven_closed"]:
+                links.append("<li>Alleen vorige steekproef: " + link(url) +
+                             " (niet bewezen gesloten)</li>")
+            if row["complete_open_pr_inventory_comparable"]:
+                for pair in row["added_collision_pairs_if_complete"]:
+                    links.append("<li>Nieuwe waargenomen bestandsoverlap: " +
+                                 link(pair["left"]) + " ↔ " + link(pair["right"]) + "</li>")
+                for pair in row["disappeared_collision_pairs_if_complete"]:
+                    links.append("<li>Niet meer waargenomen overlap: " +
+                                 link(pair["left"]) + " ↔ " + link(pair["right"]) +
+                                 " (geen bewijs van geslaagde merge of release)</li>")
             sections.append("<section><h3>" + escape(row["project"]) + "</h3><p>" +
-                            ("Twee volledige stabiele snapshots" if row["complete_open_pr_inventory_comparable"]
-                             else "ONVOLLEDIGE dekking: geen bewijs dat PR's gesloten zijn of botsingen verdwenen") +
-                            "</p><ul>" + ("".join(links) or "<li>Geen HEAD-delta aangetoond.</li>") +
-                            "</ul><p>PR's alleen in huidige steekproef: " +
-                            str(len(row["seen_only_in_current_sample_not_proven_new"])) +
-                            "; alleen vorige steekproef: " +
-                            str(len(row["seen_only_in_previous_sample_not_proven_closed"])) +
-                            "; nieuwe botsende paren met volledige bron: " +
-                            str(len(row["added_collision_pairs_if_complete"])) +
-                            "; verdwenen paren met volledige bron: " +
-                            str(len(row["disappeared_collision_pairs_if_complete"])) + "</p></section>")
+                            ("Twee volledige stabiele open-PR snapshots; claims NIET gecontroleerd."
+                             if row["complete_open_pr_inventory_comparable"] else
+                             "ONVOLLEDIGE dekking: geen bewijs dat PR's gesloten zijn of botsingen verdwenen.") +
+                            "</p><ul>" + ("".join(links) or
+                            "<li>Geen verandering aantoonbaar in deze bron.</li>") +
+                            "</ul></section>")
         return ("<section><h2>Historische PR-verandering (niet-autoriserend)</h2><p>" +
                 escape(delta["previous_observed_at_utc"]) + " → " +
                 escape(delta["current_observed_at_utc"]) +
@@ -218,21 +231,32 @@ def render_delta(delta, format="text"):
              "Alleen waargenomen bronverschillen; GEEN claim- of mergevrijgave."]
     for row in delta["projects"]:
         lines.append(row["project"] + ": " +
-                     ("beide opnamen volledig" if row["complete_open_pr_inventory_comparable"]
-                      else "ONVOLLEDIG: verdwenen PR/botsing niet bewezen") +
-                     ", HEAD/base gewijzigd " +
+                     ("beide open-PR inventarissen volledig" if row["complete_open_pr_inventory_comparable"]
+                      else "ONVOLLEDIG: gesloten PR/botsing niet bewezen") +
+                     ", gewijzigde HEAD/basis " +
                      str(len(row["head_or_base_changed_in_both_samples"])) +
-                     ", alleen recent gezien " +
+                     ", huidige-steekproef-only " +
                      str(len(row["seen_only_in_current_sample_not_proven_new"])) +
-                     ", alleen eerder gezien " +
+                     ", vorige-steekproef-only " +
                      str(len(row["seen_only_in_previous_sample_not_proven_closed"])) +
-                     ", nieuwe botsende paren " +
+                     ", nieuwe overlapparen " +
                      str(len(row["added_collision_pairs_if_complete"])) +
-                     ", verdwenen paren " +
+                     ", niet-meer-geobserveerde overlapparen " +
                      str(len(row["disappeared_collision_pairs_if_complete"])))
         for item in row["head_or_base_changed_in_both_samples"]:
-            lines.append("  " + item["url"] + " " +
+            lines.append("  HEAD/basis: " + item["url"] + " " +
                          item["previous_head"][:12] + " → " + item["current_head"][:12])
+        for url in row["seen_only_in_current_sample_not_proven_new"]:
+            lines.append("  Alleen huidige steekproef, niet bewezen nieuw: " + url)
+        for url in row["seen_only_in_previous_sample_not_proven_closed"]:
+            lines.append("  Alleen vorige steekproef, niet bewezen gesloten: " + url)
+        if row["complete_open_pr_inventory_comparable"]:
+            for pair in row["added_collision_pairs_if_complete"]:
+                lines.append("  Nieuw waargenomen overlap: " +
+                             pair["left"] + " ↔ " + pair["right"])
+            for pair in row["disappeared_collision_pairs_if_complete"]:
+                lines.append("  Niet meer waargenomen overlap, GEEN merge-bewijs: " +
+                             pair["left"] + " ↔ " + pair["right"])
     if format == "markdown":
         return "\n".join(["## " + lines[0], ""] + ["- " + line for line in lines[1:]]) + "\n"
     return "\n".join(lines)
