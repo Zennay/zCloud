@@ -6,6 +6,7 @@ No queue, unit, GitHub or worker action is performed.
 """
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -129,17 +130,26 @@ def changes(previous, current):
             tag = "service_state_changed"
         else:
             continue
+        # Stable per-transition dedup receipt. A hash is not an authorization
+        # token and does not prove a successful GitHub runner recovery.
+        material = json.dumps(
+            [host_a, name, tag, before, after],
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
         result.append({
+            "incident_key": hashlib.sha256(material).hexdigest()[:24],
             "unit": name, "change": tag,
             "previous": before, "current": after,
             "github_job_recovered": None,
             "production_restored": None,
+            "action_authorized": False,
         })
     return {
         "previous_utc": previous["observation_utc"],
         "current_utc": current["observation_utc"],
         "same_host": True,
         "complete_service_coverage": coverage_a and coverage_b,
+        "elapsed_seconds": int(elapsed),
         "transitions": result,
         "interpretation": (
             "Only bounded systemd observations; even a failed→active transition "
