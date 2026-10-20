@@ -676,3 +676,44 @@ The feature writes no issue, PR, Notion page, queue, worker lease, runner,
 workflow, VPS service or deployment. It performs no merge/restart/dispatch
 and adds or manually invokes no QA/regression suite. Current protected
 main, mandatory CI, review and release rules apply independently.
+
+
+## 20 October · Complete offline → current GitHub → offline release triage
+
+The offline operator can now export a source-bound
+`zsentinel-offline-merge-first-review-v1` JSON handoff and re-inspect its
+**highest-priority existing PR references without manual retyping** via the
+read-only collector in the already-open
+[PR #1567](https://github.com/Zennay/zCloud/pull/1567).
+
+1. In the workbench, set desired project/P0/P1 filters and deliberately
+   download **Download exactly this review-only JSON** after preview.
+2. In an *authorized local* environment with configured GitHub access,
+   run the read-only existing-PR gate command:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./zsentinel-offline-merge-first-review.json \
+  --output ./private-current-head-gates.json
+```
+
+3. Back in the original offline workbench, import the new JSON using
+   **Import GitHub PR-gate snapshot**, then inspect the red/pending/review
+   groups and optionally download a reviewed Markdown or JSON handoff.
+   A user must separately confirm current PR HEAD, independent human review,
+   protected branch/check policy, active claims and deployment authority.
+
+The importer compares the new source receipt's **original board SHA256**
+against the actual currently opened offline board, and rejects unrelated
+boards and malformed/partial provenance without discarding an existing
+accepted overlay. The UI explicitly shows `source_review_pr_count` and
+warns when a >4-candidate source was **only observed for the first four
+highest-priority PR references**. The exact imported gate receipt bytes are
+also SHA256 pinned. Older than 15-minute sources are marked stale.
+
+No previously saved observations can confirm live mergeable status or
+current required rules. Neither this local workbench nor the bounded
+GitHub collector claims issues, reruns CI, merges PRs, dispatches workers,
+writes to VPS or deploys to production. Both source PRs must independently
+clear mandatory CI, protected-branch and review conditions before this
+workflow exists on `main`. No QA suites were created or run.
