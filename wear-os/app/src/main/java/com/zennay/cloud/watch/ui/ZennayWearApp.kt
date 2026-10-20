@@ -92,12 +92,25 @@ private fun HomeScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    var expandedAlertId by rememberSaveable { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         loading = true
         runCatching { repository.loadHome() }
-            .onSuccess { data = it; error = null }
-            .onFailure { error = it.message ?: "Cloud offline" }
+            .onSuccess {
+                data = it
+                error = null
+                // Invalidate expansion if the blocker was resolved, the feed
+                // is historical, or the source became stale.
+                if (it.stale || !it.currentBlockerFeedAvailable ||
+                    it.alerts.none { alert -> alert.id == expandedAlertId }) {
+                    expandedAlertId = null
+                }
+            }
+            .onFailure {
+                error = it.message ?: "Cloud offline"
+                expandedAlertId = null
+            }
         loading = false
     }
     LaunchedEffect(Unit) { reload() }
@@ -148,21 +161,62 @@ private fun HomeScreen(
             if (urgent.isNotEmpty()) {
                 item { SectionLabel("AANDACHT NODIG · ${urgent.size}") }
                 items(urgent, key = { "alert:${it.id}" }) { alert ->
-                    SurfaceCard {
+                    val expanded = expandedAlertId == alert.id
+                    // The operator can inspect the actual cause and next
+                    // action without losing their place in the incident list.
+                    SurfaceCard(modifier = Modifier.clickable {
+                        expandedAlertId = if (expanded) null else alert.id
+                    }) {
                         Label(
                             "${alert.project?.uppercase() ?: "ZCLOUD"} · ${alert.severity.uppercase()}",
                             if (alert.severity.equals("critical", true)) Danger else Warning
                         )
                         Text(
                             alert.title, color = TextMain, fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold, maxLines = 3,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = if (expanded) Int.MAX_VALUE else 3,
                             overflow = TextOverflow.Ellipsis
                         )
                         Spacer(Modifier.height(4.dp))
-                        Text(
-                            alert.message, color = TextMuted, fontSize = 11.sp,
-                            maxLines = 4, overflow = TextOverflow.Ellipsis
-                        )
+                        if (expanded) {
+                            val separator = " · Actie: "
+                            val parts = alert.message.split(separator, limit = 2)
+                            if (parts.size == 2 && parts[0].startsWith("Oorzaak: ")) {
+                                Label("OORZAAK", Warning)
+                                Text(parts[0].removePrefix("Oorzaak: "),
+                                     color = TextMain, fontSize = 11.sp)
+                                Spacer(Modifier.height(7.dp))
+                                Label("VOLGENDE ACTIE", Accent)
+                                Text(parts[1], color = TextMain, fontSize = 11.sp)
+                            } else {
+                                Label("DETAILS", Blue)
+                                Text(alert.message, color = TextMain, fontSize = 11.sp)
+                            }
+                            alert.occurredAt?.let { seen ->
+                                Spacer(Modifier.height(7.dp))
+                                Text("Waargenomen: ${shortAge(seen)}",
+                                     color = TextMuted, fontSize = 9.sp)
+                            }
+                            val project = snapshot.projects.firstOrNull { it.id == alert.project }
+                            if (project != null) {
+                                Spacer(Modifier.height(9.dp))
+                                Text("Open ${project.name} ›",
+                                     modifier = Modifier
+                                         .fillMaxWidth()
+                                         .clickable { onProject(project.id) }
+                                         .padding(vertical = 7.dp),
+                                     color = Accent, fontSize = 11.sp,
+                                     fontWeight = FontWeight.Bold)
+                            }
+                            Text("Tik om te sluiten", color = TextMuted, fontSize = 9.sp)
+                        } else {
+                            Text(
+                                alert.message, color = TextMuted, fontSize = 11.sp,
+                                maxLines = 3, overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text("Tik voor oorzaak en actie ›", color = Accent, fontSize = 10.sp)
+                        }
                     }
                 }
             }
