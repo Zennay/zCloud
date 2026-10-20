@@ -422,9 +422,12 @@ def html_view(decision):
                     raise ValueError("unknown discovered workflow status window")
                 description = labels[window] + "; één exacte job geselecteerd. Geen volledig CI-overzicht."
                 if incomplete:
-                    description += " Niet bereikbaar: " + ", ".join(labels[x] for x in incomplete) + "."
+                    description += (" Onvolledige bronsteekproef (begrensde pagina, "
+                                    "ongeldige rij of bronfout): " +
+                                    ", ".join(labels[x] for x in incomplete) + ".")
             elif row["status"] == "degraded_unavailable":
-                description = "GitHub-venster onbereikbaar; overige jobs en gezondheid ONBEKEND."
+                description = ("GitHub-vensters niet voldoende onderzocht of bereikbaar; "
+                               "andere jobs en runnergezondheid ONBEKEND.")
             else:
                 description = "Geen kandidaat in dit kleine venster; overige jobs ONBEKEND."
             if stop_reason is not None:
@@ -437,7 +440,11 @@ def html_view(decision):
         discovery_panel = (
             '<section><h2>GitHub-zoekvensters · alleen een beperkte steekproef</h2>'
             '<p class="muted">Volgorde: wachtende workflows, lopende workflows met '
-            'wachtende jobs, daarna mislukte workflows. Geen GitHub-job wordt gestart.</p>'
+            'wachtende jobs, daarna mislukte workflows. Van de eerste vijf workflowruns '
+            'per venster wordt maximaal de nieuwste en de verst terugliggende '
+            'geldige run onderzocht; per run maximaal 25 jobs uit één GitHub-pagina. '
+            'Oudere of tussenliggende runs zijn ONBEKEND. '
+            'Geen GitHub-job wordt gestart.</p>'
             '<div class="grid">' + ''.join(cards) + '</div></section>'
         )
     notion_mode = live.get("notion") if isinstance(live, dict) else None
