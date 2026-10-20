@@ -276,6 +276,7 @@ def vps_capacity(bundle, now):
     memory = metrics.get("available_memory_mib")
     swap = metrics.get("available_swap_mib")
     disk = metrics.get("free_disk_gib")
+    unavailable_disk_pct = metrics.get("disk_unavailable_percent")
     if type(cores) is not int or not 1 <= cores <= 128:
         raise ValueError("invalid VPS vCPU capacity")
     for key, value, maximum in (
@@ -286,11 +287,19 @@ def vps_capacity(bundle, now):
     ):
         if type(value) not in (int, float) or not 0 <= value <= maximum:
             raise ValueError(f"invalid VPS resource: {key}")
+    # Older read-only resource receipts did not provide disk occupancy.
+    # Missing percent is UNKNOWN, not zero or proof of a spacious mount.
+    if unavailable_disk_pct is not None:
+        if (type(unavailable_disk_pct) not in (int, float)
+                or not math.isfinite(unavailable_disk_pct)
+                or not 0 <= unavailable_disk_pct <= 100):
+            raise ValueError("invalid VPS disk occupancy")
     overloaded = load > 1.5 * cores
     low_memory = memory < 1024
     low_swap = swap < 256
     low_disk = disk < 2
-    if overloaded or low_memory or low_swap or low_disk:
+    almost_full_disk = unavailable_disk_pct is not None and unavailable_disk_pct >= 90
+    if overloaded or low_memory or low_swap or low_disk or almost_full_disk:
         reasons = []
         if overloaded:
             reasons.append("load_above_conservative_capacity")
@@ -300,8 +309,13 @@ def vps_capacity(bundle, now):
             reasons.append("swap_headroom_low")
         if low_disk:
             reasons.append("disk_headroom_low")
+        if almost_full_disk:
+            reasons.append("disk_unavailable_at_least_90_percent")
         return {"state": "overloaded", "reason": ",".join(reasons)}
-    return {"state": "advisory_headroom", "reason": "thresholds_met_not_release_authorization"}
+    return {"state": "advisory_headroom",
+            "reason": ("thresholds_met_not_release_authorization"
+                       if unavailable_disk_pct is not None else
+                       "old_snapshot_disk_occupancy_unknown_not_release_authorization")}
 
 
 def eligible_tasks(bundle, blocked, now, capacity):
