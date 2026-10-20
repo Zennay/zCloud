@@ -90,3 +90,12 @@ De drie functies kunnen apart worden gebruikt:
 1. `zsentinel_pr_scope_guard.py --project PROJECT --path FILE`: gericht geplande bestanden vergelijken.
 2. `zsentinel_pr_scope_guard.py --project PROJECT --source-pr NUMMER`: één bestaande PR vergelijken met de rest.
 3. `zsentinel_pr_scope_portfolio.py --project PROJECT [--project ...]`: een read-only conflictkaart over meerdere projecten.
+
+
+## Onafhankelijke kandidaat-PR's: uitsluitend afwezigheid van bestandsbotsing
+
+De single-project-conflictkaart en de nieuwe portfolio-overzichten tonen óók een aparte lijst **"Geen gedeelde paden in de steekproef"**, met directe PR-links. Dit zijn bestaande open PR's die in de geraadpleegde PR-window geen exacte bestandsnaam delen met een andere bekeken open PR. Daardoor kan een operator gericht naar onafhankelijk *potentieel uitvoerbaar* productwerk kijken in plaats van alleen botsingen.
+
+Deze vermelding is **niet** gelijk aan "vrij", "claimbaar", "goed voor merge" of "geen git-mergeconflict". De volgende bewijzen ontbreken nog altijd: Notion en SQLite claim/lease-eigenaar, ongeregistreerde PR-loze branches, uncommitted work, upstream veranderingen, verplichte CI, onafhankelijke review en release-autorisatie. Zelfs bij `source_coverage_complete=true` blijven autorisatievelden false.
+
+Als een portfolio-uitvoer meer botsingskaarten oplevert dan de begrensde zichtbare selectie, toont de UI nu expliciet **"bronoverlap > uitvoerlimiet"** in plaats van een volledig verslag te suggereren. Andere projecten blijven leesbaar wanneer één GitHub-repository een fout retourneert.
