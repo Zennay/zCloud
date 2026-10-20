@@ -352,6 +352,14 @@ function validFollowupDate(value){
   !Number.isNaN(Date.parse(value+'T00:00:00Z')) &&
   new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
 }
+function validLocalChangeTime(value){
+ if(value==='')return true;
+ if(typeof value!=='string'||value.length!==24||
+    !/^20[2-9][0-9]-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$/.test(value))
+   return false;
+ const date=Date.parse(value);
+ return Number.isFinite(date)&&new Date(date).toISOString()===value;
+}
 function dueState(info){
  if(info?.followup_status==='local-complete')return 'local follow-up closed (issue status UNVERIFIED)';
  if(!info?.owner?.trim()||!info?.due)return 'needs human contact/date';
@@ -395,6 +403,7 @@ function saveSelection(){
    owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:'',
    followup_status:manualGateDecisions.has(decision.value)?
     (before?.followup_status||'open'):'open',
+   followup_changed_at_utc:before?.followup_changed_at_utc||'',
    carried_from:before?.carried_from||''
   };
   const blank=!after.note&&!after.owner&&!after.due&&
@@ -749,6 +758,8 @@ function currentBrief(){
       (manualGateDecisions.has(human?.decision)?dueState(human):'not a human escalation'),
     'Manual follow-up lifecycle: '+(human?.followup_status==='local-complete'?
       'CLOSED LOCALLY — original issue still UNVERIFIED':'open / no completion proof'),
+    'Last local toggle UTC: '+(human?.followup_changed_at_utc||'not recorded')+
+      ' (device clock only, not an external receipt)',
     'Human handoff provenance: '+(human?.carried_from?
       'manually carried from older board SHA256 '+human.carried_from+'; REVERIFY owner and gate':
       'entered on current board or not provided'),
@@ -908,7 +919,9 @@ function drawDetail(){
  progress.append(elem('h3','Local human follow-up status'),
    elem('p','Closing only hides this manual follow-up from future calendar exports. The GitHub issue, owner, CI and release status remain UNVERIFIED.'));
  const state=elem('p','Current: '+(saved?.followup_status==='local-complete'?
-   'Locally closed (not issue resolved)':'Open / manual review required'));
+   'Locally closed (not issue resolved)':'Open / manual review required')+
+   (saved?.followup_changed_at_utc?
+    ' · last local toggle '+saved.followup_changed_at_utc+' (device clock, NOT external receipt)':''));
  const switcher=elem('button',saved?.followup_status==='local-complete'?
    'Reopen local human follow-up':'Mark human follow-up locally complete');
  switcher.type='button';switcher.disabled=!manualGateDecisions.has(sel.value);
@@ -917,6 +930,7 @@ function drawDetail(){
    const row=handoffs.get(selected);
    if(!manualGateDecisions.has(row?.decision))return;
    row.followup_status=row.followup_status==='local-complete'?'open':'local-complete';
+   row.followup_changed_at_utc=new Date().toISOString();
    setUnsaved(true);invalidateBrief();drawList();drawDetail();
    status.textContent=row.followup_status==='local-complete'?
      'Only the private follow-up was locally closed; GitHub issue and gate statuses remain unknown.':
@@ -937,7 +951,8 @@ document.getElementById('export').onclick=()=>{
  const rows=[...handoffs].filter(([id,v])=>entries.has(id)&&permitted.has(v.decision))
  .map(([issue,value])=>({issue,decision:value.decision,note:value.note.slice(0,1000),
    owner:value.owner||'',due:value.due||'',carried_from:value.carried_from||'',
-   followup_status:value.followup_status||'open'}));
+   followup_status:value.followup_status||'open',
+   followup_changed_at_utc:value.followup_changed_at_utc||''}));
  const payload={schema_version:3,kind:'zsentinel-private-human-delivery-handoff',
    source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
    authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false,entries:rows};
