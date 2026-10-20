@@ -477,9 +477,9 @@ def operator_text(source):
             f" · current_lease={row['queue_lease_current_from_source']}"
             f" · event_age_s={row['event_age_seconds']}"
             f" · progress_age_s={row['progress_age_seconds']}"
-            f" · last_12_blocks_after_prompt={row['timeline']['recent_block_events_after_last_prompt_in_sample']}"
-            f" · last_12_progress_after_prompt={row['timeline']['recent_progress_events_after_last_prompt_in_sample']}"
-            f" · followup={row['safe_followup']}"
+            f" · last_12_blocks_after_prompt={(row.get('timeline') or {}).get('recent_block_events_after_last_prompt_in_sample', 'ONBEKEND')}"
+            f" · last_12_progress_after_prompt={(row.get('timeline') or {}).get('recent_progress_events_after_last_prompt_in_sample', 'ONBEKEND')}"
+            f" · followup={row.get('safe_followup', 'owner_recheck_current_source_without_recovery')}"
             f" · claim=ONBEKEND")
     for pid in source["unobserved_project_ids"]:
         lines.append(f"  {pid} · GEEN eventbron voor gekozen project, geen bewijs van nul workers.")
@@ -518,9 +518,14 @@ def worker_progress_html(source):
             or len(source["entries"]) > MAX_PROJECTS * MAX_SLOTS):
         raise ValueError("untrusted browser worker event evidence")
     from html import escape
-    inbox = source.get("owner_followup_candidates")
+    # Archived v1 decisions may predate the additive chronology fields.
+    # Preserve their historical cards while clearly marking newer evidence
+    # UNKNOWN. Never interpret missing inbox data as zero problems.
+    legacy_snapshot = "owner_followup_candidates" not in source
+    inbox = source.get("owner_followup_candidates", [])
     if (type(inbox) is not list or len(inbox) > MAX_PROJECTS * MAX_SLOTS
-            or source.get("followup_inventory_exhaustive") is not False):
+            or (not legacy_snapshot and
+                source.get("followup_inventory_exhaustive") is not False)):
         raise ValueError("untrusted bounded worker followup inbox")
     known = {(x.get("project_id"), x.get("worker_slot")): x
              for x in source["entries"] if isinstance(x, dict)}
@@ -564,6 +569,8 @@ def worker_progress_html(source):
         '<p>Advies, geen claim/lease/restart-toestemming. Niet getoonde workers'
         ' zijn niet bewezen gezond. Huidige sample is onvolledig.</p>'
         + ("<ol>" + "".join(inbox_lines) + "</ol>" if inbox_lines else
+           "<p>HISTORISCHE BRON: huidige eigenaarcontroles ONBEKEND;"
+           " vernieuw de bron.</p>" if legacy_snapshot else
            "<p>Geen specifieke eigenaarcontrole in de beperkte sample.</p>")
         + "</aside>"
     )
@@ -614,11 +621,22 @@ def worker_progress_html(source):
         if any(value is not None and (type(value) is not int or value < 0)
                for value in (age, progress)):
             raise ValueError("invalid source age")
-        timeline = row.get("timeline")
+        legacy_row = "timeline" not in row and legacy_snapshot
+        timeline = row.get("timeline") if not legacy_row else {
+            "timeline_scope": "legacy_snapshot_no_event_chronology",
+            "timeline_truncated": False,
+            "claim_epoch_bound": False,
+            "progress_is_product_delivery_proof": False,
+            "recent_events_newest_first": [],
+            "events_after_last_prompt_in_sample": 0,
+            "recent_block_events_after_last_prompt_in_sample": 0,
+            "recent_progress_events_after_last_prompt_in_sample": 0,
+        }
         if (type(timeline) is not dict
                 or timeline.get("timeline_scope") not in (
                     "last_12_indexed_events_not_complete_history",
-                    "no_events_observed")
+                    "no_events_observed",
+                    "legacy_snapshot_no_event_chronology")
                 or type(timeline.get("timeline_truncated")) is not bool
                 or timeline.get("claim_epoch_bound") is not False
                 or timeline.get("progress_is_product_delivery_proof") is not False
@@ -651,7 +669,10 @@ def worker_progress_html(source):
             "owner_recheck_current_source_without_recovery":
                 "Verifieer huidige bron bij eigenaar; geen herstelautorisatie.",
         }
-        if row.get("safe_followup") not in followups:
+        safe_followup = row.get(
+            "safe_followup",
+            "owner_recheck_current_source_without_recovery" if legacy_row else None)
+        if safe_followup not in followups:
             raise ValueError("untrusted worker followup decision")
         event_items = []
         for point in timeline["recent_events_newest_first"]:
@@ -680,6 +701,12 @@ def worker_progress_html(source):
             + "".join(event_items or ["<li>Geen events waargenomen.</li>"])
             + '</ol></details>'
         )
+        if legacy_row:
+            timeline_html = (
+                '<p class="banner">HISTORISCHE BRON: geen tijdlijn beschikbaar.'
+                ' Huidige blokkades of voortgang ONBEKEND; lees'
+                ' de geïndexeerde bron opnieuw voor actueel bewijs.</p>'
+            )
         rows.append(
             '<article class="panel ' +
             ('warn' if state == "allocated_paused_with_claimed_queue_owner_gate" else 'read') +
@@ -696,11 +723,12 @@ def worker_progress_html(source):
             ' · Laatste bronvoortgang: ' +
             (str(progress) + ' sec' if progress is not None else 'ONBEKEND') +
             ' · Actuele sample: ' +
-            str(counts[1]) + ' blokkeersignalen, ' +
-            str(counts[2]) + ' voortgangssignalen na laatste prompt' +
-            (' (afgekapt)' if timeline["timeline_truncated"] else '') +
+            ('ONBEKEND (historisch venster)' if legacy_row else
+             str(counts[1]) + ' blokkeersignalen, ' +
+             str(counts[2]) + ' voortgangssignalen na laatste prompt' +
+             (' (afgekapt)' if timeline["timeline_truncated"] else '')) +
             '.</p><p><strong>Veilige vervolgstap:</strong> ' +
-            escape(followups[row["safe_followup"]]) +
+            escape(followups[safe_followup]) +
             '</p><p class="small">Actueel claimrecht: ONBEKEND · '
             'werkhervatting NIET bewezen.</p>' +
             timeline_html + '</article>')
