@@ -38,7 +38,7 @@ jobs:
           python3 -m unittest -v tests.test_zcloud_force_v2_idle_activation_20261013
           node --check firefox-extension/worker-controller-v2.js
           node --check public/zcloud-worker.user.js
-          grep -Fq '@version      2.0.3' public/zcloud-worker.user.js
+          grep -Fq '@version      2.0.4' public/zcloud-worker.user.js
           grep -Fq 'force_start' firefox-extension/worker-controller-v2.js
 
   install:
@@ -73,7 +73,7 @@ jobs:
           cmp scripts/zcloud_force_v2_idle_activation_20261013.py "$HOME/.local/libexec/zcloud/zcloud_force_v2_idle_activation_20261013.py"
           cat >"$HOME/.config/systemd/user/zcloud-force-v2-idle-activation.service" <<'UNIT'
           [Unit]
-          Description=One-shot safe-idle v2.0.3 Firefox addon activation, no chat interruption
+          Description=One-shot safe-idle v2.0.4 Firefox addon activation, no chat interruption
           [Service]
           Type=oneshot
           Environment=HOME=/home/ubuntu
