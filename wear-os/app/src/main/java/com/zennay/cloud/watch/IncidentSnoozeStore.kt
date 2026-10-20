@@ -17,6 +17,10 @@ object IncidentSnoozeStore {
     private const val DURATION_MS = 60L * 60 * 1000
     private const val MAX_SNOOZES = 32
 
+    fun notificationTag(alert: AlertItem): String =
+        (alert.project?.takeIf { it.matches(Regex("[a-z][a-z0-9_-]{0,39}")) }
+            ?: "cloud") + ":" + alert.id
+
     fun legacyEpisodeKey(alert: AlertItem): String =
         alert.id + "\\u001f" + alert.occurredAt.orEmpty()
 
@@ -72,7 +76,7 @@ object IncidentSnoozeStore {
         // the user-selected hour expires.
         clearLocalDeliveryReceipt(appContext, alert)
         (appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)
-            ?.cancel(alert.id, 0)
+            ?.cancel(notificationTag(alert), 0)
     }
 
     fun resume(context: Context, alert: AlertItem) {
