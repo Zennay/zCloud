@@ -22,7 +22,7 @@ from zsentinel_pr_gate_now import (
 )
 
 SCHEMA = "zsentinel-pr-gate-batch-reconciliation-v1"
-MAX_RECEIPTS = 32
+MAX_RECEIPTS = (REVIEW_MAX_PRS + MAX_PRS - 1) // MAX_PRS
 MAX_RECEIPT_BYTES = 1024 * 1024
 HEAD = re.compile(r"^[a-f0-9]{40}$")
 OBSERVED = "observed_current_head_partial_gate_evidence"
@@ -86,7 +86,7 @@ def _gate_class(item: dict, observed: bool, old: bool) -> str:
 
 def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     if not 1 <= len(receipt_paths) <= MAX_RECEIPTS:
-        raise ValueError("choose one to 32 separately created saved gate receipts")
+        raise ValueError("choose one to 75 separately created saved gate receipts")
     # Reuse the existing strict canonical reader. It pins manifest bytes and
     # deterministically sorts priority and PR identity in each 4-PR batch.
     first = read_review_manifest(manifest, batch=1)
@@ -197,6 +197,26 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     for row in all_rows:
         category = row["historic_gate_category"]
         category_counts[category] = category_counts.get(category, 0) + 1
+    # Saved observations are never atomic live GitHub state.
+    batch_clocks = [_utc(batches[i]["observed_at_utc"]) for i in sorted(batches)]
+    spread = int((max(batch_clocks) - min(batch_clocks)).total_seconds())
+    source_window_coherent = spread <= 600
+    # Existing manifest order is P0/P1-first and deduplicated.
+    manual_queue = [
+        {
+            "manifest_position": pos + 1,
+            "url": row["url"],
+            "historic_gate_category": row["historic_gate_category"],
+            "human_next_gate": row["next_human_gate"],
+            "exact_head_observed": row["exact_head_observed"],
+            "receipt_old": row["saved_source_stale_over_15_minutes"],
+            "current_head_verified": False,
+            "owner_and_release_authorized": False,
+            "merge_authorized": False,
+        }
+        for pos, row in enumerate(all_rows)
+    ]
+    first_actions = manual_queue[:24]
     return {
         "schema": SCHEMA,
         "generated_at_utc": observed_at.isoformat(),
@@ -211,8 +231,13 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         "unavailable_or_drifted_prs": unavailable,
         "stale_over_15_minutes_prs": stale,
         "saved_historic_gate_category_counts": category_counts,
+        "cross_batch_observation_spread_seconds": spread,
+        "cross_batch_observation_within_10_minutes": source_window_coherent,
+        "manual_review_queue_preview": first_actions,
+        "manual_review_queue_hidden_after_24": max(0, len(manual_queue) - len(first_actions)),
         "all_saved_batches_present": not missing,
-        "all_observations_present_and_recent": not missing and not unavailable and not stale,
+        "all_observations_present_and_recent": (
+            not missing and not unavailable and not stale and source_window_coherent),
         "saved_historical_receipts_only": True,
         "live_github_state_verified": False,
         "current_heads_revalidated": False,
@@ -320,7 +345,8 @@ def main(argv=None):
             print("Private saved receipt overview created (0600). No live authority.",
                   file=sys.stderr)
         return 3 if (report["missing_batches"] or report["unavailable_or_drifted_prs"]
-                     or report["stale_over_15_minutes_prs"]) else 0
+                     or report["stale_over_15_minutes_prs"]
+                     or not report["cross_batch_observation_within_10_minutes"]) else 0
     except (OSError, ValueError):
         print("zSentinel merge-first batch reconciliation refused: saved source invalid or unavailable",
               file=sys.stderr)
