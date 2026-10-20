@@ -109,6 +109,8 @@ def _safe_followup(state, assignment):
         return "owner_check_paused_worker_with_current_queue_lease"
     if state == "recent_client_block_event_owner_review":
         return "owner_inspect_current_assignment_and_recent_browser_block"
+    if state == "post_block_progress_signal_owner_verification_required":
+        return "owner_verify_product_continuation_after_block_signal"
     if state in ("generating_but_progress_unverified_or_stale",
                  "worker_event_stale_or_unknown",
                  "configured_running_no_event_evidence"):
@@ -193,6 +195,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "progress_age_seconds": None, "assistant_character_count": None,
             "browser_generating": False, "browser_sending": False,
             "recent_block_event_after_last_prompt": False,
+            "later_progress_signal_after_recent_block": False,
             "classification": (
                 "allocated_paused_with_claimed_queue_owner_gate"
                 if paused_with_claim else
@@ -268,6 +271,25 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         and (prompt is None or blocked[0] > prompt[0])
         and block_age is not None and block_age <= 900
     )
+    # A later progress/finish event is NOT product delivery, but an old
+    # block must not remain displayed as an unanswered current failure.
+    # Retain the original failure receipt and require owner verification.
+    later_progress = None
+    if blocked_after_prompt:
+        later_progress = con.execute(
+            "SELECT id,ts FROM runner_events "
+            "INDEXED BY runner_events_project_worker_event_id "
+            "WHERE project_id=? AND worker_slot=? "
+            "AND event IN ('generation-progress','generation-finished') "
+            "AND id>? ORDER BY id DESC LIMIT 1",
+            (project, slot, blocked[0]),
+        ).fetchone()
+    newer_signal = bool(
+        later_progress is not None and type(later_progress[0]) is int
+        and later_progress[0] > blocked[0]
+        and _age(later_progress[1], now) is not None
+        and _age(later_progress[1], now) <= 900
+    )
     timeline = _bounded_timeline(
         con, project, slot, last_id,
         prompt[0] if prompt is not None else None, now)
@@ -283,6 +305,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         # A lingering running configuration without an assigned global slot
         # is not an active, stalled worker, regardless of old events.
         state = "configured_not_allocated_not_a_stalled_worker"
+    elif blocked_after_prompt and newer_signal:
+        state = "post_block_progress_signal_owner_verification_required"
     elif blocked_after_prompt:
         state = "recent_client_block_event_owner_review"
     elif (generating and event_age is not None and event_age <= 180
@@ -311,6 +335,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "browser_generating": bool(generating),
         "browser_sending": bool(sending),
         "recent_block_event_after_last_prompt": blocked_after_prompt,
+        "later_progress_signal_after_recent_block": newer_signal,
         "classification": state,
         "event_source": "indexed_local_runner_events_only",
         "owner_claim_verified": False,
@@ -409,6 +434,7 @@ def observe_worker_progress(database, projects, *, now=None):
     actionable = {
         "allocated_paused_with_claimed_queue_owner_gate",
         "recent_client_block_event_owner_review",
+        "post_block_progress_signal_owner_verification_required",
         "generating_but_progress_unverified_or_stale",
         "worker_event_stale_or_unknown",
         "configured_running_no_event_evidence",
@@ -498,6 +524,8 @@ def _operator_worker_priority(row):
         return (1, row.get("project_id", ""), row.get("worker_slot", 0))
     if row.get("classification") == "recent_client_block_event_owner_review":
         return (2, row.get("project_id", ""), row.get("worker_slot", 0))
+    if row.get("classification") == "post_block_progress_signal_owner_verification_required":
+        return (3, row.get("project_id", ""), row.get("worker_slot", 0))
     if row.get("classification") in (
             "generating_but_progress_unverified_or_stale",
             "worker_event_stale_or_unknown", "configured_running_no_event_evidence"):
@@ -576,6 +604,8 @@ def worker_progress_html(source):
     )
     status = {
         "recent_client_block_event_owner_review": "Recent browserblokkadesignaal; eigenaarcontrole",
+        "post_block_progress_signal_owner_verification_required":
+            "Na eerdere blokkade een nieuwer generatie-event; herstel niet bewezen",
         "generation_progress_timestamp_observed": "Recente generatievoortgang waargenomen",
         "generating_but_progress_unverified_or_stale": "Genereren gemeld, werkelijke voortgang onbekend/stale",
         "worker_event_stale_or_unknown": "Geen recent worker-event; geen herstelbewijs",
@@ -656,6 +686,8 @@ def worker_progress_html(source):
                 "Actieve claim op gepauzeerde worker: eigenaarcontrole nodig.",
             "owner_inspect_current_assignment_and_recent_browser_block":
                 "Open de recente browserblokkade bij de bevoegde workereigenaar.",
+            "owner_verify_product_continuation_after_block_signal":
+                "Ná blokkade is een nieuwer generatie-event gezien; laat eigenaar productcontinuïteit verifiëren.",
             "owner_verify_current_lease_and_real_worker_progress":
                 "Controleer actuele lease en werkelijke worker-voortgang met eigenaar.",
             "continue_read_only_observation_without_takeover":
