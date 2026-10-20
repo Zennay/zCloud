@@ -428,6 +428,36 @@ def _md(value, limit=MAX_TEXT):
 
 
 
+def _current_queue_owner_note(report):
+    """One bounded first-run queue read, never an owner or lease-release proof."""
+    row = report.get("current_queue_lease_owner_summary")
+    if type(row) is not dict or type(row.get("coverage")) is not str:
+        raise ValueError("missing source-bound first queue observation")
+    coverage = row["coverage"]
+    if coverage != "current":
+        return ("Actuele leasebron " + _short(coverage, 55) +
+                "; leaseconflicten, verlopen en onbekende clocks ONBEKEND.")
+    if type(row.get("group_sample_truncated")) is not bool:
+        raise ValueError("current queue sample bound unknown")
+    nums = []
+    for key, title in (
+            ("inconsistent_windows", "tegenstrijdige leasevensters"),
+            ("expired_leases", "verlopen leases"),
+            ("unverifiable_leases", "niet-verifieerbare leaseklokken")):
+        value = row.get(key)
+        if type(value) is not int or not 0 <= value <= 2500:
+            raise ValueError("invalid source-bound current queue owner count")
+        nums.append(str(value) + " " + title)
+    timestamp = row.get("observed_at_utc")
+    if type(timestamp) is not str or len(timestamp) > 40:
+        raise ValueError("missing current queue source moment")
+    return ("Read-only queue " + _short(timestamp, 40) + ": " +
+            ", ".join(nums) +
+            ". Geen vrijgave of overname." +
+            (" Projectenlijst afgekapt, resterende items ONBEKEND."
+             if row["group_sample_truncated"] else ""))
+
+
 def _historical_html(report):
     """Separate prior-ledger owner queue, deliberately NOT a fresh incident."""
     entries = report.get("historical_owner_rechecks", [])
@@ -575,6 +605,7 @@ def handoff_html(report):
             or (compared and (type(count) is not int or not 0 <= count <= 2500))
             or (not compared and count is not None)):
         raise ValueError("untrusted queue comparison handoff provenance")
+    current_queue_line = _current_queue_owner_note(report)
     queue_line = ("Claimleasevergelijking niet aangeleverd; conflictstatus ONBEKEND."
                   if not compared else
                   str(count) + " tegenstrijdige leasevensters in de begrensde bron; "
@@ -585,6 +616,8 @@ def handoff_html(report):
             '<h2>Nu opvolgen · P0 eerst</h2><p>Actuele, begrensde '
             'bronwaarneming. GEEN vrijgave voor workerclaim, retry, merge of deploy.</p>'
             '<p class="small muted">Bronbereik: ' + sources + '</p>' +
+            '<p class="small muted">Queue huidig: ' +
+            escape(current_queue_line) + '</p>' +
             '<p class="small muted">Queue #677: ' + escape(queue_line) + '</p>' +
             ('<ol>' + ''.join(cards) + '</ol>' if cards else
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
@@ -616,6 +649,7 @@ def markdown(report):
                                  or not 0 <= queue_count <= 2500))
             or (not queue_known and queue_count is not None)):
         raise ValueError("unsafe queue source status in Markdown")
+    lines.append("Queue nu: " + _md(_current_queue_owner_note(report), 350))
     lines.append("Queue #677: " + (
         str(queue_count) + " tegenstrijdige leasevensters in begrensde bron."
         if queue_known else "geen bronvergelijking; leaseconflicten ONBEKEND."))
