@@ -227,6 +227,7 @@ Notion/queue claims and the exact-head GitHub gates separately before acting.</p
 <option value="incomplete">Missing contact or date</option>
 <option value="today">Due today UTC</option>
 <option value="scheduled">Scheduled later</option>
+<option value="local-complete">Locally closed follow-up (NOT issue resolved)</option>
 </select></label>
 <label>Change since earlier board<select id="change" disabled>
 <option value="">All captured issues</option>
@@ -334,6 +335,8 @@ function contactLabel(value){
 function followupStateMatches(info,kind){
  if(!kind)return true;
  if(!manualGateDecisions.has(info?.decision))return false;
+ if(kind==='local-complete')return info.followup_status==='local-complete';
+ if(info.followup_status==='local-complete')return false;
  const complete=Boolean(info?.owner?.trim()&&info?.due);
  if(kind==='incomplete')return !complete;
  if(!complete)return false;
@@ -349,6 +352,7 @@ function validFollowupDate(value){
   new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
 }
 function dueState(info){
+ if(info?.followup_status==='local-complete')return 'local follow-up closed (issue status UNVERIFIED)';
  if(!info?.owner?.trim()||!info?.due)return 'needs human contact/date';
  return info.due<utcToday()?'overdue (manual review required)':info.due===utcToday()?
   'due today UTC':'scheduled by operator';
@@ -375,6 +379,7 @@ function saveSelection(){
  if(decision&&note&&owner&&due)handoffs.set(selected,{
   decision:decision.value,note:note.value.slice(0,1000),
   owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:'',
+  followup_status:handoffs.get(selected)?.followup_status||'open',
   carried_from:handoffs.get(selected)?.carried_from||''
  });
 }
@@ -430,16 +435,21 @@ function refreshFollowups(){
  list.replaceChildren();
  const rows=board.cards.filter(c=>manualGateDecisions.has(handoffs.get(c.issue)?.decision))
   .map(c=>({card:c,info:handoffs.get(c.issue)}))
-  .sort((a,b)=>Number(!a.info?.due)-Number(!b.info?.due)||
+  .sort((a,b)=>Number(a.info?.followup_status==='local-complete')-
+    Number(b.info?.followup_status==='local-complete')||
+   Number(!a.info?.due)-Number(!b.info?.due)||
    (a.info?.due||'').localeCompare(b.info?.due||'')||
    ({P0:0,P1:1,P2:2,Unspecified:3}[a.card.priority]-
     {P0:0,P1:1,P2:2,Unspecified:3}[b.card.priority])||
    a.card.issue.localeCompare(b.card.issue)).slice(0,60);
- const overdue=rows.filter(x=>x.info?.owner&&x.info?.due&&x.info.due<utcToday()).length;
- const incomplete=rows.filter(x=>!x.info?.owner?.trim()||!x.info?.due).length;
+ const active=rows.filter(x=>x.info?.followup_status!=='local-complete');
+ const overdue=active.filter(x=>x.info?.owner&&x.info?.due&&x.info.due<utcToday()).length;
+ const incomplete=active.filter(x=>!x.info?.owner?.trim()||!x.info?.due).length;
  document.getElementById('followupSummary').textContent=
-  rows.length+' human-only follow-ups · '+overdue+' past selected date · '+
-  incomplete+' missing contact/date · 0 external notifications, 0 authorized claims.';
+  active.length+' open human follow-ups · '+
+  (rows.length-active.length)+' locally closed · '+
+  overdue+' past review date · '+incomplete+' missing contact/date · '+
+  '0 external notifications, 0 authorized claims.';
  if(!rows.length){list.append(elem('li','No manual follow-ups saved in this session. Live blocker status unknown.'));return;}
  rows.forEach(({card,info})=>{
   const li=elem('li'),btn=elem('button',card.priority+' '+card.issue);
@@ -604,7 +614,7 @@ function refreshComparison(){
 }
 function emptyManual(entry){
  return !entry||(entry.decision==='investigate'&&!entry.note&&!entry.owner&&
-  !entry.due&&!entry.carried_from);
+  !entry.due&&!entry.carried_from&&entry.followup_status!=='local-complete');
 }
 function clearCarryPreview(message){
  carryPreview=null;
@@ -757,6 +767,7 @@ function calendarSource(stamp){
  const rows=board.cards.filter(c=>{
   const info=handoffs.get(c.issue);
   return manualGateDecisions.has(info?.decision)&&
+   info.followup_status!=='local-complete'&&
    Boolean(info?.owner?.trim()&&info?.due&&validFollowupDate(info.due));
  }).sort((a,b)=>{
   const da=handoffs.get(a.issue).due,db=handoffs.get(b.issue).due;
