@@ -142,7 +142,12 @@ jobs:
             echo "::error::Runtime checkout does not match approved main; leave owner files untouched."
             exit 1
           fi
-          if test -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$runtime_root" status --porcelain=v1 --untracked-files=all -- firefox-extension/background.js)"; then
+          # Git inspection errors are UNKNOWN, never proof of a clean tree.
+          if ! runtime_background_status="$(GIT_OPTIONAL_LOCKS=0 git -C "$runtime_root" status --porcelain=v1 --untracked-files=all -- firefox-extension/background.js)"; then
+            echo "::error::Unable to inspect runtime worker background; refusing overwrite."
+            exit 1
+          fi
+          if test -n "$runtime_background_status"; then
             echo "::error::Runtime worker background has uncommitted owner changes; refusing overwrite."
             exit 1
           fi
