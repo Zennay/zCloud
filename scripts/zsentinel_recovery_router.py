@@ -424,7 +424,17 @@ def eligible_tasks(bundle, blocked, now, capacity):
             complete = False
         else:
             claim_scopes.append((pid, paths))
-    branch_ownership = observed_prless_branch_conflicts(bundle, now)
+    try:
+        branch_ownership = observed_prless_branch_conflicts(bundle, now)
+    except (ValueError, TypeError, KeyError):
+        # A malformed optional owner snapshot must not starve unrelated projects.
+        # Treat only the canonical cloud project as unavailable for suggestion.
+        branch_ownership = {
+            "supplied": True, "coverage": "invalid",
+            "paths": (), "suppress_all": True,
+            "reason": "invalid_optional_branch_source",
+            "observed_branches": 0,
+        }
     recommendations = []
     seen = set()
     branch_suppressed = []
@@ -1045,6 +1055,8 @@ def main():
     parser = argparse.ArgumentParser(description="zSentinel bounded incident dedup and independent work router")
     parser.add_argument("bundle", help="trusted JSON evidence + tasks + active-claim inventory")
     parser.add_argument("--state", help="optional private local incident dedup ledger (JSON)")
+    parser.add_argument("--prless-branches", type=Path,
+                        help="optional saved zCloud un-PR branch owner observation (read-only)")
     parser.add_argument("--format", choices=("json", "text", "html", "ics", "desk"), default="text")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
@@ -1059,13 +1071,20 @@ def main():
             # Do not create a private HTML report on top of a pending
             # cursor or dedup ledger: a subsequent atomic JSON write could
             # otherwise clobber the report after its exclusive creation.
-            private_inputs = [args.state]
+            private_inputs = [args.state, args.bundle, args.prless_branches]
             if any(item is not None and args.desk_output.resolve() == Path(item).resolve()
                    for item in private_inputs):
                 raise ValueError("desk-output must differ from private ledger/cursor paths")
         if args.state is not None:
             ledger_lock = acquire_private_ledger_lock(args.state)
         bundle = read_json(args.bundle, MAX_INPUT_BYTES, "bundle")
+        if args.prless_branches is not None:
+            if bundle.get("prless_branch_observation") is not None:
+                raise ValueError("select one PR-less ownership source, not two")
+            if args.state is not None and Path(args.state).resolve() == args.prless_branches.resolve():
+                raise ValueError("private ledger must differ from read-only branch source")
+            bundle["prless_branch_observation"] = read_json(
+                args.prless_branches, MAX_INPUT_BYTES, "prless branch owner observation")
         old = read_json(args.state, MAX_STATE_BYTES, "state") if args.state and Path(args.state).exists() else None
         output, state = plan(bundle, old)
         output["private_ledger_written"] = bool(args.state)
