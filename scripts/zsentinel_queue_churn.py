@@ -166,6 +166,7 @@ def compare(previous, current, now=None):
                 "current_status": after["status"],
                 "owner_lease_expired_observed": after["lease_expired"],
                 "owner_lease_unverifiable_observed": after["lease_unknown"],
+                "owner_lease_window_inconsistent_observed": after["lease_inconsistent"],
                 "lease_released_or_claimable_verified": False,
                 "claim_failure_verified": False,
                 # No queue ref, UUID, claim token or human-authored title.
@@ -178,7 +179,11 @@ def compare(previous, current, now=None):
                       key=lambda k: (PRIORITIES[k[1]], k[0])):
         before, after = groups0[key], groups1[key]
         change = after["high_claim_attempts"] - before["high_claim_attempts"]
-        if change == 0 and before["queued"] == after["queued"]:
+        lease_changed = any(
+            before[k] != after[k] for k in
+            ("expired_owner_lease_rows", "unverifiable_owner_lease_rows",
+             "inconsistent_owner_lease_window_rows"))
+        if change == 0 and before["queued"] == after["queued"] and not lease_changed:
             continue
         group_changes.append({
             "project_id": key[0], "priority": key[1],
@@ -186,16 +191,23 @@ def compare(previous, current, now=None):
             "queued_count_delta_not_retry_proof": after["queued"] - before["queued"],
             "current_expired_owner_lease_rows": after["expired_owner_lease_rows"],
             "current_unverifiable_owner_lease_rows": after["unverifiable_owner_lease_rows"],
+            "current_inconsistent_owner_lease_window_rows": after["inconsistent_owner_lease_window_rows"],
             "owner_verified": False,
             "queue_write_authorized": False,
         })
     group_changes = group_changes[:40]
     count = len(increases)
+    inconsistent_leases = total1["inconsistent_owner_lease_window_rows"]
     stage = ("observed_same_item_claim_attempt_increase" if count else
+             "observed_inconsistent_lease_owner_review" if inconsistent_leases else
              "no_confirmed_repeat_within_bounded_sample")
     if count:
         action = ("Bevoegd queue-eigenaar onderzoekt de exacte lease- en worker-events van "
                   "waargenomen items. Geen automatische retry, claimrelease of failover.")
+    elif inconsistent_leases:
+        action = ("Er zijn actieve taken met tegenstrijdige leaseklokken. "
+                  "Bevoegde eigenaar moet de originele claim- en expiratiebron "
+                  "controleren; nooit automatisch vrijgeven, resetten of herverdelen.")
     elif (not previous["sample_is_complete"] or not current["sample_is_complete"]):
         action = ("De steekproef is afgekapt; selecteer zo nodig een nieuwe read-only "
                   "bronobservatie. Afwezigheid van retry churn is NIET bewezen.")
@@ -221,6 +233,7 @@ def compare(previous, current, now=None):
             total1["high_claim_attempt_items"] - total0["high_claim_attempt_items"]),
         "current_expired_lease_candidates_owner_review": total1["expired_owner_lease_rows"],
         "current_unverifiable_lease_candidates_owner_review": total1["unverifiable_owner_lease_rows"],
+        "current_inconsistent_lease_windows_owner_review": inconsistent_leases,
         "sampled_increased_claims": increases[:MAX_SAMPLES],
         "sampled_group_changes": group_changes,
         "sampled_changes_truncated": count > MAX_SAMPLES or
@@ -254,6 +267,8 @@ def public_summary(report):
             report["current_expired_lease_candidates_owner_review"],
         "current_unverifiable_lease_candidates_owner_review":
             report["current_unverifiable_lease_candidates_owner_review"],
+        "current_inconsistent_lease_windows_owner_review":
+            report["current_inconsistent_lease_windows_owner_review"],
         "comparison_private_sample_only": True,
         "claim_failure_proven": False,
         "automatic_retry_authorized": False,
@@ -270,7 +285,9 @@ def human_text(report):
              if count else "geen herhaalde claimpoging binnen de begrensde overlap bewezen.") +
             "\nACTIE: " + report["action"] +
             "\nSTATUS: attempts zijn claimpogingen, GEEN bewezen fouten; "
-            "geen leasevrijgave/retry; brondekking " + summary["coverage"] + ".")
+            "geen leasevrijgave/retry; tegenstrijdige leaseklokken " +
+            str(summary["current_inconsistent_lease_windows_owner_review"]) +
+            "; brondekking " + summary["coverage"] + ".")
 
 
 def public_html(report):
@@ -287,6 +304,8 @@ def public_html(report):
             str(r["current_expired_lease_candidates_owner_review"]) +
             '; lease-klokken onzeker: ' +
             str(r["current_unverifiable_lease_candidates_owner_review"]) +
+            '; tegenstrijdige leasevensters: ' +
+            str(r["current_inconsistent_lease_windows_owner_review"]) +
             '. Alleen eigenaarbeoordeling; geen automatische claimrelease of retry.</p>'
             '<p><a href="https://github.com/Zennay/zCloud/issues/677" '
             'rel="noopener noreferrer">Open issue #677</a></p></section>')
@@ -302,7 +321,12 @@ def private_html(report):
             str(item["previous_claim_attempts"]) + " → " +
             str(item["current_claim_attempts"]) + "</td><td>" +
             escape(item["previous_status"]) + " → " +
-            escape(item["current_status"]) + "</td></tr>")
+            escape(item["current_status"]) + "</td><td>" +
+            ("CONFLICT · eigenaarbeoordeling" if
+             item["owner_lease_window_inconsistent_observed"] else
+             "verlopen" if item["owner_lease_expired_observed"] else
+             "onverifieerbaar" if item["owner_lease_unverifiable_observed"] else
+             "geen inconsistentie waargenomen") + "</td></tr>")
     return (
         '<!doctype html><html lang="nl"><meta charset="utf-8">'
         '<meta name="referrer" content="no-referrer">'
@@ -318,7 +342,7 @@ def private_html(report):
         public_html(report) +
         '<p>' + escape(report["action"]) + '</p>'
         '<table><thead><tr><th>Project</th><th>Prioriteit</th>'
-        '<th>Claimpogingen</th><th>Status</th></tr></thead><tbody>' +
+        '<th>Claimpogingen</th><th>Status</th><th>Leasebewijs</th></tr></thead><tbody>' +
         "".join(details) +
         '</tbody></table><p>Alleen herkende overlappende samples; verdwenen/new '
         'items en niet gescande leases zijn onbekend.</p></main></html>')
