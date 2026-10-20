@@ -134,6 +134,18 @@ def public_summary(data):
             or data.get("source_scan_coverage") not in (
                 "partial", "bounded_complete_with_no_private_exclusions")):
         raise ValueError("untrusted archive candidate receipt")
+    available = data.get("archive_available_gib_estimate")
+    cold_seen = data.get("cold_extension_hints_seen_in_source_lower_bound")
+    if (type(available) not in (int, float) or not 0 <= available <= 10**7
+            or available != available
+            or (cold_seen is not None and
+                (type(cold_seen) is not int or not 0 <= cold_seen <= 20000))
+            or data.get("remote_archive_write_verified") is not False
+            or data.get("archive_statvfs_not_usable_space_guarantee") is not True
+            or data.get("claim_or_runner_mutated") is not False
+            or type(data.get("candidate_bytes_lower_bound")) is not int
+            or not 0 <= data["candidate_bytes_lower_bound"] <= 20 * 1024**4):
+        raise ValueError("invalid untrusted archive capacity source")
     return {
         "schema": "zsentinel-external-archive-summary-v1",
         "archive_separate_mount_observed": True,
