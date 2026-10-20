@@ -18,7 +18,7 @@ import time
 
 HOME = Path("/home/ubuntu")
 ROOT = HOME / "zennay-cloud" / ".drive-archive"
-STAGING = ROOT / "staging"
+STAGING = HOME / ".local/state/zcloud-drive/staging"
 RCLONE = "/home/ubuntu/.local/bin/rclone"
 DEST = "vpsarchive:zcloud-vps/automatic/runner-logs"
 STATE = HOME / ".local/state/zcloud-drive"
