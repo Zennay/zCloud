@@ -32,13 +32,14 @@ def issue_worklist(report):
     indexed = {}
     unlinked = []
     for candidate in report["entries"]:
-        refs = set()
-        snapshots = set()
+        # Track each issue independently. A PR may reference issue A in
+        # one source snapshot and issue B in a later snapshot; attributing
+        # the union of all snapshot numbers to both would be false evidence.
+        issue_seen_at = {}
         for seen in candidate["observations"]:
             for url in seen["linked_issue_urls"]:
-                refs.add(url)
-                snapshots.add(seen["snapshot_index"])
-        if not refs:
+                issue_seen_at.setdefault(url, set()).add(seen["snapshot_index"])
+        if not issue_seen_at:
             unlinked.append({
                 "url": candidate["url"],
                 "priority": candidate["latest_sample_priority"],
@@ -48,7 +49,7 @@ def issue_worklist(report):
                 "owner_claim_verified": False,
                 "merge_verified": False,
             })
-        for url in sorted(refs):
+        for url, issue_snapshots in sorted(issue_seen_at.items()):
             if "/issues/" not in url:
                 raise ValueError("Noncanonical source issue identity")
             issue = indexed.setdefault(url, {
@@ -65,8 +66,12 @@ def issue_worklist(report):
             })
             if url.split("/issues/")[0] != "https://github.com/" + candidate["repository"]:
                 raise ValueError("Source issue belongs to a different repository")
-            issue["observed_in_snapshots"].update(snapshots)
+            issue["observed_in_snapshots"].update(issue_snapshots)
             issue["linked_existing_prs"].append({
+                "issue_ref_observed_in_snapshots": sorted(issue_snapshots),
+                "issue_ref_last_seen_snapshot": max(issue_snapshots),
+                "issue_ref_absent_in_last_snapshot":
+                    max(issue_snapshots) != len(report["source_snapshots"]),
                 "pr_url": candidate["url"],
                 "pr_number": candidate["number"],
                 "source_priority": candidate["latest_sample_priority"],
