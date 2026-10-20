@@ -702,6 +702,7 @@ ATTENTION_TITLES = (
     "CI of mergeconflict vraagt actie", "PR-eigenaar moet actie ondernemen",
     "Bron/CI onvolledig of nog bezig", "Review/mergeability controleren",
     "Bescherming, eigenaarschap en release controleren",
+    "Ongewijzigde HOLD · geen nieuwe controle zonder bewijs",
 )
 
 
@@ -779,10 +780,33 @@ def merge_first_attention(board):
                  if current else 0),
             "observed_file_overlap_prs": overlaps,
             "source_current_head_verified": current,
+            "historical_gate_change": None,
+            "historical_next_step": None,
             "merge_authorized": False,
             "owner_claim_verified": False,
             "required_branch_rules_verified": False,
         })
+    # Historical data is never merge proof. It can de-emphasize a strictly
+    # unchanged observed HOLD, but cannot assert uninterrupted continuity.
+    episode = board.get("historical_gate_episodes")
+    if episode is not None:
+        if (episode.get("merge_authorized") is not False
+                or episode.get("writes_performed") is not False):
+            raise ValueError("non-read-only historical PR handoff")
+        changed = {row["url"]: row for row in episode["items"]}
+        for row in rows:
+            old = changed.get(row["url"])
+            if old is None:
+                continue
+            row["historical_gate_change"] = old["change"]
+            row["historical_next_step"] = old["operator_next_step"]
+            # Only exact bounded matching source observations qualify.
+            if old["safe_to_defer_repeat_only_when_no_new_evidence"]:
+                row["rank"] = 5
+                row["attention_group"] = ATTENTION_TITLES[5]
+                row["human_next_step"] = (
+                    "Geen ongewijzigde blokkade opnieuw controleren "
+                    "zonder nieuw bronbewijs; pak een andere PR of taak.")
     rows.sort(key=lambda row: (row["rank"], row["project"], row["number"]))
     return {
         "source": "bounded_current_exact_head_observation",
@@ -1210,6 +1234,7 @@ def as_private_csv(board):
         "prior_gate_blocker", "current_gate_blocker", "gate_episode_change",
         "gate_evidence_category", "operator_next_step",
         "attention_rank", "attention_group",
+        "historical_gate_change",
         "owner_claim_verified", "merge_authorized", "operator_notice",
     )
     writer.writerow(columns)
@@ -1395,6 +1420,7 @@ def as_private_csv(board):
                  current_gate_blocker=row["blocker"],
                  attention_rank=row["rank"],
                  attention_group=row["attention_group"],
+                 historical_gate_change=row["historical_gate_change"] or "",
                  operator_next_step=row["human_next_step"],
                  operator_notice=(
                      "Human owner action only; NOT exact required checks, "
@@ -1466,13 +1492,13 @@ def main(argv=None):
         if args.inspect_current_pr_gates:
             board = current_merge_first_gates(board, os.environ.get("GITHUB_TOKEN"),
                                              focus_prs=args.gate_pr)
-        if args.inspect_current_pr_gates:
-            board["merge_first_attention"] = merge_first_attention(board)
         if args.compare_previous is not None:
             previous = read_private_previous(args.compare_previous)
             board["historical_pr_delta"] = compare(previous, board)
             if args.inspect_current_pr_gates:
                 board["historical_gate_episodes"] = compare_gate_episodes(previous, board)
+        if args.inspect_current_pr_gates:
+            board["merge_first_attention"] = merge_first_attention(board)
         if args.format == "csv":
             if args.output is None:
                 raise ValueError("private portfolio CSV requires --output")
