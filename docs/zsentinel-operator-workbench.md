@@ -168,3 +168,20 @@ evidence requirement is **not** proof the gate passed, nor does a newly linked
 PR prove completion; every action still requires fresh actual ownership,
 required CI, reviewer and release consent. No QA/regression suite was added
 or run, and nothing contacts or writes to GitHub, Notion, workers or the VPS.
+
+### Three-line human blocker handoff (20 October)
+
+Every currently selected issue now exposes a **read-only three-line source card**:
+original priority/issue/title; bounded next investigation (not an authorized
+command); and the first observed missing evidence requirement plus the original
+UTC observation. Operators can select these lines for a manually reviewed copy.
+The view does not auto-copy to the clipboard, submit a request, include private
+human notes, assign a claim, restart a runner or signal a recovery. A first
+missing-evidence item is **not** an exhaustive gate inventory; review the full
+issue and its original source links before acting. Missing evidence, even when
+absent from the snapshot, never means that security/CI/review/release passed.
+
+The three-line summary is regenerated when the issue selection changes; it is
+not a continuously updating live monitor. This feature remains offline and
+works entirely in the existing file-based operator HTML with no new service,
+permission, QA/test suite, dependency, privileged write or release gate change.
