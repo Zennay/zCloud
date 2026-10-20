@@ -410,11 +410,19 @@ def timeline_footprint(receipts):
     high_disk = 0
     high_load = 0
     unknown_capacity = 0
-    for receipt in receipts:
+    latest_pressure_high = None
+    latest_service_rows = {}
+    latest_service_coverage = False
+    for index, receipt in enumerate(receipts):
         units = receipt.get("units") or {}
         rows = _unit_states(receipt)
-        if units.get("runner_units_observed") is not True or units.get("runner_units_truncated") is not False:
+        source_complete = (units.get("runner_units_observed") is True
+                           and units.get("runner_units_truncated") is False)
+        if not source_complete:
             partial += 1
+        if index == len(receipts) - 1:
+            latest_service_rows = rows
+            latest_service_coverage = source_complete
         for name, state in rows.items():
             observed[name] = observed.get(name, 0) + 1
             if state["state"] == "failed":
@@ -434,15 +442,28 @@ def timeline_footprint(receipts):
         high_swap += swap >= 80
         high_disk += disk >= 90
         high_load += load > 1.35 * cores
+        if index == len(receipts) - 1:
+            latest_pressure_high = (swap >= 80 or disk >= 90 or
+                                    load > 1.35 * cores)
+    latest_failed = sorted(name for name, row in latest_service_rows.items()
+                           if row["state"] == "failed")
     return {
         "samples": len(receipts), "incomplete_service_samples": partial,
         "unknown_capacity_samples": unknown_capacity,
         "swap_high_samples": high_swap,
         "root_high_samples": high_disk,
         "load_high_samples": high_load,
+        "latest_failed_services": latest_failed[:20],
+        "latest_pressure_high": latest_pressure_high,
+        "latest_service_coverage_complete": latest_service_coverage,
         "failed_observations": [
             {"unit": name, "failed_samples": count,
-             "seen_samples": observed[name]}
+             "seen_samples": observed[name],
+             "last_observed_state": (
+                 latest_service_rows[name]["state"]
+                 if name in latest_service_rows else
+                 "unknown_partial" if not latest_service_coverage else
+                 "not_in_latest_sample")}
             for name, count in sorted(failed.items(),
                                       key=lambda pair: (-pair[1], pair[0]))[:20]
         ],
@@ -454,30 +475,38 @@ def timeline_owner_actions(summary, comparisons):
     """At most three evidence-bound human follow-ups; no execution or dispatch."""
     if not isinstance(summary, dict) or comparisons is None:
         return []
-    failed = summary.get("failed_observations") or []
-    stressed = (summary.get("swap_high_samples", 0) > 0
-                or summary.get("root_high_samples", 0) > 0
-                or summary.get("load_high_samples", 0) > 0)
+    failed_history = summary.get("failed_observations") or []
+    failed_latest = summary.get("latest_failed_services") or []
+    stressed_latest = summary.get("latest_pressure_high") is True
     reboot = any(pair.get("host_reboot_observed") is True for pair in comparisons)
     unknown = (summary.get("incomplete_service_samples", 0) > 0
                or summary.get("unknown_capacity_samples", 0) > 0
+               or summary.get("latest_pressure_high") is None
                or any(pair.get("same_boot_verified") is not True
                       for pair in comparisons))
     tasks = []
-    if failed and stressed:
+    if failed_latest and stressed_latest:
         tasks.append((
-            "P0 · gefaalde services bij VPS-druk",
-            "Herhaald als failed geobserveerde runners en hostdruk vereisen "
-            "eerst eigenaarbevestigde RAM/swap/disk-capaciteit en oorzaakonderzoek; "
-            "geen automatische herstart of extra jobs.",
-            "WACHT OP EIGENAAR",
+            "P0 · actuele failed-services bij VPS-druk",
+            "De laatste bron toont failed-services EN hoge huidige hostdruk. "
+            "Laat de runtime-eigenaar oorzaak en RAM/swap/disk-headroom bevestigen "
+            "vóór mogelijke herstelbesluiten; geen herstart of nieuwe jobs.",
+            "LAATSTE BRON FAILED · EIGENAAR NODIG",
         ))
-    elif failed:
+    elif failed_latest:
         tasks.append((
-            "P1 · gefaalde runner-service",
-            "Laat de bevoegde runtime-eigenaar systemd-fout en exacte "
-            "GitHub-runnerlabel/toewijzing onafhankelijk vaststellen.",
-            "NIET HERSTELD BEWEZEN",
+            "P1 · failed-service in laatste bron",
+            "Een of meer runner-services zijn bij de laatste observatie failed. "
+            "Laat de eigenaar de oorzaak en GitHub-toewijzing onafhankelijk vaststellen.",
+            "LAATSTE BRON FAILED · GEEN JOBBEWIJS",
+        ))
+    elif failed_history:
+        tasks.append((
+            "P1 · historische failed-services opvolgen",
+            "Eerdere bronnen meldden failed, maar de laatste bron toont die "
+            "status niet. Controleer werkelijke GitHub-toewijzing en eigenaarschap; "
+            "een andere systemd-status is geen herstelbewijs.",
+            "HISTORISCH FAILED · HUIDIG JOBHERSTEL ONBEKEND",
         ))
     if reboot:
         tasks.append((
@@ -512,7 +541,9 @@ def render_timeline_footprint(summary):
         rows.append("<li><strong>" + escape(entry["unit"]) + "</strong>: "
                     + str(entry["failed_samples"]) + " van "
                     + str(entry["seen_samples"]) + " waarnemingen met "
-                    "systemd-status failed (geen aantal afzonderlijke crashes).</li>")
+                    "systemd-status failed; laatst waargenomen: "
+                    + escape(entry["last_observed_state"]) +
+                    " (geen aantal afzonderlijke crashes).</li>")
     failed_html = "".join(rows) or (
         "<li>Geen failed-status in waargenomen runnerregels; dit is geen "
         "bewijs dat alle runners gezond zijn.</li>")
@@ -534,6 +565,12 @@ def render_timeline_footprint(summary):
         + str(summary["root_high_samples"]) + "× · hoge CPU-load "
         + str(summary["load_high_samples"]) + "×. "
         "Dit zijn meetmomenten, geen minuten onder druk.</p>"
+        "<p><strong>Laatste bron:</strong> " +
+        str(len(summary.get("latest_failed_services", []))) +
+        " failed-service(s) waargenomen; hostdruk " +
+        ("hoog" if summary.get("latest_pressure_high") is True else
+         "niet hoog in waargenomen bronnen" if summary.get("latest_pressure_high") is False
+         else "onbekend") + ". Historisch failed is niet automatisch actueel P0.</p>"
         "<h3>Als failed waargenomen services</h3><ul>" + failed_html + "</ul>"
         "<h3>Vervolg voor bevoegde operator</h3><ol>" + action_rows + "</ol>"
         "<p class='warning'>Een herhaald failed-meetmoment bewijst geen nieuwe "
