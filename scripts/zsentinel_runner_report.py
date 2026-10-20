@@ -1011,6 +1011,55 @@ def render_private_json_handoff(data):
         pressure[key] = (value if type(value) in (int, float)
                          and math.isfinite(value) and 0 <= value < 1e10
                          else None)
+    # An offline T0/T1 or multi-snapshot inbox must include the observed
+    # service *changes*, not just the last inventory. Keep all window
+    # summaries and at most 40 canonical transitions, favouring newest
+    # evidence when older windows exceed the cap.
+    pairs = timeline if timeline is not None else (
+        [data["comparison"]] if isinstance(data.get("comparison"), dict) else []
+    )
+    steps = []
+    for pair in pairs:
+        if not isinstance(pair, dict) or not isinstance(pair.get("transitions"), list):
+            raise ValueError("Malformed admitted service transition window")
+        changes = pair["transitions"]
+        if len(changes) > 40:
+            raise ValueError("Unbounded transition source window")
+        steps.append({
+            "from_utc": _handoff_text(pair.get("previous_utc")),
+            "to_utc": _handoff_text(pair.get("current_utc")),
+            "same_boot_verified": pair.get("same_boot_verified") is True,
+            "source_complete": pair.get("complete_service_coverage") is True,
+            "observed_transition_count": len(changes),
+        })
+    from zsentinel_runner_snapshot import RUNNER_UNIT
+    selected = []
+    for index in range(len(pairs) - 1, -1, -1):
+        for item in reversed(pairs[index]["transitions"]):
+            name = item.get("unit")
+            event_kind = item.get("change")
+            if (not isinstance(name, str) or len(name) > 160
+                    or not RUNNER_UNIT.fullmatch(name)
+                    or event_kind not in {
+                        "newly_observed", "no_longer_observed", "service_state_changed",
+                        "previous_source_gap", "current_source_gap"
+                    }):
+                raise ValueError("Invalid canonical source transition")
+            if len(selected) >= 40:
+                break
+            selected.append({
+                "window_index": index,
+                "unit": name,
+                "change": event_kind,
+                "same_boot_verified": pairs[index].get("same_boot_verified") is True,
+                "source_complete": pairs[index].get("complete_service_coverage") is True,
+                "github_job_recovered": None,
+                "action_authorized": False,
+            })
+        if len(selected) >= 40:
+            break
+    selected.reverse()
+    total_transitions = sum(x["observed_transition_count"] for x in steps)
     payload = {
         "schema": "zsentinel.runner-owner-inbox.v1",
         "source": source_kind,
@@ -1027,6 +1076,9 @@ def render_private_json_handoff(data):
             "coach_weight_recommended": data.get("weight")
                 if type(data.get("weight")) is int and data["weight"] in (25, 40, 70) else None,
         },
+        "observation_steps": steps,
+        "observed_transitions": selected,
+        "transition_items_omitted": total_transitions - len(selected),
         "owner_actions": [
             {"problem": _handoff_text(title, 160),
              "owner_action": _handoff_text(advice, 500),
