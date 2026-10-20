@@ -425,7 +425,7 @@ def main():
             from zsentinel_recovery_view import html_view
             from zsentinel_pinned_issue import pinned_receipts_html
             from zsentinel_worker_progress_observer import worker_progress_html
-            rendered = html_view(decision)
+            rendered = html_view(decision, registry=registry)
             if args.observe_local_runners:
                 from zsentinel_local_runner_processes import render_html as runner_process_html
                 if rendered.count("<main>") != 1:
