@@ -39,6 +39,8 @@ def combine_workboards(snapshots, registry, now=None):
     windows = []
     snapshots_at = []
     seen_urls = set()
+    existing_prs = []
+    seen_pr_links = set()
     for index, snapshot in enumerate(snapshots):
         # Use the exact existing conservative evidence parser. This refuses
         # invented fix, ownership and merge authorization receipts.
@@ -106,7 +108,39 @@ def combine_workboards(snapshots, registry, now=None):
             cleaned["source_age_seconds"] = age
             cleaned["source_stale"] = age > 600
             all_items.append(cleaned)
+        listed = snapshot.get("recent_open_product_prs", [])
+        if type(listed) is not list or len(listed) > 8 * len(projects):
+            raise ValueError("unbounded existing PR source list")
+        for pr in listed:
+            if type(pr) is not dict:
+                raise ValueError("invalid listed PR receipt")
+            pid = pr.get("project_id")
+            url = pr.get("url")
+            if (pid not in projects
+                    or type(url) is not str
+                    or not url.startswith(
+                        "https://github.com/" + registry[pid] + "/pull/")
+                    or not url.rsplit("/", 1)[-1].isdigit()
+                    or pr.get("ownership_verified") is not False
+                    or pr.get("merge_authorized") is not False
+                    or pr.get("current_exact_head_verified") is not False
+                    or type(pr.get("draft")) is not bool
+                    or type(pr.get("title")) is not str
+                    or not 0 < len(pr["title"]) <= 180
+                    or type(pr.get("listed_head_sha")) is not str
+                    or len(pr["listed_head_sha"]) != 40
+                    or any(ch not in "0123456789abcdef"
+                           for ch in pr["listed_head_sha"])
+                    or url in seen_pr_links):
+                raise ValueError("untrusted or duplicate existing PR candidate")
+            seen_pr_links.add(url)
+            existing_prs.append({
+                **pr, "source_window": index + 1,
+                "source_observed_at_utc": observed.isoformat(),
+                "source_age_seconds": age, "source_stale": age > 600,
+            })
     if not 1 <= len(project_set) <= MAX_PROJECTS or len(all_items) > MAX_OUTPUT_ITEMS:
+
         raise ValueError("portfolio scope exceeds explicit display capacity")
 
     # P0 first but distribute issue slots fairly within each priority, instead
@@ -160,6 +194,8 @@ def combine_workboards(snapshots, registry, now=None):
             row.get("next_step") == "authorized_infrastructure_owner_required"
             for row in ordered),
         "items": ordered,
+        "recent_open_product_prs": existing_prs,
+        "recent_open_product_pr_count": len(existing_prs),
         "source_budget_maximum": sum(
             s.get("source_budget_maximum", 0) for s in snapshots),
         "issue_source_requests": sum(s["issue_source_requests"] for s in snapshots),
