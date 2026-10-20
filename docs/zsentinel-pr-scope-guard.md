@@ -482,3 +482,60 @@ board, or if its batch index/start/count/total do not match the saved
 candidate count. It describes the imported batch number and explicitly
 marks all **other** batches not inspected in that file. These local
 evidence rules never authorize a merge, claim, workflow retry or deployment.
+
+
+## Nieuwe merge-first totaalweergave: meerdere opgeslagen PR-gate-batches
+
+Het bestaande gereviewde manifest uit [PR #1560](https://github.com/Zennay/zCloud/pull/1560) kan meer dan vier PR's bevatten. Het reeds bestaande `zsentinel_pr_gate_now.py` inspecteert daarom maximaal vier huidige PR-heads per GitHub-GET-batch. De nieuwe **offline batchverzamelaar** toont alle afzonderlijk verzamelde bonnen in één overzicht, zonder nieuwe GitHub API-verzoeken of claims te doen:
+
+```bash
+# Verzamel handmatig per batch precies één brongebonden, private gate-bon:
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./merge-first-review.json --batch 1 \
+  --output ./private-gates-1.json
+python3 scripts/zsentinel_pr_gate_now.py \
+  --from-review ./merge-first-review.json --batch 2 \
+  --output ./private-gates-2.json
+
+# Groepeer de bewaarde waarnemingen veilig in een nieuw offline HTML-rapport:
+python3 scripts/zsentinel_pr_gate_batches.py \
+  --from-review ./merge-first-review.json \
+  --receipt ./private-gates-1.json \
+  --receipt ./private-gates-2.json \
+  --format html --output ./private-gate-overview.html
+```
+
+Dit operatorresultaat bevat alle ingelezen PR-URL's en waargenomen HEAD-SHA's,
+de voornaamste menselijke blokkade per PR, aantallen ontbrekende batches,
+ontbrekend/veranderd GitHub-bewijs en bronbonnen ouder dan vijftien minuten.
+Daarnaast zijn `--format json`, `--format markdown` en `--format text`
+beschikbaar. Het HTML-resultaat is offline en heeft geen JavaScript.
+
+De tool leest maximaal 32 bestaande bonnen van elk maximaal 1 MiB, met een
+beperkte reguliere bestandstoegang zonder symlinks waar het platform dat
+ondersteunt. Hij hergebruikt de bestaande strikte manifestparser van
+`zsentinel_pr_gate_now.py` en accepteert uitsluitend precies dezelfde
+manifest-SHA, board-SHA, PR-volgorde en batchgrootte als de originele
+prioriteitsgesorteerde bron. De originele reviewbron mag tussentijds niet
+veranderen. Dubbele batch, onverwachte PR/HEAD/autoriteitsvelden of vervalst
+`merge_authorized=true` worden afgewezen.
+
+**Statuscode 0** betekent uitsluitend dat de aangeleverde *opgeslagen*
+gatebonnen compleet, leesbaar en maximaal 15 minuten oud zijn; het betekent
+**nooit** dat een PR klaar is voor merge. **Statuscode 3** betekent
+onvolledige, verouderde of niet-vertrouwde bron. Indien een opgeslagen
+gatebon ontbreekt, wordt uitsluitend dat ontbrekende segment weergegeven;
+andere bonnen blijven bruikbaar als historische operatorinformatie.
+
+Geen van beide statussen controleert de live vereiste branch protection,
+bevoegde onafhankelijke reviewers, actuele PR-heads, Notion-claims,
+productie-release of runner-resourcing. Zelfs alle groen ogende bronbonnen
+kunnen intussen achterhaald zijn. Alle uitvoer bevat expliciet
+`claim_authorized=false`, `merge_authorized=false`,
+`deploy_authorized=false` en `writes_performed=false`.
+
+Standaard wordt op stdout geschreven; gebruik `--output` voor exclusief
+nieuw aangemaakt privaat bestand met mode 0600. Niets wordt automatisch
+naar GitHub, Notion, VPS, workers, queues of een deployment geschreven.
+De beperking van maximaal 32 bonnen betekent dat zeer grote manifests
+expliciet gedeeltelijk blijven, niet stilzwijgend als afgevinkt verschijnen.
