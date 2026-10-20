@@ -54,6 +54,13 @@ ouder is dan de begrensde eerste/laatste-issue-steekproef. Dezelfde lijst is
 opgenomen in privé JSON en Markdown, ook bij de bestaande offline-snapshotroute
 wanneer de bronsnapshot dit veld bevat.
 
+Daarnaast verschijnen maximaal **drie** oudere open product-PR's per venster
+wanneer ze via een issue-link zijn geselecteerd en op hun exacte HEAD opnieuw
+zijn gelezen. De kaart vermeldt expliciet dat het om een oudere issue-linkbron
+gaat; zo'n PR hoeft niet in de acht recentste listings te staan. De maximale
+portfolio-PR-presentatie blijft begrensd tot **162 kaarten** over maximaal
+achttien projecten. Geen extra netwerkverzoeken of QA-rondes voor deze kaarten.
+
 Elke kaart toont project, titel, GitHub-PR-link, draft/open en exact de SHA
 *zoals gezien in die PR-lijst*. De koppeling aan een gesampled issue wordt
 alleen positief gemarkeerd wanneer die in dezelfde bron is aangetroffen.
