@@ -207,7 +207,7 @@ def write_private_state(data):
             pass
 
 
-RUNNER_UNIT = re.compile(r"^actions\\.runner\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.service$")
+RUNNER_UNIT = re.compile(r"^actions\.runner\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.service$")
 
 
 def runner_inventory():
