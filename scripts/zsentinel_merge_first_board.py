@@ -19,7 +19,7 @@ from portfolio_merge_ready import PROJECTS, REPO_URL, gh
 MAX_PROJECTS = 3
 MAX_PRS = 12
 MAX_PER_REPO = 6
-MAX_GETS = 64
+MAX_GETS = 72
 MAX_SECONDS = 120
 MAX_OUTPUT = 1024 * 1024
 PR_SPEC = re.compile(r"^([A-Za-z0-9_-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]{0,6})$")
