@@ -205,6 +205,67 @@ def hotspot_inventory() -> dict:
     }
 
 
+
+def compare_storage_snapshots(previous_path: Path, current: dict) -> dict:
+    """Bounded operator-owned snapshots: compare measurements, not cleanup proofs."""
+    try:
+        if (previous_path.is_symlink() or not previous_path.is_file()
+                or previous_path.stat().st_size > 131072):
+            raise ValueError("snapshot denied")
+        prior = json.loads(previous_path.read_text(encoding="utf-8"))
+        if not isinstance(prior, dict) or prior.get("schema") != "zcloud-storage-tier-plan-v1":
+            raise ValueError("wrong schema")
+        stamp = prior.get("observed_at")
+        if not isinstance(stamp, str) or len(stamp) > 64:
+            raise ValueError("timestamp missing")
+        before = dt.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        after = dt.datetime.fromisoformat(current["observed_at"])
+        if before.tzinfo is None or before.utcoffset() is None or before > after:
+            raise ValueError("timestamp invalid")
+        previous_free = prior.get("filesystem", {}).get("free_bytes")
+        current_free = current["filesystem"]["free_bytes"]
+        if (type(previous_free) is not int or not 0 <= previous_free <= (1 << 63)
+                or type(current_free) is not int or not 0 <= current_free <= (1 << 63)):
+            raise ValueError("bad free bytes")
+        def categories(inventory: object) -> dict[str, int] | None:
+            if inventory is None:
+                return None
+            if not isinstance(inventory, dict) or not isinstance(inventory.get("measured"), list):
+                raise ValueError("bad hot paths")
+            values = {}
+            for row in inventory["measured"]:
+                if not isinstance(row, dict):
+                    raise ValueError("bad row")
+                label, size = row.get("category"), row.get("bytes")
+                if (not isinstance(label, str) or label not in {
+                    "actions_work", "user_cache", "gradle_cache", "raiseai_build", "ftmo_runner_install"
+                } or label in values or type(size) is not int or not 0 <= size <= (1 << 63)):
+                    raise ValueError("bad category")
+                values[label] = size
+            return values
+        old = categories(prior.get("hotspot_inventory"))
+        new = categories(current.get("hotspot_inventory"))
+        changes = []
+        if old is not None and new is not None:
+            for name in sorted(set(old) & set(new)):
+                changes.append({"category": name, "old_bytes": old[name],
+                                "new_bytes": new[name], "delta_bytes": new[name] - old[name]})
+            changes.sort(key=lambda row: -row["delta_bytes"])
+        return {
+            "source": "operator_supplied_read_only_snapshot",
+            "previous_observed_at": before.isoformat(),
+            "free_space_delta_bytes": current_free - previous_free,
+            "local_space_lost_bytes": max(0, previous_free - current_free),
+            "hot_path_deltas": changes,
+            "hot_path_observations_comparable": old is not None and new is not None
+                                              and set(old) == set(new),
+            "source_deletion_inferred": False,
+            "archive_copy_or_restore_inferred": False,
+        }
+    except (OSError, UnicodeError, ValueError, TypeError, OverflowError, json.JSONDecodeError):
+        raise ValueError("Not a valid bounded zCloud storage inventory snapshot.") from None
+
+
 def operator_summary(report: dict) -> str:
     """Plain-language CLI view: no speculative reclaimed totals."""
     gb = 1024 ** 3
@@ -224,6 +285,13 @@ def operator_summary(report: dict) -> str:
             lines.append(f"  {entry['category']}: {entry['bytes'] / gb:.2f} GiB — {entry['owner']}")
         if hotspots["incomplete"]:
             lines.append("  Incomplete: " + ", ".join(row["category"] for row in hotspots["incomplete"]))
+    diff = report.get("storage_change")
+    if diff is not None:
+        lines.append(f"Free-space change: {diff['free_space_delta_bytes'] / gb:+.2f} GiB since previous observation")
+        for row in diff["hot_path_deltas"]:
+            lines.append(f"  {row['category']}: {row['delta_bytes'] / gb:+.2f} GiB since previous observation")
+        if not diff["hot_path_observations_comparable"]:
+            lines.append("  Hot-path comparison incomplete: never assume absent equals zero.")
     lines.append("Files moved: 0. Files deleted: 0. Training restart authorized: no.")
     return "\n".join(lines)
 
@@ -232,6 +300,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--older-than-days", type=int, default=MIN_AGE_DAYS)
     ap.add_argument("--limit", type=int, default=MAX_LIST)
+    ap.add_argument("--previous-report", type=Path, default=None,
+                    help="Read-only bounded comparison with a previous private JSON snapshot")
     ap.add_argument("--hotspot-inventory", action="store_true",
                     help="Bounded size assessment of named hot directories, never cleanup permission")
     ap.add_argument("--format", choices=("json", "text"), default="json")
@@ -253,6 +323,7 @@ def main():
     total_assessed = sum(totals.values())
     result = {
         "schema": "zcloud-storage-tier-plan-v1",
+        "observed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "read_only": True,
         "remote": ARCHIVE,
         "minimum_age_days": args.older_than_days,
@@ -279,6 +350,11 @@ def main():
         "remote_copies_verified": False,
         "bytes_reclaimed": 0,
     }
+    if args.previous_report is not None:
+        try:
+            result["storage_change"] = compare_storage_snapshots(args.previous_report, result)
+        except ValueError as error:
+            ap.error(str(error))
     print(operator_summary(result) if args.format == "text" else json.dumps(result, indent=2))
 
 
