@@ -114,3 +114,48 @@ GitHub-mutatierecht, Notion-claim, VPS-, database- of workeractie
 toegevoegd. Claim/retry/merge/deploy blijven uitdrukkelijk niet
 geautoriseerd. De bestaande PR #1563 vereist vóór levering naar main
 exacte-head verplichte CI, onafhankelijke review en branch protection.
+
+## 20 oktober · historische blokkades in dezelfde eigenaaroverdracht
+
+**Probleem:** de huidige eenmalige bronlezing is per definitie partieel.
+Een reeds gedetecteerde menselijke blokkade kan uit het actuele GitHub-
+of queuevenster verdwijnen zonder dat die echt is hersteld. De bestaande
+herstelrouter bewaart daarom al een aparte privéledger en levert maximaal
+vijf menselijke historische hercontrolekandidaten. Tot nu ontbraken die in
+de **eigenaaroverdracht**, waardoor de operator buiten de speciale
+historische cockpit onbedoeld een incompleet actueel actielijstje zag.
+
+De bestaande --handoff-output en --show-owner-handoff nemen vanaf nu
+**zonder extra providerlezingen of dispatch** een tweede, gescheiden
+sectie op met historische, nog niet gereconcilieerde hercontroles.
+Daarbij wordt het incident-ID teruggebonden aan de door de router
+samengestelde, begrensde historische ledgerbron (maximaal 30 rijen).
+De combinatie van project, oorspronkelijke ernst, reden, laatst gezien,
+bronstatus en exacte GitHub-run/job/SHA moet overeenkomen. Tegenstrijdige
+of onbevoegd makende bronnen worden geweigerd.
+
+- **Live P0/P1-items** blijven een eigen prioriteitenrij. Historische
+  items komen **niet** terecht in actuele incidenten, notificaties,
+  nieuwe hersteltriggers of de lijst van automatisch te claimen taken.
+- **HISTORISCH · NIET ACTUEEL WAARGENOMEN** staat herkenbaar als
+  afzonderlijk kopje in privé-HTML en Markdown; JSON heeft apart
+  historical_owner_rechecks. Een per-bron UTC-laatst-gezien-moment en
+  optionele canonieke oude job/commit-links helpen de eigenaar gericht
+  te hercontroleren.
+- Maximaal vijf relevante oude hercontroles worden getoond. De
+  afkappingsindicator maakt expliciet dat verborgen oude incidenten
+  **niet** als hersteld mogen worden beschouwd. De output blijft
+  volledig alleen-lezen en attribueert geen actuele claim/eigenaar.
+- Het bestaande privé-HTML/JSON/Markdown-uitvoerbeleid, 0600
+  bestand, bescherming tegen output-overlap en het verbod op
+  automatische reruns/merges/deploys blijven hetzelfde.
+
+**Bediening:** gebruik de eerder beschreven eenmalige cockpit met
+--state (een bestaande privé-incidentledger) en --handoff-output
+of --show-owner-handoff. Zonder bestaande historische ledger ontstaan
+geen verzonnen historische kaarten. Een menselijke operator controleert
+de huidige exacte GitHub-job en eigenaar apart, vóór elke actie.
+
+Dit is **source-implementatie binnen open PR #1563**; nog geen main
+merge of productie-integratie. Verplichte exacte-head CI, onafhankelijke
+review, protected-main en eigenaar-/runtimegates blijven intact.
