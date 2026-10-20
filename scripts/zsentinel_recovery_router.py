@@ -872,7 +872,7 @@ def plan(bundle, previous=None, now=None):
                   and 1 <= github["run_id"] <= 2**53 - 1
                   and 1 <= github["job_id"] <= 2**53 - 1
                   and type(github.get("head_sha")) is str
-                  and SHA.fullmatch(github["head_sha"]) else None),
+                  and SHA.fullmatch(github["head_sha"])) else None),
         })
         next_state[key] = {
             "first_seen": utc_string(first), "last_seen": utc_string(now),
