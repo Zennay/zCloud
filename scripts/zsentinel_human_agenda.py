@@ -63,7 +63,8 @@ def human_calendar(decision):
             or decision.get("mutations_performed") is not False
             or decision.get("watch_delivery_performed") is not False
             or decision.get("deployment_authorized") is not False
-            or decision.get("queue_claims_changed") is not False):
+            or decision.get("queue_claims_changed") is not False
+            or decision.get("ci_retried") is not False):
         raise ValueError("cannot export an authorizing or untrusted decision")
     alerts = decision.get("watch_alert_candidates")
     incidents = decision.get("incidents")
@@ -80,12 +81,20 @@ def human_calendar(decision):
                 raise ValueError("noncanonical human incident identity")
             human[ident] = row
     now = datetime.now(timezone.utc)
+    # The receipt's observation time, not the export clock, tells the owner
+    # how historical each suggested action is.
+    observed = _timestamp(decision.get("observed_at_utc"))
+    if observed > now + timedelta(minutes=2):
+        raise ValueError("human calendar source is in the future")
+    observed_utc = observed.strftime("%Y%m%dT%H%M%SZ")
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     lines = [
         "BEGIN:VCALENDAR", "VERSION:2.0",
         "PRODID:-//zSentinel//Human Only Operator Agenda//NL",
         "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
         "X-WR-CALNAME:zSentinel - alleen menselijke blokkades",
+        "X-ZSENTINEL-SOURCE-UTC:" + observed_utc,
+        "X-ZSENTINEL-NO-AUTHORITY:TRUE",
     ]
     seen = set()
     for alert in alerts:
@@ -120,7 +129,9 @@ def human_calendar(decision):
         summary = _calendar_text(severity + " zSentinel " + pid + " - " + problem)
         description = _calendar_text(
             "Actie eigenaar: " + action + "\nStatus: " + status +
+            "\nBronmoment UTC: " + observed.isoformat() +
             "\nBron: onvolledig/actueel alleen voor het onderzochte venster." +
+            "\nControleer opnieuw of eigenaar, issue en gates nog actueel zijn." +
             "\nDit is een handmatig geimporteerde herinnering. Geen live herstelbewijs.")
         lines += [
             "BEGIN:VEVENT", "UID:" + uid + "@zsentinel.local",
