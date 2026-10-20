@@ -717,7 +717,13 @@ def output_html(report):
                 issue_url + "' rel='noopener noreferrer'>" + issue_title +
                 "</a></td><td>" + source + "</td><td><strong>" +
                 escape(item["category_nl"]) + "</strong><br>" +
-                escape(item["human_next_step_nl"]) + "</td></tr>")
+                escape(item["human_next_step_nl"]) +
+                "<br><small>PR-bestandsscope: " +
+                ("beperkte bron compleet" if item["pr_file_scope_sample_complete"]
+                 else "ONVOLLEDIG") + " · PR-issueverwijzingen: " +
+                ("beperkte bron compleet" if item["issue_reference_sample_complete"]
+                 else "ONVOLLEDIG") +
+                " · actuele claims niet geverifieerd</small></td></tr>")
         work_panel = (
             "<section id='merge-first-inbox' aria-label='P0/P1 merge-eerst werkbak'>"
             "<h2>Merge-eerst · menselijke P0/P1 werkbak</h2><p>" +
