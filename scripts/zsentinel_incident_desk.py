@@ -99,8 +99,15 @@ def _source(decision):
     items.sort(key=lambda x: (
         ("P0", "P1", "P2", "P3").index(x["priority"]),
         not x["human"], x["review_by"], x["id"]))
-    canonical = json.dumps({"time": source_time, "incidents": items},
-                           ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    canonical_inputs = {"time": source_time, "incidents": items}
+    owner_source = decision.get("recent_branch_ownership")
+    # Preserve the original handoff identity for reports without a new branch
+    # observation. A supplied owner snapshot changes the handoff identity,
+    # preventing a private status from opening under a different branch scope.
+    if isinstance(owner_source, dict) and owner_source.get("supplied") is True:
+        canonical_inputs["branch_owner_source"] = owner_source
+    canonical = json.dumps(canonical_inputs, ensure_ascii=True, sort_keys=True,
+                           separators=(",", ":"))
     historical = decision.get("historical_unresolved", {
         "schema": "zsentinel-historical-backlog-v1",
         "total_unresolved": 0, "shown": [], "truncated": False,
@@ -278,8 +285,9 @@ def branch_work_review_panel(decision):
 
 def review_html(decision):
     """One offline HTML view + bounded private operator handoff in browser."""
-    source = _source(decision)
+    # Validate optional branch data before using it in the source fingerprint.
     branch_panel = branch_work_review_panel(decision)
+    source = _source(decision)
     payload = json.dumps(source, ensure_ascii=True, separators=(",", ":"))
     payload = (payload.replace("<", "\\u003c").replace(">", "\\u003e")
                .replace("&", "\\u0026"))
