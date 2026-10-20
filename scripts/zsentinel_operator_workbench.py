@@ -351,7 +351,13 @@ Imported receipts are NOT live GitHub evidence, required branch rules, owner con
 <option value="observed-no-authority">Observed clear checks, NOT merge authority</option>
 </select></label>
 </div>
-<p id="prDeskSummary" aria-live="polite"></p><ol id="prDeskRows"></ol>
+<p id="prDeskSummary" aria-live="polite"></p>
+<h3>PR links with no saved gate observation · missing source batches</h3>
+<p>Only original review-manifest PR references. These links do not prove a PR
+is currently open or free of active ownership. Re-collect the indicated
+batch using the original reviewed manifest before interpreting current CI.</p>
+<ol id="missingGateRows"></ol>
+<ol id="prDeskRows"></ol>
 <h3>Productissues without captured PR references · human triage first</h3>
 <p>Missing from this saved PR window does not mean no PR exists in live GitHub.
 Verify current claims and recent branches before opening new implementation work.</p>
@@ -685,6 +691,22 @@ function acceptGateSource(data){
        data.saved_receipts_not_required_checks_verified!==true||
        data.all_batches_observed_not_all_checks_required_verified!==(missing.length===0))
      throw Error('Missing or contradictory saved batch coverage');
+    const missingRows=data.missing_batch_prs,seenUnobserved=new Set();
+    if(!Array.isArray(missingRows)||missingRows.length!==missing.length)
+     throw Error('Missing unobserved PR source breakdown');
+    for(let j=0;j<missingRows.length;j++){
+     const group=missingRows[j],index=missing[j];
+     const count=Math.min(4,candidateCount-(index-1)*4);
+     if(!group||group.batch_index!==index||
+        !Array.isArray(group.unobserved_pr_urls)||
+        group.unobserved_pr_urls.length!==count)
+      throw Error('Missing batch PR identities or boundaries');
+     for(const url of group.unobserved_pr_urls){
+      if(typeof url!=='string'||!knownPrLinks.has(url)||seenUnobserved.has(url))
+       throw Error('Unknown, repeated or foreign missing-batch PR');
+      seenUnobserved.add(url);
+     }
+    }
    }else if(data.missing_batch_count!==0||
       data.all_batches_observed_not_all_checks_required_verified!==true)
     throw Error('Incomplete legacy saved-batch provenance');
@@ -700,6 +722,7 @@ function acceptGateSource(data){
     expected_batches:expected,missing_indexes:missing,
     candidate_count:versioned?data.review_candidate_pr_count:null,
     expected_observed_prs:expectedObservedPrs,
+    missing_prs:versioned?data.missing_batch_prs:[],
     complete:missing.length===0,
     earliest_observed_at_utc:time,latest_observed_at_utc:data.latest_observed_at_utc,
     complete_receipts_not_required_checks:missing.length===0};
@@ -755,6 +778,9 @@ function acceptGateSource(data){
     bridgeCoverage.expected_observed_prs!==undefined&&
     items.size!==bridgeCoverage.expected_observed_prs)
   throw Error('Saved batch count does not match distinct observed PR receipts');
+ if(bridgeCoverage?.missing_prs?.some(group=>
+   group.unobserved_pr_urls.some(url=>items.has(url))))
+  throw Error('Missing batch PR already present as an observed gate receipt');
  return {time,timestamp,items,kind:data.schema,reviewContext,bridgeCoverage};
 }
 function gateState(url){
@@ -855,6 +881,22 @@ function refreshPrDesk(){
  list.replaceChildren();
  const current=filtered(),groups=prDeskGroups();
  const unlinked=current.filter(c=>c.open_pr_candidates.length===0);
+ const missingRows=document.getElementById('missingGateRows');
+ missingRows.replaceChildren();
+ const missing=prGateImport?.bridgeCoverage?.missing_prs||[];
+ for(const sourceBatch of missing){
+  const row=elem('li','Saved batch '+sourceBatch.batch_index+
+   ' · ALL gates UNKNOWN · original review manifest '+prGateImport.bridgeCoverage.manifest_sha256.slice(0,12));
+  const links=elem('ul');
+  for(const url of sourceBatch.unobserved_pr_urls){
+   const item=elem('li');
+   item.append(link(url+' ↗',url),elem('small','Original link only · current HEAD, checks and owner UNVERIFIED'));
+   links.append(item);
+  }
+  row.append(links);missingRows.append(row);
+ }
+ if(!missing.length)
+  missingRows.append(elem('li','No explicitly identified missing saved gate batches in current imported source.'));
  const without=document.getElementById('unlinkedIssueRows');
  without.replaceChildren();
  for(const card of unlinked){
@@ -925,6 +967,7 @@ function currentPrManifest(){
    captured_review_pr_candidates:prGateImport?.bridgeCoverage?.candidate_count??null,
    distinct_imported_saved_prs:prGateImport?.items.size??0,
    missing_saved_batch_indexes:prGateImport?.bridgeCoverage?.missing_indexes||[],
+   missing_saved_batch_pr_links:prGateImport?.bridgeCoverage?.missing_prs||[],
    observed_categories:{
     failed:groups.filter(g=>gateState(g.url)==='failed').length,
     waiting:groups.filter(g=>gateState(g.url)==='pending').length,
@@ -987,6 +1030,10 @@ function currentPrDesk(){
   'Filtered issues with no recorded PR link: '+unlinked.length,
   'Evidence window: bounded and partial; original links are not verified open/current.',
   'Saved gate status: '+line(gateOverview(groups),750),
+  ...(prGateImport?.bridgeCoverage?.missing_prs||[]).flatMap(batch=>[
+    'Missing saved batch '+batch.batch_index+' · NO GATE RECEIPT · verify separately:',
+    ...batch.unobserved_pr_urls.map(url=>'  - '+url+' · currently unverified')
+  ]),
   'All claim/merge/deploy permissions: FALSE; required CI/branch protection/review UNKNOWN.',
   'Read current GitHub PR and active Notion/worker claims separately before action.',
   ''
