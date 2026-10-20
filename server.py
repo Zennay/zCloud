@@ -3345,19 +3345,25 @@ def portfolio_queue_allocate():
             force_replacement=False
             if row and force_victim_slot==slot and force_pair:
                 previous_queue_id=str(row['queue_id'] or '')
-                c.execute(
+                release=c.execute(
                     """UPDATE portfolio_queue
                        SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                       WHERE queue_id=? AND worker_slot=? AND status='claimed'""",
+                       WHERE queue_id=? AND worker_slot=? AND status='claimed'
+                         AND eligible=1""",
                     (ts,previous_queue_id,slot),
                 )
-                preempted.add(previous_queue_id)
-                row=None
-                force_replacement=True
-                lane_candidates=[
-                    pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted)
-                    if str(pair[0]['queue_id'] or '')==force_queue_id
-                ]
+                if release.rowcount==1:
+                    preempted.add(previous_queue_id)
+                    row=None
+                    force_replacement=True
+                    lane_candidates=[
+                        pair for pair in _portfolio_eligible_lane_candidates_locked(c,ts,preempted)
+                        if str(pair[0]['queue_id'] or '')==force_queue_id
+                    ]
+                else:
+                    # No release actually occurred. Never treat the claimed
+                    # browser slot as empty or grant a replacement worker.
+                    force_victim_slot=None
             if row and str(row['status']) == 'claimed':
                 row_project=str(row['project_id'] or '')
                 # Once a browser command is pending, the queue claim is part of an
