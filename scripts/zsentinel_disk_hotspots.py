@@ -576,6 +576,11 @@ def public_summary_html(summary):
         ' GiB beschikbaar; ' +
         str(summary["mount_unavailable_percent_observed"]) +
         '% niet beschikbaar volgens lokaal statvfs. Geen toegang/vrijgavebewijs.</p>'
+        ('<p>SQLite/WAL-metadata in privé-diskrapport: ' +
+         str(summary['sqlite_files_metadata_observed']) +
+         ' database(s) waargenomen; interne freelist is geen bewezen'
+         ' vrijmaakbare opslag. Geen SQL, checkpoint of opschoning.</p>'
+         if summary.get('sqlite_files_metadata_observed') is not None else '') +
         '<p>Grote-bestanden inventaris uitsluitend lokaal en begrensd,'
         ' ondergrens ' + str(summary["observed_allocated_gib_min"]) +
         ' GiB toegewezen, minstens ' + str(summary["large_file_candidates_min"]) +
