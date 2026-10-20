@@ -22,23 +22,7 @@ MAX_DIFF_BYTES = 48 * 1024
 
 
 def admit_comparable_source_pair(older, newer):
-    """Verify original source scope, chronology and contiguous overlapping SHA receipts.
-
-    Both inputs must already have passed private ZIP and canonical issue/PR
-    receipt admission. Returns no current owner, CI or release authority.
-    """
-    admit_comparable_source_pair(older, newer)
-    _, _, _, old_issues, old_sources = older
-    _, _, _, new_issues, new_sources = newer
-    old_ids = [r["original_review_manifest_sha256"] for r in old_sources]
-    new_ids = [r["original_review_manifest_sha256"] for r in new_sources]
-    return old_ids[-1], new_ids[-1]
-
-
-def issue_difference(older, newer, issue_url):
-    """Compare fully admitted chronological dossiers for one canonical issue."""
-    if not canonical_issue(issue_url):
-        raise ValueError("Issue URL must be canonical GitHub source")
+    """Verify portfolio source scope, chronology and ordered source receipts."""
     _, old_manifest, old_doc, old_issues, old_sources = older
     _, new_manifest, new_doc, new_issues, new_sources = newer
     if old_doc.get("scope") != new_doc.get("scope"):
@@ -70,6 +54,18 @@ def issue_difference(older, newer, issue_url):
                 raise ValueError("Reused manifest digest with contradictory metadata")
     elif datetime.fromisoformat(new_sources[0]["earliest_observed_utc"]) <= old_last:
         raise ValueError("Nonordered overlapping source windows")
+    return old_ids[-1], new_ids[-1]
+
+
+def issue_difference(older, newer, issue_url):
+    """Compare fully admitted chronological dossiers for one canonical issue."""
+    if not canonical_issue(issue_url):
+        raise ValueError("Issue URL must be canonical GitHub source")
+    admit_comparable_source_pair(older, newer)
+    _, _, _, old_issues, old_sources = older
+    _, _, _, new_issues, new_sources = newer
+    old_ids = [r["original_review_manifest_sha256"] for r in old_sources]
+    new_ids = [r["original_review_manifest_sha256"] for r in new_sources]
     before = next((r for r in old_issues if r["issue_url"] == issue_url), None)
     after = next((r for r in new_issues if r["issue_url"] == issue_url), None)
     if after is None:
