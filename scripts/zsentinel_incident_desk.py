@@ -161,9 +161,52 @@ def _source(decision):
             "current_source_observed": False, "source_status": "historical_unresolved",
             "action_authorized": False,
         })
+    raw_rechecks = decision.get("historical_owner_recheck_candidates", [])
+    if type(raw_rechecks) is not list or len(raw_rechecks) > 5:
+        raise ValueError("unbounded historical owner recheck source")
+    by_old = {row["id"]: row for row in historical_rows}
+    rechecks = []
+    recheck_ids = set()
+    for row in raw_rechecks:
+        if type(row) is not dict:
+            raise ValueError("untrusted historical owner recheck")
+        ident = row.get("incident_id")
+        original = by_old.get(ident)
+        if (type(ident) is not str or not IDENT.fullmatch(ident)
+                or ident in recheck_ids or original is None
+                or original["human_historical"] is not True
+                or row.get("project_id") != original["project"]
+                or row.get("severity_at_last_observation") != original["priority"]
+                or row.get("problem_at_last_observation") != original["problem"]
+                or _stamp(row.get("source_last_seen")) != original["last"]
+                or row.get("exact_github_job") != original["exact_github_job"]
+                or row.get("source_status") != "historical_not_observed_needs_owner_recheck"
+                or row.get("current_source_observed") is not False
+                or row.get("notifier_delivery_authorized") is not False
+                or row.get("recovery_action_authorized") is not False
+                or row.get("owner_confirmation_required") is not True):
+            raise ValueError("historical human follow-up contradicts original ledger")
+        recheck_ids.add(ident)
+        rechecks.append({
+            "id": ident, "project": original["project"],
+            "priority": original["priority"], "problem": original["problem"],
+            "last": original["last"],
+            "exact_github_job": original["exact_github_job"],
+            "current_source_observed": False, "action_authorized": False,
+        })
+    recheck_partial = decision.get("historical_recheck_source_truncated", False)
+    if type(recheck_partial) is not bool:
+        raise ValueError("invalid historical human shortlist coverage")
+    owner_source_sha = hashlib.sha256(json.dumps(
+        {"observed_at": source_time, "source_rows": rechecks,
+         "truncated": recheck_partial}, ensure_ascii=True,
+        sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     return {"historical": historical_rows,
             "historical_count": total,
             "historical_truncated": historical["truncated"],
+            "owner_rechecks": rechecks,
+            "owner_rechecks_truncated": recheck_partial,
+            "owner_rechecks_sha256": owner_source_sha,
             "observed_at": source_time, "incidents": items,
             "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
             "source_partial": True, "authorizes_actions": False}
