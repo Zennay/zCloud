@@ -692,6 +692,26 @@ function gateState(url){
  if(!row.observed_checks&&!row.legacy_contexts)return 'unverified';
  return 'observed-no-authority';
 }
+const gateNextHuman={
+ inspect_incomplete_current_head_gate_source:
+  'De opgeslagen check-/reviewbron is onvolledig. Bekijk de actuele GitHub-bron opnieuw.',
+ inspect_current_head_failed_checks_with_owner:
+  'Er zijn mislukte checks. Laat de bevoegde PR-eigenaar de fout herstellen.',
+ wait_for_existing_current_head_checks:
+  'De verplichte checks lopen nog. Niet mergen of opnieuw starten.',
+ owner_address_exact_head_review_changes:
+  'Er staan wijzigingen gevraagd op deze PR. Stem af met de bevoegde eigenaar.',
+ verify_missing_current_head_checks_and_rules:
+  'Er zijn geen actuele checks gezien. Controleer de branchregels en workflows.',
+ request_independent_current_head_review:
+  'Vraag een onafhankelijke review aan voor de huidige HEAD.',
+ verify_required_rules_ownership_and_release_separately:
+  'Bevestig afzonderlijk branchregels, eigenaarschap en releasebevoegdheid.'
+};
+function humanGateStep(code){
+ return Object.hasOwn(gateNextHuman,code)?gateNextHuman[code]:
+  'Bekijk GitHub en de huidige eigenaar; dit is geen vrijgave om te mergen.';
+}
 function prGateLabel(url){
  if(!prGateImport)return 'No imported PR gate receipt; current checks and approvals UNKNOWN.';
  const row=prGateImport.items.get(url);
@@ -705,8 +725,8 @@ function prGateLabel(url){
   ' · observed independent approvals '+row.approvals+
   (row.incomplete?' · SOURCE INCOMPLETE':'')+
   (!row.observed_checks&&!row.legacy_contexts?' · NO CHECK CONTEXT SEEN':'')+
-  ' · next: '+row.next+
-  ' · CURRENT OWNER, BRANCH RULES AND MERGE AUTHORITY UNVERIFIED.';
+  ' · VOLGENDE ACTIE: '+humanGateStep(row.next)+
+  ' · HUIDIGE EIGENAAR, BRANCHREGELS EN MERGEBEVOEGDHEID NIET VASTGESTELD.';
 }
 function prDeskGroups(){
  const index=new Map(),weights={P0:0,P1:1,P2:2,Unspecified:3};
@@ -754,7 +774,7 @@ function refreshPrDesk(){
   ' issue(s) without referenced PRs in '+current.length+
   ' filtered captured issue cards. Gate filter '+(gateFilter||'all')+
   '. Snapshot '+board.observed_at_utc+
-  '. Not proof of active PR, available work or merge rights.';
+  '. GEEN actuele claim, onafhankelijke review of mergebevoegdheid aangetoond.';
  if(!groups.length){
   list.append(elem('li','No referenced PRs in this bounded filtered snapshot; not proof that none exist.'));
   return;
