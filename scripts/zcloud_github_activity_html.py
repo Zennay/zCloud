@@ -60,6 +60,8 @@ def event_link(event: dict, repo: str) -> tuple[str, str]:
         suffix += " · NOW CLOSED WITHOUT MERGE (not delivered)"
     elif event.get("pr_lifecycle") == "open":
         suffix += " · currently open"
+    if kind == "pr_closed":
+        suffix += " · closed at provider source time; NOT DELIVERED"
     if kind == "pr_merged":
         target = event.get("reported_target") or "unknown"
         suffix += (" · reported target " + target
@@ -79,17 +81,17 @@ def html_page(data: dict) -> str:
         repo = coverage["repository"]
         rows = [event for event in data["events"] if event["project"] == project]
         counts = Counter(e["kind"] for e in rows)
-        # Only one updated event per PR may establish currently closed
-        # without merge in this bounded sample; never count as shipped.
+        # An exact source-timestamped close event is the only counted
+        # closure, never a created+updated duplicate or a shipped PR.
         closed_unmerged = len({
-            e["pr"] for e in rows if e["kind"] == "pr_updated"
-            and e.get("pr_lifecycle") == "closed_without_merge"
+            e["pr"] for e in rows if e["kind"] == "pr_closed"
         })
         labels = (("main_commit", "Main commits"), ("pr_created", "PRs created"),
-                  ("pr_merged", "PRs merged"), ("ci_run", "Workflow runs"))
+                  ("pr_merged", "PRs merged"), ("pr_closed", "PRs closed without merge"),
+                  ("ci_run", "Workflow runs"))
         chips = "".join("<span>" + escape(name) + ": <b>" + str(counts.get(key, 0)) +
                         "</b></span>" for key, name in labels)
-        chips += ("<span>Now closed without merge (NOT delivered): <b>" +
+        chips += ("<span>Closure receipts (NOT delivered): <b>" +
                   str(closed_unmerged) + "</b></span>")
         main_target_merges = sum(e["kind"] == "pr_merged" and
                                  e.get("reported_main_merge") is True for e in rows)
