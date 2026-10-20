@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.work.CoroutineWorker
@@ -52,7 +53,13 @@ class AlertWorker(appContext: Context, params: WorkerParameters) : CoroutineWork
                 NotificationChannel(CHANNEL, "Critical project blockers", NotificationManager.IMPORTANCE_HIGH)
             )
             urgent.filter { it.episodeKey() !in delivered }.take(3).forEach { alert ->
+                // Each incident needs its OWN pending-intent identity.
+                // requestCode=0 alone made all visible cards share the last
+                // notification's target when FLAG_UPDATE_CURRENT was used.
                 val intent = Intent(applicationContext, MainActivity::class.java)
+                    .setAction(MainActivity.ACTION_OPEN_BLOCKER)
+                    .setData(Uri.parse("zcloud-watch://incident/" + Uri.encode(alert.id)))
+                    .putExtra(MainActivity.EXTRA_INCIDENT_ID, alert.id)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 val pending = PendingIntent.getActivity(
                     applicationContext, 0, intent,
