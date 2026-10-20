@@ -99,7 +99,10 @@ canonieke bronvelden voor handmatige triage. Onbekende jobidentiteit
 blijft afwezig: een projectnaam alleen leidt nooit tot een link.
 
 Een incidentkaart toont ook review_by_utc: de oorspronkelijke
-target_review_by uit de herstelbeslissing, in UTC. Dit is een
+target_review_by uit de herstelbeslissing, in UTC.
+Bij gelijke ernst en kaartsoort sorteert de werkbak op de eerst
+verstrijkende deadline. Een al gepasseerde deadline krijgt zichtbaar
+DEADLINE VERSTREKEN volgens de lokale exportklok, zonder automatische melding. Dit is een
 menselijke beoordelingsdeadline, geen herinnering of bewijs van
 acceptatie. Ongetekende of naïeve tijdstempels falen conservatief;
 jobvelden vereisen positieve integer-ID's en een volledige lowercase SHA.
