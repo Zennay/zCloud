@@ -2082,6 +2082,65 @@ document.getElementById('prGateBatchDownload').onclick=()=>{
  setTimeout(()=>URL.revokeObjectURL(url),1000);
  status.textContent='Private offline combined source downloaded; no GitHub, claim or merge action.';
 };
+document.getElementById('prGateOlderFile').addEventListener('change',async event=>{
+ const file=event.currentTarget.files?.[0];
+ try{
+  if(!prGateImport||!file||file.size<2||file.size>1048576||
+     !globalThis.crypto?.subtle)throw Error('Older source missing or out of bounds');
+  const bytes=await file.arrayBuffer();
+  const source=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  const accepted=acceptGateSource(source);
+  accepted.sha256=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),
+   b=>b.toString(16).padStart(2,'0')).join('');
+  if(accepted.timestamp>=prGateImport.timestamp)
+   throw Error('Earlier evidence must predate currently imported source');
+  prGatePrevious=accepted;
+  const delta=currentGateDelta(),list=document.getElementById('prGateDeltaRows');
+  list.replaceChildren();
+  for(const c of delta.changes){
+   const li=elem('li');
+   li.append(link(c.url+' ↗',c.url),elem('small',
+    c.from+' -> '+c.to+' · '+c.meaning));
+   list.append(li);
+  }
+  if(!delta.changes.length)list.append(elem('li',
+   'No sampled changes found; NOT proof of current required CI or review.'));
+  document.getElementById('prGateDeltaSummary').textContent=
+   'Historical saved observation comparison '+delta.older.time+' -> '+delta.newer.time+
+   ': '+delta.changes.length+' changed samples, '+delta.unchanged+
+   ' unchanged, '+delta.headChanged+' observed HEAD changes. NOT live evidence.';
+  gateDeltaPreview=null;
+  document.getElementById('prGateDeltaPanel').hidden=true;
+  document.getElementById('prGateDeltaText').textContent='';
+  document.getElementById('prGateDeltaDownload').disabled=true;
+  document.getElementById('prGateDeltaPreview').disabled=false;
+  status.textContent='Two local saved observations compared; no GitHub call or merge authority.';
+ }catch{
+  status.textContent='Older gate source refused: use a compatible, earlier saved snapshot. Current gate overlay unchanged.';
+ }finally{event.currentTarget.value='';}
+});
+document.getElementById('prGateDeltaPreview').onclick=()=>{
+ if(!prGatePrevious||!prGateImport)return;
+ try{
+  gateDeltaPreview=gateDeltaMarkdown();
+  document.getElementById('prGateDeltaPanel').hidden=false;
+  document.getElementById('prGateDeltaText').textContent=gateDeltaPreview;
+  document.getElementById('prGateDeltaDownload').disabled=false;
+  status.textContent='Review the historical local PR change report; no external action.';
+ }catch{clearGateDelta();status.textContent='Saved source changed. Import earlier evidence again.';}
+};
+document.getElementById('prGateDeltaDownload').onclick=()=>{
+ if(!gateDeltaPreview)return;
+ try{
+  if(gateDeltaMarkdown()!==gateDeltaPreview)
+   throw Error('Source moved since preview');
+  const uri=URL.createObjectURL(new Blob([gateDeltaPreview],
+   {type:'text/markdown;charset=utf-8'}));
+  const a=elem('a');a.href=uri;a.download='zsentinel-historical-pr-gate-delta.md';a.click();
+  setTimeout(()=>URL.revokeObjectURL(uri),1000);
+  status.textContent='Historical comparison saved privately. Required merge/release gates remain UNKNOWN.';
+ }catch{clearGateDelta();status.textContent='Historical source changed; preview again before download.';}
+};
 document.getElementById('prGateBatchApply').onclick=async()=>{
  const original=document.getElementById('prGateReviewFile');
  const selected=document.getElementById('prGateBatchFiles');
@@ -2089,7 +2148,7 @@ document.getElementById('prGateBatchApply').onclick=async()=>{
   const combined=await combineSavedGateFiles(original.files?.[0],
    [...(selected.files||[])]);
   // All files were admitted and cross-matched before replacing any state.
-  prGateImport=combined;invalidateBrief();refreshPrDesk();clearPortableGatePreview();
+  prGateImport=combined;clearGateDelta();invalidateBrief();refreshPrDesk();clearPortableGatePreview();
   document.getElementById('prGateBatchPreview').disabled=false;
   document.getElementById('prGateClear').disabled=false;
   const coverage=combined.bridgeCoverage;
@@ -2118,7 +2177,7 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
    new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),
    byte=>byte.toString(16).padStart(2,'0')).join('');
   prGateImport=accepted;
-  clearPortableGatePreview();invalidateBrief();refreshPrDesk();
+  clearGateDelta();clearPortableGatePreview();invalidateBrief();refreshPrDesk();
   document.getElementById('prGateClear').disabled=false;
   document.getElementById('prGateStatus').textContent=
    accepted.items.size+' linked PR receipts imported · '+accepted.time+
@@ -2147,7 +2206,7 @@ document.getElementById('prGateFocus').onchange=()=>{
  invalidateBrief();refreshPrDesk();
 };
 document.getElementById('prGateClear').onclick=()=>{
- prGateImport=null;clearPortableGatePreview();invalidateBrief();refreshPrDesk();
+ prGateImport=null;clearGateDelta();clearPortableGatePreview();invalidateBrief();refreshPrDesk();
  document.getElementById('prGateClear').disabled=true;
  document.getElementById('prGateStatus').textContent=
   'Imported gate source cleared. Current PR gates unknown.';
