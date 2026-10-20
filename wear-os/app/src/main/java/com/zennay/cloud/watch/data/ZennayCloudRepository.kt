@@ -28,6 +28,8 @@ class ZennayCloudRepository(
     private fun request(path: String): JSONObject {
         val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
+            // Do not forward the bearer credential across an unexpected redirect.
+            instanceFollowRedirects = false
             connectTimeout = 5_000
             readTimeout = 5_000
             setRequestProperty("Accept", "application/json")
