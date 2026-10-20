@@ -246,3 +246,33 @@ introduced. Source-level browser JavaScript was syntax-inspected without
 running a QA/regression suite. Integration still requires original exact-head
 automatic CI, independent review when required and protected-main/release
 authorization. No source merge or production deployment is implied.
+
+## 20 October · Explicitly reviewed offline calendar transfer for human blockers
+
+The private workbench includes an **optional iCalendar (.ics) handoff** for
+human-only follow-ups. Only saved issue decisions `coordinate-owner` and
+`park-blocker` with **both** a locally entered contact label and real UTC
+review date qualify; other product issues are excluded. The user must first
+click **Preview reviewed calendar events** and inspect the entire generated
+calendar text before **Download exactly these all-day events** becomes
+available. Changing any filter, issue detail, human note, follow-up label or
+date invalidates the preview; export regenerates from the same source state
+and refuses changed content.
+
+Events use stable SHA256-board-bound, canonical issue identifiers, a UTC
+creation timestamp, a date-only `DTSTART;VALUE=DATE`, original canonical
+GitHub URL and a short explicit "human review only" description. Values
+are escaped and long lines are folded at the standard 75-octet boundary.
+Export includes **no private free-form operator notes**, no calendar account
+identifier and **no embedded VALARM**. The user chooses whether/where to
+import this file. External calendar apps may apply their own default alerts,
+which should be reviewed before saving. No automatic reminder, external
+delivery, watch integration, GitHub write, owner assignment, release, CI
+rerun, or background schedule is performed by zSentinel.
+
+The ICS is private because contact labels could identify a person. Keep it
+off public issue comments. A scheduled date is never proof of notified or
+accepting ownership, and an expired date is not proof of failed CI.
+Required live claim checks, exact-head CI, security authorization, review
+and original deployment gates remain independent. No QA/regression suite
+was authored or manually run.
