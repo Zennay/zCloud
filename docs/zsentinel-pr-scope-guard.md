@@ -1749,3 +1749,28 @@ Deze functies zitten uitsluitend in de bestaande zSentinel product-PR en
 veranderen geen actieve claims, GitHub-runner, hostconfiguratie, CI-workflows,
 productiedatabase of externe dienst. **Gecommit is niet hetzelfde als
 gemerged of gedeployed.**
+
+
+### Vervallen bronmomenten mogen geen actuele gate-acties suggereren
+
+De primaire en alternatieve PR-issuekaarten en de PR-groepering toetsen
+ook de reeds bestaande bronversheidsvelden uit de geïntegreerde
+issue-/PR-cockpit. Als een issuebron als verouderd bekend is, is de
+PR-gatebron zichtbaar `issue_source_stale`. Als de gezamenlijke issue-,
+PR- en CI-bronklokken onvoldoende samenhangen, verschijnt
+`source_clock_incoherent`. Deze expliciete UNKNOWN-besluiten krijgen
+voorrang op historisch gevonden rode of groene checks, inclusief in de
+privé HTML-, tekst- en Markdown-overdracht.
+
+Bij meerdere waarnemingen voor dezelfde PR blijven verschillen als
+`inconsistent_existing_pr_gate_sources` zichtbaar in plaats van een
+gesimuleerde actuele gate-status. De concrete actie is nieuwe brondata
+lezen en actuele eigenaar, vereiste CI, review en branchregels beoordelen.
+De werkbak wijzigt daarvoor zelf niets en vraagt geen nieuwe
+runnercapaciteit of betaalde CI aan. Syntactisch ongeldige of ontbrekende
+bronwaarden zijn geen toestemming om verder te gaan.
+
+Dit is specifiek bedoeld om het oude *merge-first* overzicht veilig
+bruikbaar te maken terwijl externe jobs, claims en reviews wijzigen;
+het is geen extra formele releasegate en geen aanspraak op volledige
+live-brondekking.
