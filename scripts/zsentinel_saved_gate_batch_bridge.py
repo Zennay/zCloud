@@ -43,19 +43,47 @@ GATE_FIELDS = (
 )
 
 
+def unique_object(pairs):
+    """Prevent a late duplicate flag from hiding earlier contradictory evidence."""
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError("Duplicate JSON evidence field")
+        obj[key] = value
+    return obj
+
+
+def invalid_constant(_value):
+    raise ValueError("Nonfinite number in source JSON")
+
+
 def bounded_json(path: Path) -> tuple[dict, bytes]:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    """One identity-bound, nofollow, nonblocking open for offline evidence."""
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise ValueError("Required safe file opening is unavailable")
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or not 2 <= before.st_size <= MAX_BYTES:
+        raise ValueError("Source is not a bounded regular file")
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
-        metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or not 2 <= metadata.st_size <= MAX_BYTES:
-            raise ValueError("Source is not a bounded regular file")
-        with os.fdopen(fd, "rb", closefd=False) as stream:
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISREG(metadata.st_mode)
+                or (metadata.st_dev, metadata.st_ino) != (before.st_dev, before.st_ino)
+                or metadata.st_size != before.st_size):
+            raise ValueError("Source replaced between metadata and read")
+        with os.fdopen(os.dup(descriptor), "rb") as stream:
             content = stream.read(MAX_BYTES + 1)
+        after = os.fstat(descriptor)
+        if (len(content) != metadata.st_size or len(content) > MAX_BYTES
+                or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+                != (metadata.st_dev, metadata.st_ino, metadata.st_size,
+                    metadata.st_mtime_ns)):
+            raise ValueError("Source content or metadata changed during read")
     finally:
-        os.close(fd)
-    if len(content) > MAX_BYTES:
-        raise ValueError("Source exceeds one MiB")
-    value = json.loads(content.decode("utf-8", errors="strict"))
+        os.close(descriptor)
+    value = json.loads(content.decode("utf-8", errors="strict"),
+                       object_pairs_hook=unique_object,
+                       parse_constant=invalid_constant)
     if type(value) is not dict:
         raise ValueError("Source must be a JSON object")
     return value, content
