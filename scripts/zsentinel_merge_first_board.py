@@ -270,6 +270,22 @@ def inspect(repo, number, budget, expected_body_digest=None,
                 "status": "SOURCE_UNAVAILABLE", "review": "UNKNOWN", "checks": "UNKNOWN",
                 "source": "INCOMPLETE", "actions": ["Refresh this PR independently"]}
 
+def delivery_receipt(row):
+    """Attach actual default-branch delivery truth to each operator PR card.
+
+    A historical merge timestamp or an unavailable ancestry query cannot
+    authorize main delivery, production deployment or issue closure.
+    """
+    record = dict(row)
+    verified = (record.get("status") == "MERGED_ON_MAIN_VERIFIED"
+                and isinstance(record.get("main_commit"), str)
+                and re.fullmatch(r"[0-9a-f]{40}", record["main_commit"]) is not None)
+    record["main_merged"] = bool(verified)
+    record["live_verified"] = False
+    if not verified:
+        record.pop("main_commit", None)
+    return record
+
 
 def render(rows, observed):
     esc = lambda x: html.escape(str(x), quote=True)
@@ -432,7 +448,8 @@ def main():
             raise ValueError("maximum three projects and six PRs per repository")
         if len(selected) > MAX_PRS:
             raise ValueError("maximum twelve PRs")
-        rows = [inspect(repo, number, budget) for repo, _, number in selected]
+        rows = [delivery_receipt(inspect(repo, number, budget))
+                for repo, _, number in selected]
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         if args.output:
             heading = ("<p><strong>Onvolledige recente PR-bron:</strong> "
@@ -447,7 +464,9 @@ def main():
             print(json.dumps({"observed_utc": observed, "github_gets": budget[0],
                               "discovery_partial_repositories": partial,
                               "selection": "recent_open_product_only" if args.project else "explicit",
-                              "main_merged": False, "live_verified": False,
+                              "main_delivery_scope": "PER_PR_EXACT_SOURCE_ONLY",
+                              "main_verified_prs": sum(row["main_merged"] for row in rows),
+                              "live_verified": False,
                               "gate_authorization": "NOT_ASSESSED", "prs": rows},
                              ensure_ascii=False))
         else:
@@ -457,7 +476,9 @@ def main():
             for row in rows:
                 print(f"{row['repo']}#{row['number']} {row['status']} | CI={row['checks']} "
                       f"| review={row['review']} | workflows={row.get('workflows', 'UNKNOWN')}"
-                      f" | next: {'; '.join(row['actions'])}")
+                      f" | main_merged={str(row['main_merged']).lower()}"
+                      f" | main_commit={row.get('main_commit', 'NOT_VERIFIED')}"
+                      f" | live_verified=false | next: {'; '.join(row['actions'])}")
             if not rows:
                 print("No eligible recent product PRs observed; not proof backlog is empty.")
             if args.output:
