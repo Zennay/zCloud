@@ -334,6 +334,10 @@ This is a saved partial snapshot: linked PRs may have changed, closed or merged.
 Open the original PR, inspect the current head, live claims, required checks,
 independent reviews and branch/release authority before touching code or merging.</p>
 <p id="prDeskSummary" aria-live="polite"></p><ol id="prDeskRows"></ol>
+<h3>Productissues without captured PR references · human triage first</h3>
+<p>Missing from this saved PR window does not mean no PR exists in live GitHub.
+Verify current claims and recent branches before opening new implementation work.</p>
+<ol id="unlinkedIssueRows"></ol>
 <button type="button" id="previewPrDesk">Preview filtered merge-first handoff</button>
 <div id="prDeskPanel" hidden><pre id="prDeskContent"></pre>
 <button type="button" id="downloadPrDesk" disabled>Download exactly this reviewed PR handoff (.md)</button></div>
@@ -549,12 +553,26 @@ function prDeskGroups(){
 function refreshPrDesk(){
  const list=document.getElementById('prDeskRows');
  list.replaceChildren();
- const groups=prDeskGroups(),withMultiple=groups.filter(g=>g.issues.length>1).length;
+ const current=filtered(),groups=prDeskGroups();
+ const unlinked=current.filter(c=>c.open_pr_candidates.length===0);
+ const without=document.getElementById('unlinkedIssueRows');
+ without.replaceChildren();
+ for(const card of unlinked){
+  const item=elem('li');
+  item.append(link(card.priority+' '+card.issue+' ↗',card.url),
+   elem('small',card.title+' · '+card.project+
+     ' · human decision: '+(handoffs.get(card.issue)?.decision||'investigate')));
+  without.append(item);
+ }
+ if(!unlinked.length)
+  without.append(elem('li','Every filtered issue had a captured PR link; live state still unknown.'));
+ const withMultiple=groups.filter(g=>g.issues.length>1).length;
  document.getElementById('prDeskSummary').textContent=
-  groups.length+' unique PR links in '+filtered().length+
-  ' filtered observed issue cards · '+withMultiple+
-  ' linked from multiple issues (NOT proof of duplicated code). Snapshot: '+
-  board.observed_at_utc+'. No active PR, merge or claim status verified.';
+  groups.length+' unique saved PR links · '+withMultiple+
+  ' linked from multiple issues · '+unlinked.length+
+  ' issue(s) without referenced PRs in '+current.length+
+  ' filtered captured issue cards. Snapshot '+board.observed_at_utc+
+  '. Not proof of active PR, available work or merge rights.';
  if(!groups.length){
   list.append(elem('li','No referenced PRs in this bounded filtered snapshot; not proof that none exist.'));
   return;
@@ -580,7 +598,8 @@ function refreshPrDesk(){
 }
 function currentPrDesk(){
  const groups=prDeskGroups();
- if(!groups.length)return null;
+ const unlinked=filtered().filter(c=>c.open_pr_candidates.length===0);
+ if(!groups.length&&!unlinked.length)return null;
  const lines=[
   '# zSentinel · MERGE FIRST · review-only PR handoff',
   '',
@@ -588,6 +607,7 @@ function currentPrDesk(){
   'Captured UTC: '+board.observed_at_utc,
   'Filtered current issue cards: '+filtered().length,
   'Unique referenced PR links: '+groups.length,
+  'Filtered issues with no recorded PR link: '+unlinked.length,
   'Evidence window: bounded and partial; original links are not verified open/current.',
   'All claim/merge/deploy permissions: FALSE; required CI/branch protection/review UNKNOWN.',
   'Read current GitHub PR and active Notion/worker claims separately before action.',
@@ -605,6 +625,14 @@ function currentPrDesk(){
     [...group.gaps].map(g=>line(g,300)).join('; '):
     'No complete current gate receipt; verify required CI, owner, review and release.'),
    'Next: inspect this existing PR before creating new source work. Do not auto-merge.',
+   '');
+ }
+ if(unlinked.length){
+  lines.push('## Productissues without captured PR references (NOT verified unowned)','',
+   ...unlinked.map(c=>
+    '- '+c.url+' · '+line(c.priority,20)+' · '+line(c.title,180)+
+    ' · human disposition '+(handoffs.get(c.issue)?.decision||'investigate')),
+   'Before implementation: check active owner claims, recent branches and live open PR inventory.',
    '');
  }
  lines.push('Source-only grouping. No GitHub mutations, review approvals or releases performed.','');
