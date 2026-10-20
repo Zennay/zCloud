@@ -80,7 +80,9 @@ def render_html(board, max_rows=20):
                 or type(observed_count) is not int
                 or observed_count != len(full)
                 or observed_count != len(alt_items) + int(pr is not None)
-                or {item.get("url") for item in full if type(item) is dict}
+                or any(type(item) is not dict or type(item.get("url")) is not str
+                       for item in full)
+                or {item["url"] for item in full}
                 != (other_seen | ({pr} if pr else set()))):
             raise ValueError("issue PR candidates not consistent with saved source")
         if (row.get("other_existing_prs_with_observed_failed_gates")
