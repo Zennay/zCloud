@@ -37,3 +37,18 @@ Severity changes such as a warning becoming a hard blocker are reported separate
 ## Bounded disk triage (optional)
 
 Add `--disk-hotspots` to include disk sizes for **five specifically named categories** only: checkout, zCloud runner installation, user cache, Gradle cache and RaiseAI build directory alongside the checkout's parent. All `du` operations are read-only, use argv rather than shell expansion, and have a three-second deadline each. Missing or timed-out categories are shown as **incomplete**, never as zero. Default runs incur **no recursive disk scan**. The operator can inspect candidates before any separately authorized cleanup; the preflight cannot remove caches, log files, runner builds or other workers' files.
+
+
+## Inspect external archive availability without moving data
+
+Use `--archive-readiness` to inspect the configured `/home/ubuntu/VPS-Archief` mount as part of the same read-only report. This checks the *exact* mountpoint in `/proc/self/mountinfo`; an unmounted directory is not mistaken for an archive. It also detects the existing rclone process when it explicitly runs with `--read-only`, without printing arguments, secrets or environment variables.
+
+```sh
+python3 scripts/zcloud_vps_preflight.py --archive-readiness --format html > private-preflight.html
+```
+
+The resulting report distinguishes `not_mounted`, `mount_declares_read_only`, `rclone_client_read_only`, and `mounted_write_unverified`. **Even a mounted read/write FUSE filesystem is not proof of permission to copy or purge data.** Archive readiness is a warning and an owner-directed next step, never an authorization to transfer, mount differently, overwrite, delete source files or bypass archive encryption/checksums. No write probes are attempted. On 20 October the connected VPS was observed running an explicitly `--read-only` rclone archive mount while local disk usage was around 91%; this flag is not a safe migration destination. Confirm separately that a legitimate encrypted writable destination and permissions exist, verify remote hashes, and authorize source removal only after reliable independent proof.
+
+Git subprocesses in the preflight now drop *all* inherited `GIT_*` variables (not just three common index/worktree overrides), while using `GIT_OPTIONAL_LOCKS=0`, so inherited Git namespace, configuration and alternate-object overrides cannot redirect its checkout inspection. This is local hardening, not an assertion that the production checkout has been reconciled.
+
+The preflight is deliberately **not** a deployment gate, an auto-cleanup script or a full runner-registration probe: the live listener process can exist without an assigned successful GitHub job. Exact-head protected-main CI, independent review and the serialized release owner remain mandatory.
