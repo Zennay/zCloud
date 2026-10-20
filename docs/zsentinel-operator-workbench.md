@@ -953,3 +953,22 @@ existing single-file control; neither path loses its behavior.
 The local source inspection for this feature checks Python
 syntactic validity and embedded browser JavaScript syntax only.
 No QA/regression suite, CI retrigger or privileged VPS task was added.
+
+
+### 20 October · Focused missing-batch collection handoff
+
+When saved historical batches are incomplete, the workbench now also
+prints the *manual read-only* command for each missing batch beside the
+unobserved PR links. The same command is included in the private Markdown
+operator handoff. For example, with batch 2 missing:
+
+```sh
+python3 scripts/zsentinel_pr_gate_now.py --from-review ./zsentinel-offline-merge-first-review.json --batch 2 --output ./zsentinel-saved-gate-batch-2.json
+```
+
+The command is rendered as text, **never executed**, and its batch index
+is bounded to 1–75. The operator decides whether/when to collect new
+GitHub observations; it requires access to the exact original reviewed
+manifest and must respect current GitHub/API and project ownership gates.
+New data can be imported via the same in-browser multi-batch selection.
+No CI retrigger, write to GitHub, claim, merge or deploy is performed.
