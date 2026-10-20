@@ -1604,3 +1604,54 @@ batches aanwezig zijn. Een aangevinkt of in ZIP vermeld PR is NOOIT
 bewijs van actuele HEAD, vereiste CI, zelfstandige review, vrij eigenaarschap,
 main-merge of productieherstel. Voor iedere echte merge of deploy blijven
 de bestaande actuele eigenaar-, security-, branch-, CI- en releasegates vereist.
+
+
+## 20 oktober · Privé projectdossier heropenen, doorzoeken en veilig uitpakken
+
+De bestaande `portfolio-zip`-export is nu zonder oorspronkelijke manifest-,
+gatebatch- of live GitHub-toegang te **inspecteren, per PR te doorlopen en
+veilig uit te pakken**. De lezer is standalone Python-standaardbibliotheek
+en schrijft bij alleen inspecteren niets.
+
+```bash
+# Inspecteer en toon maximaal 20 eerder waargenomen P0-PR's.
+python3 scripts/zsentinel_saved_gate_dossier.py \
+  --input ./private-zcloud-handoff.zip \
+  --show-queue --project Zennay/zCloud --priority P0 --limit 20
+
+# Koppel de overdracht expliciet aan een eerder betrouwbaar opgeslagen
+# originele reviewmanifest-SHA256; maak uitsluitend een NIEUWE privémap.
+python3 scripts/zsentinel_saved_gate_dossier.py \
+  --input ./private-zcloud-handoff.zip \
+  --expect-review-sha256 <64-tekens-SHA256-uit-eigen-betrouwbare-bron> \
+  --extract-to ./private-zcloud-handoff-opened
+```
+
+De ZIP-lezer valideert éérst alle vijf exact verwachte namen, gecomprimeerde
+en uitgepakte grootte, vaste reguliere bestandspermissies, alle vier SHA256
+bestandschecksums en samenhangende bronidentiteiten/scope. De individuele
+CSV/JSON/HTML/Markdown-output wordt pas daarna naar een nieuwe afgeschermde
+map geschreven; elk bestand is 0600, de map 0700. Bestaande mappen,
+bestanden of symlinks worden nooit overschreven. De parentdirectory en de
+nieuw aangemaakte uitvoermap blijven via nofollow-bestandsdescriptors
+vastgepind tijdens het schrijven; bij bestandsfouten worden alleen de eigen
+nieuwe bestanden verwijderd.
+
+Met `--show-queue` staan uit dezelfde ZIP de oorspronkelijke PR-URL, prioriteit,
+afzonderlijke waargenomen bron/gate-status, originele issue-koppelingen en de
+menselijke vervolgactie direct in de terminal. `--project`, `--priority` en
+`--limit 1..50` filteren uitsluitend **de opgeslagen steekproef**. Zij
+veranderen geen actuele GitHub PR of eigenaar. De tool weigert
+contradictoire bron-PR-identiteiten, dubbele PR's of buiten de genoemde
+scope gelegen selecties. Het ontbreken van een PR in het pakket bewijst
+niets over de huidige GitHub-inventaris.
+
+**Belangrijk vertrouwenverschil:** interne SHA256-controle bewijst dat
+onderdelen van het ZIP-pakket bij elkaar passen, maar **niet** wie het
+pakket heeft gemaakt. Gebruik desgewenst
+`--expect-review-sha256` uit een afzonderlijk vertrouwde bron voordat je
+de inhoud verspreidt of opent. Ook een volledig overeenkomend pakket
+bewijst NOOIT huidig eigenaarschap, geldige verplichte CI, onafhankelijke
+review, main-merge, vrijgegeven productie of werkelijk runnerherstel.
+Geen diensten, Notion claims, workers, tests, workflows of deployments worden
+door deze offline overdrachtsfunctie aangeroepen.
