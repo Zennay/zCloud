@@ -1695,3 +1695,57 @@ dezelfde ge-escapete, maximaal vier kandidaat-PRs per issue; er worden
 geen nieuwe netwerkverzoeken gedaan en geen claims, PRs, jobs, CI of
 deploys aangestuurd. De groepssectie blijft gewoon zichtbaar en levert
 geen verborgen formulierrecord aan een gebruikerssessie.
+
+
+### PR-eerst-operatie: eigen lokale status per bestaande PR
+
+De issuegericht werkbak kan nu ook als daadwerkelijke **PR-eerst reviewbalie**
+worden gebruikt. Iedere bestaande PR-groep toont één zelfstandige privéstatus
+(Nog te beoordelen / Wacht op review of CI / Wacht op huidige eigenaar /
+Afstemming nodig / Opvolging vastgelegd) en een eigen korte notitie, ongeacht
+hoeveel productissues dezelfde PR als hoofd- of alternatieve kandidaat noemen.
+Een lokaal PR-statusfilter, issue-/PR-zoekfunctie, projectfilter en
+prioriteitsfilter helpen bestaande integratiepunten apart opvolgen. De
+privé Markdown-overdracht neemt zowel issue- als PR-besluiten mee, inclusief
+canonieke PR-links en waargenomen issuekoppelingen. Er is **geen** automatische
+claim, merge of GitHub-commentaarfunctie toegevoegd.
+
+Ook de brongekoppelde privé JSON-sessie bewaart nu de afzonderlijke
+PR-groepsnotities en PR-statussen als expliciet `zsentinel-local-handoff-v2`.
+Bij herstel worden **eerst alle** issue- én PR-gegevens gecontroleerd;
+een vreemde URL, bronhash, onbekende status of te lange notitie weigert de
+import voordat bestaande lokale velden worden aangepast. De nieuwe
+SHA256-bronbinding omvat nu ook **iedere zichtbare PR-groep**, volledige
+oorspronkelijke issuekoppelingen, primaire koppelingen en de waargenomen
+gate-/overlap-/bronwijzigingsstatus. Daardoor kleven oude notities niet
+stilzwijgend aan andere bestaande PRs of later gewijzigde gatewaarnemingen.
+De sessie-import is begrensd op 512 KiB; die omvang is uitsluitend lokaal,
+er wordt niets naar een server geüpload. Het sluiten van een werkblad met
+niet-opgeslagen PR- of issuenotities geeft een standaard browserwaarschuwing.
+
+Eerder opgeslagen privésessies met `zsentinel-local-handoff-v1` kunnen
+uitsluitend de **oorspronkelijke issuenotities** terugzetten, en alleen wanneer
+hun *exacte vroegere* bronhash gelijk is aan de opnieuw berekende legacy-hash
+van diezelfde issue-, PR- en gatewaarneming. PR-groepsnotities blijven in die
+situatie onaangeroerd. Vreemde, verouderde of gemengde bronnen blijven
+geweigerd. Een nieuwe export gebruikt altijd v2.
+
+### Één PR-gatebron voor alle gekoppelde issues
+
+De broncompiler voegt afzonderlijke gatewaarnemingen uit meerdere aan
+dezelfde PR gekoppelde issues samen tot één read-only
+`group_gate_source_state`. Een geobserveerde failure, pending status,
+ontbrekende bron of een gedeeltelijke waarneming krijgt een expliciete
+Nederlandse menselijke vervolgactie. Als verschillende issuekaarten elkaar
+**tegensprekende PR-gatewaarnemingen** geven, verschijnt
+`inconsistent_existing_pr_gate_sources` met een verzoek de echte actuele
+PR-HEAD onafhankelijk te controleren; er wordt nooit stilzwijgend één
+positieve waarneming gekozen. Gedetecteerde bestandscope-overlap en
+historische PR-beweging staan op dezelfde groepskaart en in privétekst/
+Markdown. Geen van deze velden bewijst vereiste branchchecks, onafhankelijke
+review, eigenaarschap, mergebevoegdheid of live herstel.
+
+Deze functies zitten uitsluitend in de bestaande zSentinel product-PR en
+veranderen geen actieve claims, GitHub-runner, hostconfiguratie, CI-workflows,
+productiedatabase of externe dienst. **Gecommit is niet hetzelfde als
+gemerged of gedeployed.**
