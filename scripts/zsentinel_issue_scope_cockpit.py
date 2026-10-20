@@ -101,7 +101,8 @@ def _saved_pr_gates(raw):
     return result
 
 
-def compose(source, source_sha, canonical, selected, collision, saved_gates=None):
+def compose(source, source_sha, canonical, selected, collision, saved_gates=None,
+            source_mode="saved_local_snapshot"):
     if (not isinstance(source_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", source_sha)
             or type(collision) is not dict
             or collision.get("schema") != "zsentinel-portfolio-pr-collision-board-v1"
@@ -114,6 +115,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             or type(collision.get("project_views")) is not list
             or len(collision["project_views"]) != len(selected)):
         raise ValueError("scope source unexpectedly authorizes work or mismatches issue projects")
+    if source_mode not in ("saved_local_snapshot", "live_readonly_github_issues"):
+        raise ValueError("unknown issue source mode")
     saved_gates = saved_gates or {}
     if type(saved_gates) is not dict or len(saved_gates) > 5:
         raise ValueError("invalid saved PR gate map")
@@ -342,6 +345,7 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         "schema": "zsentinel-integrated-issue-pr-scope-v1",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "product_issue_source_sha256": source_sha,
+        "issue_source_mode": source_mode,
         "source_issue_observed_at_utc": source["observed_at_utc"],
         "source_pr_observed_at_utc": collision["observed_at_utc"],
         "source_clocks_within_10_minutes": coherent,
@@ -371,7 +375,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
 def output_text(report, markdown=False):
     intro = ("# zSentinel · Gecombineerde product- en PR-bestandsscope"
              if markdown else "zSentinel | productissues + PR-bestandsscope")
-    lines = [intro, "Issue-bron SHA256: " + report["product_issue_source_sha256"],
+    lines = [intro, "Issue-bron: " + report["issue_source_mode"],
+             "Issue-bron SHA256: " + report["product_issue_source_sha256"],
              "Bronmomenten ≤10 min uiteen: " +
              ("ja" if report["source_clocks_within_10_minutes"] else "NEE — oude bron is geen live claim")]
     for pid in report["github_scope_by_project"]:
@@ -559,8 +564,9 @@ update();
             "<aside>Geen geverifieerd eigenaarschap, live claims, volledige branch-"
             "inventaris, CI, review of merge-/deploybevoegdheid. Een gedeelde "
             "bestandsnaam bewijst geen Git-mergeconflict. Alleen read-only "
-            "GitHub-data en een lokaal gekozen issue-bronbestand.</aside>"
-            "<p>Projecten: " + escape(", ".join(report["chosen_projects"])) +
+            "GitHub-data of een lokaal opgeslagen bronbestand.</aside>"
+            "<p>Issuebron: " + escape(report["issue_source_mode"]) +
+            " · Projecten: " + escape(", ".join(report["chosen_projects"])) +
             ". Bronmomenten samenhangend: " +
             ("ja" if report["source_clocks_within_10_minutes"] else
              "NEE — controleer eerst nieuwe issue-evidence") + "</p>" +
@@ -608,7 +614,9 @@ def main(argv=None):
             raise ValueError("no canonical product-issue projects in the selected issue source")
         pr_scope = collect_portfolio(projects, canonical, os.environ.get("GITHUB_TOKEN"), args.max_prs)
         report = compose(view, sha, canonical, projects, pr_scope,
-                         saved_gates=_saved_pr_gates(source))
+                         saved_gates=_saved_pr_gates(source),
+                         source_mode=("live_readonly_github_issues" if args.live_issues
+                                      else "saved_local_snapshot"))
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
