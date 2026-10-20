@@ -331,3 +331,35 @@ renewed-owner-review warning. This is provenance only, not a verified
 owner, released claim or calendar notification. The transfer still requires
 a deliberate preview and confirmation; current human notes remain untouched,
 and all original required source/CI/security/review/release gates stay active.
+
+## 20 October · Local closure and reopening of manual follow-ups
+
+The operator can now explicitly **Mark human follow-up locally complete**
+or **Reopen local human follow-up** from the original issue detail. This
+state is private annotation history only: it does **not** close the GitHub
+issue, verify that a real human received the escalation, release an active
+claim, approve CI, or resolve an infrastructure outage.
+
+- A locally closed human follow-up remains visible in the workbench issue
+  list and manual follow-up history, labeled **CLOSED LOCALLY — issue still
+  UNVERIFIED**. It no longer contributes to overdue/missing-date reminders
+  and is excluded from a newly generated manual calendar (.ics) export.
+  Operators may filter explicitly for **Locally closed follow-up**.
+- Reopening preserves the original manually entered contact and UTC date
+  so that the human can review the case again; it does not notify or assign
+  an external person. The underlying GitHub issue stays in normal priority
+  triage whether the local human follow-up was completed or not.
+- A private export now uses **schema_version 3** and preserves the open
+  or local-complete lifecycle value. The exact-board restore and older-board
+  carry-forward accept v1, v2 and v3. Historical v1/v2 entries default to
+  open. Invalid lifecycle states and mismatched SHA/timestamps are rejected.
+- The reviewed carry-forward panel shows when an older handoff is locally
+  closed instead of silently reopening it, while preserving the previous
+  source hash and reporting any new/changed issue evidence. A local closure
+  imported from an older snapshot must still be independently rechecked
+  before a human assumes the real issue was handled.
+
+All changes remain private in-memory state until the human chooses a
+local export. No background polling, calendar service, source/queue writes,
+notification, production mutation, test/QA suite or privilege escalation
+was added; the original GitHub, Notion, CI, security and release gates remain.
