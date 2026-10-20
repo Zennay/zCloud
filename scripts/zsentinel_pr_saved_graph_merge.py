@@ -43,12 +43,16 @@ def read_bounded(path: Path):
     if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
         raise ValueError("safe regular-file opening is unavailable")
     before = path.lstat()
-    if not stat.S_ISREG(before.st_mode) or not 2 <= before.st_size <= MAX_SOURCE_BYTES:
-        raise ValueError("source must be a bounded regular file")
+    if (not stat.S_ISREG(before.st_mode)
+            or not 2 <= before.st_size <= MAX_SOURCE_BYTES
+            or before.st_uid != os.geteuid()
+            or before.st_mode & 0o077):
+        raise ValueError("source must be owner-private 0600 and bounded")
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         meta = os.fstat(fd)
         if (not stat.S_ISREG(meta.st_mode)
+                or meta.st_uid != os.geteuid() or meta.st_mode & 0o077
                 or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
                 != (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns)):
             raise ValueError("source changed before read")
@@ -56,6 +60,7 @@ def read_bounded(path: Path):
             raw = stream.read(MAX_SOURCE_BYTES + 1)
         after = os.fstat(fd)
         if (len(raw) != meta.st_size or len(raw) > MAX_SOURCE_BYTES
+                or after.st_uid != os.geteuid() or after.st_mode & 0o077
                 or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
                 != (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns)):
             raise ValueError("source changed during read")
