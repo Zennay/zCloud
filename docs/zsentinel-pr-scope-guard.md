@@ -845,3 +845,44 @@ het betreffende gerichte PR-deel. Tot vier gerichte PR's levert
 maximaal **36 extra GitHub GETs** inclusief de bestaande vijf-GET huidige
 CI-/reviewcollectie per succesvol geselecteerd PR. Er vindt geen
 GitHub-write, claim, merge, workflowrerun of production-deploy plaats.
+
+
+### Rechtstreeks een grote bestaande PR vergelijken met andere open PR's
+
+Naast de portfolio-route werkt de uitgebreide bestandsopname nu ook
+**direct** in de bestaande single-project-bestandsscopecockpit,
+uitsluitend wanneer de gebruiker daarvoor één concrete bron-PR kiest:
+
+```bash
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --source-pr 1567 --expanded-source-files \
+  --max-prs 24 --format html > ./source-pr-overlap.html
+```
+
+Dit verzamelt maximaal **drie begrensde GitHub-filepagina's** voor de gekozen
+canonieke open product-PR (maximaal 240 unieke huidige én bij rename oude
+paden). Daarna worden die paden vergeleken met de reeds bestaande
+begrensde lijst van maximaal 48 andere recente open PR's, zonder de bron-PR
+zelf als conflict te tonen. Een tweede bron-PR metadata-GET controleert dat
+dezelfde HEAD/base nog open staat aan het eind van de waarneming.
+Dit is een expliciete read-only vorm van PR-integratievoorbereiding,
+**geen** Git-mergeconflict- of eigenaarsverificatie.
+
+Zonder `--expanded-source-files` blijft de bestaande snelle route met
+één bronbestandspagina en hoogstens tachtig paden intact. De extra optie
+mag niet zonder `--source-pr` en niet samen met
+`--audit-open-prs`; QA-only-titels zijn voor uitgebreide bronlezing
+niet toegestaan. Bij ontbrekende/gewijzigde bron, dubbele paginaregels,
+meer dan 240 paden of een volledig gevulde derde pagina wordt de
+bron geweigerd. Hierdoor zijn **maximaal vijf gerichte bron-GETs**
+nodig (metadata + maximaal drie filepagina's + één metadata-freshness-read),
+boven op de bestaande begrensde open-PR-steekproef en file-GETs.
+
+De JSON bevat `source_file_pages_observed`,
+`source_file_count` en `expanded_source_file_pages_requested`
+onder `selected_source_pr`. Het aantal gelezen bronpagina's/paden
+wordt ook in de Nederlandse HTML-, tekst- en Markdown-uitvoer getoond.
+De CLI drukt bij bronfouten geen ruwe exception met eventuele lokale
+privébestandspaden meer af. Elke bevinding blijft zonder autorisatie:
+verplichte exacte-head CI, onafhankelijke review, actuele Notion-claims,
+branchregels, eigenaar en releasevenster moeten separaat worden gecontroleerd.
