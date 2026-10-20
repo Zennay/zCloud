@@ -15,6 +15,24 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 IDENT = re.compile(r"^[a-z][a-z0-9_-]{0,90}$")
 MAX_ENTRIES = 24
 MAX_WINDOWS = 8
+OWNER_REVIEW_CATEGORIES = frozenset((
+    "allocated_paused_with_claimed_queue_owner_gate",
+    "allocated_queue_claim_expired_or_invalid_owner_recheck",
+    "recent_client_block_event_owner_review",
+    "recent_browser_block_without_prompt_context_owner_review",
+    "generating_but_progress_unverified_or_stale",
+    "worker_event_stale_or_unknown",
+    "configured_running_no_event_evidence",
+))
+OWNER_REVIEW_PRIORITY = {
+    "allocated_paused_with_claimed_queue_owner_gate": 0,
+    "allocated_queue_claim_expired_or_invalid_owner_recheck": 0,
+    "recent_client_block_event_owner_review": 1,
+    "recent_browser_block_without_prompt_context_owner_review": 1,
+    "generating_but_progress_unverified_or_stale": 2,
+    "worker_event_stale_or_unknown": 2,
+    "configured_running_no_event_evidence": 2,
+}
 
 
 def _utc(value):
@@ -170,8 +188,32 @@ def summarize_worker_windows(windows):
             "workers_compared": len(comparable),
             "entries": comparable,
         })
+    attention = []
+    for pair in pairs:
+        for row in pair["entries"]:
+            if (row["previous_worker_state"] in OWNER_REVIEW_CATEGORIES
+                    and row["later_worker_state"] in OWNER_REVIEW_CATEGORIES):
+                attention.append({
+                    "from_window": pair["from_window"],
+                    "to_window": pair["to_window"],
+                    "project_id": row["project_id"],
+                    "worker_slot": row["worker_slot"],
+                    "previous_classification": row["previous_worker_state"],
+                    "later_classification": row["later_worker_state"],
+                    "owner_followup": row["later_owner_followup"],
+                    "priority": OWNER_REVIEW_PRIORITY.get(
+                        row["later_worker_state"], 3),
+                    "not_a_verified_stall_or_lease": True,
+                    "owner_claim_verified": False,
+                    "no_automatic_recovery": True,
+                })
+    attention.sort(key=lambda row: (
+        row["priority"], -row["to_window"],
+        row["project_id"], row["worker_slot"]))
     return {
         "schema": "zsentinel-historical-worker-continuity-v1",
+        "persistent_observed_owner_review": attention[:MAX_ENTRIES * (MAX_WINDOWS - 1)],
+        "persistent_observed_owner_review_count": len(attention),
         "source_windows": len(windows),
         "adjacent_comparisons": pairs,
         "unknown_or_partial_pairs": sum(
