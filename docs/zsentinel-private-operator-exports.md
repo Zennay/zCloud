@@ -123,3 +123,51 @@ Ook wanneer het opgeslagen bestand gisteren is gemaakt, ontstaat
 **geen nieuwe CI- of eigenaarswaarneming**. Alleen de operator kan de
 eventuele oude herinnering bewust importeren. Source-only branchfunctie:
 geen scheduler, claim, auto-deploy of live service-activering.
+
+## Historische P0/P1-incidenttijdlijn (2–8 echte bronmomenten)
+
+De zelfstandige productmodule
+\`scripts/zsentinel_decision_timeline.py\` vergelijkt twee tot acht
+eigenaar-private, chronologisch opeenvolgende **live-cockpit JSON-rapporten**.
+Het hergebruikt dezelfde 0600/no-follow/duplicate-key-admissie als de
+bestaande offline replay; originele bestanden worden niet gewijzigd. De
+uitvoer is een nieuw bestand, nooit een overschreven bron.
+
+\`\`\`bash
+# Maak bronbestanden op verschillende momenten met de bestaande cockpit:
+python3 scripts/zsentinel_live_cockpit.py --github-only --project cloud \
+  --format json --output /private/zsentinel-t0.json
+# (Apart later uitgevoerde bronobservatie; geen achtergrondtaak ingepland.)
+python3 scripts/zsentinel_live_cockpit.py --github-only --project cloud \
+  --format json --output /private/zsentinel-t1.json
+
+# Later op hetzelfde apparaat, ZONDER een provider te raadplegen:
+python3 scripts/zsentinel_decision_timeline.py \
+  --snapshot /private/zsentinel-t0.json \
+  --snapshot /private/zsentinel-t1.json \
+  --format html --output /private/historische-incidenten.html
+\`\`\`
+
+Formaten: \`html\` (interactieve offline filters voor urgentie, aanwezigheid,
+menselijke actie en zoeken), \`json\` (gebonden bron- en incidentmomenten),
+\`md\` (privé overdracht) en \`text\`. De tool leest alleen eerder
+aangemaakte privébestanden en exporteert exclusief nieuwe
+\`.html/.json/.md/.txt\`-bestanden. Maximaal 8 bronnen, 30 dagen per
+bron, 200 incidenten per moment, 1600 unieke incidenten intern en
+400 zichtbare kaarten (eventuele afkapping expliciet). Bestaande
+exact-incidentidentiteit is nodig voor herhaling; hetzelfde ID bij een
+ander project/probleem wordt geweigerd.
+
+**Bronwaarheid:** P0 blijft historisch urgent als een latere bron P1
+ziet. Een tijdelijk niet-bemonsterd incident dat daarna terugkeert
+krijgt de categorie *bronhiaat/heropgemerkt*, **geen** veronderstelde
+tussentijdse oplossing. Ontbrekend in de laatste steekproef betekent
+NOOIT opgelost; de CLI houdt zulke incidenten als menselijke
+reconciliatiekandidaten. Het oorspronkelijke bronmoment, chronologische
+vensters, genormaliseerde SHA-256-identiteit, waargenomen P0/P1-cijfers,
+menselijke opvolgacties en onbekende eigenaarstoestand blijven zichtbaar.
+
+Dit is een **operatorproduct**, niet een nieuwe Quality Validation- of
+schedulerfunctie. Het genereert geen providerrequests, eigenaarsclaims,
+GitHub merges, CI-retries, runneracties, betalingen of productie-deploys.
+Een opgeslagen waarneming is geen actueel CI- of reviewbewijs.
