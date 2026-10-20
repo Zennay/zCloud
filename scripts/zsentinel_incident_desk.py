@@ -631,6 +631,10 @@ $("downloadBrief").onclick=()=>{
 };
 isFresh();render();
 </script></html>"""
-    # Fill the trusted static markup first. Never replace marker-like words
-    # inside a subsequently embedded and escaped external incident payload.
-    return html.replace("__BRANCH_PANEL__", branch_panel).replace("__SOURCE__", payload)
+    # Split the ORIGINAL template before inserting either source-derived
+    # value. Never scan an inserted incident/branch value for another marker.
+    if (html.count("__BRANCH_PANEL__") != 1 or html.count("__SOURCE__") != 1):
+        raise ValueError("offline incident desk template has ambiguous placeholders")
+    before_branch, rest = html.split("__BRANCH_PANEL__", 1)
+    between, after_source = rest.split("__SOURCE__", 1)
+    return before_branch + branch_panel + between + payload + after_source
