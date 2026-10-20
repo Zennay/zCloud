@@ -371,7 +371,8 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
             # Explicit known PRs can be historical: a closed source PR may
             # already be on main while its linked issue remains open. Never
             # let open-only discovery hide that independently checked receipt.
-            closed_product = (pr.get("state") == "closed"
+            closed_product = (isinstance(pr, dict)
+                              and pr.get("state") == "closed"
                               and type(pr.get("draft")) is bool
                               and not explicit_qa_only_pr(pr))
             if eligible_pr(pr) is None and not closed_product:
