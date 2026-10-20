@@ -264,6 +264,19 @@ def disk_used_fraction():
         return None
 
 
+def root_free_gib():
+    """Available root capacity, not proof that cleanup or recovery occurred."""
+    try:
+        fs = os.statvfs("/")
+        total = fs.f_blocks * fs.f_frsize
+        free = fs.f_bavail * fs.f_frsize
+        if total <= 0 or free < 0 or free > total:
+            return None
+        return round(free / (1024 ** 3), 2)
+    except (OSError, ValueError, OverflowError):
+        return None
+
+
 def root_volume_identity():
     """Observe Linux root mount identity/capacity without traversing files."""
     try:
@@ -282,12 +295,14 @@ def snapshot():
     memory, swap_used = memory_pressure()
     disk_used = disk_used_fraction()
     root_dev, root_total = root_volume_identity()
+    root_free = root_free_gib()
     try:
         cores = max(1, len(os.sched_getaffinity(0)))
         load = os.getloadavg()[0]
     except (OSError, AttributeError):
         cores, load = 1, None
-    unknown = not proc_ok or memory is None or swap_used is None or disk_used is None or load is None
+    unknown = (not proc_ok or memory is None or swap_used is None or
+               disk_used is None or load is None or root_free is None)
     return {
         "runner_active": runner, "zcloud_runner_active": sentinel,
         "host_load": round(load, 2) if load is not None else None,
@@ -295,6 +310,7 @@ def snapshot():
         "swap_used_percent": round(swap_used * 100, 1) if swap_used is not None else None,
         "disk_unavailable_percent": round(disk_used * 100, 1) if disk_used is not None else None,
         "root_mount_device": root_dev, "root_volume_bytes": root_total,
+        "root_available_gib": root_free,
         "source_complete": not unknown,
     }
 
@@ -498,6 +514,9 @@ def human_preview(data):
           f"{data['swap_used_percent'] if data['swap_used_percent'] is not None else 'onbekend'}%;"
           f" root niet beschikbaar "
           f"{data['disk_unavailable_percent'] if data['disk_unavailable_percent'] is not None else 'onbekend'}%")
+    print("Vrije root-schijfruimte: " +
+          (str(data.get("root_available_gib")) + " GiB" if
+           data.get("root_available_gib") is not None else "onbekend"))
     if not data["unit_observed"]:
         print("Bestaande trainerinstellingen: niet uitleesbaar via user-systemd")
     elif not data["unit_active"]:
