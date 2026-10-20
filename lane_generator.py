@@ -305,6 +305,14 @@ def recovery_scope_diagnostic(item):
             else "invalid_or_empty_declaration")
 
 
+def recovery_active_profile_mismatch(item):
+    """Old active lane metadata is a reservation, not new four-lane authority."""
+    record = _metadata(item).get("execution_lane")
+    if not isinstance(record, dict):
+        return True  # Missing provenance does not prove a safe migration.
+    return str(record.get("profile") or "").strip().lower() != "portfolio-recovery"
+
+
 def _recovery_scope_from_item(item):
     return _recovery_declared_scope(_metadata(item))
 
@@ -551,6 +559,16 @@ def generate_execution_lanes(project, backlog, claims=()):
         and str(item.get("status") or "").lower() in ACTIVE_STATUSES
         and not any(_recovery_scope_from_item(item).values())
     ]
+    # Active leases from an older profile must not be reinterpreted into
+    # independent four-lane writes, even if someone supplies file scopes.
+    # Existing owners are preserved; the runtime owner must reconcile the
+    # currently deployed profile and the original worker's claim first.
+    mismatched_active_profiles = [
+        item for item in classified
+        if profile == "portfolio-recovery"
+        and str(item.get("status") or "").lower() in ACTIVE_STATUSES
+        and recovery_active_profile_mismatch(item)
+    ]
     # An active row with an impossible, expired or absent queue lease stays
     # owned by its current worker, but cannot authorize another parallel
     # writer. Only the portfolio-recovery profile has this extra hold.
@@ -631,10 +649,18 @@ def generate_execution_lanes(project, backlog, claims=()):
         lane_id = candidate["lane_id"]
         if lane_id in chosen_by_lane:
             continue
-        if unknown_active_scopes or unknown_claim_scopes or untrusted_active_leases:
+        if (unknown_active_scopes or unknown_claim_scopes
+                or untrusted_active_leases or mismatched_active_profiles):
             # Existing queue writers and externally supplied claims retain
             # their ownership; neither an empty scope nor a malformed scope
             # proves that a new queued writer is independent.
+            if mismatched_active_profiles:
+                blocked_by_lane[lane_id].append({
+                    "kind": "queue",
+                    "reason": "active_legacy_profile_unreconciled",
+                    "ambiguous_active_count": len(mismatched_active_profiles),
+                    "overlap": {"capabilities": [], "files": []},
+                })
             if unknown_active_scopes:
                 blocked_by_lane[lane_id].append({
                     "kind": "queue",
@@ -730,6 +756,7 @@ def generate_execution_lanes(project, backlog, claims=()):
             "active_backlog_count": active_backlog_counts[lane_id],
             "parallel_active_warning": active_backlog_counts[lane_id] > 1,
             "unknown_active_scope_count": len(unknown_active_scopes),
+            "active_profile_mismatch_count": len(mismatched_active_profiles),
             "unknown_claim_scope_count": unknown_claim_scopes,
             "untrusted_active_lease_count": len(untrusted_active_leases),
             "serialized_unscoped_queue_admitted": (
