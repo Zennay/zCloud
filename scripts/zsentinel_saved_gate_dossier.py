@@ -267,6 +267,11 @@ def extract_dossier(path: Path, destination: Path, *, expected_manifest_sha=None
                              os.O_NOFOLLOW, 0o600, dir_fd=childfd)
                 created.append(name)
                 with os.fdopen(fd, "wb") as sink:
+                    opened_member = os.fstat(sink.fileno())
+                    if (not stat.S_ISREG(opened_member.st_mode)
+                            or opened_member.st_uid != os.geteuid()
+                            or stat.S_IMODE(opened_member.st_mode) & 0o077):
+                        raise ValueError("Private dossier member mode unavailable")
                     sink.write(files[name])
                     sink.flush()
                     os.fsync(sink.fileno())
@@ -434,7 +439,8 @@ def main(argv=None):
             if not ordered:
                 print("No PRs in this saved filter; current GitHub coverage UNKNOWN.")
         if args.extract_to is not None:
-            print("Private dossier extracted into: " + str(args.extract_to))
+            print("Private dossier extracted into the requested new local directory; "
+                  "no private filesystem path is included in this summary.")
         return 0
     except (OSError, ValueError, TypeError, KeyError, UnicodeError,
             BadZipFile, OverflowError, EOFError) as exc:
