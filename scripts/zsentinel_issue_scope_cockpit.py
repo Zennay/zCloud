@@ -102,7 +102,7 @@ def _saved_pr_gates(raw):
 
 
 def compose(source, source_sha, canonical, selected, collision, saved_gates=None,
-            source_mode="saved_local_snapshot"):
+            source_mode="saved_local_snapshot", focus_issue=None):
     if (not isinstance(source_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", source_sha)
             or type(collision) is not dict
             or collision.get("schema") != "zsentinel-portfolio-pr-collision-board-v1"
@@ -207,6 +207,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             raw_titles[row["issue"]] = name
     issue_rows = []
     for card in source["cards"][:MAX_ISSUES]:
+        if focus_issue is not None and card["issue"] != focus_issue:
+            continue
         pid = card["project"]
         if pid not in exact:
             continue
@@ -350,6 +352,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "product_issue_source_sha256": source_sha,
         "issue_source_mode": source_mode,
+        "focused_issue": focus_issue,
+        "focus_found_in_bounded_issue_source": True if focus_issue else None,
         "source_issue_observed_at_utc": source["observed_at_utc"],
         "saved_claim_source_observed_at_utc":
             source.get("source_times_utc", {}).get("claims"),
@@ -602,6 +606,8 @@ def main(argv=None):
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
     parser.add_argument("--project", action="append")
     parser.add_argument("--max-prs", type=int, default=10)
+    parser.add_argument("--focus-issue",
+                        help="Toon slechts één issue die echt in de begrensde bron voorkomt, bv. Zennay/zCloud#1326")
     parser.add_argument("--format", choices=("html", "json", "text", "markdown"),
                         default="html")
     args = parser.parse_args(argv)
@@ -626,6 +632,16 @@ def main(argv=None):
         else:
             source, sha = read_source_and_sha(args.issue_board)
         view = validated_view(source)
+        if args.focus_issue:
+            from zsentinel_product_delivery_board import ISSUE as ISSUE_ID
+            if not ISSUE_ID.fullmatch(args.focus_issue):
+                raise ValueError("invalid repository#issue focus identity")
+            matches = [card for card in view["cards"]
+                       if card["issue"] == args.focus_issue]
+            if len(matches) != 1:
+                raise ValueError(
+                    "focused issue absent from bounded source; NOT evidence it is resolved")
+            view = {**view, "cards": matches}
         projects = _safe_projects(view, canonical, args.project)
         if not projects:
             raise ValueError("no canonical product-issue projects in the selected issue source")
@@ -633,7 +649,8 @@ def main(argv=None):
         report = compose(view, sha, canonical, projects, pr_scope,
                          saved_gates=_saved_pr_gates(source),
                          source_mode=("live_readonly_github_issues" if args.live_issues
-                                      else "saved_local_snapshot"))
+                                      else "saved_local_snapshot"),
+                         focus_issue=args.focus_issue)
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
