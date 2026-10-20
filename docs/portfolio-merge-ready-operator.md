@@ -88,6 +88,9 @@ python3 scripts/zsentinel_issue_first_board.py \
 De SHA-256 is een *zelfcontrole van de geordende zoekkandidaatnummers*,
 geen cryptografisch bewijs van GitHub-herkomst. Een gewijzigde zoekvolgorde
 weigert een onbetrouwbare offset en vraagt een verse inspectie vanaf offset 0.
+Een offset die niet naar een werkelijk nog bestaand kandidaatnummer wijst,
+wordt eveneens geweigerd. Het bronvenster toont voortaan exact de **daadwerkelijk
+geïnspecteerde** positie, afzonderlijk van de gehele opgevraagde zoekpagina.
 Vervolg-snapshots die midden in een pagina starten zijn niet toegestaan met
 `--snapshot-output`: de offline bundelaar accepteert uitsluitend oorspronkelijke
 privésnapshots vanaf pagina-offset nul en zal onvolledige pagina's als PARTIAL
@@ -105,7 +108,10 @@ niet atomair, ook niet bij een aansluitende paginareeks. Bij minimaal twee
 bekeken pagina's leest de werkbak het echte issue bovendien nogmaals na de laatste
 pagina. Is het issue intussen niet meer aantoonbaar open, of is dat laatste
 bronverzoek niet mogelijk binnen het budget, dan worden de eerder gekoppelde
-issue-referenties expliciet ingetrokken en de issue-state UNKNOWN. Het programma
+issue-referenties expliciet ingetrokken en de issue-state UNKNOWN. Veranderen
+de oorspronkelijke prioriteit of titel van het issue tussen afzonderlijke
+bronmomenten, dan blijven oude P0/P1-labels evenmin als geverifieerd staan.
+Het programma
 neemt geen claim, dispatch, review, merge of deploy over.
 
 Een snapshot via `--snapshot-output` is bewust uitsluitend voor **één**
