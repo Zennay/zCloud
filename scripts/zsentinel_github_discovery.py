@@ -269,6 +269,7 @@ def discover(registry, selected, token=None):
                     "selected_one_source_bound_job_partial_window" if incomplete_windows
                     else "selected_one_source_bound_job"),
                 "run_id": run_id, "job_id": job_id,
+                "primary_head_sha": sha,
                 "repository": canonical_repository,
                 "run_pages_checked": checked, "workflow_status_window": window,
                 "primary_job_status": status,
