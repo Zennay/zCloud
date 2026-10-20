@@ -306,6 +306,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "status": "current_exact_pr_head_and_sample_match",
                 "draft_at_read": gate["draft_at_read"],
                 "github_mergeable_boolean_observed": gate["github_mergeable_boolean_observed"],
+                "check_runs_total_observed": gate["check_runs_total_observed"],
                 "observed_checks_pending": gate["observed_checks_pending"],
                 "observed_checks_unknown": gate["observed_checks_unknown"],
                 "observed_checks_not_successful": gate["observed_checks_not_successful"],
@@ -450,6 +451,8 @@ def current_gate_blocker(row):
     if (row["observed_checks_not_successful"] > 0
             or row["observed_legacy_failure_or_error"] > 0):
         return "failed_checks_or_legacy_context"
+    if row["github_mergeable_boolean_observed"] is False:
+        return "github_merge_conflict_observed"
     if row["draft_at_read"]:
         return "draft_pr_needs_owner"
     if row["observed_exact_head_changes_requested"] > 0:
@@ -463,8 +466,13 @@ def current_gate_blocker(row):
             and row["legacy_contexts_observed"] == 0
             and not row["check_runs_sample_complete_and_terminal"]):
         return "check_source_not_terminal"
+    if (row["check_runs_total_observed"] == 0
+            and row["legacy_contexts_observed"] == 0):
+        return "no_ci_check_or_legacy_context_seen"
     if row["observed_independent_exact_head_approvals"] < 1:
         return "independent_review_not_seen"
+    if row["github_mergeable_boolean_observed"] is None:
+        return "github_mergeability_not_determined"
     return "branch_rules_ownership_and_release_not_verified"
 
 
@@ -473,6 +481,9 @@ BLOCKER_DESCRIPTIONS = {
     "incomplete_github_gate_source": "Niet alle Check Runs, reviews of legacy-statussen zijn gelezen.",
     "failed_checks_or_legacy_context": "Er is een falende Check Run of legacy-statuscontext gezien.",
     "draft_pr_needs_owner": "De PR is nog een draft; eerst door eigenaar reviewklaar maken.",
+    "github_merge_conflict_observed": "GitHub meldt dat deze PR niet automatisch kan worden gemerged; herstel conflict met eigenaar.",
+    "github_mergeability_not_determined": "GitHub heeft mergeability nog niet berekend; geen groen oordeel.",
+    "no_ci_check_or_legacy_context_seen": "Geen Check Runs of legacy-statuscontext waargenomen; vereiste CI onbekend.",
     "review_changes_requested": "Er zijn op de exacte HEAD wijzigingen gevraagd.",
     "checks_still_running": "Bestaande Check Runs of legacy-statuscontexten lopen nog.",
     "check_source_not_terminal": "CI-status kon niet als volledig afgerond worden bevestigd.",
@@ -532,6 +543,7 @@ def current_gate_lines(board, markdown=False):
             "  Exact HEAD " + gate["head_sha_observed"][:12] +
             " · Check Runs lopend " + str(gate["observed_checks_pending"]) +
             " / mislukt " + str(gate["observed_checks_not_successful"]) +
+            " / totaal gezien " + str(gate["check_runs_total_observed"]) +
             " / onbekend " + str(gate["observed_checks_unknown"]) +
             " · legacy pending " + str(gate["observed_legacy_pending"]) +
             " / failed " + str(gate["observed_legacy_failure_or_error"]) +
@@ -691,6 +703,7 @@ def as_html(board):
                     "HEAD " + escape(gate["head_sha_observed"][:12]) +
                     " · Check Runs lopend " + str(gate["observed_checks_pending"]) +
                     " / mislukt " + str(gate["observed_checks_not_successful"]) +
+                    " / totaal gezien " + str(gate["check_runs_total_observed"]) +
                     " / onbekend " + str(gate["observed_checks_unknown"]) +
                     " · legacy pending " + str(gate["observed_legacy_pending"]) +
                     " / failed " + str(gate["observed_legacy_failure_or_error"]) +
