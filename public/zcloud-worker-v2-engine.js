@@ -119,7 +119,14 @@
       'button[data-testid="new-chat-button"]'].flatMap(s=>[...document.querySelectorAll(s),document.querySelector(s)]).find(visible)||null;
   }
   function failedConversation(){
-    const t=String((document.querySelector("main")||document.body)?.innerText||"").toLowerCase();
+    // Never treat a quoted error in an actual conversation as an error page.
+    // A terminal load failure has no usable composer and no visible chat turns.
+    const main=document.querySelector("main");
+    if(!main||visible(composer()))return false;
+    if([...main.querySelectorAll('[data-message-author-role],[data-testid="conversation-turn"]')].some(visible))
+      return false;
+    const t=String(main.innerText||"").trim().toLowerCase();
+    if(!t||t.length>2000)return false; // Large pages are not a bounded error screen.
     return /could not load (?:this )?(?:chatgpt )?conversation|conversation not found|gesprek kon niet worden geladen/.test(t);
   }
   async function newChat(reason){
