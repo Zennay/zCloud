@@ -227,6 +227,20 @@ def bounded_events(
                 merged_at = pr.get("merged_at")
                 if merged_at is not None and instant(merged_at) is None:
                     raise ValueError("github_timestamp_invalid")
+                current_state = pr.get("state")
+                closed_at = pr.get("closed_at")
+                if current_state not in ("open", "closed"):
+                    raise ValueError("github_pr_state_invalid")
+                if closed_at is not None and instant(closed_at) is None:
+                    raise ValueError("github_timestamp_invalid")
+                if (current_state == "open" and
+                        (closed_at is not None or merged_at is not None)):
+                    raise ValueError("github_pr_state_inconsistent")
+                if current_state == "closed" and closed_at is None:
+                    raise ValueError("github_pr_closed_time_missing")
+                lifecycle = ("merged" if merged_at is not None
+                             else "closed_without_merge" if current_state == "closed"
+                             else "open")
                 merge_sha = pr.get("merge_commit_sha")
                 if merged_at is not None:
                     if not isinstance(merge_sha, str) or not SHA_RE.fullmatch(merge_sha):
@@ -248,6 +262,10 @@ def bounded_events(
                 ref = f"https://github.com/{repo}/pull/{number}"
                 fields = {"pr": number, "url": ref, "draft": draft,
                           "pr_head_sha": head_sha,
+                          # This is the current state at observation time,
+                          # not a retroactive claim about when PR was created.
+                          "pr_lifecycle": lifecycle,
+                          "pr_closed_at": closed_at,
                           "merged": merged_at is not None, "main_merged": False,
                           "main_merge_evidence": "not_proven_in_bounded_history",
                           "merge_commit_sha": merge_sha,
