@@ -350,6 +350,13 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
         output.append(item)
     result = {
         **board,
+        # The recent-PR collision board cannot represent the full set after
+        # an explicitly selected different PR has been found. Even if it
+        # claimed a complete bounded snapshot earlier, that newer/direct
+        # source proves it is not a complete view of the combined result.
+        "source_coverage_complete": (
+            board["source_coverage_complete"] and fallback_count == 0),
+        "source_coverage_limited_by_direct_prs": fallback_count > 0,
         "current_live_pr_gate_observation": {
             "mode": ("explicit_product_pr_refs_with_bounded_direct_lookup"
                      if focus_prs and fallback_count else
