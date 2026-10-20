@@ -696,6 +696,20 @@ def output_html(report):
     bundle_summary = ""
     if report.get("saved_gate_batch_reconciliation"):
         b = report["saved_gate_batch_reconciliation"]
+        action_items = []
+        for action in b["manual_review_queue_preview"]:
+            url = escape(action["url"], quote=True)
+            action_items.append(
+                "<li><a rel='noopener noreferrer' href='" + url + "'>" +
+                str(action["manifest_position"]) + ". " + url +
+                "</a> · " + escape(action["historic_gate_category"]) +
+                " · " + escape(action["human_next_gate"]) +
+                " · uitsluitend historische triage, geen mergebevoegdheid.</li>")
+        action_list = ("<details><summary>Menselijke merge-first werkbak (" +
+                       str(len(action_items)) + " zichtbaar)</summary><ol>" +
+                       "".join(action_items) + "</ol><p>" +
+                       str(b["manual_review_queue_hidden_after_24"]) +
+                       " overige kandidaat-PR's niet in deze compacte lijst.</p></details>")
         bundle_summary = (
             "<section><h2>Opgeslagen PR-gatebatches</h2><p>Brongebonden " +
             str(b["observed_prs"]) + "/" + str(b["total_manifest_prs"]) +
@@ -705,7 +719,8 @@ def output_html(report):
             " · batchmomenten coherent: " +
             escape(str(b["cross_batch_observation_within_10_minutes"])) +
             ". Alle HEADs en verplichte branchregels moeten live opnieuw worden "
-            "gecontroleerd vóór merge. Geen claim- of mergevrijgave.</p></section>"
+            "gecontroleerd vóór merge. Geen claim- of mergevrijgave.</p>" +
+            action_list + "</section>"
         )
     cards = []
     for row in report["issues"]:
@@ -1049,6 +1064,11 @@ def main(argv=None):
             print(output_html(report))
         else:
             print(output_text(report, markdown=args.format == "markdown"))
+        # A saved bundle is never current permission. Mark stale/incoherent
+        # saved evidence incomplete without concealing independent issue cards.
+        if (report["saved_gate_batch_reconciliation"] is not None
+                and not report["saved_gate_batch_reconciliation"]["saved_bundle_complete_and_recent"]):
+            return 3
         return 2 if any(p["existing_prs"] and any(
             ref["file_scope_state"] == "shared_file_paths_observed"
             for ref in p["existing_prs"]) for p in report["issues"]) else (
