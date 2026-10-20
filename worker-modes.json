@@ -3,14 +3,14 @@
     "id": "zsentinel",
     "name": "zSentinel · Vliegende keep",
     "eyebrow": "PORTFOLIO RECOVERY WORKER",
-    "goal": "Continually clear open issues, unfinished features, broken workflows and stuck projects across the entire portfolio.",
+    "goal": "Clear highest-impact open P0/P1 issues, finish inherited product pull requests through protected main, and recover blocked release/runner flows across the whole portfolio.",
     "repo_url": "https://github.com/Zennay/zCloud",
     "notion_url": "https://app.notion.com/p/3fb9e19ac95581f2b686f01ed9e4dee0",
     "phase": "Cross-project open-work recovery",
     "status": "active",
     "priority": "high",
-    "next_step": "Pick the highest-impact unowned, safe open P0/P1 issue across projects; implement, test, commit and close only after verification. Move to the next safe task instead of waiting.",
-    "milestone_revision": "zsentinel-worker-role-20261016",
+    "next_step": "Sweep existing merge-ready product PRs first, check exact-head CI and independent review with the zCloud portfolio_merge_ready script, claim the authorized exclusive mainwriter lease, merge and verify default-branch SHA where allowed, then deploy only via existing gates. For any blocked PR, repair CI/conflicts/runner or deliver another free P0/P1 fix; do not create duplicate drafts.",
+    "milestone_revision": "zsentinel-release-first-20261020",
     "milestones": [
       {
         "title": "Actively repair unowned open work across projects",
