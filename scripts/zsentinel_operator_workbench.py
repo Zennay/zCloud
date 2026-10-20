@@ -719,6 +719,26 @@ function gateState(url){
  if(!row.observed_checks&&!row.legacy_contexts)return 'unverified';
  return 'observed-no-authority';
 }
+function gateOverview(groups){
+ const counts={failed:0,pending:0,review:0,unverified:0,
+  'observed-no-authority':0};
+ for(const group of groups)counts[gateState(group.url)]++;
+ const age=prGateImport?Math.max(0,Math.floor((Date.now()-prGateImport.timestamp)/60000)):null;
+ const coverage=prGateImport?.bridgeCoverage?
+   ' · complete SAVED batch set '+prGateImport.bridgeCoverage.batches+
+   ' · source '+prGateImport.bridgeCoverage.manifest_sha256.slice(0,12):
+  prGateImport?.reviewContext?
+   ' · only saved batch '+prGateImport.reviewContext.batch_index+'/'+
+    prGateImport.reviewContext.batches_total+' observed':
+   ' · no manifest-complete saved source proven';
+ return 'Saved observations: '+counts.failed+' failed · '+counts.pending+
+  ' waiting · '+counts.review+' review needed · '+counts.unverified+
+  ' unknown/incomplete · '+counts['observed-no-authority']+
+  ' sampled clear (NOT merge approval)'+
+  (age===null?' · no imported source':' · saved source '+age+' min old'+
+   (age>15?' STALE':'')+coverage)+
+  ' · current required CI, claims, branch protection and owner review UNKNOWN';
+}
 const gateNextHuman={
  inspect_incomplete_current_head_gate_source:
   'De opgeslagen check-/reviewbron is onvolledig. Bekijk de actuele GitHub-bron opnieuw.',
@@ -800,7 +820,7 @@ function refreshPrDesk(){
   ' linked from multiple issues · '+unlinked.length+
   ' issue(s) without referenced PRs in '+current.length+
   ' filtered captured issue cards. Gate filter '+(gateFilter||'all')+
-  '. Snapshot '+board.observed_at_utc+
+  '. Snapshot '+board.observed_at_utc+'. '+gateOverview(groups)+
   '. GEEN actuele claim, onafhankelijke review of mergebevoegdheid aangetoond.';
  if(!groups.length){
   list.append(elem('li','No referenced PRs in this bounded filtered snapshot; not proof that none exist.'));
@@ -889,6 +909,7 @@ function currentPrDesk(){
   'Gate focus: '+(document.getElementById('prGateFocus').value||'all'),
   'Filtered issues with no recorded PR link: '+unlinked.length,
   'Evidence window: bounded and partial; original links are not verified open/current.',
+  'Saved gate status: '+line(gateOverview(groups),750),
   'All claim/merge/deploy permissions: FALSE; required CI/branch protection/review UNKNOWN.',
   'Read current GitHub PR and active Notion/worker claims separately before action.',
   ''
