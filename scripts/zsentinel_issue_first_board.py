@@ -37,14 +37,16 @@ def eligible_pr(item):
             or not isinstance(base, dict)):
         raise ValueError("invalid PR source fields")
     lowered = title.strip().casefold()
-    if (item.get("state") != "open" or item.get("draft") is True
+    # Drafts are unfinished *existing* product work, never merge permission.
+    # Include them in discovery so a new duplicate PR is not encouraged.
+    if (item.get("state") != "open" or type(item.get("draft")) is not bool
             or base.get("ref") != "main"
             or lowered.startswith(("test(", "test:", "qa(", "qa:", "chore(qa)"))
             or "quality-validation" in lowered):
         return None
     rank = (0 if lowered.startswith(("p0", "fix:", "fix("))
             else 1 if lowered.startswith(("p1", "feat:", "feat(")) else 2)
-    return rank
+    return rank + (3 if item["draft"] else 0)
 
 
 def collect(projects, registry, budget):
@@ -94,7 +96,7 @@ def collect(projects, registry, budget):
                                        expected_body_digest=fingerprint,
                                        expected_title_digest=title_digest)
                 if (report.get("source") == "COMPLETE"
-                        and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY"}
+                        and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY", "DRAFT"}
                         and report.get("head") == observed_head
                         and isinstance(observed_head, str)):
                     report["observed_issue_refs"] = [
@@ -224,7 +226,7 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
                                    expected_body_digest=fingerprint,
                                    expected_title_digest=title_digest)
             if (report.get("source") == "COMPLETE"
-                    and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY"}
+                    and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY", "DRAFT"}
                     and report.get("head") == (record.get("head") or {}).get("sha")):
                 report["observed_issue_refs"] = [issue_info]
                 report["issue_reference_source"] = (
