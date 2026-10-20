@@ -290,8 +290,12 @@ private fun HomeScreen(
                                 // Read only on recomposition; local button taps
                                 // bump the version. No remote acknowledgement.
                                 val version = snoozeVersion
-                                val currentTick = snoozeMinuteTick
-                                val remaining = IncidentSnoozeStore.remainingMillis(appContext, alert)
+                                val observedTime = remember(snoozeMinuteTick, snoozeVersion) {
+                                    System.currentTimeMillis()
+                                }
+                                val remaining = IncidentSnoozeStore.remainingMillis(
+                                    appContext, alert, now = observedTime
+                                )
                                 Spacer(Modifier.height(9.dp))
                                 Label("LOKALE MELDINGSINSTELLING", Blue)
                                 Text(
