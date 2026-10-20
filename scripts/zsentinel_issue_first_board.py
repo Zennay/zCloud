@@ -124,9 +124,9 @@ def collect(projects, registry, budget):
                     continue
                 fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
                 title_digest = hashlib.sha256(item["title"].encode("utf-8")).hexdigest()
-                report = board.inspect(repo, item["number"], budget,
+                report = board.delivery_receipt(board.inspect(repo, item["number"], budget,
                                        expected_body_digest=fingerprint,
-                                       expected_title_digest=title_digest)
+                                       expected_title_digest=title_digest))
                 if (report.get("source") == "COMPLETE"
                         and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY", "DRAFT"}
                         and report.get("head") == observed_head
@@ -254,9 +254,9 @@ def collect_targeted(project, issue_number, registry, budget, candidate_page=1,
             fingerprint = hashlib.sha256(body.encode("utf-8")).hexdigest()
             title_digest = hashlib.sha256(
                 record["title"].encode("utf-8")).hexdigest()
-            report = board.inspect(repo, number, budget,
+            report = board.delivery_receipt(board.inspect(repo, number, budget,
                                    expected_body_digest=fingerprint,
-                                   expected_title_digest=title_digest)
+                                   expected_title_digest=title_digest))
             if (report.get("source") == "COMPLETE"
                     and report.get("status") in {"HOLD", "OBSERVED_GATES_ONLY", "DRAFT"}
                     and report.get("head") == (record.get("head") or {}).get("sha")):
@@ -391,9 +391,9 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
                 continue
             digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
             title_digest = hashlib.sha256(title.encode("utf-8")).hexdigest()
-            report = board.inspect(repo, number, budget,
+            report = board.delivery_receipt(board.inspect(repo, number, budget,
                                    expected_body_digest=digest,
-                                   expected_title_digest=title_digest)
+                                   expected_title_digest=title_digest))
             has_ref = issue_number in reference_hints(
                 title, body, {issue_number}, repo=repo)
             source_matches = (report.get("source") == "COMPLETE"
@@ -416,6 +416,9 @@ def collect_explicit_prs(project, issue_number, registry, budget, pr_numbers):
             outcomes.append({"number": number,
                              "status": report.get("status", "SOURCE_UNAVAILABLE"),
                              "head": report.get("head"),
+                             "main_merged": report["main_merged"],
+                             "main_commit": report.get("main_commit"),
+                             "live_verified": False,
                              "issue_reference_source": report["issue_reference_source"]})
             if not has_ref:
                 limitations.append({"project": project,
@@ -829,7 +832,7 @@ def main():
     cli.add_argument("--issue", type=int,
                      help="target one known open issue outside the recent PR window; requires one --project")
     cli.add_argument("--candidate-pr", type=int, action="append",
-                     help="directly inspect 1–10 known open existing PR numbers instead of GitHub Search")
+                     help="directly inspect 1–10 known existing product PRs, including closed receipts, without search")
     cli.add_argument("--candidate-page", type=int, default=1,
                      help="continue targeted issue search on page 1–50 of 20 PRs")
     cli.add_argument("--auto-pages", type=int, default=1,
