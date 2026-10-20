@@ -175,15 +175,49 @@ def sweep(repo, project, args):
                 if result["status"] == "GREEN":
                     # Scope claim is checked again immediately before a requested write.
                     if args.merge and live_claim(project, args.claim_key, args.owner_id, head):
+                        # All mutable GitHub inputs are refreshed before the
+                        # explicit one-PR write, not borrowed from first read.
                         before = gh(f"repos/{repo}/pulls/{number}")
-                        if before["head"]["sha"] != head or before.get("mergeable") is not True:
-                            result["status"] = "HEAD_MOVED"
+                        if (before["head"]["sha"] != head
+                                or before["base"]["ref"] != default
+                                or before.get("draft") is True
+                                or before.get("mergeable") is not True):
+                            result["status"] = "HEAD_BASE_OR_GATE_MOVED"
+                        elif not approvals(
+                            repo, number, (before.get("user") or {}).get("login", ""), head
+                        ):
+                            result["status"] = "REVIEW_CHANGED_BEFORE_MERGE"
+                        elif check_state(repo, head) != "GREEN":
+                            result["status"] = "CHECKS_CHANGED_BEFORE_MERGE"
+                        elif not live_claim(project, args.claim_key, args.owner_id, head):
+                            result["status"] = "MAINWRITER_LEASE_CHANGED"
                         else:
                             outcome = gh(f"repos/{repo}/pulls/{number}/merge", "PUT",
                                          {"sha": head, "merge_method": "squash"})
-                            result["merged"] = outcome.get("merged") is True
-                            result["main_commit"] = outcome.get("sha") if result["merged"] else None
-                            result["status"] = "MERGED" if result["merged"] else "MERGE_REJECTED"
+                            if outcome.get("merged") is not True or not outcome.get("sha"):
+                                result["status"] = "MERGE_REJECTED"
+                            else:
+                                # A 200 response does not by itself prove a
+                                # durable merged PR or the current default ref.
+                                result["status"] = "MERGE_ACCEPTED_POSTCHECK_UNKNOWN"
+                                result["reported_commit"] = outcome["sha"]
+                                try:
+                                    after = gh(f"repos/{repo}/pulls/{number}")
+                                    default_ref = gh(f"repos/{repo}/git/ref/heads/{default}")
+                                    observed_head = (default_ref.get("object") or {}).get("sha")
+                                    result["default_branch_head_observed"] = observed_head
+                                    if (after.get("merged_at")
+                                            and after.get("merge_commit_sha") == outcome["sha"]
+                                            and isinstance(observed_head, str)
+                                            and len(observed_head) == 40):
+                                        result["merged"] = True
+                                        result["main_commit"] = outcome["sha"]
+                                        result["status"] = "MERGED"
+                                except (RuntimeError, ValueError, KeyError, TypeError,
+                                        subprocess.TimeoutExpired):
+                                    # Never retry the PUT automatically: it may
+                                    # already have merged. Require manual review.
+                                    pass
                     elif args.merge:
                         result["status"] = "MAINWRITER_LEASE_REQUIRED"
                     else:
