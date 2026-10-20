@@ -223,7 +223,14 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path], *, allow_pa
                         or type(row.get("human_next_gate_step")) is not str
                         or re.fullmatch("[a-z_]{5,80}", row["human_next_gate_step"]) is None):
                     raise ValueError("Malformed exact-head gate observation")
-            sanitized[url] = {k: row[k] for k in GATE_FIELDS if k in row}
+            # Failed/unavailable observations carry no trustworthy gate details.
+            # Never pass accidental receipt metadata through to browser/exports.
+            fields = (GATE_FIELDS if row["status"] ==
+                      "observed_current_head_partial_gate_evidence" else
+                      ("url", "status", "read_only", "merge_authorized",
+                       "deployment_authorized",
+                       "required_branch_checks_and_rules_verified"))
+            sanitized[url] = {k: row[k] for k in fields if k in row}
         indexed[idx] = sanitized
     missing = sorted(set(range(1, total + 1)) - set(indexed))
     if missing and not allow_partial:
@@ -283,22 +290,121 @@ def combined_manifest(manifest: dict, raw: bytes, paths: list[Path], *, allow_pa
     }
 
 
+
+def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
+    """Human-readable, priority-ordered handoff from saved read-only gate receipts.
+
+    Never upgrades observed checks/reviews to required approval or infers merge.
+    This is the same snapshot as the JSON browser bridge, with no extra GETs.
+    """
+    selected, digest = canonical_manifest(manifest, raw)
+    if (integrated.get("original_review_manifest_sha256") != digest
+            or integrated.get("merge_authorized") is not False
+            or integrated.get("deploy_authorized") is not False):
+        raise ValueError("Review handoff provenance has changed")
+    observed = {}
+    for issue in integrated["issues"]:
+        for item in issue["existing_prs"]:
+            url, gate = item["url"], item["live_exact_head_review_checks_observation"]
+            if url in observed and observed[url] != gate:
+                raise ValueError("Conflicting PR observations in saved review")
+            observed[url] = gate
+    missing = set(integrated["missing_batch_indexes"])
+    priority_name = ("P0", "P1", "P2", "Unspecified")
+    lines = [
+        "# zSentinel — private merge-first PR-overdracht",
+        "",
+        "> Alleen een begrensde opgeslagen momentopname, geen actuele merge-",
+        "> review-, eigenaars-, CI- of deployautorisatie. Controleer alles live.",
+        "",
+        "- Manifest SHA256: `" + digest + "`",
+        "- Oorspronkelijk board SHA256: `" + integrated["original_board_sha256"] + "`",
+        "- Oudste gate-observatie UTC: " + integrated["earliest_observed_at_utc"],
+        "- Nieuwste gate-observatie UTC: " + integrated["latest_observed_at_utc"],
+        "- Batches waargenomen: " + str(integrated["observed_batch_count"]) +
+          "/" + str(integrated["expected_batch_count"]),
+        "- PR-kandidaten uit bron: " + str(len(selected)) +
+          " (geen bewijs dat ze nu open of vrij zijn)",
+        "- Niet bekeken batches: " + (", ".join(map(str, sorted(missing))) or "geen"),
+        "- Claims, verplichte branchregels, CI, review en release: **NIET VRIJGEGEVEN**",
+        "",
+        "## Prioritaire bestaande PR-kandidaten",
+        "",
+    ]
+    for position, (priority, repo, number, ref) in enumerate(selected):
+        url = ref["url"]
+        batch = position // 4 + 1
+        lines.extend([
+            "### " + priority_name[priority] + " · [" + repo + "#" +
+            str(number) + "](" + url + ")",
+            "",
+            "Bronissues: " + ", ".join(
+                "[" + issue["issue"] + "](" + issue["url"] + ")"
+                for issue in ref["observed_issue_refs"]),
+        ])
+        gate = observed.get(url)
+        if batch in missing or gate is None:
+            lines.append("**NIET BEOORDEELD:** gate-batch " + str(batch) +
+                         " ontbreekt; actuele HEAD, CI en reviews onbekend.")
+        elif gate["status"] != "observed_current_head_partial_gate_evidence":
+            lines.append("**ONBEKEND:** GitHub onbereikbaar of PR-HEAD gewijzigd; "
+                         "haal nieuwe exacte bron op vóór opvolging.")
+        else:
+            lines.extend([
+                "Waargenomen HEAD: `" + gate["head_sha_observed"] + "`",
+                "Check-run steekproef: " +
+                str(gate["observed_checks_completed"]) + " afgerond, " +
+                str(gate["observed_checks_pending"]) + " lopend, " +
+                str(gate["observed_checks_not_successful"]) + " niet geslaagd.",
+                "Legacy status: " +
+                str(gate["legacy_status_pending_observed"]) + " lopend, " +
+                str(gate["legacy_status_failure_or_error_observed"]) + " fout.",
+                "Onafhankelijke reviews waargenomen: " +
+                str(gate["observed_independent_exact_head_approvals"]) +
+                " approvals, " + str(gate["observed_exact_head_changes_requested"]) +
+                " wijzigingen gevraagd (vereiste reviewpolicy onbekend).",
+                "Volgende menselijke stap: `" + gate["human_next_gate_step"] + "`.",
+            ])
+            if (not gate["check_runs_page_complete"] or
+                    gate["review_page_may_be_truncated"] or
+                    gate["legacy_status_source_may_be_truncated"]):
+                lines.append("**GEDEELTELIJKE BRON:** checks, reviews of status "
+                             "kunnen buiten de waargenomen pagina vallen.")
+        lines.extend([
+            "Merge, actieve eigenaar en productielive-status: **ONBEKEND / "
+            "NIET GEAUTORISEERD**.",
+            "",
+        ])
+    lines.extend([
+        "## Handmatige vrijgavegrenzen",
+        "",
+        "Ververs exact-head verplichte GitHub CI en branches, vraag onafhankelijke "
+        "review en controleer huidige Notion/workerclaims. Alleen geautoriseerde "
+        "GitHub merge/release met echte main-SHA geldt als oplevering. "
+        "Niets in dit rapport voert een actie uit.",
+        "",
+    ])
+    return "\n".join(lines)
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-review", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--allow-partial", action="store_true",
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--format", choices=("json", "markdown"), default="json",\n                        help="Private JSON browser import or readable merge-first Markdown")\n    parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         review, raw = bounded_json(args.from_review)
         result = combined_manifest(review, raw, args.receipt,
                                    allow_partial=args.allow_partial)
-        rendered = (json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2) +
-                    "\n").encode("utf-8")
+        if args.format == "markdown":
+            rendered = markdown_brief(review, raw, result).encode("utf-8")
+        else:
+            rendered = (json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2) +
+                        "\n").encode("utf-8")
         if len(rendered) > MAX_BYTES:
-            raise ValueError("Browser import format exceeds one MiB")
+            raise ValueError("Private handoff output exceeds one MiB")
         fd = os.open(args.output, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
                      getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
@@ -310,9 +416,9 @@ def main(argv=None):
             args.output.unlink(missing_ok=True)
             raise
         if result["missing_batch_count"]:
-            print("Private PARTIAL saved-gate bridge written: missing batch data UNKNOWN; no action authorized.")
+            print("Private PARTIAL saved-gate " + args.format + " handoff written: missing batch data UNKNOWN; no action authorized.")
         else:
-            print("Private COMPLETE saved-gate bridge written: required CI/review still UNKNOWN.")
+            print("Private COMPLETE saved-gate " + args.format + " handoff written: required CI/review still UNKNOWN.")
         return 0
     except (OSError, ValueError, UnicodeError, OverflowError, TypeError):
         print("Refused: invalid bounded source, incomplete/mismatched batches or output.",
