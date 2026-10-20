@@ -784,12 +784,22 @@ def main():
     parser = argparse.ArgumentParser(description="zSentinel indexed read-only browser worker progress")
     parser.add_argument("--database", required=True, type=Path)
     parser.add_argument("--project", action="append", required=True)
-    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument(
+        "--format", choices=("text", "json", "html", "markdown"), default="text",
+        help="standalone offline HTML/Markdown operator handoff without GitHub or server GET"
+    )
     args = parser.parse_args()
     try:
         receipt = observe_worker_progress(args.database, args.project)
-        print(operator_text(receipt) if args.format == "text"
-              else json.dumps(receipt, ensure_ascii=True, sort_keys=True))
+        if args.format in ("html", "markdown"):
+            # Imported only for explicitly selected report output. The
+            # handoff only processes this immutable read-only receipt.
+            from zsentinel_worker_handoff import render_html, render_markdown
+            print(render_html(receipt) if args.format == "html"
+                  else render_markdown(receipt))
+        else:
+            print(operator_text(receipt) if args.format == "text"
+                  else json.dumps(receipt, ensure_ascii=True, sort_keys=True))
     except (OSError, ValueError, sqlite3.Error) as exc:
         parser.exit(2, "zSentinel worker source unavailable: " + str(exc)[:180] + "\n")
     return 0
