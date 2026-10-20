@@ -2442,3 +2442,31 @@ Directoryscans gebruiken voor hun laatste padcomponent nu
 resultaat blijft een volledig privé, create-only rapport en geen
 publieke bestandslijst. Geen QA- of regressiesuite gestart; uitsluitend
 een kort syntactisch compile van de bronmodules.
+
+### 20 oktober · éénmalige echte read-only VPS-scan en bewijsgrens
+
+Met verbonden zSSH is de nieuwe, op commit gepinde standalone-scanner
+**eenmalig uitgevoerd als read-only in-memory metadata-inspectie**:
+`max_entries=1000`, `max_depth=2`, `max_seconds=2`, workspace
+`/home/ubuntu/zennay-cloud`. Er werd geen privérapport geschreven en
+er zijn geen bestanden ingekeken, verplaatst of verwijderd.
+
+Geanonimiseerde directe bronuitvoer:
+- `mount_available_gib_observed=6.66`
+- `mount_unavailable_percent_observed=93.05`
+- `observed_allocated_gib_min=0.66` (slechts het onderzochte venster)
+- `large_file_candidates_min=1`
+- `coverage=partial`, `truncation_reason=entry_budget_exhausted`
+- `directories_unscanned=692`
+
+Deze getallen zijn GEEN complete vrijruimte-/bestandsinventaris, geen
+bewijs van het oorspronkelijke runnerprobleem en geen schoonmaakrecht.
+De directe inspectie toonde een echte presentatiefout:
+`private_report_written=true` in de padvrije samenvatting, terwijl
+bewust niets was opgeslagen. De samenvatting zet nu expliciet
+`private_report_written=false` en
+`private_report_creation=not_verified_at_summary_time`, want ze
+wordt vóór de create-only outputactie geconstrueerd. De HTML legt
+deze herkomstgrens uit en vermeldt geen bestandsnamen.
+Geen QA-/regressietestprogramma gestart; dit was één gerichte
+functionele read-only inspectie met harde bronlimieten.
