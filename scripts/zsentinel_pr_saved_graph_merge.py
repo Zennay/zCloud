@@ -567,6 +567,12 @@ def render_private_csv(report):
                      pr["number"], pr["url"], pr["head_sha"],
                      pr["source_window"], "false", "false", "false",
                      "Source observation; never an owner or merge instruction."))
+        if group["shared_file_samples_truncated"]:
+            row(("source_warning", *always, group["group_number_in_this_observation"],
+                 group["pr_count_observed"], group["distinct_shared_files_observed"],
+                 "", "", "", "", "", "", "", "false", "false", "false",
+                 "This group has more shared files than the bounded CSV sample; "
+                 "unlisted filenames are UNKNOWN in this export."))
     if report["connected_cross_window_groups_truncated"]:
         row(("source_warning", *always, "", "", "", "", "", "", "", "",
              "", "", "false", "false", "false",
