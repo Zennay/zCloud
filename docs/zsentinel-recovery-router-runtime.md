@@ -1969,3 +1969,52 @@ selectie-SHA, en vermeldt verdwijnen uit de volgende steekproef
 uitdrukkelijk **niet** als herstel. Menselijke noodbriefings sluiten
 deze nog niet exact herlezen read-only jobs bewust uit: broninspectie
 is zelfstandig productwerk, geen verplichte mensactie.
+
+## Browserworker-herstel op basis van een echte begrensde eventtijdlijn (20 oktober)
+
+De zelfstandige read-only workerobserver en het reeds bestaande zSentinel
+Live Cockpit `--worker-events-database` tonen nu, naast de huidige status,
+een **maximaal twaalf recente geïndexeerde browser-events per worker**.
+Alleen bestaande metadata uit `runner_events` worden gebruikt: een veilige
+eventcategorie (onbekend → `other_event`), leeftijd in seconden, of het
+event na de laatst waargenomen `prompt-sent` valt, en browser
+`generating/sending` signalen. Geen gesprekken, prompts, fouten,
+toegangstokens, payloads, URLs, queue-ID's of claimidentiteiten.
+
+De volledige bediening van de reeds bestaande Live Cockpit blijft gelijk:
+
+```sh
+umask 077
+python3 scripts/zsentinel_live_cockpit.py \
+  --github-only \
+  --project cloud \
+  --worker-events-database /private/authorized/portfolio.sqlite \
+  --format html > /private/authorized/worker-herstel.html
+```
+
+Het door de bevoegde operator opgegeven pad is een voorbeeld. Gebruik alleen
+een bron waarvoor read-only toegang bestaat, zonder VPS-mutatie. De
+workerbron gebruikt bestaande SQLite-indexen en een mode=ro/query_only
+snapshot; er wordt geen aanvullende server-GET, browseractie,
+queueclaim, leaseverlenging of scheduler-aanroep uitgevoerd.
+
+De cockpit toont **eigenaarcontrole eerst**: een toegewezen gepauzeerde
+worker met nog geldige queueclaim; daarna herhaalde recente
+blokkadesignalen na de laatste prompt; daarna een enkele recente blokkade
+en pas daarna verouderde/onvoldoende voortgang. Een uitklapbare tijdlijn
+maakt zichtbaar welke events en leeftijden daadwerkelijk zijn waargenomen.
+De `safe_followup` in JSON en de tekstversie adviseren alleen inspectie
+en veilige werkcontinuïteit, geen automatische recovery.
+
+**Grenzen:** de twaalf recente events vormen geen volledige eventhistorie.
+Een latere gebeurtenis wist een eerdere fout niet, maar één oud
+blokkeerevent bewijst evenmin een *actuele* storing. Browser-events zijn
+niet cryptografisch of transactioneel aan een actuele queue-claimepoch
+gebonden. `generation-finished` bewijst geen productcommit, en een geldig
+leaseveld is **geen toestemming** om claims over te nemen. Daarom blijven
+`owner_claim_verified=false`, `worker_resumed_verified=false`,
+`repair_authorized=false` en `actions_performed=false` in alle uitvoer.
+Deze read-only observatie **vervangt niet** de nog zelfstandige
+control-plane implementatie van claimgebonden eventhistorie (#1342).
+Voor alle werkelijke wijzigingen blijven actuele runtime-ownerclaims,
+verplichte CI, onafhankelijke review en bestaande VPS/releasegates leidend.
