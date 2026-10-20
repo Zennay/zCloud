@@ -45,12 +45,14 @@ def runner_diagnostics(cutoff: float):
             if candidate_file(path, cutoff):
                 stat = path.stat()
                 yield {
-                    "kind": "completed-runner-diagnostic",
+                    "kind": "aged-runner-log-owner-review",
                     "source": str(path),
                     "relative_archive": f"cold/runner-diagnostics/{runner.name}/{path.name}",
                     "bytes": stat.st_size,
                     "modified_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
                     "can_remove_automatically": False,
+                    "no_open_handle_verified": True,
+                    "archive_transfer_approved": False,
                 }
 
 
@@ -71,12 +73,14 @@ def training_reports(cutoff: float):
             continue
         stat = path.stat()
         yield {
-            "kind": "completed-training-report",
+            "kind": "aged-training-report-owner-review",
             "source": str(path),
             "relative_archive": f"cold/fuckball-training/reports/{path.name}",
             "bytes": stat.st_size,
             "modified_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
             "can_remove_automatically": False,
+            "no_open_handle_verified": True,
+            "archive_transfer_approved": False,
         }
 
 
@@ -105,6 +109,8 @@ def old_app_release_review(cutoff: float):
                 "modified_utc": dt.datetime.fromtimestamp(stat.st_mtime, dt.timezone.utc).isoformat(),
                 "release_superseded_verified": False,
                 "can_remove_automatically": False,
+                "no_open_handle_verified": True,
+                "archive_transfer_approved": False,
             }
 
 def filesystem():
@@ -399,8 +405,10 @@ def main():
         ap.error("requires at least 3 cold days and 1..5000 displayed candidates")
     cutoff = dt.datetime.now(dt.timezone.utc).timestamp() - args.older_than_days * 86400
     totals, count, examples = {}, {}, []
+    total_count = 0
     additional = tuple(old_app_release_review(cutoff)) if args.include_release_reviews else ()
     for row in (*runner_diagnostics(cutoff), *training_reports(cutoff), *additional):
+        total_count += 1
         kind = row["kind"]
         totals[kind] = totals.get(kind, 0) + row["bytes"]
         count[kind] = count.get(kind, 0) + 1
@@ -423,6 +431,10 @@ def main():
         "cold_candidate_counts": count,
         "cold_candidate_bytes": totals,
         "total_candidate_bytes": total_assessed,
+        "total_candidate_count": total_count,
+        "examples_limit": args.limit,
+        "examples_omitted": max(0, total_count - len(examples)),
+        "archive_transfer_attempted": False,
         "examples": examples,
         "excluded": [
             "live code, GitHub runner executables, working checkouts and active logs",
@@ -432,7 +444,7 @@ def main():
             "files with multiple hardlinks or symlinks",
             "unproven superseded APK exports (manual review only, 14+ day minimum)",
         ],
-        "move_policy": "Existing encrypted archive tooling must complete remote full-byte verification; never delete from inventory alone.",
+        "move_policy": "Old file age does not prove closed file handles or inactive ownership. Explicit owner review plus existing encrypted remote full-byte verification required before any authorized transfer or cleanup.",
         "source_deletion_authorized": False,
         "remote_copies_verified": False,
         "bytes_reclaimed": 0,
