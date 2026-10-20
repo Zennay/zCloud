@@ -297,7 +297,7 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
         recommend("CAPACITY_FIRST", "VPS resource owner",
                   "Insufficient resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
-    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS", "RUNNER_UNIT_TRANSITIONING"}:
+    if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS", "RUNNER_UNIT_TRANSITIONING", "RUNNER_LISTENER_DUPLICATED"}:
         recommend("RUNNER_OWNER", "zCloud Actions runner owner (#1326)",
                   "The dedicated listener/registered runner may be unavailable independently of other project runners.",
                   "Inspect the dedicated service and assigned jobs with the authorized runner owner. Restore only under the existing idle and account-identity gates; independently confirm a job was assigned.")
@@ -356,6 +356,9 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
     unit = str(systemd["state"])
     if not pids:
         mark("ZCLOUD_RUNNER_MISSING", "block", "Dedicated zCloud Runner.Listener not observed.")
+    elif len(pids) > 1:
+        mark("RUNNER_LISTENER_DUPLICATED", "block",
+             "Multiple dedicated zCloud listeners observed; runner registration ownership is ambiguous.")
     if unit in {"failed", "inactive"}:
         mark("RUNNER_UNIT_NOT_ACTIVE", "block", f"zCloud runner unit state: {unit}.")
     elif unit in {"activating", "deactivating"}:
@@ -378,12 +381,17 @@ def measure(root: Path, expected_main_sha: str | None = None, disk_hotspots: boo
         available_pct = None
         mark("MEMORY_UNOBSERVABLE", "warn", "Cannot read memory accounting.")
 
-    if memory.get("SwapTotal", 0):
-        swap_pct = round(100 * (1 - memory.get("SwapFree", 0) / memory["SwapTotal"]), 1)
-        if swap_pct >= 95:
-            mark("SWAP_EXHAUSTED", "block", "Swap utilisation >=95%.")
+    if {"SwapTotal", "SwapFree"} <= memory.keys() and 0 <= memory["SwapFree"] <= memory["SwapTotal"]:
+        if memory["SwapTotal"] > 0:
+            swap_pct = round(100 * (1 - memory["SwapFree"] / memory["SwapTotal"]), 1)
+            if swap_pct >= 95:
+                mark("SWAP_EXHAUSTED", "block", "Swap utilisation >=95%.")
+        else:
+            swap_pct = None  # Explicit zero swap is valid: no swap utilisation percentage.
     else:
         swap_pct = None
+        mark("SWAP_TELEMETRY_INCOMPLETE", "warn",
+             "Swap total/free counters are missing or contradictory; capacity is not fully observed.")
 
     try:
         volume = os.statvfs(root)
@@ -478,7 +486,7 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         clean_status = "locally_clear"
     add("preserve_checkout", clean_status, "Checkout/working-tree owner",
         "Never overwrite an uncommitted or independently owned change.")
-    if not runner["listener_pids"] or runner["unit_state"] in {"failed", "inactive", "ambiguous", "activating", "deactivating"}:
+    if len(runner["listener_pids"]) != 1 or runner["unit_state"] in {"failed", "inactive", "ambiguous", "activating", "deactivating"}:
         runner_status = "blocked"
     elif runner["unit_state"] == "unavailable":
         runner_status = "unit_unverified"
@@ -488,7 +496,7 @@ def release_gate_matrix(report: dict) -> list[dict[str, str]]:
         "Listener existence does not prove current GitHub job assignment.")
     if {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY"} & findings:
         capacity_status = "blocked"
-    elif None in (resources["available_ram_pct"], resources["disk_free_pct"]):
+    elif "SWAP_TELEMETRY_INCOMPLETE" in findings or None in (resources["available_ram_pct"], resources["disk_free_pct"]):
         capacity_status = "unknown"
     else:
         capacity_status = "locally_observed_only"
