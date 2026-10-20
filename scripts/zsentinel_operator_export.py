@@ -34,8 +34,11 @@ Vanaf deze map:
   python3 zsentinel_runner_report.py --t0 T0.json --t1 T1.json --output NIEUW.html
   python3 zsentinel_runner_report.py --timeline T0.json T1.json T2.json --output VERLOOP.html
   python3 zsentinel_runner_report.py --format markdown --timeline T0.json T1.json T2.json --output OVERDRACHT.md
+  python3 zsentinel_runner_report.py --format json --output inbox-nu.json
+  python3 zsentinel_runner_report.py --format json --t0 T0.json --t1 T1.json --output inbox-vergelijking.json
+  python3 zsentinel_runner_report.py --format json --timeline T0.json T1.json T2.json --output inbox-historie.json
 
-Rapporten worden create-only (0600) gemaakt in bestaande veilige doelmappen.
+Rapporten en de nieuwe gestructureerde JSON-eigenaarinbox worden create-only (0600)\ngemaakt in bestaande veilige doelmappen. JSON noemt bronmoment,\nbeperkte capaciteit/servicetellingen en maximaal drie handmatige acties.\nDe JSON-inbox activeert GEEN herstel of workflow.\n
 Gebruik nooit bestaande rapport-/bronbestandsnamen als nieuw doel. Het huidige --preview toont de werkelijke effectieve CPU-toewijzing
 en of een verhoging nog op ten minste 5 minuten/3 observaties wacht.
 De private HTML/JSON-receipts bewaren deze beslisstatus uitsluitend
