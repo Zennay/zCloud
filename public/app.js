@@ -1095,7 +1095,15 @@ async function refreshPublicGitHubEvidence(selectedOverride=null,quiet=false){
         observedAt:good===3||!previousCoverage?sampledAt:previousCoverage.observedAt,
         lastAttemptAt:sampledAt,staleEvidence:good<3&&previousRows.length>0}].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
     const coveredIds=new Set(githubCoverage.map(row=>row.project));
-    const retainedProjectRows=good===3?events:[...previousRows,...events];
+    // Partial provider reads must not shadow genuinely refreshed events
+    // with older copies carrying the same canonical project/kind/GitHub ID.
+    // Keep earlier events only when not reobserved, explicitly historical.
+    const freshIds=new Set(events.map(row=>row.id));
+    const retainedProjectRows=good===3?events:[
+      ...events,
+      ...previousRows.filter(row=>!freshIds.has(row.id))
+        .map(row=>({...row,staleUnverified:true}))
+    ];
     const githubEvents=fairPublicGitHubHistory(
       [...previousGitHub.events.filter(row=>row.project!==projectId&&coveredIds.has(row.project)),
        ...retainedProjectRows],githubCoverage);
