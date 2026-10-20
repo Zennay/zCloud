@@ -46,9 +46,9 @@ def explicit_qa_only_pr(item):
         return True
     lowered = title.strip().casefold()
     prefix = re.match(
-        r"^(?:\\[?p[0-3]\\]?[\\s:—-]*)?"
+        r"^(?:\[?p[0-3]\]?[\s:—-]*)?"
         r"(?:qa|tests?|regression|quality[ -]validation)"
-        r"(?=\\b|\\(|:|-)", lowered)
+        r"(?=\b|\(|:|-)", lowered)
     marked = any(
         isinstance(label, dict)
         and isinstance(label.get("name"), str)
