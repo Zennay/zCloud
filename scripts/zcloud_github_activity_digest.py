@@ -165,6 +165,20 @@ def digest(payload: dict) -> str:
                 head_sha = event.get("pr_head_sha")
                 if not isinstance(head_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", head_sha):
                     raise ValueError("invalid_pr_head_sha")
+                # Older valid receipts do not contain this optional lifecycle.
+                # Never interpret a legacy missing field as an open PR.
+                lifecycle = event.get("pr_lifecycle")
+                if lifecycle is not None:
+                    if lifecycle not in ("open", "merged", "closed_without_merge"):
+                        raise ValueError("invalid_pr_lifecycle")
+                    if (lifecycle == "merged") != (event.get("merged") is True):
+                        raise ValueError("pr_lifecycle_merge_conflict")
+                    closed_time = event.get("pr_closed_at")
+                    if (lifecycle == "open" and closed_time is not None
+                            or lifecycle != "open" and (
+                                not isinstance(closed_time, str)
+                                or len(closed_time) > 40)):
+                        raise ValueError("invalid_pr_closure_source")
             if kind == "ci_run":
                 if event.get("conclusion") not in OUTCOMES:
                     raise ValueError("invalid_outcome")
@@ -180,6 +194,12 @@ def digest(payload: dict) -> str:
                     raise ValueError("invalid_main_commit_identity")
             validated.append(event)
         created = sum(e["kind"] == "pr_created" for e in validated)
+        # Count one current closed-unmerged PR per source only, never the
+        # created AND updated record as two separate closures.
+        closed_unmerged = len({
+            e["pr"] for e in validated if e["kind"] == "pr_updated"
+            and e.get("pr_lifecycle") == "closed_without_merge"
+        })
         merged = sum(e["kind"] == "pr_merged" for e in validated)
         merged_to_main_reported = sum(e["kind"] == "pr_merged" and
                                       e["reported_main_merge"] for e in validated)
@@ -192,7 +212,9 @@ def digest(payload: dict) -> str:
         main_commits = sum(e["kind"] == "main_commit" for e in validated)
         first_seen_in_view = sum(e.get("new_since_previous") is True for e in validated)
         lines.append("Observed event counts (bounded window, may be truncated): "
-                     + str(created) + " PR-created; " + str(merged)
+                     + str(created) + " PR-created; " + str(closed_unmerged)
+                     + " PRs currently closed without merge (not deliveries); "
+                     + str(merged)
                      + " PR-merged-to-some-base (of which " +
                      str(merged_to_main_reported) + " reported target=main; " +
                      str(source_matched_merges) + " with matching SHA in the same imported main history); " +
@@ -221,6 +243,10 @@ def digest(payload: dict) -> str:
                 label = kind.replace("_", " ") + " #" + str(number) + " · head " + event["pr_head_sha"][:12]
                 if event.get("draft") is True:
                     label += " (draft)"
+                if event.get("pr_lifecycle") == "closed_without_merge":
+                    label += " (now closed without merge; NOT delivered)"
+                elif event.get("pr_lifecycle") == "open":
+                    label += " (currently open)"
                 if kind == "pr_merged":
                     target = event.get("reported_target") or "unknown"
                     label += (
