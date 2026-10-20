@@ -447,10 +447,53 @@ def html_view(data):
     )
 
 
-def save_private(path, markup):
+def markdown_view(data):
+    """Portable private owner handoff: three lines per action, no raw queue fields."""
+    lines = [
+        "# zSentinel | Hersteloverdracht",
+        "",
+        "**Lokale bron:** " + data["observed_utc"],
+        "**Context:** alleen read-only wachtrijobservatie; Notion-claims en"
+        " GitHub-releasegates NIET gecontroleerd.",
+        "",
+        "## Actiekaarten",
+    ]
+    for action in data["recovery_actions"]:
+        lines.extend((
+            "",
+            "- **Probleem:** " + action["problem"],
+            "  **Actie:** " + action["next_step"],
+            "  **Status:** " + action["status"],
+        ))
+    lines.extend(("", "## Urgente portfolio-queue (lokale bron)", "",
+                  "| Project | P0 wacht | P1 wacht | P0 actief | P1 actief |",
+                  "| --- | ---: | ---: | ---: | ---: |"))
+    for item in data["portfolio_urgent_local"]:
+        lines.append(
+            f"| {item['project']} | {item['queued_p0']} "
+            f"(eligible {item['eligible_queued_p0']}) | {item['queued_p1']} "
+            f"(eligible {item['eligible_queued_p1']}) | "
+            f"{item['in_flight_p0']} | {item['in_flight_p1']} |"
+        )
+    lines.extend((
+        "",
+        "## Integriteit en bevoegdheden",
+        "",
+        "- Lokale bron volledig: "
+        + ("ja" if data["source_complete"] else "nee/onbekend"),
+        "- Actuele externe eigenaarvrijheid: NIET AFLEIDBAAR.",
+        "- De term eligible betekent uitsluitend het lokale wachtrijveld.",
+        "- Geen claim, serviceherstart, workflow, merge, release of deploy geautoriseerd.",
+        "- Source-read is geen bevestiging van GitHub merged=true of een hervatte worker.",
+        "",
+    ))
+    return "\n".join(lines)
+
+
+def save_private(path, markup, extension=".html"):
     dest = Path(path)
-    if dest.suffix.lower() != ".html" or dest.name in ("", ".", ".."):
-        raise ValueError("New private .html target required")
+    if dest.suffix.lower() != extension or dest.name in ("", ".", ".."):
+        raise ValueError("New private report with requested extension required")
     directory = os.open(
         str(dest.parent), os.O_RDONLY | os.O_DIRECTORY
         | getattr(os, "O_NOFOLLOW", 0),
@@ -481,18 +524,21 @@ def main():
     )
     parser.add_argument("--db", default="history.db", help="Read-only SQLite source")
     parser.add_argument("--max-rows", type=int, default=250)
-    parser.add_argument("--format", choices=("text", "json", "html"), default="text")
-    parser.add_argument("--output", help="New owner-private .html file, HTML only")
+    parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
+    parser.add_argument("--output", help="New owner-private file: .html or .md")
     args = parser.parse_args()
     if not 1 <= args.max_rows <= MAX_ROWS:
         parser.error("--max-rows must be between 1 and 500")
-    if (args.format == "html") != bool(args.output):
-        parser.error("HTML requires --output, other formats cannot write files")
+    if (args.format in ("html", "markdown")) != bool(args.output):
+        parser.error("HTML/Markdown requires --output, other formats cannot write files")
     try:
         packet = collect(args.db, args.max_rows)
         if args.format == "html":
-            save_private(args.output, html_view(packet))
+            save_private(args.output, html_view(packet), ".html")
             print("Privé herstelbalie gemaakt (0600); geen systeemactie.")
+        elif args.format == "markdown":
+            save_private(args.output, markdown_view(packet), ".md")
+            print("Privé hersteloverdracht gemaakt (0600); geen systeemactie.")
         elif args.format == "json":
             print(json.dumps(packet, ensure_ascii=False, sort_keys=True))
         else:
