@@ -362,7 +362,8 @@ function saveSelection(){
  const owner=document.getElementById('followupOwner'),due=document.getElementById('followupDue');
  if(decision&&note&&owner&&due)handoffs.set(selected,{
   decision:decision.value,note:note.value.slice(0,1000),
-  owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:''
+  owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:'',
+  carried_from:handoffs.get(selected)?.carried_from||''
  });
 }
 function filtered(){
@@ -435,7 +436,8 @@ function refreshFollowups(){
     drawList();drawDetail();detail.scrollIntoView({block:'nearest'});};
   li.append(btn,elem('strong',card.title),elem('small',
    'Human label: '+(info.owner||'not entered')+' · UTC review date: '+
-   (info.due||'not entered')+' · '+dueState(info)+' · '+info.decision));
+   (info.due||'not entered')+' · '+dueState(info)+' · '+info.decision+
+   (info.carried_from?' · Imported from older source; owner must reverify':'')));
   list.append(li);
  });
 }
@@ -621,6 +623,9 @@ function currentBrief(){
     'Manual follow-up contact: '+line(human?.owner||'not entered',80)+' (label only, not a GitHub or Notion assignee)',
     'Manual UTC review date: '+(human?.due||'not entered')+' · '+
       (manualGateDecisions.has(human?.decision)?dueState(human):'not a human escalation'),
+    'Human handoff provenance: '+(human?.carried_from?
+      'manually carried from older board SHA256 '+human.carried_from+'; REVERIFY owner and gate':
+      'entered on current board or not provided'),
     'Claim context: '+line(card.claim_context,100),
     'Observed PRs: '+(card.open_pr_candidates.length?
       card.open_pr_candidates.join(' | '):'none in bounded snapshot'),
@@ -764,6 +769,9 @@ function drawDetail(){
  const saved=handoffs.get(selected);
  sel.value=saved?.decision||'investigate';note.value=saved?.note||'';
  owner.value=saved?.owner||'';due.value=saved?.due||'';
+ if(saved?.carried_from)detail.append(elem('p',
+   'Imported from older source '+saved.carried_from.slice(0,12)+
+   '… · reassess owner, date, CI and original issue before action.','notice'));
  detail.append(label,sel,ownerLabel,owner,dueLabel,due,nlabel,note);
  const update=()=>{saveSelection();invalidateBrief();refreshTriage();refreshFollowups();};
  sel.addEventListener('change',()=>{update();drawList()});
@@ -777,7 +785,7 @@ document.getElementById('export').onclick=()=>{
  saveSelection();
  const rows=[...handoffs].filter(([id,v])=>entries.has(id)&&permitted.has(v.decision))
  .map(([issue,value])=>({issue,decision:value.decision,note:value.note.slice(0,1000),
-   owner:value.owner||'',due:value.due||''}));
+   owner:value.owner||'',due:value.due||'',carried_from:value.carried_from||''}));
  const payload={schema_version:2,kind:'zsentinel-private-human-delivery-handoff',
    source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
    authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false,entries:rows};
@@ -830,10 +838,15 @@ document.getElementById('restore').addEventListener('change',async event=>{
          (data.schema_version===2&&(
           typeof v.owner!=='string'||v.owner.length>80||
           [...v.owner].some(ch=>ch.codePointAt(0)<32||ch==='<'||ch==='>')||
-          !validFollowupDate(v.due))))throw Error('malformed note/follow-up');
+          !validFollowupDate(v.due)||
+          (v.carried_from!==undefined&&
+           (typeof v.carried_from!=='string'||
+            (v.carried_from!==''&&!/^[a-f0-9]{64}$/.test(v.carried_from)))))))
+         throw Error('malformed note/follow-up provenance');
      next.set(v.issue,{decision:v.decision,note:v.note,
        owner:data.schema_version===2?v.owner:'',
-       due:data.schema_version===2?v.due:''});
+       due:data.schema_version===2?v.due:'',
+       carried_from:data.schema_version===2?(v.carried_from||''):''});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
    invalidateBrief();drawList();drawDetail();
