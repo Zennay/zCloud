@@ -1882,3 +1882,20 @@ python3 scripts/zsentinel_pr_scope_portfolio.py \
 ```
 
 De bronnen blijven per opnamemoment begrensd/niet atomair: geen bewijs van reviewbeleid, exacte verplichte branch-checkset, workerclaims, Git mergecompatibiliteit buiten een bevestigd GitHub-oordeel of deploytoestemming. GitHub-hosted CI-billing #1523 en VPS-listener #1326 zijn afzonderlijke P0-blokkades: de actielijst verandert geen daarvan en doet geen runnerherstart, CI-rerun, claim, merge of deploy.
+
+## 20 oktober · private eigenaar-werkopdrachten voor bestaande PRs
+
+De bestaande `scripts/zsentinel_pr_scope_portfolio.py` biedt naast zijn offline HTML/JSON/CSV nu een **brongebonden eigenaarshandoff**. Een operator kan hiermee concrete, leesbare Markdown-werkopdrachten voor maximaal vier bestaande product-PRs genereren, zonder bronrepo, scheduler, Notion, runner, GitHub CI of branch state te schrijven. Elke kaart bevat exacte PR-HEAD en doelbasis (of expliciet ONBEKEND), de waargenomen blokkade, concrete menselijke vervolgstap, directe niet-groene check/legacy-contextlinks, GitHub-bestandsdiff, bekende PR-bestandsoverlap en uitsluitend als hint vermelde issueverwijzingen.
+
+CLI, voorbeeld voor een **nieuwe** privé-outputlocatie (een bestand dat nog niet bestaat):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 \
+  --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format workorders --output /private/path/zsentinel-owner-workorders.md
+```
+
+Voor verschillende projecten kan `--project` maximaal drie keer en `--gate-pr` maximaal vier keer worden opgegeven. Alle project- en repo-identiteiten moeten uit de canonieke registry komen; een expliciet oudere PR kan apart begrensd direct worden gelezen. Zonder `--inspect-current-pr-gates` of zonder `--output` wordt **geen werkopdracht gemaakt**. Het bestand wordt exclusief met eigenaarrechten en `0600` aangemaakt: geen overwrite, geen symlink-follow, geen stdout-dump. De uitvoer is begrensd tot 512 KiB. Gebruik voor machines de reeds bestaande private `--format csv` of read-only JSON, niet een nieuwe schedulerclaim.
+
+Het document noemt een SHA256-inhoudsbewijs zodat twee handoffs vergeleken kunnen worden; dit bewijst alleen **welke bronfeiten in deze eenmalige opname waren verwerkt**, geen identiteit van een reviewer of actualiteit van de API. Het is geen automatische opdracht tot merge of CI-rerun: een PR-eigenaar moet actuele HEAD, actieve claims, werkelijk verplichte CI, onafhankelijke review, protected-main en releasebevoegdheid apart controleren. Gedeelde bestandsnamen betekenen niet dat GitHub een mergeconflict heeft bevestigd. Beperkte 4-PR-selectie en oudere snapshots bewijzen niets over onbekende PRs of de tussenliggende periode. Alleen handmatig gecontroleerde owner-handoff; geen eigen releasegates toegevoegd.
