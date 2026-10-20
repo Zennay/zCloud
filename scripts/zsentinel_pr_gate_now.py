@@ -53,15 +53,33 @@ def _one(repo, number, token):
             or len(checks["check_runs"]) > 100):
         raise ValueError("bounded check-runs source unavailable")
     check_rows = checks["check_runs"]
+    # GitHub retains several Check Run attempts for the same name/app on a
+    # commit. Only the newest observed attempt is actionable. An older failed
+    # attempt MUST NOT continue blocking the operator after a newer success.
+    # This is still a sampled observation, never required-check verification.
     statuses = {"completed_observed": 0, "pending_observed": 0,
                 "failure_observed": 0, "other_observed": 0}
     seen_check_ids = set()
+    latest_checks = {}
     for row in check_rows:
-        if type(row) is not dict or type(row.get("id")) is not int or row["id"] in seen_check_ids:
+        if (type(row) is not dict or type(row.get("id")) is not int
+                or row["id"] <= 0 or row["id"] in seen_check_ids):
             raise ValueError("invalid or repeated check source identity")
         seen_check_ids.add(row["id"])
         if row.get("head_sha") not in (None, head):
             raise ValueError("check source head drift")
+        app = row.get("app")
+        name = row.get("name")
+        if (type(app) is not dict or type(app.get("id")) is not int
+                or app["id"] <= 0 or type(name) is not str
+                or not 1 <= len(name) <= 180
+                or any(ord(char) < 32 or ord(char) == 127 for char in name)):
+            raise ValueError("check run identity incomplete")
+        key = (app["id"], name)
+        if key not in latest_checks or row["id"] > latest_checks[key]["id"]:
+            latest_checks[key] = row
+    actionable = []
+    for row in latest_checks.values():
         state, conclusion = row.get("status"), row.get("conclusion")
         if state == "completed":
             statuses["completed_observed"] += 1
@@ -71,6 +89,24 @@ def _one(repo, number, token):
             statuses["pending_observed"] += 1
         else:
             statuses["other_observed"] += 1
+        if ((state == "completed" and conclusion not in OK_CONCLUSIONS)
+                or state != "completed"):
+            actionable.append({
+                "name": row["name"],
+                "check_run_id": row["id"],
+                # Canonical link built from trusted repository + numeric ID;
+                # never follow or publish arbitrary provider details_url.
+                "url": "https://github.com/" + repo + "/runs/" + str(row["id"]),
+                "state": state if type(state) is str and state in
+                    ("completed", "queued", "in_progress", "pending",
+                     "waiting", "requested") else "unknown",
+                "conclusion": conclusion if type(conclusion) is str and
+                    len(conclusion) <= 40 else None,
+            })
+    actionable.sort(key=lambda item: (
+        item["state"] != "completed", item["name"], item["check_run_id"]))
+    actionable_hidden = max(0, len(actionable) - 12)
+    actionable = actionable[:12]
     # Check Runs and legacy commit statuses are distinct GitHub evidence
     # surfaces. A successful Check Run is not proof that a required legacy
     # commit-status context succeeded. Keep both visible and non-authorizing.
@@ -159,6 +195,10 @@ def _one(repo, number, token):
         "draft_at_read": last.get("draft") is True,
         "github_mergeable_boolean_observed": last.get("mergeable"),
         "check_runs_total_observed": checks["total_count"],
+        "check_runs_latest_attempts_observed": len(latest_checks),
+        "check_runs_superseded_attempts_observed": len(check_rows) - len(latest_checks),
+        "observed_actionable_check_runs": actionable,
+        "observed_actionable_check_runs_hidden": actionable_hidden,
         "check_runs_page_complete": len(check_rows) == checks["total_count"],
         "check_runs_sample_complete_and_terminal": check_complete,
         "observed_checks_completed": statuses["completed_observed"],
