@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+from html import escape
 import os
 import subprocess
 from pathlib import Path
@@ -266,6 +267,92 @@ def compare_storage_snapshots(previous_path: Path, current: dict) -> dict:
         raise ValueError("Not a valid bounded zCloud storage inventory snapshot.") from None
 
 
+
+def render_html(report: dict) -> str:
+    """Self-contained responsive operator view, no JS or external resources."""
+    esc = lambda value: escape(str(value), quote=True)
+    gib = 1024 ** 3
+    pressure = report["disk_pressure"]
+    remaining = pressure["bytes_needed_to_reserve"]
+    reserve_state = "Below operational reserve" if remaining else "Reserve currently met"
+    archive = report["archive_mount"]
+    rows = []
+    hot = report.get("hotspot_inventory")
+    if hot is not None:
+        for item in hot["measured"]:
+            rows.append(
+                "<tr><th scope='row'>" + esc(item["category"]) + "</th>"
+                "<td>" + esc(f'{item["bytes"] / gib:.2f} GiB') + "</td>"
+                "<td>" + esc(item["owner"]) + "</td>"
+                "<td>Owner approval required</td></tr>"
+            )
+        for item in hot["incomplete"]:
+            rows.append("<tr><th scope='row'>" + esc(item["category"]) + "</th>"
+                        "<td>Unknown</td><td>Owner to inspect</td><td>Incomplete scan</td></tr>")
+    else:
+        rows.append("<tr><td colspan='4'>Optional hot-path inventory not requested.</td></tr>")
+    change = report.get("storage_change")
+    change_section = ""
+    if change is not None:
+        deltas = "".join(
+            "<tr><th scope='row'>" + esc(item["category"]) + "</th>"
+            "<td>" + esc(f'{item["delta_bytes"] / gib:+.3f} GiB') + "</td></tr>"
+            for item in change["hot_path_deltas"]
+        ) or "<tr><td colspan='2'>No comparable path sizes.</td></tr>"
+        change_section = (
+            "<section aria-labelledby='change'><h2 id='change'>Change since previous snapshot</h2>"
+            "<p>Local free-space change: <strong>"
+            + esc(f'{change["free_space_delta_bytes"] / gib:+.3f} GiB')
+            + "</strong>. This does not prove deletion, upload or archival integrity.</p>"
+            "<table><thead><tr><th>Category</th><th>Change</th></tr></thead><tbody>"
+            + deltas + "</tbody></table></section>"
+        )
+    css = """
+    :root{font:16px/1.55 system-ui,Arial,sans-serif;color:#1d2937;background:#f5f7f9}
+    *{box-sizing:border-box}body{margin:0}main{max-width:1000px;margin:auto;padding:clamp(16px,4vw,40px)}
+    h1{font-size:clamp(1.6rem,3vw,2.2rem);line-height:1.18;margin:0}
+    h2{font-size:1.2rem;margin:0 0 14px}
+    header{border-bottom:1px solid #cdd4db;padding-bottom:22px}
+    .muted{color:#52606d}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:12px}
+    .card,section{background:white;border:1px solid #dce3e9;border-radius:12px;padding:20px}
+    section{margin:18px 0;overflow-x:auto}.metric{font-size:1.75rem;font-weight:750;line-height:1.2}
+    table{width:100%;border-collapse:collapse;font-size:.95rem}th,td{text-align:left;padding:10px;border-bottom:1px solid #edf0f3}
+    th{font-weight:650}thead th{color:#52606d}.warning{border-left:4px solid #8d6b2b;padding-left:12px}
+    .fine{font-size:.85rem}footer{padding:18px 0;color:#52606d}
+    @media(max-width:520px){section,.card{padding:14px}th,td{padding:8px}}
+    @media print{:root{background:white}section,.card{break-inside:avoid}}
+    """
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>zCloud storage owner overview</title><style>' + css + '</style></head><body><main>'
+        '<header><h1>zCloud VPS storage overview</h1>'
+        '<p class="muted">Read-only observation · ' + esc(report["observed_at"])
+        + '</p><p class="warning"><strong>' + esc(reserve_state)
+        + '</strong> · Nothing here authorizes migration, deletion or restart.</p></header>'
+        '<section aria-label="Disk capacity"><div class="cards">'
+        '<div class="card"><div class="metric">' + esc(f'{pressure["actual_free_bytes"]/gib:.2f}') +
+        ' GiB</div><div class="muted">Actually free on local root</div></div>'
+        '<div class="card"><div class="metric">' + esc(f'{remaining/gib:.2f}') +
+        ' GiB</div><div class="muted">Remaining training reserve gap</div></div>'
+        '<div class="card"><div class="metric">' + esc(f'{report["total_candidate_bytes"]/gib:.3f}') +
+        ' GiB</div><div class="muted">Unverified aged file assessment only</div></div>'
+        '</div></section>'
+        '<section aria-labelledby="hot"><h2 id="hot">Large local folders</h2>'
+        '<p class="muted">These are live or owner-protected footprints. Size is NOT reclaimable storage.</p>'
+        '<table><thead><tr><th>Category</th><th>Size</th><th>Responsible owner</th><th>Disposition</th></tr></thead>'
+        '<tbody>' + "".join(rows) + '</tbody></table></section>'
+        + change_section +
+        '<section aria-labelledby="archive"><h2 id="archive">External archive</h2>'
+        '<p>Browse mount status: <strong>' + esc(archive["state"]) + '</strong>.</p>'
+        '<p class="muted">The existing crypt-backed remote uploader and independent checksum/restore '
+        'proof are separate, owner-gated processes.</p></section>'
+        '<footer class="fine">Transferred: 0 bytes · deleted: 0 bytes · '
+        'training restart authorized: no. Current source report is not a security or release approval.</footer>'
+        '</main></body></html>'
+    )
+
+
 def operator_summary(report: dict) -> str:
     """Plain-language CLI view: no speculative reclaimed totals."""
     gb = 1024 ** 3
@@ -304,7 +391,7 @@ def main():
                     help="Read-only bounded comparison with a previous private JSON snapshot")
     ap.add_argument("--hotspot-inventory", action="store_true",
                     help="Bounded size assessment of named hot directories, never cleanup permission")
-    ap.add_argument("--format", choices=("json", "text"), default="json")
+    ap.add_argument("--format", choices=("json", "text", "html"), default="json")
     ap.add_argument("--include-release-reviews", action="store_true",
                     help="Also assess old standalone APK exports; never assert superseded or safe to prune")
     args = ap.parse_args()
@@ -355,7 +442,12 @@ def main():
             result["storage_change"] = compare_storage_snapshots(args.previous_report, result)
         except ValueError as error:
             ap.error(str(error))
-    print(operator_summary(result) if args.format == "text" else json.dumps(result, indent=2))
+    if args.format == "text":
+        print(operator_summary(result))
+    elif args.format == "html":
+        print(render_html(result))
+    else:
+        print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
