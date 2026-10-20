@@ -223,7 +223,7 @@ def render_issue_sections(unmatched, partial):
     return note + "</section>"
 
 
-def to_html(rows, unmatched, partial, observed):
+def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=None):
     raw = board.render(rows, observed)
     esc = lambda x: html.escape(str(x), quote=True)
     cards = []
@@ -240,7 +240,25 @@ def to_html(rows, unmatched, partial, observed):
                      " (alleen PR-bodyverwijzing, niet opgelost)</p>")
     related = ("<section><h2>Geobserveerde P0/P1-referenties</h2>" +
                "".join(cards) + "</section>") if cards else ""
-    return raw.replace("<main>", render_issue_sections(unmatched, partial) +
+    target_section = ""
+    if targeted:
+        target_section = (
+            "<section aria-label='Gericht open issue'><h2>Gericht P0/P1-issue</h2>"
+            "<p><a href='" + esc(targeted["url"]) + "'>" +
+            esc(targeted["priority"] + " #" + str(targeted["number"]) + " · "
+                + targeted["title"]) + "</a></p>"
+            "<p>Alleen actuele expliciete PR-bodyverwijzingen, geen ownership-"
+            "of oplossingsbewijs.</p>"
+        )
+        if target_coverage:
+            target_section += (
+                "<p>Search total: " + esc(target_coverage["search_total"]) +
+                " · Maximaal bekeken: " + esc(target_coverage["search_examined"]) +
+                " · Bron: " + esc(target_coverage["source"]) + "</p>"
+            )
+        target_section += "</section>"
+    return raw.replace("<main>", target_section +
+                       render_issue_sections(unmatched, partial) +
                        related + "<main>", 1)
 
 
@@ -272,7 +290,9 @@ def main():
         observed = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         if args.output:
             board.private_write(board.Path(args.output),
-                                to_html(rows, unmatched, partial, observed))
+                                to_html(rows, unmatched, partial, observed,
+                                        targeted=targeted,
+                                        target_coverage=target_coverage))
         payload = {
             "observed_utc": observed,
             "project_ids": args.project,
