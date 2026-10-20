@@ -55,9 +55,13 @@ def _fold(line):
     return "\r\n".join(result)
 
 
-def human_calendar(decision):
-    """One bounded, script-free ICS containing only actionable human incidents."""
-    if (not isinstance(decision, dict)
+def human_calendar(decision, *, include_historical=False):
+    """Offline ICS with fresh human incidents and opt-in historical owner checks.
+
+    Historical entries use the original review deadline, never an invented
+    future alarm. Importing the file remains a deliberate operator action.
+    """
+    if (type(include_historical) is not bool or not isinstance(decision, dict)
             or type(decision.get("schema_version")) is not int
             or decision["schema_version"] != 1
             or decision.get("mutations_performed") is not False
@@ -146,7 +150,78 @@ def human_calendar(decision):
             "DESCRIPTION:" + _calendar_text("zSentinel menselijke beoordeling: " + pid),
             "END:VALARM", "END:VEVENT",
         ]
-    if not alerts:
+    if include_historical:
+        rechecks = decision.get("historical_owner_recheck_candidates", [])
+        historical = decision.get("historical_unresolved", {})
+        shown = historical.get("shown") if isinstance(historical, dict) else None
+        if (type(rechecks) is not list or len(rechecks) > 5
+                or type(shown) is not list or len(shown) > 30
+                or historical.get("action_authorized") is not False
+                or historical.get("source_partial") is not True):
+            raise ValueError("untrusted opt-in historical calendar source")
+        ledger = {}
+        for item in shown:
+            if type(item) is not dict or type(item.get("incident_id")) is not str:
+                raise ValueError("invalid historical calendar ledger row")
+            ident = item["incident_id"]
+            if ident in ledger:
+                raise ValueError("duplicate historical calendar source")
+            ledger[ident] = item
+        for row in rechecks:
+            if type(row) is not dict:
+                raise ValueError("untrusted historical calendar candidate")
+            ident = row.get("incident_id")
+            origin = ledger.get(ident)
+            if (type(ident) is not str or not ALERT_ID.fullmatch(ident)
+                    or origin is None or ident in seen
+                    or origin.get("human_escalation_historical") is not True
+                    or origin.get("source_status") != "not_observed_needs_reconciliation"
+                    or row.get("source_status") != "historical_not_observed_needs_owner_recheck"
+                    or row.get("current_source_observed") is not False
+                    or row.get("notifier_delivery_authorized") is not False
+                    or row.get("recovery_action_authorized") is not False
+                    or row.get("owner_confirmation_required") is not True
+                    or row.get("project_id") != origin.get("project_id")
+                    or row.get("severity_at_last_observation") != origin.get("severity")
+                    or row.get("problem_at_last_observation") != origin.get("problem")
+                    or row.get("source_last_seen") != origin.get("last_seen")
+                    or row.get("exact_github_job") != origin.get("exact_github_job")):
+                raise ValueError("historical calendar source does not match ledger")
+            seen.add(ident)
+            pid = _plain(row["project_id"], 80)
+            problem = _plain(row["problem_at_last_observation"], 120)
+            severity = row["severity_at_last_observation"]
+            if not PROJECT.fullmatch(pid) or not PROBLEM.fullmatch(problem) or severity not in ("P0", "P1"):
+                raise ValueError("invalid historical calendar label")
+            first = _timestamp(origin["first_seen"])
+            last = _timestamp(origin["last_seen"])
+            if first > last or last > observed + timedelta(minutes=2):
+                raise ValueError("historical calendar times contradict decision")
+            # Preserve the original priority-based review target, even if old.
+            original_due = first + timedelta(hours=2 if severity == "P0" else 12)
+            uid = hashlib.sha256(("historical:" + pid + ":" + ident).encode("utf-8")).hexdigest()[:32]
+            summary = _calendar_text("HISTORISCH " + severity + " zSentinel " +
+                                     pid + " - " + problem)
+            description = _calendar_text(
+                "Historische bron: laatst gezien " + last.isoformat() +
+                "\\nBevoegde eigenaar: verifieer huidige exacte job/issue en gates." +
+                "\\nGEEN nieuw incident, geen actuele bron, geen autoherstel of melding." +
+                "\\nDe oorspronkelijke reviewtermijn is behouden en kan verlopen zijn.")
+            lines.extend([
+                "BEGIN:VEVENT", "UID:" + uid + "@zsentinel.local",
+                "DTSTAMP:" + stamp,
+                "DTSTART:" + original_due.strftime("%Y%m%dT%H%M%SZ"),
+                "DTEND:" + (original_due + timedelta(minutes=15)).strftime("%Y%m%dT%H%M%SZ"),
+                "SUMMARY:" + summary, "DESCRIPTION:" + description,
+                "X-ZSENTINEL-HISTORICAL-SOURCE:TRUE",
+                "STATUS:TENTATIVE", "CLASS:PRIVATE", "TRANSP:TRANSPARENT",
+                # NO VALARM on historical entries: nothing is sent or
+                # scheduled as a fresh warning by this exporter.
+                "END:VEVENT",
+            ])
+        if historical.get("truncated") is True or decision.get("historical_recheck_source_truncated") is True:
+            lines.append("X-ZSENTINEL-HISTORICAL-SAMPLE:INCOMPLETE")
+    if not alerts and not include_historical:
         lines.append("X-ZSENTINEL-COVERAGE:NO-HUMAN-ACTION-CANDIDATES-IN-BOUNDED-SAMPLE")
     lines.append("END:VCALENDAR")
     return "\r\n".join(_fold(line) for line in lines) + "\r\n"
