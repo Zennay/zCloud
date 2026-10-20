@@ -998,7 +998,7 @@ def as_private_csv(board):
         "issue_number_hint", "current_exact_head_gate_status",
         "check_name", "check_state", "check_conclusion", "check_url",
         "prior_gate_blocker", "current_gate_blocker", "gate_episode_change",
-        "gate_evidence_category",
+        "gate_evidence_category", "operator_next_step",
         "owner_claim_verified", "merge_authorized", "operator_notice",
     )
     writer.writerow(columns)
@@ -1141,6 +1141,7 @@ def as_private_csv(board):
                  prior_gate_blocker=row["previous_blocker"] or "",
                  current_gate_blocker=row["current_blocker"] or "",
                  gate_episode_change=row["change"],
+                 operator_next_step=row["operator_next_step"],
                  operator_notice="Two sampled observations only; no automatic recheck, merge or owner authority.")
             for category in row["observed_changed_gate_evidence_categories"]:
                 emit("gate_episode_evidence_change", project, repo,
@@ -1149,6 +1150,7 @@ def as_private_csv(board):
                      pr_base_sha=row["current_base"] or "",
                      gate_evidence_category=category,
                      gate_episode_change=row["change"],
+                     operator_next_step=row["operator_next_step"],
                      operator_notice="Changed check, legacy or individual review evidence; release gates unchanged.")
             for detail in row["observed_changed_non_green_checks"]:
                 emit("gate_episode_changed_check", project, repo,
