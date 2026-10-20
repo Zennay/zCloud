@@ -110,6 +110,15 @@ def suggested_actions(packet):
                 "procesaanwezigheid is geen bewijs van geslaagde CI.",
                 "GITHUB_RUNNER_ASSIGNMENT_NOT_OBSERVED",
             ))
+        elif _number(cloud.get("workers")) > 0:
+            result.append(action(
+                "zcloud-worker-without-listener-observation",
+                "urgent" if local_proc.get("source_complete") is True else "review",
+                "Er draait een zCloud Runner.Worker, maar de lokale snapshot ziet geen zCloud-listener.",
+                "Behoud de bestaande worker/job; vraag de bevoegde eigenaar de listener en "
+                "GitHub runner-toewijzing onafhankelijk te controleren zonder blanket restart.",
+                "ACTIVE_WORKER_PROTECTED_LISTENER_UNKNOWN",
+            ))
         elif local_proc.get("source_complete") is True:
             result.append(action(
                 "zcloud-listener-absent", "urgent",
