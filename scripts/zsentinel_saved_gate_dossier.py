@@ -51,30 +51,58 @@ def strict_json(raw: bytes):
 
 
 def read_archive(path: Path):
-    """Nofollow, regular-file bounded read with metadata replacement checks."""
-    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+    """Read one private archived handoff from pinned no-follow descriptors.
+
+    Refuse symlink ancestors, mutable shared parents and foreign/public input.
+    An internally consistent ZIP is not an authenticated GitHub source.
+    """
+    if not all(hasattr(os, flag) for flag in
+               ("O_NOFOLLOW", "O_NONBLOCK", "O_DIRECTORY")):
         raise ValueError("Required local file safety is unavailable")
-    first = path.lstat()
-    if (not stat.S_ISREG(first.st_mode)
-            or first.st_size < 100 or first.st_size > MAX_ARCHIVE):
-        raise ValueError("Source is not a bounded regular archive")
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    if not path.name or path.name in (".", ".."):
+        raise ValueError("Invalid private archive name")
+
+    parentfd = _open_private_extract_parent(path.parent)
     try:
-        before = os.fstat(fd)
-        if (not stat.S_ISREG(before.st_mode)
-                or (before.st_dev, before.st_ino, before.st_size) !=
-                   (first.st_dev, first.st_ino, first.st_size)):
-            raise ValueError("Archive changed during safe open")
-        with os.fdopen(os.dup(fd), "rb") as source:
-            raw = source.read(MAX_ARCHIVE + 1)
-        after = os.fstat(fd)
-        if (len(raw) != first.st_size
-                or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-                != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)):
-            raise ValueError("Archive replaced or modified during read")
-        return raw
+        first = os.stat(path.name, dir_fd=parentfd, follow_symlinks=False)
+        if (not stat.S_ISREG(first.st_mode)
+                or first.st_uid != os.geteuid()
+                or stat.S_IMODE(first.st_mode) & 0o077
+                or not 100 <= first.st_size <= MAX_ARCHIVE):
+            raise ValueError("Source is not an owned private bounded archive")
+
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW |
+                     os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
+                     dir_fd=parentfd)
+        try:
+            before = os.fstat(fd)
+            identity = (first.st_dev, first.st_ino, first.st_size,
+                        first.st_mtime_ns, first.st_ctime_ns)
+            observed = (before.st_dev, before.st_ino, before.st_size,
+                        before.st_mtime_ns, before.st_ctime_ns)
+            if (not stat.S_ISREG(before.st_mode)
+                    or observed != identity
+                    or before.st_uid != os.geteuid()
+                    or stat.S_IMODE(before.st_mode) & 0o077):
+                raise ValueError("Private archive changed during safe open")
+            with os.fdopen(os.dup(fd), "rb") as source:
+                raw = source.read(MAX_ARCHIVE + 1)
+            after = os.fstat(fd)
+            final = os.stat(path.name, dir_fd=parentfd, follow_symlinks=False)
+            end = (after.st_dev, after.st_ino, after.st_size,
+                   after.st_mtime_ns, after.st_ctime_ns)
+            path_end = (final.st_dev, final.st_ino, final.st_size,
+                        final.st_mtime_ns, final.st_ctime_ns)
+            if (len(raw) != first.st_size or end != identity
+                    or path_end != identity or not stat.S_ISREG(final.st_mode)
+                    or final.st_uid != os.geteuid()
+                    or stat.S_IMODE(final.st_mode) & 0o077):
+                raise ValueError("Private archive replaced or modified during read")
+            return raw
+        finally:
+            os.close(fd)
     finally:
-        os.close(fd)
+        os.close(parentfd)
 
 
 def open_dossier(path: Path):
