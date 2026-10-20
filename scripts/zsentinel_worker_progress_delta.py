@@ -271,6 +271,59 @@ def public_html(report):
     )
 
 
+
+def private_markdown(report):
+    """Human-readable bounded owner handoff, including unpaired worker slots.
+
+    The Markdown is a private offline observation, never a claim, recovery,
+    GitHub approval or proof that a disappearing worker completed its task.
+    """
+    data = public_summary(report)
+    rows = report.get("items")
+    if type(rows) is not list or len(rows) > 2 * MAX_ENTRIES:
+        raise ValueError("unbounded worker owner handoff")
+    lines = [
+        "# zSentinel · worker voortgang en eigenaaracties",
+        "",
+        "**Bron:** twee read-only observaties van dezelfde geïndexeerde DB; "
+        "geen claim-epoch, productoplevering, veilige vrijgave of herstel bewezen.",
+        "",
+        "- Vorige bron: " + report["previous_observed_at_utc"],
+        "- Huidige bron: " + report["current_observed_at_utc"],
+        "- Beide keren waargenomen slots: " + str(data["shared_worker_slots"]),
+        "- Nieuw in beperkte bron (niet nieuwe claim): " +
+        str(data["new_in_sample_not_new_claim"]),
+        "- Verdwenen uit beperkte bron (niet opgelost): " +
+        str(data["missing_in_sample_not_recovered"]),
+        "",
+        "| Project | Worker-slot | Waarneming | Bevoegde eigenaaractie |",
+        "| --- | ---: | --- | --- |",
+    ]
+    for row in rows:
+        if (type(row) is not dict
+                or type(row.get("project_id")) is not str
+                or not SLUG.fullmatch(row["project_id"])
+                or type(row.get("worker_slot")) is not int
+                or not 1 <= row["worker_slot"] <= 16
+                or type(row.get("stage")) is not str
+                or row["stage"] not in report["counts"]
+                or type(row.get("owner_action")) is not str
+                or not 1 <= len(row["owner_action"]) <= 220
+                or any(ord(c) < 32 or ord(c) == 127 for c in row["owner_action"])):
+            raise ValueError("invalid private worker followup")
+        # Reject Markdown table injection even though current actions are
+        # internally generated and project/slot identities are canonical.
+        label = row["stage"].replace("|", "\\|")
+        action = row["owner_action"].replace("|", "\\|")
+        lines.append("| " + row["project_id"] + " | " +
+                     str(row["worker_slot"]) + " | " + label +
+                     " | " + action + " |")
+    lines += ["", "**Vervolg:** bevestig bij de werkelijke eigenaar of dezelfde "
+              "worker, taak, lease en codelevering nog bestaan. Geen automatische "
+              "claim, retry, dispatch, restart, merge of deploy.", ""]
+    return "\n".join(lines)
+
+
 def private_html(report):
     public_summary(report)
     rows = []
@@ -335,7 +388,8 @@ def main():
         if result and args.output:
             content = (private_html(result) if args.format == "html"
                        else json.dumps(result, ensure_ascii=True, indent=2)
-                       if args.format == "json" else human_text(result))
+                       if args.format == "json" else private_markdown(result)
+                       if args.format == "md" else human_text(result))
             write_private_output(args.output, content, args.format)
         if args.snapshot_output:
             write_private_output(args.snapshot_output,
