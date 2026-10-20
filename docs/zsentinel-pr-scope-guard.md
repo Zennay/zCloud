@@ -1849,3 +1849,17 @@ De bestaande `--inspect-current-pr-gates`-route bewaart nu per exact PR-HEAD, do
 Dit verhelpt een echt operatorgat: twee HEADs met bijvoorbeeld 1 falende check en 0 approvals kunnen gelijk lijken ondanks een herstart, vervangen checkjob, gewijzigde legacy-status of nieuwe reviewbon met gelijk blijvende aantallen. De historische `--compare-previous`-uitvoer beoordeelt dit nu als **gewijzigd gatebewijs** en vermeldt de categorie (Check Run, legacy-context of individuele review). Bij een ongewijzigde `check_run_id` met gewijzigde niet-groene staat/conclusie verschijnt ook een directe checklink. Privé-CSV bevat hiervoor `gate_episode_evidence_change`, naast bestaande `gate_episode_changed_check` en `gate_episode_history`.
 
 Voor *stabiel geobserveerd op twee bronmomenten* zijn nu naast dezelfde HEAD en doelbranch-basis **beide volledige bronopnamen en alle drie geldige vingerafdrukken** nodig. Oudere bewaarde snapshots zonder deze bronvingerafdrukken blijven leesbaar maar worden conservatief **onvolledige bron**; nooit als stabiele blokkade of mergevrijgave gepresenteerd. Verschillende SHA256-identiteiten zijn aandachtssignalen, niet noodzakelijk gewijzigde verplichte CI. Geen automatische claim, check-herstart, gate-bypass, merge of productiehandeling.
+
+### Niet opnieuw dezelfde HOLD checken; concrete, eigenaar-veilige vervolgstappen
+
+De read-only vergelijking geeft nu in HTML, Markdown, tekst, JSON en privé-CSV bij elke PR de machineleesbare `operator_next_step`, plus een Nederlandse beschrijving in het operatoroverzicht. Gebaseerd op de bestaande brongebonden blocker in plaats van een nieuwe policy/gate:
+
+- **Identieke HEAD, base en drie volledige gatebronnen op beide meetmomenten:** `defer_unchanged_hold_without_new_evidence`. Geen zinloze tweede controle of CI-retrigger zonder nieuw bewijs.
+- **Bestaande actuele CI nog pending:** `wait_for_existing_ci_without_retrigger`. Dit is geen opdracht om een workflow opnieuw te starten.
+- **Actueel gefaalde check:** `owner_fix_current_head_failure`. Alleen de PR-eigenaar herstelt een vereiste check; de bronmelding geeft geen toestemming om verplichte checks te omzeilen.
+- **Geen onafhankelijke review:** `request_independent_review_for_current_head`, uitsluitend voor dezelfde actuele HEAD.
+- **Wijziging in HEAD/base of onvolledige bron:** `inspect_current_pr_at_source`; een oude vergelijking is geen basis voor nieuwe acties.
+- **Uit de steekproef verdwenen:** `verify_pr_status_before_concluding_closed`; nooit automatisch als gemerged afsluiten.
+- Draft, gevraagde wijzigingen, door GitHub bevestigd conflict, of onbekende branch-/releasevoorwaarden leveren hun eigen bestaande, eigenaar-veilige stap op.
+
+De private CSV bevat `operator_next_step` in zowel `gate_episode_history` als `gate_episode_evidence_change`. De `operator_next_steps_observed`-telling in JSON is een operatoroverzicht, geen scheduler-claim. Iedere actie blijft menselijk/brongebonden: geen nieuwe automatische merge-/deploy- of runnerautorisatie.
