@@ -2702,10 +2702,18 @@ def _portfolio_observe_conflicting_claimed_lanes_locked(connection):
     ).fetchall()
     accepted=[]
     conflicts=[]
+    unknown_projects=[]
     for row in rows:
         project_id=str(row['project_id'] or '')
         project=PROJECT_INDEX.get(project_id) or {}
         if not project:
+            # An old active worker can still exist even when its project
+            # registry entry vanished; never imply its scope is conflict-free.
+            unknown_projects.append({
+                'queue_id':str(row['queue_id']),
+                'project_id':project_id,
+                'reason':'active_claim_project_missing_from_registry',
+            })
             continue
         lane=classify_backlog_item(project,dict(row))
         for other in accepted:
@@ -2729,7 +2737,7 @@ def _portfolio_observe_conflicting_claimed_lanes_locked(connection):
             'lane_id':lane['lane_id'],
             'scope':lane['scope'],
         })
-    return conflicts
+    return {'conflicts':conflicts,'unclassified_active_claims':unknown_projects}
 
 def _portfolio_queue_execution_capable(title,completion_criteria=''):
     title_text=str(title or '').strip().lower()
@@ -3083,12 +3091,18 @@ def portfolio_queue_conflict_snapshot(limit=20):
         raise ValueError('Ongeldige conflictweergavelimiet')
     try:
         with connect() as c:
-            collisions=_portfolio_observe_conflicting_claimed_lanes_locked(c)
+            observation=_portfolio_observe_conflicting_claimed_lanes_locked(c)
+        collisions=observation['conflicts']
+        unknowns=observation['unclassified_active_claims']
         return {
-            'coverage':'observed_current_portfolio_queue_claims_only',
+            'coverage':('active_project_scope_unknown_owner_review_required'
+                        if unknowns else 'observed_current_portfolio_queue_claims_only'),
             'active_lane_conflicts_observed':len(collisions),
             'conflicts':collisions[:limit],
             'list_truncated':len(collisions)>limit,
+            'unclassified_active_claim_count':len(unknowns),
+            'unclassified_active_claims':unknowns[:limit],
+            'unclassified_list_truncated':len(unknowns)>limit,
             'owner_review_required':True,
             'reassign_or_release_authorized':False,
             'worker_actions_performed':False,
@@ -3101,6 +3115,9 @@ def portfolio_queue_conflict_snapshot(limit=20):
             'active_lane_conflicts_observed':None,
             'conflicts':[],
             'list_truncated':None,
+            'unclassified_active_claim_count':None,
+            'unclassified_active_claims':[],
+            'unclassified_list_truncated':None,
             'owner_review_required':True,
             'reassign_or_release_authorized':False,
             'worker_actions_performed':False,
@@ -3240,10 +3257,10 @@ def portfolio_queue_allocate():
                 # An expired idle claim cannot be taken back in the same
                 # scheduler tick, before its old browser mapping has cleared.
                 preempted.add(str(previous['queue_id']))
-        active_lane_conflicts=_portfolio_observe_conflicting_claimed_lanes_locked(c)
-        if active_lane_conflicts:
-            logging.debug('Active owner lane overlaps require owner follow-up; retained %d claims',
-                          len(active_lane_conflicts))
+        owner_scope=_portfolio_observe_conflicting_claimed_lanes_locked(c)
+        if owner_scope['conflicts'] or owner_scope['unclassified_active_claims']:
+            logging.debug('Active owner lane overlap or unknown project scope retained: %d overlaps, %d unclassified',
+                          len(owner_scope['conflicts']),len(owner_scope['unclassified_active_claims']))
 
         occupied_rows=c.execute(
             """SELECT * FROM portfolio_queue
