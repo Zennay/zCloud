@@ -24,3 +24,15 @@ The source policy now recognises Dutch build/repair language (including `bouw`, 
 `product_delivery_disposition` has three outcomes: `product` (eligible for the *existing* subsequent authorization path), `qa_only` (hold new QA admission), and `invalid` (unknown/corrupt metadata or malformed ticket: fail closed). Existing `is_new_product_delivery` delegates to that same decision, avoiding a second classifier.
 
 The read-only portfolio API's `delivery_policy` now separates `queued_qa_only_held` from `queued_invalid_or_unknown_held`; malformed metadata no longer increases a count labelled as QA when its malformed state reaches the source classifier. Both counts are limited to the returned visible queue items, not a complete queue-wide census. The existing API mapping currently converts unreadable raw JSON to an empty metadata object before this snapshot; therefore the API count **cannot be used to prove that all malformed stored JSON was detected**. The raw SQLite admission path still parses its original metadata and refuses invalid JSON. Do not infer queue sanitization from the read-only counter. Active claims and owner scopes are never released or displaced by either classification. All existing review, exact-HEAD CI, main-merge, resource and release gates remain mandatory; these committed source changes are **not** a live VPS deployment.
+
+## Read-only worker-admission workbench (20 October, subsequent source commit)
+
+The existing authenticated `GET /api/portfolio-queue` response now includes operator-facing queue pressure categories from the **visible response items only**:
+
+* `queued_rows_visible`, `active_claimed_running_verifying_visible`, and `malformed_nonobject_rows` establish the input's observation scope.
+* `queued_ineligible_held` and `queued_worker_slot_occupied` distinguish authorization/slot constraints from policy holds. They do **not** establish why a task was marked ineligible or who owns a slot.
+* `queued_qa_only_held` and `queued_invalid_or_unknown_held` distinguish intentional no-QA policy from missing/corrupt classification evidence.
+* `candidate_priority_counts` reports P0/P1/P2/P3/other **visible candidate** distribution; `candidate_list_truncated` warns that the up-to-eight visible candidate list hides additional matching rows.
+* `source_coverage=visible_api_rows_only_not_full_queue` prevents those partial counts from being advertised as the full durable queue.
+
+This product workbench is additive: the queue's existing `items` contract remains unchanged, and `not_claimed_or_authorized=true` / `admission_scope_lease_and_capacity_not_verified=true` remain unconditional. No auto-merge, queue write, worker admission, rate-limit change, CI dispatch or host mutation is implied. Merging to main and deploying are distinct owner-gated next steps.
