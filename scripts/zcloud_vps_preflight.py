@@ -293,9 +293,9 @@ def actionable_recovery(findings: list[dict[str, str]]) -> list[dict[str, str]]:
             "changes_host": "no", "authorization_required": "yes",
         })
 
-    if codes & {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE"}:
+    if codes & {"LOW_DISK", "TRAINING_DISK_RESERVE_BELOW", "SWAP_EXHAUSTED", "LOW_AVAILABLE_MEMORY", "MEMORY_PRESSURE", "SWAP_TELEMETRY_INCOMPLETE"}:
         recommend("CAPACITY_FIRST", "VPS resource owner",
-                  "Insufficient resource headroom can cause repeat OOM crashes or incomplete releases.",
+                  "Insufficient or unverified resource headroom can cause repeat OOM crashes or incomplete releases.",
                   "Inspect disk/cache ownership and memory pressure read-only; agree on safe cleanup or resizing before a controlled runner recovery. Never automatically delete or clear swap.")
     if codes & {"ZCLOUD_RUNNER_MISSING", "RUNNER_UNIT_NOT_ACTIVE", "RUNNER_UNIT_UNOBSERVABLE", "RUNNER_UNIT_AMBIGUOUS", "RUNNER_UNIT_TRANSITIONING", "RUNNER_LISTENER_DUPLICATED"}:
         recommend("RUNNER_OWNER", "zCloud Actions runner owner (#1326)",
@@ -695,7 +695,7 @@ ol,ul{{padding-left:22px;margin:0}}li{{margin:0 0 14px}}li:last-child{{margin-bo
 {item("Unit manager", runner["unit_manager"])}
 {item("Dedicated listener count", len(runner["listener_pids"]))}
 {item("Available RAM", val(resources["available_ram_pct"]) + "%")}
-{item("Swap used", val(resources["swap_used_pct"]) + "%")}
+{item("Swap used", str(resources["swap_used_pct"]) + "%" if resources["swap_used_pct"] is not None else "unknown")}
 {item("Filesystem free", val(resources["disk_free_pct"]) + "%")}
 {item("Actual free bytes", val(resources["disk_free_bytes"]))}
 {item("Training free reserve bytes", resources["training_reserve_bytes"])}
