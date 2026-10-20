@@ -39,7 +39,7 @@ REASONS = {
     "priority": "bronprioriteit",
     "linked_issue_urls": "gekoppelde bronissues",
     "next_action": "menselijke vervolgstap",
-    "gate_observations": "begrensde CI-/reviewwaarnemingen",
+    "gate_observations": "begrensde CI-/reviewwaarnemingen (alleen zelfde HEAD vergelijkbaar)",
 }
 COUNTER_KEYS = (
     "checks_completed", "checks_pending", "checks_not_successful",
@@ -134,6 +134,11 @@ def compare(before, after):
             category = "changed" if reasons else "same_in_sample"
         counts[category] += 1
         row = b or a
+        # Never compare gate receipt counts as progress across different
+        # code heads. They are merely two unrelated observed check sets.
+        common_exact_head = bool(
+            a and b and a["data"]["observed_head"] is not None
+            and a["data"]["observed_head"] == b["data"]["observed_head"])
         priority = row["data"]["priority"]
         if priority not in priority_order:
             raise ValueError("Invalid PR priority from original source")
@@ -143,6 +148,7 @@ def compare(before, after):
             "changed_fields": reasons,
             "before": a["data"] if a else None,
             "after": b["data"] if b else None,
+            "gate_counts_same_exact_head": common_exact_head,
             "closed_or_merged_verified": False,
             "live_status_verified": False,
             "human_follow_up": (
@@ -150,7 +156,11 @@ def compare(before, after):
                 if category == "new_in_sample" else
                 "Controleer PR live; verdwijnen uit een steekproef is NOOIT bewijs van merge/sluiting."
                 if category == "left_sample" else
-                "Inspecteer actuele PR-HEAD, verplichte gates, claims en oorspronkelijke issues."
+                ("PR-HEAD verschilde of is onbekend; hergebruik geen oude "
+                 "CI-/reviewwaarnemingen. Controleer actuele gates, claims en issues."
+                 if not common_exact_head else
+                 "Vergelijk alleen waargenomen same-HEAD broncijfers; verplichte "
+                 "CI, reviews en eigenaarschap moeten alsnog live worden bewezen.")
                 if category == "changed" else
                 "Geen steekproefwijziging; actuele GitHub- en eigenaarsstatus blijft onbekend."
             ),
