@@ -184,12 +184,30 @@ def main():
     s = snapshot()
     quota, weight, mode = admission(s)
     if args.preview:
-        print(json.dumps({**s, "mode": mode, "quota": quota, "weight": weight,
-                          "applied": False}, sort_keys=True))
+        try:
+            current = installed_cgroup()
+            observed = {
+                "unit_observed": True,
+                "unit_active": current["active"],
+                "current_quota_percent": (round(current["quota_seconds"] * 100, 2)
+                                          if current["quota_seconds"] is not None else None),
+                "current_weight": current["weight"],
+                "recommendation_currently_applied": matches_cgroup(current, quota, weight),
+            }
+        except (OSError, subprocess.SubprocessError, ValueError):
+            # Read-only preview still works outside an available user systemd bus.
+            observed = {"unit_observed": False, "unit_active": None,
+                        "current_quota_percent": None, "current_weight": None,
+                        "recommendation_currently_applied": None}
+        print(json.dumps({**s, **observed, "mode": mode, "quota": quota,
+                          "weight": weight, "applied": False}, sort_keys=True))
         return
     actual = installed_cgroup()
     if not actual["active"]:
-        raise SystemExit("Coach unit not active: no CPU adjustment or applied-state assertion")
+        write_private_state({**s, "quota": quota, "weight": weight, "mode": mode,
+                             "unit_active": False, "applied_verified": False})
+        print("coach-not-active: capacity observed, CPU controls left unchanged")
+        return
     if not matches_cgroup(actual, quota, weight):
         # No command shell, no privileged unit and no service restart.
         subprocess.run(
@@ -201,7 +219,7 @@ def main():
         if not matches_cgroup(actual, quota, weight):
             raise SystemExit("Coach policy not verified after systemd update")
     write_private_state({**s, "quota": quota, "weight": weight,
-                         "mode": mode, "applied_verified": True})
+                         "mode": mode, "unit_active": True, "applied_verified": True})
     print(f"{mode}: Fuckball CPUQuota={quota}%; CPUWeight={weight}; "
           f"active runner={s['runner_active']}; sources complete={s['source_complete']}")
 
