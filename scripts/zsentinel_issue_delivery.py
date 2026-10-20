@@ -270,6 +270,9 @@ def render_html(board):
     from zsentinel_issue_delivery_ui import (
         controls, script_tag, followup_controls, packet_selector, INTERACTIVE_CSS,
     )
+    mode = board.get("collection_mode")
+    if mode not in (None, "one_shot_live_read_only", "explicit_saved_private_sources"):
+        raise ValueError("untrusted source collection mode")
     progress = board.get("progress_since_previous")
     notion = board.get("notion_active_work_observation")
     notion_panel = ""
@@ -385,8 +388,11 @@ def render_html(board):
         overview_panel = (
             '<section aria-label="Portfolio-breed werkoverzicht"><h2>Gecombineerd '
             'portfolio · ' + str(len(board["projects"])) + ' projecten</h2>'
-            '<p class="notice">Dit document combineert aparte GitHub-bronmomenten. '
-            'Er is géén live synchronisatie en geen eigendoms-/herstelbewijs. '
+            '<p class="notice">Dit document combineert aparte GitHub-bronmomenten. ' +
+            ('Deze gegevens zijn éénmalig live opgehaald en NIET '
+             'doorlopend gesynchroniseerd. ' if mode == "one_shot_live_read_only"
+             else 'Dit zijn expliciet opgeslagen bronnen; GEEN live-opvraag. ') +
+            'Er is géén actuele eigendoms-/herstelbevestiging. '
             'Verouderde of ontbrekende bron vereist nieuwe observatie.</p>'
             '<ul>' + "".join(lines) + '</ul></section>'
         )
@@ -527,7 +533,11 @@ def render_html(board):
         'Geen claim, QA-ronde, runneractie, review, merge of deploy vanuit dit bord.</p>'
         '<p class="muted">Bronmoment UTC: ' + escape(board["observed_at"]) +
         ' · PR-bronreads: ' + str(board["exact_head_pr_requests"]) +
-        ' · productissues: ' + str(board["issue_count"]) + '</p>' +
+        ' · productissues: ' + str(board["issue_count"]) +
+        (' · Eenmalig live GETs: ' + str(board["observed_provider_gets"])
+         if mode == "one_shot_live_read_only" else
+         ' · Zelf opgeslagen bronvensters' if mode == "explicit_saved_private_sources"
+         else '') + '</p>' +
         source_warning + '</header><main>' +
         controls(board["projects"]) + overview_panel + queue_panel +
         notion_panel + progress_panel + "".join(sections) + owner_panel + '<section><details><summary>Brondekking en '
@@ -544,6 +554,12 @@ def render_markdown(board):
     lines = ["# zSentinel · Productherstelbord",
              "Bronmoment UTC: " + _markdown_literal(board["observed_at"], 40),
              "Beperkte issue-/PR-steekproef. Geen eigenaar, scope, fix of merge goedgekeurd."]
+    if board.get("collection_mode") == "one_shot_live_read_only":
+        lines.append("Eenmalige live-opvraag · maximaal 18 canonieke projecten, "
+                     "geen doorlopende synchronisatie · waargenomen GETs: " +
+                     str(board["observed_provider_gets"]))
+    elif board.get("collection_mode") == "explicit_saved_private_sources":
+        lines.append("Expliciet opgeslagen privé-bronvensters; geen live-opvraag.")
     progress = board.get("progress_since_previous")
     notion = board.get("notion_active_work_observation")
     windows = board.get("source_windows", [])
