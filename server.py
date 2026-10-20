@@ -3084,11 +3084,53 @@ def portfolio_queue_health():
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         dropped=c.execute("SELECT COUNT(*) FROM portfolio_queue WHERE status='dropped'").fetchone()[0]
         attention=c.execute("SELECT COUNT(*) FROM portfolio_attention WHERE status='open'").fetchone()[0]
+        # A raw eligible count can be large while every fresh queued row is
+        # QA-only and therefore intentionally invisible to worker admission.
+        # Bounded source-only health must use the same product policy rather
+        # than declaring a false healthy queue on old QA backlog density.
+        bounded=c.execute("""SELECT status,worker_slot,title,completion_criteria,metadata_json
+                             FROM portfolio_queue
+                             WHERE eligible=1
+                               AND status IN ('queued','claimed','running','verifying')
+                             ORDER BY CASE WHEN status IN ('claimed','running','verifying') THEN 0 ELSE 1 END,
+                                      CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                                           WHEN 'P2' THEN 2 ELSE 3 END,
+                                      created_at,queue_id LIMIT 1001""").fetchall()
+    observed=bounded[:1000]
+    product_ready=0
+    excluded_qa=0
+    excluded_invalid=0
+    for row in observed:
+        if str(row['status'])!='queued':
+            # Existing owned work counts as in progress; never reinterpret or
+            # release it based on a newer product-only intake policy.
+            product_ready+=1
+            continue
+        if row['worker_slot'] is not None:
+            continue
+        decision=product_delivery_disposition(dict(row))
+        if decision=='product':
+            product_ready+=1
+        elif decision=='qa_only':
+            excluded_qa+=1
+        else:
+            excluded_invalid+=1
+    source_complete=len(bounded)<=1000
     target=max(6,max(1,int(GLOBAL_CHATGPT_WORKER_LIMIT))*PORTFOLIO_QUEUE_MIN_READY_PER_WORKER)
+    required=min(target,max(1,len([p for p in PROJECT_INDEX.values()
+                                   if str(p.get('queue_mode') or '').lower()!='human-gated'])))
     return {
         'ready':int(ready),'queued':int(queued),'projects':int(projects),'dropped':int(dropped),
         'attention':int(attention),'target_ready':int(target),
-        'healthy':int(ready)>=min(target,max(1,len([p for p in PROJECT_INDEX.values() if str(p.get('queue_mode') or '').lower()!='human-gated']))),
+        # Preserve historical raw counts for dashboards but base the health
+        # signal on actual policy-admissible work and unchanged active owners.
+        'healthy':int(product_ready)>=required,
+        'product_delivery_ready_observed':int(product_ready),
+        'queued_qa_only_excluded_observed':int(excluded_qa),
+        'queued_invalid_excluded_observed':int(excluded_invalid),
+        'product_delivery_source_complete':source_complete,
+        'product_delivery_observation_limit':1000,
+        'product_delivery_missing_tail_may_exist':not source_complete,
         'notion_attention_url':PORTFOLIO_ATTENTION_NOTION_URL,
     }
 
