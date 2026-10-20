@@ -937,9 +937,110 @@ def render_private_handoff(data):
     return content
 
 
+
+def render_private_json_handoff(data):
+    """Bounded machine-readable owner inbox, never a recovery instruction.
+
+    Use only already collected live evidence or admitted owner-private receipts.
+    No provider requests, process arguments, paths, claims or service actions.
+    """
+    import json
+    import math
+
+    if not isinstance(data, dict) or not isinstance(data.get("host"), dict):
+        raise ValueError("Missing bounded runner source")
+    host, units = data["host"], data.get("units")
+    if not isinstance(units, dict):
+        raise ValueError("Missing runner service source")
+
+    timeline = data.get("timeline")
+    if timeline is not None:
+        summary = data.get("timeline_footprint")
+        if (not isinstance(summary, dict) or not isinstance(timeline, list)
+                or not 2 <= len(timeline) <= 11
+                or summary.get("samples") != len(timeline) + 1):
+            raise ValueError("Unverified historical timeline")
+        work = timeline_owner_actions(summary, timeline)
+        window = {
+            "first_utc": _handoff_text(timeline[0].get("previous_utc")),
+            "last_utc": _handoff_text(timeline[-1].get("current_utc")),
+            "observations": summary["samples"],
+            "comparison_count": len(timeline),
+            "incomplete_service_samples": summary["incomplete_service_samples"],
+            "unknown_capacity_samples": summary["unknown_capacity_samples"],
+            "failed_services_at_last_observation": len(summary["latest_failed_services"]),
+        }
+        source_kind = "private-offline-timeline"
+    else:
+        work = recovery_priorities(data)[:3]
+        window = {
+            "last_utc": _handoff_text(data.get("time")),
+            "observations": 1 + int(data.get("comparison") is not None),
+            "comparison_count": int(data.get("comparison") is not None),
+        }
+        source_kind = ("private-offline-pair" if data.get("offline_replay") is True
+                       else "local-read-only-current")
+
+    # A missing observation is UNKNOWN, never zero healthy/failed runners.
+    observed = units.get("runner_units_observed") is True
+    rows = units.get("runner_units")
+    if observed and (not isinstance(rows, list) or len(rows) > 20):
+        raise ValueError("Unbounded runner inventory")
+    counts = {state: 0 for state in ("active", "failed", "inactive", "unknown")}
+    if observed:
+        for unit in rows:
+            if not isinstance(unit, dict):
+                raise ValueError("Untrusted runner row")
+            state = unit.get("state")
+            counts[state if state in counts else "unknown"] += 1
+
+    pressure = {}
+    for key in ("host_load", "cores", "memory_available_gib",
+                "swap_used_percent", "disk_unavailable_percent",
+                "root_available_gib", "root_inode_available_percent"):
+        value = host.get(key)
+        pressure[key] = (value if type(value) in (int, float)
+                         and math.isfinite(value) and 0 <= value < 1e10
+                         else None)
+    payload = {
+        "schema": "zsentinel.runner-owner-inbox.v1",
+        "source": source_kind,
+        "window": window,
+        "evidence": {
+            "capacity_complete": host.get("source_complete") is True,
+            "runner_inventory_observed": observed,
+            "runner_inventory_complete": observed and units.get("runner_units_truncated") is False,
+            "runner_service_counts": counts if observed else None,
+            "capacity": pressure,
+            "coach_quota_recommended_percent": data.get("quota")
+                if type(data.get("quota")) is int and data["quota"] in (60, 100, 175) else None,
+            "coach_weight_recommended": data.get("weight")
+                if type(data.get("weight")) is int and data["weight"] in (25, 40, 70) else None,
+        },
+        "owner_actions": [
+            {"problem": _handoff_text(title, 160),
+             "owner_action": _handoff_text(advice, 500),
+             "status": _handoff_text(status, 160),
+             "action_authorized": False}
+            for title, advice, status in work[:3]
+        ],
+        "authority": {"claim": False, "restart": False, "dispatch": False,
+                      "merge": False, "deploy": False},
+        "github_job_recovered": None,
+        "production_restored": None,
+        "limitations": ["systemd is not GitHub job assignment",
+                        "offline history is not current release or claim evidence",
+                        "source gaps must not be interpreted as healthy capacity"],
+    }
+    result = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    if len(result.encode("utf-8")) > 128 * 1024:
+        raise ValueError("Private JSON inbox exceeds size limit")
+    return result
+
+
 def save_private(path, markup, extension=".html"):
     target = Path(path)
-    if extension not in {".html", ".md"} or (
+    if extension not in {".html", ".md", ".json"} or (
             not target.name or target.name in {".", ".."} or target.suffix != extension):
         raise ValueError("Choose a new private output filename with the correct suffix")
     raw = markup.encode("utf-8")
@@ -970,7 +1071,7 @@ def save_private(path, markup, extension=".html"):
 def main():
     parser = argparse.ArgumentParser(description="Private one-shot zSentinel runner incident workbench")
     parser.add_argument("--output", required=True, help="NEW private 0600 output (never overwritten)")
-    parser.add_argument("--format", choices=("html", "markdown"), default="html",
+    parser.add_argument("--format", choices=("html", "markdown", "json"), default="html",
                         help="Offline timeline may be exported as a private Markdown owner handoff")
     parser.add_argument("--previous", help="Optional owner-private T0 JSON, same-host and <=72 hours")
     parser.add_argument("--t0", help="Offline replay: first owner-private JSON receipt")
@@ -997,7 +1098,10 @@ def main():
                 from zsentinel_runner_snapshot import packet, changes, load_private
                 current = packet(data)
                 data["comparison"] = changes(load_private(args.previous), current)
-        if args.format == "markdown":
+        if args.format == "json":
+            markup = render_private_json_handoff(data)
+            save_private(args.output, markup, extension=".json")
+        elif args.format == "markdown":
             markup = render_private_handoff(data)
             save_private(args.output, markup, extension=".md")
         else:
