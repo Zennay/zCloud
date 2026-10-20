@@ -108,7 +108,10 @@ def sweep(repo, project, args):
         result = {"repo": repo, "pr": number, "head": head[:12],
                   "base": item["base"]["ref"], "merged": False}
         if item.get("state") != "open":
-            result["status"] = "ALREADY_MERGED" if item.get("merged_at") else "CLOSED"
+            result["merged"] = bool(item.get("merged_at"))
+            result["status"] = "ALREADY_MERGED" if result["merged"] else "CLOSED"
+            if result["merged"]:
+                result["main_commit"] = item.get("merge_commit_sha")
         elif item["base"]["ref"] != default:
             result["status"] = "CHILD_PR_REQUIRES_PARENT_INTEGRATION"
         elif item["draft"]:
