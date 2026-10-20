@@ -277,6 +277,17 @@ def root_free_gib():
         return None
 
 
+def root_inode_availability():
+    """Optional available inode percentage/total; no filesystem traversal."""
+    try:
+        fs = os.statvfs("/")
+        if fs.f_files <= 0 or fs.f_favail < 0 or fs.f_favail > fs.f_files:
+            return None, None
+        return round(100 * fs.f_favail / fs.f_files, 2), int(fs.f_files)
+    except (OSError, ValueError, OverflowError):
+        return None, None
+
+
 def root_volume_identity():
     """Observe Linux root mount identity/capacity without traversing files."""
     try:
@@ -296,6 +307,7 @@ def snapshot():
     disk_used = disk_used_fraction()
     root_dev, root_total = root_volume_identity()
     root_free = root_free_gib()
+    inode_available, inode_total = root_inode_availability()
     try:
         cores = max(1, len(os.sched_getaffinity(0)))
         load = os.getloadavg()[0]
@@ -311,6 +323,8 @@ def snapshot():
         "disk_unavailable_percent": round(disk_used * 100, 1) if disk_used is not None else None,
         "root_mount_device": root_dev, "root_volume_bytes": root_total,
         "root_available_gib": root_free,
+        "root_inode_available_percent": inode_available,
+        "root_inode_total": inode_total,
         "source_complete": not unknown,
     }
 
@@ -355,6 +369,12 @@ def pressure_reasons(s):
             urgent.append("critical-root-free-gib")
         elif free < 5:
             moderate.append("limited-root-free-gib")
+    inode = s.get("root_inode_available_percent")
+    if type(inode) in (int, float) and math.isfinite(inode) and 0 <= inode <= 100:
+        if inode < 1:
+            urgent.append("critical-root-inodes")
+        elif inode < 5:
+            moderate.append("limited-root-inodes")
     return urgent, moderate
 
 
@@ -507,6 +527,8 @@ REASON_LABELS = {
     "limited-root-disk-headroom": "de vrije ruimte op de root-schijf is beperkt",
     "critical-root-free-gib": "minder dan 2 GiB root-schijfruimte beschikbaar",
     "limited-root-free-gib": "minder dan 5 GiB root-schijfruimte beschikbaar",
+    "critical-root-inodes": "minder dan 1% vrije root-inodes beschikbaar",
+    "limited-root-inodes": "minder dan 5% vrije root-inodes beschikbaar",
 }
 
 
@@ -525,6 +547,9 @@ def human_preview(data):
     print("Vrije root-schijfruimte: " +
           (str(data.get("root_available_gib")) + " GiB" if
            data.get("root_available_gib") is not None else "onbekend"))
+    print("Vrije root-inodes: " +
+          (str(data.get("root_inode_available_percent")) + "%" if
+           data.get("root_inode_available_percent") is not None else "onbekend"))
     if not data["unit_observed"]:
         print("Bestaande trainerinstellingen: niet uitleesbaar via user-systemd")
     elif not data["unit_active"]:
