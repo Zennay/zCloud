@@ -195,6 +195,9 @@ def collect(database, maximum):
     unknown_active_scopes = max(
         (lane.get("unknown_active_scope_count", 0) for lane in lanes), default=0
     )
+    unknown_claim_scopes = max(
+        (lane.get("unknown_claim_scope_count", 0) for lane in lanes), default=0
+    )
     # Diagnostic only. The dispatch path itself remains governed by the
     # existing lane generator and actual external claim/release gates.
     active_items = [
@@ -204,7 +207,8 @@ def collect(database, maximum):
     collision_counts = {lane_id: 0 for lane_id in LANE_NAMES}
     cross_lane_coverage = (
         len(active_items) <= 64 and not queue_partial
-        and not truncated_queue_fields and unknown_active_scopes == 0
+        and not truncated_queue_fields
+        and unknown_active_scopes == 0 and unknown_claim_scopes == 0
     )
     if cross_lane_coverage:
         for index, left in enumerate(active_items):
@@ -250,6 +254,7 @@ def collect(database, maximum):
         "queue_partial": queue_partial,
         "truncated_queue_fields_observed": truncated_queue_fields,
         "active_write_scopes_not_declared": unknown_active_scopes,
+        "active_claim_scopes_not_declared": unknown_claim_scopes,
         "active_local_leases_observed": len(claims),
         "expired_local_leases_observed": expired,
         "ambiguous_local_claims": ambiguous,
@@ -268,13 +273,13 @@ def collect(database, maximum):
         "lanes": visible,
         "source_complete": not (
             queue_partial or claims_partial or ambiguous
-            or truncated_queue_fields or unknown_active_scopes
+            or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or portfolio_partial or unknown_project_groups
         ),
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
             or ambiguous or queue_partial or claims_partial
-            or truncated_queue_fields or unknown_active_scopes
+            or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
             or any(collision_counts.values())
@@ -335,6 +340,10 @@ def text_view(data):
         out.append("HOLD: " + str(data["active_write_scopes_not_declared"])
                    + " actieve taken hebben geen expliciete schrijf-scope; "
                    + "nieuwe parallelle toelating geblokkeerd.")
+    if data["active_claim_scopes_not_declared"]:
+        out.append("HOLD: " + str(data["active_claim_scopes_not_declared"])
+                   + " lokale claims hebben geen expliciete schrijf-scope; "
+                   + "geen nieuwe parallelle toelating.")
     if data["truncated_queue_fields_observed"]:
         out.append("LET OP: " + str(data["truncated_queue_fields_observed"])
                    + " te grote bronvelden; geen eigenaarvrijheid afleidbaar.")
@@ -385,6 +394,12 @@ def html_view(data):
             str(data["active_write_scopes_not_declared"])
             + " actieve taken missen een declaratie van bestands-/capability-scope. "
             "Nieuwe parallelle toelating blijft geblokkeerd tot de eigenaar dit oplost."
+        )
+    if data["active_claim_scopes_not_declared"]:
+        warnings.append(
+            str(data["active_claim_scopes_not_declared"])
+            + " actieve lokale claims missen een declaratie van schrijf-scope. "
+            "Geen tweede schrijver toelaten zonder bewijs van externe eigenaars."
         )
     if data["truncated_queue_fields_observed"]:
         warnings.append(
