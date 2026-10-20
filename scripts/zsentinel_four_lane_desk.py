@@ -21,6 +21,7 @@ from lane_generator import (
     generate_execution_lanes,
     scopes_overlap,
 )
+from zsentinel_recovery_actions import suggested_actions
 
 LANE_NAMES = {
     "release-integration": "PRs naar main",
@@ -226,7 +227,7 @@ def collect(database, maximum):
             ),
             # Scope, queue IDs and worker/claim identity are intentionally absent.
         })
-    return {
+    packet = {
         "schema": "zsentinel.four-lane-desk.v1",
         "observed_utc": now.replace(microsecond=0).isoformat(),
         "profile": "portfolio-recovery",
@@ -265,6 +266,8 @@ def collect(database, maximum):
             or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
         ),
     }
+    packet["recovery_actions"] = suggested_actions(packet)
+    return packet
 
 
 def text_view(data):
@@ -283,6 +286,11 @@ def text_view(data):
             f"{lane['active_backlog_count']}; conflicten "
             f"{lane['conflicting_claims'] + lane['conflicting_queue_entries']}{extra}"
         )
+    out.append("Herstelacties (probleem / veilige vervolgactie / status):")
+    for item in data["recovery_actions"]:
+        out.append("  " + item["problem"])
+        out.append("  Actie: " + item["next_step"])
+        out.append("  Status: " + item["status"])
     out.append("Open lokale P0/P1-queue per echt project (adviserend):")
     for item in data["portfolio_urgent_local"]:
         out.append(
@@ -372,6 +380,12 @@ def html_view(data):
         "dit overzicht verleent geen schrijfrechten."
     )
     details = "".join("<li>" + html.escape(item) + "</li>" for item in warnings)
+    action_cards = "".join(
+        "<article><h3>" + html.escape(item["problem"]) + "</h3>"
+        + "<p>" + html.escape(item["next_step"]) + "</p>"
+        + "<p class='eyebrow'>" + html.escape(item["status"]) + "</p></article>"
+        for item in data["recovery_actions"]
+    )
     portfolio_rows = "".join(
         "<tr><th scope='row'>" + html.escape(item["project"]) + "</th>"
         + "<td>" + str(item["queued_p0"]) + " <small>(eligible "
@@ -411,13 +425,15 @@ def html_view(data):
         "table{border-collapse:collapse;width:100%;text-align:right}"
         "th,td{padding:10px 8px;border-bottom:1px solid #30415c}"
         "th:first-child{text-align:left}table{font-size:.9rem}"
-        ".scroll{overflow:auto}li{margin:8px 0}"
+        ".scroll{overflow:auto}li{margin:8px 0}h3{font-size:1rem;line-height:1.4}"
         "footer{color:#a8b7d4;margin-top:28px}"
         "</style></head><body><main><header><div class='eyebrow'>"
         "Portfolio recovery · operatorweergave</div><h1>Vier herstelbanen</h1>"
         "<p>Actueel lokaal bronmoment: "
         + html.escape(data["observed_utc"]) + "</p></header><div class='grid'>"
         + "".join(cards) + "</div><section class='notice'>"
+        "<h2>Veilige herstelacties</h2><p>Elke kaart: probleem, actie en status. Alleen advies.</p>"
+        "<div class='grid'>" + action_cards + "</div></section><section class='notice'>"
         "<h2>Portfolio · urgente lokale wachtrij</h2>"
         "<p>Deze tabel is alleen een prioriteitenhint. Bestaande claims en eigenaars blijven leidend.</p>"
         "<div class='scroll'><table><thead><tr><th scope='col'>Project</th>"
