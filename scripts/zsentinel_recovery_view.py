@@ -752,6 +752,19 @@ def html_view(decision):
                 or row.get("priority") not in ("P0", "P1", "P2", "P3")
                 or type(row.get("id")) is not str or len(row["id"]) > 80):
             raise ValueError("invalid branch collision candidate")
+        if ("branch_ref" in row) != ("conflicting_path" in row):
+            raise ValueError("incomplete branch conflict identity")
+        if "branch_ref" in row and (
+                type(row["branch_ref"]) is not str or len(row["branch_ref"]) > 161
+                or type(row["conflicting_path"]) is not str
+                or len(row["conflicting_path"]) > 220):
+            raise ValueError("invalid branch reference in collision receipt")
+        source_details = (
+            '<p class="small word">Bestaande branch: ' +
+            phrase(row["branch_ref"], 161) + ' · bestand: ' +
+            phrase(row["conflicting_path"], 220) + '</p>'
+            if "branch_ref" in row else ''
+        )
         branch_cards.append(
             '<article class="panel warn"><span class="tag">' +
             phrase(row["priority"], 5) +
@@ -759,7 +772,8 @@ def html_view(decision):
             phrase(row["id"], 80) + '</h3><p>Al bestaand branchwerk of ' +
             'onvolledige branchscope; voorstel overgeslagen.</p><p class="small">' +
             phrase(row["reason"], 70) +
-            '</p><p class="muted small">Controleer de originele branch, huidige ' +
+            '</p>' + source_details +
+            '<p class="muted small">Controleer de originele branch, huidige ' +
             'eigenaar en live claims. Geen claim of merge toegestaan.</p></article>'
         )
     branch_status = (
