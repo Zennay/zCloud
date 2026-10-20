@@ -327,6 +327,19 @@ def html_view(data):
         "dit overzicht verleent geen schrijfrechten."
     )
     details = "".join("<li>" + html.escape(item) + "</li>" for item in warnings)
+    portfolio_rows = "".join(
+        "<tr><th scope='row'>" + html.escape(item["project"]) + "</th>"
+        + "<td>" + str(item["queued_p0"]) + "</td><td>"
+        + str(item["queued_p1"]) + "</td><td>"
+        + str(item["in_flight_p0"]) + "</td><td>"
+        + str(item["in_flight_p1"]) + "</td></tr>"
+        for item in data["portfolio_urgent_local"]
+    ) or "<tr><td colspan='5'>Geen urgente bronrijen waargenomen; niet gelijk aan geen issues.</td></tr>"
+    portfolio_note = (
+        "<p class='warn'>Gedeeltelijke projectbron of niet-herkende projectgroep.</p>"
+        if data["portfolio_priority_partial"] or data["portfolio_unknown_project_groups"]
+        else "<p>Alleen lokale wachtrij, geen live GitHub-issue- of Notion-claimbewijs.</p>"
+    )
     return (
         "<!doctype html><html lang='nl'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -348,12 +361,23 @@ def html_view(data):
         "dt{color:#9eb2d3;font-size:.82rem}dd{font-size:1.8rem;"
         "margin:4px 0;font-weight:700}.warn{color:#ffca83}"
         ".notice{margin-top:22px;background:#151d2e}"
-        "li{margin:8px 0}footer{color:#a8b7d4;margin-top:28px}"
+        "table{border-collapse:collapse;width:100%;text-align:right}"
+        "th,td{padding:10px 8px;border-bottom:1px solid #30415c}"
+        "th:first-child{text-align:left}table{font-size:.9rem}"
+        ".scroll{overflow:auto}li{margin:8px 0}"
+        "footer{color:#a8b7d4;margin-top:28px}"
         "</style></head><body><main><header><div class='eyebrow'>"
         "Portfolio recovery · operatorweergave</div><h1>Vier herstelbanen</h1>"
         "<p>Actueel lokaal bronmoment: "
         + html.escape(data["observed_utc"]) + "</p></header><div class='grid'>"
-        + "".join(cards) + "</div><section class='notice'><h2>Grenzen en "
+        + "".join(cards) + "</div><section class='notice'>"
+        "<h2>Portfolio · urgente lokale wachtrij</h2>"
+        "<p>Deze tabel is alleen een prioriteitenhint. Bestaande claims en eigenaars blijven leidend.</p>"
+        "<div class='scroll'><table><thead><tr><th scope='col'>Project</th>"
+        "<th scope='col'>P0 wacht</th><th scope='col'>P1 wacht</th>"
+        "<th scope='col'>P0 actief</th><th scope='col'>P1 actief</th>"
+        "</tr></thead><tbody>" + portfolio_rows + "</tbody></table></div>"
+        + portfolio_note + "</section><section class='notice'><h2>Grenzen en "
         "vervolgactie</h2><ul>" + details + "</ul></section>"
         "<footer>Alleen lokale read-only bron. Geen claim, CI-start, merge, "
         "runneractie of deployment uitgevoerd.</footer></main></body></html>"
