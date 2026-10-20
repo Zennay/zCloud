@@ -475,6 +475,22 @@ def collect(registry: Path, selected: list[str], hours: int, max_events: int,
                 break
         if not advanced:
             break
+    # The browser treats imported receipts as untrusted. Only carry a
+    # positive recent-main indicator when the exact canonical main commit
+    # event survives this *same bounded exported receipt*. Without it the
+    # UI must display "not proven" instead of a bare true boolean.
+    included_main = {
+        (item["project"], item["sha"]) for item in fair
+        if item["kind"] == "main_commit"
+    }
+    for item in fair:
+        if item["kind"] not in {"pr_created", "pr_updated", "pr_merged"}:
+            continue
+        if item.get("main_merged") is True and (
+            item["project"], item.get("merge_commit_sha")
+        ) not in included_main:
+            item["main_merged"] = False
+            item["main_merge_evidence"] = "main_sha_not_in_exported_window"
     return {
         "schema": "zcloud-github-activity-readonly-v1",
         "observed_at": stamp(observed),
