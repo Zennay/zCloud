@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import shutil
 import subprocess
 import sys
@@ -16,51 +17,64 @@ ROOT = HOME / "zennay-cloud"
 STATE = HOME / ".local/state/zcloud-drive"
 BIN = HOME / ".local/bin/rclone"
 DEST = "vpsarchive:zCloud-cold"
-DATE = re.compile(r"(?<!\d)(20\d{6})(?!\d)")
+# Shared zCloud checkouts contain dated private/research directories from OTHER projects.
+# A date alone is not permission to upload or prune their contents.
+ARCHIVE_NAME = re.compile(r"^zcloud-(?:cold|archive|backup)-(20\d{6})(?:[-_][A-Za-z0-9_-]{1,80})?$")
 EXCLUDE = {"repos", "worktrees", "scripts", "tests", "public", "deploy", ".git", ".github",
            "node_modules", ".venv", "backups", "dist", "build", "__pycache__"}
 MIN_UPLOAD_DAYS = 2
 MIN_PRUNE_DAYS = 7
 MAX_BATCH_BYTES = 4 * 1024 ** 3
 MAX_CANDIDATES = 8
+MAX_SCAN_NODES = 100000
 
 def command(*args, capture=False):
     p = subprocess.run(args, text=True, stdout=subprocess.PIPE if capture else None,
                        stderr=subprocess.PIPE if capture else None)
     if p.returncode:
-        raise RuntimeError("Command failed: " + str(args[1:3]) +
-                           (" [" + p.stderr[-300:] + "]" if capture and p.stderr else ""))
+        # Upstream stderr may contain tokens or private provider details.
+        raise RuntimeError("Archive command failed (exit code %d)" % p.returncode)
     return p.stdout if capture else ""
 
 def examine(path, cutoff):
     if path.is_symlink() or not path.is_dir() or path.parent != ROOT or path.name in EXCLUDE:
         return None
-    match = DATE.search(path.name)
+    match = ARCHIVE_NAME.fullmatch(path.name)
     if not match:
         return None
     try:
-        if dt.datetime.strptime(match.group(1), "%Y%m%d").timestamp() >= cutoff:
+        if dt.datetime.strptime(match.group(1), "%Y%m%d").replace(tzinfo=dt.timezone.utc).timestamp() >= cutoff:
             return None
     except ValueError:
         return None
     size = 0
     count = 0
+    scanned = 0
     newest = 0
     try:
+        device = path.lstat().st_dev
         for current, dirs, files in os.walk(path, followlinks=False):
             st = os.lstat(current)
+            if not stat.S_ISDIR(st.st_mode) or st.st_dev != device:
+                return None
             newest = max(newest, st.st_mtime)
+            scanned += 1
             for name in dirs + files:
                 child = Path(current) / name
                 x = child.lstat()
-                if child.is_symlink():
+                scanned += 1
+                if (stat.S_ISLNK(x.st_mode) or x.st_dev != device or
+                        (not stat.S_ISDIR(x.st_mode) and
+                         (not stat.S_ISREG(x.st_mode) or x.st_nlink != 1))):
                     return None
                 newest = max(newest, x.st_mtime)
-                if child.is_file():
+                if stat.S_ISREG(x.st_mode):
                     size += x.st_size
                     count += 1
-                    if count > 200000:
+                    if size > MAX_BATCH_BYTES:
                         return None
+                if scanned > MAX_SCAN_NODES:
+                    return None
     except (OSError, PermissionError):
         return None
     if newest >= cutoff or count == 0:
@@ -127,6 +141,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["plan", "run", "cleanup"])
     args = parser.parse_args()
+    # Planning does not create state, acquire a lock or contact OAuth.
+    if args.mode == "plan":
+        items = candidates(MIN_UPLOAD_DAYS)
+        print(json.dumps({"mode": "read_only", "cold_days": MIN_UPLOAD_DAYS,
+            "candidate_count": len(items), "scope": "zcloud-{cold,archive,backup}-YYYYMMDD[-suffix]",
+            "max_candidates": MAX_CANDIDATES, "max_batch_bytes": MAX_BATCH_BYTES,
+            "transfer_performed": False, "cleanup_authorized": False,
+            "items": [{"name": x["name"], "bytes": x["bytes"], "files": x["files"]}
+                      for x in items]}, indent=2))
+        return
     STATE.mkdir(parents=True, exist_ok=True)
     lock = open(STATE / "archive.lock", "a+")
     try:
@@ -136,11 +160,7 @@ def main():
         return
     days = MIN_PRUNE_DAYS if args.mode == "cleanup" else MIN_UPLOAD_DAYS
     items = candidates(days)
-    if args.mode == "plan":
-        print(json.dumps({"cold_days": days, "candidate_count": len(items),
-            "items": [{"name": x["name"], "bytes": x["bytes"], "files": x["files"]}
-                      for x in items]}, indent=2))
-        return
+    # Mutation modes alone connect to external storage.
     if not connected():
         print("NOT_CONNECTED: authorize Google Drive for the gdrive remote first", file=sys.stderr)
         return
