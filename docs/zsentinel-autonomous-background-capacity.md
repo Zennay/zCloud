@@ -101,6 +101,39 @@ enable, stop, dispatch, write or repair action. Recovery of OOM-failed
 project runners remains subject to the specific service owner, memory
 headroom and existing production gates.
 
+## Privé offline herstelwerkbank
+
+Met de bestaande one-shot preview kan een bevoegde operator een statisch
+Nederlandstalig HTML-overzicht genereren zonder een externe dashboarddienst:
+
+`python3 scripts/zsentinel_background_priority.py --preview --human --report "$HOME/private-recovery/zsentinel-20261020.html"`
+
+De bestemmingsmap moet **al bestaan** en door de uitvoerende gebruiker
+beschrijfbaar zijn. Het opgegeven `.html`-bestand moet **nieuw** zijn: aanmaken
+is exclusief (`O_CREAT|O_EXCL|O_NOFOLLOW`), bestandstoegang is `0600`,
+de laatste doelmapcomponent wordt zonder symlink geopend. Het programma
+overschrijft nooit een bestaand HTML-rapport en logt de privébestandsnaam
+niet naar stdout of een portfolio-feed. Een ongeldige naam, bestaand bestand,
+ontoegankelijke doelmap of onvolledige write geeft een fout; gedeeltelijk
+geschreven bestanden worden weer verwijderd.
+
+De rapportbron komt uit dezelfde **eenmalige** read-only host- en
+service-observaties als de preview. Een afzonderlijke zelfstandige ingang
+`python3 scripts/zsentinel_runner_report.py --output NEW.html`
+biedt dezelfde HTML-werkbank voor een losse beheeractie. Het rapport bevat
+hostcapaciteit, CPU-advies versus huidige coach-instellingen en maximaal
+20 canonieke runner-servicestatussen met veilige vervolgadviezen bij
+`failed/oom-kill`, gestopt of actief. De status van een uitvoerende GitHub-job
+blijft onafhankelijk van een actieve listener.
+
+Het HTML bevat **geen JavaScript of externe assets**, heeft een beperkende
+Content Security Policy en is uitsluitend privé beschikbaar. Hiermee worden
+geen logs, GitHub credentials, gebruikersprofielen of proces-argv opgeslagen.
+Het bestand is een momentopname; de tool claimt geen CI-success, main-merge,
+recovered listener, vrijgevallen Notion-claim of live productieintegratie.
+De optionele `--report`-modus draait nooit vanuit de bestaande
+systemd-timer en voert geen nieuwe `systemctl set-property`-actie uit.
+
 ## Operator installation and release boundaries
 
 Code files:
