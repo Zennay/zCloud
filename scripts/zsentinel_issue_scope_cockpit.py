@@ -17,7 +17,11 @@ import re
 import sys
 
 from zsentinel_operator_workbench import read_source_and_sha, validated_view
-from zsentinel_product_issue_inbox import canonical_projects, collect as collect_live_issues
+from zsentinel_product_issue_inbox import (
+    canonical_projects, collect as collect_live_issues,
+    bounded_get as github_issue_get, priority as canonical_issue_priority,
+    observed_time as canonical_issue_clock,
+)
 from zsentinel_product_delivery_board import prepare as prepare_delivery_board
 from zsentinel_pr_scope_guard import ROOT, registry
 from zsentinel_pr_scope_portfolio import collect_portfolio
@@ -42,6 +46,76 @@ NEXT_ACTIONS_NL = {
     "verify_live_owner_then_product_implementation":
         "Controleer eerst huidige Notion-claims, open branches en bestandscope vóór productwerk.",
 }
+
+
+def direct_issue_inbox(canonical, selected_projects, focus_issue, token):
+    """Fetch one explicitly named still-open canonical GitHub product issue.
+
+    Not a broad search and not evidence that a missing issue is fixed.
+    Reuses the already merged issue classifier and Product Delivery Board.
+    """
+    from zsentinel_product_delivery_board import ISSUE as ISSUE_ID
+    if (type(focus_issue) is not str or ISSUE_ID.fullmatch(focus_issue) is None
+            or type(selected_projects) is not list
+            or len(selected_projects) != 1
+            or selected_projects[0] not in canonical):
+        raise ValueError("direct issue requires one registered --project and canonical repo#number")
+    repository, raw_number = focus_issue.rsplit("#", 1)
+    pid = selected_projects[0]
+    if canonical[pid] != repository:
+        raise ValueError("focused issue does not match the selected canonical repository")
+    number = int(raw_number)
+    issue = github_issue_get(
+        "https://api.github.com/repos/" + repository +
+        "/issues/" + str(number), token)
+    if (type(issue) is not dict or issue.get("number") != number
+            or "pull_request" in issue or issue.get("state") != "open"):
+        raise ValueError("issue unavailable, not open, or not a product issue; no recovery conclusion")
+    title = issue.get("title")
+    assignees = issue.get("assignees")
+    if (type(title) is not str or not 1 <= len(title) <= 1000
+            or type(assignees) is not list):
+        raise ValueError("canonical issue metadata incomplete")
+    severity, qa_only = canonical_issue_priority(issue)
+    if qa_only:
+        raise ValueError("explicit issue is QA-only; product-delivery policy excludes it")
+    created = canonical_issue_clock(issue.get("created_at"))
+    updated = canonical_issue_clock(issue.get("updated_at"))
+    now = datetime.now(timezone.utc)
+    if not created <= updated <= now:
+        raise ValueError("issue source dates are inconsistent")
+    record = {
+        "id": repository + "#" + str(number), "project": pid,
+        "repository": repository, "number": number,
+        "title": title[:180], "priority": severity,
+        "qa_only": False, "has_assignee": len(assignees) > 0,
+        "active_claim": "not_verified", "related_open_prs": [],
+        "created_at": created.isoformat(timespec="seconds"),
+        "updated_at": updated.isoformat(timespec="seconds"),
+        "url": "https://github.com/" + repository + "/issues/" + str(number),
+        "state": "open",
+    }
+    return {
+        "schema": "zsentinel-product-issue-inbox-v1",
+        "observed_at": now.isoformat(timespec="seconds"),
+        "projects": [pid],
+        "coverage": [{
+            "project": pid, "repository": repository,
+            "oldest_window": "not_queried_exact_issue_only",
+            "recent_window": "exact_selected_open_issue_only",
+            "open_pr_window": "not_queried_direct_issue_source",
+            "status": "partial",
+            "active_claims_verified": False,
+        }],
+        "request_count": 1,
+        "items": [record], "suppressed_qa_only": 0,
+        "stopped_after_rate_or_auth_denial": False,
+        "truncated": True,
+        "queue_ownership_known": False,
+        "active_claims_verified": False,
+        "actions_authorized": False,
+        "fully_synchronized": False,
+    }
 
 
 def _safe_projects(source, canonical, explicit=None):
@@ -115,7 +189,9 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             or type(collision.get("project_views")) is not list
             or len(collision["project_views"]) != len(selected)):
         raise ValueError("scope source unexpectedly authorizes work or mismatches issue projects")
-    if source_mode not in ("saved_local_snapshot", "live_readonly_github_issues"):
+    if source_mode not in (
+            "saved_local_snapshot", "live_readonly_github_issues",
+            "live_exact_selected_github_issue"):
         raise ValueError("unknown issue source mode")
     if (type(raw_board) is not dict
             or raw_board.get("schema") != "zsentinel-product-delivery-triage-v1"
@@ -659,8 +735,13 @@ def main(argv=None):
                 raise ValueError("canonical registry disagreement")
             if args.max_prs > 12:
                 raise ValueError("live issue + PR mode caps --max-prs at 12 per project")
-            inbox = collect_live_issues(canonical, args.project,
-                                        os.environ.get("GITHUB_TOKEN"), max_items=60)
+            if args.focus_issue:
+                inbox = direct_issue_inbox(
+                    canonical, args.project, args.focus_issue,
+                    os.environ.get("GITHUB_TOKEN"))
+            else:
+                inbox = collect_live_issues(canonical, args.project,
+                                            os.environ.get("GITHUB_TOKEN"), max_items=60)
             source = prepare_delivery_board(inbox, limit=60)
             raw = json.dumps(source, ensure_ascii=False, sort_keys=True,
                              separators=(",", ":")).encode("utf-8")
@@ -686,7 +767,9 @@ def main(argv=None):
         pr_scope = collect_portfolio(projects, canonical, os.environ.get("GITHUB_TOKEN"), args.max_prs)
         report = compose(view, sha, canonical, projects, pr_scope,
                          saved_gates=_saved_pr_gates(source),
-                         source_mode=("live_readonly_github_issues" if args.live_issues
+                         source_mode=("live_exact_selected_github_issue"
+                                      if args.live_issues and args.focus_issue
+                                      else "live_readonly_github_issues" if args.live_issues
                                       else "saved_local_snapshot"),
                          focus_issue=args.focus_issue, raw_board=source)
         if args.format == "json":
