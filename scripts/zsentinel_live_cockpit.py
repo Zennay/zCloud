@@ -251,6 +251,8 @@ def main():
     parser.add_argument("--state", type=Path,
                         help="optional local private incident ledger file")
     parser.add_argument("--format", choices=("text", "json", "html", "ics", "desk"), default="html")
+    parser.add_argument("--output", type=Path,
+                        help="optional create-only 0600 .html/.json/.ics/.txt report; no stdout dump")
     parser.add_argument("--desk-output", type=Path,
                         help="new, create-only private .html output (required only for --format desk)")
     parser.add_argument("--handoff-output", type=Path,
@@ -291,6 +293,23 @@ def main():
                 raise ValueError("--github-only cannot prove DB-mounted VPS capacity")
         elif args.database is None:
             raise ValueError("--database required unless --github-only is explicit")
+        if args.output is not None:
+            expected = {"html": ".html", "json": ".json",
+                        "ics": ".ics", "text": ".txt"}
+            if args.format not in expected:
+                raise ValueError("--output supports html, json, ics or text; desk uses --desk-output")
+            if args.output.suffix != expected[args.format]:
+                raise ValueError("--output extension must match the chosen operator format")
+            # The destination is never an input, ledger, separate private
+            # output, or original canonical project registry. Refuse aliasing
+            # before making ANY optional report or ledger writes.
+            protected = (args.registry, args.database, args.state,
+                         args.worker_events_database, args.notion_claims_export,
+                         args.disk_hotspots_previous, args.disk_hotspots_output,
+                         args.desk_output, args.handoff_output)
+            if any(path is not None and args.output.resolve() == path.resolve()
+                   for path in protected):
+                raise ValueError("--output overlaps an input, ledger or private report")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
         if args.desk_output is not None and args.format not in ("desk", "html"):
@@ -475,9 +494,12 @@ def main():
                                      args.handoff_output.suffix.lstrip("."))
             except OSError:
                 raise ValueError("private owner handoff could not be written") from None
+        if args.output is not None:
+            from zsentinel_private_output import write_private_output
+            write_private_output(args.output, rendered, args.format)
         if args.state:
             write_json_atomic(args.state, ledger)
-        if args.format != "desk":
+        if args.format != "desk" and args.output is None:
             print(rendered)
     except (OSError, ValueError, TypeError, KeyError, sqlite3.Error) as exc:
         parser.exit(2, f"zSentinel live cockpit unavailable: {exc}\n")
