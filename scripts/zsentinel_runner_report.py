@@ -30,6 +30,8 @@ REASON_NL = {
     "elevated-swap-use": "Verhoogd swapgebruik",
     "low-root-disk-headroom": "Weinig vrije root-schijfruimte",
     "limited-root-disk-headroom": "Beperkte root-schijfruimte",
+    "critical-root-free-gib": "Minder dan 2 GiB vrije rootruimte",
+    "limited-root-free-gib": "Minder dan 5 GiB vrije rootruimte",
 }
 
 
@@ -112,6 +114,8 @@ def recovery_priorities(data):
                       load is None or
                       host["swap_used_percent"] >= 80 or
                       host["disk_unavailable_percent"] >= 90 or
+                      (type(host.get("root_available_gib")) in (int, float) and
+                       host["root_available_gib"] < 2) or
                       load > cores * 1.35)
     actions = []
     if under_pressure:
