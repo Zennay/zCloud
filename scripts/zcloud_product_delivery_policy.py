@@ -44,7 +44,7 @@ NEGATED_DELIVERY = re.compile(
     r"(?:merge|deploy|release|build|fix|repair|implement|integrate|"
     r"ship|deliver|refactor|migrate|restore|enable|herstel|"
     r"repareer|bouw|implementeer|integreer|lever|samenvoegen|"
-    r"mergen|fixen|oplossen|uitrollen)\b",
+    r"mergen|fixen|oplossen|uitrollen|los\s+op)\b",
     re.IGNORECASE,
 )
 
@@ -105,7 +105,7 @@ def product_delivery_disposition(item):
     """
     if not isinstance(item, dict):
         return "invalid"
-    if str(item.get("status") or "queued").strip().casefold() != "queued":
+    if str(item.get("status") or "").strip().casefold() != "queued":
         return "invalid"
     try:
         metadata = _metadata(item)
