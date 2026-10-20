@@ -203,7 +203,16 @@ onbekend schema of een verschil groter dan 72 uur.
 
 Het HTML toont expliciet de T0- en T1-tijd, dekkingsgraad, waargenomen
 statusovergangen en stabiele incidentcodes, plus de bij T1 **opgeslagen**
-capaciteitswaarden en CPU-aanbeveling. Een vorige bron zonder
+capaciteitswaarden en CPU-aanbeveling. Voor nieuwe bronbestanden bewaart
+zSentinel ook de waargenomen Linux-root-mount-identiteit en het totale
+volume. Het historische overzicht toont verschillen in beschikbare RAM,
+swapdruk en load, en toont een schijfdelta **uitsluitend** wanneer zowel
+het mount-device als de totale volumeomvang op T0 en T1 overeenkomen.
+Ontbrekende oude mount-identiteit of een veranderd volume geeft
+`niet vergelijkbaar`, niet een verzonnen vrijeruimtewinst.
+Alle verschillen zijn begrensde momentopnames, geen bewijs van veilige
+bestandsverwijdering, runnerherstel of nieuwe training.
+Een vorige bron zonder
 opgeslagen coachinstellingen blijft **onbekend**, niet stiekem live
 nagevraagd. `--previous T0.json` zonder `--t0/--t1` is de aparte
 **actuele**, read-only systeemobservatie die het verschil met T0 in het
