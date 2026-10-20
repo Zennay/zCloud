@@ -564,6 +564,25 @@ function drawDetail(){
  card.evidence_gaps.forEach(x=>ul.append(elem('li',x)));
  if(!card.evidence_gaps.length)ul.append(elem('li','Live claim, required review and release rights still need independent verification.'));
  gaps.append(ul);detail.append(gaps);
+ const summary=elem('section');
+ summary.setAttribute('aria-label','Three-line source-bound blocker handoff');
+ summary.append(elem('h3','Three-line blocker handoff · human-only'),
+  elem('p','Review before sharing. This is not permission to execute.'));
+ const immediateGate=card.evidence_gaps.length?
+  card.evidence_gaps[0]:'Owner/claim, required CI, independent review and release gates unverified.';
+ const compact=[
+  'Problem · '+line(card.priority+' '+card.issue+' — '+card.title,280),
+  'Next investigation (not an action) · '+line(card.recommended_next_step,320),
+  'Gate / status · '+line(immediateGate,260)+' · observed '+line(board.observed_at_utc,45)+
+   ' · NOT AUTHORIZED'
+ ].join('\\n');
+ const snippet=elem('textarea');snippet.readOnly=true;snippet.rows=5;
+ snippet.value=compact;snippet.setAttribute('aria-label','Read-only three-line blocker summary');
+ const copy=elem('button','Select three lines for manual copy');copy.type='button';
+ copy.onclick=()=>{snippet.focus();snippet.select();
+  status.textContent='Three source-bound lines selected for manual copy; nothing was submitted.';};
+ summary.append(snippet,copy);
+ detail.append(summary);
  const label=elem('label','Operator disposition (non-authorizing)');label.htmlFor='decision';
  const sel=elem('select');sel.id='decision';
  [['investigate','Investigate product issue'],['integrate-existing-pr','Inspect/integrate existing PR'],
