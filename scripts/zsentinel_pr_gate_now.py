@@ -30,6 +30,16 @@ def _sha(value):
     return value
 
 
+def _source_evidence_fingerprint(source_kind, observed_rows):
+    """Deterministic bounded evidence identity; never approval or authentication."""
+    if source_kind not in ("check_runs", "legacy_status", "current_head_reviews"):
+        raise ValueError("unrecognized read-only evidence category")
+    payload = json.dumps(
+        ["zsentinel-gate-evidence-v1", source_kind, observed_rows],
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _one(repo, number, token):
     if not REPO.fullmatch(repo) or type(number) is not int or not 1 <= number <= 999999999:
         raise ValueError("invalid canonical PR identity")
@@ -78,6 +88,14 @@ def _one(repo, number, token):
         key = (app["id"], name)
         if key not in latest_checks or row["id"] > latest_checks[key]["id"]:
             latest_checks[key] = row
+    # Retain source identity even if each count looks identical: a rerun or
+    # new success can supersede a prior check without altering aggregate counts.
+    check_fingerprint = _source_evidence_fingerprint("check_runs", sorted(
+        ({"app_id": app_id, "name": name,
+          "check_run_id": row["id"], "status": row.get("status"),
+          "conclusion": row.get("conclusion")}
+         for (app_id, name), row in latest_checks.items()),
+        key=lambda item: (item["app_id"], item["name"])))
     actionable = []
     for row in latest_checks.values():
         state, conclusion = row.get("status"), row.get("conclusion")
@@ -132,6 +150,10 @@ def _one(repo, number, token):
         name = row["context"]
         if name not in latest_context or row["id"] > latest_context[name]["id"]:
             latest_context[name] = row
+    legacy_fingerprint = _source_evidence_fingerprint("legacy_status", sorted(
+        ({"context": name, "status_id": row["id"], "state": row["state"]}
+         for name, row in latest_context.items()),
+        key=lambda item: item["context"]))
     legacy_states = {"success": 0, "pending": 0, "failure": 0, "error": 0}
     for row in latest_context.values():
         legacy_states[row["state"]] += 1
@@ -170,6 +192,11 @@ def _one(repo, number, token):
         current = most_recent.get(reviewer)
         if current is None or row["id"] > current[0]:
             most_recent[reviewer] = (row["id"], review_state)
+    review_fingerprint = _source_evidence_fingerprint(
+        "current_head_reviews", sorted(
+            ({"reviewer": name, "review_id": entry[0], "state": entry[1]}
+             for name, entry in most_recent.items()),
+            key=lambda item: item["reviewer"]))
     last = github_json(repo, prefix, token)
     if (type(last) is not dict or last.get("number") != number
             or last.get("state") != "open"
@@ -206,6 +233,7 @@ def _one(repo, number, token):
         "draft_at_read": last.get("draft") is True,
         "github_mergeable_boolean_observed": last.get("mergeable"),
         "check_runs_total_observed": checks["total_count"],
+        "check_runs_evidence_sha256": check_fingerprint,
         "check_runs_latest_attempts_observed": len(latest_checks),
         "check_runs_superseded_attempts_observed": len(check_rows) - len(latest_checks),
         "observed_actionable_check_runs": actionable,
@@ -217,6 +245,7 @@ def _one(repo, number, token):
         "observed_checks_not_successful": statuses["failure_observed"],
         "observed_checks_unknown": statuses["other_observed"],
         "legacy_status_contexts_observed": len(latest_context),
+        "legacy_status_evidence_sha256": legacy_fingerprint,
         "legacy_status_superseded_attempts_observed":
             len(legacy["statuses"]) - len(latest_context),
         "observed_actionable_legacy_contexts": legacy_actionable,
@@ -231,6 +260,7 @@ def _one(repo, number, token):
         "legacy_status_sample_complete_and_terminal": (
             not legacy_partial and legacy_states["pending"] == 0),
         "observed_independent_exact_head_approvals": approved,
+        "exact_head_review_evidence_sha256": review_fingerprint,
         "observed_exact_head_changes_requested": requested,
         "review_page_may_be_truncated": len(reviews) == 100,
         "exact_head_stable_on_second_read": True,
