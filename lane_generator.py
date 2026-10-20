@@ -215,15 +215,27 @@ PROJECT_SCOPE_ALIASES = {
 }
 
 
+def _scope_values(scope, key):
+    """Accept a single scope name as one value, never as individual chars.
+
+    Persisted task metadata can contain either a string or an array. Splitting
+    "server.py" into characters silently loses real file-scope collisions.
+    """
+    values = scope.get(key)
+    if isinstance(values, str):
+        return (values,)
+    return values if isinstance(values, (list, tuple, set, frozenset)) else ()
+
+
 def _normal_scope(scope):
     scope = scope if isinstance(scope, dict) else {}
     capabilities = []
-    for value in scope.get("capabilities") or []:
+    for value in _scope_values(scope, "capabilities"):
         item = re.sub(r"[^a-z0-9._:/-]+", "-", str(value or "").strip().lower()).strip("-")
         if item and item not in capabilities:
             capabilities.append(item)
     files = []
-    for value in scope.get("files") or []:
+    for value in _scope_values(scope, "files"):
         item = str(value or "").strip().replace("\\", "/")
         while item.startswith("./"):
             item = item[2:]
