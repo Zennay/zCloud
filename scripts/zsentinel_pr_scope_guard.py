@@ -587,6 +587,20 @@ def graph_html(report):
                     if report["pr_file_scope_sample_complete"]
                     else "onvolledig; bron/venster niet stabiel of afgekapt")
     unpaired = report["unpaired_open_prs_in_sample_not_claim_verified"]
+    duplicate_cards = []
+    for group in report["shown_duplicate_issue_groups"]:
+        mentioned = "".join(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(item["url"], quote=True) + "'>PR @" +
+            escape(item["head_sha"][:12]) + "</a></li>"
+            for item in group["shown_pr_sources"])
+        duplicate_cards.append(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(group["issue_url"], quote=True) + "'>Issue #" +
+            str(group["issue_number"]) + "</a> · " +
+            str(group["open_pr_mentions_observed"]) +
+            " PR-tekstvermeldingen (geen fix-/eigenaarbewijs)<ul>" +
+            mentioned + "</ul></li>")
     isolated_links = "".join(
         "<li><a rel='noopener noreferrer' href='" +
         escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
@@ -614,7 +628,12 @@ def graph_html(report):
             " geverifieerd. Geen automatische claim of merge.</aside>"
             "<table><thead><tr><th>Open PR's</th><th>Overlap</th>"
             "<th>Gedeelde bestanden</th></tr></thead><tbody>" +
-            "".join(rows) + "</tbody></table><h2>Geen gedeelde paden in de steekproef</h2>"
+            "".join(rows) + "</tbody></table>"
+            "<h2>Meerdere open PR's noemen hetzelfde issue</h2>"
+            "<p>Positieve PR-tekstvermeldingen, geen bewezen fix of mergevrijgave.</p><ul>" +
+            ("".join(duplicate_cards) or
+             "<li>Geen dubbele verwijzingen in het onderzochte bronvenster.</li>") +
+            "</ul><h2>Geen gedeelde paden in de steekproef</h2>
             "<p>Dit zijn niet automatisch vrije taken. Raadpleeg actuele claims, "
             "PR-loze branches, bestandsleases en reviews.</p><ul>" +
             (isolated_links or "<li>Geen overige open PR's in de steekproef.</li>") +
