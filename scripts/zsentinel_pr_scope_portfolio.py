@@ -48,6 +48,8 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
                 "shown_collision_pairs": [],
                 "unpaired_open_prs_not_claim_verified": [],
                 "issue_reference_source_covered": False,
+                "issue_reference_snapshot_stable": False,
+                "issue_reference_sample_complete": False,
                 "observed_issue_to_pr_mentions_unverified": [],
                 "observed_collision_pairs": None,
                 "inspected_open_prs": None,
@@ -70,12 +72,18 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
             "shown_collision_pairs": pairs,
             "unpaired_open_prs_not_claim_verified":
                 source["unpaired_open_prs_in_sample_not_claim_verified"],
+            # Positive links from a *stable inspected subset* remain useful
+            # even if this large repository has more PRs than our budget.
+            # Never infer an absent PR or an absent issue is claimable.
             "issue_reference_source_covered":
+                source["open_pr_snapshot_stable"],
+            "issue_reference_snapshot_stable":
+                source["open_pr_snapshot_stable"],
+            "issue_reference_sample_complete":
                 complete and source["issue_reference_body_coverage_complete"],
             "observed_issue_to_pr_mentions_unverified": (
                 source["open_pr_issue_references_unverified"]
-                if complete and source["issue_reference_body_coverage_complete"]
-                else []),
+                if source["open_pr_snapshot_stable"] else []),
             "observed_collision_pairs": source["observed_file_collision_pairs"],
             "inspected_open_prs": source["inspected_prs"],
             "observed_open_prs": source["observed_open_prs"],
