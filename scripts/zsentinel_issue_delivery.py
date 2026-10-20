@@ -489,7 +489,13 @@ def render_html(board):
                  if pr["referenced_by_sampled_issue"] else
                  ' · GEEN issuekoppeling in deze beperkte steekproef') +
                 (' · BRON VEROUDERD' if pr.get("source_stale") else '') +
-                ' · <strong>geen actuele gate- of eigendomscheck</strong></li>'
+                ' · <strong>' +
+                escape(pr.get("gate_observation",
+                              "not_reinspected_exact_head")) +
+                '</strong> · ' +
+                escape(pr.get("owner_next_step",
+                              "Controleer actuele PR-HEAD en eigenaar.")) +
+                ' · GEEN merge-/releaseautorisatie</li>'
             )
         if cards:
             listed_sections.append(
@@ -746,7 +752,12 @@ def render_markdown(board):
                          (" · GEEN issuekoppeling in beperkte bron" if not
                           pr["referenced_by_sampled_issue"] else
                           " · issuekoppeling in beperkte bron") +
-                         (" · VEROUDERD" if pr.get("source_stale") else ""))
+                         (" · VEROUDERD" if pr.get("source_stale") else "") +
+                         " · bron " + _markdown_literal(pr.get(
+                             "gate_observation", "not_reinspected_exact_head")) +
+                         " · " + _markdown_literal(pr.get(
+                             "owner_next_step",
+                             "Controleer actuele PR-HEAD en eigenaar.")))
     for item in sorted(board["items"],
                        key=lambda row: row["next_step"] ==
                                        "authorized_infrastructure_owner_required"):
