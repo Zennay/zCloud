@@ -779,9 +779,11 @@ def graph_operator_text(report):
         if row["shared_files_truncated"]:
             result.append("  Meer bestandspaden niet weergegeven.")
     for group in report["shown_duplicate_issue_groups"]:
-        result.append("GELIJK ISSUE IN PR-TEKST #" + str(group["issue_number"]) +
+        result.append("GELIJK NUMMER IN PR-TEKST #" + str(group["issue_number"]) +
                       " · " + str(group["open_pr_mentions_observed"]) +
-                      " PR-bronvermeldingen, geen geverifieerde oplossing")
+                      " PR-bronvermeldingen · GitHub identiteit: " +
+                      group["identity_status"] +
+                      " · geen geverifieerde oplossing/eigenaar")
         for link in group["shown_pr_sources"]:
             result.append("  " + link["url"] + " @ " + link["head_sha"][:12] +
                           " · vermeld in: " + "/".join(link["mentioned_in"]))
@@ -846,7 +848,9 @@ def graph_html(report):
             escape(group["issue_url"], quote=True) + "'>Issue #" +
             str(group["issue_number"]) + "</a> · " +
             str(group["open_pr_mentions_observed"]) +
-            " PR-tekstvermeldingen (geen fix-/eigenaarbewijs)<ul>" +
+            " PR-tekstvermeldingen · GitHub identiteit: " +
+            escape(group["identity_status"]) +
+            " (geen fix-/eigenaarbewijs)<ul>" +
             mentioned + "</ul></li>")
     isolated_links = "".join(
         "<li><a rel='noopener noreferrer' href='" +
@@ -993,10 +997,12 @@ def graph_markdown(report):
         lines.append("Geen gemeenschappelijke bestandsnamen waargenomen.")
     lines.extend(["", "## Mogelijk dubbel werk rond hetzelfde issue (titel of body)", ""])
     for group in report["shown_duplicate_issue_groups"]:
-        lines.append("- [Issue #" + str(group["issue_number"]) + "](" +
+        lines.append("- [Nummer #" + str(group["issue_number"]) + "](" +
                      group["issue_url"] + ") · " +
                      str(group["open_pr_mentions_observed"]) +
-                     " open PR-tekstverwijzingen, geen geverifieerde fix")
+                     " open PR-tekstverwijzingen · GitHub identiteit: " +
+                     group["identity_status"] +
+                     " · geen geverifieerde fix/eigenaar")
         for row in group["shown_pr_sources"]:
             lines.append("  - [PR](" + row["url"] + ") · " +
                          "/".join(row["mentioned_in"]) +
