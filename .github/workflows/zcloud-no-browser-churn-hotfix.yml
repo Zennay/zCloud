@@ -122,7 +122,33 @@ jobs:
           prewrite_main="$(timeout 15 git ls-remote --exit-code origin refs/heads/main | awk '{print $1}')"
           test -n "$prewrite_main"
           test "$prewrite_main" = "$GITHUB_SHA"
-          backup="$HOME/.local/state/zcloud/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
+          # Preserve the existing VPS owner's checkout. A matching GitHub
+          # dispatch SHA does NOT prove this separate runtime checkout is
+          # clean or even on the same commit. Refuse to overwrite an untracked,
+          # modified, or symlinked watchdog file during a serialized release.
+          test ! -L "$live"
+          test ! -d "$live"
+          if test -d "$root/scripts" && test -w "$root/scripts"; then
+            test ! -L "$root"
+            test ! -L "$root/scripts"
+            test ! -L "$root/scripts/zcloud_worker_watchdog.py"
+            runtime_main="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" rev-parse --verify HEAD)"
+            if test "$runtime_main" != "$GITHUB_SHA"; then
+              echo "::error::Runtime checkout is not the exact approved main; preserve the owner's checkout."
+              exit 1
+            fi
+            watchdog_status="$(GIT_OPTIONAL_LOCKS=0 git -C "$root" status --porcelain=v1 --untracked-files=all -- scripts/zcloud_worker_watchdog.py)"
+            if test -n "$watchdog_status"; then
+              echo "::error::Runtime watchdog path has uncommitted or untracked owner work; refusing to overwrite."
+              exit 1
+            fi
+          fi
+          # A backup pathname must not redirect through an unexpected
+          # symlink; prepare the private directory only after all preflights.
+          state_dir="$HOME/.local/state/zcloud"
+          test ! -L "$state_dir"
+          umask 077
+          backup="$state_dir/zcloud-worker-watchdog.pre-no-churn-$GITHUB_RUN_ID"
           mkdir -p "$(dirname "$backup")"
           if test -f "$live"; then cp -p "$live" "$backup"; fi
           if test -d "$root/scripts" && test -w "$root/scripts"; then
