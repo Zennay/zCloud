@@ -223,6 +223,9 @@ def main():
                         help="Notion queue data source UUID, or NOTION_QUEUE_DATA_SOURCE_ID environment variable")
     parser.add_argument("--notion-claims-export", type=Path,
                         help="private saved Notion connector query; no current-claim proof")
+    parser.add_argument("--archive-target", type=Path,
+                        help="optional existing external archive mount; metadata plan only")
+    parser.add_argument("--archive-min-age-days", type=int, default=7)
     parser.add_argument("--disk-hotspots-root", type=Path,
                         help="explicit workspace for bounded, read-only disk hotspot scan")
     parser.add_argument("--disk-hotspots-output", type=Path,
@@ -255,6 +258,8 @@ def main():
     try:
         if (args.disk_hotspots_root is None) != (args.disk_hotspots_output is None):
             raise ValueError("disk hotspot scan requires both root and private output")
+        if args.archive_target is not None and args.disk_hotspots_root is None:
+            raise ValueError("--archive-target requires private disk scan")
         if args.disk_sqlite and args.disk_hotspots_root is None:
             raise ValueError("--disk-sqlite requires root and private disk output")
         if args.disk_inspect_unlinked_files and args.disk_hotspots_root is None:
@@ -326,6 +331,11 @@ def main():
         if args.disk_hotspots_root is not None:
             from zsentinel_disk_hotspots import observe as disk_observe, html as disk_html, public_summary
             disk_report = disk_observe(args.disk_hotspots_root)
+            if args.archive_target is not None:
+                from zsentinel_archive_readiness import observe as archive_observe
+                disk_report["archive_readiness"] = archive_observe(
+                    disk_report, args.archive_target,
+                    min_age_days=args.archive_min_age_days)
             if args.disk_sqlite:
                 from zsentinel_sqlite_footprint import observe_many as sqlite_observe
                 disk_report["sqlite_footprint"] = sqlite_observe(
