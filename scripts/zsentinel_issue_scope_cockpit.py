@@ -272,6 +272,72 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             "merge_authorized": False, "deploy_authorized": False,
         })
     issue_rows.sort(key=lambda x: (P[x["priority"]], x["project"], x["issue"]))
+    # Integrate the already-merged canonical product board's saved operational
+    # signals (queue retries, expiries, and positive claim observations).
+    # This does NOT read production SQLite or determine owner availability.
+    source_operations = {}
+    for item in source.get("project_operations", []):
+        if type(item) is not dict or item.get("action_authorized") is not False:
+            raise ValueError("unexpected authority in saved operator context")
+        pid = item.get("project")
+        if type(pid) is not str or pid in source_operations:
+            raise ValueError("duplicate project operational evidence")
+        source_operations[pid] = item
+    project_signals = []
+    for pid in selected:
+        row = source_operations.get(pid)
+        if row is None:
+            project_signals.append({
+                "project": pid, "source_status": "not_provided",
+                "observed_claim_ids": None, "expired_leases_observed": None,
+                "high_claim_cycles_observed": None, "human_next_step": None,
+                "active_owner_verified": False, "recovery_authorized": False,
+            })
+            continue
+        ids = row.get("observed_claim_ids")
+        if ids is not None and (
+                type(ids) is not list or len(ids) > 150
+                or any(type(i) is not int or i < 0 for i in ids)):
+            raise ValueError("untrusted observed claim identifiers")
+        queue = row.get("queue_observation")
+        if queue is not None and type(queue) is not dict:
+            raise ValueError("untrusted saved queue aggregation")
+        queue = queue or {}
+        high = queue.get("high_claim_attempts")
+        expired = queue.get("expired_active_leases")
+        if any(v is not None and (
+                type(v) is not int or v < 0 or v > 100000000)
+               for v in (high, expired)):
+            raise ValueError("unbounded saved queue incident count")
+        action = row.get("recommended_next_step")
+        if type(action) is not str or len(action) > 650:
+            raise ValueError("invalid saved next owner step")
+        project_signals.append({
+            "project": pid,
+            "source_status": "saved_operator_observation_only",
+            "observed_claim_ids": ids,
+            "expired_leases_observed": expired,
+            "high_claim_cycles_observed": high,
+            "human_next_step": action,
+            "active_owner_verified": False, "recovery_authorized": False,
+        })
+    branch_raw = source.get("coverage", {}).get("branches")
+    branch_context = None
+    if branch_raw is not None:
+        if (type(branch_raw) is not dict
+                or type(branch_raw.get("coverage_complete")) is not bool
+                or type(branch_raw.get("recent_overlap_candidates")) is not int
+                or not 0 <= branch_raw["recent_overlap_candidates"] <= 12
+                or branch_raw.get("repository") != "Zennay/zCloud"):
+            raise ValueError("invalid saved un-PR'd branch evidence")
+        branch_context = {
+            "repository": "Zennay/zCloud",
+            "recent_overlap_candidates_observed":
+                branch_raw["recent_overlap_candidates"],
+            "sample_complete": branch_raw["coverage_complete"],
+            "active_ownership_verified": False,
+            "source": "optional_saved_branch_owner_audit_not_live",
+        }
     return {
         "schema": "zsentinel-integrated-issue-pr-scope-v1",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -280,6 +346,8 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
         "source_pr_observed_at_utc": collision["observed_at_utc"],
         "source_clocks_within_10_minutes": coherent,
         "chosen_projects": selected,
+        "saved_operational_context": project_signals,
+        "saved_unpr_branch_context": branch_context,
         "github_scope_by_project": [{
             "project": pid, "source_status": exact[pid]["source"],
             "pr_sample_complete": exact[pid]["complete"],
@@ -310,6 +378,22 @@ def output_text(report, markdown=False):
         lines.append(pid["project"] + ": PR-bron " + pid["source_status"] +
                      ", waargenomen gedeelde padenparen " +
                      str(pid["observed_overlap_pairs"]))
+    for item in report["saved_operational_context"]:
+        lines.append("Operatiebron " + item["project"] + ": " +
+                     item["source_status"] +
+                     ", aflopende leases in opgeslagen bron: " +
+                     str(item["expired_leases_observed"]) +
+                     ", hoge claimcycli: " +
+                     str(item["high_claim_cycles_observed"]) +
+                     ", actuele eigenaar: ONBEKEND")
+        if item["human_next_step"]:
+            lines.append("  Bronadvies: " + item["human_next_step"])
+    if report["saved_unpr_branch_context"] is not None:
+        branches = report["saved_unpr_branch_context"]
+        lines.append("PR-loze branches (opgeslagen, geen live eigenaren): " +
+                     str(branches["recent_overlap_candidates_observed"]) +
+                     " overlapkandidaten; compleet: " +
+                     str(branches["sample_complete"]))
     for row in report["issues"]:
         ref = ("[" + row["issue"] + "](" + row["url"] + ")" if markdown
                else row["url"])
@@ -337,6 +421,34 @@ def output_text(report, markdown=False):
 
 
 def output_html(report):
+    signals = []
+    for item in report["saved_operational_context"]:
+        signals.append(
+            "<tr><td>" + escape(item["project"]) + "</td><td>" +
+            escape(item["source_status"]) + "</td><td>" +
+            escape(str(item["high_claim_cycles_observed"])) + "</td><td>" +
+            escape(str(item["expired_leases_observed"])) + "</td><td>" +
+            escape(item["human_next_step"] or "Niet bekend") +
+            "</td></tr>")
+    branch_context = report["saved_unpr_branch_context"]
+    branch_note = (
+        "<p>zCloud PR-loze-branchobservatie: " +
+        str(branch_context["recent_overlap_candidates_observed"]) +
+        " mogelijke overlappen (opgeslagen bron, compleet: " +
+        str(branch_context["sample_complete"]) +
+        "; geen actuele eigenaarsbevestiging).</p>"
+        if branch_context else
+        "<p>PR-loze-branchwaarneming ontbreekt; geen eigenaarsconclusie.</p>")
+    signals_html = (
+        "<section aria-label='Opgeslagen operationele bron'>"
+        "<h2>Operationele context uit bestaande Product Delivery Board</h2>"
+        "<p>Dit zijn alleen eerder opgeslagen waarnemingen, geen live "
+        "SQLite-, lease-, runner- of productieoverzicht.</p>"
+        "<div class='scroll'><table><thead><tr><th>Project</th><th>Bron</th>"
+        "<th>Claimcycli</th><th>Verlopen leases</th><th>Bronadvies</th>"
+        "</tr></thead><tbody>" + "".join(signals) +
+        "</tbody></table></div>" + branch_note + "</section>"
+    )
     cards = []
     for row in report["issues"]:
         prs = []
@@ -439,6 +551,8 @@ update();
             "padding:11px;color:white;border-radius:7px;font:inherit}"
             ".filters output{font-size:14px;color:#dce7fa}"
             "a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #e4cf84}"
+            ".scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}"
+            "td,th{padding:10px;border-bottom:1px solid #53647a;text-align:left}"
             "aside{background:#303744;padding:18px;border-left:4px solid #e7c576}"
             "@media(min-width:770px){main{display:grid;grid-template-columns:1fr 1fr;gap:14px}}"
             "</style><h1>zSentinel · Productissues en PR-bestandscope</h1>"
@@ -450,7 +564,7 @@ update();
             ". Bronmomenten samenhangend: " +
             ("ja" if report["source_clocks_within_10_minutes"] else
              "NEE — controleer eerst nieuwe issue-evidence") + "</p>" +
-            filter_bar + "<main>" + "".join(cards) + "</main>" +
+            signals_html + filter_bar + "<main>" + "".join(cards) + "</main>" +
             offline_script + "<footer><small>Issue SHA256 " +
             escape(report["product_issue_source_sha256"]) + "</small></footer></html>")
 
