@@ -32,6 +32,9 @@ GATE_KEYS = (
     "review_page_may_be_truncated", "legacy_status_source_may_be_truncated",
     "observed_actionable_check_runs_hidden",
     "observed_actionable_legacy_contexts_hidden",
+    "check_runs_total_observed", "check_runs_latest_attempts_observed",
+    "check_runs_superseded_attempts_observed",
+    "legacy_contexts_observed", "legacy_status_superseded_attempts_observed",
 )
 
 
@@ -165,6 +168,36 @@ def _proof(row):
     return result
 
 
+def _changed_non_green(past, now):
+    """Only positive differences in the sampled non-green check evidence."""
+    if not past or past["status"] != now["status"] or now["status"] != (
+            "current_exact_pr_head_and_sample_match"):
+        return [], 0
+    changes = []
+    old_jobs = {c["check_run_id"]: c for c in past["observed_actionable_check_runs"]}
+    new_jobs = {c["check_run_id"]: c for c in now["observed_actionable_check_runs"]}
+    for job_id in sorted(new_jobs.keys() - old_jobs.keys()):
+        job = new_jobs[job_id]
+        changes.append({"kind": "non_green_job_newly_observed",
+                        "label": job["name"], "url": job["url"]})
+    for job_id in sorted(old_jobs.keys() - new_jobs.keys()):
+        job = old_jobs[job_id]
+        changes.append({"kind": "previous_non_green_job_not_in_current_sample",
+                        "label": job["name"], "url": job["url"]})
+    old_legacy = {s["context"]: s for s in past["observed_actionable_legacy_contexts"]}
+    new_legacy = {s["context"]: s for s in now["observed_actionable_legacy_contexts"]}
+    for context in sorted(old_legacy.keys() | new_legacy.keys()):
+        old = old_legacy.get(context)
+        new = new_legacy.get(context)
+        if old != new:
+            entry = new or old
+            changes.append({
+                "kind": ("non_green_legacy_now_observed" if new else
+                         "previous_non_green_legacy_not_in_current_sample"),
+                "label": context, "url": entry["url"]})
+    return changes[:16], max(0, len(changes) - 16)
+
+
 def compare_gate_episodes(previous, current):
     old_repos = _project_repositories(previous)
     new_repos = _project_repositories(current)
@@ -214,8 +247,11 @@ def compare_gate_episodes(previous, current):
             change = "same_exact_head_and_gate_receipts_at_two_observations"
         else:
             change = "gate_receipt_changed_same_head"
+        movements, hidden = _changed_non_green(past, now) if exact else ([], 0)
         rows.append({
             "url": url, "project": now["project"],
+            "observed_changed_non_green_checks": movements,
+            "observed_changed_non_green_checks_hidden": hidden,
             "previous_head": old_head if type(old_head) is str and SHA.fullmatch(old_head) else None,
             "current_head": head if type(head) is str and SHA.fullmatch(head) else None,
             "change": change,
@@ -233,6 +269,8 @@ def compare_gate_episodes(previous, current):
             "url": url, "project": old["project"],
             "previous_head": old.get("head_sha_observed"),
             "current_head": None,
+            "observed_changed_non_green_checks": [],
+            "observed_changed_non_green_checks_hidden": 0,
             "change": "not_selected_now_not_evidence_of_merge_or_closure",
             "previous_blocker": old["human_gate_blocker"],
             "current_blocker": None,
@@ -287,7 +325,16 @@ def render_gate_episodes(report, style="text"):
         items = "".join(
             "<li><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>" + escape(row["url"]) +
-            "</a>: " + escape(LABELS[row["change"]]) + "</li>"
+            "</a>: " + escape(LABELS[row["change"]]) +
+            ("<ul>" + "".join(
+                "<li>" + escape(item["kind"]) + ": <a rel='noopener noreferrer' href='" +
+                escape(item["url"], quote=True) + "'>" + escape(item["label"]) +
+                "</a></li>" for item in row["observed_changed_non_green_checks"]) +
+             "</ul>" if row["observed_changed_non_green_checks"] else "") +
+            ("<p>Extra veranderingen buiten voorvertoning: " +
+             str(row["observed_changed_non_green_checks_hidden"]) + "</p>"
+             if row["observed_changed_non_green_checks_hidden"] else "") +
+            "</li>"
             for row in rows)
         return ("<section><h2>PR-gateverandering tussen twee opnamen</h2><p>" +
                 str(report["unchanged_observed_holds"]) + " ongewijzigde observaties; " +
@@ -306,5 +353,13 @@ def render_gate_episodes(report, style="text"):
         link = ("[Open PR](" + row["url"] + ")" if style == "markdown" else row["url"])
         lines.append("- " + link + " · " + LABELS[row["change"]] +
                      (" · HEAD " + row["current_head"][:12] if row["current_head"] else ""))
+        for detail in row["observed_changed_non_green_checks"]:
+            label = detail["label"].replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+            detail_link = ("[" + label + "](" + detail["url"] + ")"
+                           if style == "markdown" else detail["label"] + " · " + detail["url"])
+            lines.append("  " + detail["kind"] + " · " + detail_link)
+        if row["observed_changed_non_green_checks_hidden"]:
+            lines.append("  Extra veranderingen niet getoond: " +
+                         str(row["observed_changed_non_green_checks_hidden"]))
     lines.append("Geen automatische claim, workflow-herstart, merge of deploy.")
     return "\n".join(lines) + "\n"
