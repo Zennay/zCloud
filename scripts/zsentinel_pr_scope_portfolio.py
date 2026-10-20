@@ -140,6 +140,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
     is rejected as a cross-source match rather than called merge-ready.
     """
     from zsentinel_pr_gate_now import observe_many
+    from zsentinel_pr_scope_guard import selected_source_pr
 
     if (type(board) is not dict
             or board.get("schema") != "zsentinel-portfolio-pr-collision-board-v1"
@@ -225,18 +226,36 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                     break
         if len(selected) == 4:
             break
+    fallback_count = 0
     if focus_prs:
         available = {
             project + "#" + str(pr["number"]): (project, repo, pr)
             for bucket in buckets for project, repo, pr in bucket
         }
-        # Existing stable double-read PR source remains authoritative.
-        # An unobserved / QA-only / changed source PR cannot be silently
-        # looked up through another route or treated as current.
-        if any(raw not in available for raw in focus_prs):
-            raise ValueError(
-                "selected PR absent from stable sampled product-PR scope; no gate reads")
-        selected = [available[raw] for raw in focus_prs]
+        source_projects = {
+            view["project"]: view["repository"] for view in board["project_views"]
+        }
+        selected = []
+        for raw in focus_prs:
+            project, number_text = raw.split("#", 1)
+            if project not in source_projects:
+                raise ValueError("explicit PR not in selected registered project")
+            if raw in available:
+                selected.append(available[raw])
+                continue
+            # An older PR can fall outside the 16 newest entries. Pin its
+            # exact head/base directly instead of declaring it nonexistent.
+            # This two-GET direct observation does not verify its conflicts
+            # with PRs outside the ordinary capped collision inventory.
+            repo = source_projects[project]
+            direct = selected_source_pr(repo, int(number_text), token)
+            if direct["product_candidate_based_on_title"] is not True:
+                raise ValueError("QA-only or non-product selected PR")
+            selected.append((project, repo, {
+                **direct,
+                "direct_explicit_source_only": True,
+            }))
+            fallback_count += 1
     identities = [(repo, pr["number"]) for _, repo, pr in selected]
     gate_rows = observe_many(identities, token)["items"] if identities else []
     output = []
@@ -250,6 +269,9 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "project": project,
                 "url": captured["url"],
                 "head_sha_observed": captured["head_sha"],
+                "observed_in_recent_pr_collision_sample":
+                    not captured.get("direct_explicit_source_only", False),
+                "complete_file_collision_coverage_verified": False,
                 "status": "current_exact_pr_head_and_sample_match",
                 "draft_at_read": gate["draft_at_read"],
                 "github_mergeable_boolean_observed": gate["github_mergeable_boolean_observed"],
@@ -279,6 +301,9 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             item = {
                 "project": project, "url": captured["url"],
                 "head_sha_observed": captured["head_sha"],
+                "observed_in_recent_pr_collision_sample":
+                    not captured.get("direct_explicit_source_only", False),
+                "complete_file_collision_coverage_verified": False,
                 "status": "pr_source_unavailable_or_changed_between_observations",
                 "required_rules_verified": False,
                 "live_owner_claim_verified": False,
@@ -290,21 +315,26 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
     result = {
         **board,
         "current_live_pr_gate_observation": {
-            "mode": ("explicit_stable_sampled_product_pr_refs" if focus_prs else
+            "mode": ("explicit_product_pr_refs_with_bounded_direct_lookup"
+                     if focus_prs and fallback_count else
+                     "explicit_stable_sampled_product_pr_refs" if focus_prs else
                      "opt_in_one_shot_at_most_four_stable_sampled_prs"),
             "observed_at_utc": datetime.now(timezone.utc).isoformat(),
             "items": output,
             "inspected_stable_sample_prs": total_inspected,
             "pr_gate_receipts_requested": len(selected),
+            "direct_explicit_prs_outside_recent_sample": fallback_count,
+            "extra_direct_pr_identity_gets": fallback_count * 2,
             "observed_gate_blocker_counts": {
                 category: sum(row["human_gate_blocker"] == category for row in output)
                 for category in sorted({row["human_gate_blocker"] for row in output})
             },
             "explicit_selected_prs": list(focus_prs),
             "qa_only_title_prs_not_inspected": qa_only_skipped,
-            "more_sampled_prs_not_gate_checked": total_inspected > len(selected),
+            "more_sampled_prs_not_gate_checked": (
+                total_inspected > len(selected) - fallback_count),
             "source_unavailable_or_changed_projects": incomplete_projects,
-            "max_additional_github_gets": len(selected) * 5,
+            "max_additional_github_gets": len(selected) * 5 + fallback_count * 2,
             "file_scope_and_gate_reads_are_atomic": False,
             "required_branch_protection_verified": False,
             "notion_claims_verified": False,
@@ -313,7 +343,8 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             "deploy_authorized": False,
             "writes_performed": False,
         },
-        "maximum_github_gets": board["maximum_github_gets"] + len(selected) * 5,
+        "maximum_github_gets": (board["maximum_github_gets"] + len(selected) * 5
+                                + fallback_count * 2),
         "claim_authorized": False,
         "merge_authorized": False,
         "deploy_authorized": False,
