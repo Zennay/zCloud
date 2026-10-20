@@ -1101,3 +1101,23 @@ onbeslist, nooit succesvol. Het rapport sluit **merge-/deployautorisatie,
 actieve claimbeschikbaarheid en main-oplevering uit**: verse exact-head-CI,
 branchregels, echte reviewergoedkeuring en serialized release zijn apart
 vereist. Geen QA-suite of eigen workflow wordt geschreven of gestart.
+
+
+### Snelle vrijgaveblokkade-inbox in de privé-overdracht
+
+Bij een grote reviewmanifest met maximaal 300 eerder gevonden PRs bevat
+`--format markdown` vóór de individuele PR-kaarten een **één-scherm
+blokkeerinbox**. De bestaande kandidaten staan daarin volgens de strikte
+bronwaarheid onder ontbrekende batch/GitHub-bron, waargenomen niet-geslaagde
+checks, lopende checks, gevraagde reviewwijzigingen, gedeeltelijke CI-bron,
+nog niet waargenomen onafhankelijke review of onbekende verplichte
+release-/eigenaarsregels. Per categorie toont hij maximaal zes rechtstreeks
+klikbare, canonieke PR-links en het resterende aantal; alle PR-kaarten en
+bronissues blijven daaronder aanwezig, P0 voor P1. Zo hoeft de operator niet
+honderden kaarten af te lopen voordat de reden voor stilstand zichtbaar is.
+
+Ook de **leeftijd van de oudste opgeslagen receipt** staat nadrukkelijk in
+de samenvatting; na zes uur wordt die als verouderd gemarkeerd. Dit is alleen
+een weergave van één bevroren, read-only bewijsset. Nul fouten in een sample
+geeft nooit groen licht: exacte verplichte GitHub-checks, benodigde reviews,
+actieve claims, hoofdbranchmerge en productie zijn afzonderlijk te verifiëren.
