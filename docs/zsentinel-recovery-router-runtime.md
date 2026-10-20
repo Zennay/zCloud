@@ -1842,3 +1842,24 @@ De standaard `--output`-writer weigert bestaande doelbestanden en
 schrijft uitsluitend create-only `0600` Markdown; zonder outputparameter
 gaat de tekst naar stdout. Geen verandering aan verplichte bestaande
 CI, review, research, security en releasegates; nieuwe QA-suites niet gemaakt.
+
+
+### 20 oktober · P0/P1-projectspreiding en menselijke escalaties zonder valse alarmen
+
+Bij meer dan twaalf blockerkaarten bewaart het zSentinel-bord de prioriteit
+P0 vóór P1 én de bestaande bronklassevolgorde. Binnen één identieke
+prioriteit/klasse verdeelt het de zichtbare kaarten beurtelings over
+projecten in plaats van een drukke repository alle twaalf plaatsen te
+laten vullen. Het overige aantal blijft expliciet afgekapt; projectspreiding
+bewijst geen opgelost werk of vrije claim.
+
+De menselijke handoff heeft dezelfde bronkaartidentiteit als het offline
+bord, zodat een eigenaar een verzoek tussen verschillende momentopnames
+kan terugvinden. Alleen een daadwerkelijk noodzakelijke onafhankelijke
+PR-review, gevraagde reviewcorrectie, bevoegde releasebeslissing of
+vastgestelde account-billing-startweigering komt uit PR-data in de
+menselijke briefing. Generiek PR-brononderzoek, ontbrekende CI, een
+automatisch oplosbare codefout, een gewone draft-PR en historische
+onzekerheid worden niet als onmiddellijke menselijke interventie
+aangemerkt. P0/P1 owner-only issuegates en concrete auth-/leaseconflicten
+behouden hun bestaande brongebonden plaats.
