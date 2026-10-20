@@ -237,8 +237,11 @@ def saved_queue(receipt: dict, *, project=None, priority=None):
         if (type(repo) is not str or PROJECT.fullmatch(repo) is None
                 or repo in discovered_projects or type(rows) is not list
                 or not 1 <= len(rows) <= 300
-                or group.get("source_prs_observed") != len(rows)):
-            raise ValueError("Inconsistent sampled project inventory")
+                or group.get("source_prs_observed") != len(rows)
+                or group.get("read_only") is not True
+                or any(group.get(key) is not False for key in
+                       ("ownership_verified", "merge_authorized", "live_verified"))):
+            raise ValueError("Inconsistent sampled project inventory or authority")
         discovered_projects.add(repo)
         for row in rows:
             if type(row) is not dict:
@@ -251,6 +254,7 @@ def saved_queue(receipt: dict, *, project=None, priority=None):
                     or url in seen or row.get("priority") not in PRIORITY
                     or row.get("primary_gate") not in CATEGORIES
                     or row.get("gate_source") not in SOURCES
+                    or row.get("review_and_merge_authorized") is not False
                     or type(issues) is not list or len(issues) > 60
                     or any(type(i) is not str or
                            ISSUE_URL.fullmatch(i) is None or
@@ -262,6 +266,24 @@ def saved_queue(receipt: dict, *, project=None, priority=None):
                     or any(ord(ch) < 32 or ord(ch) == 127
                            for ch in row["next_action"])):
                 raise ValueError("Untrusted saved PR or issue source")
+            observed = row.get("gate_observations")
+            count_names = (
+                "checks_completed", "checks_pending", "checks_not_successful",
+                "independent_approvals_observed", "changes_requested_observed",
+                "legacy_pending_observed", "legacy_failed_observed",
+            )
+            flag_names = (
+                "checks_page_complete", "reviews_page_may_be_truncated",
+                "legacy_page_may_be_truncated",
+            )
+            if observed is not None:
+                if (type(observed) is not dict
+                        or set(observed) != set(count_names + flag_names)
+                        or row["gate_source"] != "observed_partial_gate_receipt"
+                        or any(type(observed[k]) is not int or
+                               not 0 <= observed[k] <= 100 for k in count_names)
+                        or any(type(observed[k]) is not bool for k in flag_names)):
+                    raise ValueError("Untrusted saved gate observation")
             seen.add(url)
             if ((project is None or repo == project)
                     and (priority is None or priority == row["priority"])):
@@ -325,6 +347,14 @@ def main(argv=None):
                 print("  Original PR: " + item["url"])
                 print("  Linked source issues: " +
                       (", ".join(item["linked_issue_urls"]) or "none observed"))
+                observed = item.get("gate_observations")
+                if observed is not None:
+                    print("  Sampled exact-HEAD gates (NOT required CI proof): " +
+                          str(observed["checks_completed"]) + " completed, " +
+                          str(observed["checks_pending"]) + " pending, " +
+                          str(observed["checks_not_successful"]) + " unsuccessful; " +
+                          str(observed["independent_approvals_observed"]) +
+                          " observed independent approvals")
             if len(ordered) > args.limit:
                 print(str(len(ordered) - args.limit) +
                       " additional source-sampled PRs not displayed (NOT resolved).")
