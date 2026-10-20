@@ -70,8 +70,11 @@ def verified_source_coverage(selected, provenance, bundle):
         ]
         ci_ok = (len(ci_status) == 1 and ci_status[0] in (
             "selected_one_source_bound_job", "no_actionable_job_in_sampled_windows"))
-        issue_ok = (len(issue_status) == 1 and issue_status[0] == "partial"
-                    and not inbox.get("stopped_after_rate_or_auth_denial", False))
+        # GitHub 401/403 can be repository-specific. An unrelated project's
+        # denied issue window must not suppress this project's own complete
+        # bounded issue/PR receipt. Global rate-limit handling is already
+        # reflected in each per-project coverage status.
+        issue_ok = (len(issue_status) == 1 and issue_status[0] == "partial")
         # A truncated issue feed is still a partial observation, not an
         # authoritative full issue list. It should not mask a CI denial.
         if ci_ok and issue_ok:
