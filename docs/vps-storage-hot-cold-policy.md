@@ -39,3 +39,14 @@ python3 scripts/vps_storage_audit.py --older-than-days 3 --limit 20
 ```
 
 This command is strictly read-only and is safe during active training. It does not copy or prune files. Work in this branch is a storage discovery/policy integration, not a completed offsite migration or a training restart.
+
+
+## 20 October · measured training free-space reserve instead of optimistic archive estimates
+
+The existing read-only `scripts/vps_storage_audit.py` now exposes a `disk_pressure` section next to candidate inventory and `archive_mount`. The report measures **actual** local free bytes against the existing 10 GiB training headroom threshold. It separately computes an *optimistic upper bound* for old candidate bytes: even if every assessed candidate were independently verified and eventually authorized for deletion, would the total be enough to close the reserve gap? The answer must never be reported as reclaimed bytes.
+
+All outputs explicitly declare `source_deletion_authorized=false`, `remote_copies_verified=false`, `bytes_reclaimed=0`, `training_restart_authorized=false`. The mounted `VPS-Archief` path is detected read-only through the kernel mount table; `mounted_write_unverified` still does **not** grant remote-write permission. Actual encrypted transfers must use the existing approved uploader and its remote full-byte/restore proofs.
+
+**Direct live source inspection (read-only, no installed script, no QA suite):** connected zSSH executed the exact immutable source `8b1a02d` in memory against the VPS. Observed root available **9,914,683,392 bytes**, which is **822,734,848 bytes below** the 10 GiB reserve. This bounded source sample found **381** older diagnostic/training-report candidates totalling **833,723 bytes**. Even hypothetical verified pruning of *all* of those would leave a gap of **821,901,125 bytes**. Mount: `fuse.rclone`, `mounted_read_only`. **No bytes were moved/reclaimed and Fuckball training was not restarted.** The eligible candidate count and amount may legitimately differ from older snapshots, since source files and access change; the prior unverified ~1.6 GiB statement must not be treated as current reclaimable capacity.
+
+This makes the next real storage choice explicit: a separately authorized search for other *completed, unreferenced, recoverable* cold objects or a larger local disk, without gambling on active models, live databases, dirty worktrees, trainer inputs or a read-only archive browse mount. Existing uploader/prune permissions, remote crypt recovery proof, and service ownership remain unchanged.
