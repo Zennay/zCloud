@@ -409,10 +409,9 @@ Bij classificatie gaat een aanwezige ruwe `metadata_json` vóór een afzonderlij
 De bestaande `portfolio_queue_enqueue` weigert nu expliciet opgegeven lege,
 niet-string of niet-canonieke queue-ID's; alleen een echt weggelaten ID wordt
 op basis van de taakbron berekend. Dit voorkomt dat bijvoorbeeld een expliciete
-lege ID stilzwijgend een nieuwe taakidentiteit oplevert. Voor overige
-niet-canonieke waarden geldt dezelfde weigering. De producent
-queue-ID's, in plaats van bijvoorbeeld `foo#1` en `foo 1` beide stil naar
-`foo-1` te herschrijven. Een producer-retry mag uitsluitend een bestaande,
+lege ID stilzwijgend een nieuwe taakidentiteit oplevert. Voor overige niet-canonieke waarden geldt dezelfde weigering. Twee
+verschillende externe waarden zoals `foo#1` en `foo 1` kunnen daardoor
+niet langer stilzwijgend allebei als `foo-1` worden opgeslagen. Een producer-retry mag uitsluitend een bestaande,
 nog ongeclaimde taak met **dezelfde project-ID, exacte titel en dezelfde parent-ID**
 actualiseren. Een bezette, anders getitelde of vanuit een andere parent afkomstige
 identiteit geeft een `ValueError` zonder de andere taakinformatie te overschrijven.
