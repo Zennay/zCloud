@@ -80,7 +80,7 @@ def observe_open_references(root: Path, file_rows: list, *,
         if identity == (expected_dev, expected_inode):
             identities.setdefault(identity, []).append(index)
     matches = [0] * len(file_rows)
-    observed_pids = [set() for _ in file_rows]
+    process_counts = [0] * len(file_rows)
     started = time.monotonic()
     processes = handles = unreadable = 0
     exhausted = False
@@ -95,6 +95,7 @@ def observe_open_references(root: Path, file_rows: list, *,
                 if not process.name.isascii() or not process.name.isdecimal():
                     continue
                 processes += 1
+                process_matches = set()  # candidate indices only, never retain process IDs
                 try:
                     with os.scandir("/proc/" + process.name + "/fd") as fds:
                         for descriptor in fds:
@@ -113,11 +114,13 @@ def observe_open_references(root: Path, file_rows: list, *,
                             if indices:
                                 for index in indices:
                                     matches[index] += 1
-                                    observed_pids[index].add(process.name)
+                                    process_matches.add(index)
                         if exhausted:
                             break
                 except OSError:
                     unreadable += 1
+                for index in process_matches:
+                    process_counts[index] += 1
                 if exhausted:
                     break
     return {
@@ -133,7 +136,7 @@ def observe_open_references(root: Path, file_rows: list, *,
         "coverage": "partial" if exhausted or unreadable else "sampled_not_exhaustive",
         "per_candidate": [
             {"index": i, "open_descriptors_observed": matches[i],
-             "distinct_processes_observed": len(observed_pids[i]),
+             "distinct_processes_observed": process_counts[i],
              "file_reidentified": any(i in indices for indices in identities.values()),
              "safe_to_delete": False, "writer_status": "unknown"}
             for i in range(len(file_rows))
