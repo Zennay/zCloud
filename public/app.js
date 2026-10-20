@@ -1958,7 +1958,13 @@ function exportZSentinelHandoff(){
       lines.push('- '+source.name+' '+clean(row.project,56)+' · '+clean(row.status,32)+
         ' · observed '+clean(row.observedAt||'unknown',48)+
         (row.staleEvidence?' · STALE RETAINED EVIDENCE, NOT CURRENT STATUS':'')+
-        (row.lastAttemptAt?' · last attempt '+clean(row.lastAttemptAt,48):''));
+        (row.lastAttemptAt?' · last attempt '+clean(row.lastAttemptAt,48):'')+
+        (source.name==='PR/CI GitHub source'&&row.providerAdmission&&
+         Object.hasOwn(GITHUB_PROVIDER_ADMISSIONS,row.providerAdmission)&&
+         row.providerAdmission!=='none'
+          ?' · GITHUB PROVIDER HOLD: '+GITHUB_PROVIDER_ADMISSIONS[row.providerAdmission]+
+           ' · missing events UNKNOWN'
+          :''));
     }
   }
   lines.push('', '## Product queue admission (provisional)', '');
@@ -2042,6 +2048,7 @@ function zSentinelDeliveryPulseSummary(github,visible,focus){
     &&(!focus||row.project===focus));
   const completeSample=covered.length&&covered.every(row=>
     row.status==='partial_sources'&&!row.staleEvidence
+    &&(!row.providerAdmission||row.providerAdmission==='none')
     &&Number.isFinite(Date.parse(row.observedAt))
     &&Date.now()-Date.parse(row.observedAt)<=6*3600000);
   const reportedMerges=events.filter(row=>row.kind==='pr_merged')
