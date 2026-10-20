@@ -2731,23 +2731,29 @@ def _portfolio_eligible_lane_candidates_locked(connection,ts,preempted=None):
         other_project=str(pending_project['project_id'] or '')
         if other_project in observed_projects or other_project not in PROJECT_INDEX:
             continue
-        # A source sample is not a full backlog census. Keep this extra
-        # project discovery read capped and strictly query-only.
-        project_page=connection.execute(
-            """SELECT * FROM portfolio_queue
-               WHERE project_id=? AND eligible=1 AND status='queued'
-                 AND worker_slot IS NULL AND claimed_at IS NULL
-                 AND claim_expires IS NULL
-               ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
-                             WHEN 'P2' THEN 2 ELSE 3 END,
-                        created_at,queue_id LIMIT 128""",
-            (other_project,),
-        ).fetchall()
-        matches=[
-            row for row in project_page
-            if str(row['queue_id']) not in preempted
-            and is_new_product_delivery(dict(row))
-        ]
+        # Older QA-only records can fill the first page for one project.
+        # Search up to four bounded 128-row pages to find actual product
+        # candidates rather than declaring that project empty after QA rows.
+        # No cursor or worker/lease state is persisted by these SELECTs.
+        matches=[]
+        for project_offset in (0,128,256,384):
+            project_page=connection.execute(
+                """SELECT * FROM portfolio_queue
+                   WHERE project_id=? AND eligible=1 AND status='queued'
+                     AND worker_slot IS NULL AND claimed_at IS NULL
+                     AND claim_expires IS NULL
+                   ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1
+                                 WHEN 'P2' THEN 2 ELSE 3 END,
+                            created_at,queue_id LIMIT 128 OFFSET ?""",
+                (other_project,project_offset),
+            ).fetchall()
+            matches.extend(
+                row for row in project_page
+                if str(row['queue_id']) not in preempted
+                and is_new_product_delivery(dict(row))
+            )
+            if len(matches)>=8 or len(project_page)<128:
+                break
         if matches:
             rows.extend(matches[:8])
     # Cross-project additions may have higher urgency than older items in
