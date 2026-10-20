@@ -132,6 +132,7 @@ def render_html(board, max_rows=20):
             "' data-priority='" + h(row["priority"]) +
             "' data-issue='" + h(row["issue_url"]) +
             "' data-pr='" + h(pr or "") +
+            "' data-prs='" + h(" ".join(item[0] for item in alt_items)) +
             "' data-title='" + h(row["title"]) +
             "' data-category='" + h(row["category_nl"]) +
             "' data-next='" + h(row["human_next_step_nl"]) + "'>"
@@ -220,7 +221,7 @@ def render_html(board, max_rows=20):
     script = r"""<script>
 (function(){
 'use strict';
-const tickets=Array.from(document.querySelectorAll('.ticket'));
+const tickets=Array.from(document.querySelectorAll('article.ticket[data-issue]'));
 const search=document.getElementById('q'), priority=document.getElementById('priority');
 const project=document.getElementById('project'), state=document.getElementById('state');
 const visible=document.getElementById('visible');
@@ -230,8 +231,8 @@ function refresh(){
  const q=search.value.trim().toLocaleLowerCase('nl');
  let count=0;
  for(const t of tickets){
-  const text=[t.dataset.title,t.dataset.issue,t.dataset.pr,t.dataset.project,
-   t.dataset.category,t.dataset.next].join(' ').toLocaleLowerCase('nl');
+  const text=[t.dataset.title,t.dataset.issue,t.dataset.pr,t.dataset.prs,
+   t.dataset.project,t.dataset.category,t.dataset.next].join(' ').toLocaleLowerCase('nl');
   const show=(!q||text.includes(q))&&(!priority.value||priority.value===t.dataset.priority)&&
    (!project.value||project.value===t.dataset.project)&&
    (!state.value||state.value===t.querySelector('.local-state').value);
@@ -257,6 +258,11 @@ document.getElementById('export').addEventListener('click',function(){
   parts.push(String(index+1)+'. ['+safeText(t.dataset.title)+']('+issue+') · '+
    safeText(t.dataset.project)+' · '+safeText(t.dataset.priority));
   parts.push('   Bestaande PR: '+(t.dataset.pr?'[Open PR]('+t.dataset.pr+')':'niet gezien in steekproef'));
+  const additional=t.dataset.prs.trim()?t.dataset.prs.trim().split(' '):[];
+  if(additional.length){
+   parts.push('   Andere bestaande PRs (geen eigenaars- of mergebewijs):');
+   for(const alt of additional.slice(0,4))parts.push('   - [Open PR]('+alt+')');
+  }
   parts.push('   Bronroute: '+safeText(t.dataset.category));
   parts.push('   Aanbevolen stap: '+safeText(t.dataset.next));
   parts.push('   Handmatige status: '+labels[t.querySelector('.local-state').value]);
