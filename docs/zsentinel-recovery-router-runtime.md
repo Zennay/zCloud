@@ -1941,3 +1941,31 @@ Geen QA- of regressiesuites geschreven of uitgevoerd, geen runner
 herstart, GitHub job retrigger, workerclaim, productiequeue-write,
 Notion-claim of deployment uitgevoerd. De bestaande exact-head CI,
 review, toestemming en releasegates blijven verplicht.
+
+
+### 20 oktober · extra wachtende self-hosted jobs in blocker-first opvolging
+
+De begrensde GitHub-bron kan bij hetzelfde project meerdere jobs met een
+exacte self-hosted `runner_route`, een `queued`-status en zonder
+toegewezen runner aantreffen. Eerder werd alleen de primair geselecteerde
+job een blokkaderouteringskandidaat. De overige geldige bronjobs staan
+nu afzonderlijk als **P1 read-only opvolgkaarten** op het blocker-first
+overzicht, na geverifieerde incidenten en eigenaargebonden P0-gates.
+De kaart is expliciet *nog niet exact herlezen*, dus **geen bewezen
+lopende VPS-storing**, werkhervatting, actieve claim of herstarttoestemming.
+
+Elke opvolgkaart bevat een rechtstreeks gevalideerde GitHub-job-URL en een
+kopieerbare `--job PROJECT:RUN_ID:JOB_ID:HEAD_SHA`. De operator kan
+precies die job via het bestaande read-only CLI-pad opnieuw ophalen.
+Er gaat niets automatisch naar GitHub, Notion, SQLite of de runner.
+De maximaal twaalf zichtbare blockerkaarten behouden P0 vóór P1,
+bronklasseprioriteit en eerlijke projectsprijding. Andere aanvullende
+jobs in de GitHub-pagina blijven in het uitklapbare bronoverzicht staan;
+als de lijst afgekapt is, noemt het portfolio dit expliciet.
+
+De offline blocker-continuity reader herkent de stabiele identiteit
+`job:<project>:<run-id>:<job-id>`, valideert de herleeslink en
+selectie-SHA, en vermeldt verdwijnen uit de volgende steekproef
+uitdrukkelijk **niet** als herstel. Menselijke noodbriefings sluiten
+deze nog niet exact herlezen read-only jobs bewust uit: broninspectie
+is zelfstandig productwerk, geen verplichte mensactie.
