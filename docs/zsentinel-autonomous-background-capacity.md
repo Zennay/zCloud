@@ -297,6 +297,12 @@ onvolledige inventarisdekking, dezelfde of veranderde Linux-opstartsessie,
 load/RAM/swap/root-schijfverschil en (uitsluitend waar vergelijkbaar) de
 daadwerkelijk gemeten CPUQuota/CPUWeight-instellingen van de Fuckball-coach.
 Het laatste bronmoment blijft de basis voor de huidige kaartensamenvatting.
+Die kaartensamenvatting wordt nu opgemaakt uit **exact dezelfde eenmaal
+geopende T0/T1-bronobjecten** als de tijdlijn; geen tweede bestandsopening
+waarbij een tussentijds vervangen privébron een tegenstrijdige eindkaart
+zou kunnen opleveren. Deze bronconsistentie is alleen binnen de geopende
+momentopnames gegarandeerd; er is geen cryptografische claim over de
+werkelijke VPS-runner- of GitHub-geschiedenis.
 Opeenvolgende bronmomenten moeten strikt oplopen en het hele venster past
 binnen **72 uur** op **exact hetzelfde hostlabel**. Per-bon laden is begrensd
 tot 128 KiB en de uiteindelijke offline HTML blijft maximaal 128 KiB.
