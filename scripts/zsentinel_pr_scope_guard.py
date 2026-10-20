@@ -1040,6 +1040,30 @@ def graph_html(report):
         escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
         "</a> · " + escape(pr["head_sha"][:12]) + "</li>"
         for pr in unpaired)
+    cluster_cards = []
+    for cluster in report["linked_pr_collision_clusters"]:
+        members = "".join(
+            "<li><a rel='noopener noreferrer' href='" +
+            escape(pr["url"], quote=True) + "'>PR #" + str(pr["number"]) +
+            "</a> · HEAD <code>" + escape(pr["head_sha"][:12]) +
+            "</code> · " + str(pr["other_prs_with_shared_files_observed"]) +
+            " directe bestandsverbindingen</li>"
+            for pr in cluster["participating_prs"])
+        samples = "".join("<li><code>" + escape(path) + "</code></li>"
+                          for path in cluster["shared_files_sample"])
+        cluster_cards.append(
+            "<li><h3>Connectiegroep " + str(cluster["component_number"]) +
+            " · " + str(cluster["pr_count_observed"]) + " open PRs</h3>" +
+            "<p>" + str(cluster["shared_file_edge_count_observed"]) +
+            " waargenomen PR-paren · " +
+            str(cluster["distinct_shared_file_count_observed"]) +
+            " unieke gedeelde bestandspaden. Veel verbindingen betekenen geen " +
+            "eigenaarschap of veilige mergevolgorde.</p><ul>" +
+            members + "</ul><details><summary>Gedeelde bestanden (begrensd)</summary><ul>" +
+            samples + "</ul>" +
+            ("<p>Meer gedeelde bestandspaden zijn niet afgebeeld.</p>"
+             if cluster["shared_files_sample_truncated"] else "") +
+            "</details></li>")
     return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>zSentinel PR-conflictenkaart</title>"
@@ -1065,7 +1089,12 @@ def graph_html(report):
             ". Gedeelde bestandspaden betekenen niet automatisch Git-mergeconflict."
             " Geen Notion-claim, eigenaar, bestandslease of PR-loze branch"
             " geverifieerd. Geen automatische claim of merge.</aside>"
-            "<table><thead><tr><th>Open PR's</th><th>Overlap</th>"
+            "<h2>Verbonden PR-bestandsgroepen</h2>"
+            "<p>Exact waargenomen gelijke bestandspaden verbinden PRs binnen het "
+            "gelezen venster. Geen claim-, mergevolgorde- of Git-conflictbewijs.</p><ol>" +
+            ("".join(cluster_cards) or
+             "<li>Geen verbonden groepen in de bekeken bron.</li>") +
+            "</ol><table><thead><tr><th>Open PR's</th><th>Overlap</th>"
             "<th>Gedeelde bestanden</th></tr></thead><tbody>" +
             "".join(rows) + "</tbody></table>"
             "<h2>Meerdere open PR's noemen hetzelfde issue</h2>"
@@ -1169,6 +1198,26 @@ def graph_markdown(report):
                      str(receipt["observed_prs"]) + " PRs.")
     if report["cross_page_duplicate_prs_observed"]:
         lines.append("**ONSTABIEL:** dezelfde PR op meerdere pagina's.")
+    lines.extend(["", "## Verbonden PR-bestandsgroepen", "",
+                  "Alleen gedeelde bestandspaden in het bekeken venster; "
+                  "geen eigenaarschap, Git-conflictbewijs of mergeautorisatie.", ""])
+    for cluster in report["linked_pr_collision_clusters"]:
+        lines.append("### Groep " + str(cluster["component_number"]) +
+                     " · " + str(cluster["pr_count_observed"]) + " open PRs · " +
+                     str(cluster["shared_file_edge_count_observed"]) + " PR-paren")
+        lines.append(str(cluster["distinct_shared_file_count_observed"]) +
+                     " verschillende gedeelde paden.")
+        for pr in cluster["participating_prs"]:
+            lines.append("- [PR #" + str(pr["number"]) + "](" + pr["url"] +
+                         ") · HEAD " + pr["head_sha"][:12] + " · " +
+                         str(pr["other_prs_with_shared_files_observed"]) +
+                         " directe bestandsverbindingen")
+        for path in cluster["shared_files_sample"]:
+            lines.append("  - Gedeeld bestand: " + repr(path))
+        if cluster["shared_files_sample_truncated"]:
+            lines.append("  - Extra gedeelde bestanden niet afgebeeld.")
+    if not report["linked_pr_collision_clusters"]:
+        lines.append("Geen verbonden groepen waargenomen.")
     lines.extend(["", "## Bestandsbotsingen (ook over paginagrenzen)", ""])
     for row in report["shown_file_collision_pairs"]:
         left, right = row["left"], row["right"]
