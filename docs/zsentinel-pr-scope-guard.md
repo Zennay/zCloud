@@ -420,15 +420,15 @@ The read-only CLI can also consume the **review-only JSON manifest** already
 exported by the offline Merge-first Workbench in
 [existing PR #1560](https://github.com/Zennay/zCloud/pull/1560):
 
-\`\`\`sh
+```sh
 python3 scripts/zsentinel_pr_gate_now.py \
   --from-review ./zsentinel-offline-merge-first-review.json \
   --output ./private-current-head-gates.json
-\`\`\`
+```
 
 This explicitly requested one-shot operation accepts only a bounded,
 strict-UTF-8, regular, non-symlink (when supported by the OS) JSON file under
-1 MiB with the expected \`zsentinel-offline-merge-first-review-v1\` schema,
+1 MiB with the expected `zsentinel-offline-merge-first-review-v1` schema,
 SHA-256 source board identifier, **all four authorization flags false**,
 original canonical Zennay GitHub PR URLs and unique saved PR identities.
 It never trusts saved ownership, prior mergeability or cached CI as live
@@ -436,14 +436,14 @@ authorization. Malformed/unbounded/missing-source inputs stop before any
 GitHub query. It sorts saved PR references P0, P1, P2, Unspecified and
 observes **at most four** using the same existing max-20-read bounded current
 PR gate collector. Any fifth or later PR is explicitly **NOT OBSERVED**:
-the output contains \`source_review_pr_count\` and
-\`review_only_top_four_observed=true\` when truncated.
+the output contains `source_review_pr_count` and
+`review_only_top_four_observed=true` when truncated.
 
 The GitHub gate receipt embeds the exact imported manifest SHA256 plus the
 original board source SHA256, so the operator can reconcile two saved
 snapshots without claiming they were fetched in one live transaction.
-\`--format text\` includes this source provenance and warns about any
-omitted fifth-or-later candidates. \`--format json\` remains the default
+`--format text` includes this source provenance and warns about any
+omitted fifth-or-later candidates. `--format json` remains the default
 for locally importing the fresh observation back into #1560; importing it
 never grants merge, deploy or claim authority. Source manifests do not
 authorize work, and neither separate PR is considered integrated until
