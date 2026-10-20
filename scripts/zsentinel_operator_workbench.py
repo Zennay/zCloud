@@ -625,7 +625,7 @@ function clearCarryPreview(message){
 }
 function previewCarry(data){
  if(!baseline)throw Error('Earlier source board required');
- if(!data||Array.isArray(data)||![1,2].includes(data.schema_version)||
+ if(!data||Array.isArray(data)||![1,2,3].includes(data.schema_version)||
     data.kind!=='zsentinel-private-human-delivery-handoff'||
     data.source_board_sha256!==baseline.sha||
     data.source_observed_at_utc!==baseline.observed_at_utc||
@@ -717,6 +717,8 @@ function currentBrief(){
     'Manual follow-up contact: '+line(human?.owner||'not entered',80)+' (label only, not a GitHub or Notion assignee)',
     'Manual UTC review date: '+(human?.due||'not entered')+' · '+
       (manualGateDecisions.has(human?.decision)?dueState(human):'not a human escalation'),
+    'Manual follow-up lifecycle: '+(human?.followup_status==='local-complete'?
+      'CLOSED LOCALLY — original issue still UNVERIFIED':'open / no completion proof'),
     'Human handoff provenance: '+(human?.carried_from?
       'manually carried from older board SHA256 '+human.carried_from+'; REVERIFY owner and gate':
       'entered on current board or not provided'),
@@ -871,7 +873,28 @@ function drawDetail(){
    'Imported from older source '+saved.carried_from.slice(0,12)+
    '… · reassess owner, date, CI and original issue before action.','notice'));
  detail.append(label,sel,ownerLabel,owner,dueLabel,due,nlabel,note);
- const update=()=>{saveSelection();invalidateBrief();refreshTriage();refreshFollowups();};
+ const progress=elem('section');
+ progress.setAttribute('aria-label','Manual human follow-up completion');
+ progress.append(elem('h3','Local human follow-up status'),
+   elem('p','Closing only hides this manual follow-up from future calendar exports. The GitHub issue, owner, CI and release status remain UNVERIFIED.'));
+ const state=elem('p','Current: '+(saved?.followup_status==='local-complete'?
+   'Locally closed (not issue resolved)':'Open / manual review required'));
+ const switcher=elem('button',saved?.followup_status==='local-complete'?
+   'Reopen local human follow-up':'Mark human follow-up locally complete');
+ switcher.type='button';switcher.disabled=!manualGateDecisions.has(sel.value);
+ switcher.onclick=()=>{
+   saveSelection();
+   const row=handoffs.get(selected);
+   if(!manualGateDecisions.has(row?.decision))return;
+   row.followup_status=row.followup_status==='local-complete'?'open':'local-complete';
+   invalidateBrief();drawList();drawDetail();
+   status.textContent=row.followup_status==='local-complete'?
+     'Only the private follow-up was locally closed; GitHub issue and gate statuses remain unknown.':
+     'Private human follow-up reopened; review date and contact label preserved.';
+ };
+ progress.append(state,switcher);detail.append(progress);
+ const update=()=>{saveSelection();invalidateBrief();refreshTriage();refreshFollowups();
+   switcher.disabled=!manualGateDecisions.has(sel.value);};
  sel.addEventListener('change',()=>{update();drawList()});
  note.addEventListener('input',update);
  owner.addEventListener('input',update);
@@ -883,8 +906,9 @@ document.getElementById('export').onclick=()=>{
  saveSelection();
  const rows=[...handoffs].filter(([id,v])=>entries.has(id)&&permitted.has(v.decision))
  .map(([issue,value])=>({issue,decision:value.decision,note:value.note.slice(0,1000),
-   owner:value.owner||'',due:value.due||'',carried_from:value.carried_from||''}));
- const payload={schema_version:2,kind:'zsentinel-private-human-delivery-handoff',
+   owner:value.owner||'',due:value.due||'',carried_from:value.carried_from||'',
+   followup_status:value.followup_status||'open'}));
+ const payload={schema_version:3,kind:'zsentinel-private-human-delivery-handoff',
    source_board_sha256:boardSha,source_observed_at_utc:board.observed_at_utc,
    authorizes_claim:false,authorizes_merge:false,authorizes_deploy:false,entries:rows};
  const uri=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\\n'],{type:'application/json'}));
@@ -947,7 +971,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
  try{
    if(file.size<4||file.size>65536)throw Error('size');
    const data=JSON.parse(await file.text());
-   if(!data||Array.isArray(data)||![1,2].includes(data.schema_version)||
+   if(!data||Array.isArray(data)||![1,2,3].includes(data.schema_version)||
       data.kind!=='zsentinel-private-human-delivery-handoff'||
       data.source_board_sha256!==boardSha||
       data.source_observed_at_utc!==board.observed_at_utc||
@@ -961,18 +985,20 @@ document.getElementById('restore').addEventListener('change',async event=>{
          typeof v.note!=='string'||v.note.length>1000||
          new TextEncoder().encode(v.note).length>4000||
          [...v.note].some(ch=>ch.codePointAt(0)<32&&ch!=='\\n'&&ch!=='\\t')||
-         (data.schema_version===2&&(
+         (data.schema_version>=2&&(
           typeof v.owner!=='string'||v.owner.length>80||
           [...v.owner].some(ch=>ch.codePointAt(0)<32||ch==='<'||ch==='>')||
           !validFollowupDate(v.due)||
+          (data.schema_version===3&&!['open','local-complete'].includes(v.followup_status))||
           (v.carried_from!==undefined&&
            (typeof v.carried_from!=='string'||
             (v.carried_from!==''&&!/^[a-f0-9]{64}$/.test(v.carried_from)))))))
          throw Error('malformed note/follow-up provenance');
      next.set(v.issue,{decision:v.decision,note:v.note,
-       owner:data.schema_version===2?v.owner:'',
-       due:data.schema_version===2?v.due:'',
-       carried_from:data.schema_version===2?(v.carried_from||''):''});
+       owner:data.schema_version>=2?v.owner:'',
+       due:data.schema_version>=2?v.due:'',
+       carried_from:data.schema_version>=2?(v.carried_from||''):'',
+       followup_status:data.schema_version===3?v.followup_status:'open'});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
    invalidateBrief();drawList();drawDetail();
