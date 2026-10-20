@@ -232,6 +232,14 @@ def collect(database, maximum):
             "candidate_observed": lane.get("queue_id") is not None,
             "active_backlog_count": lane.get("active_backlog_count", 0),
             "parallel_active_warning": lane.get("parallel_active_warning", False),
+            "serialized_unscoped_queue_admitted": lane.get(
+                "serialized_unscoped_queue_admitted", False
+            ),
+            "new_write_admission_held": bool(
+                lane.get("status") == "blocked"
+                or lane.get("unknown_active_scope_count")
+                or lane.get("unknown_claim_scope_count")
+            ),
             "active_cross_lane_scope_conflicts": (
                 collision_counts[lane["lane_id"]] if cross_lane_coverage else None
             ),
@@ -297,6 +305,10 @@ def text_view(data):
     ]
     for lane in data["lanes"]:
         extra = " | MEERDERE ACTIEVE TAKEN" if lane["parallel_active_warning"] else ""
+        if lane["serialized_unscoped_queue_admitted"]:
+            extra += " | MAXIMAAL EEN SCHRIJVER ZONDER SCOPE"
+        if lane["new_write_admission_held"]:
+            extra += " | NIEUWE SCHRIJFACTIE NIET VRIJGEGEVEN"
         if lane["active_cross_lane_scope_conflicts"]:
             extra += " | CONFLICT MET ANDERE ACTIEVE BAAN"
         elif lane["active_cross_lane_scope_conflicts"] is None:
@@ -362,6 +374,10 @@ def html_view(data):
             if lane["parallel_active_warning"] else ""
         )
         count = lane["conflicting_claims"] + lane["conflicting_queue_entries"]
+        if lane["serialized_unscoped_queue_admitted"]:
+            warning += "<p class='warn'>Wachtende taak zonder schrijfscope: uitsluitend seriële kandidaat, geen claimautorisatie.</p>"
+        if lane["new_write_admission_held"]:
+            warning += "<p class='warn'>Nieuwe schrijfopdracht niet vrijgegeven.</p>"
         if lane["active_cross_lane_scope_conflicts"]:
             warning += "<p class='warn'>Actief scopeconflict met andere herstelbaan.</p>"
         elif lane["active_cross_lane_scope_conflicts"] is None:
