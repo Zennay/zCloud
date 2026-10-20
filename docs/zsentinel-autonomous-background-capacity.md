@@ -248,6 +248,32 @@ beschikbare blokken (`statvfs.f_bavail × f_frsize`) in GiB.
 - Geen disk cleaner, extra directory-scan, servicemutatie, runnerrestart,
   CI-dispatch, queueclaim of productieactivatie is toegevoegd.
 
+## Inode-capaciteit · aanvulling 20 oktober 2026
+
+Veel kleine bestanden kunnen de inodepool uitputten terwijl er nog
+gigabytes beschikbaar zijn. Het optionele Linux-`statvfs`-signaal
+`root_inode_available_percent` (en de begrensde
+`root_inode_total` als herkomstcontext) is daarom toegevoegd aan
+de read-only capaciteitsbron. Er wordt niet door directories gewandeld,
+niets verwijderd en geen inode-aantal als vrijgave voor extra werk gebruikt.
+
+- Minder dan **1%** vrije inodes is urgente systeemdruk: het bestaande
+  CPU-advies laat de achtergrondtrainer maximaal 60%/gewicht 25 toe.
+  Bij **1–5%** is de gematigde band maximaal 100%/gewicht 40.
+  Zwaardere bestaande CPU-, RAM-, swap- of byteschijfdruk houdt voorrang.
+- Op filesystems die geen betrouwbare totale inodepool melden staat dit
+  optionele signaal op **onbekend**; er wordt geen valse 100%-waarde
+  gemaakt. De bestaande verplichte capaciteitssignalen blijven behouden.
+- De privé HTML-werkbank en `--preview --human` tonen expliciet de
+  beschikbare inode-fractie. Nieuwe T0/T1-historische bronnen tonen
+  procentpuntverschillen uitsluitend bij gelijk Linux-rootdevice,
+  gelijk volumetotaal **én gelijk aantal totale inodes**.
+  Oudere bronmomenten blijven leesbaar, met een niet-vergelijkbaar
+  inodeverschil in plaats van een fictieve nulmeting.
+- Een gunstige inodewaarde bewijst geen geslaagde GitHub CI,
+  runner-herstel, veilige opschoning of geautoriseerde productie-release.
+  Automatische systemd-aanpassing blijft onder alle bestaande gates.
+
 ## Bootbewuste runnerherstelvergelijking (privé T0/T1)
 
 Nieuwe `zsentinel_runner_snapshot.py`-bonnen slaan vanaf deze bronversie
