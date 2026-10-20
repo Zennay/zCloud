@@ -11,6 +11,8 @@ import hashlib
 import json
 import re
 
+from zsentinel_pr_scope_guard import edit_path
+
 SCHEMA = "zsentinel-private-pr-workorders-v1"
 BOARD = "zsentinel-portfolio-pr-collision-board-v1"
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -57,9 +59,10 @@ def _markdown(value):
     return re.sub(r"([\\\[\]_*\x60<>])", r"\\\1", value)
 
 
-def _observed_overlap_paths(view, pr_url):
-    """Only shared filenames explicitly shown for this PR, not merge conflicts."""
+def _observed_overlap_paths(view, pr_url, direct_overlaps=None):
+    """Only observed shared filenames, including an older focused PR."""
     paths, related, hinted_issues = set(), set(), set()
+    paths_limited = False
     for pair in view.get("shown_collision_pairs", [])[:80]:
         left, right = pair["left"], pair["right"]
         if left["url"] == pr_url:
@@ -69,15 +72,22 @@ def _observed_overlap_paths(view, pr_url):
         else:
             continue
         for path in pair.get("shared_files", [])[:MAX_PATHS]:
-            if (type(path) is str and 0 < len(path) <= 180 and
-                    "\n" not in path and "\r" not in path):
-                paths.add(path)
+            paths.add(edit_path(path))
+    for source in (direct_overlaps or [])[:16]:
+        if type(source) is not dict:
+            raise ValueError("invalid older PR collision observation")
+        related.add(source["other_pr_url"])
+        paths_limited |= (source.get("shared_paths_preview_truncated") is True or
+                          source.get("other_pr_file_list_incomplete") is True)
+        for path in source.get("shared_paths_preview", [])[:12]:
+            paths.add(edit_path(path))
     for issue in view.get("shown_duplicate_issue_groups", [])[:80]:
         if any(source.get("url") == pr_url for source in issue.get("shown_pr_sources", [])):
             n = issue.get("issue_number")
             if type(n) is int and 0 < n < 100000000:
                 hinted_issues.add(n)
-    return (sorted(paths)[:MAX_PATHS], len(paths) > MAX_PATHS,
+    return (sorted(paths)[:MAX_PATHS],
+            len(paths) > MAX_PATHS or paths_limited,
             sorted(related)[:8], sorted(hinted_issues)[:MAX_ISSUE_HINTS])
 
 
@@ -95,6 +105,11 @@ def collect_workorders(board):
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("opt-in current merge-first gate inspection required")
     projects = {view["project"]: view for view in board["project_views"]}
+    live = board.get("current_live_pr_gate_observation")
+    if (type(live) is not dict or type(live.get("items")) is not list
+            or len(live["items"]) > MAX_PRS):
+        raise ValueError("missing bounded live gate receipts")
+    gate_sources = {item["url"]: item for item in live["items"]}
     observed_at = _timestamp(desk.get("observed_at_utc"))
     cards, seen = [], set()
     for item in desk["items"]:
@@ -116,7 +131,11 @@ def collect_workorders(board):
                       item.get("source_current_head_verified") is True)
         if not pinned and (head is not None or base is not None):
             raise ValueError("untrusted partial PR head/base receipt")
-        paths, paths_cut, related, hints = _observed_overlap_paths(projects[project], url)
+        live_gate = gate_sources.get(url)
+        if live_gate is None:
+            raise ValueError("selected PR not in current bounded gate receipt")
+        paths, paths_cut, related, hints = _observed_overlap_paths(
+            projects[project], url, live_gate.get("sampled_file_overlaps_observed"))
         for extra in item.get("observed_file_overlap_prs", [])[:8]:
             related.append(_same_repo_url(extra, repo))
         related = sorted(set(related) - {url})[:8]
@@ -155,7 +174,16 @@ def collect_workorders(board):
                          "; geen bewijs voor tussenliggende periode.")
         if paths_cut or item.get("non_green_jobs_hidden") or (
                 item.get("source_current_head_verified") is not True):
-            notes.append("Eén of meer bronlijsten zijn onvolledig.")
+            notes.append("Brongegevens voor conflicterende paden/CI zijn mogelijk afgekapt.")
+        if live_gate.get("observed_in_recent_pr_collision_sample") is False:
+            notes.append(
+                "Dit is een expliciet geselecteerde oudere PR buiten het "
+                "recente overzicht. Bestandsbotsingen met andere PRs blijven "
+                "onvolledig, ook als geen overlap is gevonden.")
+        if live_gate.get("sampled_file_overlaps_hidden"):
+            notes.append("Gerelateerde PRs buiten de bounded sample worden niet getoond.")
+        if not pinned:
+            notes.append("Verifieer HEAD en doelbranch voordat dit als huidige taak geldt.")
         cards.append({
             "project": project, "repository": repo, "number": num,
             "url": url, "files_url": url + "/files", "head_sha": head if pinned else None,
