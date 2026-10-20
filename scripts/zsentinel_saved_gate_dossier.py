@@ -167,6 +167,47 @@ def open_dossier(path: Path):
     return extracted, manifest, receipt
 
 
+def _open_private_extract_parent(directory: Path) -> int:
+    """Pin every ancestor descriptor; reject symlink and shared-write detours.
+
+    The final destination parent must belong to this operator, not merely
+    resolve to a writable path supplied by an untrusted archive or symlink.
+    No directories are created by this admission function.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    absolute = Path(os.path.abspath(os.fspath(directory)))
+    if not absolute.is_absolute() or absolute.parts[0] != os.sep:
+        raise ValueError("Invalid private extract parent")
+    descriptor = os.open(os.sep, flags)
+    try:
+        for component in absolute.parts[1:]:
+            before = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            if not stat.S_ISDIR(before.st_mode) or before.st_mode & 0o022:
+                raise ValueError("Unsafe private extract parent component")
+            nextfd = os.open(component, flags, dir_fd=descriptor)
+            try:
+                opened = os.fstat(nextfd)
+                if (not stat.S_ISDIR(opened.st_mode)
+                        or (opened.st_dev, opened.st_ino) !=
+                           (before.st_dev, before.st_ino)
+                        or opened.st_mode & 0o022):
+                    raise ValueError("Private extract parent identity changed")
+            except BaseException:
+                os.close(nextfd)
+                raise
+            os.close(descriptor)
+            descriptor = nextfd
+        owner = os.fstat(descriptor)
+        if (not stat.S_ISDIR(owner.st_mode)
+                or owner.st_uid != os.geteuid()
+                or owner.st_mode & 0o022):
+            raise ValueError("Private extract destination parent is not owned and safe")
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def extract_dossier(path: Path, destination: Path, *, expected_manifest_sha=None):
     """Create a new private directory only after fully verifying the ZIP.
 
@@ -180,8 +221,7 @@ def extract_dossier(path: Path, destination: Path, *, expected_manifest_sha=None
     # parent symlinks and never resolve an attacker-replaced destination path.
     if not destination.name or destination.name in (".", ".."):
         raise ValueError("Invalid private destination name")
-    parentfd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY |
-                       os.O_NOFOLLOW)
+    parentfd = _open_private_extract_parent(destination.parent)
     try:
         os.mkdir(destination.name, 0o700, dir_fd=parentfd)
         childfd = None
@@ -189,6 +229,11 @@ def extract_dossier(path: Path, destination: Path, *, expected_manifest_sha=None
         try:
             childfd = os.open(destination.name, os.O_RDONLY |
                               os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parentfd)
+            created_directory = os.fstat(childfd)
+            if (not stat.S_ISDIR(created_directory.st_mode)
+                    or created_directory.st_uid != os.geteuid()
+                    or stat.S_IMODE(created_directory.st_mode) & 0o077):
+                raise ValueError("Extracted dossier directory is not private")
             for name in FILES:
                 fd = os.open(name, os.O_CREAT | os.O_EXCL | os.O_WRONLY |
                              os.O_NOFOLLOW, 0o600, dir_fd=childfd)
