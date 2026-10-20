@@ -351,6 +351,169 @@ def html_view(report):
             "<p>Bronmoment " + escape(report["observed_at_utc"]) + "</p></html>")
 
 
+
+MAX_CONFLICT_PAIRS = 200
+MAX_SHARED_FILES_PER_PAIR = 24
+
+
+def observe_conflict_graph(repo, token=None, limit=24):
+    """Show PR-to-PR file collisions over a bounded, double-read open PR window.
+
+    Collision means *shared pathname*, NOT merge conflict, active owner, worker
+    claim, or proof that either PR must be rejected.
+    """
+    if not REPO.fullmatch(repo) or type(limit) is not int or not 1 <= limit <= MAX_INSPECT:
+        raise ValueError("invalid graph request")
+    before = open_prs(repo, token)
+    chosen = before[:limit]
+    file_owners = {}
+    suspicious_lists = []
+    observed = []
+    for pr in chosen:
+        files, truncated = changed_paths(repo, pr["number"], token)
+        observed.append({
+            "number": pr["number"], "url": pr["url"],
+            "head_sha": pr["head_sha"], "base_sha": pr["base_sha"],
+            "file_count_observed": len(files),
+            "file_list_complete": not truncated,
+        })
+        if truncated:
+            suspicious_lists.append(pr["number"])
+        for path in files:
+            file_owners.setdefault(path, set()).add(pr["number"])
+    pairs = {}
+    for path, numbers in file_owners.items():
+        involved = sorted(numbers)
+        for index, left in enumerate(involved):
+            for right in involved[index + 1:]:
+                pairs.setdefault((left, right), []).append(path)
+    # Priority for operator inspection: most shared files first, then exact
+    # PR identifiers. This is NOT a claim or merge recommendation.
+    ordered = sorted(pairs.items(), key=lambda item: (-len(item[1]), item[0]))
+    cards = []
+    by_num = {pr["number"]: pr for pr in observed}
+    for (a, b), paths in ordered[:MAX_CONFLICT_PAIRS]:
+        cards.append({
+            "left": by_num[a], "right": by_num[b],
+            "shared_file_count_observed": len(paths),
+            "shared_files": sorted(paths)[:MAX_SHARED_FILES_PER_PAIR],
+            "shared_files_truncated": len(paths) > MAX_SHARED_FILES_PER_PAIR,
+            "action": "inspect_existing_prs_and_current_claims_before_edit",
+            "merge_conflict_verified": False,
+            "same_active_owner_verified": False,
+        })
+    after = open_prs(repo, token)
+    stable = before == after
+    fully_sampled = (len(before) < MAX_OPEN_PAGE and len(before) <= limit
+                     and not suspicious_lists and stable
+                     and len(ordered) <= MAX_CONFLICT_PAIRS)
+    return {
+        "schema": "zsentinel-pr-file-collision-graph-v1",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "repository": repo,
+        "source": "bounded_double_read_current_open_github_prs_and_files",
+        "observed_open_prs": len(before),
+        "inspected_prs": len(chosen),
+        "inspected_pr_heads": observed,
+        "observed_file_collision_pairs": len(ordered),
+        "shown_file_collision_pairs": cards,
+        "collision_cards_truncated": len(ordered) > MAX_CONFLICT_PAIRS,
+        "pr_file_lists_truncated": suspicious_lists,
+        "open_pr_page_may_be_truncated": len(before) == MAX_OPEN_PAGE,
+        "open_pr_snapshot_stable": stable,
+        "pr_file_scope_sample_complete": fully_sampled,
+        "source_result": ("collisions_observed" if ordered else
+                          "incomplete_no_collisions_observed" if not fully_sampled
+                          else "no_open_pr_shared_paths_observed"),
+        "findings_are_merge_conflicts": False,
+        "claim_inventory_verified": False,
+        "notion_claims_verified": False,
+        "prless_branches_verified": False,
+        "worker_file_leases_verified": False,
+        "file_edit_authorized": False,
+        "claim_authorized": False,
+        "merge_authorized": False,
+        "writes_performed": False,
+    }
+
+
+def graph_operator_text(report):
+    result = [
+        "zSentinel | PR-tegen-PR bestandsoverlap (ALLEEN LEZEN)",
+        "Repository: " + report["repository"],
+        "Gelezen open PR's: " + str(report["inspected_prs"]) +
+        " / gezien " + str(report["observed_open_prs"]),
+        "Gedeelde-bestandparen: " + str(report["observed_file_collision_pairs"]),
+        "Bron volledig: " + ("ja" if report["pr_file_scope_sample_complete"]
+                               else "NEE (steekproef of veranderde bron)"),
+    ]
+    for row in report["shown_file_collision_pairs"]:
+        a, b = row["left"], row["right"]
+        result.append("PR #" + str(a["number"]) + " ↔ PR #" + str(b["number"]) +
+                      ": " + str(row["shared_file_count_observed"]) +
+                      " gemeenschappelijke bestanden | " +
+                      a["url"] + " | " + b["url"])
+        for file in row["shared_files"]:
+            result.append("  " + file)
+        if row["shared_files_truncated"]:
+            result.append("  Meer bestandspaden niet weergegeven.")
+    if report["pr_file_lists_truncated"]:
+        result.append("Onvolledige bestandlijsten: " +
+                      ", ".join(str(n) for n in report["pr_file_lists_truncated"]))
+    result.append("Dit zijn gedeelde bestandspaden, GEEN bewezen Git-mergeconflicten.")
+    result.append("Open PR-steekproef is GEEN verificatie van Notion-claims, eigenaren, leases of PR-loze branches.")
+    result.append("Er wordt niets gewijzigd of geclaimd; bestaande releasegates blijven intact.")
+    return "\n".join(result)
+
+
+def graph_html(report):
+    rows = []
+    for row in report["shown_file_collision_pairs"]:
+        a, b = row["left"], row["right"]
+        left, right = escape(a["url"], quote=True), escape(b["url"], quote=True)
+        files = "<br>".join("<code>" + escape(path) + "</code>"
+                             for path in row["shared_files"])
+        if row["shared_files_truncated"]:
+            files += "<br>...meer paden"
+        rows.append(
+            "<tr><td><a rel='noopener noreferrer' href='" + left +
+            "'>PR #" + str(a["number"]) + "</a> ↔ "
+            "<a rel='noopener noreferrer' href='" + right +
+            "'>PR #" + str(b["number"]) + "</a></td><td>" +
+            str(row["shared_file_count_observed"]) + "</td><td>" + files +
+            "</td></tr>")
+    if not rows:
+        rows.append("<tr><td colspan='3'>Geen gedeelde bestandspaden in de gelezen PR-steekproef.</td></tr>")
+    completeness = ("volledig, uitsluitend voor huidige open PR's"
+                    if report["pr_file_scope_sample_complete"]
+                    else "onvolledig; bron/venster niet stabiel of afgekapt")
+    return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>zSentinel PR-conflictenkaart</title>"
+            "<style>body{background:#111820;color:#f2f5f8;font:16px system-ui;"
+            "max-width:1050px;margin:auto;padding:24px}"
+            "table{width:100%;border-collapse:collapse}td,th{padding:12px;"
+            "border-bottom:1px solid #566078;text-align:left;vertical-align:top;"
+            "overflow-wrap:anywhere}a{color:#b5d7ff}"
+            "aside{padding:12px;border-left:4px solid #bac1c9;background:#243140}"
+            "code{overflow-wrap:anywhere}</style>"
+            "<h1>zSentinel · PR-bestandsoverlap</h1><p>" +
+            escape(report["repository"]) + " | " +
+            str(report["inspected_prs"]) + " van " +
+            str(report["observed_open_prs"]) +
+            " open PR's gelezen | " +
+            str(report["observed_file_collision_pairs"]) +
+            " waargenomen paren</p><aside>Bron: " + escape(completeness) +
+            ". Gedeelde bestandspaden betekenen niet automatisch Git-mergeconflict."
+            " Geen Notion-claim, eigenaar, bestandslease of PR-loze branch"
+            " geverifieerd. Geen automatische claim of merge.</aside>"
+            "<table><thead><tr><th>Open PR's</th><th>Overlap</th>"
+            "<th>Gedeelde bestanden</th></tr></thead><tbody>" +
+            "".join(rows) + "</tbody></table><p>Bronmoment: " +
+            escape(report["observed_at_utc"]) + "</p></html>")
+
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--registry", type=Path, default=ROOT / "projects.json")
@@ -358,12 +521,27 @@ def main(argv=None):
     parser.add_argument("--path", action="append", default=[])
     parser.add_argument("--source-pr", type=int, help="Gebruik alle gewijzigde paden van deze open PR als doel; sla PR zelf over.")
     parser.add_argument("--max-prs", type=int, default=24)
+    parser.add_argument("--audit-open-prs", action="store_true",
+                        help="Toon een bestandsoverlapkaart voor open PR's zonder handmatige doelpaden.")
     parser.add_argument("--format", choices=("text", "json", "html"), default="text")
     args = parser.parse_args(argv)
     try:
         repos = registry(args.registry)
         if args.project not in repos:
             raise ValueError("unknown canonical project")
+        if args.audit_open_prs:
+            if args.path or args.source_pr is not None:
+                raise ValueError("--audit-open-prs cannot be combined with --path/--source-pr")
+            report = observe_conflict_graph(repos[args.project],
+                                            os.environ.get("GITHUB_TOKEN"), args.max_prs)
+            if args.format == "json":
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            elif args.format == "html":
+                print(graph_html(report))
+            else:
+                print(graph_operator_text(report))
+            return (2 if report["observed_file_collision_pairs"] else
+                    3 if not report["pr_file_scope_sample_complete"] else 0)
         report = observe(repos[args.project], args.path,
                          os.environ.get("GITHUB_TOKEN"), args.max_prs, args.source_pr)
         if args.format == "json":
