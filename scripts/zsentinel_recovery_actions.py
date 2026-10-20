@@ -99,8 +99,20 @@ def suggested_actions(packet):
             "PR_AND_OWNER_GATE_REQUIRED",
         ))
     # Show one safe independent continuation when release/owner waits.
-    if not any(lane.get("id") == "product-remediation"
-               and lane.get("status") != "idle" for lane in packet.get("lanes", [])[:4]):
+    # An idle lane is *not* an available new writer while another active
+    # queue task or local claim has an unknown actual write scope. Do not
+    # suggest a supposedly independent handoff on incomplete ownership data.
+    admission_clear = (
+        packet.get("source_complete") is True
+        and packet.get("ownership_reconciliation_required") is False
+        and packet.get("active_cross_lane_coverage_complete") is True
+        and _number(packet.get("active_write_scopes_not_declared")) == 0
+        and _number(packet.get("active_claim_scopes_not_declared")) == 0
+    )
+    if admission_clear and not any(
+        lane.get("id") == "product-remediation" and lane.get("status") != "idle"
+        for lane in packet.get("lanes", [])[:4]
+    ):
         result.append(action(
             "unoccupied-product-lane", "info",
             "De lokale productherstelbaan toont geen actieve taakhouder.",
