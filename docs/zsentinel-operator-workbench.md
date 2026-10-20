@@ -443,3 +443,7 @@ lease, authorization, CI, review, runner and release admission are all
 calendar writes, workflow dispatch, VPS command or production deployment
 occurs. The existing protected-main and independent review gates are
 unchanged. No QA or regression suites were authored or manually executed.
+
+### Source checks directly in the bulk review
+
+Every selectable human follow-up includes a canonical original GitHub-issue link. The private pre-apply review prints that issue URL and the first source-observed missing gate alongside the exact proposed local change, so a human can reopen the original owner/CI/release evidence before confirming. The first displayed gap is not an exhaustive authorization checklist and the original source snapshot may be stale. The operator must still verify all current gates independently; neither preview nor confirmation writes to GitHub, Notion, workers, CI or production.
