@@ -22,6 +22,7 @@ MAX_WINDOWS = 6
 MAX_PROJECTS = 18
 MAX_ITEMS_PER_WINDOW = 24
 MAX_OUTPUT_ITEMS = 144
+MAX_OUTPUT_PRS = MAX_PROJECTS * 8 + MAX_WINDOWS * 3
 
 
 def combine_workboards(snapshots, registry, now=None):
@@ -109,7 +110,7 @@ def combine_workboards(snapshots, registry, now=None):
             cleaned["source_stale"] = age > 600
             all_items.append(cleaned)
         listed = snapshot.get("recent_open_product_prs", [])
-        if type(listed) is not list or len(listed) > 8 * len(projects):
+        if type(listed) is not list or len(listed) > 8 * len(projects) + 3:
             raise ValueError("unbounded existing PR source list")
         for pr in listed:
             if type(pr) is not dict:
@@ -139,8 +140,9 @@ def combine_workboards(snapshots, registry, now=None):
                 "source_observed_at_utc": observed.isoformat(),
                 "source_age_seconds": age, "source_stale": age > 600,
             })
-    if not 1 <= len(project_set) <= MAX_PROJECTS or len(all_items) > MAX_OUTPUT_ITEMS:
-
+    if (not 1 <= len(project_set) <= MAX_PROJECTS
+            or len(all_items) > MAX_OUTPUT_ITEMS
+            or len(existing_prs) > MAX_OUTPUT_PRS):
         raise ValueError("portfolio scope exceeds explicit display capacity")
 
     # P0 first but distribute issue slots fairly within each priority, instead
