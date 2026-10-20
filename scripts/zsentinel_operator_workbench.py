@@ -207,7 +207,8 @@ Source is a bounded saved zSentinel board, not a live ownership or production fe
 <p class="notice"><strong>No automatic claim, merge, retry, deploy or privileged runner action.</strong>
 An apparently free issue is never proof that its ownership is clear. Check live
 Notion/queue claims and the exact-head GitHub gates separately before acting.</p>
-<p id="info" aria-live="polite"></p></header>
+<p id="info" aria-live="polite"></p>
+<p id="unsavedStatus" role="status" aria-live="polite">No locally edited handoffs to export.</p></header>
 <div class="filters">
 <label>Search product issues<input id="search" type="search" placeholder="Issue, project or next step"></label>
 <label>Priority<select id="priority"><option value="">All priorities</option>
@@ -358,6 +359,17 @@ function dueState(info){
   'due today UTC':'scheduled by operator';
 }
 let selected=null;const handoffs=new Map();
+let unsavedLocal=false;
+function setUnsaved(value){
+ unsavedLocal=Boolean(value);
+ document.getElementById('unsavedStatus').textContent=unsavedLocal?
+  'Unsaved private follow-up edits. Use Download private human handoff (.json) before closing this tab.':
+  'Private follow-up annotations match the last locally downloaded or restored handoff (if any).';
+}
+window.addEventListener('beforeunload',event=>{
+ if(!unsavedLocal)return;
+ event.preventDefault();event.returnValue='';
+});
 let viewedBrief=null;
 let viewedCalendar=null,viewedCalendarStamp=null;
 function invalidateBrief(){
@@ -376,12 +388,21 @@ function saveSelection(){
  if(!selected)return;
  const decision=document.getElementById('decision'),note=document.getElementById('note');
  const owner=document.getElementById('followupOwner'),due=document.getElementById('followupDue');
- if(decision&&note&&owner&&due)handoffs.set(selected,{
-  decision:decision.value,note:note.value.slice(0,1000),
-  owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:'',
-  followup_status:handoffs.get(selected)?.followup_status||'open',
-  carried_from:handoffs.get(selected)?.carried_from||''
- });
+ if(decision&&note&&owner&&due){
+  const before=handoffs.get(selected);
+  const after={
+   decision:decision.value,note:note.value.slice(0,1000),
+   owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:'',
+   followup_status:before?.followup_status||'open',
+   carried_from:before?.carried_from||''
+  };
+  const blank=!after.note&&!after.owner&&!after.due&&
+   after.decision==='investigate'&&after.followup_status==='open'&&!after.carried_from;
+  if(!before&&blank)return;
+  if(JSON.stringify(before)!==JSON.stringify(after)){
+   handoffs.set(selected,after);setUnsaved(true);
+  }
+ }
 }
 function filtered(){
  const q=document.getElementById('search').value.trim().toLowerCase();
@@ -893,7 +914,7 @@ function drawDetail(){
    const row=handoffs.get(selected);
    if(!manualGateDecisions.has(row?.decision))return;
    row.followup_status=row.followup_status==='local-complete'?'open':'local-complete';
-   invalidateBrief();drawList();drawDetail();
+   setUnsaved(true);invalidateBrief();drawList();drawDetail();
    status.textContent=row.followup_status==='local-complete'?
      'Only the private follow-up was locally closed; GitHub issue and gate statuses remain unknown.':
      'Private human follow-up reopened; review date and contact label preserved.';
@@ -920,6 +941,7 @@ document.getElementById('export').onclick=()=>{
  const uri=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\\n'],{type:'application/json'}));
  const a=elem('a');a.href=uri;a.download='zsentinel-human-handoff.json';a.click();
  setTimeout(()=>URL.revokeObjectURL(uri),1000);
+ setUnsaved(false);
  status.textContent='Private source-bound handoff downloaded. Nothing was submitted.';
 };
 document.getElementById('baseline').addEventListener('change',async event=>{
@@ -968,6 +990,7 @@ document.getElementById('carryApply').onclick=()=>{
  }
  const count=carryPreview.eligible.length;
  for(const row of carryPreview.eligible)handoffs.set(row.issue,row.value);
+ setUnsaved(true);
  clearCarryPreview('Transferred '+count+' reviewed, human-only annotations. All live owners/gates must be reverified.');
  invalidateBrief();drawList();drawDetail();
  status.textContent='Manually reviewed notes carried forward; no Notion claim or external action performed.';
@@ -1007,7 +1030,7 @@ document.getElementById('restore').addEventListener('change',async event=>{
        followup_status:data.schema_version===3?v.followup_status:'open'});
    }
    handoffs.clear();next.forEach((v,k)=>handoffs.set(k,v));
-   invalidateBrief();drawList();drawDetail();
+   setUnsaved(false);invalidateBrief();drawList();drawDetail();
    status.textContent='Own human handoff restored from this exact original board.';
  }catch{
    status.textContent='Handoff not restored: invalid, foreign or from another board snapshot.';
