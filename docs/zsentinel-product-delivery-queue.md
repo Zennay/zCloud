@@ -782,3 +782,23 @@ cap- en autorisatieregels. Alleen automatisch vervolgwerk dat direct uit
 deze menselijke blokkade voortkomt blijft onuitgegeven. De beslissing
 vindt plaats in de bestaande taak-afhandelingsbron, zonder nieuwe
 QA-gates of live workflow-, VPS- of claimactie.
+
+
+## 20 oktober · Een menselijke blocker bewaart het concrete vervolgvoorstel
+
+Een `BLOCKED`-taak met aangetoonde menselijke escalatie creëert geen
+automatische afhankelijke werkopdracht meer. Als de oorspronkelijke
+worker wel een gestructureerde `next_task.title` voorstelde, wordt die
+titel nu bounded (maximaal 200 tekens, newline-genormaliseerd) bovenaan
+de projectgebonden `Attention Needed`-details opgeslagen, voorafgegaan
+door: `Voorgestelde vervolgstap na toestemming (NIET ingepland)`.
+Dat betreft uitsluitend het bestaande geautoriseerde menselijke inbox-pad.
+De beheerinterface ontsmet nog steeds de HTML-tekst van de detailregel.
+Geen `next_task` wordt hierdoor ingeschreven of automatisch toegestaan;
+de echte menselijke autorisatie en een latere vrije queue-opdracht zijn
+afzonderlijke handelingen.
+
+Een `BLOCKED` zonder menselijke actie kan nog steeds zelfstandig
+uitvoerbaar vervolgwerk genereren binnen de bestaande productpolicy.
+Andere reeds bestaande producttaken blijven op hun eigen lanes en
+onder de eigen worker-/CI-/reviewgates lopen.
