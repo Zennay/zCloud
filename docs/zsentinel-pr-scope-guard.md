@@ -574,3 +574,48 @@ Onvolledige batches, ontbrekende actuele Notion-claims, niet geverifieerde
 branch protection en release-eigenaarschap kunnen nooit verborgen
 mergetoestemming opleveren. Er wordt geen bestaande review, branch,
 testuitvoering, queue of productiedienst gemuteerd.
+
+
+### Doorbouw 20 oktober · volledige manifestcapaciteit en geprioriteerde werkbak
+
+De gecombineerde `zsentinel_pr_gate_batches.py` ondersteunt nu **het gehele
+bestaande manifestmaximum van 300 PR's**, met 75 afzonderlijke bronbatches
+van telkens maximaal vier PR's. Er blijft **maximaal één batch per expliciete
+`zsentinel_pr_gate_now.py`-opvraag**: geen verborgen massale GitHub-poll,
+geen betaalde of background worker en geen automatische CI-reruns.
+
+De HTML-, tekst- en Markdown-overzichten tonen bovenaan **Eerst bekijken**:
+een compacte handmatige merge-first-werkbak met maximaal 24 bestaande
+PR-links, huidige *historisch waargenomen* CI/reviewcategorie en de
+eerstvolgende menselijke actie. De volgorde volgt exact de originele
+P0/P1-eerst gesorteerde reviewmanifestvolgorde. Als een eerdere batch ontbreekt,
+blijven de oorspronkelijke manifestposities behouden; niet de nummering van
+het beperkte ontvangstbestand. Overige PR's blijven in de volledige
+batchsecties zichtbaar.
+
+Batches zijn nooit één gelijktijdige GitHub-snapshot. De uitvoer toont nu
+het **tijdsverschil tussen de oudste en nieuwste bewaarde bronbon**:
+meer dan 600 seconden maakt de bron expliciet incoherent. Ook ontbrekende,
+onbereikbare en ouder dan vijftien minuten opgeslagen bonnen leveren
+statuscode `3` op. In de JSON staan deze niet-autoriserende bronvelden:
+
+- `cross_batch_observation_spread_seconds`
+- `cross_batch_observation_within_10_minutes`
+- `manual_review_queue_preview`
+- `manual_review_queue_hidden_after_24`
+- `all_observations_present_and_recent`
+
+Ook de bestaande interactieve `zsentinel_issue_scope_cockpit.py` toont deze
+bronwaarschuwing en de compacte menselijke werklijst in een uitklapbare
+sectie bij de brongebonden issues. Een ontbrekende of incoherente
+opgeslagen PR-batch laat de overige issuekaarten staan, maar de tool
+geeft statuscode `3` in plaats van een ogenschijnlijk volledige
+merge-first-beoordeling. Dit is geen nieuwe release-, review- of
+toestemmingsgate: het is alleen een correcte aanduiding van incomplete
+**historische waarnemingen**.
+
+`read-only`, `writes_performed=false`, `claim_authorized=false`,
+`merge_authorized=false` en `deploy_authorized=false` blijven bindend.
+Exact-head CI, GitHub-branch protection, onafhankelijke review,
+huidige claims en bevoegd releasebeheer moeten afzonderlijk live worden
+gecontroleerd vóór uitvoering van enige merge of productiehandeling.
