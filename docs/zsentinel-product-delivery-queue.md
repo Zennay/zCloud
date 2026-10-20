@@ -493,3 +493,26 @@ Dit is een **functionele allocatorwijziging** en niet een nieuwe audit of
 QA-implementatie. De vereiste automatische CI op exact de nieuwe PR-head,
 onafhankelijke review en geserialiseerde runtime-release moeten voor main/live
 nog plaatsvinden. Geen testsuites geschreven, uitgebreid of handmatig gestart.
+
+
+## 20 oktober · Actieve browseropdracht blijft zichtbaar tijdens leasevernieuwing
+
+De echte `portfolio_queue_allocate` beschermde reeds `running` en
+`verifying` taakclaims wanneer een lease kort voorbij zijn deadline was;
+alleen een daadwerkelijk veilige `claimed`-idle taak kan volgens de bestaande
+eigenaarsregels worden herverdeeld. Maar de afzonderlijke API-/slothelper
+`portfolio_queue_current_for_slot` en projectbezetting-helper
+`portfolio_queue_has_project_assignment` eisten voor **alle** statussen een
+nog niet verlopen `claim_expires`. Daardoor kon het dashboard/browserpad een
+lopende of verifiërende owner tijdelijk als ontbrekend tonen vóór de gewone
+schedulervernieuwing. Dat is strijdig met het actieve-claimcontract.
+
+De twee uitleesqueries zijn nu gelijkgetrokken met het bestaande
+allocatiebeleid: `running` en `verifying` blijven zichtbaar ook met een
+verlopen lease, terwijl een niet-actieve `claimed`-rij de oude leasevoorwaarde
+behoudt. Bij ongelijktijdige inconsistente slotregels heeft `running`
+voorrang boven `verifying` en `claimed`; niets wordt automatisch vrijgegeven.
+Het daadwerkelijke moment waarop een taak door de bevoegde eigenaar wordt
+afgesloten, blijft ongewijzigd. Deze branch voert geen live leasevernieuwing,
+database- of browserwijziging uit. Alleen normale CI, onafhankelijke review,
+protected main en runtime-owner-release kunnen dit operationeel maken.
