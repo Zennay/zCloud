@@ -205,11 +205,17 @@ def render_markdown(report):
             for url in links[:5]:
                 lines.append("  - " + url)
             if len(links) > 5:
-                lines.append("  - Extra bronlinks weggelaten; NIET opgelost")
+                lines.append("  - " + str(len(links) - 5) +
+                             " extra PR-bronlinks weggelaten; "
+                             "NIET gesloten of vrij eigenaarschap")
         lines.append("- Gewijzigde bronwaarnemingen: " +
                      str(len(row["changed_prs"])))
         for url, reasons in row["changed_prs"][:5]:
             lines.append("  - " + url + ": " + ", ".join(reasons))
+        if len(row["changed_prs"]) > 5:
+            lines.append("  - " + str(len(row["changed_prs"]) - 5) +
+                         " aanvullende gewijzigde PR-bronlinks weggelaten; "
+                         "geen bewijs van herstel")
         lines.append("")
     lines.extend([
         "## Vervolg voor bevoegde operator", "",
@@ -243,8 +249,12 @@ def render_html(report):
             contents = "".join(
                 '<li><a href="' + e(url) +
                 '" target="_blank" rel="noopener noreferrer">' +
-                e(url) + "</a></li>" for url in links[:5]
+                e(url) + "</a></li>" for url in links[:3]
             ) or "<li>Geen in dit bronvenster</li>"
+            if len(links) > 3:
+                contents += "<li>" + str(len(links) - 3) + (
+                    " aanvullende bronlinks niet weergegeven. "
+                    "Geen sluit-, merge- of claimvrijgavebewijs.</li>")
             items.append("<details><summary>" + label + ": " +
                          str(len(links)) + "</summary><ul>" +
                          contents + "</ul></details>")
@@ -252,8 +262,12 @@ def render_html(report):
             '<li><a href="' + e(url) +
             '" target="_blank" rel="noopener noreferrer">' +
             e(url) + "</a> · " + e(", ".join(reasons)) + "</li>"
-            for url, reasons in row["changed_prs"][:5]
+            for url, reasons in row["changed_prs"][:3]
         ) or "<li>Geen in dit bronvenster</li>"
+        if len(row["changed_prs"]) > 3:
+            changed += "<li>" + str(len(row["changed_prs"]) - 3) + (
+                " overige gewijzigde bestaande PRs niet getoond; "
+                "volledige bronselectie blijft onbekend.</li>")
         items.append("<details><summary>Gewijzigde PR-bronfeiten: " +
                      str(len(row["changed_prs"])) + "</summary><ul>" +
                      changed + "</ul></details>")
