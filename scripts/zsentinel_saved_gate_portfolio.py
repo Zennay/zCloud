@@ -75,6 +75,29 @@ def project_worklist(selected, integrated, *, project=None):
                             else "observed_partial_gate_receipt"),
             "linked_issue_urls": sorted(issue["url"] for issue in ref["observed_issue_refs"]),
             "concurrent_gates": list(concurrent),
+            # Keep only bounded, already validated saved gate facts. These
+            # observations permit offline T0/T1 change detection but cannot
+            # prove required checks, a review policy or main merge authority.
+            "gate_observations": (
+                {
+                    "checks_completed": gate["observed_checks_completed"],
+                    "checks_pending": gate["observed_checks_pending"],
+                    "checks_not_successful": gate["observed_checks_not_successful"],
+                    "independent_approvals_observed":
+                        gate["observed_independent_exact_head_approvals"],
+                    "changes_requested_observed":
+                        gate["observed_exact_head_changes_requested"],
+                    "legacy_pending_observed":
+                        gate["legacy_status_pending_observed"],
+                    "legacy_failed_observed":
+                        gate["legacy_status_failure_or_error_observed"],
+                    "checks_page_complete": gate["check_runs_page_complete"],
+                    "reviews_page_may_be_truncated":
+                        gate["review_page_may_be_truncated"],
+                    "legacy_page_may_be_truncated":
+                        gate["legacy_status_source_may_be_truncated"],
+                }
+                if gate is not None and category != "source" else None),
             "head_observed": (
                 gate["head_sha_observed"]
                 if gate is not None and category != "source" else None),
