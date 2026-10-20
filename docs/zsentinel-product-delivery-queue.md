@@ -263,3 +263,47 @@ deze wijziging behoudt uitsluitend het bestaande werk.
 Er is geen nieuwe test-, QA-, CI- of VPS-actie gestart en geen
 live queue-mutatie uitgevoerd. Alleen echte geautoriseerde
 merge en productie-uitrol maken dit runtimegedrag actief.
+
+
+### 20 oktober · Verlopen leases zonder onbedoelde werkovername
+
+De allocator had nog één zelfstandige route die **alle**
+`claimed`, `running` en `verifying`-rijen met een
+verlopen `claim_expires` direct op `queued` zette,
+ongeacht werkelijke voortgang. Zo kon een vertraagde
+browserworker of een taak in verplichte review plotseling
+zijn slot kwijtraken en meteen in dezelfde tick opnieuw
+geclaimd worden. Dit gaf risico op dubbel werk, verloren
+overdracht en claim-churn.
+
+De source allocator inspecteert deze gevallen nu
+afzonderlijk. `running` en `verifying` worden
+**nooit op basis van alleen TTL automatisch vrijgegeven**.
+Een `claimed` taak met aantoonbaar bezige browserworker
+blijft ook eigenaar, inclusief bij tijdelijk ontbrekende
+globale slotsynchronisatie terwijl een worker van hetzelfde
+project nog bezig is. Een beschermde lease krijgt alleen
+de normale allocatorslot-retentie, **geen verzonnen
+bewijs van voortgang of geslaagde CI**.
+
+Een werkelijk verlopen, niet-bezige `claimed` taak kan
+via de bestaande statuswijziging worden vrijgegeven,
+maar de oude queue-ID wordt direct in de reeds bestaande
+`preempted`-set geplaatst. Daarmee kan de allocator
+die ID **niet in dezelfde tick opnieuw claimen** voordat
+de oude browsertoewijzing uit de bron is verdwenen.
+
+De bezette-slotselectie telt ook bestaande ineligible
+`claimed`/`running`/`verifying`-rijen mee:
+het ongeschikt worden voor **nieuw** werk is geen
+toestemming om een reeds door een owner geclaimd
+browser-slot over te nemen. Voor aantoonbaar vastgelopen
+actieve taken blijft een aparte, bevoegde owneractie
+en echte actuele observatie nodig. Er is geen nieuw
+recovery/CI/review-overridepad toegevoegd.
+
+De source is uitsluitend op de bestaande PR #1536
+gecommit, niet in live SQLite gedeployed. Alle bestaande
+merge-, CI-, reviewer- en productieautorisatiegates
+blijven verplicht. Geen QA- of regressierondes,
+geen serviceherstart en geen live workerclaimmutaties.
