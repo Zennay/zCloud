@@ -107,6 +107,8 @@ def _safe_followup(state, assignment):
     """Decision support only; NEVER infer claim/lease/recovery authority."""
     if state == "allocated_paused_with_claimed_queue_owner_gate":
         return "owner_check_paused_worker_with_current_queue_lease"
+    if state == "allocated_queue_claim_expired_or_invalid_owner_recheck":
+        return "owner_reconcile_stale_queue_claim_without_claim_transfer"
     if state == "recent_client_block_event_owner_review":
         return "owner_inspect_current_assignment_and_recent_browser_block"
     if state == "post_block_progress_signal_owner_verification_required":
@@ -178,6 +180,9 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
     paused_with_claim = bool(
         desired_state == "paused" and global_slot is not None
         and assignment["current_lease"] and assignment["status"] is not None)
+    stale_queue_claim = bool(
+        global_slot is not None and assignment["status"] is not None
+        and assignment["coverage"] == "lease_expired_or_invalid_owner_recheck")
     last = con.execute(
         "SELECT id,ts,event,generating,sending,progress_at,assistant_chars "
         "FROM runner_events WHERE project_id=? AND worker_slot=? "
@@ -200,6 +205,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "classification": (
                 "allocated_paused_with_claimed_queue_owner_gate"
                 if paused_with_claim else
+                "allocated_queue_claim_expired_or_invalid_owner_recheck"
+                if stale_queue_claim else
                 "configured_running_no_event_evidence"
                 if desired_state == "running" and global_slot is not None
                 else "configured_not_allocated_not_a_stalled_worker"
@@ -215,6 +222,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "safe_followup": _safe_followup(
                 "allocated_paused_with_claimed_queue_owner_gate"
                 if paused_with_claim else
+                "allocated_queue_claim_expired_or_invalid_owner_recheck"
+                if stale_queue_claim else
                 "configured_running_no_event_evidence"
                 if desired_state == "running" and global_slot is not None else
                 "configured_not_allocated_not_a_stalled_worker"
@@ -307,6 +316,11 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         prompt[0] if prompt is not None else None, now)
     if paused_with_claim:
         state = "allocated_paused_with_claimed_queue_owner_gate"
+    elif stale_queue_claim:
+        # Queue status is still claimed/running/verifying but its lease
+        # cannot be treated as live. Require the canonical queue owner,
+        # NEVER auto-release or reassign this slot from stale metadata.
+        state = "allocated_queue_claim_expired_or_invalid_owner_recheck"
     elif desired_state == "paused":
         state = "configured_paused_not_incident"
     elif desired_state == "draining":
@@ -447,6 +461,7 @@ def observe_worker_progress(database, projects, *, now=None):
     # claim transfers, dispatch instructions or restart authorizations.
     actionable = {
         "allocated_paused_with_claimed_queue_owner_gate",
+        "allocated_queue_claim_expired_or_invalid_owner_recheck",
         "recent_client_block_event_owner_review",
         "post_block_progress_signal_owner_verification_required",
         "generating_but_progress_unverified_or_stale",
@@ -533,6 +548,8 @@ def _operator_worker_priority(row):
     """Read-only urgency order, never ownership or recovery authorization."""
     if row.get("classification") == "allocated_paused_with_claimed_queue_owner_gate":
         return (0, row.get("project_id", ""), row.get("worker_slot", 0))
+    if row.get("classification") == "allocated_queue_claim_expired_or_invalid_owner_recheck":
+        return (1, row.get("project_id", ""), row.get("worker_slot", 0))
     if (row.get("classification") == "recent_client_block_event_owner_review"
             and isinstance(row.get("timeline"), dict)
             and type(row["timeline"].get("recent_block_events_after_last_prompt_in_sample")) is int
@@ -629,6 +646,8 @@ def worker_progress_html(source):
         "recent_event_only_no_product_progress_proof": "Recent browser-event; geen productvoortgang bewezen",
         "configured_paused_not_incident": "Opzettelijk gepauzeerde worker; GEEN herstelincident",
         "allocated_paused_with_claimed_queue_owner_gate": "P0 EIGENAARCONTROLE: actieve queueclaim op toegewezen maar gepauzeerde worker",
+        "allocated_queue_claim_expired_or_invalid_owner_recheck":
+            "P1 EIGENAARCONTROLE: queueclaim bestaat maar lease is verlopen of onbetrouwbaar; GEEN vrijgavebewijs",
         "configured_not_allocated_not_a_stalled_worker": "Worker heeft geen globale toewijzing; oude config/events zijn GEEN actieve storing",
         "configured_draining_owner_hold": "Worker wordt door eigenaar gedraineerd; geen automatische herstart",
         "configured_running_no_event_evidence": "Worker staat op running maar heeft geen eventbron; eerst eigendom en start controleren",
@@ -712,6 +731,8 @@ def worker_progress_html(source):
         followups = {
             "owner_check_paused_worker_with_current_queue_lease":
                 "Actieve claim op gepauzeerde worker: eigenaarcontrole nodig.",
+            "owner_reconcile_stale_queue_claim_without_claim_transfer":
+                "Claimstatus bestaat maar lease is verlopen/ongeldig; laat bevoegde eigenaar handmatig toestand reconciliëren, zonder overname.",
             "owner_inspect_current_assignment_and_recent_browser_block":
                 "Open de recente browserblokkade bij de bevoegde workereigenaar.",
             "owner_verify_product_continuation_after_block_signal":
