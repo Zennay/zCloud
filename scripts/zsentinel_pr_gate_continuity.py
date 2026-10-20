@@ -47,6 +47,7 @@ def _project_repositories(board):
             or type(board.get("project_views")) is not list
             or not 1 <= len(board["projects"]) <= 3
             or len(board["project_views"]) != len(board["projects"])
+            or any(type(project) is not str for project in board["projects"])
             or len(set(board["projects"])) != len(board["projects"])):
         raise ValueError("not a bounded non-authorizing PR board")
     repos = {}
@@ -112,6 +113,8 @@ def _gate_rows(board, repos):
                         or check["check_run_id"] in check_ids
                         or type(check.get("name")) is not str
                         or not 1 <= len(check["name"]) <= 180
+                        or any(ord(char) < 32 or ord(char) == 127
+                               for char in check["name"])
                         or check.get("state") not in (
                             "completed", "queued", "in_progress",
                             "pending", "waiting", "requested", "unknown")
@@ -127,6 +130,8 @@ def _gate_rows(board, repos):
                 if (type(status_row) is not dict
                         or type(status_row.get("context")) is not str
                         or not 1 <= len(status_row["context"]) <= 200
+                        or any(ord(char) < 32 or ord(char) == 127
+                               for char in status_row["context"])
                         or status_row["context"] in seen_contexts
                         or status_row.get("state") not in
                             ("pending", "failure", "error")
@@ -339,12 +344,18 @@ def render_gate_episodes(report, style="text"):
         return ("<section><h2>PR-gateverandering tussen twee opnamen</h2><p>" +
                 str(report["unchanged_observed_holds"]) + " ongewijzigde observaties; " +
                 str(report["attention_needed"]) +
-                " opnieuw te bekijken; niet bewezen wat daartussen gebeurde.</p><ul>" +
+                " opnieuw te bekijken; niet bewezen wat daartussen gebeurde.</p>" +
+                ("<p>Gatebewijs ontbreekt bij een van beide opnamen; geen vergelijking mogelijk.</p>"
+                 if report["comparison_status"] != "two_bounded_observations" else "") +
+                "<ul>" +
                 (items or "<li>Geen vergelijkbaar gatebewijs.</li>") +
                 "</ul><p>GEEN automatische retrigger, claim-, review- of mergevrijgave.</p></section>")
     lines = [
         ("## PR-gateverandering tussen twee opnamen" if style == "markdown"
          else "PR-gateverandering tussen twee opnamen"),
+        ("Geen twee vergelijkbare gate-opnamen aanwezig." if
+         report["comparison_status"] != "two_bounded_observations" else
+         "Twee gate-opnamen aanwezig; uitsluitend bronmomentvergelijking."),
         "Ongewijzigd op twee meetmomenten: " + str(report["unchanged_observed_holds"]) +
         "; opnieuw te bekijken: " + str(report["attention_needed"]) +
         ". Geen bewijs voor de tussenliggende periode.",
