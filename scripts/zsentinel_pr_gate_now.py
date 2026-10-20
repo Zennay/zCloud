@@ -246,9 +246,12 @@ def human_gate_summary(source: dict) -> str:
             "Review-manifest SHA256: " + source["source_review_manifest_sha256"],
             "Overgenomen bron-board SHA256: " + source["source_review_board_sha256"],
             "Kandidaat-PRs in opgeslagen bron: " + str(source["source_review_pr_count"]),
-            "Alleen eerste vier P0/P1-prioritaire PRs bekeken: " +
-                ("JA; resterende PRs zijn NIET bekeken" if source["review_only_top_four_observed"]
-                 else "NEE; alle opgeslagen PRs bekeken"),
+            "Huidige gecontroleerde bronbatch: " +
+                str(source["source_review_batch_index"]) + "/" +
+                str(source["source_review_batches_total"]) + " · startref " +
+                str(source["source_review_batch_first_pr"]) + " · maximaal " +
+                str(source["source_review_batch_count"]) + " PRs",
+            "Overige batches afzonderlijk controleren; één JSON is nooit volledige mergevrijgave.",
         ])
     for item in source["items"]:
         lines.append("")
@@ -286,7 +289,7 @@ REVIEW_PR_URL = re.compile(
     r"^https://github[.]com/(Zennay/[A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]{0,8})$")
 
 
-def read_review_manifest(path: Path):
+def read_review_manifest(path: Path, batch: int = 1):
     """Bounded read-only handoff selection; no claim or merge permission."""
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
@@ -335,8 +338,16 @@ def read_review_manifest(path: Path):
         seen.add(identity)
         selected.append((priorities[row["highest_linked_priority"]], identity))
     selected.sort(key=lambda row: (row[0], row[1]))
+    batches = (len(selected) + MAX_PRS - 1) // MAX_PRS
+    if type(batch) is not int or not 1 <= batch <= batches:
+        raise ValueError("review batch is outside the available saved PR range")
+    first = (batch - 1) * MAX_PRS
     return {
-        "prs": [identity for _, identity in selected[:MAX_PRS]],
+        "prs": [identity for _, identity in selected[first:first + MAX_PRS]],
+        "source_review_batch_index": batch,
+        "source_review_batches_total": batches,
+        "source_review_batch_first_pr": first + 1,
+        "source_review_batch_count": min(MAX_PRS, len(selected) - first),
         "source_review_manifest_sha256": hashlib.sha256(raw).hexdigest(),
         "source_review_board_sha256": data["source_board_sha256"],
         "source_review_pr_count": len(selected),
@@ -355,6 +366,9 @@ def main(argv=None):
         "--from-review", type=Path,
         help="Review-only JSON manifest from the offline Merge-first Workbench")
     parser.add_argument(
+        "--batch", type=int, default=1,
+        help="1-based bounded review manifest batch (four PRs maximum per operation)")
+    parser.add_argument(
         "--format", choices=("json", "text"), default="json",
         help="JSON for offline import (default), or human-readable Dutch gate triage")
     parser.add_argument(
@@ -364,9 +378,11 @@ def main(argv=None):
     try:
         review = None
         if args.from_review is not None:
-            review = read_review_manifest(args.from_review)
+            review = read_review_manifest(args.from_review, batch=args.batch)
             refs = review["prs"]
         else:
+            if args.batch != 1:
+                raise ValueError("--batch requires --from-review")
             if not 1 <= len(args.pr) <= MAX_PRS:
                 raise ValueError("choose one to four PR references")
             refs = []
@@ -381,6 +397,8 @@ def main(argv=None):
         if review is not None:
             for key in ("source_review_manifest_sha256",
                         "source_review_board_sha256", "source_review_pr_count",
+                        "source_review_batch_index", "source_review_batches_total",
+                        "source_review_batch_first_pr", "source_review_batch_count",
                         "review_only_top_four_observed"):
                 source[key] = review[key]
         rendered = (
