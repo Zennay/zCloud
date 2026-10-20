@@ -622,11 +622,26 @@ def linked_pr_collision_clusters(observed, pairs):
         paths = sorted(group["shared_paths"])
         ranked = sorted(numbers, key=lambda n: (-group["degree"][n], n))
         most_links = group["degree"][ranked[0]]
+        # The exact file -> touching PR matrix must come from source file
+        # receipts, not the capped collision-pair cards. No additional GETs.
+        observed_files = {
+            number: set(by_num[number]["file_paths_observed"]) for number in numbers
+        }
+        file_ownership = [{
+            "path": path,
+            "touching_prs": [{
+                "number": number, "url": by_num[number]["url"],
+                "head_sha": by_num[number]["head_sha"],
+                "source_file_list_complete": by_num[number]["file_list_complete"],
+            } for number in ranked if path in observed_files[number]],
+            "ownership_verified": False,
+        } for path in paths[:MAX_CLUSTER_DISPLAY_PATHS]]
         clusters.append({
             "pr_count_observed": len(numbers),
             "shared_file_edge_count_observed": group["observed_edge_count"],
             "distinct_shared_file_count_observed": len(paths),
             "shared_files_sample": paths[:MAX_CLUSTER_DISPLAY_PATHS],
+            "shared_file_pr_matrix": file_ownership,
             "shared_files_sample_truncated": len(paths) > MAX_CLUSTER_DISPLAY_PATHS,
             "participating_prs": [
                 {"number": number, "url": by_num[number]["url"],
