@@ -3201,6 +3201,10 @@ def portfolio_queue_health():
                                       created_at,queue_id LIMIT 1001""").fetchall()
     observed=bounded[:1000]
     product_ready=0
+    active_owners_observed=0
+    claimable_product_observed=0
+    queued_occupied_slot_observed=0
+    queued_residual_lease_observed=0
     excluded_qa=0
     excluded_invalid=0
     for row in observed:
@@ -3208,13 +3212,18 @@ def portfolio_queue_health():
             # Existing owned work counts as in progress; never reinterpret or
             # release it based on a newer product-only intake policy.
             product_ready+=1
+            active_owners_observed+=1
             continue
-        if (row['worker_slot'] is not None or row['claimed_at'] is not None
-                or row['claim_expires'] is not None):
+        if row['worker_slot'] is not None:
+            queued_occupied_slot_observed+=1
+            continue
+        if row['claimed_at'] is not None or row['claim_expires'] is not None:
+            queued_residual_lease_observed+=1
             continue
         decision=product_delivery_classification(dict(row))[0]
         if decision=='product':
             product_ready+=1
+            claimable_product_observed+=1
         elif decision=='qa_only':
             excluded_qa+=1
         else:
@@ -3230,6 +3239,17 @@ def portfolio_queue_health():
         # signal on actual policy-admissible work and unchanged active owners.
         'healthy':int(product_ready)>=required,
         'product_delivery_ready_observed':int(product_ready),
+        # Available *unclaimed* product work and already-active owner work
+        # are separate observations. Neither bypasses downstream lane, Notion,
+        # worker-capacity, lease or release authorization.
+        'product_delivery_unclaimed_candidates_observed':int(claimable_product_observed),
+        'product_delivery_active_owner_rows_observed':int(active_owners_observed),
+        'queued_worker_slot_occupied_observed':int(queued_occupied_slot_observed),
+        'queued_residual_lease_fields_observed':int(queued_residual_lease_observed),
+        'product_delivery_health_evidence':(
+            'observed_sufficient' if product_ready>=required else
+            'insufficient_complete' if source_complete else 'incomplete_unknown'
+        ),
         'queued_qa_only_excluded_observed':int(excluded_qa),
         'queued_invalid_excluded_observed':int(excluded_invalid),
         'product_delivery_source_complete':source_complete,
