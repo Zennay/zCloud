@@ -332,20 +332,42 @@ def public_html(report):
             'rel="noopener noreferrer">Open issue #677</a></p></section>')
 
 
+
+def private_conflict_owner_rows(report):
+    """Bounded project-only owner actions; no raw queue identity or release authority."""
+    summary = public_summary(report)
+    entries = report.get("sampled_current_inconsistent_lease_items")
+    if (type(entries) is not list or len(entries) > MAX_SAMPLES
+            or type(report.get("lease_conflict_samples_truncated")) is not bool
+            or report.get("current_conflicts_only_from_bounded_sample") is not True):
+        raise ValueError("untrusted private claim-conflict owner source")
+    if (summary["current_inconsistent_lease_windows_owner_review"] == 0 and entries
+            or len(entries) > summary["current_inconsistent_lease_windows_owner_review"]):
+        raise ValueError("private claim-conflict sample contradicts observed total")
+    validated = []
+    for item in entries:
+        if (type(item) is not dict or set(item) != {
+                "project_id", "priority", "current_status",
+                "current_claim_attempts", "owner_must_reconcile_claim_and_expiry",
+                "claim_release_authorized"}
+                or item["owner_must_reconcile_claim_and_expiry"] is not True
+                or item["claim_release_authorized"] is not False
+                or item["priority"] not in PRIORITIES
+                or item["current_status"] not in ("claimed", "running", "verifying")
+                or type(item["current_claim_attempts"]) is not int
+                or not 0 <= item["current_claim_attempts"] <= 10**9
+                or type(item["project_id"]) is not str
+                or not SLUG.fullmatch(item["project_id"])):
+            raise ValueError("unsafe current lease owner action")
+        validated.append(dict(item))
+    return validated
+
+
 def private_html(report):
     public_summary(report)
     details = []
     conflicts = []
-    for item in report["sampled_current_inconsistent_lease_items"][:MAX_SAMPLES]:
-        if (item.get("owner_must_reconcile_claim_and_expiry") is not True
-                or item.get("claim_release_authorized") is not False
-                or item.get("priority") not in PRIORITIES
-                or item.get("current_status") not in STATUSES
-                or type(item.get("current_claim_attempts")) is not int
-                or not 0 <= item["current_claim_attempts"] <= 10**9
-                or type(item.get("project_id")) is not str
-                or not SLUG.fullmatch(item["project_id"])):
-            raise ValueError("unsafe current lease owner action")
+    for item in private_conflict_owner_rows(report):
         conflicts.append(
             "<li><strong>" + escape(item["priority"]) + " · " +
             escape(item["project_id"]) + "</strong> · " +
