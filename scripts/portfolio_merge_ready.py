@@ -59,18 +59,35 @@ def gh(path, method="GET", fields=None):
         raise RuntimeError(f"GitHub {method} request failed for {path}: exit {result.returncode}")
     return json.loads(result.stdout)
 
-def approvals(repo, number, author):
+def approvals(repo, number, author, exact_head):
+    """Only independently approved exact-source reviews; ambiguity denies."""
     records = gh(f"repos/{repo}/pulls/{number}/reviews?per_page=100")
+    # A truncated review history is not evidence that older changes requests
+    # have been resolved. Fail closed rather than guessing review chronology.
+    if not isinstance(records, list) or len(records) >= 100:
+        return False
     latest = {}
     for review in records:
+        if not isinstance(review, dict):
+            return False
         user = review.get("user") or {}
+        if not isinstance(user, dict):
+            return False
         login = user.get("login", "")
-        if not login or login == author or user.get("type") == "Bot":
+        if not isinstance(login, str) or not login:
             continue
-        if review.get("state") in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
-            latest[login] = review["state"]
-    return (any(v == "APPROVED" for v in latest.values())
-            and not any(v == "CHANGES_REQUESTED" for v in latest.values()))
+        if login.casefold() == author.casefold() or user.get("type") == "Bot":
+            continue
+        state = review.get("state")
+        if state in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}:
+            latest[login.casefold()] = (
+                state, review.get("commit_id"),
+            )
+    if any(state == "CHANGES_REQUESTED" for state, _ in latest.values()):
+        return False
+    return any(state == "APPROVED" and sha == exact_head
+               for state, sha in latest.values())
+
 
 def check_state(repo, sha):
     checks = gh(f"repos/{repo}/commits/{sha}/check-runs?per_page=100")
@@ -151,7 +168,7 @@ def sweep(repo, project, args):
             current = gh(f"repos/{repo}/pulls/{number}")
             if current["head"]["sha"] != head or current.get("mergeable") is not True:
                 result["status"] = "CHANGED_OR_CONFLICTED"
-            elif not approvals(repo, number, (current.get("user") or {}).get("login", "")):
+            elif not approvals(repo, number, (current.get("user") or {}).get("login", ""), head):
                 result["status"] = "INDEPENDENT_REVIEW_REQUIRED"
             else:
                 result["status"] = check_state(repo, head)
