@@ -952,8 +952,8 @@ def main(argv=None):
                         help="Selecteer 1..50 van maximaal 48 open PRs per sorteerpagina; "
                              "oudere pagina's zijn altijd gedeeltelijk, nooit vrijgave")
     parser.add_argument("--page-count", type=int, default=1,
-                        help="Alleen --audit-open-prs: 1..3 opeenvolgende pagina's "
-                             "en hoogstens 48 PRs; nooit claimvrijgave")
+                        help="1..3 opeenvolgende pagina's voor --audit-open-prs, "
+                             "--source-pr of --path; hoogstens 48 PRs totaal")
     parser.add_argument("--audit-open-prs", action="store_true",
                         help="Toon een bestandsoverlapkaart voor open PR's zonder handmatige doelpaden.")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
