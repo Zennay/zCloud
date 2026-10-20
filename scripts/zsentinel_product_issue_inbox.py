@@ -187,11 +187,14 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
     coverage = []
     calls = 0
     rate_or_auth_denied = False
+    admission_denied_projects = 0
     for project in names:
         repo = projects[project]
         statuses = []
+        project_denied = False
+        denial_category = None
         for direction in ("asc", "desc"):
-            if rate_or_auth_denied:
+            if rate_or_auth_denied or project_denied:
                 statuses.append("not_fetched_after_rate_or_auth_denial")
                 continue
             if calls >= MAX_CALLS:
@@ -241,15 +244,23 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
                 statuses.append("bounded_truncated" if len(issues) == 12 else "bounded_window")
             except ValueError as error:
                 statuses.append(str(error))
-                if str(error) == "github_permission_or_rate_limit":
-                    rate_or_auth_denied = True
+                if isinstance(error, GithubAdmissionError):
+                    project_denied = True
+                    denial_category = error.category
+                    if error.category == "rate_limit_confirmed":
+                        rate_or_auth_denied = True
+                elif str(error) == "github_permission_or_rate_limit":
+                    # Legacy compatible denial without provider subtype: fail
+                    # closed for this project, but do not poison unrelated repos.
+                    project_denied = True
         successful = sum(s.startswith("bounded_") for s in statuses)
         # Candidate reuse first: check a bounded recent window of existing
         # open PRs for explicit #issue references. This is NOT proof of
         # active ownership or acceptance: never claim the PR's branch.
-        pr_coverage = ("not_fetched_after_rate_or_auth_denial" if rate_or_auth_denied
+        pr_coverage = ("not_fetched_after_rate_or_auth_denial"
+                       if rate_or_auth_denied or project_denied
                        else "not_fetched_budget")
-        if not rate_or_auth_denied and calls < MAX_CALLS:
+        if not rate_or_auth_denied and not project_denied and calls < MAX_CALLS:
             calls += 1
             params = urllib.parse.urlencode({
                 "state": "open", "sort": "updated", "direction": "desc",
@@ -303,7 +314,9 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
             "status": ("partial" if successful == 2 and pr_coverage.startswith("bounded_")
                        else "degraded" if successful else "unavailable"),
             "active_claims_verified": False,
+            "provider_admission": denial_category,
         })
+        admission_denied_projects += int(project_denied)
     priority_rank = {"P0": 0, "P1": 1, "P2": 2, "Unspecified": 3}
     grouped = defaultdict(list)
     excluded_qa = 0
@@ -339,7 +352,10 @@ def collect(projects, names, token, max_items=MAX_ITEMS):
         "observed_at": observed.isoformat(timespec="seconds"),
         "projects": names, "coverage": coverage, "request_count": calls,
         "items": result, "suppressed_qa_only": excluded_qa,
+        # Global stop only for a confirmed provider limit. Repository-local
+        # 401/403 is not authority to suppress independently readable repos.
         "stopped_after_rate_or_auth_denial": rate_or_auth_denied,
+        "repository_admission_denials": admission_denied_projects,
         "truncated": len(result) >= max_items or any("bounded_truncated" in
             (row["oldest_window"], row["recent_window"]) for row in coverage),
         "queue_ownership_known": False,
