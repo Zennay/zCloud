@@ -228,6 +228,24 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
     }
 
 
+
+def attach_open_references(report, root: Path):
+    """Opt-in local /proc read; attach private per-file details without authorizing cleanup."""
+    if (type(report) is not dict or report.get("schema") != SCHEMA
+            or report.get("deletion_authorized") is not False
+            or "file_open_reference_observation" in report):
+        raise ValueError("untrusted or already annotated disk report")
+    from zsentinel_disk_file_activity import observe_open_references
+    activity = observe_open_references(_root(root), report["top_files"])
+    for index, row in enumerate(report["top_files"]):
+        row["open_references_observed"] = activity["per_candidate"][index]["open_descriptors_observed"]
+        row["file_reidentified"] = activity["per_candidate"][index]["file_reidentified"]
+    report["file_open_reference_observation"] = {
+        key: value for key, value in activity.items() if key != "per_candidate"
+    }
+    return report
+
+
 def markdown(report):
     if report.get("schema") != SCHEMA or report.get("deletion_authorized") is not False:
         raise ValueError("untrusted disk workbench source")
@@ -480,14 +498,7 @@ def main():
         report = observe(args.root, min_mib=args.min_mib, max_entries=args.max_entries,
                          max_depth=args.max_depth, max_seconds=args.max_seconds)
         if args.inspect_open_handles:
-            from zsentinel_disk_file_activity import observe_open_references
-            activity = observe_open_references(_root(args.root), report["top_files"])
-            for index, row in enumerate(report["top_files"]):
-                row["open_references_observed"] = activity["per_candidate"][index]["open_descriptors_observed"]
-                row["file_reidentified"] = activity["per_candidate"][index]["file_reidentified"]
-            report["file_open_reference_observation"] = {
-                key: value for key, value in activity.items() if key != "per_candidate"
-            }
+            attach_open_references(report, args.root)
         if args.previous is not None:
             from zsentinel_disk_trend import load_previous, compare
             report["disk_growth_comparison"] = compare(load_previous(args.previous), report)
