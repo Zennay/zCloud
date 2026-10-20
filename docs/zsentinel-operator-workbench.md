@@ -1068,3 +1068,36 @@ No GitHub request, runner operation, claim, CI rerun, merge, deploy
 or local automatic persistence is made by the browser. This provides
 human incident recovery context only; the historical comparison
 cannot establish live delivery or authorization.
+
+
+## Privé merge-first PR-gate-overdracht op basis van opgeslagen receipts (20 oktober)
+
+De bestaande `zsentinel_saved_gate_batch_bridge.py` kan de al verzamelde,
+aan één reviewmanifest gebonden batches nu zonder browser, GitHub API,
+Notion-schrijfactie of nieuwe gate-run samenvatten in **direct leesbare Markdown**:
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review.json \
+  --receipt ./gate-batch-1.json --receipt ./gate-batch-2.json \
+  --format markdown --output ./private-merge-first-handoff.md
+```
+
+Laat `--format` weg voor de bestaande `json` browserimport. Het Markdown
+volgt **de oorspronkelijke P0/P1-prioriteit en bestaande PR's**, noemt per
+PR de gekoppelde bronissues en — alleen als een geldig exact-head-receipt
+bestaat — de geobserveerde SHA, steekproef van CI-statussen, onafhankelijke
+reviews en menselijke vervolgstap. Ontbrekende batches zijn zichtbaar
+**NIET BEOORDEELD**, onbereikbare GitHub-bronnen **ONBEKEND**, en afgekapt
+geretourneerde check-/reviewpagina's **GEDEELTELIJKE BRON**.
+
+Beide formaten zijn opnieuw uit **dezelfde streng begrensde, SHA-gebonden
+sourcebewijzen** opgebouwd; onbereikbare/HEAD-gewijzigde PRs dragen geen
+onbetrouwbare gate-details over naar het browserimportbestand. De output
+wordt exclusief als nieuw privébestand `0600` aangemaakt en overschrijft
+geen bestaande bestanden. Zonder `--allow-partial` wordt iedere ontbrekende
+batch geweigerd. Met de expliciete optie blijft de ontbrekende bron
+onbeslist, nooit succesvol. Het rapport sluit **merge-/deployautorisatie,
+actieve claimbeschikbaarheid en main-oplevering uit**: verse exact-head-CI,
+branchregels, echte reviewergoedkeuring en serialized release zijn apart
+vereist. Geen QA-suite of eigen workflow wordt geschreven of gestart.
