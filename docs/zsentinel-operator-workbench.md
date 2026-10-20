@@ -731,11 +731,17 @@ current-head PR-gate receipts from the existing read-only collector in
 [zCloud PR #1567](https://github.com/Zennay/zCloud/pull/1567), into **one**
 `zsentinel-integrated-issue-pr-scope-v1` JSON document that the existing
 **Import GitHub PR-gate snapshot** browser input in this workbench already
-accepts. The browser code, network restrictions, runtime and owner claims
-remain unchanged.
+accepts. The offline browser importer now also validates the bridge's pinned
+original board SHA256, complete-batch marker, bounded oldest/newest UTC
+timestamps and exact set membership of captured PR URLs. It visibly labels
+the receipt set as complete *saved batch coverage*, never complete
+mandatory CI/review or merge authorization. Network restrictions, runtime
+and owner claims remain unchanged.
 
 Use a **previously reviewed and downloaded** exact JSON manifest and
 the separate non-mutating collector's output for *every* numbered batch.
+The bridge deliberately uses the **oldest** batch observation as the browser's
+overall timestamp so it does not present stale members as fresh.
 Example for a nine-PR manifest, after separately collecting the three
 read-only batches using `zsentinel_pr_gate_now.py --from-review ... --batch 1/2/3
 --output ...`:
