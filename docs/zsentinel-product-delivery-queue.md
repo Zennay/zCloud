@@ -757,3 +757,28 @@ en de eigenaar volgens dezelfde bestaande beschermingslogica vernieuwd.
 Buiten de allocator blijft de helper zonder cache werken zoals voorheen.
 Er zijn geen nieuwe workerrechten, background loops, index-migraties,
 workflowtriggers of live VPS-mutaties toegevoegd.
+
+
+## 20 oktober · Menselijke BLOCKED-gate start geen afhankelijk vervolgwerk
+
+Een browserworker kon in hetzelfde `portfolio_queue_finish()`-antwoord
+`BLOCKED` met een menselijke blokkade én een voorgestelde `next_task`
+aanleveren. De oude control-plane maakte dan toch een nieuw workerqueue-
+item aan voordat de menselijke toestemming er was; de menselijke Attention
+Needed-rij verhinderde niet dat die nieuwe opdracht via een andere worker
+zou kunnen worden geclaimd. Dit is geen bewezen onafhankelijke taak.
+
+Zodra `BLOCKED` een echte menselijke Attention Needed-actie oplevert,
+wordt geen nieuwe `next_task` en ook geen generieke
+`portfolio_write_continuation` vanuit **diezelfde geblokkeerde queue-ID**
+gestart. De API meldt `continuation_status=held_for_human`,
+`human_approval_required=true` en `handoff_complete=false`.
+De individuele blocker en bestaande incidentbron blijven bewaard en
+worden niet geautoriseerd door een voltooid statusreceipt.
+
+Dit is geen globale schedulerpauze: bestaande aparte, ongeclaimde
+productwerktaken kunnen normaal doorlopen binnen hun eigen claims,
+cap- en autorisatieregels. Alleen automatisch vervolgwerk dat direct uit
+deze menselijke blokkade voortkomt blijft onuitgegeven. De beslissing
+vindt plaats in de bestaande taak-afhandelingsbron, zonder nieuwe
+QA-gates of live workflow-, VPS- of claimactie.
