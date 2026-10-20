@@ -281,7 +281,11 @@ def product_queue_snapshot(items, max_visible=8):
                 "invalid_completion_criteria",
             })
         )
-        if not valid_receipt:
+        # A direct raw SQLite/source row always gets classified from its
+        # actual metadata, even when a caller supplied plausible annotations.
+        # The normalized API path has already source-bound its annotation
+        # before removing metadata_json in _portfolio_queue_row().
+        if not valid_receipt or item.get("metadata_json") not in (None, ""):
             disposition, reason = product_delivery_classification(item)
         if disposition != "product":
             hold_reasons[reason] = hold_reasons.get(reason, 0) + 1
