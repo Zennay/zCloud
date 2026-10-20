@@ -644,7 +644,7 @@ function currentPrManifest(){
    active_claim_verified:false,new_work_authorized:false
   }))
  };
- return JSON.stringify(receipt,null,2)+'\n';
+ return JSON.stringify(receipt,null,2)+'\\n';
 }
 function currentPrDesk(){
  const groups=prDeskGroups();
