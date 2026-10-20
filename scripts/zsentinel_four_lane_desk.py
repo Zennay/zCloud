@@ -63,6 +63,59 @@ def _utc(value):
         return None
 
 
+def operator_admission(lane, source_complete, cross_lane_complete, collision_count):
+    """Map a local lane observation to human-only admission guidance.
+
+    This deliberately never claims a task and is not an admission token.
+    Unverified sources, in-flight ownership and scope collisions retain
+    precedence over the absence of a queued task.
+    """
+    state = str(lane.get("status") or "idle").lower()
+    deferred = max(0, int(lane.get("deferred_qa_packages") or 0))
+    blocked = lane.get("blocked_by") or []
+    if state in ACTIVE:
+        return {
+            "code": "ACTIVE_OWNER_PROTECTED",
+            "label": "Bestaande eigenaar behouden",
+            "next_step": "Controleer actuele claimhouder en voortgang; neem deze taak niet over.",
+        }
+    if not source_complete or not cross_lane_complete:
+        return {
+            "code": "HOLD_SOURCE_RECONCILIATION",
+            "label": "Bron- of scopecertificaat ontbreekt",
+            "next_step": "Laat de huidige runtime-eigenaar ontbrekende claims, scopes en dekking vaststellen.",
+        }
+    if collision_count:
+        return {
+            "code": "HOLD_ACTIVE_SCOPE_CONFLICT",
+            "label": "Actieve schrijfscopes overlappen",
+            "next_step": "Laat de betrokken bestaande eigenaren het bestandsconflict oplossen.",
+        }
+    if blocked:
+        return {
+            "code": "HOLD_EXISTING_CLAIM_OR_SCOPE",
+            "label": "Conflict of seriële schrijfgrens",
+            "next_step": "Vergelijk actieve leases en bestandsbereiken met de huidige eigenaren.",
+        }
+    if state == "blocked" and deferred:
+        return {
+            "code": "HOLD_QA_PRODUCT_POLICY",
+            "label": "Alleen uitgesloten QA-werk over",
+            "next_step": "Laat de wachtrijeigenaar QA apart beheren; kies echt productwerk.",
+        }
+    if state == "queued":
+        return {
+            "code": "CANDIDATE_EXTERNAL_GATES",
+            "label": "Lokale kandidaat, niet geautoriseerd",
+            "next_step": "Controleer GitHub-PR, Notion-claim, eigenaar en resourcegates vóór start.",
+        }
+    return {
+        "code": "NO_LOCAL_CANDIDATE",
+        "label": "Geen lokale kandidaat waargenomen",
+        "next_step": "Controleer Notion en GitHub op onbeheerde productissues; claim niets automatisch.",
+    }
+
+
 def collect(database, maximum, include_runner_processes=False):
     """Capture one bounded, read-only SQLite snapshot without owner identities."""
     path = Path(database).absolute()
@@ -236,11 +289,23 @@ def collect(database, maximum, include_runner_processes=False):
     observed = {status: sum(
         str(row.get("status", "")).lower() == status for row in queue
     ) for status in sorted(VALID)}
+    # Build source trust once, then apply it consistently in every lane card.
+    source_complete = not (
+        queue_partial or claims_partial or ambiguous or truncated_queue_fields
+        or unknown_active_scopes or unknown_claim_scopes or runtime_shadowed_active
+        or portfolio_partial or unknown_project_groups
+        or inconsistent_queue_claim_windows or untrusted_active_leases
+    )
     visible = []
     for lane in lanes:
         conflicts = lane.get("blocked_by") or []
+        admission = operator_admission(
+            lane, source_complete, cross_lane_coverage,
+            collision_counts[lane["lane_id"]],
+        )
         visible.append({
             "id": lane["lane_id"],
+            "admission": admission,
             "name": LANE_NAMES[lane["lane_id"]],
             "status": lane["status"],
             "candidate_observed": lane.get("queue_id") is not None,
@@ -250,11 +315,8 @@ def collect(database, maximum, include_runner_processes=False):
             "serialized_unscoped_queue_admitted": lane.get(
                 "serialized_unscoped_queue_admitted", False
             ),
-            "new_write_admission_held": bool(
-                lane.get("status") == "blocked"
-                or lane.get("unknown_active_scope_count")
-                or lane.get("unknown_claim_scope_count")
-                or lane.get("untrusted_active_lease_count")
+            "new_write_admission_held": (
+                admission["code"] != "CANDIDATE_EXTERNAL_GATES"
             ),
             "active_cross_lane_scope_conflicts": (
                 collision_counts[lane["lane_id"]] if cross_lane_coverage else None
@@ -298,12 +360,7 @@ def collect(database, maximum, include_runner_processes=False):
         "dispatch_authorized": False,
         "release_authorized": False,
         "lanes": visible,
-        "source_complete": not (
-            queue_partial or claims_partial or ambiguous
-            or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
-            or runtime_shadowed_active or portfolio_partial or unknown_project_groups
-            or inconsistent_queue_claim_windows or untrusted_active_leases
-        ),
+        "source_complete": source_complete,
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
             or inconsistent_queue_claim_windows or untrusted_active_leases
