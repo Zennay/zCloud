@@ -523,6 +523,14 @@ def main():
                     "quota": result["current_quota_percent"],
                     "weight": result["current_weight"],
                     "recommendation_matches": result["recommendation_currently_applied"],
+                    "effective_quota": result["effective_quota"],
+                    "effective_weight": result["effective_weight"],
+                    "promotion_status": result["promotion_status"],
+                    "promotion_observations": result["promotion_observations"],
+                    "promotion_remaining_seconds": (
+                        max(0, PROMOTION_SECONDS - result["promotion_elapsed_seconds"])
+                        if result["promotion_elapsed_seconds"] is not None else None
+                    ),
                 },
                 "quota": quota, "weight": weight, "mode": mode, "reasons": reasons,
             }
