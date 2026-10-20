@@ -262,6 +262,34 @@ nieuw privé bronmoment; geen extra systeembrede installatie, reset,
 workerstart, GitHub-dispatch, betaling, merge of deploy. Toestemming en
 exacte-head CI/review blijven onverkort van toepassing.
 
+## Meerdere privébronmomenten: historisch runnerverloop (nieuw)
+
+Voor een terugkerende VPS-runnerblokkade kan de operator voortaan **drie tot
+twaalf** eerder opgeslagen, chronologisch oplopende JSON-bronmomenten in één
+volledig offline HTML-overzicht openen. Gebruik alleen eigen mode-0600
+bronbestanden en een **nieuwe** privé `.html`-uitvoer:
+
+```bash
+python3 scripts/zsentinel_runner_report.py --output herstelverloop.html \
+  --timeline T0.json T1.json T2.json
+```
+
+De weergave laat per opeenvolgende meting zien: servicestatuswijzigingen,
+onvolledige inventarisdekking, dezelfde of veranderde Linux-opstartsessie,
+load/RAM/swap/root-schijfverschil en (uitsluitend waar vergelijkbaar) de
+daadwerkelijk gemeten CPUQuota/CPUWeight-instellingen van de Fuckball-coach.
+Het laatste bronmoment blijft de basis voor de huidige kaartensamenvatting.
+Opeenvolgende bronmomenten moeten strikt oplopen en het hele venster past
+binnen **72 uur** op **exact hetzelfde hostlabel**. Per-bon laden is begrensd
+tot 128 KiB en de uiteindelijke offline HTML blijft maximaal 128 KiB.
+Onvergelijkbare signalen blijven onbekend in plaats van een gesuggereerd
+herstel. Een herstart van de VPS verbreekt aantoonbare same-boot-continuïteit.
+
+`--timeline` is onderling exclusief met `--t0/--t1` en `--previous`.
+Historische replay doet **geen** actuele Linux-/systemd-probes, GitHub-calls,
+claimwijzigingen, runner-herstart, model-/broker- of productieactie. Het
+rapport bewijst geen GitHub-jobassignment, succesvolle CI, training of merge.
+
 ## Samenhangend privé operatorpakket (geen installatie)
 
 Een normale toekomstige runtime-installatie van het basis CPU-prioriteitscript
