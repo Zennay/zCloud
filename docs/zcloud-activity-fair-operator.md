@@ -1,13 +1,13 @@
 # Lokale Activity zonder projectverdringing (#1518)
 
-De bestaande `scripts/zcloud_activity_fair_page.py` selecteert events per project eerlijk, maar had geen zelfstandige operatoringang. `scripts/zcloud_activity_fair_export.py` maakt dit nu direct bruikbaar zonder het centrale `server.py`-writerpad of de productie-API aan te raken.
+De bestaande `scripts/zcloud_activity_fair_page.py` selecteert events per project eerlijk, maar had geen zelfstandige operatoringang. De CLI valideert de projectselectie tegen het bestaande `projects.json`; zSentinel is een herstelrol, geen extra project. `scripts/zcloud_activity_fair_export.py` maakt dit nu direct bruikbaar zonder het centrale `server.py`-writerpad of de productie-API aan te raken.
 
 ## Eenmalige read-only weergave
 
 ```sh
 python3 scripts/zcloud_activity_fair_export.py \
   --db /pad/naar/bestaande/history.db \
-  --project cloud --project supa --project zsentinel \
+  --all-projects \
   --page-size 60 --format html --output /prive/nieuwe/activity.html
 ```
 
@@ -28,7 +28,7 @@ python3 scripts/zcloud_activity_fair_export.py \
   --output /prive/nieuwe/activity-page-2.json
 ```
 
-Vervolg werkt alleen met een geldige versie-1 JSON-export van **dezelfde geordende projectset** en met een aanwezige `next_cursor`. Geen volgende cursor betekent dat de lokale selectie op het meetmoment uitgeput was; dat betekent **niet** dat externe projectactiviteit afwezig is. Het oudere bronmoment kan tijdens de tweede paginering alweer veranderd zijn; de resultaten zijn geen atomische portfolio-snapshot.
+De optie `--all-projects` leest dezelfde canonieke set uit `projects.json`; gebruik anders herhaald `--project cloud --project supa`. Onbekende of dubbele project-ID's worden geweigerd. Vervolg werkt alleen met een geldige versie-1 JSON-export van **dezelfde geordende projectset** en met een aanwezige `next_cursor`. Geen volgende cursor betekent dat de lokale selectie op het meetmoment uitgeput was; dat betekent **niet** dat externe projectactiviteit afwezig is. Het oudere bronmoment kan tijdens de tweede paginering alweer veranderd zijn; de resultaten zijn geen atomische portfolio-snapshot.
 
 De commandoregel beperkt tot 32 projecten, 80 events per pagina, maximaal 16 KiB cursorinput, 2 MiB uitvoer en een read-only databaseverbinding met `mode=ro` en `PRAGMA query_only=ON`. Fouten worden uitgesproken gemeld, niet vervangen door een lege 'geen activiteit'-status. Het operatorproces schrijft nooit naar SQLite of de lokale queue en roept geen GitHub-API aan.
 
