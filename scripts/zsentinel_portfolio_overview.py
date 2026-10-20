@@ -791,8 +791,9 @@ def main():
             raise ValueError("--inspect-hosted-no-start needs existing PR inspection")
         if args.format == "desk" and args.desk_output is None:
             raise ValueError("--format desk requires --desk-output")
-        if args.show_owner_handoff and args.format != "html":
-            raise ValueError("--show-owner-handoff requires HTML portfolio output")
+        if args.show_owner_handoff and args.format not in (
+                "html", "handoff", "json", "text"):
+            raise ValueError("--show-owner-handoff requires html, handoff, json or text")
         if args.output is not None and args.format not in ("html", "json", "text", "handoff"):
             raise ValueError("--output supports only html, json, text or human handoff")
         if args.compare_with is not None and args.format not in ("html", "json", "text"):
@@ -1138,6 +1139,9 @@ def main():
         elif args.format == "handoff":
             from zsentinel_unblock_board import human_handoff_markdown
             rendered = human_handoff_markdown(unblock)
+            if owner_handoff is not None:
+                from zsentinel_runtime_handoff import markdown as owner_markdown
+                rendered = owner_markdown(owner_handoff) + "\n\n" + rendered
             if worker_delta is not None:
                 from zsentinel_worker_progress_delta import human_text as worker_delta_text
                 rendered = ("## zSentinel · worker heartbeat versus progress #1342\n\n" +
@@ -1169,6 +1173,7 @@ def main():
                 "local_runner_observation": local_runner,
                 "runner_cross_source": runner_cross_source,
                 "queue_claim_churn": decision.get("queue_claim_churn"),
+                "owner_handoff": owner_handoff,
                 "worker_progress_delta": decision.get("worker_progress_delta"),
                 "existing_pr_delivery": (pr_desk if pr_desk is not None else
                     {"coverage": "not_requested", "merge_authorized": False}),
@@ -1288,6 +1293,9 @@ def main():
                     disk["observed_allocated_gib_min"],
                     disk["large_file_candidates_min"], disk["coverage"]))
             rendered = "\n".join(lines)
+            if owner_handoff is not None:
+                from zsentinel_runtime_handoff import markdown as owner_markdown
+                rendered = owner_markdown(owner_handoff) + "\n\n" + rendered
             if continuity is not None:
                 from zsentinel_blocker_continuity import as_text
                 rendered = as_text(continuity) + "\n" + rendered
