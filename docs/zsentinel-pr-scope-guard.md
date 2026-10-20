@@ -1863,3 +1863,22 @@ De read-only vergelijking geeft nu in HTML, Markdown, tekst, JSON en privé-CSV 
 - Draft, gevraagde wijzigingen, door GitHub bevestigd conflict, of onbekende branch-/releasevoorwaarden leveren hun eigen bestaande, eigenaar-veilige stap op.
 
 De private CSV bevat `operator_next_step` in zowel `gate_episode_history` als `gate_episode_evidence_change`. De `operator_next_steps_observed`-telling in JSON is een operatoroverzicht, geen scheduler-claim. Iedere actie blijft menselijk/brongebonden: geen nieuwe automatische merge-/deploy- of runnerautorisatie.
+
+## 20 oktober · Merge-first actielijst bovenaan de operatorpagina
+
+De bestaande `scripts/zsentinel_pr_scope_portfolio.py` toont bij `--inspect-current-pr-gates` voortaan meteen een **bruikbare merge-first actielijst** in de offline HTML-pagina, tekst en Markdown. Dit is de productgerichte hoofdweergave vóór de detailtabellen. Maximaal vier reeds geselecteerde, exact-HEAD waargenomen bestaande product-PRs worden in blocker-categorieën gegroepeerd: (1) mislukte checks of door GitHub vastgesteld conflict, (2) draft/reviewwijzigingen/gewijzigde bron, (3) ontbrekende of nog lopende CI-bron, (4) onafhankelijke review of onbekende mergeability, (5) branch protection/ownership/release. De bestaande GitHub checkjobs/legacy-contexten openen direct via canonical links. Een beperkte bestandscope-lijst toont gelinkte andere PRs, maar heet nooit een bewezen Git-conflict of vrij eigenaarschap.
+
+Het is bewust geen dispatch- of mergequeue. Statusbron, HEAD en doelbasis zijn zichtbaar; ontbrekende samplingsdekking wordt prominent vermeld. Bestaande `--compare-previous`-opnamen geven de acties *nieuw bewijs sinds vorige steekproef* of *op beide bronmomenten exact dezelfde HOLD*. Nieuwe waarnemingen worden binnen hun categorie vooraan getoond. De strikt gelijkblijvende HOLD gaat onderaan met `Geen ongewijzigde blokkade opnieuw controleren zonder nieuw bronbewijs`. Een niet meer in de steekproef aanwezige PR blijft uitdrukkelijk **niet bewezen gemerged**.
+
+Ook `--format csv --output /private/new-name.csv` produceert een private mode-0600 handoff met `merge_first_action`, `merge_first_blocking_job` en `merge_first_related_pr` rijen. Deze bevatten PR-URL/nummer, exact HEAD+base waar geldig, blocker, rang/categorie, eigenaar-veilige vervolgstap en direct gelinkte actuele niet-groene checks. Waarschuwingsrijen melden beperkte source coverage en verborgen CI-jobs. CSV wordt nooit standaard op stdout geëxporteerd. Geen extra GitHub GETs, geen aparte polling en geen automatische acties toegevoegd.
+
+Gebruik bijvoorbeeld voor een *nieuw* privé-HTML-operatoroverzicht:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --max-prs 16 --inspect-current-pr-gates \
+  --gate-pr cloud#1567 --format html \
+  --output /private/new-merge-first-desk.html
+```
+
+De bronnen blijven per opnamemoment begrensd/niet atomair: geen bewijs van reviewbeleid, exacte verplichte branch-checkset, workerclaims, Git mergecompatibiliteit buiten een bevestigd GitHub-oordeel of deploytoestemming. GitHub-hosted CI-billing #1523 en VPS-listener #1326 zijn afzonderlijke P0-blokkades: de actielijst verandert geen daarvan en doet geen runnerherstart, CI-rerun, claim, merge of deploy.
