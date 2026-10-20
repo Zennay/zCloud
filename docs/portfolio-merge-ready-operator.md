@@ -68,12 +68,21 @@ binnen het **bestaande gezamenlijke 84-GET / 120s-budget**:
 ```sh
 python3 scripts/zsentinel_issue_first_board.py \
   --project cloud --issue 1326 --candidate-page 1 --auto-pages 3 \
-  --output /private/issue-1326-three-pages.html
+  --max-linked-prs 12 --output /private/issue-1326-three-pages.html
 ```
 
-**Geen kandidaten binnen één pagina overslaan.** Bij vier relevante PRs, een
-aflopende GitHub-GET-limiet of een vroeg gestopte pagina stopt de automatische
-volgende-pagina-route bewust vóór er andere zoekpagina's gelezen worden. De
+**Meer volledige bestaande-PR-inventaris, zonder de externe limieten te verhogen.**
+De gerichte issue-route kan nu met `--max-linked-prs 1..12` per **hele opdracht**
+maximaal twaalf actuele bestaande product-PR-rapporten meenemen (standaard 12).
+Een ingestelde limiet telt dus over alle automatisch gelezen pagina's; de
+84-GET/120-secondenlimiet blijft ongewijzigd. Het minimum is 1 en er
+worden nooit dertien of meer rapporten gepubliceerd. De hoeveelheid bekeken
+zoekkandidaten is afzonderlijk zichtbaar en is geen garantie dat alle 20, 60
+of 1000 mogelijke resultaten daadwerkelijk zijn onderzocht.
+
+**Geen kandidaten binnen één pagina overslaan.** Bij het ingestelde PR-limiet,
+een aflopende GitHub-GET-limiet of een vroeg gestopte pagina stopt de
+automatische volgende-pagina-route bewust vóór er andere zoekpagina's gelezen worden. De
 operator krijgt `next_candidate_offset` en `source_page_sha256` in de JSON,
 tekst en HTML. Hervat op **dezelfde** zoekpagina met de geobserveerde offset en
 fingerprint, bijvoorbeeld als het resultaat `next_candidate_offset=6` toont:
@@ -85,8 +94,10 @@ python3 scripts/zsentinel_issue_first_board.py \
   --output /private/issue-1326-page1-remainder.html
 ```
 
-De SHA-256 is een *zelfcontrole van de geordende zoekkandidaatnummers*,
-geen cryptografisch bewijs van GitHub-herkomst. Een gewijzigde zoekvolgorde
+De SHA-256 is een *zelfcontrole van het volledige zoekvenster*: de geordende
+zoekkandidaatnummers, GitHub Search `total_count` en de
+`incomplete_results`-status. Dit is geen cryptografisch bewijs van
+GitHub-herkomst. Een gewijzigde zoekvolgorde
 weigert een onbetrouwbare offset en vraagt een verse inspectie vanaf offset 0.
 Een offset die niet naar een werkelijk nog bestaand kandidaatnummer wijst,
 wordt eveneens geweigerd. Het bronvenster toont voortaan exact de **daadwerkelijk
