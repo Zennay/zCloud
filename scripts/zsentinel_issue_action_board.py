@@ -307,9 +307,15 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
             pr_url = group["pr_url"]
             link = ("[Open bestaande PR](" + pr_url + ")"
                     if style == "markdown" else pr_url)
+            primary_visible = sum(
+                url in visible_urls for url in
+                group.get("primary_issue_urls_in_source", [])
+            )
             lines.append("- " + group["highest_priority"] + " · " + link +
                          " · " + str(len(linked_visible)) +
-                         " productissue(s) in de beperkte overdracht noemen deze PR.")
+                         " productissue(s) in deze bron noemen de PR; " +
+                         str(primary_visible) +
+                         " daarvan hebben deze als primaire reviewkandidaat (geen fixbewijs).")
             for issue_url in linked_visible:
                 lines.append("  " + ("[Issue](" + issue_url + ")"
                                     if style == "markdown" else issue_url))
