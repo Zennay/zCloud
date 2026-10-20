@@ -722,3 +722,59 @@ GitHub collector claims issues, reruns CI, merges PRs, dispatches workers,
 writes to VPS or deploys to production. Both source PRs must independently
 clear mandatory CI, protected-branch and review conditions before this
 workflow exists on `main`. No QA suites were created or run.
+
+
+## 20 October · Complete saved gate-batch bridge to the existing offline browser
+
+The new **`scripts/zsentinel_saved_gate_batch_bridge.py`** joins saved
+current-head PR-gate receipts from the existing read-only collector in
+[zCloud PR #1567](https://github.com/Zennay/zCloud/pull/1567), into **one**
+`zsentinel-integrated-issue-pr-scope-v1` JSON document that the existing
+**Import GitHub PR-gate snapshot** browser input in this workbench already
+accepts. The browser code, network restrictions, runtime and owner claims
+remain unchanged.
+
+Use a **previously reviewed and downloaded** exact JSON manifest and
+the separate non-mutating collector's output for *every* numbered batch.
+Example for a nine-PR manifest, after separately collecting the three
+read-only batches using `zsentinel_pr_gate_now.py --from-review ... --batch 1/2/3
+--output ...`:
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./reviewed-manifest.json \
+  --receipt ./private-gates-batch-1.json \
+  --receipt ./private-gates-batch-2.json \
+  --receipt ./private-gates-batch-3.json \
+  --output ./new-private-combined-gates.json
+```
+
+Then import **new-private-combined-gates.json** in the offline workbench.
+The result contains only original canonical issue-to-PR associations,
+the bounded allowlisted exact-head observation fields, original manifest
+SHA256, original board SHA256, observed batch coverage and explicitly
+false claim/merge/deploy/writes flags. It is created exclusively as a new
+private `0600` file with an `fsync` before the command succeeds.
+No existing file is overwritten. Neither original receipts nor any
+privileged GitHub/Notion/VPS state is modified.
+
+**Fail-closed rather than silently showing a partial backlog:** all
+`ceil(PR count / 4)` exact numbered receipts must be supplied. The bridge
+verifies their raw manifest SHA, original saved board identity, exact
+priority/repository/PR sort order and batch boundaries against the
+existing collector's contract; it refuses duplicate/missing batches,
+unexpected PRs, changed/mixed source identity, source data outside a
+ten-minute observation window, foreign issue relationships, and
+unbounded files. Limits: 300 PRs, 75 batches, 60 issue rows, up to five
+PR references per issue, at most 1 MiB per input/output and 8 MiB of
+combined input. When any bound is exceeded, no combined import is created;
+the operator can use smaller separately reviewed manifests.
+
+This is **saved source evidence**, not fresh or necessarily complete
+mandatory checks, branch rules, human reviews, current worker ownership,
+or deploy authority. Even a complete file set may contain unreadable PR
+observations or checks still queued. Operators must open each real PR
+and independently verify its current exact head, required branch
+protection, independent review and authorization. No QA/regression
+suite, CI rerun, paid runner, live worker or production action is
+initiated by this bridge.
