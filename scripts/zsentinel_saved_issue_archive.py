@@ -131,6 +131,9 @@ def _validate_receipt(report, manifest):
         if type(prs) is not list or not 1 <= len(prs) <= MAX_LINKED_PRS:
             raise ValueError("Invalid bounded saved PR links")
         seen_prs = set()
+        observed_for_issue = set()
+        missing_pr_count = 0
+        disappeared_link_count = 0
         for pr in prs:
             if type(pr) is not dict:
                 raise ValueError("Invalid saved PR reference")
@@ -159,6 +162,32 @@ def _validate_receipt(report, manifest):
                     or pr.get("issue_ref_absent_in_last_snapshot") is not
                     (spans[-1] != len(snapshots))):
                 raise ValueError("Contradictory sampled issue relationship")
+            observed_for_issue.update(spans)
+            latest_pr_sample = pr.get("last_seen_snapshot")
+            if (type(latest_pr_sample) is not int or
+                    not 1 <= latest_pr_sample <= len(snapshots)):
+                raise ValueError("Invalid last-seen sampled PR position")
+            pr_missing = latest_pr_sample != len(snapshots)
+            if pr.get("missing_from_final_sample") is not pr_missing:
+                raise ValueError("PR disappearance contradicts saved windows")
+            missing_pr_count += pr_missing
+            disappeared_link_count += (
+                spans[-1] != len(snapshots) and not pr_missing
+            )
+        observed = issue.get("observed_in_snapshots")
+        if (type(observed) is not list
+                or observed != sorted(observed_for_issue)
+                or issue.get("last_link_observed_snapshot") != max(observed_for_issue)
+                or issue.get("link_unobserved_in_final_sample") is not
+                (max(observed_for_issue) != len(snapshots))
+                or issue.get("sampled_prs_missing_from_final") != missing_pr_count
+                or issue.get("links_lost_while_pr_still_sampled") !=
+                disappeared_link_count
+                or issue.get("multiple_candidate_prs_need_owner_review") is not
+                (len(prs) > 1)
+                or issue.get("last_snapshot_missing_batches") is not
+                bool(snapshots[-1]["missing_batch_indexes"])):
+            raise ValueError("Issue continuity inconsistent with sampled PR links")
         if (issue.get("highest_source_priority") not in rank or
                 issue["highest_source_priority"] !=
                 min((p["issue_link_priority"] for p in prs),
