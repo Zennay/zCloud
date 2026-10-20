@@ -287,7 +287,7 @@ def render(report, fmt):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, action="append", required=True,
-                        help="Chronological private ZIP, 2..12 times")
+                        help="Chronological private ZIP, 1..12 times")
     parser.add_argument("--priority", choices=PRIORITIES)
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=30)
@@ -296,7 +296,7 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
-        source = build_timeline(args.source)
+        source = build_timeline(args.source, minimum_sources=1)
         issue_report = issue_worklist(source)
         filtered = filter_issue_page(issue_report, priority=args.priority,
                                      page=args.page, page_size=args.page_size)
