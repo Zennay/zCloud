@@ -1416,3 +1416,29 @@ CI, tests, queue-mutaties, workeracties of merges uit; het is
 uitsluitend een private read-only operatorinventaris. De actuele
 Notion-/GitHub-eigenaarsclaims, beschermde main, verplichte exact-head
 CI, reviews en geautoriseerde deploy blijven onafhankelijke voorwaarden.
+
+
+### Eén gecombineerde werkbak voor cross-window bestands- én nummeroverlap
+
+De opgeslagen Graph-JSON bevat ook bestaande *tekstuele*
+`#N`-verwijzingen met `title`/`body`-herkomst. De privé-composer
+verifieert dat die hints alleen aan PR's met dezelfde **exacte
+waargenomen HEAD** uit het betreffende bronvenster zijn gekoppeld,
+en zoekt nu eveneens naar hetzelfde genoemde nummer in **twee
+verschillende bewaarde vensters**. Resultaten zijn zichtbaar als
+`cross_snapshot_issue_number_hints_observed` met canonieke
+PR-links en oorspronkelijke bronvensternummers, apart van
+`cross_snapshot_file_collision_pairs_observed`.
+
+Dat voorkomt dat twee PRs op bijvoorbeeld pagina 1 en pagina 5
+aan het *zelfde benoemde probleem* werken zonder gedeelde bestanden,
+maar voor de operator onzichtbaar blijven. Een titel/body-`#N`
+is echter niet gecontroleerd als echt GitHub-issue (het kan ook een
+PR-nummer zijn), laat staan als opgeleverde fix. Daarom krijgt dit
+offline resultaat **nooit** de optionele live
+`--resolve-issue-identity`-status uit een ouder bestand als
+actuele waarheid mee. Actuele GitHub-status, actief eigenaarschap,
+verplichte CI, review en main/deploy moeten afzonderlijk worden
+vastgesteld. Binnen één eerder bekeken venster getoonde
+issuevermeldingen worden niet als nieuwe cross-window-conflicten
+herhaald.
