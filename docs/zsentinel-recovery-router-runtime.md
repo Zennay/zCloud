@@ -2629,3 +2629,62 @@ blijven onveranderlijk. Bestaande P0 [#1326](https://github.com/Zennay/zCloud/is
 billing [#1523](https://github.com/Zennay/zCloud/issues/1523),
 onafhankelijke review, exacte-head CI en geserialiseerde productie-
 eigenaar blijven vereisten.
+
+
+### 20 oktober · Exacte VPS-runnertriage direct zonder queue-DB
+
+Nieuwe operatorfunctie `scripts/zsentinel_runner_triage.py` gebruikt **één
+reeds bestaande GitHub Actions run/job/SHA** en leest maximaal twee
+GitHub GET-bronnen plus één lokale begrensde `/proc`-steekproef.
+Geen queue-DB of publieke zCloud-server nodig: bruikbaar wanneer de
+queuebron niet beschikbaar is, zonder hem te vervangen of te repareren.
+
+Voorbeeld op de **bevoegde, reeds verbonden VPS**, met echte bestaande
+nummers/het originele SHA uit GitHub (dit zijn placeholders):
+```sh
+python3 scripts/zsentinel_runner_triage.py \
+  --run-id RUN_ID --job-id JOB_ID --head-sha FULL_40_HEX_SHA
+```
+De standaarduitvoer geeft direct **drie Nederlandstalige regels**:
+probleem, volgende bevoegde eigenaaractie en status. Optioneel kan de
+operator `--format html --output /private/new-report.html` of
+`--format json --output /private/new-report.json` gebruiken. Deze
+bestanden worden uitsluitend **create-only 0600** aangemaakt: bestaande
+bestanden worden nooit overschreven. De operator moet voor elk verslag
+een eigen, expliciete nieuwe private bestandsnaam kiezen. Zonder expliciet
+outputpad worden geen HTML-/JSON-bestanden geschreven.
+
+Belangrijke verbeteringen ten opzichte van een losse job/runnerstatus:
+- Het exacte job-ontvangstbewijs bewaart ook de canonieke volle commit-SHA,
+  `run_id`, `job_id`, GitHub-observatieklok en oorspronkelijke
+  job-creatietijd. Dit voegt **geen** nieuwe API-aanvragen toe.
+- De plaatselijke /proc-waarneming en GitHub-waarneming moeten elk
+  maximaal **vijf minuten oud** zijn en hoogstens vijf minuten uiteen
+  liggen; anders krijgt de kaart `source_clocks_not_fresh_or_coincident`
+  en nooit een actuele runnerdiagnose.
+- Een self-hosted job in GitHub-status `queued` zonder toewijzing is pas
+  een **mogelijke vastloper** na **minimaal dertig minuten** volgens de
+  oorspronkelijke job-creatietijd. Korter: `queued_recent_not_yet_stalled`.
+- `waiting`/`pending`, hosted/custom labels, gedeeltelijke lokale
+  procesdekking, foutieve/missende GitHub-bronnen en historische
+  runner-toewijzing blijven verschillende onzekerheidsstaten.
+- Een geweigerde GitHub-read krijgt expliciet
+  `github_job_unavailable`; deze wordt niet langer verwisseld met
+  `no_pinned_zcloud_job`.
+- De HTML bevat uitsluitend een lokaal, strikt gevalideerd linkje naar
+  de **exacte bestaande GitHub-job**, nooit een herstart- of retryknop.
+  SHA- en bronklokken dienen uitsluitend diagnose, geen runnerbeheer.
+
+Deze functie is alleen-lezen en geeft op geen enkele route
+`runner_restart_authorized`, `workflow_dispatch_authorized`,
+`job_resumed_verified` of `claims_changed` vrij. De afwijking
+tussen GitHub-job en /proc-processen is **geen** bewijs van een defecte
+listener, gecorrigeerde labels, werkende GitHub-registratie of automatische
+herstelmogelijkheid. Autorisatie, onafhankelijke PR-review, vereiste
+exact-head CI en geserialiseerde productie-release blijven buiten scope.
+
+Het bestaande `zsentinel_portfolio_overview.py` toont de gekoppelde
+operatorinformatie nu in HTML, JSON en tekst, én in de afzonderlijke
+privé Markdown-hersteloverdracht (`--format handoff`). Gebruik
+`--observe-local-runner` alleen wanneer de bestaande runtime-DB
+uitdrukkelijk beschikbaar is. Anders de zelfstandige triage-CLI hierboven.
