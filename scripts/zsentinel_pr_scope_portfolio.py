@@ -330,6 +330,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
                 "project": project,
                 "url": captured["url"],
                 "head_sha_observed": captured["head_sha"],
+                "base_sha_observed": captured["base_sha"],
                 "observed_in_recent_pr_collision_sample":
                     not captured.get("direct_explicit_source_only", False),
                 "complete_file_collision_coverage_verified": False,
@@ -382,6 +383,7 @@ def current_merge_first_gates(board, token=None, focus_prs=None):
             item = {
                 "project": project, "url": captured["url"],
                 "head_sha_observed": captured["head_sha"],
+                "base_sha_observed": captured["base_sha"],
                 "observed_in_recent_pr_collision_sample":
                     not captured.get("direct_explicit_source_only", False),
                 "complete_file_collision_coverage_verified": False,
