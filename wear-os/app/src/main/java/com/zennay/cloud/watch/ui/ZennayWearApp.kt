@@ -71,10 +71,11 @@ private val Track = Color(0xFF202A35)
 fun ZennayWearApp(
     repository: ZennayCloudRepository = remember { ZennayCloudRepository() },
     openIncidentId: String? = null,
+    openIncidentProject: String? = null,
     onIncidentHandled: () -> Unit = {}
 ) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
-    LaunchedEffect(openIncidentId) {
+    LaunchedEffect(openIncidentId, openIncidentProject) {
         if (openIncidentId != null) selectedId = null
     }
     MaterialTheme {
@@ -84,6 +85,7 @@ fun ZennayWearApp(
                     repository = repository,
                     onProject = { selectedId = it },
                     openIncidentId = openIncidentId,
+                    openIncidentProject = openIncidentProject,
                     onIncidentHandled = onIncidentHandled
                 )
             } else {
@@ -103,6 +105,7 @@ private fun HomeScreen(
     repository: ZennayCloudRepository,
     onProject: (String) -> Unit,
     openIncidentId: String?,
+    openIncidentProject: String?,
     onIncidentHandled: () -> Unit
 ) {
     var data by remember { mutableStateOf<WatchSnapshot?>(null) }
@@ -112,7 +115,7 @@ private fun HomeScreen(
     val appContext = LocalContext.current
     var snoozeVersion by remember { mutableStateOf(0) }
     var snoozeMinuteTick by remember { mutableStateOf(0) }
-    var expandedAlertId by rememberSaveable { mutableStateOf<String?>(null) }
+    var expandedIncidentKey by rememberSaveable { mutableStateOf<String?>(null) }
     var disappearedIncidentNotice by rememberSaveable { mutableStateOf(false) }
 
     suspend fun reload() {
@@ -125,28 +128,30 @@ private fun HomeScreen(
                 // Invalidate expansion if the blocker was resolved, the feed
                 // is historical, or the source became stale.
                 if (it.stale || !it.currentBlockerFeedAvailable ||
-                    it.alerts.none { alert -> alert.id == expandedAlertId }) {
-                    expandedAlertId = null
+                    it.alerts.none { alert ->
+                        IncidentSnoozeStore.notificationTag(alert) == expandedIncidentKey
+                    }) {
+                    expandedIncidentKey = null
                 }
             }
             .onFailure {
                 error = it.message ?: "Cloud offline"
-                expandedAlertId = null
+                expandedIncidentKey = null
             }
         loading = false
     }
     // Refresh only an expanded card's local snooze countdown. Compose
     // cancels the coroutine on collapse; no extra HTTP requests or background
     // pollers are created, and incident state is never mutated.
-    LaunchedEffect(expandedAlertId) {
-        if (expandedAlertId != null) {
+    LaunchedEffect(expandedIncidentKey) {
+        if (expandedIncidentKey != null) {
             while (true) {
                 delay(30_000L)
                 snoozeMinuteTick++
             }
         }
     }
-    LaunchedEffect(openIncidentId) {
+    LaunchedEffect(openIncidentId, openIncidentProject) {
         // A notification can arrive while the watch is already running.
         // Always obtain new evidence before opening the named blocker;
         // never navigate by ID into historical or offline cached data.
@@ -156,16 +161,19 @@ private fun HomeScreen(
             val current = snapshot?.takeIf {
                 error == null && !it.stale && it.currentBlockerFeedAvailable
             }
-            expandedAlertId = openIncidentId.takeIf { id ->
+            val requestedKey = if (openIncidentId != null &&
+                openIncidentProject != null) "$openIncidentProject:$openIncidentId"
+                else null
+            expandedIncidentKey = requestedKey?.takeIf { key ->
                 current?.alerts?.any { alert ->
-                    alert.id == id && (
+                    IncidentSnoozeStore.notificationTag(alert) == key && (
                         alert.severity.equals("high", true) ||
                         alert.severity.equals("critical", true) ||
                         alert.severity.equals("error", true) ||
                         alert.severity.equals("needs_attention", true))
                 } == true
             }
-            disappearedIncidentNotice = current != null && expandedAlertId == null
+            disappearedIncidentNotice = current != null && expandedIncidentKey == null
             onIncidentHandled()
         }
     }
@@ -229,12 +237,15 @@ private fun HomeScreen(
                 }.thenByDescending { it.occurredAt.orEmpty() })
             if (urgent.isNotEmpty()) {
                 item { SectionLabel("AANDACHT NODIG · ${urgent.size}") }
-                items(urgent, key = { "alert:${it.id}" }) { alert ->
-                    val expanded = expandedAlertId == alert.id
+                items(urgent, key = {
+                    "alert:" + IncidentSnoozeStore.notificationTag(it)
+                }) { alert ->
+                    val incidentKey = IncidentSnoozeStore.notificationTag(alert)
+                    val expanded = expandedIncidentKey == incidentKey
                     // The operator can inspect the actual cause and next
                     // action without losing their place in the incident list.
                     SurfaceCard(modifier = Modifier.clickable {
-                        expandedAlertId = if (expanded) null else alert.id
+                        expandedIncidentKey = if (expanded) null else incidentKey
                     }) {
                         Label(
                             "${alert.project?.uppercase() ?: "ZCLOUD"} · ${alert.severity.uppercase()}",
