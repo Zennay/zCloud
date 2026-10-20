@@ -21,6 +21,7 @@ MAX_PRS = 4
 MAX_PATHS = 24
 MAX_CHECKS = 24
 MAX_ISSUE_HINTS = 12
+SOURCE_FRESHNESS_SECONDS = 6 * 60 * 60
 
 
 def _timestamp(value):
@@ -146,6 +147,12 @@ def collect_workorders(board):
     observed_at = _timestamp(desk.get("observed_at_utc"))
     if _timestamp(live.get("observed_at_utc")) != observed_at:
         raise ValueError("inconsistent live gate and action source times")
+    # Exact HEAD at the time of reading is not an assertion that the same
+    # PR is still current hours later. Preserve historical receipts, but
+    # withdraw their source-current label from the operator workbench.
+    source_stale = (
+        datetime.now(timezone.utc) -
+        datetime.fromisoformat(observed_at)).total_seconds() > SOURCE_FRESHNESS_SECONDS
     cards, seen = [], set()
     for item in desk["items"]:
         if (type(item) is not dict or item.get("merge_authorized") is not False
@@ -212,6 +219,11 @@ def collect_workorders(board):
         for value in (category, blocker, next_step):
             _markdown(value)
         notes = []
+        if source_stale:
+            notes.append(
+                "HISTORISCHE BRON: de opgeslagen GitHub/PR-gatewaarneming is "
+                "ouder dan zes uur. Herlees HEAD, reviews en verplichte checks "
+                "voordat een PR als actueel wordt behandeld.")
         if not pinned:
             notes.append("Geen stabiele actuele HEAD/basis bevestigd; eerst bij GitHub herlezen.")
         if item.get("historical_gate_change") is not None:
@@ -235,7 +247,9 @@ def collect_workorders(board):
             "url": url, "files_url": url + "/files", "head_sha": head if pinned else None,
             "base_sha": base if pinned else None,
             "category": _markdown(category), "blocker": _markdown(blocker),
-            "human_next_step": _markdown(next_step), "source_current": pinned,
+            "human_next_step": _markdown(next_step),
+            "source_current": pinned and not source_stale,
+            "source_exact_head_at_observation": pinned,
             "rank": item["rank"], "check_links": links,
             "check_links_hidden": int(item.get("non_green_jobs_hidden", 0)),
             "overlap_paths": [_markdown(p) for p in paths],
@@ -248,7 +262,9 @@ def collect_workorders(board):
     cards.sort(key=lambda x: (x["rank"], x["project"], x["number"]))
     receipt = {
         "schema": SCHEMA, "source_observed_at_utc": observed_at,
-        "project_set": list(board["projects"]), "items": cards,
+        "project_set": list(project_ids), "items": cards,
+        "source_observation_stale": source_stale,
+        "source_freshness_budget_seconds": SOURCE_FRESHNESS_SECONDS,
         "selection_is_not_full_open_pr_backlog":
             desk["source_not_a_complete_pr_inventory"],
         "source": "bounded_read_only_github_pr_and_gate_observations",
@@ -279,6 +295,11 @@ def render_markdown(bundle):
         "branch protection, merge- of deploytoestemming.",
         "",
     ]
+    if bundle.get("source_observation_stale") is True:
+        lines.append(
+            "**HISTORISCHE BRON (>6 uur):** geen actuele PR-/HEAD-/"
+            "review-/CI-toestand bewezen. Bronlinks zijn voor hercontrole, "
+            "niet voor mergebesluit.\n")
     if bundle["selection_is_not_full_open_pr_backlog"]:
         lines.append("**ONVOLLEDIGE SELECTIE:** overige open PRs/botsingen onbekend.\n")
     for card in bundle["items"]:
