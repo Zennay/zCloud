@@ -130,6 +130,149 @@ def collect_portfolio(projects, canonical, token=None, max_prs=10):
     }
 
 
+
+def current_merge_first_gates(board, token=None):
+    """Combine the current PR-overlap board with <=4 actual exact-head gate reads.
+
+    This is one opted-in *observation*, never merge authorization or a claim.
+    The overlap and check snapshots are sequential, not atomic. A changed head
+    is rejected as a cross-source match rather than called merge-ready.
+    """
+    from zsentinel_pr_gate_now import observe_many
+
+    if (type(board) is not dict
+            or board.get("schema") != "zsentinel-portfolio-pr-collision-board-v1"
+            or type(board.get("project_views")) is not list
+            or not 1 <= len(board["project_views"]) <= MAX_PROJECTS
+            or any(board.get(key) is not False for key in (
+                "notion_claims_verified", "worker_file_leases_verified",
+                "claim_authorized", "merge_authorized", "deploy_authorized",
+                "writes_performed"))):
+        raise ValueError("untrusted source for live merge-first gate inspection")
+
+    buckets = []
+    total_inspected = 0
+    incomplete_projects = []
+    for view in board["project_views"]:
+        if (type(view) is not dict or type(view.get("project")) is not str
+                or type(view.get("repository")) is not str):
+            raise ValueError("untrusted project identity")
+        receipts = view.get("sampled_open_pr_heads", [])
+        if type(receipts) is not list or len(receipts) > MAX_PRS_PER_PROJECT:
+            raise ValueError("invalid inspected PR head count")
+        total_inspected += len(receipts)
+        if (view.get("source_status") == "unavailable"
+                or view.get("open_pr_snapshot_stable") is not True):
+            incomplete_projects.append(view["project"])
+            buckets.append([])
+            continue
+        by_num = {}
+        for receipt in receipts:
+            if (type(receipt) is not dict or type(receipt.get("number")) is not int
+                    or type(receipt.get("head_sha")) is not str
+                    or type(receipt.get("base_sha")) is not str
+                    or type(receipt.get("url")) is not str
+                    or receipt["number"] in by_num
+                    or receipt["url"] != "https://github.com/" +
+                    view["repository"] + "/pull/" + str(receipt["number"])):
+                raise ValueError("untrusted PR sample identity")
+            by_num[receipt["number"]] = receipt
+        order = []
+        # Prefer existing source collisions and duplicate issue mentions,
+        # then stable existing PR order. This is attention, NOT priority/owner.
+        for pair in view.get("shown_collision_pairs", []):
+            for side in ("left", "right"):
+                number = pair[side]["number"]
+                if number in by_num and number not in order:
+                    order.append(number)
+        for group in view.get("shown_duplicate_issue_groups", []):
+            for item in group["shown_pr_sources"]:
+                number = next((n for n, pr in by_num.items()
+                               if pr["url"] == item["url"]), None)
+                if number is not None and number not in order:
+                    order.append(number)
+        for pr in receipts:
+            if pr["number"] not in order:
+                order.append(pr["number"])
+        buckets.append([(view["project"], view["repository"], by_num[n])
+                        for n in order])
+    # Fair sampling across projects: no noisy project can occupy all four
+    # scarce API receipts while another stable project is present.
+    selected = []
+    for offset in range(MAX_PRS_PER_PROJECT):
+        for bucket in buckets:
+            if len(bucket) > offset:
+                selected.append(bucket[offset])
+                if len(selected) == 4:
+                    break
+        if len(selected) == 4:
+            break
+    identities = [(repo, pr["number"]) for _, repo, pr in selected]
+    gate_rows = observe_many(identities, token) ["items"] if identities else []
+    output = []
+    for (project, repo, captured), gate in zip(selected, gate_rows):
+        matched = (
+            gate.get("status") == "observed_current_head_partial_gate_evidence"
+            and gate.get("head_sha_observed") == captured["head_sha"]
+            and gate.get("base_sha_observed") == captured["base_sha"])
+        if matched:
+            item = {
+                "project": project,
+                "url": captured["url"],
+                "head_sha_observed": captured["head_sha"],
+                "status": "current_exact_pr_head_and_sample_match",
+                "observed_checks_pending": gate["observed_checks_pending"],
+                "observed_checks_not_successful": gate["observed_checks_not_successful"],
+                "observed_legacy_pending": gate["legacy_status_pending_observed"],
+                "observed_legacy_failure_or_error":
+                    gate["legacy_status_failure_or_error_observed"],
+                "observed_independent_exact_head_approvals":
+                    gate["observed_independent_exact_head_approvals"],
+                "human_next_gate_step": gate["human_next_gate_step"],
+                "check_page_complete": gate["check_runs_page_complete"],
+                "review_page_may_be_truncated": gate["review_page_may_be_truncated"],
+                "required_rules_verified": False,
+                "live_owner_claim_verified": False,
+                "merge_authorized": False,
+            }
+        else:
+            item = {
+                "project": project, "url": captured["url"],
+                "head_sha_observed": captured["head_sha"],
+                "status": "pr_source_unavailable_or_changed_between_observations",
+                "required_rules_verified": False,
+                "live_owner_claim_verified": False,
+                "merge_authorized": False,
+            }
+        output.append(item)
+    result = {
+        **board,
+        "current_live_pr_gate_observation": {
+            "mode": "opt_in_one_shot_at_most_four_stable_sampled_prs",
+            "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+            "items": output,
+            "inspected_stable_sample_prs": total_inspected,
+            "pr_gate_receipts_requested": len(selected),
+            "more_sampled_prs_not_gate_checked": total_inspected > len(selected),
+            "source_unavailable_or_changed_projects": incomplete_projects,
+            "max_additional_github_gets": len(selected) * 5,
+            "file_scope_and_gate_reads_are_atomic": False,
+            "required_branch_protection_verified": False,
+            "notion_claims_verified": False,
+            "independent_review_policy_verified": False,
+            "merge_authorized": False,
+            "deploy_authorized": False,
+            "writes_performed": False,
+        },
+        "maximum_github_gets": board["maximum_github_gets"] + len(selected) * 5,
+        "claim_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "writes_performed": False,
+    }
+    return result
+
+
 def summary_lines(view):
     if view["source_status"] == "unavailable":
         return ["Bron ONBESCHIKBAAR: geen oordeel over open PR's of overlap."]
