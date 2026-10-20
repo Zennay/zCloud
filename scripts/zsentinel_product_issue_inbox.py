@@ -165,7 +165,8 @@ def bounded_get(url, token):
         if error.code == 403:
             # GitHub can report a rate-budget exhaustion as HTTP 403.
             # Headers only; never copy exception bodies, URLs or credentials.
-            remaining = error.headers.get("X-RateLimit-Remaining")
+            remaining = (error.headers.get("X-RateLimit-Remaining")
+                         if error.headers is not None else None)
             category = ("rate_limit_confirmed" if remaining == "0"
                         else "forbidden_or_rate_limit_unknown")
             raise GithubAdmissionError(category) from None
