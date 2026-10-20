@@ -185,16 +185,18 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
                 '</li>')
         omitted = len(match["linked_existing_prs"]) - len(prs)
         cards.append(
-            '<article class="brief"><h3><a target="_blank" ' +
+            '<article class="brief"><details><summary>' +
+            e(card["priority"]) + ' ' + e(card["issue"]) + ' · ' +
+            str(len(match["linked_existing_prs"])) +
+            ' source-PR links</summary><p><a target="_blank" ' +
             'rel="noopener noreferrer" href="' + e(card["url"]) + '">' +
-            e(card["priority"]) + ' ' + e(card["issue"]) +
-            '</a></h3><p>' + str(len(match["linked_existing_prs"])) +
-            ' original PR links from the separate historical source. ' +
-            'This is NOT live ownership/CI/review.</p><ol>' +
+            e(card["title"]) +
+            '</a> · Old saved PR references only; live ownership/CI/review '
+            'remain UNKNOWN.</p><ol>' +
             ''.join(prs) + '</ol>' +
             ('<p>' + str(omitted) +
              ' other saved PR references not displayed. NOT resolved.</p>'
-             if omitted else '') + '</article>')
+             if omitted else '') + '</details></article>')
     other_issues = [
         row for row in report["issues"]
         if row["issue_url"] not in visited
@@ -221,7 +223,8 @@ def issue_pr_connections_html(view: dict, report: dict | None) -> str:
         ' · other source-linked issues: ' + str(len(other_issues)) +
         ' · PRs without saved issue links: ' +
         str(report["pr_without_source_issue_count"]) + ' (not free).</p>'
-        '<details><summary>Open existing PR references for matching issues</summary>' +
+        '<details><summary>Browse ' + str(len(cards)) +
+        ' matching saved-PR issue groups</summary>' +
         ''.join(cards) + '</details>' +
         '<details><summary>Other source issues and unlinked PRs (incomplete '
         'coverage)</summary><ol>' + ''.join(unmatched) + '</ol>' +
