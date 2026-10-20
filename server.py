@@ -3032,11 +3032,21 @@ def portfolio_queue_audit(refill=True):
             ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
             projects=c.execute("""SELECT COUNT(DISTINCT project_id) FROM portfolio_queue WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
         return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':[],'time':now()}
-    # Keep at least one executable item available for every non-human-gated active project.
+    # Refill must observe the *same product admission policy* as the worker
+    # selector. Otherwise a project with only stale QA-only queued rows is
+    # incorrectly considered supplied and never receives a product ticket.
+    # Active claimed/running/verifying tasks ALWAYS remain represented, even
+    # when their title no longer passes today's producer policy.
     with connect() as c:
-        rows=c.execute("""SELECT DISTINCT project_id FROM portfolio_queue
+        rows=c.execute("""SELECT * FROM portfolio_queue
                           WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchall()
-        represented={str(row['project_id']) for row in rows}
+        represented={
+            str(row['project_id']) for row in rows
+            if str(row['status']) in ('claimed','running','verifying')
+            or (str(row['status'])=='queued'
+                and row['worker_slot'] is None
+                and is_new_product_delivery(dict(row)))
+        }
     project_order=sorted(
         PROJECT_INDEX.values(),
         key=lambda p: ({'system':0,'high':1,'normal':2,'low':3,'background':4}.get(str(p.get('priority') or 'normal'),2), str(p.get('id') or ''))
