@@ -179,6 +179,15 @@ def compare_portfolio_prs(current, previous, registry, previous_sha256, now=None
                 "merged_verified": False, "closed_verified": False,
                 "owner_verified": False,
             })
+    # Merge-first navigation: genuine observed HEAD drift is the first
+    # operator investigation, then stale project windows, then new samples.
+    # This is only a suggested human source reread, never merge admission.
+    changed.sort(key=lambda row: (
+        0 if "listed_head_changed_REINSPECT_EXACT_HEAD" in row["changes"]
+        else 1 if row["state"] == "current_project_window_not_newer_NO_DELTA_INFERRED"
+        else 2 if row["changes"] else 3,
+        projects.index(row["project_id"]), row["url"],
+    ))
     return {
         "schema": "zsentinel-private-portfolio-pr-delta-v1",
         "previous_sha256": previous_sha256,
