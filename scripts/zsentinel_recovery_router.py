@@ -313,10 +313,13 @@ def vps_capacity(bundle, now):
         if almost_full_disk:
             reasons.append("disk_unavailable_at_least_90_percent")
         return {"state": "overloaded", "reason": ",".join(reasons)}
+    if unavailable_disk_pct is None:
+        # A legacy snapshot cannot establish safe mount headroom; a human may
+        # inspect it but the self-hosted advisory router must fail closed.
+        return {"state": "unavailable",
+                "reason": "old_snapshot_disk_occupancy_unknown_not_release_authorization"}
     return {"state": "advisory_headroom",
-            "reason": ("thresholds_met_not_release_authorization"
-                       if unavailable_disk_pct is not None else
-                       "old_snapshot_disk_occupancy_unknown_not_release_authorization")}
+            "reason": "thresholds_met_not_release_authorization"}
 
 
 def eligible_tasks(bundle, blocked, now, capacity):
