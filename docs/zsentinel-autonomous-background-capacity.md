@@ -79,6 +79,28 @@ was manually changed after the previous observation is re-evaluated on
 the next invocation, while an inactive unit remains untouched (but has
 an explicit unverified observation in private state).
 
+## Read-only GitHub runner service overview
+
+For a one-command private operator view, use `python3
+scripts/zsentinel_background_priority.py --preview --human --runners`.
+The added `--runners` flag is **opt-in and preview-only**; the background
+timer never inventories other services. It uses bounded, shell-free
+`systemctl list-units` reads for at most 20 canonical
+`actions.runner.<owner>.<runner>.service` names. Only failed units get
+a bounded `systemctl show -p Result` read for familiar values such as
+`oom-kill`, `exit-code` or `timeout`. No unit descriptions, arbitrary
+command lines, GitHub credentials or process environment are returned.
+An oversized list explicitly says the coverage is partial; if systemd is
+unreachable, the output says the service state could not be observed.
+
+An **active runner service is not proof of an executing GitHub job**,
+correct GitHub labels, successful builds or a healthy deploy. Likewise,
+`inactive/dead` does not mean that a service is crashed: it may have
+stopped normally. The optional overview deliberately provides no restart,
+enable, stop, dispatch, write or repair action. Recovery of OOM-failed
+project runners remains subject to the specific service owner, memory
+headroom and existing production gates.
+
 ## Operator installation and release boundaries
 
 Code files:
