@@ -3108,7 +3108,7 @@ def portfolio_queue_health():
             continue
         if row['worker_slot'] is not None:
             continue
-        decision=product_delivery_disposition(dict(row))
+        decision=product_delivery_classification(dict(row))[0]
         if decision=='product':
             product_ready+=1
         elif decision=='qa_only':
