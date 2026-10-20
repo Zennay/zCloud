@@ -314,7 +314,7 @@ def discovery(projects, allowed, budget, max_per_project):
             # QA-only work is excluded from discovery, not from observed
             # collision evidence or other workers' authoritative ownership.
             normalized = title.strip().casefold()
-            if (entry.get("draft") is True
+            if (type(entry.get("draft")) is not bool
                     or normalized.startswith(("test(", "test:", "qa(", "qa:", "chore(qa)"))
                     or "quality-validation" in normalized):
                 continue
@@ -326,12 +326,14 @@ def discovery(projects, allowed, budget, max_per_project):
             rank = (0 if normalized.startswith(("p0", "fix(p0", "fix:", "fix("))
                     else 1 if normalized.startswith(("p1", "feat(", "feat:"))
                     else 2)
-            eligible.append((rank, len(eligible), number))
+            # Ready PRs take precedence within the same priority, while
+            # DRAFT remains visible as owner-controlled unfinished work.
+            eligible.append((rank, 1 if entry["draft"] else 0, len(eligible), number))
         if malformed:
             partial.append(repo)
             continue  # Fail closed for this inventory, retain other projects.
         # Priority is only an ordering aid, never ownership or merge evidence.
-        for _, _, number in sorted(eligible)[:max_per_project]:
+        for _, _, _, number in sorted(eligible)[:max_per_project]:
             selected.append((repo, key, number))
     return selected, partial
 
