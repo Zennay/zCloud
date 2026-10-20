@@ -96,3 +96,12 @@ In addition to the individual detailed sections, every text, JSON and HTML repor
 The board does not fetch GitHub secrets or run any mutating command. No single green local row means the release is approved; **every row** has `authorizes_release=false` and the top-level `release_authorized=false`. The HTML version stays self-contained and script-free; the JSON can be handed off privately to an authorized deployment owner. Active workers and a dirty checkout should be reconciled through their original owners, not forcibly stopped or reset.
 
 The board ships as part of the already-open PR #1540 and remains inactive on production until normal exact-head required checks, independent review and protected-main merge. This source update is not a claim of deployment.
+
+
+## Shared-VPS training headroom — operational release blocker (20 October)
+
+A percentage-only disk check can miss a concrete shortage for co-located training workloads. The preflight therefore observes the filesystem's **actual free bytes**, always compares them with the existing **10 GiB operational training reserve** and emits `TRAINING_DISK_RESERVE_BELOW` when the reserve is not met—even if the percentage of free space happens to be above the old 10% threshold. The report includes `disk_free_bytes`, `training_reserve_bytes`, and `training_reserve_gap_bytes` in JSON, text, and the offline mobile HTML board. This is a safe readiness signal, never permission to stop a worker or delete anything.
+
+Direct authorized connected zSSH source inspection at [eb9bc30e](https://github.com/Zennay/zCloud/commit/eb9bc30e0667b66a44d16bb5cf26eae8c283e889) reported **9,867,055,104 available bytes**, **10,737,418,240 required**, and a **870,363,136-byte shortfall**. The source returned `result=blocked`, `worker_safety.state=active_work_observed` and `release_authorized=false`; no service, runner, generation, queue, local checkout or archive was modified. These values can change every minute. Do not reuse them to authorize a future release.
+
+Read-only worker accounting now explicitly closes its SQLite connection after its bounded SELECT transaction, avoiding lingering connection handles in long-running diagnostic use. It never reconciles, claims or updates queue state. All independent exact-head CI, review, protected-main, owner-gated safe idle and serialized production release barriers remain intact.
