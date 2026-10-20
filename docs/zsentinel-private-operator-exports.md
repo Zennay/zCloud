@@ -49,3 +49,29 @@ merge/deploy en verleent geen nieuwe security- of systeemrechten. De
 project-PR moet nog steeds door normale exact-HEAD verplichte CI, onafhankelijke
 review, protected-main en runtime-release-eigenaarschap. Het bronresultaat op
 een PR-branch bewijst geen live serverinstallatie.
+
+## Eenzelfde bronmoment voor cockpit én agenda
+
+Met `--agenda-output` kun je naast een gekozen normale operatorweergave in
+één run een afzonderlijke privé-ICS voor de bevoegde incidenteneigenaar
+aanmaken. Hierdoor hoeven GitHub- en SQLite-bronnen niet opnieuw gelezen te
+worden voor alleen het kalenderbestand; beide resultaten zijn gebaseerd op
+dezelfde routerbeslissing. Iedere bestandsnaam moet uniek en nieuw zijn.
+
+```bash
+python3 scripts/zsentinel_live_cockpit.py --github-only --project cloud \
+  --format html --output /private/zsentinel-operator.html \
+  --agenda-output /private/zsentinel-owner.ics
+```
+
+Je kunt het HTML-bord lokaal openen en de ICS afzonderlijk in een
+kalenderprogramma **handmatig** importeren. Het kalenderbestand bevat geen
+bevestiging van een actieve eigenaar, verzonden notificatie of GitHub-merge.
+`--agenda-output` werkt met de normale cockpitformaten, inclusief
+`--format desk --desk-output ...`. Bij `--format ics` is die optie niet nodig:
+gebruik `--output NEW.ics`. De uitvoerbestanden mogen geen bronbestanden,
+elkaar, een queue-ledger of een andere privé-uitvoer overschrijven.
+
+Als een van meerdere afzonderlijke bestandsaanmaken faalt, kan een eerder
+aangemaakt privérapport behouden blijven. De CLI meldt de fout en verzint
+nooit een complete transactie of geslaagde menselijke kalenderimport.
