@@ -518,6 +518,55 @@ def worker_progress_html(source):
             or len(source["entries"]) > MAX_PROJECTS * MAX_SLOTS):
         raise ValueError("untrusted browser worker event evidence")
     from html import escape
+    inbox = source.get("owner_followup_candidates")
+    if (type(inbox) is not list or len(inbox) > MAX_PROJECTS * MAX_SLOTS
+            or source.get("followup_inventory_exhaustive") is not False):
+        raise ValueError("untrusted bounded worker followup inbox")
+    known = {(x.get("project_id"), x.get("worker_slot")): x
+             for x in source["entries"] if isinstance(x, dict)}
+    inbox_lines = []
+    already = set()
+    for entry in inbox:
+        if type(entry) is not dict:
+            raise ValueError("invalid worker owner followup candidate")
+        key = (entry.get("project_id"), entry.get("worker_slot"))
+        matching = known.get(key)
+        if (matching is None or key in already
+                or entry.get("classification") != matching.get("classification")
+                or entry.get("safe_followup") != matching.get("safe_followup")
+                or entry.get("owner_claim_verified") is not False
+                or entry.get("recovery_authorized") is not False
+                or entry.get("continuation_verified") is not False
+                or entry.get("current_queue_lease_observed") is not
+                    matching.get("queue_lease_current_from_source")):
+            raise ValueError("inconsistent worker owner followup identity")
+        already.add(key)
+        count = entry.get("recent_block_events_after_prompt_in_sample")
+        progress = entry.get("recent_progress_events_after_prompt_in_sample")
+        if (type(count) is not int or not 0 <= count <= MAX_TIMELINE_EVENTS
+                or type(progress) is not int or not 0 <= progress <= MAX_TIMELINE_EVENTS
+                or type(entry.get("timeline_truncated")) is not bool
+                or not isinstance(entry.get("project_id"), str)
+                or not PROJECT.fullmatch(entry["project_id"])
+                or type(entry.get("worker_slot")) is not int
+                or not 1 <= entry["worker_slot"] <= 16):
+            raise ValueError("invalid owner followup metrics")
+        inbox_lines.append(
+            "<li><strong>" + escape(entry["project_id"]) +
+            " · worker " + str(entry["worker_slot"]) + "</strong> · " +
+            escape(entry["safe_followup"]) +
+            " · blokkades binnen beperkte sample: " + str(count) +
+            " · voortgangssignalen: " + str(progress) +
+            " · claim NIET geverifieerd.</li>"
+        )
+    inbox_html = (
+        '<aside class="panel warn"><h3>Eigenaarcontrole · begrensde actielijst</h3>'
+        '<p>Advies, geen claim/lease/restart-toestemming. Niet getoonde workers'
+        ' zijn niet bewezen gezond. Huidige sample is onvolledig.</p>'
+        + ("<ol>" + "".join(inbox_lines) + "</ol>" if inbox_lines else
+           "<p>Geen specifieke eigenaarcontrole in de beperkte sample.</p>")
+        + "</aside>"
+    )
     status = {
         "recent_client_block_event_owner_review": "Recent browserblokkadesignaal; eigenaarcontrole",
         "generation_progress_timestamp_observed": "Recente generatievoortgang waargenomen",
@@ -667,7 +716,7 @@ def worker_progress_html(source):
         ' vervolgstap. Geen claim-epoch-binding, browserstatus-GET,'
         ' herstart of werkafrondingsbewijs. Oude of ontbrekende events'
         ' bewijzen geen daadwerkelijke storing of herstel.</p>'
-        '<div class="grid">' + ''.join(rows) + '</div></section>'
+        + inbox_html + '<div class="grid">' + ''.join(rows) + '</div></section>'
     )
 
 
