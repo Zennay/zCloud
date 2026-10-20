@@ -304,10 +304,38 @@ def sweep(repo, project, args):
         result = {"repo": repo, "pr": number, "head": head[:12],
                   "base": item["base"]["ref"], "merged": False}
         if item.get("state") != "open":
-            result["merged"] = bool(item.get("merged_at"))
-            result["status"] = "ALREADY_MERGED" if result["merged"] else "CLOSED"
-            if result["merged"]:
-                result["main_commit"] = item.get("merge_commit_sha")
+            # A closed PR can target a non-main branch, or its old merge
+            # commit may no longer be contained in main. A merge timestamp
+            # alone is not proof of present default-branch delivery.
+            result["status"] = "CLOSED_NOT_MERGED"
+            reported_commit = item.get("merge_commit_sha")
+            if item.get("merged") is True and item.get("merged_at"):
+                result["status"] = "MERGED_RECEIPT_MAIN_UNVERIFIED"
+                result["reported_commit"] = reported_commit
+                if item["base"]["ref"] != default:
+                    result["status"] = "MERGED_INTO_NONDEFAULT_BRANCH"
+                elif isinstance(reported_commit, str) and re.fullmatch(
+                        r"[0-9a-f]{40}", reported_commit):
+                    try:
+                        current_pr = gh(f"repos/{repo}/pulls/{number}")
+                        default_ref = gh(f"repos/{repo}/git/ref/heads/{default}")
+                        current_head = (default_ref.get("object") or {}).get("sha")
+                        result["default_branch_head_observed"] = current_head
+                        if (current_pr.get("state") == "closed"
+                                and current_pr.get("merged") is True
+                                and current_pr.get("merged_at")
+                                and current_pr.get("merge_commit_sha") == reported_commit
+                                and (current_pr.get("base") or {}).get("ref") == default
+                                and (current_pr.get("head") or {}).get("sha") == head
+                                and verify_default_contains_merge(
+                                    repo, reported_commit, current_head)):
+                            result["merged"] = True
+                            result["main_commit"] = reported_commit
+                            result["status"] = "ALREADY_MERGED_ON_MAIN_VERIFIED"
+                    except (RuntimeError, ValueError, KeyError, TypeError,
+                            subprocess.TimeoutExpired):
+                        # A source outage cannot turn a receipt into delivery.
+                        pass
         elif item["base"]["ref"] != default:
             result["status"] = "CHILD_PR_REQUIRES_PARENT_INTEGRATION"
         elif item["draft"]:
@@ -390,6 +418,8 @@ def main():
     args = parser.parse_args()
     if args.max_prs < 1 or args.max_prs > 24:
         parser.error("--max-prs must be between 1 and 24")
+    if args.pr and (len(args.pr) > 24 or any(n < 1 or n > 9999999 for n in args.pr)):
+        parser.error("--pr requires at most 24 valid PR numbers (1..9999999)")
     if args.merge and (len(args.repo) != 1 or len(args.pr or []) != 1
                        or not args.owner_id or not args.claim_key):
         parser.error("--merge needs one --repo, one explicit --pr, --owner-id and --claim-key")
