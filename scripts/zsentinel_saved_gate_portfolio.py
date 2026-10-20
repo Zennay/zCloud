@@ -132,7 +132,9 @@ def portfolio_html(selected, integrated):
             str(p["concurrent_categories"][key]) + " " + LABELS[key][0]
             for key in LABELS if p["concurrent_categories"][key])
         cards.append(
-            '<article class="portfolio-project"><h3>' + e(p["repository"]) +
+            '<article class="portfolio-project" id="project-' +
+            e(p["repository"].replace("/", "-")) + '"><h3>' +
+            e(p["repository"]) +
             '</h3><p>PR-kandidaten in bron: <strong>' +
             str(p["source_prs_observed"]) + '</strong> · P0: ' +
             str(p["p0_prs_in_sample"]) + ' · P1: ' +
@@ -151,13 +153,20 @@ def portfolio_html(selected, integrated):
             '<p>Alleen opgeslagen gedeeltelijke gatewaarnemingen; '
             'geen actuele vrijgave of eigendomsbewijs.</p><ol>' +
             ''.join(queue) + '</ol></details></article>')
+    jump_links = '<nav aria-label="Spring direct naar project"><strong>' + \
+        'Ga naar project: </strong>' + ' · '.join(
+            '<a href="#project-' + e(p["repository"].replace("/", "-")) +
+            '">' + e(p["repository"]) + ' (' +
+            str(p["source_prs_observed"]) + ' PRs)</a>'
+            for p in projects) + '</nav>'
     return ('<section class="portfolio-overview" aria-label="zSentinel '
             'portfolio afhandeloverzicht"><h2>Portfolio · bestaande PR '
             'afhandeling</h2><p>Alle aantallen zijn <strong>uitsluitend '
             'uit het opgeslagen bronvenster</strong>. Projecten zonder '
             'waargenomen PR kunnen buiten de steekproef liggen. Geen '
             'eigenaar, merge of live herstel is geverifieerd.</p>'
-            '<div class="portfolio-grid">' + ''.join(cards) + '</div></section>')
+            jump_links + '<div class="portfolio-grid">' +
+            ''.join(cards) + '</div></section>')
 
 
 def portfolio_csv(selected, integrated):
