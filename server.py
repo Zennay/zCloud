@@ -1038,7 +1038,10 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
         c.execute('BEGIN IMMEDIATE')
         # Admission is serialized with the settings writer, not a stale
         # snapshot outside the transaction. Do not change settings on HOLD.
-        _dynamic_worker_resize_guard_locked(c,chatgpt_count,claude_count)
+        if chatgpt_count+claude_count>MAX_CHATGPT_WORKERS:
+            raise ValueError('Totaal aantal browserworkers overschrijdt de uitvoerbare globale limiet')
+        if capacity_changed:
+            _dynamic_worker_resize_guard_locked(c,chatgpt_count,claude_count)
         for key,value in values.items():
             c.execute(
                 "INSERT INTO runtime_settings(key,value,updated_at,actor) VALUES(?,?,?,?) "
