@@ -32,6 +32,8 @@ REASON_NL = {
     "limited-root-disk-headroom": "Beperkte root-schijfruimte",
     "critical-root-free-gib": "Minder dan 2 GiB vrije rootruimte",
     "limited-root-free-gib": "Minder dan 5 GiB vrije rootruimte",
+    "critical-root-inodes": "Minder dan 1% root-inodes beschikbaar",
+    "limited-root-inodes": "Minder dan 5% root-inodes beschikbaar",
 }
 
 
@@ -114,6 +116,8 @@ def recovery_priorities(data):
                       load is None or
                       host["swap_used_percent"] >= 80 or
                       host["disk_unavailable_percent"] >= 90 or
+                      (type(host.get("root_inode_available_percent")) in (int, float) and
+                       host["root_inode_available_percent"] < 1) or
                       (type(host.get("root_available_gib")) in (int, float) and
                        host["root_available_gib"] < 2) or
                       load > cores * 1.35)
@@ -198,9 +202,10 @@ def render_comparison(comparison):
         "swap_used_percent": ("Swapgebruik", " procentpunt"),
         "disk_unavailable_percent": ("Rootruimte niet beschikbaar", " procentpunt"),
         "root_available_gib": ("Rootruimte beschikbaar", " GiB"),
+        "root_inode_available_percent": ("Root-inodes beschikbaar", " procentpunt"),
     }
     metric_rows = []
-    for metric in capacity.get("metrics", [])[:5]:
+    for metric in capacity.get("metrics", [])[:6]:
         name, unit = cap_labels.get(metric.get("metric"), ("Onbekende meting", ""))
         if metric.get("comparable") is True:
             delta = metric.get("difference")
@@ -382,6 +387,7 @@ def render(data):
         box("Swap gebruikt", _value(host["swap_used_percent"], "%")),
         box("Root niet beschikbaar", _value(host["disk_unavailable_percent"], "%")),
         box("Root beschikbaar", _value(host.get("root_available_gib"), " GiB")),
+        box("Root-inodes beschikbaar", _value(host.get("root_inode_available_percent"), "%")),
     ])
     return f"""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -743,8 +749,9 @@ def render_timeline(pairs, observations):
             "swap_used_percent": ("Swap", " procentpunt"),
             "disk_unavailable_percent": ("Root niet beschikbaar", " procentpunt"),
             "root_available_gib": ("Root beschikbaar", " GiB"),
+            "root_inode_available_percent": ("Root-inodes beschikbaar", " procentpunt"),
         }
-        for item in capacity.get("metrics", [])[:5]:
+        for item in capacity.get("metrics", [])[:6]:
             name, unit = labels.get(item.get("metric"), ("Andere metric", ""))
             amount = item.get("difference")
             if item.get("comparable") is True and type(amount) in (float, int):
@@ -877,11 +884,11 @@ def render_private_handoff(data):
         rows.append("Bron: " + continuity + " | runnerinventaris: "
                     + ("volledig binnen limieten" if coverage else "GEDEELTELIJK/ONBEKEND") + ".")
         metrics = (pair.get("capacity_comparison") or {}).get("metrics", [])
-        for m in metrics[:5]:
+        for m in metrics[:6]:
             name = m.get("metric")
             if name not in {"host_load", "memory_available_gib",
                             "swap_used_percent", "disk_unavailable_percent",
-                            "root_available_gib"}:
+                            "root_available_gib", "root_inode_available_percent"}:
                 continue
             diff = m.get("difference")
             if m.get("comparable") is True and type(diff) in (int, float):
