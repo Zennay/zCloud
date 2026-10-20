@@ -92,3 +92,36 @@ are accepted under existing exact-head CI, independent review, protected-main
 and serialized release policies. Native finite retry/backoff and automated
 `NEEDS_AI` disposition from [#677](https://github.com/Zennay/zCloud/issues/677)
 remain **not implemented**. No live queue, claims, workers, service or billing changed.
+
+## 20 oktober · Activity: ook stille projecten bij korte pagina's zichtbaar
+
+De bestaande read-only Activity-selector `scripts/zcloud_activity_fair_page.py`
+is uitgebreid voor de situatie dat de opgevraagde paginagrootte **kleiner**
+is dan het aantal echte projecten. Voorheen begon elke pagina opnieuw bij
+het project met de nieuwste eerstvolgende gebeurtenis. Daardoor konden
+drukke projecten meerdere pagina's lang terugkomen voordat een stiller
+project zijn eerste rij te zien kreeg.
+
+De selector geeft vanaf de tweede pagina **projecten met nog niet getoonde
+gebeurtenissen eerst hun eerste zichtbare plaats**. Binnen die groep blijft
+de originele UTC-tijdvolgorde gelden; zodra de eerder onzichtbare projecten
+hun eerste plek kregen, blijven de normale round-robin-volgorde en de
+bestaande per-project cursors intact. Er worden geen events weggeschreven,
+gewist, gemarkeerd als verwerkt of verborgen. De scope blijft maximaal 32
+projecten, 80 gebeurtenissen per pagina en bestaande SQLite read-only
+keyset-query's.
+
+De response bevat twee extra beschrijvende velden:
+`coverage.projects_shown_in_page` en
+`coverage.projects_not_yet_shown_with_events`. Een project dat nog
+geen eerste plek heeft gehad is daarmee niet langer stilzwijgend gelijk
+aan een project zonder gebeurtenissen. De eerdere
+`github_pr_branch_ci=not_synchronized` en `feed_complete=false`
+blijven ongewijzigd; de verbetering betreft **alleen de lokaal bekende
+Activity-geschiedenis**. De GitHub Live-bron moet afzonderlijk worden
+gecontroleerd voor echte merges, CI en actualiteit.
+
+Code staat op bestaande [PR #1549](https://github.com/Zennay/zCloud/pull/1549).
+Geen testsuites geschreven of handmatig uitgevoerd; geen productie-DB,
+claim, worker, workflow of deployment gewijzigd. Exacte-head CI,
+onafhankelijke review en release-autorisatie blijven vereist.
