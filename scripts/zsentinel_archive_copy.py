@@ -138,6 +138,7 @@ def transfer(source_root: Path, relative: str, archive_root: Path,
     dest_dir_fd = None
     dest_fd = None
     created = False
+    created_identity = None
     try:
         dest_dir_fd, available = _target_directory(archive_root, source)
         if available < before.st_size + 128 * 1024**2:
@@ -147,6 +148,8 @@ def transfer(source_root: Path, relative: str, archive_root: Path,
             getattr(os, "O_CLOEXEC", 0),
             0o600, dir_fd=dest_dir_fd)
         created = True
+        created_info = os.fstat(dest_fd)
+        created_identity = (created_info.st_dev, created_info.st_ino)
         length, digest = _read_copy(src_fd, output_fd=dest_fd)
         os.fsync(dest_fd)
         written = os.fstat(dest_fd)
@@ -196,8 +199,13 @@ def transfer(source_root: Path, relative: str, archive_root: Path,
         if dest_fd is not None:
             os.close(dest_fd)
         if created and dest_dir_fd is not None:
+            # Never unlink an unrelated file after a concurrent target swap.
             try:
-                os.unlink(leaf, dir_fd=dest_dir_fd)
+                remaining = os.stat(leaf, dir_fd=dest_dir_fd,
+                                    follow_symlinks=False)
+                if ((remaining.st_dev, remaining.st_ino) ==
+                        created_identity and stat.S_ISREG(remaining.st_mode)):
+                    os.unlink(leaf, dir_fd=dest_dir_fd)
             except OSError:
                 pass
         raise
@@ -248,7 +256,8 @@ def main():
             raise ValueError("private JSON receipt required")
         if args.mode == "plan":
             if (args.owner_confirm is not None or args.expected_sha256 is not None
-                    or args.archive_filename is not None):
+                    or args.archive_filename is not None or
+                    args.archive_root is not None):
                 raise ValueError("plan must not supply copy authority")
             result = inspect_digest(args.root, args.file)
         else:
@@ -257,9 +266,17 @@ def main():
             result = transfer(
                 args.root, args.file, args.archive_root, args.archive_filename,
                 expected_sha256=args.expected_sha256, confirmation=args.owner_confirm)
-        write_private_output(
-            args.output, json.dumps(result, ensure_ascii=True, indent=2,
-                                    sort_keys=True), "json")
+        try:
+            write_private_output(
+                args.output, json.dumps(result, ensure_ascii=True, indent=2,
+                                        sort_keys=True), "json")
+        except (OSError, ValueError):
+            if args.mode == "copy":
+                parser.exit(3, "Archive copy may have completed but its private "
+                            "receipt could not be saved. Do NOT retry without "
+                            "verifying destination and source independently. "
+                            "Original source remains untouched.\n")
+            raise
         print("Private archive receipt created; source not deleted or changed.")
         return 0
     except (ValueError, OSError, TypeError, KeyError, OverflowError):
