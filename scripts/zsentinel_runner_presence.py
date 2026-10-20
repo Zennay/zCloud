@@ -44,7 +44,7 @@ def observe_local_runners(proc_root="/proc"):
     if /proc access is absent, denied, or traversal was truncated.
     """
     seen = {
-        family: {"listeners": 0, "workers": 0}
+        family: {"listeners": 0, "workers": 0, "argv0_only": 0}
         for family in sorted(set(KNOWN_RUNNER_DIRS.values()))
     }
     observation = {
@@ -75,20 +75,45 @@ def observe_local_runners(proc_root="/proc"):
                 if encountered > MAX_PROC_ENTRIES:
                     observation["source_warnings"].append("procfs_entry_budget_exceeded")
                     break
+                lower_assurance = False
+                process_dir = root / item.name
                 try:
-                    executable = os.readlink(root / item.name / "exe")
+                    executable = os.readlink(process_dir / "exe")
+                    signature = _classify_executable(executable)
                 except FileNotFoundError:
-                    # Process naturally exited during observation: absence cannot
-                    # conclusively prove a listener failed or GitHub rejected it.
+                    # Process may have exited during this bounded enumeration.
                     continue
-                except (PermissionError, OSError):
-                    denied += 1
-                    continue
-                signature = _classify_executable(executable)
-                if not signature:
+                except OSError:
+                    # Several hardened VPS installs deny /proc/PID/exe even to
+                    # a readable, same-user process. Only consider argv[0]
+                    # after first matching the *kernel* process name.
+                    try:
+                        with (process_dir / "comm").open("r", encoding="utf-8") as fh:
+                            name = fh.read(32).strip()
+                        if name not in ("Runner.Listener", "Runner.Worker"):
+                            denied += 1
+                            continue
+                        with (process_dir / "cmdline").open("rb") as fh:
+                            prefix = fh.read(512)
+                        argv0, separator, _ = prefix.partition(bytes((0,)))
+                        if not separator:
+                            denied += 1
+                            continue
+                        signature = _classify_executable(
+                            argv0.decode("utf-8", errors="replace")
+                        )
+                        if signature is not None and signature[1] != name:
+                            signature = None
+                        lower_assurance = signature is not None
+                    except (OSError, UnicodeError):
+                        denied += 1
+                        continue
+                if signature is None:
                     continue
                 family, role = signature
                 seen[family]["listeners" if role == "Runner.Listener" else "workers"] += 1
+                if lower_assurance:
+                    seen[family]["argv0_only"] += 1
         if denied:
             observation["source_warnings"].append("procfs_processes_inaccessible")
         observation["source_complete"] = (
@@ -99,8 +124,10 @@ def observe_local_runners(proc_root="/proc"):
     for family, values in seen.items():
         # Only a process presence signal. Never label it "online" or "healthy".
         values["local_observation"] = (
-            "PRESENT" if values["listeners"] else
-            "ABSENCE_NOT_VERIFIED" if not observation["source_complete"]
+            "PROCESS_ARGV0_SEEN_NOT_VERIFIED"
+            if values["listeners"] and values["argv0_only"]
+            else "EXECUTABLE_VERIFIED" if values["listeners"]
+            else "ABSENCE_NOT_VERIFIED" if not observation["source_complete"]
             else "NOT_SEEN_IN_SNAPSHOT"
         )
     return observation
