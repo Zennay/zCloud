@@ -2409,3 +2409,36 @@ en portfolio-HTML/JSON/tekst ontvangen enkel de padvrije
 onvolledige-bronwaarschuwing**. Bij een fout is er geen stilzwijgende
 "alles opgelost" status, geen claim, automatische cleanup, runnerrestart,
 workflowdispatch, CI-omzeiling of release.
+ 
+### 20 oktober · werkelijke mount-capaciteit naast momentopnameverschillen
+
+De nieuwe onafhankelijke disk-observer legt bij iedere expliciete
+privé-scan ook `statvfs` vast voor het **zelfde bestaande
+projectworkspace-filesysteem**: totale capaciteit, voor de normale
+runtimegebruiker werkelijk beschikbare bytes en het percentage
+niet-beschikbare blokken. Alleen in het privé JSON-bronbestand
+staan daarbij hostnaam en mount-`st_dev`; de portfolio/live-cockpit
+toont uitsluitend de padvrije cijfers.
+
+Twee snapshots vergelijken kan voortaan alleen wanneer **alle**
+volgende bronidentiteiten overeenkomen: workspacepad, scanprofiel,
+Linux hostnaam, mount-device en totale filesystemcapaciteit. Andere
+hosts, een nieuw ingehangen volume en oudere bronformaten zonder
+montage-identiteit worden expliciet geweigerd; maak daarvoor eerst een
+nieuwe T0 JSON-bron. Een passende T0/T1-vergelijking toont zowel
+gesamplede groepen als de **feitelijk via statvfs waargenomen verandering
+in beschikbare GiB** op hetzelfde filesystem.
+
+**Belangrijk:** meer statvfs-vrije ruimte bewijst alleen een verschil
+tussen twee bronmomenten, niet welke bestanden veilig verwijderd zijn.
+Schrijvende processen, filesystem-reserveringen en andere jobs kunnen
+tussendoor veranderen. Daarom blijven `disk_freed_verified=false`,
+`cleanup_authorized=false`, `runner_recovered_verified=false` en
+`claims_changed=false`. Geen automatische restarts/opschoonacties.
+
+Directoryscans gebruiken voor hun laatste padcomponent nu
+`O_DIRECTORY|O_NOFOLLOW` en gesloten filedescriptors. Ook mappen met
+`private` in de naam worden niet meer doorzocht. Het controleerbare
+resultaat blijft een volledig privé, create-only rapport en geen
+publieke bestandslijst. Geen QA- of regressiesuite gestart; uitsluitend
+een kort syntactisch compile van de bronmodules.
