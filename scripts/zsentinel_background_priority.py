@@ -318,9 +318,17 @@ def main():
                         help="Include read-only GitHub runner service states in preview")
     parser.add_argument("--report", metavar="NEW_PRIVATE_HTML",
                         help="Create a private offline runner recovery report; implies --runners and --preview")
+    parser.add_argument("--snapshot", metavar="NEW_PRIVATE_JSON",
+                        help="Create a private runner evidence receipt, optionally comparing a previous receipt")
+    parser.add_argument("--previous", metavar="PRIVATE_JSON",
+                        help="Previous owner-private snapshot, valid only with --snapshot")
     args = parser.parse_args()
-    if (args.human or args.runners or args.report) and not args.preview:
-        parser.error("--human, --runners and --report require --preview")
+    if (args.human or args.runners or args.report or args.snapshot or args.previous) and not args.preview:
+        parser.error("read-only options require --preview")
+    if args.report and args.snapshot:
+        parser.error("choose --report or --snapshot (one new private artifact per invocation)")
+    if args.previous and not args.snapshot:
+        parser.error("--previous requires --snapshot")
     if not args.preview and os.geteuid() != 1000:
         raise SystemExit("Refusing to alter units outside ubuntu user scope")
     s = snapshot()
@@ -345,11 +353,10 @@ def main():
                         "recommendation_currently_applied": None}
         result = {**s, **observed, "mode": mode, "quota": quota,
                   "weight": weight, "reasons": reasons, "applied": False}
-        if args.runners or args.report:
+        if args.runners or args.report or args.snapshot:
             result.update(runner_inventory())
-        if args.report:
-            # Import only for the explicit report action; never in the timer.
-            from zsentinel_runner_report import render, save_private
+        if args.report or args.snapshot:
+            # Import only for explicit private artifact creation, never in the timer.
             from datetime import datetime, timezone
             report_data = {
                 "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -366,15 +373,29 @@ def main():
                 "quota": quota, "weight": weight, "mode": mode, "reasons": reasons,
             }
             try:
-                save_private(args.report, render(report_data))
-            except (OSError, ValueError):
-                parser.exit(1, "Privé rapport niet gemaakt; controleer nieuw .html-doel en rechten.\n")
+                if args.report:
+                    from zsentinel_runner_report import render, save_private
+                    save_private(args.report, render(report_data))
+                else:
+                    from zsentinel_runner_snapshot import (
+                        packet, changes, load_private, save_private_json,
+                    )
+                    receipt = packet(report_data)
+                    if args.previous:
+                        receipt["comparison"] = changes(
+                            load_private(args.previous), receipt,
+                        )
+                    save_private_json(args.snapshot, receipt)
+            except (OSError, ValueError, TypeError, KeyError, UnicodeError):
+                parser.exit(1, "Privé bronmoment niet gemaakt; controleer nieuw doel, bron en rechten.\n")
         if args.human:
             human_preview(result)
         else:
             print(json.dumps(result, sort_keys=True))
         if args.report:
             print("Privé offline herstelrapport gemaakt (0600, geen systeemwijziging).")
+        if args.snapshot:
+            print("Privé runnerbronmoment gemaakt (0600, geen serviceactie).")
         return
     actual = installed_cgroup()
     if not actual["active"]:
