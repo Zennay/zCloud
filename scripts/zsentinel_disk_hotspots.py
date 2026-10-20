@@ -155,7 +155,7 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
                     relative = str(Path(directory, entry.name).relative_to(root))
                     # Path is a display label only, never passed to a shell.
                     item = (allocated, relative, max(0, int(info.st_size)),
-                            max(0, int(info.st_mtime)))
+                            max(0, int(info.st_mtime)), int(info.st_dev), int(info.st_ino))
                     if len(top) < TOP:
                         heapq.heappush(top, item)
                     elif item > top[0]:
@@ -217,8 +217,9 @@ def observe(root: Path, *, min_mib=64, max_entries=MAX_FILES,
         "top_files": [
             {"relative_path": name, "allocated_mib": round(n / (1024**2), 1),
              "logical_mib": round(size / (1024**2), 1),
-             "last_modified_utc": datetime.fromtimestamp(mtime, timezone.utc).isoformat()}
-            for n, name, size, mtime in items
+             "last_modified_utc": datetime.fromtimestamp(mtime, timezone.utc).isoformat(),
+             "scan_device": device, "scan_inode": inode}
+            for n, name, size, mtime, device, inode in items
         ],
         "deletion_authorized": False,
         "runner_restart_authorized": False,
@@ -283,7 +284,9 @@ def markdown(report):
         lines.append("- " + str(item["allocated_mib"]) + " MiB toegewezen: `" + safe +
                      "` · gewijzigd " + item["last_modified_utc"][:10] +
                      (" · open verwijzingen waargenomen: " + str(item["open_references_observed"])
-                      + " (geen bewezen actieve schrijver of veilige verwijdering)"
+                      + (" (bestandsidentiteit bevestigd, schrijver ONBEKEND)"
+                         if item.get("file_reidentified") else
+                         " (bestand vervangen of verdwenen, schrijver ONBEKEND)")
                       if "open_references_observed" in item else ""))
     if not report["top_files"]:
         lines.append("Geen groot bestand in het onderzochte venster; geen vrijruimtegarantie.")
@@ -342,7 +345,9 @@ def html(report):
                      escape(row["relative_path"]) + "</code></p><small>Laatste wijziging: " +
                      escape(row["last_modified_utc"][:10]) +
                      (" · Open verwijzingen in steekproef: " + str(row["open_references_observed"])
-                      + "; schrijver ONBEKEND, geen toestemming tot verwijdering"
+                      + ("; bestandsidentiteit bevestigd, schrijver ONBEKEND"
+                         if row.get("file_reidentified") else
+                         "; oorspronkelijke bestandsidentiteit niet meer aanwezig")
                       if "open_references_observed" in row else "") +
                      "</small></article>")
     if not report["top_files"]:
