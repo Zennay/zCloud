@@ -1931,3 +1931,42 @@ met expliciete telling van het niet getoonde restant). Ze zijn dus
 niet alleen als aantal te zien en worden nooit als vrij, opgelost of
 gemerged geclassificeerd. De werkbank blijft dezelfde private,
 door de oorspronkelijke board/ZIP-bronnen begrensde HTML-output.
+
+## 20 October · Private ZIP extraction without path detours (existing PR #1560)
+
+The companion offline reader `scripts/zsentinel_saved_gate_dossier.py` now
+opens a private handoff ZIP through an anchored, no-follow directory-descriptor
+walk from the filesystem root. It refuses symlinks in **any ancestor**, not
+only the immediate parent, as well as shared-write ancestors, an unowned
+destination parent, a non-regular ZIP, and a ZIP that is not owned by the
+operator or has group/other access. The exact descriptor bytes and inode
+identity are checked before and after reading.
+
+```sh
+python3 scripts/zsentinel_saved_gate_dossier.py \
+  --input /home/ubuntu/private-dossiers/source-project.zip \
+  --show-queue \
+  --limit 10
+
+python3 scripts/zsentinel_saved_gate_dossier.py \
+  --input /home/ubuntu/private-dossiers/source-project.zip \
+  --extract-to /home/ubuntu/private-dossiers/extracted-project-20261020
+```
+
+The ZIP and destination parent must already be under private, operator-owned
+paths that are not shared-writable. The new destination folder is created only
+when it **does not exist**, with private owner-only mode. All five member files
+must also have actual private owner-only modes; mounts that ignore 0600/0700
+fail rather than pretending the dossier is confidential. Existing destinations
+are never replaced. Console success output intentionally omits the private
+destination path. The local operator remains responsible for keeping old
+manually downloaded files secure.
+
+The CLI also prints the **original sampled UTC instant** and a strictly
+informational freshness classification: recent (under six hours), stale
+(over six hours), uncertain clock, or unknown timestamp. A fresh timestamp
+does not verify live GitHub status, exact-head CI, reviews, claims or release;
+stale observations require renewed live source inspection before decisions.
+No timed polling, merge/dispatch, automatic refresh, background work, network
+requests, new QA suite or live production writes are introduced. Existing
+review and CI gates remain unchanged.
