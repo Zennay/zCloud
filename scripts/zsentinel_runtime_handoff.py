@@ -310,6 +310,78 @@ def _md(value, limit=MAX_TEXT):
     return value
 
 
+
+def _historical_html(report):
+    """Separate prior-ledger owner queue, deliberately NOT a fresh incident."""
+    entries = report.get("historical_owner_rechecks", [])
+    if type(entries) is not list or len(entries) > 5:
+        raise ValueError("invalid historical owner handoff collection")
+    rows = []
+    for row in entries:
+        if (type(row) is not dict
+                or row.get("kind") != "historical_owner_recheck"
+                or row.get("evidence") != "prior_private_ledger_not_current"
+                or row.get("current_source_observed") is not False
+                or row.get("historical_reconciliation_required") is not True
+                or row.get("live_alert_authorized") is not False
+                or any(row.get(k) is not False for k in (
+                    "claim_authorized", "retry_authorized",
+                    "merge_authorized", "deploy_authorized"))
+                or row.get("priority") not in ("P0", "P1")):
+            raise ValueError("untrusted historical owner view")
+        last = row.get("historical_source_last_seen_utc")
+        if type(last) is not str or len(last) > 35:
+            raise ValueError("missing last-seen historical source")
+        job = row.get("exact_github_job")
+        job_links = ""
+        if job is not None:
+            if (type(job) is not dict
+                    or set(job) != {"run_id", "job_id", "head_sha"}
+                    or type(job["run_id"]) is not int
+                    or type(job["job_id"]) is not int
+                    or not SAFE_SHA.fullmatch(str(job["head_sha"]))):
+                raise ValueError("invalid historical exact job reference")
+            for key, suffix, label in (
+                ("exact_github_job_url",
+                 "/actions/runs/" + str(job["run_id"]) + "/job/" + str(job["job_id"]),
+                 "Historische job"),
+                ("exact_github_commit_url", "/commit/" + job["head_sha"],
+                 "Historische commit")):
+                url = row.get(key)
+                if url is None:
+                    continue
+                if (type(url) is not str
+                        or not re.fullmatch(
+                            r"https://github[.]com/Zennay/[A-Za-z0-9_.-]+"
+                            + re.escape(suffix), url)):
+                    raise ValueError("noncanonical historical GitHub link")
+                job_links += (' <a href="' + escape(url, quote=True) +
+                              '" target="_blank" rel="noopener noreferrer">' +
+                              label + '</a>')
+        elif row.get("exact_github_job_url") or row.get("exact_github_commit_url"):
+            raise ValueError("historical link without source job")
+        rows.append('<li><strong>HISTORISCH · ' +
+                    escape(row["priority"]) + ' · ' +
+                    escape(_project(row.get("project"))) +
+                    '</strong> — laatst gezien ' + escape(last) +
+                    ' · momenteel NIET waargenomen. ' +
+                    escape(_short(row.get("next_step"))) + job_links +
+                    '</li>')
+    if not rows and report.get("historical_rechecks_truncated") is not True:
+        return ""
+    return ('<section class="panel" aria-label="Historische eigenaarhercontrole">'
+            '<h2>Historisch · opnieuw verifiëren</h2>'
+            '<p>Deze blokkades zijn in een eerdere privébron gezien, '
+            'niet in de huidige momentopname. Geen nieuwe melding, '
+            'geen herstel- of claimbevoegdheid.</p>' +
+            ('<ol>' + ''.join(rows) + '</ol>' if rows else
+             '<p>Geen historische hercontroles getoond.</p>') +
+            ('<p>Historische steekproef afgekapt; andere openstaande '
+             'incidenten niet als hersteld beschouwen.</p>'
+             if report.get("historical_rechecks_truncated") is True else '') +
+            '</section>')
+
+
 def handoff_html(report):
     """Script-free P0-first owner strip for the existing live cockpit."""
     if (not isinstance(report, dict) or report.get("schema") != SCHEMA
@@ -387,7 +459,7 @@ def handoff_html(report):
              '<p>Geen actie in het onderzochte venster; geen compleet herstelbewijs.</p>') +
             ('<p>Werkbak afgekapt; extra items blijven buiten dit venster.</p>'
              if report.get("items_truncated") is True else '') +
-            '</section>')
+            '</section>' + _historical_html(report))
 
 
 def markdown(report):
