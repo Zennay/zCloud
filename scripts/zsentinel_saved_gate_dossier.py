@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import stat
 import sys
 from zipfile import BadZipFile, ZipFile, ZIP_DEFLATED
@@ -416,6 +417,139 @@ def source_recency_summary(source_observed_at: object) -> str:
     return "Snapshot recent within 6 hours: still NOT proof of current GitHub state"
 
 
+def _handoff_plain_text(value: str) -> str:
+    """Keep a source-side note plain text in an operator-reviewed Markdown file."""
+    if type(value) is not str or len(value) > 300 or any(
+        ord(char) < 32 or ord(char) == 127 for char in value
+    ):
+        raise ValueError("Unsafe handoff note")
+    return (value.replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\\", "\\\\")
+            .replace("[", "\\[").replace("]", "\\]")
+            .replace("`", "&#96;"))
+
+
+def render_selected_pr_handoff(manifest: dict, receipt: dict,
+                               repo: str, row: dict) -> str:
+    """Human-reviewable, exact saved-source PR packet; never release authority."""
+    url = row["url"]
+    match = PR_URL.fullmatch(url)
+    if match is None or match.group(1) != repo or int(match.group(2)) != row["pr_number"]:
+        raise ValueError("Selected PR identity does not match source")
+    observed = row.get("gate_observations")
+    details = [
+        "# Private zSentinel PR handoff (saved source, not live)",
+        "",
+        "**NO release authorization. This is not evidence of current ownership, required CI, review, merge, deployment, or resolved issues.**",
+        "",
+        "- Repository: " + repo,
+        "- PR: " + url,
+        "- Sampled priority: " + row["priority"],
+        "- Sampled main blocker category: " + row["primary_gate"],
+        "- Gate source coverage: " + row["gate_source"],
+        "- Original snapshot UTC: " + str(manifest["latest_observed_at_utc"]),
+        "- Original review manifest SHA256: " +
+          manifest["original_review_manifest_sha256"],
+        "- Original board SHA256: " + manifest["original_board_sha256"],
+        "- ZIP consistency checks: internally passed, **not authenticated**",
+        "- PR HEAD / current branch: **UNKNOWN FROM THIS SAVED DOSSIER**",
+        "- Active owner/lease: **UNKNOWN**",
+        "- Required exact-head CI/review/branch rules: **UNKNOWN**",
+        "- Merged on main: **NOT VERIFIED**",
+        "- Live deployed: **NOT VERIFIED**",
+        "",
+        "## Saved human next action",
+        _handoff_plain_text(row["next_action"]),
+        "",
+        "## Linked issues from the original sampled scope",
+    ]
+    issues = row["linked_issue_urls"]
+    details.extend("- " + url for url in issues)
+    if not issues:
+        details.append("- None observed (not proof none exist)")
+    details.extend(["", "## Partial sampled gate observation"])
+    if observed is None:
+        details.append("No source-bound exact-head gate counters were available.")
+    else:
+        details.extend([
+            "- Completed checks observed: " + str(observed["checks_completed"]),
+            "- Pending checks observed: " + str(observed["checks_pending"]),
+            "- Not-successful checks observed: " + str(observed["checks_not_successful"]),
+            "- Independent approvals observed: " + str(observed["independent_approvals_observed"]),
+            "- Changes requested observed: " + str(observed["changes_requested_observed"]),
+            "- Checks page complete: " + str(observed["checks_page_complete"]),
+            "- Reviews page possibly truncated: " +
+              str(observed["reviews_page_may_be_truncated"]),
+        ])
+    details.extend([
+        "",
+        "## Human-only follow-up",
+        "1. Open the canonical PR and linked issues; identify the actual current product owner.",
+        "2. Check the current exact HEAD, mandatory status checks, reviewer decisions and protected-main rules in GitHub.",
+        "3. Return to the *existing* PR before considering any independent implementation.",
+        "4. If anything is pending or externally owned, park only this PR and choose other free product work.",
+        "",
+        "No queued, rejected or absent evidence here may be relabelled as success. "
+        "Do not dispatch runners, claim work, restart services or merge from this document.",
+        "",
+    ])
+    result = "\n".join(details)
+    if len(result.encode("utf-8")) > 48 * 1024:
+        raise ValueError("Selected PR handoff exceeds private size limit")
+    return result
+
+
+def _save_private_handoff(destination: Path, content: str) -> None:
+    """Atomic create-only Markdown publication under a private operator folder."""
+    if not destination.name.endswith(".md") or destination.name in (".", ".."):
+        raise ValueError("Expected a new private .md handoff file")
+    data = content.encode("utf-8")
+    if not 1 <= len(data) <= 48 * 1024:
+        raise ValueError("Private handoff exceeds size limit")
+    parentfd = _open_private_extract_parent(destination.parent)
+    stage = ".zsentinel-handoff-" + secrets.token_hex(12) + ".tmp"
+    stagefd = None
+    identity = None
+    try:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+        stagefd = os.open(stage, flags, 0o600, dir_fd=parentfd)
+        opened = os.fstat(stagefd)
+        identity = (opened.st_dev, opened.st_ino)
+        if (not stat.S_ISREG(opened.st_mode)
+                or opened.st_uid != os.geteuid()
+                or stat.S_IMODE(opened.st_mode) & 0o077):
+            raise ValueError("Filesystem cannot make private handoff")
+        pending = memoryview(data)
+        while pending:
+            written = os.write(stagefd, pending)
+            if written <= 0:
+                raise OSError("handoff write made no progress")
+            pending = pending[written:]
+        os.fsync(stagefd)
+        check = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
+        if (not stat.S_ISREG(check.st_mode)
+                or (check.st_dev, check.st_ino) != identity):
+            raise ValueError("Private staging identity drift")
+        # Linking does not replace pre-existing files and makes only complete
+        # content visible under the operator's chosen final filename.
+        os.link(stage, destination.name, src_dir_fd=parentfd,
+                dst_dir_fd=parentfd, follow_symlinks=False)
+        os.fsync(parentfd)
+    finally:
+        if stagefd is not None:
+            os.close(stagefd)
+        if identity is not None:
+            try:
+                current = os.stat(stage, dir_fd=parentfd, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == identity:
+                    os.unlink(stage, dir_fd=parentfd)
+                    os.fsync(parentfd)
+            except OSError:
+                pass
+        os.close(parentfd)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True,
@@ -431,6 +565,10 @@ def main(argv=None):
                         help="New, nonexistent private directory; otherwise inspect only")
     parser.add_argument("--expect-review-sha256",
                         help="Optional trusted original manifest SHA256 to pin")
+    parser.add_argument("--inspect-pr",
+                        help="One canonical saved GitHub PR URL to inspect; never live")
+    parser.add_argument("--handoff-markdown", type=Path,
+                        help="Create-only private Markdown for --inspect-pr")
     args = parser.parse_args(argv)
     try:
         if (args.expect_review_sha256 is not None
@@ -438,7 +576,10 @@ def main(argv=None):
             raise ValueError("Invalid expected source SHA256")
         if (not 1 <= args.limit <= 50
                 or (args.priority is not None and not args.show_queue)
-                or (args.project is not None and not args.show_queue)):
+                or (args.project is not None and not args.show_queue)
+                or (args.handoff_markdown is not None and args.inspect_pr is None)
+                or (args.inspect_pr is not None and
+                    (PR_URL.fullmatch(args.inspect_pr) is None or args.show_queue))):
             raise ValueError("Invalid read-only queue selection")
         if args.extract_to is None:
             _files, manifest, receipt = open_dossier(args.input)
@@ -495,6 +636,26 @@ def main(argv=None):
                       " additional source-sampled PRs not displayed (NOT resolved).")
             if not ordered:
                 print("No PRs in this saved filter; current GitHub coverage UNKNOWN.")
+        if args.inspect_pr is not None:
+            candidates = saved_queue(receipt)
+            selected = [(repo, item) for repo, item in candidates
+                        if item["url"] == args.inspect_pr]
+            if len(selected) != 1:
+                raise ValueError("PR not present in this saved source window")
+            repository, item = selected[0]
+            packet = render_selected_pr_handoff(manifest, receipt, repository, item)
+            print("Saved PR selected: " + item["url"])
+            print("Original sampled priority: " + item["priority"] +
+                  "; blocker: " + item["primary_gate"] +
+                  "; coverage: " + item["gate_source"])
+            print("Human next action: " + _handoff_plain_text(item["next_action"]))
+            print("Source-bound linked issues: " +
+                  str(len(item["linked_issue_urls"])) +
+                  "; current required release gates UNKNOWN")
+            if args.handoff_markdown is not None:
+                _save_private_handoff(args.handoff_markdown, packet)
+                print("New complete private PR handoff created in selected folder. "
+                      "No source paths, live access, claim or release authority.")
         if args.extract_to is not None:
             print("Private dossier extracted into the requested new local directory; "
                   "no private filesystem path is included in this summary.")
