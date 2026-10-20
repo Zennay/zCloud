@@ -530,31 +530,58 @@ MAX_LINKS_PER_DUPLICATE_ISSUE = 8
 
 
 def issue_identity(repo, number, token):
-    """Optional GET-only identity check; never validates PR ownership or fixes."""
+    """Optional bounded GitHub identity + source-derived issue priority.
+
+    Identity is not a PR-to-issue fix link. Priority only applies to
+    explicitly observed real *open* issues with bounded source metadata.
+    """
     if not REPO.fullmatch(repo) or type(number) is not int or not 0 < number < 100000000:
         raise ValueError("invalid issue identity")
+
+    def observation(status, priority="not_observed"):
+        return {"status": status, "priority": priority}
+
     try:
         result = github_json(repo, "/issues/" + str(number), token)
     except ValueError:
-        return "source_unavailable"
+        return observation("source_unavailable")
     if not isinstance(result, dict) or result.get("number") != number:
-        return "identity_unconfirmed"
-    # GitHub's /issues/N endpoint returns pull requests too, with html_url
-    # /pull/N (not /issues/N). Detect PR identity *before* the issue URL
-    # comparison, otherwise every PR-number mention looks unavailable.
+        return observation("identity_unconfirmed")
     if "pull_request" in result:
         if result.get("html_url") == (
                 "https://github.com/" + repo + "/pull/" + str(number)):
-            return "reference_is_pull_request_not_issue"
-        return "identity_unconfirmed"
+            return observation("reference_is_pull_request_not_issue")
+        return observation("identity_unconfirmed")
     if result.get("html_url") != (
             "https://github.com/" + repo + "/issues/" + str(number)):
-        return "identity_unconfirmed"
-    if result.get("state") == "open":
-        return "confirmed_open_issue_at_observation"
+        return observation("identity_unconfirmed")
     if result.get("state") == "closed":
-        return "confirmed_closed_issue_at_observation"
-    return "issue_state_unknown"
+        return observation("confirmed_closed_issue_at_observation")
+    if result.get("state") != "open":
+        return observation("issue_state_unknown")
+
+    # Only explicit P0/P1 labels or title prefixes from this issue's actual
+    # GitHub response determine priority. Anything malformed stays unknown.
+    title, labels = result.get("title"), result.get("labels")
+    priority = "unclassified"
+    if type(title) is str and len(title) <= 500 and (
+            isinstance(labels, list) and len(labels) <= 100):
+        names = set()
+        for label in labels:
+            if type(label) is not dict or type(label.get("name")) is not str:
+                names.clear()
+                break
+            names.add(label["name"].strip().casefold())
+        prefix = re.match(r"^\s*\[?P([01])(?:\]|\b|\s*[-:])", title, re.IGNORECASE)
+        p0 = {"p0", "priority:p0", "priority/p0", "critical", "severity:critical",
+              "severity/p0", "urgent", "blocker"}
+        p1 = {"p1", "priority:p1", "priority/p1", "high", "severity:high",
+              "severity/p1"}
+        if names & p0 or (prefix and prefix.group(1) == "0"):
+            priority = "P0"
+        elif names & p1 or (prefix and prefix.group(1) == "1"):
+            priority = "P1"
+    return observation("confirmed_open_issue_at_observation", priority)
 
 
 def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
@@ -631,6 +658,21 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         # actual pull request, not an issue; source evidence distinguishes it.
         for number, _ in duplicate_issue_groups[:MAX_IDENTITY_LOOKUPS]:
             checked_identities[number] = issue_identity(repo, number, token)
+    def observed_status(number):
+        return checked_identities.get(number, {}).get("status", "not_observed")
+
+    def observed_priority(number):
+        return checked_identities.get(number, {}).get("priority", "not_observed")
+
+    # P0-then-P1 first *among verified lookups*; unobserved candidates stay
+    # visible and unknown rather than being assigned an invented priority.
+    ranked_groups = sorted(duplicate_issue_groups, key=lambda row: (
+        0 if observed_status(row[0]) == "confirmed_open_issue_at_observation"
+             and observed_priority(row[0]) == "P0" else
+        1 if observed_status(row[0]) == "confirmed_open_issue_at_observation"
+             and observed_priority(row[0]) == "P1" else 2,
+        -len(row[1]), row[0]))
+
     def next_human_step(status):
         # Display-only operator routing. Nothing here claims, edits, merges,
         # schedules a workflow or authorizes a release.
@@ -643,11 +685,11 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         return "verify_reference_identity_before_routing"
 
     duplicate_issue_cards = [{
-        "operator_next_step": next_human_step(
-            checked_identities.get(issue, "not_observed")),
+        "operator_next_step": next_human_step(observed_status(issue)),
+        "observed_issue_priority": observed_priority(issue),
         "issue_url": "https://github.com/" + repo + "/issues/" + str(issue),
         "issue_number": issue,
-        "identity_status": checked_identities.get(issue, "not_observed"),
+        "identity_status": observed_status(issue),
         "identity_lookup_authorizes_fix_or_claim": False,
         "open_pr_mentions_observed": len(prs),
         "shown_pr_sources": prs[:MAX_LINKS_PER_DUPLICATE_ISSUE],
@@ -656,7 +698,7 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
         "issue_fix_verified": False,
         "common_owner_verified": False,
         "merge_authorized": False,
-    } for issue, prs in duplicate_issue_groups[:MAX_DUPLICATE_ISSUE_GROUPS]]
+    } for issue, prs in ranked_groups[:MAX_DUPLICATE_ISSUE_GROUPS]]
     pairs = {}
     for path, numbers in file_owners.items():
         involved = sorted(numbers)
@@ -726,13 +768,21 @@ def observe_conflict_graph(repo, token=None, limit=24, open_page=1,
                 "confirmed_open_issue_at_observation",
                 "confirmed_closed_issue_at_observation",
                 "reference_is_pull_request_not_issue")
-                for v in checked_identities.values()),
+                for v in (item["status"] for item in checked_identities.values())),
         "observed_confirmed_open_issue_groups": sum(
-            v == "confirmed_open_issue_at_observation"
-            for v in checked_identities.values()),
+            item["status"] == "confirmed_open_issue_at_observation"
+            for item in checked_identities.values()),
+        "observed_confirmed_open_P0_issue_groups": sum(
+            item["status"] == "confirmed_open_issue_at_observation"
+            and item["priority"] == "P0"
+            for item in checked_identities.values()),
+        "observed_confirmed_open_P1_issue_groups": sum(
+            item["status"] == "confirmed_open_issue_at_observation"
+            and item["priority"] == "P1"
+            for item in checked_identities.values()),
         "observed_issue_number_is_pr_groups": sum(
-            v == "reference_is_pull_request_not_issue"
-            for v in checked_identities.values()),
+            item["status"] == "reference_is_pull_request_not_issue"
+            for item in checked_identities.values()),
         "shown_duplicate_issue_groups": duplicate_issue_cards,
         "duplicate_issue_groups_truncated": (
             len(duplicate_issue_groups) > MAX_DUPLICATE_ISSUE_GROUPS),
