@@ -161,6 +161,8 @@ def refresh(bundle, registry, token=None):
             output.append({"project_id": pid, "source": "github_exact_run_job",
                            "repository": repository,
                            "status": "refreshed", "run_id": run_id, "job_id": job_id,
+                           "head_sha": sha, "observed_at": utc_string(observed),
+                           "queued_at": utc_string(queued_at),
                            "job_status": status, "runner_assigned": bool(runner_id),
                            "canonical_zcloud_runner_assignment_observed": canonical_runner_assigned,
                            "runner_id_observed": runner_id if runner_id else None,
