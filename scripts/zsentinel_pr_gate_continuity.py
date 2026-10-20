@@ -221,6 +221,63 @@ def _changed_non_green(past, now):
     return changes[:16], max(0, len(changes) - 16)
 
 
+# Existing operator blocker categories only. This is a read-only handoff,
+# never a scheduler admission, reviewer action or protected-main approval.
+BLOCKER_NEXT_STEP = {
+    "source_changed_or_unavailable": "inspect_current_pr_at_source",
+    "incomplete_github_gate_source": "inspect_missing_current_source_with_owner",
+    "failed_checks_or_legacy_context": "owner_fix_current_head_failure",
+    "github_merge_conflict_observed": "owner_resolve_real_git_conflict",
+    "draft_pr_needs_owner": "owner_mark_draft_review_ready",
+    "review_changes_requested": "owner_address_review_changes",
+    "checks_still_running": "wait_for_existing_ci_without_retrigger",
+    "check_source_not_terminal": "wait_for_existing_ci_without_retrigger",
+    "no_ci_check_or_legacy_context_seen": "inspect_missing_current_source_with_owner",
+    "independent_review_not_seen": "request_independent_review_for_current_head",
+    "github_mergeability_not_determined": "inspect_current_pr_at_source",
+    "branch_rules_ownership_and_release_not_verified":
+        "verify_protected_main_rules_ownership_and_release",
+}
+
+NEXT_STEP_LABELS = {
+    "defer_unchanged_hold_without_new_evidence":
+        "Geen herhaalde controle zonder nieuw bronbewijs.",
+    "inspect_current_pr_at_source": "Bekijk de actuele PR/HEAD bij GitHub.",
+    "inspect_missing_current_source_with_owner":
+        "Verifieer ontbrekende CI-/reviewbron bij de verantwoordelijke.",
+    "owner_fix_current_head_failure":
+        "Laat de eigenaar de actuele falende verplichte check onderzoeken.",
+    "owner_resolve_real_git_conflict":
+        "Laat de PR-eigenaar een door GitHub bevestigd mergeconflict herstellen.",
+    "owner_mark_draft_review_ready":
+        "Laat de PR-eigenaar de draft reviewklaar maken.",
+    "owner_address_review_changes":
+        "Laat de eigenaar gevraagde reviewwijzigingen verwerken.",
+    "wait_for_existing_ci_without_retrigger":
+        "Wacht op bestaande CI; geen extra workflow-herstart.",
+    "request_independent_review_for_current_head":
+        "Vraag onafhankelijke review voor de huidige exacte HEAD.",
+    "verify_protected_main_rules_ownership_and_release":
+        "Controleer bestaande protected-main, eigenaar en releasevoorwaarden.",
+    "verify_pr_status_before_concluding_closed":
+        "Controleer rechtstreeks of de PR nog open is; niet als gemerged tellen.",
+    "inspect_current_gate_receipt_with_owner":
+        "Controleer veranderd gatebewijs bij de PR-eigenaar.",
+}
+
+
+def _next_step(change, now=None):
+    if change == "same_exact_head_and_gate_receipts_at_two_observations":
+        return "defer_unchanged_hold_without_new_evidence"
+    if change == "not_selected_now_not_evidence_of_merge_or_closure":
+        return "verify_pr_status_before_concluding_closed"
+    if change in ("head_changed_or_source_uncertain",
+                  "gate_source_incomplete_no_stability_claim"):
+        return "inspect_current_pr_at_source"
+    blocker = now.get("human_gate_blocker") if now is not None else None
+    return BLOCKER_NEXT_STEP.get(blocker, "inspect_current_gate_receipt_with_owner")
+
+
 def compare_gate_episodes(previous, current):
     old_repos = _project_repositories(previous)
     new_repos = _project_repositories(current)
@@ -299,6 +356,7 @@ def compare_gate_episodes(previous, current):
             "previous_base": old_base if type(old_base) is str and SHA.fullmatch(old_base) else None,
             "current_base": base if type(base) is str and SHA.fullmatch(base) else None,
             "change": change,
+            "operator_next_step": _next_step(change, now),
             "previous_blocker": past.get("human_gate_blocker") if past else None,
             "current_blocker": now["human_gate_blocker"],
             "safe_to_defer_repeat_only_when_no_new_evidence":
@@ -319,6 +377,7 @@ def compare_gate_episodes(previous, current):
             "observed_changed_non_green_checks_hidden": 0,
             "observed_changed_gate_evidence_categories": [],
             "change": "not_selected_now_not_evidence_of_merge_or_closure",
+            "operator_next_step": _next_step("not_selected_now_not_evidence_of_merge_or_closure"),
             "previous_blocker": old["human_gate_blocker"],
             "current_blocker": None,
             "safe_to_defer_repeat_only_when_no_new_evidence": False,
@@ -338,6 +397,10 @@ def compare_gate_episodes(previous, current):
             row["safe_to_defer_repeat_only_when_no_new_evidence"] for row in rows),
         "attention_needed": sum(
             not row["safe_to_defer_repeat_only_when_no_new_evidence"] for row in rows),
+        "operator_next_steps_observed": {
+            action: sum(row["operator_next_step"] == action for row in rows)
+            for action in sorted({row["operator_next_step"] for row in rows})
+        },
         "never_proves_intermediate_continuity_or_recovery": True,
         "automatic_retry_authorized": False,
         "claim_authorized": False, "merge_authorized": False,
@@ -373,6 +436,8 @@ def render_gate_episodes(report, style="text"):
             "<li><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>" + escape(row["url"]) +
             "</a>: " + escape(LABELS[row["change"]]) +
+            "<p>Vervolg: " + escape(NEXT_STEP_LABELS[row["operator_next_step"]]) +
+            "</p>" +
             ("<p>Gewijzigd bronbewijs: " +
              escape("; ".join(row["observed_changed_gate_evidence_categories"])) +
              "</p>" if row["observed_changed_gate_evidence_categories"] else "") +
@@ -409,6 +474,7 @@ def render_gate_episodes(report, style="text"):
         link = ("[Open PR](" + row["url"] + ")" if style == "markdown" else row["url"])
         lines.append("- " + link + " · " + LABELS[row["change"]] +
                      (" · HEAD " + row["current_head"][:12] if row["current_head"] else ""))
+        lines.append("  Vervolg: " + NEXT_STEP_LABELS[row["operator_next_step"]])
         if row["observed_changed_gate_evidence_categories"]:
             lines.append("  Gewijzigd bronbewijs: " +
                          "; ".join(row["observed_changed_gate_evidence_categories"]))
