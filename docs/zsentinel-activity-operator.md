@@ -577,8 +577,10 @@ does not silently suppress the other independently selected projects.
 Repeated calls to the denied repository are stopped for this invocation.
 
 A **401 (invalid authentication)**, **429**, or **403 with explicitly
-`X-RateLimit-Remaining: 0`** still stops subsequent provider reads
-globally. A 403 without that header is *not* declared a proven permissions
+`X-RateLimit-Remaining: 0` or a `Retry-After` header** still stops subsequent
+provider reads globally. `Retry-After` on 403 can signal a secondary GitHub
+throttle even when the primary rate budget is nonzero; the collector respects
+that instruction rather than continuing across repositories. A 403 without that header is *not* declared a proven permissions
 problem: GitHub may also use it for a secondary provider limit. The new
 `coverage[].provider_admission` source field therefore distinguishes
 `authentication_required`, `rate_limit_confirmed`,
