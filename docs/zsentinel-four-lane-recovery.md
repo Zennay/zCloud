@@ -636,3 +636,41 @@ This evidence is a bounded **local** observation only. It is not a
 Notion lease reconciliation or GitHub source-of-truth update; it cannot
 authorize new parallel workers. Mandatory exact-head CI and independent
 reviews are still external release gates.
+
+
+## 20 October · legacy profile migration cannot grant new parallel workers
+
+A current **read-only** inspection of the connected VPS checkout found
+`project-contracts.json` declaring `zsentinel.lane_profile=platform`
+and `ai_worker_cap=2`; the separate `worker-modes.json` entry had no
+explicit lane profile. All three in-flight SQLite queue items carry
+`execution_lane.profile=product` rather than the **proposed**
+`portfolio-recovery` profile in this GitHub PR. Those two local sources
+do **not** prove which exact configuration the running service has
+loaded; no live deployed four-lane admission is asserted.
+
+Before this fix, the proposed four-lane planner reclassified those
+legacy active tasks from their titles. Even if their missing file
+scopes were later repaired, their original profile/claim provenance
+still would **not** be evidence that the active workers had safely
+migrated into the new lane model. The planner now separately tracks
+`active_profile_mismatch_count` for legacy or missing active
+`execution_lane.profile` and prevents **new queued admission** while
+such claims exist. Existing task slots, owners and active work are not
+reclaimed, restarted, relabeled or changed.
+
+The SQLite-only operator desk exposes
+`active_legacy_profile_claims_observed` in its bounded aggregate
+packet. Unoccupied lanes show `HOLD_LEGACY_PROFILE_MIGRATION`
+rather than treating the proposed profile as deployed. The prioritized
+human action explains that the authorized runtime owner must reconcile
+actual loaded configuration, original worker claims and file ownership
+*before* any profile migration. `deployed_four_lane_profile` remains
+`NOT_VERIFIED` until separately established by the runtime owner.
+
+This is not a new process gate: it preserves an existing ownership
+boundary that the in-flight legacy claims already occupy. Reconciliation
+requires existing independent review, mandatory exact-head CI,
+protected-main merge and an authorized release. The code here has
+no authority to edit live contracts, worker modes, claim leases,
+queue rows, browser sessions or services.
