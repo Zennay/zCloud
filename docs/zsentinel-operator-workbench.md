@@ -1497,3 +1497,69 @@ Navigatie: boven de projectkaarten staat nu ook een toetsenbordtoegankelijke
 **Ga naar project**-lijst met gewone interne HTML-ankers. Daarmee kan de
 operator direct naar het relevante project en diens volledige, uitklapbare
 PR-rij springen, zonder scripts, netwerkverzoeken of extra momentopnamen.
+
+
+## 20 oktober · Zelfstandig projectdossier + complete PR-excelrij (PR #1560)
+
+Een operator kan dezelfde al opgeslagen, exact gebonden bron nu **gericht**
+voor één werkelijk in het manifest waargenomen project omzetten naar een
+volledige offline werkpagina. Er is geen heel zCloud-dashboard of nieuwe live
+API nodig. Dit is bedoeld om bestaande PR's af te handelen vóór nieuw werk.
+
+```bash
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review-manifest.json \
+  --receipt ./private-gate-batch-1.json \
+  --receipt ./private-gate-batch-2.json \
+  --allow-partial \
+  --project Zennay/zCloud \
+  --format portfolio-html \
+  --output ./private-zcloud-pr-dossier.html
+```
+
+De pagina heeft een duidelijk **privé en opgeslagen bron**-waarschuwingspaneel,
+bron- en manifest-SHA256, oorspronkelijke UTC-waarnemingsperiode, exacte
+batchcoverage, aantal getoonde PRs ten opzichte van **alle** PRs in het
+oorspronkelijke bronvenster en originele GitHub-issue-/PR-links. Elk project
+heeft alle brongebonden PR-kandidaten met hun afzonderlijke menselijke acties.
+Projectkaarten zijn toetsenbord- en printvriendelijk en gebruiken alleen lokale
+HTML/CSS onder een strikte Content Security Policy, geen inline scripts,
+externe afhankelijkheden, automatische login, browseropslag of API-oproepen.
+
+`--project` werkt uitsluitend voor `--format portfolio-*`. Een project
+zonder PR in de **gevalideerde bronsteekproef** wordt geweigerd in plaats van
+foutief als leeg, veilig of gereed getoond. De selectie wordt *na* validatie
+van het volledige manifest en alle aangeboden batches toegepast. Zonder
+`--project` blijven de bestaande portfolio-exports portfolio-breed. Zowel
+`portfolio-json`, `portfolio-csv` als `portfolio-markdown` accepteren
+dezelfde selectie; JSON noemt nu expliciet het oorspronkelijke PR-volume,
+het daadwerkelijk gefilterde volume en de optionele gekozen bronprojectscope.
+
+Een aanvullende **volledige Excel-vriendelijke PR-afhandelrij** maakt
+zelfstandige opvolging van alle bron-PRs mogelijk, in plaats van alleen
+projecttotalen en maximaal drie links:
+
+```bash
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./private-review-manifest.json \
+  --receipt ./private-gate-batch-1.json \
+  --receipt ./private-gate-batch-2.json \
+  --allow-partial \
+  --project Zennay/zCloud \
+  --format portfolio-pr-csv \
+  --output ./private-zcloud-pr-actions.csv
+```
+
+Elke CSV-regel bevat prioriteit, exact origineel PR-adres, issue-adressen,
+bronbatch, hoofd- én overige waargenomen gateblokkades, eventueel
+daadwerkelijk waargenomen *oude* HEAD, en een concrete menselijke stap.
+Actuele eigenaar, verplichte CI/review, merge op main en live blijven
+**ONBEKEND**. CSV bevat uitsluitend canonieke GitHub-links, vaste
+bronlabels, getallen en bron-SHA's — geen vrije operatornotities die als
+spreadsheetformules kunnen worden uitgevoerd.
+
+Alle formaten behouden de bestaande maximaal 1 MiB create-only 0600
+bestandsgrens; ongeldige bronnen/filternamen krijgen geen output. Opgeslagen
+beschikbare bronkandidaten vormen nooit een complete GitHub PR-inventaris,
+actueel eigenaarsbewijs, leasevrijgave, benodigde review of merge-autorisatie.
+Deze functie neemt niets over en verstuurt/dispatcht/retryt/merget/deployt niets.
