@@ -24,24 +24,27 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_OPEN_BLOCKER = "com.zennay.cloud.watch.OPEN_BLOCKER"
         const val EXTRA_INCIDENT_ID = "com.zennay.cloud.watch.incident_id"
+        const val EXTRA_PROJECT_ID = "com.zennay.cloud.watch.project_id"
     }
 
-    private var pendingIncidentId by mutableStateOf<String?>(null)
+    private var pendingIncident by mutableStateOf<Pair<String, String>?>(null)
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        pendingIncidentId = readIncidentFrom(intent)
+        pendingIncident = readIncidentFrom(intent)
         scheduleImportantAlerts()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         setContent {
             ZennayWearApp(
-                openIncidentId = pendingIncidentId,
+                openIncidentId = pendingIncident?.second,
+                openIncidentProject = pendingIncident?.first,
                 onIncidentHandled = {
-                    pendingIncidentId = null
+                    pendingIncident = null
                     intent?.removeExtra(EXTRA_INCIDENT_ID)
+                    intent?.removeExtra(EXTRA_PROJECT_ID)
                 }
             )
         }
@@ -50,15 +53,19 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingIncidentId = readIncidentFrom(intent)
+        pendingIncident = readIncidentFrom(intent)
     }
 
-    private fun readIncidentFrom(source: Intent?): String? {
+    private fun readIncidentFrom(source: Intent?): Pair<String, String>? {
         if (source?.action != ACTION_OPEN_BLOCKER) return null
         val id = source.getStringExtra(EXTRA_INCIDENT_ID) ?: return null
-        // Notifications contain only an observed incident identity, never
-        // permission to run a recovery or view untrusted external URLs.
-        return id.takeIf { it.isNotBlank() && it.length <= 256 }
+        val project = source.getStringExtra(EXTRA_PROJECT_ID) ?: return null
+        // Both identities are mandatory. A reused incident ID in a different
+        // project must never open the wrong worker or service blocker.
+        if (id.isBlank() || id.length > 256 ||
+            !project.matches(Regex("[a-z][a-z0-9_-]{0,39}"))) return null
+        // Intent is navigation only; it never authorizes remediation.
+        return project to id
     }
 
     private fun scheduleImportantAlerts() {
