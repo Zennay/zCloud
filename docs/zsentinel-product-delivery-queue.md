@@ -708,3 +708,52 @@ source-URL volgens het veilige URL-filter en een deterministische
 `queue:` of `queuehash:`-incident-ID. Geen workerclaim wordt gemaakt,
 vrijgegeven of overgenomen. Productie en verplichte releasegates blijven
 ongewijzigd.
+
+
+## 20 oktober · Ongeverifieerde workerdone is geen CI- of main-bewijs
+
+Het project-statusreceipt werd voorheen bij `portfolio_queue_finish(DONE)`
+opgeslagen met `ci_status='success'`; bij `BLOCKED` stond
+`ci_status='failure'` en bij `CONTINUE` `in_progress`. Deze waarden
+beschrijven uitsluitend het antwoord van een browserworker en **zeggen niets
+over de verplichte externe GitHub Actions-rapporten, een onafhankelijke
+review, een geslaagde PR-merge of de live applicatie**. De bestaande
+`project_runtime.apply_receipt()` gebruikt `ci_status` echter voor de
+zichtbare project-executiestatus; hierdoor kon een eenvoudige taakafmelding
+onjuiste CI-succesinformatie in het cockpitoverzicht tonen.
+
+De workerqueue schrijft bij een taakafmelding geen geverifieerde CI-status
+meer. Het oorspronkelijke `DONE`/`BLOCKED`/`CONTINUE` blijft
+auditbaar in `action` en de brongebonden receipt-`evidence`; aan de
+evidence worden `ci_evidence=not_observed_by_queue_transition` en
+`main_merge_evidence=not_observed_by_queue_transition` toegevoegd. De
+API-response vermeldt expliciet `ci_verified_by_queue_result=false` en
+`main_merge_verified_by_queue_result=false`. Een werkelijke CI-/mergestatus
+kan uitsluitend uit de desbetreffende geautoriseerde exact-head-bron volgen.
+
+## 20 oktober · Minder SQLite-belasting per browser-allocatieronde
+
+De echte scheduler riep voor verschillende global worker-slots opnieuw
+`_portfolio_eligible_lane_candidates_locked()` aan. Sinds de
+projecteerlijke selectie kon één schedulerpass daardoor herhaaldelijk vier
+globale bronpagina's én vier aanvullende 128-rijenpagina's per mogelijk
+verborgen project scannen, terwijl dezelfde bron-inventaris in die ene
+`BEGIN IMMEDIATE`-transactie grotendeels onveranderd bleef.
+
+Er is nu een **transactie-lokale, optionele ID-shortlistcache**: de dure
+begrensde bronselectie wordt maximaal één keer gebouwd in een
+`portfolio_queue_allocate()`-aanroep. Voor ieder volgend slot vraagt de
+helper de actuele, werkelijk `queued`, geldige en claimvrije rijen voor
+die hoogstens 240 IDs opnieuw op bij SQLite. Daarna worden
+`_portfolio_lane_snapshot_locked()` en de bestaande lane-, claims-,
+preemption-, Force Start-, geheugen- en projectcapregels op de actuele
+transactiestatus toegepast. Een eerder in dezelfde ronde geclaimd of
+vrijgegeven item wordt niet opnieuw toegewezen op basis van een
+verouderd cache-record. Cachegegevens verlaten de transactie niet.
+
+Voor bestaande `running`/`verifying`-slots die toch al niet mogen worden
+gepreëmpt, wordt de herhaalde kandidaat-/laneselectie volledig overgeslagen
+en de eigenaar volgens dezelfde bestaande beschermingslogica vernieuwd.
+Buiten de allocator blijft de helper zonder cache werken zoals voorheen.
+Er zijn geen nieuwe workerrechten, background loops, index-migraties,
+workflowtriggers of live VPS-mutaties toegevoegd.
