@@ -171,10 +171,19 @@ def active_process(path):
                     if inside(os.readlink(item / attribute)):
                         return True
                 for descriptor in (item / "fd").iterdir():
-                    if inside(os.readlink(descriptor)):
+                    try:
+                        target = os.readlink(descriptor)
+                    except FileNotFoundError:
+                        # An individual descriptor closed; continue checking
+                        # the others rather than skipping the whole process.
+                        continue
+                    if inside(target):
                         return True
             except FileNotFoundError:
-                # Process exited during inspection; it cannot own new writes.
+                # A vanished process cannot still own a descriptor. A live
+                # process with unreadable cwd/exe evidence is inconclusive.
+                if item.exists():
+                    return True
                 continue
             except (OSError, PermissionError):
                 # This shared host contains unrelated processes. Without
