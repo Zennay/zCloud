@@ -178,7 +178,7 @@ def human_html(change):
         '</a><br><small>' + e(", ".join(fields)) + '</small></li>'
         for url, fields in change["changed"]
     ) or "<li>No comparable source differences observed.</li>"
-    result = """<!doctype html><html lang="nl"><head><meta charset="utf-8">
+    result = ("""<!doctype html><html lang="nl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; script-src 'none'; img-src 'none'; form-action 'none'; base-uri 'none'">
@@ -226,7 +226,7 @@ links(change["no_longer_seen"]) + """</ol></section>
 altered + """</ol></section>
 <footer>Geen fetch, workerclaim, CI-dispatch, PR-merge of deploy door dit
 statische dossier. Verplichte toestemming, reviewers en CI blijven gelden.
-</footer></main></body></html>"""
+</footer></main></body></html>""")
     if len(result.encode("utf-8")) > MAX_DIFF_BYTES:
         raise ValueError("Private HTML issue handoff exceeds size budget")
     return result
