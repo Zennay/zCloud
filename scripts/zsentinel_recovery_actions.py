@@ -40,6 +40,17 @@ def suggested_actions(packet):
             "Laat de bestaande servereigenaar de live in-flight scopebron en de huidige claimhouder vergelijken.",
             "HOLD_RUNTIME_SOURCE_GAP",
         ))
+    suspect_windows = _number(
+        packet.get("inconsistent_in_flight_queue_claim_windows_observed")
+    )
+    if suspect_windows:
+        result.append(action(
+            "inconsistent-in-flight-lease", "urgent",
+            f"{suspect_windows} lopende queue-claims hebben een onmogelijke of ontbrekende claimstart.",
+            "Laat de huidige claimeigenaar start- en vervaltijd controleren; "
+            "vertrouw de toekomstige vervaldatum niet en herclaim niets.",
+            "HOLD_CLAIM_TIME_RECONCILIATION",
+        ))
     missing_scope = _number(packet.get("active_write_scopes_not_declared"))
     if missing_scope:
         result.append(action(
