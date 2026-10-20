@@ -353,7 +353,9 @@ def output_html(report):
                 gate_note +
                 ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
         cards.append(
-            "<article><small>" + escape(row["priority"]) + " · " +
+            "<article data-priority='" + escape(row["priority"], quote=True) +
+            "' data-project='" + escape(row["project"], quote=True) +
+            "'><small>" + escape(row["priority"]) + " · " +
             escape(row["project"]) + "</small><h2><a rel='noopener noreferrer' href='" +
             escape(row["url"], quote=True) + "'>" + escape(row["title"]) +
             "</a></h2><p class='meta'>" + escape(row["issue"]) +
@@ -368,18 +370,64 @@ def output_html(report):
             ("<ul>" + "".join(prs) + "</ul>" if prs else
              "<p>Geen bestaande PR-link in het bronissue; eigenaarschap blijft onbekend.</p>") +
             "</article>")
+    filter_bar = (
+        "<div class='filters' aria-label='Productissuefilters'>"
+        "<label>Zoek issues of bestaande PR's"
+        "<input id='filter-search' type='search' placeholder='Issue, project, PR-nummer'></label>"
+        "<label>Prioriteit<select id='filter-priority'>"
+        "<option value=''>Alle prioriteiten</option>"
+        "<option>P0</option><option>P1</option><option>P2</option>"
+        "<option>Unspecified</option></select></label>"
+        "<label>Project<select id='filter-project'><option value=''>Alle projecten</option>" +
+        "".join("<option value='" + escape(p, quote=True) + "'>" +
+                escape(p) + "</option>" for p in report["chosen_projects"]) +
+        "</select></label><output id='filter-count' aria-live='polite'></output></div>"
+    )
+    # A purely local filter over already rendered text; no fetch, storage, or
+    # executable content derived from issue titles, PR bodies or repo strings.
+    offline_script = """<script>(function(){
+'use strict';
+const search=document.getElementById('filter-search');
+const priority=document.getElementById('filter-priority');
+const project=document.getElementById('filter-project');
+const count=document.getElementById('filter-count');
+const cards=Array.from(document.querySelectorAll('article[data-project]'));
+function update(){
+  const term=search.value.trim().toLocaleLowerCase('nl');
+  let shown=0;
+  for(const card of cards){
+    const ok=(!term || card.textContent.toLocaleLowerCase('nl').includes(term)) &&
+      (!priority.value || card.dataset.priority===priority.value) &&
+      (!project.value || card.dataset.project===project.value);
+    card.hidden=!ok;
+    if(ok) shown++;
+  }
+  count.textContent=shown+' van '+cards.length+' productissues zichtbaar';
+}
+for(const el of [search,priority,project])el.addEventListener('input',update);
+update();
+})();</script>"""
     return ("<!doctype html><html lang='nl'><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<meta name='referrer' content='no-referrer'>"
             "<meta http-equiv='Content-Security-Policy' "
-            "content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
-            "form-action 'none'; object-src 'none'\">"
+            "content=\"default-src 'none'; style-src 'unsafe-inline'; "
+            "script-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; "
+            "base-uri 'none'; form-action 'none'; object-src 'none'\">"
             "<title>zSentinel · Product + PR-scope</title>"
             "<style>body{font:16px/1.5 system-ui;background:#101a29;color:#f2f7fd;"
             "max-width:1060px;margin:auto;padding:24px}h1{font-size:28px}"
             "a{color:#b1dbff}article{margin:14px 0;padding:16px;"
             "border:1px solid #556981;border-radius:12px;background:#1c293b}"
             "small{font-weight:bold;color:#dfc794}ul{overflow-wrap:anywhere}"
+            "article[hidden]{display:none!important}.meta{color:#bdd0e2;font-size:13px}"
+            "details{margin:9px 0}summary{cursor:pointer}"
+            ".filters{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px;"
+            "margin:24px 0}.filters label{display:grid;gap:4px}"
+            ".filters input,.filters select{background:#203449;border:1px solid #79899e;"
+            "padding:11px;color:white;border-radius:7px;font:inherit}"
+            ".filters output{font-size:14px;color:#dce7fa}"
+            "a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #e4cf84}"
             "aside{background:#303744;padding:18px;border-left:4px solid #e7c576}"
             "@media(min-width:770px){main{display:grid;grid-template-columns:1fr 1fr;gap:14px}}"
             "</style><h1>zSentinel · Productissues en PR-bestandscope</h1>"
@@ -390,8 +438,9 @@ def output_html(report):
             "<p>Projecten: " + escape(", ".join(report["chosen_projects"])) +
             ". Bronmomenten samenhangend: " +
             ("ja" if report["source_clocks_within_10_minutes"] else
-             "NEE — controleer eerst nieuwe issue-evidence") + "</p><main>" +
-            "".join(cards) + "</main><footer><small>Issue SHA256 " +
+             "NEE — controleer eerst nieuwe issue-evidence") + "</p>" +
+            filter_bar + "<main>" + "".join(cards) + "</main>" +
+            offline_script + "<footer><small>Issue SHA256 " +
             escape(report["product_issue_source_sha256"]) + "</small></footer></html>")
 
 
