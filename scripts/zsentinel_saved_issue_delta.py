@@ -42,8 +42,14 @@ def issue_difference(older, newer, issue_url):
         overlap = max(matches)
         if shared != set(old_ids[-overlap:]):
             raise ValueError("Partial or inconsistent source overlap")
-        if old_sources[-overlap:] != new_sources[:overlap]:
-            raise ValueError("Reused manifest digest with contradictory metadata")
+        for older_source, newer_source in zip(
+                old_sources[-overlap:], new_sources[:overlap]):
+            # Source ordinals are local to each generated dossier: the same
+            # original manifest can be #3 in one ZIP and #1 in another.
+            # Compare original receipt data, not its display position.
+            if ({k: v for k, v in older_source.items() if k != "index"} !=
+                    {k: v for k, v in newer_source.items() if k != "index"}):
+                raise ValueError("Reused manifest digest with contradictory metadata")
     elif datetime.fromisoformat(new_sources[0]["earliest_observed_utc"]) <= old_last:
         raise ValueError("Nonordered overlapping source windows")
     before = next((r for r in old_issues if r["issue_url"] == issue_url), None)
