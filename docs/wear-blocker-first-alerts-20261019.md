@@ -105,3 +105,8 @@ De bestaande `ZennayCloudRepository.request()` las voorheen elke HTTP-body onbeg
 Geauthenticeerde GET-verzoeken volgen bovendien geen HTTP-redirects meer automatisch. Een onverwachte 3xx gaat naar de bestaande foutafhandeling in plaats van een bearer-tokenrequest naar een andere bestemming te laten volgen. Het bestaande `API_BASE`, leesrechtenmodel, 5-seconden netwerkdeadlines, incidentclassificatie en notificatie-toestemmingsgates blijven intact.
 
 Dit is **source-only** in de bestaande [PR #1561](https://github.com/Zennay/zCloud/pull/1561). Geen nieuwe QA-/regressiesuite of handmatige workflow uitgevoerd; geen signing, APK-publicatie, Watch-installatie, queue/claim, live server of VPS aangepast. Onafhankelijke review, verplichte exact-head CI, geautoriseerde app-release en fysieke toestelbevestiging zijn nog nodig vóór productielevering.
+
+
+### Behoud reeds afgeleverde meldingen bij een gedeeltelijk mislukte poll
+
+De Wear OS-notificatieronde slaat de aflevering van een alert pas **na** een geslaagde `NotificationManager.notify` op. De gehele aflevering van maximaal drie meldingen staat nu in een `try/finally`: als een latere notification-call een fout geeft, blijft het bewijs van eerder in dezelfde poll geslaagd afgeleverde meldingen bewaard. De bestaande WorkManager-retry kan daardoor na een gedeeltelijke fout verder zonder de eerdere meldingen door gebrek aan receipts opnieuw te sturen. De suppressie is nog steeds lokaal en episodegebonden, geen servererkenning, geen incidentoplossing en geen stillegging van workers. Bron in bestaande open PR; geen live horloge-acceptatie of release bewezen.
