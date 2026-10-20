@@ -705,6 +705,52 @@ def html_view(decision):
             or type(historic.get("truncated")) is not bool
             or historic["truncated"] != (missing > len(historic["shown"]))):
         raise ValueError("untrusted historical backlog receipt")
+    historical_owner = decision.get("historical_owner_recheck_candidates", [])
+    historical_owner_partial = decision.get("historical_recheck_source_truncated", False)
+    if (type(historical_owner) is not list or len(historical_owner) > 5
+            or type(historical_owner_partial) is not bool):
+        raise ValueError("unbounded historical owner recheck feed")
+    historical_by_id = {row["incident_id"]: row for row in historic["shown"]}
+    historical_owner_cards = []
+    seen_owner_rechecks = set()
+    for row in historical_owner:
+        if type(row) is not dict:
+            raise ValueError("untrusted historical recheck source")
+        key = row.get("incident_id")
+        source = historical_by_id.get(key)
+        if (type(key) is not str or len(key) != 32 or key in seen_owner_rechecks
+                or source is None or source.get("human_escalation_historical") is not True
+                or row.get("source_status") != "historical_not_observed_needs_owner_recheck"
+                or row.get("current_source_observed") is not False
+                or row.get("notifier_delivery_authorized") is not False
+                or row.get("recovery_action_authorized") is not False
+                or row.get("owner_confirmation_required") is not True
+                or row.get("project_id") != source["project_id"]
+                or row.get("severity_at_last_observation") != source["severity"]
+                or row.get("problem_at_last_observation") != source["problem"]
+                or row.get("source_last_seen") != source["last_seen"]
+                or row.get("exact_github_job") != source["exact_github_job"]):
+            raise ValueError("historical recheck not backed by private ledger")
+        seen_owner_rechecks.add(key)
+        historical_owner_cards.append(
+            '<article class="panel warn"><span class="tag">HISTORISCH · OWNER-RECHECK</span>'
+            '<span class="tag">' + phrase(row["severity_at_last_observation"], 5) +
+            '</span><span class="tag">' + phrase(row["project_id"], 80) +
+            '</span><h3>' + phrase(row["problem_at_last_observation"], 120) +
+            '</h3><p>Laatste bron: ' + phrase(row["source_last_seen"], 45) +
+            '</p><p>Bevoegde eigenaar: controleer oorspronkelijke job/issue en '
+            'huidige gates. Geen actuele storing bewezen, geen notificatie verzonden, '
+            'geen automatische recoveryactie.</p></article>'
+        )
+    if historical_owner_partial and not (
+            historic["truncated"] or
+            sum(x.get("human_escalation_historical") is True
+                for x in historic["shown"]) > len(historical_owner)):
+        raise ValueError("unexplained historical recheck truncation")
+    if (not historical_owner_partial and
+            len(historical_owner) != sum(
+                x.get("human_escalation_historical") is True for x in historic["shown"])):
+        raise ValueError("historical owner rechecks missing from complete sample")
     unattributed = decision.get("unattributed_progress_or_jobs", 0)
     if type(unattributed) is not int or unattributed < 0:
         raise ValueError("invalid unattributed evidence count")
