@@ -74,6 +74,20 @@ def render_html(board, max_rows=20):
                 raise ValueError("untrusted alternative PR gate or authority")
             other_seen.add(alt_url)
             alt_items.append((alt_url, gate_state, other))
+        full = row.get("all_existing_pr_candidates_in_sample")
+        observed_count = row.get("existing_pr_count_in_sample")
+        if (type(full) is not list or len(full) > 5
+                or type(observed_count) is not int
+                or observed_count != len(full)
+                or observed_count != len(alt_items) + int(pr is not None)
+                or {item.get("url") for item in full if type(item) is dict}
+                != (other_seen | ({pr} if pr else set()))):
+            raise ValueError("issue PR candidates not consistent with saved source")
+        if (row.get("other_existing_prs_with_observed_failed_gates")
+                != sum(state == "observed_failed" for _, state, _ in alt_items)
+                or row.get("other_existing_prs_with_observed_pending_gates")
+                != sum(state == "observed_pending" for _, state, _ in alt_items)):
+            raise ValueError("issue PR gate totals contradict saved source")
         def h(value):
             return escape(value, quote=True)
         alt_html = ""
