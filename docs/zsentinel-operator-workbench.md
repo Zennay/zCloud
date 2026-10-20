@@ -276,3 +276,42 @@ accepting ownership, and an expired date is not proof of failed CI.
 Required live claim checks, exact-head CI, security authorization, review
 and original deployment gates remain independent. No QA/regression suite
 was authored or manually run.
+
+## 20 October · Reviewed carry-forward between observed source boards
+
+**Use case:** the operator has a newer saved zSentinel board and wants to
+preserve a human contact or follow-up date from an older observation. Exact
+SHA-pinned `Reopen own handoff` deliberately still rejects files from another
+board. To migrate explicitly and safely:
+
+1. Open the new/current workbench, load the actual earlier delivery-board JSON
+   using **Earlier source snapshot**. The page hashes its exact bytes,
+   validates its bounded source schema and requires its observation time to
+   predate the current board.
+2. Under **Reviewed human follow-up carry-forward**, choose the private
+   handoff exported from **that same earlier board**. Its saved SHA-256 and
+   observation timestamp must both equal the validated earlier source, and
+   every referenced issue must be canonical and present in that earlier board.
+3. Read the proposed transfer list and its counts. Only human decisions
+   `coordinate-owner` / `park-blocker` with the **same canonical issue and
+   project** on both boards are eligible. Old cards that vanished from the
+   bounded new snapshot are omitted, not marked resolved.
+4. Click **Confirm carry-forward of reviewed human follow-ups**. It transfers
+   only annotations on current cards that have no meaningful manual
+   disposition, note, contact, date or previously imported provenance. Existing
+   current edits remain intact. Any intervening edit of a candidate prevents
+   import until a fresh preview.
+5. Reverify each imported human contact, GitHub issue, live Notion claim,
+   required CI and release gate. Every imported entry displays the prior
+   source SHA prefix; private JSON and Markdown exports preserve its original
+   SHA-256 source provenance. This is **not** proof that the old assignee is
+   still responsible or that a previously overdue issue is still open.
+
+Earlier v1 JSON handoffs are accepted with empty contact/due dates. V2 JSON
+handoffs may contain bounded UTF-8 human notes, contact/date and optional
+prior-source metadata. Invalid, duplicate, cross-repository or unrecognized
+cards fail closed rather than silently creating new current issues. The
+whole flow runs locally in the browser without server writes, browser
+network calls, worker assignment, notifications, retries, or queue mutations.
+No QA/regression suites were created or run. Integration of this feature
+remains gated by the existing protected-main and exact-head release checks.
