@@ -270,7 +270,18 @@ def main(argv=None):
             print(issue["highest_source_priority"] + " " + issue["issue_url"] +
                   " / historical existing PR candidates " +
                   str(len(issue["linked_existing_prs"])))
-            print("  " + str(issue.get("triage_focus", "Recheck original issue")))
+            # Text in a self-consistent archive is still unauthenticated.
+            # Produce operator wording from validated fixed status fields,
+            # not attacker-controlled free-form narrative or terminal codes.
+            if issue.get("link_unobserved_in_final_sample") is True:
+                print("  Historical issue link not seen in last saved sample; "
+                      "NOT proof of closure or merge.")
+            elif len(issue["linked_existing_prs"]) > 1:
+                print("  Multiple sampled PR candidates: recheck each live "
+                      "owner, file scope, exact-head CI and review.")
+            else:
+                print("  Recheck current issue/PR state and actual owner "
+                      "before any merge or claim.")
             for candidate in issue["linked_existing_prs"][:5]:
                 print("    " + candidate["pr_url"] + " / issue-link " +
                       candidate["issue_link_priority"] + " / HEAD " +
