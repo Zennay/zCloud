@@ -1970,3 +1970,21 @@ stale observations require renewed live source inspection before decisions.
 No timed polling, merge/dispatch, automatic refresh, background work, network
 requests, new QA suite or live production writes are introduced. Existing
 review and CI gates remain unchanged.
+
+### Saved PR inbox: urgent work first, fair between projects
+
+The offline dossier CLI's `--show-queue` is now sorted by **observed**
+priority P0 → P1 → P2 → unspecified. Within a priority, candidates from
+different sampled repositories are interleaved round-robin by canonical
+repository name, preserving each repository's original saved PR order.
+One noisy project can no longer fill the first 20 lines solely because it
+appeared first in an archived list.
+
+The CLI states the exact filtered candidate total, sampled project count and
+per-priority distribution before showing any PR. Its `--limit` applies
+**after** priority/fairness ordering; missing rows are reported as not
+displayed, never interpreted as merged or completed. This is strictly a
+human-only navigation order over an old ZIP, not a real scheduler,
+ownership validator, CI verdict or permission to merge. Combined with the
+six-hour source-age label, it lets an operator find the most urgent known
+work without treating snapshot omissions as an absence of live P0 incidents.
