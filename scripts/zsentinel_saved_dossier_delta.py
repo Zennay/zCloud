@@ -37,7 +37,17 @@ REASONS = {
     "priority": "bronprioriteit",
     "linked_issue_urls": "gekoppelde bronissues",
     "next_action": "menselijke vervolgstap",
+    "gate_observations": "begrensde CI-/reviewwaarnemingen",
 }
+COUNTER_KEYS = (
+    "checks_completed", "checks_pending", "checks_not_successful",
+    "independent_approvals_observed", "changes_requested_observed",
+    "legacy_pending_observed", "legacy_failed_observed",
+)
+BOOLEAN_KEYS = (
+    "checks_page_complete", "reviews_page_may_be_truncated",
+    "legacy_page_may_be_truncated",
+)
 FIELDS = tuple(REASONS)
 
 
@@ -73,6 +83,14 @@ def admit_record(report):
                 if type(value) is not list or len(value) > 60 or len(set(value)) != len(value):
                     raise ValueError("Contradictory saved PR link/gate evidence")
                 value = sorted(value)
+            elif name == "gate_observations" and value is not None:
+                if (type(value) is not dict
+                        or set(value) != set(COUNTER_KEYS + BOOLEAN_KEYS)
+                        or any(type(value[k]) is not int or not 0 <= value[k] <= 100
+                               for k in COUNTER_KEYS)
+                        or any(type(value[k]) is not bool for k in BOOLEAN_KEYS)
+                        or candidate["gate_source"] != "observed_partial_gate_receipt"):
+                    raise ValueError("Untrusted saved gate-counter observations")
             fields[name] = value
         rows[url] = {"repository": repo, "number": candidate["pr_number"],
                      "data": fields}
