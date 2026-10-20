@@ -2686,56 +2686,50 @@ def _portfolio_lane_metadata(row,lane):
     }
     return json.dumps(metadata,ensure_ascii=False,separators=(',',':'))
 
-def _portfolio_requeue_conflicting_claimed_lanes_locked(connection,ts):
-    """Release only unstarted claimed rows whose derived write lane already conflicts."""
+def _portfolio_observe_conflicting_claimed_lanes_locked(connection):
+    """Read-only conflict inventory; never revoke another owner's active claim.
+
+    A 'claimed' queue row can already have a live worker or pending browser
+    handoff. Lane overlap is not evidence of permission to release its lease.
+    Only the authorized owner can reconcile conflicting active scopes.
+    """
     rows=connection.execute(
         """SELECT * FROM portfolio_queue
-           WHERE eligible=1 AND status IN ('claimed','running','verifying') AND worker_slot IS NOT NULL
+           WHERE status IN ('claimed','running','verifying') AND worker_slot IS NOT NULL
            ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'verifying' THEN 1 ELSE 2 END,
                     CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
                     claimed_at,created_at,queue_id"""
     ).fetchall()
     accepted=[]
-    released=[]
+    conflicts=[]
     for row in rows:
         project_id=str(row['project_id'] or '')
         project=PROJECT_INDEX.get(project_id) or {}
         if not project:
             continue
         lane=classify_backlog_item(project,dict(row))
-        conflict=None
         for other in accepted:
             if other['project_id']!=project_id:
                 continue
             overlap=scopes_overlap(lane['scope'],other['scope'])
             if lane['lane_id']==other['lane_id'] or overlap['capabilities'] or overlap['files']:
-                conflict={
-                    'queue_id':other['queue_id'],
-                    'lane_id':other['lane_id'],
-                    'overlap':overlap,
-                }
+                conflicts.append({
+                    'queue_id':str(row['queue_id']),
+                    'project_id':project_id,
+                    'lane_id':lane['lane_id'],
+                    'conflicts_with_queue_id':other['queue_id'],
+                    'conflicts_with_lane_id':other['lane_id'],
+                })
                 break
-        if conflict and str(row['status'])=='claimed':
-            connection.execute(
-                """UPDATE portfolio_queue
-                   SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
-                   WHERE queue_id=? AND status='claimed'""",
-                (ts,row['queue_id']),
-            )
-            released.append({
-                'queue_id':str(row['queue_id']),
-                'project_id':project_id,
-                'lane_id':lane['lane_id'],
-                'conflict':conflict,
-            })
-            continue
+        # Even conflicting claimed/running/verifying rows remain occupied.
+        # Never change status, slot, claim timestamps or eligibility here.
         accepted.append({
             'queue_id':str(row['queue_id']),
             'project_id':project_id,
             'lane_id':lane['lane_id'],
             'scope':lane['scope'],
         })
-    return released
+    return conflicts
 
 def _portfolio_queue_execution_capable(title,completion_criteria=''):
     title_text=str(title or '').strip().lower()
@@ -3168,7 +3162,10 @@ def portfolio_queue_allocate():
                      SET status='queued',worker_slot=NULL,claimed_at=NULL,claim_expires=NULL,updated_at=?
                      WHERE eligible=1 AND status IN ('claimed','running','verifying')
                        AND claim_expires IS NOT NULL AND claim_expires<=?""",(ts,ts))
-        _portfolio_requeue_conflicting_claimed_lanes_locked(c,ts)
+        active_lane_conflicts=_portfolio_observe_conflicting_claimed_lanes_locked(c)
+        if active_lane_conflicts:
+            logging.debug('Active owner lane overlaps require owner follow-up; retained %d claims',
+                          len(active_lane_conflicts))
 
         occupied_rows=c.execute(
             """SELECT * FROM portfolio_queue
