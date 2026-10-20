@@ -99,6 +99,7 @@ def build(report):
             raise ValueError("unbounded linked existing PR inventory")
         selected = None
         link_count = 0
+        linked_candidates = []
         for p in refs:
             url = p.get("url") if type(p) is dict else None
             if (type(url) is not str or PR.fullmatch(url) is None
@@ -118,6 +119,21 @@ def build(report):
                 live.get("legacy_status_pending_observed", 0) > 0))
             overlap = p.get("file_scope_state") == "shared_file_paths_observed"
             moved = p.get("historical_source_activity_observed") is True
+            # Every existing candidate remains visible, not just the most
+            # informative one. Gate observations never confer merge rights.
+            candidate_state = (
+                "observed_failed" if failed else
+                "observed_pending" if pending else
+                "observed_partial_no_release_permission" if has_live_gate else
+                "not_observed"
+            )
+            linked_candidates.append({
+                "url": url, "gate_state": candidate_state,
+                "file_overlap_observed": overlap,
+                "source_movement_observed": moved,
+                "merge_authorized": False,
+                "owner_verified": False,
+            })
             # Select the most informative existing candidate; never use the
             # score as an indication of merge readiness or an owner lease.
             rank = (int(has_live_gate), int(failed), int(overlap),
@@ -148,6 +164,12 @@ def build(report):
         else:
             action = "owner_before_new_product_work"
         chosen_url = selected[1]["url"] if selected else None
+        # Stable canonical order for review and local offline note binding.
+        linked_candidates.sort(key=lambda item: item["url"])
+        other_candidates = [
+            candidate for candidate in linked_candidates
+            if candidate["url"] != chosen_url
+        ]
         gate_source = ("not_observed" if selected is None or not selected[2]
                        else "observed_failed" if selected[3]
                        else "observed_pending" if selected[4]
@@ -161,6 +183,16 @@ def build(report):
             "category_nl": LABELS[action], "human_next_step_nl": GUIDANCE[action],
             "existing_pr_count_in_sample": len(refs),
             "candidate_existing_pr_url": chosen_url,
+            "all_existing_pr_candidates_in_sample": linked_candidates,
+            "other_existing_pr_candidates_in_sample": other_candidates,
+            "other_existing_prs_with_observed_failed_gates": sum(
+                item["gate_state"] == "observed_failed"
+                for item in other_candidates
+            ),
+            "other_existing_prs_with_observed_pending_gates": sum(
+                item["gate_state"] == "observed_pending"
+                for item in other_candidates
+            ),
             "candidate_pr_observation_only": True if selected else None,
             "candidate_exact_head_gate_state": gate_source,
             "historic_pr_movement_in_sample": issue.get(
@@ -301,6 +333,17 @@ def render_compact_inbox(board, style="markdown", max_rows=20):
             lines.append("   PR eerst: " + (
                 "[Open bestaande PR](" + url + ")" if style == "markdown"
                 else url))
+        others = item.get("other_existing_pr_candidates_in_sample", [])
+        if others:
+            lines.append("   Andere bestaande PRs in bron: " + str(len(others)) +
+                         " (elk afzonderlijk met huidige eigenaar afstemmen).")
+            for other in others[:4]:
+                ref = other["url"]
+                lines.append("   Alternatief: " + (
+                    "[Open PR](" + ref + ")" if style == "markdown"
+                    else ref) + " · exacte-HEAD bron: " + other["gate_state"] +
+                    (" · bestandsoverlap" if other["file_overlap_observed"] else "") +
+                    (" · historische beweging" if other["source_movement_observed"] else ""))
     if len(board["cards"]) > max_rows:
         lines.append("")
         lines.append("ONVOLLEDIG overzicht: " +
