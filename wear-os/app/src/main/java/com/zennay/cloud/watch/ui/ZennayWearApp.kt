@@ -246,7 +246,12 @@ private fun HomeScreen(
                                 maxLines = 3, overflow = TextOverflow.Ellipsis
                             )
                             Spacer(Modifier.height(4.dp))
-                            Text("Tik voor oorzaak en actie ›", color = Accent, fontSize = 10.sp)
+                            Text(
+                                if (alert.humanActionRequired) "Menselijke actie nodig · tik voor details ›"
+                                else "Actuele status · tik voor details ›",
+                                color = if (alert.humanActionRequired) Warning else Accent,
+                                fontSize = 10.sp
+                            )
                         }
                     }
                 }
