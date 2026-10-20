@@ -322,29 +322,25 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
         "onafhankelijke_review_niet_gezien": [],
         "verplichte_regels_en_eigenaarschap_onbekend": [],
     }
+    # Share the single strict classification contract with the standalone
+    # HTML desk and CSV worklist; no duplicate, drifting release semantics.
+    from zsentinel_saved_gate_html import (
+        _classify, concurrent_gate_reasons, LABELS,
+    )
+    buckets = {
+        "source": "bron_of_batch_onbekend",
+        "failed": "checks_niet_geslaagd",
+        "pending": "checks_nog_lopend",
+        "changes": "wijzigingen_gevraagd",
+        "partial": "CI_bron_onvolledig",
+        "review": "onafhankelijke_review_niet_gezien",
+        "policy": "verplichte_regels_en_eigenaarschap_onbekend",
+    }
     for position, (priority, _repo, _number, ref) in enumerate(selected):
         url = ref["url"]
-        gate = observed.get(url)
-        if (position // 4 + 1 in missing or gate is None or
-                gate.get("status") != "observed_current_head_partial_gate_evidence"):
-            bucket = "bron_of_batch_onbekend"
-        elif (gate["observed_checks_not_successful"] or
-              gate["legacy_status_failure_or_error_observed"]):
-            bucket = "checks_niet_geslaagd"
-        elif gate["observed_checks_pending"] or gate["legacy_status_pending_observed"]:
-            bucket = "checks_nog_lopend"
-        elif gate["observed_exact_head_changes_requested"]:
-            bucket = "wijzigingen_gevraagd"
-        elif (not gate["check_runs_page_complete"] or
-              gate["review_page_may_be_truncated"] or
-              gate["legacy_status_source_may_be_truncated"] or
-              not gate["observed_checks_completed"]):
-            bucket = "CI_bron_onvolledig"
-        elif not gate["observed_independent_exact_head_approvals"]:
-            bucket = "onafhankelijke_review_niet_gezien"
-        else:
-            bucket = "verplichte_regels_en_eigenaarschap_onbekend"
-        groups[bucket].append((priority, _repo, _number, url))
+        gate = None if position // 4 + 1 in missing else observed.get(url)
+        primary = _classify(gate)
+        groups[buckets[primary]].append((priority, _repo, _number, url))
     source_time = datetime.fromisoformat(integrated["earliest_observed_at_utc"])
     hours_old = max(0, int((datetime.now(timezone.utc) - source_time).total_seconds() // 3600))
     lines = [
@@ -420,6 +416,9 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
                 " approvals, " + str(gate["observed_exact_head_changes_requested"]) +
                 " wijzigingen gevraagd (vereiste reviewpolicy onbekend).",
                 "Volgende menselijke stap: `" + gate["human_next_gate_step"] + "`.",
+                "Gelijktijdige waargenomen blokkades: " +
+                " · ".join(LABELS[reason][0] for reason in
+                           concurrent_gate_reasons(gate)) + ".",
             ])
             if (not gate["check_runs_page_complete"] or
                     gate["review_page_may_be_truncated"] or
