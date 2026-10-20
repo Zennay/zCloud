@@ -308,3 +308,19 @@ zijn lease, herstel, ownership, merge en deploy nog steeds NIET bewezen.
 Dit is bronimplementatie op de bestaande PR; geen automatische
 schedulerinstallatie, productie- of runnerrelease, SQLite-migratie,
 claimovername, workflow-retry of QA-ronde.
+
+### Geen workercontinuïteit over een nieuwe taak of gewijzigde lease
+
+De historische bronvergelijking eist sinds de laatste integratie óók
+overeenstemming van `allocated_global_slot`,
+`queue_assignment_coverage`, `queue_claim_status_observed` en
+`desired_state`. Bij een wisseling van toewijzing, queue-claimstatus
+of lease-dekking wordt de vergelijking expliciet
+`UNKNOWN_assignment_or_lease_context_changed` of
+`UNKNOWN_worker_desired_state_changed`: dezelfde worker-slotindex
+kan immers onder een **ander werkpakket** vallen. Een ongewijzigd
+slot met nieuw indexed event is slechts een browsersignaal, nooit
+een bewijs van dezelfde claim, productieverandering, commit of
+eigenaarsovername. Herhaalde eigenaarcontrole wordt uitsluitend
+geprioriteerd als beide gecontroleerde bronvensters dezelfde
+toewijzingscontext tonen en geen broncursor geroteerd is.
