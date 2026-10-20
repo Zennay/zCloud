@@ -442,6 +442,129 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
     ])
     return "\n".join(lines)
 
+
+def prior_gate_delta(previous: dict, current: dict, selected: list) -> list[str]:
+    """Compare two private snapshots of *the same* source manifest.
+
+    Source coverage and gate sample changes are observations, never CI
+    success, ownership, or a merge authorization. No network access.
+    """
+    if (previous.get("schema") != OUTPUT_SCHEMA
+            or previous.get("original_review_manifest_sha256") !=
+               current["original_review_manifest_sha256"]
+            or previous.get("original_board_sha256") !=
+               current["original_board_sha256"]
+            or any(previous.get(key) is not False for key in
+                   ("claim_authorized", "merge_authorized", "deploy_authorized",
+                    "may_take_ownership", "writes_performed"))
+            or type(previous.get("saved_receipts_not_required_checks_verified"))
+               is not bool
+            or previous["saved_receipts_not_required_checks_verified"] is not True):
+        raise ValueError("Earlier bridge is not the same non-authorizing source")
+    before = observed_time(previous.get("latest_observed_at_utc"))
+    after = observed_time(current["earliest_observed_at_utc"])
+    if before >= after:
+        raise ValueError("Previous observations must end before current ones begin")
+    if (type(previous.get("issues")) is not list
+            or len(previous["issues"]) > 60
+            or type(previous.get("expected_batch_count")) is not int
+            or previous["expected_batch_count"] != current["expected_batch_count"]
+            or type(previous.get("missing_batch_indexes")) is not list):
+        raise ValueError("Malformed prior bridge coverage")
+    total = current["expected_batch_count"]
+    indexes = previous["missing_batch_indexes"]
+    if (len(indexes) > total or
+            any(type(n) is not int or n < 1 or n > total for n in indexes)
+            or len(set(indexes)) != len(indexes)):
+        raise ValueError("Prior missing batch coverage is invalid")
+    allowed = {item[3]["url"] for item in selected}
+    def inventory(snapshot):
+        indexed = {}
+        for issue in snapshot["issues"]:
+            if (type(issue) is not dict or type(issue.get("issue")) is not str
+                    or ISSUE.fullmatch(issue["issue"]) is None
+                    or issue.get("url") != "https://github.com/" +
+                        issue["issue"].replace("#", "/issues/")
+                    or type(issue.get("existing_prs")) is not list
+                    or len(issue["existing_prs"]) > 5):
+                raise ValueError("Invalid prior issue identity")
+            for entry in issue["existing_prs"]:
+                if (type(entry) is not dict or entry.get("url") not in allowed
+                        or type(entry.get("live_exact_head_review_checks_observation"))
+                           is not dict):
+                    raise ValueError("Noncanonical prior PR source")
+                url = entry["url"]
+                if issue["issue"].rsplit("#", 1)[0] != PR.fullmatch(url).group(1):
+                    raise ValueError("PR is unrelated to prior issue")
+                gate = entry["live_exact_head_review_checks_observation"]
+                if (gate.get("url") != url
+                        or gate.get("status") not in ALLOWED_STATUS
+                        or gate.get("read_only") is not True
+                        or gate.get("merge_authorized") is not False
+                        or gate.get("deployment_authorized") is not False):
+                    raise ValueError("Prior PR gate receipt cannot be trusted")
+                if gate["status"] == "observed_current_head_partial_gate_evidence":
+                    if (type(gate.get("head_sha_observed")) is not str
+                            or HEAD.fullmatch(gate["head_sha_observed"]) is None):
+                        raise ValueError("Prior observed PR HEAD malformed")
+                if url in indexed and indexed[url] != gate:
+                    raise ValueError("Inconsistent saved PR receipts")
+                indexed[url] = gate
+        return indexed
+
+    old = inventory(previous)
+    new = inventory(current)
+    order = {row[3]["url"]: i for i, row in enumerate(selected)}
+    affected = []
+    for url in allowed:
+        first, last = old.get(url), new.get(url)
+        if first is None and last is None:
+            continue
+        if first is None:
+            reason = "nu pas in batch waargenomen; voorheen onbekend"
+        elif last is None:
+            reason = "nu buiten steekproef/batch; NIET gemerged of opgelost"
+        elif first["status"] != last["status"]:
+            reason = "GitHub-bronstatus veranderd; herbeoordeel"
+        elif (first.get("head_sha_observed") != last.get("head_sha_observed")):
+            reason = "PR HEAD veranderd; eerdere checks/reviews niet hergebruiken"
+        else:
+            keys = ("observed_checks_pending", "observed_checks_not_successful",
+                    "observed_checks_completed",
+                    "observed_independent_exact_head_approvals",
+                    "observed_exact_head_changes_requested",
+                    "legacy_status_pending_observed",
+                    "legacy_status_failure_or_error_observed",
+                    "check_runs_page_complete", "review_page_may_be_truncated",
+                    "legacy_status_source_may_be_truncated")
+            if any(first.get(key) != last.get(key) for key in keys):
+                reason = "waargenomen CI-/reviewsteekproef veranderd"
+            else:
+                continue
+        affected.append((order[url], url, reason))
+    affected.sort()
+    lines = [
+        "## Wat veranderde sinds vorige privéwaarneming?",
+        "",
+        "Oude laatste bron UTC: " + previous["latest_observed_at_utc"],
+        "Nieuwe eerste bron UTC: " + current["earliest_observed_at_utc"],
+        "Verschillen binnen DEZELFDE reviewmanifestbron: " + str(len(affected)) +
+        " PR(s); ieder oordeel blijft onbeslist zonder nieuwe live bron.",
+        "",
+    ]
+    if not affected:
+        lines.append("Geen verschillen binnen de twee bemonsterde bronnen; "
+                     "**dit bewijst GEEN geslaagde of afgeronde PR**.")
+    for _, url, reason in affected[:120]:
+        lines.append("- [" + url.split("/")[3] + "/" + url.split("/")[4] +
+                     "#" + url.rsplit("/", 1)[-1] + "](" + url + "): " + reason)
+    if len(affected) > 120:
+        lines.append("Verdere wijzigingen niet opgesomd: " +
+                     str(len(affected) - 120) + " PR(s).")
+    lines.extend(["", "Opgeslagen PR's zijn geen claims of releasebesluiten.", ""])
+    return lines
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-review", type=Path, required=True)
@@ -450,14 +573,26 @@ def main(argv=None):
                         help="Import only supplied, source-bound batches; label missing batches UNKNOWN")
     parser.add_argument("--format", choices=("json", "markdown"), default="json",
                         help="Private JSON browser import or readable merge-first Markdown")
+    parser.add_argument("--previous", type=Path,
+                        help="Prior private JSON bridge for same-manifest PR delta (Markdown only)")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         review, raw = bounded_json(args.from_review)
         result = combined_manifest(review, raw, args.receipt,
                                    allow_partial=args.allow_partial)
+        if args.previous is not None and args.format != "markdown":
+            raise ValueError("Previous observation requires Markdown output")
         if args.format == "markdown":
-            rendered = markdown_brief(review, raw, result).encode("utf-8")
+            briefing = markdown_brief(review, raw, result)
+            if args.previous is not None:
+                old, _ = bounded_json(args.previous)
+                selected, _ = canonical_manifest(review, raw)
+                delta = prior_gate_delta(old, result, selected)
+                # Prepend an operator-relevant comparison without modifying
+                # the original fully source-bound per-PR descriptions.
+                briefing = "\n".join(delta) + "\n" + briefing
+            rendered = briefing.encode("utf-8")
         else:
             rendered = (json.dumps(result, ensure_ascii=True, sort_keys=True, indent=2) +
                         "\n").encode("utf-8")
