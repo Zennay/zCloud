@@ -185,3 +185,21 @@ The three-line summary is regenerated when the issue selection changes; it is
 not a continuously updating live monitor. This feature remains offline and
 works entirely in the existing file-based operator HTML with no new service,
 permission, QA/test suite, dependency, privileged write or release gate change.
+
+### Change-focused triage and briefing filter (20 October)
+
+With a valid earlier board loaded, the operator can now filter the **current**
+observed issue list, human next-action queue and private Markdown briefing to:
+newly observed issues, materially changed evidence (priority, issue title,
+recommended investigation, attached PRs or exact missing-gate strings), or
+still-observed issues. **New or changed evidence** combines the first two
+categories for a focused delivery handoff. The filter is disabled without a
+valid earlier board; clearing the previous board resets it to all currently
+observed issues, rather than displaying a misleading empty shortlist.
+
+The historical comparison still lists issues no longer visible in the current
+bounded sample separately, and never declares them resolved or reassigned.
+Changing the filter invalidates an older briefing preview; only a fresh,
+reviewed preview can be downloaded. This remains an offline, read-only human
+workflow without queue ownership or release permission. No testsuites were
+written or run for this source feature.
