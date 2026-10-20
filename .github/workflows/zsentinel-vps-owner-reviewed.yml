@@ -7,6 +7,11 @@ on:
         description: "Paste exact current main commit SHA before using the permanent VPS runner"
         required: true
         type: string
+      inspect_sqlite_space:
+        description: "Optional metadata-only SQLite/WAL owner receipt, no SQL or cleanup"
+        required: false
+        type: boolean
+        default: false
       window:
         description: "Read-only portfolio window (auto rotates)"
         required: false
@@ -154,4 +159,37 @@ jobs:
           print("Local process evidence does NOT prove runner job assignment, safe idle or recovery.")
           print("No claims/leases changed, runner restarted, workflows dispatched or production deployed.")
           print("Source selection is bounded and does not prove all workers healthy.")
+          PY
+
+      - name: Optional SQLite and WAL disk capacity receipt, no SQL or cleanup
+        if: steps.capacity.outputs.run == 'true' && inputs.inspect_sqlite_space == true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          from pathlib import Path
+          from zsentinel_sqlite_footprint import observe_many
+          result = observe_many(Path("/home/ubuntu/zennay-cloud"), ["history.db"])
+          if (result.get("checkpoint_or_database_write") is not False
+                  or result.get("reclaimable_bytes_verified") is not False
+                  or result.get("cleanup_performed") is not False
+                  or len(result.get("reports", [])) != 1):
+              raise SystemExit("DENY_UNTRUSTED_SQLITE_SPACE_SOURCE")
+          row = result["reports"][0]
+          wal = row.get("wal_sidecar")
+          if (row.get("cleanup_performed") is not False
+                  or row.get("queue_claims_changed") is not False
+                  or not isinstance(wal, dict)
+                  or wal.get("coverage") == "unsafe_nonregular_or_other_mount"):
+              raise SystemExit("DENY_UNTRUSTED_SQLITE_METADATA")
+          def mib(n):
+              return "unknown" if type(n) is not int or n < 0 else str(round(n / 1048576, 1))
+          print("### zSentinel · SQLite disk footprint (metadata only)")
+          print("Database allocated MiB: " + mib(row["database_allocated_bytes"]))
+          print("WAL file size MiB: " + mib(wal["size_bytes"]))
+          print("Checkpoint-header coverage: " + row["checkpoint_header_coverage"])
+          print("Internal freelist MiB (NOT safely reclaimable proof): " +
+                mib(row["checkpoint_freelist_bytes_not_reclaim_proof"]))
+          print("No paths/records, SQL, DB write, checkpoint, reclaim, restart or claim mutation.")
+          print("Verify writer leases, backup and storage headroom before owner-approved maintenance.")
           PY
