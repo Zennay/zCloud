@@ -438,18 +438,27 @@ def current_gate_lines(board, markdown=False):
         link = ("[" + gate["url"] + "](" + gate["url"] + ")"
                 if markdown else gate["url"])
         lines.append("- " + gate["project"] + " · " + link)
+        lines.append("  Actuele blokkade: " + BLOCKER_DESCRIPTIONS[
+            gate["human_gate_blocker"]])
         if gate["status"] != "current_exact_pr_head_and_sample_match":
-            lines.append("  BRON ONZEKER: PR-HEAD veranderd of GitHub gatebron ontbreekt.")
             continue
         lines.append(
             "  Exact HEAD " + gate["head_sha_observed"][:12] +
-            " · CI lopend " + str(gate["observed_checks_pending"]) +
-            " · mislukt " + str(gate["observed_checks_not_successful"]) +
+            " · Check Runs lopend " + str(gate["observed_checks_pending"]) +
+            " / mislukt " + str(gate["observed_checks_not_successful"]) +
+            " / onbekend " + str(gate["observed_checks_unknown"]) +
+            " · legacy pending " + str(gate["observed_legacy_pending"]) +
+            " / failed " + str(gate["observed_legacy_failure_or_error"]) +
+            " · draft " + str(gate["draft_at_read"]) +
+            " · gevraagde reviewwijzigingen " +
+            str(gate["observed_exact_head_changes_requested"]) +
             " · onafhankelijke approvals gezien " +
             str(gate["observed_independent_exact_head_approvals"]) +
             " · vervolg: " + GATE_LABELS.get(
                 gate["human_next_gate_step"], "Bron onvolledig; actuele gates inspecteren."))
-        if not gate["check_page_complete"] or gate["review_page_may_be_truncated"]:
+        if (not gate["check_page_complete"]
+                or gate["review_page_may_be_truncated"]
+                or gate["legacy_status_source_may_be_truncated"]):
             lines.append("  WAARSCHUWING: niet alle actuele check/reviewgegevens waargenomen.")
     lines.append("Afzonderlijke Notion-claims, branch protection, eigenaar/release "
                  "en verplichte checks blijven NIET vrijgegeven.")
@@ -594,12 +603,21 @@ def as_html(board):
             else:
                 detail = (
                     "HEAD " + escape(gate["head_sha_observed"][:12]) +
-                    " · CI lopend " + str(gate["observed_checks_pending"]) +
-                    " · mislukt " + str(gate["observed_checks_not_successful"]) +
+                    " · Check Runs lopend " + str(gate["observed_checks_pending"]) +
+                    " / mislukt " + str(gate["observed_checks_not_successful"]) +
+                    " / onbekend " + str(gate["observed_checks_unknown"]) +
+                    " · legacy pending " + str(gate["observed_legacy_pending"]) +
+                    " / failed " + str(gate["observed_legacy_failure_or_error"]) +
+                    " · draft " + str(gate["draft_at_read"]) +
+                    " · reviewwijzigingen " +
+                    str(gate["observed_exact_head_changes_requested"]) +
                     " · onafhankelijke approvals gezien " +
                     str(gate["observed_independent_exact_head_approvals"]) +
                     " · " + escape(GATE_LABELS.get(
                         gate["human_next_gate_step"], "Bron onvolledig.")))
+            detail = (
+                "BLOKKADE: " + escape(BLOCKER_DESCRIPTIONS[
+                    gate["human_gate_blocker"]]) + " · " + detail)
             pr_cards.append(
                 "<li><a href='" + url + "' rel='noopener noreferrer'>" +
                 escape(gate["project"]) + " · " + url +
