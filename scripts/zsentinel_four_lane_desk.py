@@ -28,6 +28,7 @@ from lane_generator import (
     scopes_overlap,
 )
 from scripts.zsentinel_recovery_actions import suggested_actions
+from scripts.zsentinel_runner_presence import observe_local_runners, text_report
 
 LANE_NAMES = {
     "release-integration": "PRs naar main",
@@ -62,7 +63,7 @@ def _utc(value):
         return None
 
 
-def collect(database, maximum):
+def collect(database, maximum, include_runner_processes=False):
     """Capture one bounded, read-only SQLite snapshot without owner identities."""
     path = Path(database).absolute()
     if not path.is_file():
@@ -299,6 +300,9 @@ def collect(database, maximum):
             or (sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0)
         ),
     }
+    packet["runner_processes"] = (
+        observe_local_runners() if include_runner_processes else None
+    )
     packet["recovery_actions"] = suggested_actions(packet)
     return packet
 
@@ -328,6 +332,8 @@ def text_view(data):
         out.append("  " + item["problem"])
         out.append("  Actie: " + item["next_step"])
         out.append("  Status: " + item["status"])
+    if data.get("runner_processes") is not None:
+        out.append(text_report(data["runner_processes"]))
     out.append("Open lokale P0/P1-queue per echt project (adviserend):")
     for item in data["portfolio_urgent_local"]:
         out.append(
@@ -459,6 +465,32 @@ def html_view(data):
         + "<p class='eyebrow'>" + html.escape(item["status"]) + "</p></article>"
         for item in data["recovery_actions"]
     )
+    runner_section = ""
+    proc = data.get("runner_processes")
+    if proc is not None:
+        families = "".join(
+            "<tr><th scope='row'>" + html.escape(name) + "</th>"
+            "<td>" + str(item["listeners"]) + "</td><td>"
+            + str(item["workers"]) + "</td><td>"
+            + html.escape(item["local_observation"]) + "</td></tr>"
+            for name, item in sorted(proc["families"].items())
+            if item["listeners"] or item["workers"]
+        )
+        if not families:
+            families = "<tr><td colspan='4'>Geen herkenbare processen. Geen uitvalbewijs.</td></tr>"
+        incomplete = (
+            "<p class='warn'>Procesbron onvolledig: ontbrekende processen niet bewezen.</p>"
+            if not proc["source_complete"] else ""
+        )
+        runner_section = (
+            "<section class='notice'><h2>Lokale GitHub-runners</h2>"
+            "<p>Een listenerproces betekent niet dat GitHub een job toewijst, "
+            "dat runnerlabels kloppen of dat CI geslaagd is.</p>"
+            "<div class='scroll'><table><thead><tr>"
+            "<th>Runner</th><th>Listener</th><th>Worker</th><th>Waarneming</th>"
+            "</tr></thead><tbody>" + families + "</tbody></table></div>"
+            + incomplete + "</section>"
+        )
     portfolio_rows = "".join(
         "<tr><th scope='row'>" + html.escape(item["project"]) + "</th>"
         + "<td>" + str(item["queued_p0"]) + " <small>(eligible "
@@ -513,7 +545,8 @@ def html_view(data):
         "<th scope='col'>P0 wacht</th><th scope='col'>P1 wacht</th>"
         "<th scope='col'>P0 actief</th><th scope='col'>P1 actief</th>"
         "</tr></thead><tbody>" + portfolio_rows + "</tbody></table></div>"
-        + portfolio_note + "</section><section class='notice'><h2>Grenzen en "
+        + portfolio_note + "</section>" + runner_section
+        + "<section class='notice'><h2>Grenzen en "
         "vervolgactie</h2><ul>" + details + "</ul></section>"
         "<footer>Alleen lokale read-only bron. Geen claim, CI-start, merge, "
         "runneractie of deployment uitgevoerd.</footer></main></body></html>"
@@ -538,6 +571,9 @@ def markdown_view(data):
             "  **Actie:** " + action["next_step"],
             "  **Status:** " + action["status"],
         ))
+    if data.get("runner_processes") is not None:
+        lines.extend(("", "## Runnerprocessen (alleen /proc)", "",
+                      text_report(data["runner_processes"]), ""))
     lines.extend(("", "## Urgente portfolio-queue (lokale bron)", "",
                   "| Project | P0 wacht | P1 wacht | P0 actief | P1 actief |",
                   "| --- | ---: | ---: | ---: | ---: |"))
@@ -597,6 +633,8 @@ def main():
     )
     parser.add_argument("--db", default="history.db", help="Read-only SQLite source")
     parser.add_argument("--max-rows", type=int, default=250)
+    parser.add_argument("--runner-processes", action="store_true",
+                        help="Read only local /proc listener presence; no job or online proof")
     parser.add_argument("--format", choices=("text", "json", "html", "markdown"), default="text")
     parser.add_argument("--output", help="New owner-private file: .html or .md")
     args = parser.parse_args()
@@ -605,7 +643,8 @@ def main():
     if (args.format in ("html", "markdown")) != bool(args.output):
         parser.error("HTML/Markdown requires --output, other formats cannot write files")
     try:
-        packet = collect(args.db, args.max_rows)
+        packet = collect(args.db, args.max_rows,
+                         include_runner_processes=args.runner_processes)
         if args.format == "html":
             save_private(args.output, html_view(packet), ".html")
             print("Privé herstelbalie gemaakt (0600); geen systeemactie.")
