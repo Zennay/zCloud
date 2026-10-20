@@ -40,3 +40,11 @@ This product workbench is additive: the queue's existing `items` contract remain
 ## Source-consistent metadata receipt (20 October follow-up)
 
 The queue's original `metadata_json` is classified once with the strict duplicate-key, bounded, nonfinite-rejecting reader **before** `_portfolio_queue_row` supplies a compatibility `metadata` object. A sanitized `{}` may still be rendered for legacy consumers, but `delivery_policy_disposition=invalid` remains visible on an originally invalid queued row and is consumed by the summary. Standalone calls to the pure summary function without a source receipt continue to classify their own items. No new live queue state is written, and no extra SQL read is required.
+
+## Actionable hold reasons (20 October continuation)
+
+Every queued row in the authenticated `GET /api/portfolio-queue` response now carries `delivery_policy_disposition` and a fixed `delivery_policy_reason`. Both are computed from the original SQLite row **before** legacy JSON presentation normalization. Invalid source metadata cannot silently masquerade as a valid product ticket in this interface.
+
+The `delivery_policy` summary adds `queued_hold_reason_counts`, a bounded map of stable, non-sensitive reason codes. Examples: `explicit_qa_lane` (explicitly excluded from new dispatch), `qa_title_without_delivery` (legacy QA-only title without actual implementation), `invalid_metadata` (raw parse fails), `invalid_title` (ticket requires human correction), and `invalid_lane_metadata` (malformed ownership classification). Counters are observations over **only visible eligible, slot-free queued items**; they do not imply all repository tasks were scanned.
+
+This is a **read-only operator explanation**, not a workflow or worker action. An invalid ticket must be re-scoped by its authorized owner; do not silently drop, unclaim, rewrite or relabel it. `product_candidate` is an input to existing downstream lane/lease/capacity gates, **not** permission to dispatch, merge or deploy. Active `claimed/running/verifying` tasks remain unchanged.
