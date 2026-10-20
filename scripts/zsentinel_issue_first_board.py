@@ -384,6 +384,8 @@ def main():
         cli.error("--candidate-page requires --issue")
     if args.snapshot_output and args.issue is None:
         cli.error("--snapshot-output requires a targeted --issue")
+    if args.snapshot_output and args.output:
+        cli.error("--output and --snapshot-output cannot be combined")
     try:
         registry = board.registry()
         budget = [0, time.monotonic() + board.MAX_SECONDS]
@@ -454,7 +456,7 @@ def main():
                       f"next_page={target_coverage['next_page']} "
                       f"complete={target_coverage['search_complete']}")
     except (ValueError, OSError, KeyError, TypeError):
-        cli.error("invalid project, source, or private output; no merge/write performed")
+        cli.error("invalid project, source, or private output; no remote writer action performed")
 
 
 if __name__ == "__main__":
