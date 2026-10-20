@@ -33,6 +33,7 @@ NEXT_ACTION_NL = {
     "fix_exact_head_ci_with_owner": "Los de daadwerkelijk falende head-checks op met eigenaar.",
     "inspect_unlisted_status_contexts_with_owner": "Gecombineerde GitHub-status meldt fout; open actuele PR-checks met eigenaar, want context staat niet in de beperkte steekproef.",
     "wait_for_complete_exact_head_ci": "Wacht op ontbrekende of lopende exact-head CI; blijf aan ander werk bouwen.",
+    "wait_for_first_ci_receipt": "Er is geen enkele actuele check-run of klassieke status zichtbaar. Laat eigenaar de vereiste CI en branchregels vaststellen; geen merge of review-gereedverklaring.",
     "request_independent_review": "Vraag onafhankelijke review; geen automatische merge.",
     "confirm_branch_protection_and_release_with_owner": "Laat eigenaar volledige branchebescherming en releasevoorwaarden controleren.",
     "verify_pr_source_with_owner": "PR-bron onvoldoende bereikbaar; eigenaar moet actuele GitHub-status controleren.",
@@ -391,6 +392,9 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
             item["legacy_status_contexts"] = {
                 "head_sha": head_sha,
                 "combined_observed": combined,
+                # GitHub's combined status is "pending" even when it has
+                # *zero* legacy status contexts. That is not a running check.
+                "implicit_pending_without_contexts": combined == "pending" and not statuses,
                 "sampled": len(statuses),
                 "unique_contexts_seen": len(latest_context),
                 "page_truncated_or_unknown": len(statuses) == MAX_STATUSES,
@@ -458,8 +462,13 @@ def observe_prs(registry, selections, token=None, inspect_no_start_annotations=F
                 # The combined source reports a failure but the sampled page
                 # did not identify it: never suggest review or merge.
                 next_step = "inspect_unlisted_status_contexts_with_owner"
+            elif total == 0 and not statuses:
+                # An empty check-runs page and empty legacy contexts provide
+                # no CI evidence at all, even if GitHub reports "pending".
+                next_step = "wait_for_first_ci_receipt"
             elif (waiting or inconclusive or legacy_pending
-                  or combined == "pending" or len(statuses) == MAX_STATUSES
+                  or (combined == "pending" and bool(statuses))
+                  or len(statuses) == MAX_STATUSES
                   or total != len(runs)):
                 next_step = "wait_for_complete_exact_head_ci"
             elif approvals == 0:
