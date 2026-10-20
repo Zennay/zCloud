@@ -207,4 +207,18 @@ python3 scripts/zsentinel_issue_scope_cockpit.py \
 
 De gefocuste kaart combineert issuetitel, prioriteit, originele Workbench-adviezen/bronhiaten, gevonden bestaande PR's (inclusief positieve vermeldingen uit een beperkte stabiele lijst), geobserveerde bestandsbotsingen en eventuele historische CI-/reviewbewijsverwijzingen. Voor eigenaar-only issues zoals zCloud #1326 of #1523 blijft de tekst expliciet **bevoegde menselijke eigenaar vereist**; er wordt nooit een restart/claim/merge/retry uitgevoerd.
 
-**Belangrijk:** als het exacte `Zennay/Repo#nummer` niet voorkomt in de begrensde actuele issuesample, wordt dit met exitcode 3 gemeld als *niet aangetroffen in de steekproef*. Het product beweert niet dat het issue gesloten of opgelost is. Het selecteren van een issue verandert ook nooit de originele private bron-SHA of de werkelijke bronobservatietijd.
+**Nu rechtstreeks opgehaalde live issuebron:** bij `--live-issues --focus-issue` en exact **één geregistreerd** `--project` wordt niet meer gezocht in de beperkte oudste/nieuwste issuewindow. Het programma leest het exacte open issue via de reeds bestaande canonical GitHub GET-helper en gebruikt daarna de ongewijzigde Product Delivery Board-classificatie voor prioriteit, QA-only uitsluiting, claims-unknown en PR-verwijzingen. Dit is zinvol bij oude urgente issues die anders niet in de steekproef voorkomen. De uitvoer krijgt `issue_source_mode=live_exact_selected_github_issue`, **1 directe issue-GET** en vervolgens het bestaande begrensde open-PR-overlaponderzoek. De uitkomst kan geen eigenaar/CI/review/mergegoedkeuring verlenen.
+
+Bij `--issue-board --focus-issue` geldt nog steeds het eerdere, strikte gedrag: het exacte issue moet in de **opgeslagen** board aanwezig zijn. Bij een 404, gesloten status, verwijderde source, of verkeerde repository in directe live-modus is de uitkomst *niet beschikbaar voor deze live open-issueinspectie*, **niet** automatisch "opgelost" of "vrij". QA-only geselecteerde issues worden overeenkomstig het gebruikersbeleid geweigerd; er worden geen tests gestart. Het selecteren verandert de originele private bron-SHA of observatietijd nooit.
+
+
+### Exacte P0-recovery zonder volle GitHub-backlogscan
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud \
+  --focus-issue 'Zennay/zCloud#1326' --max-prs 10 \
+  --format html > /secure/location/p0-runner-eigenaaroverdracht.html
+```
+
+Zonder `--focus-issue` blijft de reguliere productissue-inbox P0/P1/P2-prioriteit en onafhankelijke projecten ondersteunen. Met `--focus-issue` is het exact ene nog open GitHub-issue de bron en kan het veel oudere P0-probleem niet meer door paginering verdwijnen. Voor #1326 blijft de herstelactie bij de geautoriseerde VPS/runner-eigenaar; de browserkaart is bewijs-/overdrachtsinformatie, geen toestemming om de listener te herstarten.
