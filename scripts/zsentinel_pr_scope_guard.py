@@ -840,7 +840,9 @@ def graph_operator_text(report):
         "Gedeelde-bestandparen: " + str(report["observed_file_collision_pairs"]),
         "Optionele GH issueidentiteit: " +
         str(report["issue_identity_lookups_performed"]) + " opgevraagd, " +
-        str(report["observed_confirmed_open_issue_groups"]) + " open issues, " +
+        str(report["observed_confirmed_open_issue_groups"]) + " open issues (" +
+        str(report["observed_confirmed_open_P0_issue_groups"]) + " P0, " +
+        str(report["observed_confirmed_open_P1_issue_groups"]) + " P1), " +
         str(report["observed_issue_number_is_pr_groups"]) + " waren PR-nummers; " +
         ("onvolledig/ongezien" if report["issue_identity_lookup_incomplete"]
          else "waargenomen bronnen beschikbaar"),
@@ -872,6 +874,7 @@ def graph_operator_text(report):
                       " · " + str(group["open_pr_mentions_observed"]) +
                       " PR-bronvermeldingen · GitHub identiteit: " +
                       group["identity_status"] +
+                      " · prioriteit: " + group["observed_issue_priority"] +
                       " · actie: " + group["operator_next_step"] +
                       " · geen geverifieerde oplossing/eigenaar")
         for link in group["shown_pr_sources"]:
@@ -940,6 +943,7 @@ def graph_html(report):
             str(group["open_pr_mentions_observed"]) +
             " PR-tekstvermeldingen · GitHub identiteit: " +
             escape(group["identity_status"]) +
+            " · prioriteit: " + escape(group["observed_issue_priority"]) +
             " · actie: " + escape(group["operator_next_step"]) +
             " (geen fix-/eigenaarbewijs)<ul>" +
             mentioned + "</ul></li>")
@@ -1093,6 +1097,7 @@ def graph_markdown(report):
                      str(group["open_pr_mentions_observed"]) +
                      " open PR-tekstverwijzingen · GitHub identiteit: " +
                      group["identity_status"] +
+                     " · prioriteit: " + group["observed_issue_priority"] +
                      " · actie: " + group["operator_next_step"] +
                      " · geen geverifieerde fix/eigenaar")
         for row in group["shown_pr_sources"]:
