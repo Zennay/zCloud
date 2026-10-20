@@ -32,6 +32,17 @@ If the property update fails, the timer task fails without publishing a
 false new applied decision. The state contains only numeric capacity and
 boolean runner observations, not process command lines or credentials.
 
+## Read-only decision preview
+
+On a machine with access to the Python source, `python3
+scripts/zsentinel_background_priority.py --preview` prints a single JSON
+snapshot with root-disk/swap/memory/load observations, conservative mode,
+recommended quota/weight and `"applied": false`. It is safe for observation:
+no user-manager call, service change or state file write, and it does not
+require Ubuntu UID 1000. The bare command remains restricted to that UID
+and applies the policy only to the existing dedicated user unit. A preview
+is **not proof** the timer is deployed or that the recommendation is live.
+
 ## Operator installation and release boundaries
 
 Code files:
