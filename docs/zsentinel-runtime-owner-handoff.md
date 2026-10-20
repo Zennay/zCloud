@@ -224,3 +224,49 @@ geen native writer-migratie, geen nieuwe automatische retry/backoff policy
 uit [issue #677](https://github.com/Zennay/zCloud/issues/677), geen
 productiedeploy. Verplichte exacte-head CI en onafhankelijke review
 blijven vereist voor de merge naar main.
+
+## 20 oktober · integratieherstel: leaseconflict tot in centrale eigenaarwerkbak
+
+De portfolio-CLI bouwde de optionele `--show-owner-handoff` **voordat**
+een `--queue-previous` privésnapshot met de actuele queue was
+vergeleken. De aparte queue #677-kaart kende daardoor wel
+`inconsistent_owner_lease_window_rows`, maar de eigenlijke centrale
+eigenaaroverdracht werd stilzwijgend zonder die blokkades gerenderd.
+Dit is nu een gecorrigeerd **productdatapad**, geen extra QA-gate.
+
+- `scripts/zsentinel_portfolio_overview.py` bouwt éénmaal de
+  eigenaaroverdracht **nadat** de brongebonden claimtrend in dezelfde
+  `decision` is opgenomen. Er komen geen extra provider- of
+  databaselezingen, queueclaims, retries of notificaties bij.
+- `scripts/zsentinel_queue_churn.py` biedt één gedeelde,
+  read-only validator voor de private lijst van maximaal twintig
+  geobserveerde project-/prioriteit-/status-conflicten. Dezelfde
+  broncontrole voedt de bestaande losse HTML en de geïntegreerde
+  eigenaaroverdracht; ruwe queue-ID's, leasetokens en namen worden
+  nooit toegevoegd.
+- `scripts/zsentinel_runtime_handoff.py` koppelt de trendsamenvatting
+  aan precies hetzelfde `decision`-document voordat brongebonden
+  `queue_lease_window_review`-kaarten naar de bestaande
+  P0/P1/P2-werkbak gaan. De kaart noemt het geobserveerde project,
+  oorspronkelijke prioriteit, status en pogingen, plus de verplichte
+  actie: **originele claimstart en vervaltijd bij de bevoegde eigenaar
+  controleren, zonder vrijgave of overname**.
+- Het privé HTML/Markdown-rapport vermeldt nu afzonderlijk de
+  vergeleken queuebron en het totale aantal conflicten. Zonder
+  `--queue-previous` staat er expliciet **ONBEKEND** in plaats
+  van nul; een gedeeltelijke of afgeknotte steekproef blijft zichtbaar.
+  JSON behoudt dezelfde provenance- en autorisatievelden.
+
+**Bediening:** de bestaande portfolio-CLI met
+`--database /pad/naar/bestaande/history.db`,
+`--queue-previous /eigenaar/prive/queue-eerst.json` en
+`--show-owner-handoff --format html` geeft de centrale
+eigenaarwerkbak mét de private trendinformatie. De vorige snapshot
+moet eerst via het bestaande alleen-lezen queue-snapshotcommando zijn
+opgeslagen. Bij ontbrekende, tijdsverkeerde of niet bij dezelfde
+database horende bron blijven de gates en onbekendstatus zichtbaar.
+
+**Levering:** commits op de reeds openstaande
+[zCloud PR #1563](https://github.com/Zennay/zCloud/pull/1563).
+Dit is geen `main`-merge of productie-uitrol. Exacte-head CI,
+review, branch protection en uitvoerrechten blijven onverminderd gelden.
