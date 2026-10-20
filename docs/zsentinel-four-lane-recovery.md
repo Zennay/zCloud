@@ -504,3 +504,36 @@ merge at the exact checked head. This change writes no production SQLite,
 runner state, scheduler, browser or GitHub Actions workflows.
 
 The bounded advisory recovery-action feed also emits `NO_NEW_QA_WORK_ADMISSION` when the desk observes deferred QA packages. The action explicitly returns these legacy items to their existing queue owner and keeps attention on real product issues and PR integration. It does not start, remove, relabel, reprioritize or claim any queued item. If higher-severity owner/runner risks fill the existing nine-card ceiling, the per-lane exclusion count remains independently visible.
+
+
+## 20 October · operator admission decision per lane
+
+The same local SQLite snapshot now supplies each of the four recovery
+lanes with an explicit **owner-safe decision**, a Dutch reason and next
+operator step in JSON, text, offline HTML and private Markdown. Examples:
+
+| Code | Meaning |
+| --- | --- |
+| `ACTIVE_OWNER_PROTECTED` | Already in flight; retain the owner. |
+| `HOLD_EXPIRED_LOCAL_CLAIM` | At least one expired local claim lease: reconcile with its owner before any new writer. |
+| `HOLD_SOURCE_RECONCILIATION` | Queue, claim or scope source incomplete. |
+| `HOLD_ACTIVE_SCOPE_CONFLICT` | In-flight writers have overlapping explicit scopes. |
+| `HOLD_EXISTING_CLAIM_OR_SCOPE` | Another existing scope or serial lane blocks new work. |
+| `HOLD_QA_PRODUCT_POLICY` | Queued QA tasks were excluded from new recovery admission. |
+| `CANDIDATE_EXTERNAL_GATES` | One local queued candidate is observed but still requires external GitHub, Notion, owner and resource gates. |
+| `NO_LOCAL_CANDIDATE` | No candidate is observed, which never implies global ownership is free. |
+
+The decision is **advice, not an authorization token**. Active work is
+protected even when its claim clock cannot be independently confirmed.
+An expired local `task_claims` lease is not silently interpreted as an
+unowned queue task; the desk and action feed surface a human
+`HOLD_EXPIRED_LOCAL_CLAIM` follow-up. This also applies to otherwise
+empty lanes. The desk never renews, releases, restarts, reassigns or
+mutates those records. Operator cards continue to hide task IDs, raw titles,
+credentials, actor identities and file paths. GitHub and Notion live sources
+are not observed by this local SQLite snapshot, so even a clean card cannot
+authorize merge or dispatch.
+
+This implementation remains on existing product PR #1572 pending
+independent exact-head CI and review, protected-main merge and separate
+authorized live activation. No QA suite was added or run.
