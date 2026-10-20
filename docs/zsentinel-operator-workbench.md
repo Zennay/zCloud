@@ -1003,3 +1003,35 @@ download preview or imported source changes, preview is required again.
 The browser never persists personal notes, private gate observations or
 files silently. Python AST and embedded JS syntax were checked on the
 exact pinned branch source (not a QA or regression suite).
+
+
+### 20 October · Compare saved PR gate changes, without inventing live recovery
+
+The existing PR gate panel now includes **Compare an older saved PR-gate
+snapshot with this imported source (offline)**. First import the newer
+single-file or browser-combined gate observation. Then select an
+**older saved** gate JSON from the same original captured board. The
+older UTC source timestamp must precede the newer observation. The
+normal source-validation path checks the older JSON before comparison.
+
+The view lists PR references whose **saved observational state**,
+same-HEAD pending/failing/approval counts, or sampled HEAD changed.
+Each row links to its original PR. A changed HEAD is always marked
+**NOT COMPARABLE** for old versus new check counts. Unavailable, absent,
+incomplete and no-check-context sources are **UNKNOWN**, not a passed
+workflow or PR. If the samples do not differ, the view explicitly
+says this is *not* evidence that mandatory checks are green today.
+Both exact saved UTC observation times appear in the report.
+
+The operator can preview a Markdown **historical PR gate difference**
+report and deliberately download those exact reviewed bytes. The
+report contains the original source-board identity and both selected
+JSON SHA-256 digests, with prominent labels that active claims, live
+GitHub HEAD, required branch rules, independent approval and release
+authority were never verified. Replacing or clearing the current gate
+source clears any previously selected comparison and its export.
+
+No GitHub request, runner operation, claim, CI rerun, merge, deploy
+or local automatic persistence is made by the browser. This provides
+human incident recovery context only; the historical comparison
+cannot establish live delivery or authorization.
