@@ -990,6 +990,13 @@ function prDeskGroups(){
    b.issues.length-a.issues.length ||
    a.project.localeCompare(b.project)||a.url.localeCompare(b.url));
 }
+function missingGateCommand(index){
+ // Only integer indexes validated against the reviewed source. This is a
+ // copyable read-only operator command, never executed by this browser.
+ if(!Number.isInteger(index)||index<1||index>75)return '';
+ return 'python3 scripts/zsentinel_pr_gate_now.py --from-review ./zsentinel-offline-merge-first-review.json --batch '+
+  index+' --output ./zsentinel-saved-gate-batch-'+index+'.json';
+}
 function refreshPrDesk(){
  const list=document.getElementById('prDeskRows');
  list.replaceChildren();
@@ -1007,7 +1014,8 @@ function refreshPrDesk(){
    item.append(link(url+' ↗',url),elem('small','Original link only · current HEAD, checks and owner UNVERIFIED'));
    links.append(item);
   }
-  row.append(links);missingRows.append(row);
+  row.append(links,elem('pre',missingGateCommand(sourceBatch.batch_index)));
+  missingRows.append(row);
  }
  if(!missing.length)
   missingRows.append(elem('li','No explicitly identified missing saved gate batches in current imported source.'));
@@ -1146,7 +1154,8 @@ function currentPrDesk(){
   'Saved gate status: '+line(gateOverview(groups),750),
   ...(prGateImport?.bridgeCoverage?.missing_prs||[]).flatMap(batch=>[
     'Missing saved batch '+batch.batch_index+' · NO GATE RECEIPT · verify separately:',
-    ...batch.unobserved_pr_urls.map(url=>'  - '+url+' · currently unverified')
+    ...batch.unobserved_pr_urls.map(url=>'  - '+url+' · currently unverified'),
+    '  Optional manual read-only collection: '+missingGateCommand(batch.batch_index)
   ]),
   'All claim/merge/deploy permissions: FALSE; required CI/branch protection/review UNKNOWN.',
   'Read current GitHub PR and active Notion/worker claims separately before action.',
