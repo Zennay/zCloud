@@ -1442,3 +1442,55 @@ verplichte CI, review en main/deploy moeten afzonderlijk worden
 vastgesteld. Binnen één eerder bekeken venster getoonde
 issuevermeldingen worden niet als nieuwe cross-window-conflicten
 herhaald.
+
+
+## Directe GitHub-venstercollectie: één CLI, één privéresultaat
+
+De offline composer kan nu **ook zonder handmatig opgeslagen
+tussenbestanden** worden gebruikt. Voorheen moest de operator meerdere
+`--audit-open-prs`-commando's starten en binnen tien minuten alle
+bronbestanden combineren. Het nieuwe `--live-scan`-pad gebruikt dezelfde
+bestaande read-only GitHub-conflictobservatie en de **exactzelfde
+bronvalidatie en gecombineerde rapportgenerator** als de privébestanden:
+
+```sh
+# Een complete read-only operatoruitvoer in één commando:
+umask 077
+python3 scripts/zsentinel_pr_saved_graph_merge.py \
+  --repo Zennay/zCloud --live-scan \
+  --start-page 1 --windows 3 --prs-per-page 6 \
+  --format html --output ./private-live-cross-window.html
+```
+
+Resultaat: **zes aansluitende PR-pagina's**, verdeeld over drie
+afzonderlijk dubbel gelezen bronvensters, maximaal 36 PR-identiteiten
+en maximaal 48 GitHub GETs. De eerdere offline route met herhaalde
+`--input` blijft volledig ondersteund. Voor grote repo's zijn
+beide opties bruikbaar: de directe variant voor een nieuwe, beperkte
+steekproef en de offline variant voor grotere reeds vastgelegde
+vensters (hoogstens 288 PRs). Alle resultaten worden als nieuw,
+privé `0600`-bestand aangemaakt en bestaande bestanden nooit
+overschreven. `--format` ondersteunt HTML, Markdown, tekst of JSON.
+
+**Harde live grenzen:** `--windows` is 2–3, iedere venstergroep
+bevat precies twee aaneengesloten pagina's, maximaal twaalf PR's
+per pagina, maximaal 36 PR-bestandsinventarissen totaal en een
+startpagina waardoor de gekozen reeks binnen pagina 1–50 valt.
+De vraaglast is maximaal `windows × (4 + 2 × prs_per_page)`
+publieke read-only GitHub GETs. De CLI maakt geen extra
+issue-resolutie-GETs en vereist voor live collecties een expliciete
+`--live-scan`-vlag. `GITHUB_TOKEN` is optioneel voor toegestane
+privérepositories; hij wordt nooit in het rapport opgenomen.
+Live en `--input` zijn bewust onderling exclusief.
+
+Het rapport vermeldt expliciet
+`collection_mode=current_run_bounded_github_GET_only` of
+`private_saved_graph_files`, het aantal bronvensters en voor
+live collecties het maximale GET-budget. De **opeenvolgende** GETs
+worden niet als een atomische, gegarandeerd actuele PR-lijst
+gepresenteerd. Veranderende dubbele bron-PRs, onstabiele
+voor-/nalezing, overschrijden van bronlimieten of veranderende
+identiteit leiden tot weigering; andere niet-gelezen pagina's,
+ongetrackte branches, Notion-leases en vereiste CI/reviews
+blijven onbekend. Dit is geen automatische dispatcher of
+productieactie en geeft nooit edit-, claim-, merge- of deployrechten.
