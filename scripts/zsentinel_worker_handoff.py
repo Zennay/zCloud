@@ -203,7 +203,7 @@ def write_private_handoff(path: Path, content: str, *, format: str) -> None:
     Uses O_EXCL against existing destination and O_NOFOLLOW for final path.
     Does not touch production service/queue or GitHub/Notion state.
     """
-    if type(path) is not Path or format not in ("html", "markdown"):
+    if not isinstance(path, Path) or format not in ("html", "markdown"):
         raise ValueError("handoff output must be an explicit private path and format")
     ext = ".html" if format == "html" else ".md"
     if path.name in ("", ".", "..") or not path.name.endswith(ext):
@@ -219,7 +219,6 @@ def write_private_handoff(path: Path, content: str, *, format: str) -> None:
     dirfd = os.open(
         parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
         getattr(os, "O_CLOEXEC", 0))
-    created = False
     try:
         folder = os.fstat(dirfd)
         if (not stat.S_ISDIR(folder.st_mode) or folder.st_uid != os.geteuid()
@@ -234,7 +233,6 @@ def write_private_handoff(path: Path, content: str, *, format: str) -> None:
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW |
             getattr(os, "O_CLOEXEC", 0),
             0o600, dir_fd=dirfd)
-        created = True
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as dest:
@@ -244,7 +242,6 @@ def write_private_handoff(path: Path, content: str, *, format: str) -> None:
         except BaseException:
             # Only the exclusive newly created inode belongs to this call.
             os.unlink(path.name, dir_fd=dirfd)
-            created = False
             raise
     finally:
         os.close(dirfd)
