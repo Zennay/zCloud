@@ -375,11 +375,37 @@ def markdown_brief(manifest: dict, raw: bytes, integrated: dict) -> str:
                 repo + "#" + str(number) +
                 "](" + url + ")" for priority, repo, number, url in entries[:6]) +
                 (" · … resterend: " + str(len(entries) - 6) if len(entries) > 6 else ""))
+    # Same source-admitted, priority-fair portfolio action order as the
+    # standalone HTML and CSV, not a separate or authoritative PR crawler.
+    from zsentinel_saved_gate_portfolio import project_worklist
+    per_project = project_worklist(selected, integrated)
     lines.extend([
         "",
         "Deze categorieën zijn uitsluitend prioritering op basis van de "
         "opgeslagen bronsteekproef. Geen categorie betekent een mergevrijgave.",
         "",
+        "## Portfolio · eerste bestaande PR per project",
+        "",
+        "Deze projecten komen alleen uit de begrensde opgeslagen PR-steekproef. "
+        "Ontbrekende projecten of CI zijn nooit bewijs van geen werk of herstel.",
+        "",
+    ])
+    for project in per_project:
+        first = project["first_candidate"]
+        lines.extend([
+            "### " + project["repository"] + " · " +
+            str(project["source_prs_observed"]) + " PR-kandidaten (P0 " +
+            str(project["p0_prs_in_sample"]) + ", P1 " +
+            str(project["p1_prs_in_sample"]) + ")",
+            "",
+            "- Gatebron onbekend: " + str(project["unknown_gate_source_prs"]),
+            "- Eerste bestaande PR: [" + first["priority"] + " #" +
+            str(first["pr_number"]) + "](" + first["url"] + ")",
+            "- Menselijke actie: " + first["next_action"],
+            "- Huidige eigenaar, vereiste gates, main-merge en live: **ONBEKEND**",
+            "",
+        ])
+    lines.extend([
         "## Prioritaire bestaande PR-kandidaten",
         "",
     ])
