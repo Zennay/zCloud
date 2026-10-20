@@ -1620,3 +1620,31 @@ Met de bestaande argumenten `--open-page`, `--page-count` en optioneel `--resolv
 **Expliciet nieuw bestand vereist:** de CLI accepteert `--format csv` alleen samen met `--audit-open-prs --output /pad/nieuw.csv`. De schrijfactie creëert exclusief één lokaal 0600-bestand met een UTC-/brongebonden privacybericht, nooit stdout en nooit een al bestaand bestand; bij exportfout blijft geen bruikbaar halve CSV achter. Maximaal 2 MiB en 2500 records, UTF-8-BOM, gestandaardiseerde CSV-quoting en veilige zichtbare weergave van controlbytes en spreadsheetformuleprefixen. De code voert geen live claim, runneractie, merge, workflowtrigger of deploy uit.
 
 De bronvormen zijn nu complementair: directe single-project CSV uit de live PR-kaart; gecombineerde multi-project CSV uit de portfolio-workbench; en over-paginagrenzen CSV uit de private saved/live graph workbench. Alle drie zijn nonauthoriserende snapshots; controleer de actuele Notion/workerclaims, onafhankelijk review, volledige vereiste CI, branch protection en ownerrechten steeds apart.
+
+
+### Merge-first issuewerkbak: alle bestaande PR-kandidaten behouden (20 oktober)
+
+Wanneer een P0/P1-productissue in de begrensde bron meerdere bestaande PRs
+noemt, bevat de geïntegreerde read-only issuekaart voortaan **alle maximaal
+vijf brongebonden PR-kandidaten**. Voor ieder alternatief blijven de
+canonieke GitHub-PR-link, de afzonderlijke exact-HEAD gatebron
+(`observed_failed`, `observed_pending`, `not_observed` of
+`observed_partial_no_release_permission`), waargenomen bestandscopebotsing
+en historische bronbeweging beschikbaar. Eén primaire PR blijft vooraan
+staan, maar onderliggende bestaande implementaties verdwijnen niet meer.
+
+De Nederlandse tekst-/Markdown-overdracht toont maximaal vier andere
+bestaande PRs per issue expliciet. De privéschermwerkbak heeft onder iedere
+issuekaart een uitklapbare lijst met dezelfde links en gatewaarschuwingen,
+zonder nieuw netwerkverkeer. De hash voor herstel van lokale browsernotities
+neemt nu ook deze alternatieve PR-lijst mee: eerdere handmatige besluiten
+worden niet automatisch gekoppeld aan een gewijzigde selectie van bestaande
+PRs. Dit is bewust alleen *menselijke review*, geen bewering dat meerdere
+PRs dezelfde bug daadwerkelijk repareren.
+
+De bestaande limieten blijven behouden: maximaal 60 issuekaarten, maximaal
+vijf bestaande PR-verwijzingen per issue, maximaal vier alternatieven in
+de weergave. De huidige claimhouder, exacte-head verplichte CI,
+onafhankelijke review en protected-main blijven noodzakelijke externe
+voorwaarden. Geen QA-suite, automatische dispatch, claimovername, CI-rerun,
+merge of deploy is aan deze bronroute toegevoegd.
