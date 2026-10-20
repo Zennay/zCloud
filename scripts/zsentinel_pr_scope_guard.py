@@ -379,6 +379,8 @@ def html_view(report):
 MAX_CONFLICT_PAIRS = 200
 MAX_SHARED_FILES_PER_PAIR = 24
 MAX_REFERENCED_ISSUES = 32
+MAX_DUPLICATE_ISSUE_GROUPS = 80
+MAX_LINKS_PER_DUPLICATE_ISSUE = 8
 
 
 def observe_conflict_graph(repo, token=None, limit=24):
@@ -417,6 +419,28 @@ def observe_conflict_graph(repo, token=None, limit=24):
                 })
         for path in files:
             file_owners.setdefault(path, set()).add(pr["number"])
+    # A second product overlap exists even when PRs modify disjoint files:
+    # several open source PR bodies mentioning the same issue. These are
+    # unverified text mentions, not issue fixes, owners, or merge authority.
+    by_issue = {}
+    for link in issue_links:
+        by_issue.setdefault(link["issue_number"], {})[link["pr_url"]] = {
+            "url": link["pr_url"], "head_sha": link["pr_head_sha"]}
+    duplicate_issue_groups = sorted(
+        [(issue, sorted(prs.values(), key=lambda item: item["url"]))
+         for issue, prs in by_issue.items() if len(prs) > 1],
+        key=lambda row: (-len(row[1]), row[0]))
+    duplicate_issue_cards = [{
+        "issue_url": "https://github.com/" + repo + "/issues/" + str(issue),
+        "issue_number": issue,
+        "open_pr_mentions_observed": len(prs),
+        "shown_pr_sources": prs[:MAX_LINKS_PER_DUPLICATE_ISSUE],
+        "source_pr_list_truncated": len(prs) > MAX_LINKS_PER_DUPLICATE_ISSUE,
+        "relation": "same_issue_number_unverified_open_pr_body_text_only",
+        "issue_fix_verified": False,
+        "common_owner_verified": False,
+        "merge_authorized": False,
+    } for issue, prs in duplicate_issue_groups[:MAX_DUPLICATE_ISSUE_GROUPS]]
     pairs = {}
     for path, numbers in file_owners.items():
         involved = sorted(numbers)
@@ -461,6 +485,15 @@ def observe_conflict_graph(repo, token=None, limit=24):
         "inspected_prs": len(chosen),
         "inspected_pr_heads": observed,
         "open_pr_issue_references_unverified": issue_links,
+        "observed_duplicate_issue_groups": len(duplicate_issue_groups),
+        "shown_duplicate_issue_groups": duplicate_issue_cards,
+        "duplicate_issue_groups_truncated": (
+            len(duplicate_issue_groups) > MAX_DUPLICATE_ISSUE_GROUPS),
+        "duplicate_issue_group_coverage_complete": (
+            len(before) < page_size and len(before) <= limit
+            and stable and not any(
+                not pr["issue_reference_body_covered"] for pr in chosen)
+            and len(duplicate_issue_groups) <= MAX_DUPLICATE_ISSUE_GROUPS),
         "issue_reference_body_coverage_complete":
             all(pr["issue_reference_body_covered"] for pr in chosen),
         "observed_file_collision_pairs": len(ordered),
@@ -495,6 +528,9 @@ def graph_operator_text(report):
         "Gelezen open PR's: " + str(report["inspected_prs"]) +
         " / gezien " + str(report["observed_open_prs"]),
         "Gedeelde-bestandparen: " + str(report["observed_file_collision_pairs"]),
+        "Meerdere open PR-tekstverwijzingen naar hetzelfde issue: " +
+        str(report["observed_duplicate_issue_groups"]) +
+        " (alleen onderzochte bronnen, geen fix-eigendom)",
         "Bron volledig: " + ("ja" if report["pr_file_scope_sample_complete"]
                                else "NEE (steekproef of veranderde bron)"),
     ]
@@ -508,6 +544,14 @@ def graph_operator_text(report):
             result.append("  " + file)
         if row["shared_files_truncated"]:
             result.append("  Meer bestandspaden niet weergegeven.")
+    for group in report["shown_duplicate_issue_groups"]:
+        result.append("GELIJK ISSUE IN PR-TEKST #" + str(group["issue_number"]) +
+                      " · " + str(group["open_pr_mentions_observed"]) +
+                      " PR-bronvermeldingen, geen geverifieerde oplossing")
+        for link in group["shown_pr_sources"]:
+            result.append("  " + link["url"] + " @ " + link["head_sha"][:12])
+    if report["duplicate_issue_groups_truncated"]:
+        result.append("Meer mogelijke dubbele issue-PR vermeldingen afgekapt.")
     if report["unpaired_open_prs_in_sample_not_claim_verified"]:
         result.append("PR's zonder gedeelde paden IN DEZE STEEKPROEF (geen eigenaarvrijgave):")
         for pr in report["unpaired_open_prs_in_sample_not_claim_verified"]:
