@@ -79,7 +79,9 @@ def collect(database, maximum):
         ).fetchall()
         priority_rows = db.execute(
             """SELECT project_id, UPPER(priority) AS priority,
-                      LOWER(status) AS status, COUNT(*) AS amount
+                      LOWER(status) AS status, COUNT(*) AS amount,
+                      SUM(CASE WHEN LOWER(status)='queued' AND eligible=1
+                               THEN 1 ELSE 0 END) AS queue_eligible
                  FROM portfolio_queue
                 WHERE UPPER(priority) IN ('P0','P1')
                   AND LOWER(status) IN ('queued','claimed','running','verifying')
@@ -108,10 +110,14 @@ def collect(database, maximum):
         values = portfolio_counts.setdefault(project_id, {
             "project": PORTFOLIO_PROJECTS[project_id],
             "queued_p0": 0, "queued_p1": 0, "in_flight_p0": 0,
-            "in_flight_p1": 0,
+            "in_flight_p1": 0, "eligible_queued_p0": 0, "eligible_queued_p1": 0,
         })
         key = ("queued_" if row["status"] == "queued" else "in_flight_") + row["priority"].lower()
         values[key] += int(row["amount"])
+        if row["status"] == "queued":
+            values["eligible_queued_" + row["priority"].lower()] += int(
+                row["queue_eligible"] or 0
+            )
     portfolio = sorted(
         (value for value in portfolio_counts.values() if any(
             value[key] for key in ("queued_p0", "queued_p1", "in_flight_p0", "in_flight_p1")
@@ -257,8 +263,9 @@ def text_view(data):
     out.append("Open lokale P0/P1-queue per echt project (adviserend):")
     for item in data["portfolio_urgent_local"]:
         out.append(
-            f"  {item['project']}: P0 wacht {item['queued_p0']}; "
-            f"P1 wacht {item['queued_p1']}; "
+            f"  {item['project']}: P0 wacht {item['queued_p0']} "
+            f"(eligible {item['eligible_queued_p0']}); P1 wacht {item['queued_p1']} "
+            f"(eligible {item['eligible_queued_p1']}); "
             f"P0 in behandeling {item['in_flight_p0']}; "
             f"P1 in behandeling {item['in_flight_p1']}"
         )
@@ -327,14 +334,20 @@ def html_view(data):
     if not data["active_cross_lane_coverage_complete"]:
         warnings.append("Actieve cross-lane scopevergelijking is beperkt tot 64 taken.")
     warnings.append(
+        "Queue-eligible betekent alleen een lokaal veld, niet dat de taak "
+        "claimbaar is: controleer de externe eigenaar en releasegates."
+    )
+    warnings.append(
         "Externe Notion-claims en releasegates zijn niet waargenomen; "
         "dit overzicht verleent geen schrijfrechten."
     )
     details = "".join("<li>" + html.escape(item) + "</li>" for item in warnings)
     portfolio_rows = "".join(
         "<tr><th scope='row'>" + html.escape(item["project"]) + "</th>"
-        + "<td>" + str(item["queued_p0"]) + "</td><td>"
-        + str(item["queued_p1"]) + "</td><td>"
+        + "<td>" + str(item["queued_p0"]) + " <small>(eligible "
+        + str(item["eligible_queued_p0"]) + ")</small></td><td>"
+        + str(item["queued_p1"]) + " <small>(eligible "
+        + str(item["eligible_queued_p1"]) + ")</small></td><td>"
         + str(item["in_flight_p0"]) + "</td><td>"
         + str(item["in_flight_p1"]) + "</td></tr>"
         for item in data["portfolio_urgent_local"]
