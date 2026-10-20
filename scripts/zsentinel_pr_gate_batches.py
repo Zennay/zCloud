@@ -17,14 +17,13 @@ import stat
 import sys
 
 from zsentinel_pr_gate_now import (
-    MAX_PRS, REVIEW_MAX_BYTES, REVIEW_MAX_PRS, REVIEW_SCHEMA,
+    MAX_PRS, REVIEW_MAX_PRS, REVIEW_SCHEMA,
     SCHEMA as GATE_SCHEMA, read_review_manifest,
 )
 
 SCHEMA = "zsentinel-pr-gate-batch-reconciliation-v1"
 MAX_RECEIPTS = 32
 MAX_RECEIPT_BYTES = 1024 * 1024
-SHA = re.compile(r"^[a-f0-9]{64}$")
 HEAD = re.compile(r"^[a-f0-9]{40}$")
 OBSERVED = "observed_current_head_partial_gate_evidence"
 UNKNOWN = "github_source_unavailable_or_head_changed"
@@ -58,6 +57,31 @@ def _utc(value):
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise ValueError("observation time must include UTC offset")
     return moment.astimezone(timezone.utc)
+
+
+def _gate_class(item: dict, observed: bool, old: bool) -> str:
+    """Conservative saved triage: never represents merge clearance."""
+    if not observed:
+        return "source_unavailable"
+    if old:
+        return "saved_evidence_stale"
+    if (item.get("check_runs_page_complete") is not True
+            or item.get("legacy_status_source_may_be_truncated") is not False
+            or item.get("review_page_may_be_truncated") is not False):
+        return "source_incomplete"
+    if (item["observed_checks_not_successful"] > 0
+            or item.get("legacy_status_failure_or_error_observed", 0) > 0):
+        return "observed_check_failure"
+    if item.get("draft_at_read") is True:
+        return "saved_draft"
+    if item.get("observed_exact_head_changes_requested", 0) > 0:
+        return "observed_review_changes"
+    if (item["observed_checks_pending"] > 0
+            or item.get("legacy_status_pending_observed", 0) > 0):
+        return "observed_checks_waiting"
+    if item["observed_independent_exact_head_approvals"] < 1:
+        return "saved_review_needed"
+    return "verify_live_branch_and_owner_rules"
 
 
 def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
@@ -141,6 +165,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 "independent_exact_head_approvals_observed": (
                     item["observed_independent_exact_head_approvals"] if observed else None),
                 "next_human_gate": item["human_next_gate_step"] if observed else "recollect_exact_head_source",
+                "historic_gate_category": _gate_class(item, observed, age > 900),
                 "saved_source_stale_over_15_minutes": age > 900,
                 "merge_authorized": False, "deployment_authorized": False,
             })
@@ -152,6 +177,10 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
     all_rows = [row for i in sorted(batches) for row in batches[i]["prs"]]
     unavailable = sum(row["source_status"] != "observed_partial" for row in all_rows)
     stale = sum(row["saved_source_stale_over_15_minutes"] for row in all_rows)
+    category_counts = {}
+    for row in all_rows:
+        category = row["historic_gate_category"]
+        category_counts[category] = category_counts.get(category, 0) + 1
     return {
         "schema": SCHEMA,
         "generated_at_utc": observed_at.isoformat(),
@@ -165,6 +194,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
         "observed_prs": len(all_rows),
         "unavailable_or_drifted_prs": unavailable,
         "stale_over_15_minutes_prs": stale,
+        "saved_historic_gate_category_counts": category_counts,
         "all_saved_batches_present": not missing,
         "all_observations_present_and_recent": not missing and not unavailable and not stale,
         "saved_historical_receipts_only": True,
@@ -192,6 +222,9 @@ def human(report, markdown=False):
         "Ontbrekende batches: " + (", ".join(map(str, report["missing_batches"])) or "geen"),
         "Onbereikbare of veranderde HEADs: " + str(report["unavailable_or_drifted_prs"]),
         "Verouderde (>15 min) opgeslagen PR-waarnemingen: " + str(report["stale_over_15_minutes_prs"]),
+        "Historische gatecategorieën: " + ", ".join(
+            key + "=" + str(value) for key, value in
+            sorted(report["saved_historic_gate_category_counts"].items())),
         "Belangrijk: alle gegevens zijn historisch; beschermde main, exacte CI, "
         "review, actieve ownerclaim en release zijn NIET geverifieerd.",
     ]
@@ -200,7 +233,7 @@ def human(report, markdown=False):
                      " · bron UTC " + batch["observed_at_utc"])
         for row in batch["prs"]:
             name = ("[" + row["url"] + "](" + row["url"] + ")") if markdown else row["url"]
-            lines.append("- " + name + " · " + row["next_human_gate"] +
+            lines.append("- " + name + " · [" + row["historic_gate_category"] + "] " + row["next_human_gate"] +
                          (" · VEROUderd (>15 min)" if row["saved_source_stale_over_15_minutes"] else "") +
                          " · MERGE NEE")
     lines.append("\nGeen claims, workflows, GitHub-writes, merge of deploy uitgevoerd.")
@@ -214,10 +247,11 @@ def html(report):
         for row in batch["prs"]:
             url = escape(row["url"], quote=True)
             step = escape(row["next_human_gate"])
+            category = escape(row["historic_gate_category"])
             head = escape(row["exact_head_observed"] or "onbekend")
             note = " · oud bronbewijs" if row["saved_source_stale_over_15_minutes"] else ""
             items.append('<li><a rel="noopener noreferrer" href="' + url + '">' + url +
-                         '</a><br><small>HEAD ' + head + ' · ' + step + escape(note) +
+                         '</a><br><small>HEAD ' + head + ' · [' + category + '] ' + step + escape(note) +
                          ' · geen mergevrijgave</small></li>')
         cards.append("<section><h2>Batch " + str(batch["batch"]) + "</h2><ol>" +
                      "".join(items) + "</ol></section>")
@@ -227,6 +261,8 @@ def html(report):
                " · niet waargenomen " + str(report["unavailable_or_drifted_prs"]) +
                " · verouderd " + str(report["stale_over_15_minutes_prs"]))
     missing = ", ".join(map(str, report["missing_batches"])) or "geen"
+    cats = ", ".join(escape(k) + ": " + str(v) for k, v in
+                     sorted(report["saved_historic_gate_category_counts"].items()))
     return ('<!doctype html><html lang="nl"><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>zSentinel · Merge-first gatebatches</title>'
@@ -237,7 +273,7 @@ def html(report):
             'a{overflow-wrap:anywhere}li{margin:.9rem 0}small{color:#41546a}'
             '</style><header><h1>zSentinel · opgeslagen PR-gates</h1><p>' +
             escape(summary) + '</p><p>Ontbrekende batches: ' + escape(missing) +
-            '</p><strong>GEEN merge-, claim-, deploy- of reviewvrijgave. '
+            '</p><p>Historische gates: ' + cats + '</p><strong>GEEN merge-, claim-, deploy- of reviewvrijgave. '
             'Bron is niet live.</strong></header>' + "".join(cards) +
             '<p>Geen GitHub- of runtime-mutaties uitgevoerd.</p></html>\n')
 
