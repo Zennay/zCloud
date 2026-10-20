@@ -414,6 +414,7 @@ def observe_conflict_graph(repo, token=None, limit=24):
             "head_sha": pr["head_sha"], "base_sha": pr["base_sha"],
             "product_candidate_based_on_title": pr["product_issue_reference_candidate"],
             "file_count_observed": len(files),
+            "file_paths_observed": files,
             "file_list_complete": not truncated,
         })
         if truncated:
