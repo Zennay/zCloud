@@ -6,7 +6,7 @@ A repeated blocker at two timestamps is NOT continuous proof between them.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from html import escape
 import re
 
@@ -67,13 +67,17 @@ def _gate_rows(board, repos):
                    ("merge_authorized", "deploy_authorized",
                     "writes_performed"))):
         raise ValueError("invalid bounded exact-head gate source")
-    _clock(gates.get("observed_at_utc"))
+    board_time = _clock(board.get("observed_at_utc"))
+    gate_time = _clock(gates.get("observed_at_utc"))
+    if (gate_time < board_time or gate_time - board_time > timedelta(minutes=15)
+            or gate_time > datetime.now(timezone.utc)):
+        raise ValueError("gate receipts too old, future, or detached from PR snapshot")
     rows = {}
     for row in gates["items"]:
         if type(row) is not dict:
             raise ValueError("invalid exact-head row")
         project, url = row.get("project"), row.get("url")
-        if project not in repos or type(url) is not str:
+        if type(project) is not str or project not in repos or type(url) is not str:
             raise ValueError("gate outside canonical project")
         prefix = "https://github.com/" + repos[project] + "/pull/"
         if not url.startswith(prefix) or not re.fullmatch(r"[1-9][0-9]{0,8}", url[len(prefix):]):
@@ -97,11 +101,54 @@ def _gate_rows(board, repos):
                 val = row.get(key)
                 if type(val) is not list or len(val) > MAX_CHECKS:
                     raise ValueError("invalid bounded check records")
+            check_ids = set()
+            for check in row["observed_actionable_check_runs"]:
+                if (type(check) is not dict
+                        or type(check.get("check_run_id")) is not int
+                        or check["check_run_id"] <= 0
+                        or check["check_run_id"] in check_ids
+                        or type(check.get("name")) is not str
+                        or not 1 <= len(check["name"]) <= 180
+                        or check.get("state") not in (
+                            "completed", "queued", "in_progress",
+                            "pending", "waiting", "requested", "unknown")
+                        or (check.get("conclusion") is not None and
+                            (type(check["conclusion"]) is not str
+                             or len(check["conclusion"]) > 40))
+                        or check.get("url") != "https://github.com/" +
+                            repos[project] + "/runs/" + str(check["check_run_id"])):
+                    raise ValueError("invalid pinned GitHub check identity")
+                check_ids.add(check["check_run_id"])
+            seen_contexts = set()
+            for status_row in row["observed_actionable_legacy_contexts"]:
+                if (type(status_row) is not dict
+                        or type(status_row.get("context")) is not str
+                        or not 1 <= len(status_row["context"]) <= 200
+                        or status_row["context"] in seen_contexts
+                        or status_row.get("state") not in
+                            ("pending", "failure", "error")
+                        or status_row.get("url") !=
+                            "https://github.com/" + repos[project] +
+                            "/commit/" + head + "/checks"):
+                    raise ValueError("invalid pinned legacy status context")
+                seen_contexts.add(status_row["context"])
             for key in ("observed_actionable_check_runs_hidden",
-                        "observed_actionable_legacy_contexts_hidden"):
+                        "observed_actionable_legacy_contexts_hidden",
+                        "observed_checks_pending",
+                        "observed_checks_unknown",
+                        "observed_checks_not_successful",
+                        "observed_legacy_pending",
+                        "observed_legacy_failure_or_error",
+                        "observed_independent_exact_head_approvals",
+                        "observed_exact_head_changes_requested"):
                 val = row.get(key)
                 if type(val) is not int or not 0 <= val <= 1000000:
-                    raise ValueError("invalid check truncation count")
+                    raise ValueError("invalid check/review count")
+            for key in ("check_page_complete", "review_page_may_be_truncated",
+                        "legacy_status_source_may_be_truncated",
+                        "check_runs_sample_complete_and_terminal"):
+                if type(row.get(key)) is not bool:
+                    raise ValueError("invalid check source completeness flag")
         rows[url] = row
     return rows
 
