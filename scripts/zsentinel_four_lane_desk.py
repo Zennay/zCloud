@@ -158,6 +158,7 @@ def collect(database, maximum, include_runner_processes=False):
     ambiguous = 0
     expired_queue_claims = 0
     unknown_queue_claim_expiry = 0
+    inconsistent_queue_claim_windows = 0
     runtime_shadowed_active = 0
     for item in queue:
         if str(item.get("status", "")).lower() not in ACTIVE:
@@ -166,8 +167,13 @@ def collect(database, maximum, include_runner_processes=False):
         if item.get("eligible") != 1:
             runtime_shadowed_active += 1
         expiry = _utc(item.get("claim_expires"))
+        claimed = _utc(item.get("claimed_at"))
+        # A future expiry cannot certify an invalid start timestamp.
+        # Preserve the present owner; only flag the source discrepancy.
         if expiry is None:
             unknown_queue_claim_expiry += 1
+        elif claimed is None or claimed > now or expiry <= claimed:
+            inconsistent_queue_claim_windows += 1
         elif expiry <= now:
             expired_queue_claims += 1
     for row in claim_rows[:maximum]:
@@ -275,6 +281,7 @@ def collect(database, maximum, include_runner_processes=False):
         "claims_partial": claims_partial,
         "expired_in_flight_queue_claims_observed": expired_queue_claims,
         "unknown_in_flight_queue_expiry_observed": unknown_queue_claim_expiry,
+        "inconsistent_in_flight_queue_claim_windows_observed": inconsistent_queue_claim_windows,
         "claimed_without_local_lease_observation": (
             sum(observed[s] for s in ACTIVE) > 0 and len(claims) == 0
         ),
@@ -289,10 +296,11 @@ def collect(database, maximum, include_runner_processes=False):
             queue_partial or claims_partial or ambiguous
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
+            or inconsistent_queue_claim_windows
         ),
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
-            or ambiguous or queue_partial or claims_partial
+            or inconsistent_queue_claim_windows or ambiguous or queue_partial or claims_partial
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
