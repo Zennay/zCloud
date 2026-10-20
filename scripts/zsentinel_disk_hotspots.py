@@ -330,19 +330,17 @@ def main():
     parser.add_argument("--max-depth", type=int, default=MAX_DEPTH)
     parser.add_argument("--max-seconds", type=int, default=MAX_SECONDS)
     parser.add_argument("--format", choices=("json", "md", "html"), default="md")
-    parser.add_argument("--output", type=Path, help="private create-only .json/.md/.html")
+    parser.add_argument("--output", type=Path, required=True,
+                        help="REQUIRED private create-only .json/.md/.html; no filename stdout")
     args = parser.parse_args()
     try:
         report = observe(args.root, min_mib=args.min_mib, max_entries=args.max_entries,
                          max_depth=args.max_depth, max_seconds=args.max_seconds)
         content = (json.dumps(report, ensure_ascii=True, indent=2) if args.format == "json"
                    else html(report) if args.format == "html" else markdown(report))
-        if args.output is not None:
-            from zsentinel_private_output import write_private_output
-            write_private_output(args.output, content, args.format)
-            print("Private disk workbench created (exclusive output; nothing deleted).")
-        else:
-            print(content)
+        from zsentinel_private_output import write_private_output
+        write_private_output(args.output, content, args.format)
+        print("Private disk workbench created (exclusive output; no paths or contents printed).")
     except (ValueError, OSError, OverflowError) as exc:
         parser.exit(2, "zSentinel disk observation unavailable or unsafe; no changes made.\n")
 
