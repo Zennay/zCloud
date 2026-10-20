@@ -3073,6 +3073,40 @@ def portfolio_queue_audit(refill=True):
                               WHERE eligible=1 AND status IN ('queued','claimed','running','verifying')""").fetchone()[0]
     return {'ready':int(ready),'projects':int(projects),'removed':removed,'created':created,'time':now()}
 
+def portfolio_queue_conflict_snapshot(limit=20):
+    """Read-only authenticated owner-conflict worklist; never revoke a lease.
+
+    The live database is source truth for *observed* active queue scopes,
+    but overlap is not proof of an abandoned claim or merge authorization.
+    """
+    if type(limit) is not int or not 1<=limit<=20:
+        raise ValueError('Ongeldige conflictweergavelimiet')
+    try:
+        with connect() as c:
+            collisions=_portfolio_observe_conflicting_claimed_lanes_locked(c)
+        return {
+            'coverage':'observed_current_portfolio_queue_claims_only',
+            'active_lane_conflicts_observed':len(collisions),
+            'conflicts':collisions[:limit],
+            'list_truncated':len(collisions)>limit,
+            'owner_review_required':True,
+            'reassign_or_release_authorized':False,
+            'worker_actions_performed':False,
+        }
+    except (sqlite3.Error, ValueError, TypeError, KeyError):
+        # A failed current observation cannot be interpreted as no conflict.
+        logging.warning('zSentinel active lane conflict observation unavailable')
+        return {
+            'coverage':'unavailable_not_a_zero_conflict_observation',
+            'active_lane_conflicts_observed':None,
+            'conflicts':[],
+            'list_truncated':None,
+            'owner_review_required':True,
+            'reassign_or_release_authorized':False,
+            'worker_actions_performed':False,
+        }
+
+
 def portfolio_queue_health():
     with connect() as c:
         ready=c.execute("""SELECT COUNT(*) FROM portfolio_queue
@@ -4996,6 +5030,7 @@ class Handler(BaseHTTPRequestHandler):
                 'backend':'sqlite',
                 'items':items,
                 'delivery_policy':product_queue_snapshot(items),
+                'active_lane_conflict_observation':portfolio_queue_conflict_snapshot(),
                 'allocation':global_worker_allocation(),
                 'time':now(),
             })
