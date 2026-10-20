@@ -209,6 +209,9 @@ def collect(database, maximum, include_runner_processes=False):
     unknown_claim_scopes = max(
         (lane.get("unknown_claim_scope_count", 0) for lane in lanes), default=0
     )
+    untrusted_active_leases = max(
+        (lane.get("untrusted_active_lease_count", 0) for lane in lanes), default=0
+    )
     # Diagnostic only. The dispatch path itself remains governed by the
     # existing lane generator and actual external claim/release gates.
     active_items = [
@@ -250,6 +253,7 @@ def collect(database, maximum, include_runner_processes=False):
                 lane.get("status") == "blocked"
                 or lane.get("unknown_active_scope_count")
                 or lane.get("unknown_claim_scope_count")
+                or lane.get("untrusted_active_lease_count")
             ),
             "active_cross_lane_scope_conflicts": (
                 collision_counts[lane["lane_id"]] if cross_lane_coverage else None
@@ -274,6 +278,7 @@ def collect(database, maximum, include_runner_processes=False):
         "truncated_queue_fields_observed": truncated_queue_fields,
         "active_write_scopes_not_declared": unknown_active_scopes,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
+        "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
         "active_local_leases_observed": len(claims),
         "expired_local_leases_observed": expired,
@@ -296,11 +301,12 @@ def collect(database, maximum, include_runner_processes=False):
             queue_partial or claims_partial or ambiguous
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
-            or inconsistent_queue_claim_windows
+            or inconsistent_queue_claim_windows or untrusted_active_leases
         ),
         "ownership_reconciliation_required": bool(
             expired_queue_claims or unknown_queue_claim_expiry
-            or inconsistent_queue_claim_windows or ambiguous or queue_partial or claims_partial
+            or inconsistent_queue_claim_windows or untrusted_active_leases
+            or ambiguous or queue_partial or claims_partial
             or truncated_queue_fields or unknown_active_scopes or unknown_claim_scopes
             or runtime_shadowed_active or portfolio_partial or unknown_project_groups
             or not cross_lane_coverage
@@ -367,6 +373,10 @@ def text_view(data):
         out.append("Onbekende queue-claimtermijnen: "
                    + str(data["unknown_in_flight_queue_expiry_observed"])
                    + " (controleer eigenaar).")
+    if data["untrusted_active_leases_observed"]:
+        out.append("HOLD: " + str(data["untrusted_active_leases_observed"])
+                   + " actieve taakleases zijn op dit bronmoment onbetrouwbaar; "
+                   "nieuwe schrijflanes niet vrijgegeven.")
     if data["inconsistent_in_flight_queue_claim_windows_observed"]:
         out.append("HOLD: " +
                    str(data["inconsistent_in_flight_queue_claim_windows_observed"])
@@ -434,6 +444,12 @@ def html_view(data):
         warnings.append(
             str(data["unknown_in_flight_queue_expiry_observed"])
             + " actieve wachtrijclaims hebben geen betrouwbaar vervalmoment."
+        )
+    if data["untrusted_active_leases_observed"]:
+        warnings.append(
+            str(data["untrusted_active_leases_observed"])
+            + " actieve queueleases zijn verlopen of onbetrouwbaar; "
+              "behoud huidige eigenaars en geef geen nieuwe schrijver vrij."
         )
     if data["inconsistent_in_flight_queue_claim_windows_observed"]:
         warnings.append(
@@ -609,6 +625,9 @@ def markdown_view(data):
         "",
         "- Lokale bron volledig: "
         + ("ja" if data["source_complete"] else "nee/onbekend"),
+        "- Actieve queueleases niet toelaatbaar voor nieuwe schrijvers: "
+        + str(data["untrusted_active_leases_observed"])
+        + " (houder blijft eigenaar).",
         "- Onbetrouwbare actieve queue-claimvensters: "
         + str(data["inconsistent_in_flight_queue_claim_windows_observed"])
         + " (geen automatische herclaim).",
