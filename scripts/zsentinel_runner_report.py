@@ -987,12 +987,21 @@ def render_private_json_handoff(data):
     if observed and (not isinstance(rows, list) or len(rows) > 20):
         raise ValueError("Unbounded runner inventory")
     counts = {state: 0 for state in ("active", "failed", "inactive", "unknown")}
+    services = None
     if observed:
-        for unit in rows:
-            if not isinstance(unit, dict):
-                raise ValueError("Untrusted runner row")
-            state = unit.get("state")
+        # Reuse the existing receipt's strict canonical unit-name, bounded-row,
+        # state and duplicate validator. Never forward arbitrary process names.
+        from zsentinel_runner_snapshot import _unit_states
+        valid = _unit_states({"units": units})
+        services = []
+        for name, service in sorted(valid.items()):
+            state = service["state"]
             counts[state if state in counts else "unknown"] += 1
+            services.append({
+                "unit": name, "systemd_state": state,
+                "github_job_assignment_verified": False,
+                "recovery_authorized": False,
+            })
 
     pressure = {}
     for key in ("host_load", "cores", "memory_available_gib",
@@ -1011,6 +1020,7 @@ def render_private_json_handoff(data):
             "runner_inventory_observed": observed,
             "runner_inventory_complete": observed and units.get("runner_units_truncated") is False,
             "runner_service_counts": counts if observed else None,
+            "runner_services": services,
             "capacity": pressure,
             "coach_quota_recommended_percent": data.get("quota")
                 if type(data.get("quota")) is int and data["quota"] in (60, 100, 175) else None,
