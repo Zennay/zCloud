@@ -350,6 +350,11 @@ current local observation. Missing batches remain UNKNOWN. No internet calls.</p
 <label>Saved current-head PR gate batches (up to 75, 8 MiB combined)
 <input type="file" id="prGateBatchFiles" multiple accept=".json,application/json"></label>
 <button id="prGateBatchApply" type="button">Combine saved batches in this browser</button>
+<button id="prGateBatchPreview" type="button" disabled>Preview portable, private combined JSON</button>
+<div id="prGateBatchPreviewPanel" hidden>
+<pre id="prGateBatchPreviewText"></pre>
+<button id="prGateBatchDownload" type="button" disabled>Download exactly this reviewed combined JSON</button>
+</div>
 </details>
 <p id="prGateStatus" aria-live="polite">No imported source. All current PR gates unknown.</p>
 <label>Filter saved PR references by observed gate state
@@ -784,7 +789,10 @@ async function combineSavedGateFiles(manifestFile,batchFiles){
  const reimport=acceptGateSource(portable);
  if(reimport.items.size!==items.size)
   throw Error('Portable snapshot lost original saved PR observations');
- return {...reimport,sha256:reviewSha,portableText};
+ const portableHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',
+  new TextEncoder().encode(portableText))),
+  b=>b.toString(16).padStart(2,'0')).join('');
+ return {...reimport,sha256:portableHash,portableText};
 
 }
 function acceptGateSource(data){
@@ -1965,6 +1973,32 @@ document.getElementById('restore').addEventListener('change',async event=>{
 
 
 
+function clearPortableGatePreview(){
+ document.getElementById('prGateBatchPreview').disabled=true;
+ document.getElementById('prGateBatchPreviewPanel').hidden=true;
+ document.getElementById('prGateBatchPreviewText').textContent='';
+ document.getElementById('prGateBatchDownload').disabled=true;
+}
+document.getElementById('prGateBatchPreview').onclick=()=>{
+ if(!prGateImport?.portableText)return;
+ document.getElementById('prGateBatchPreviewText').textContent=prGateImport.portableText;
+ document.getElementById('prGateBatchPreviewPanel').hidden=false;
+ document.getElementById('prGateBatchDownload').disabled=false;
+ status.textContent='Review this exact offline combined JSON before downloading; no external action.';
+};
+document.getElementById('prGateBatchDownload').onclick=()=>{
+ const data=prGateImport?.portableText;
+ if(!data||document.getElementById('prGateBatchPreviewPanel').hidden||
+    document.getElementById('prGateBatchPreviewText').textContent!==data){
+  clearPortableGatePreview();status.textContent='Source changed; preview before download.';
+  return;
+ }
+ const url=URL.createObjectURL(new Blob([data],{type:'application/json;charset=utf-8'}));
+ const linkEl=elem('a');linkEl.href=url;
+ linkEl.download='zsentinel-offline-source-bound-pr-gates.json';linkEl.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+ status.textContent='Private offline combined source downloaded; no GitHub, claim or merge action.';
+};
 document.getElementById('prGateBatchApply').onclick=async()=>{
  const original=document.getElementById('prGateReviewFile');
  const selected=document.getElementById('prGateBatchFiles');
@@ -1972,7 +2006,8 @@ document.getElementById('prGateBatchApply').onclick=async()=>{
   const combined=await combineSavedGateFiles(original.files?.[0],
    [...(selected.files||[])]);
   // All files were admitted and cross-matched before replacing any state.
-  prGateImport=combined;invalidateBrief();refreshPrDesk();
+  prGateImport=combined;invalidateBrief();refreshPrDesk();clearPortableGatePreview();
+  document.getElementById('prGateBatchPreview').disabled=false;
   document.getElementById('prGateClear').disabled=false;
   const coverage=combined.bridgeCoverage;
   document.getElementById('prGateStatus').textContent=
@@ -2000,7 +2035,7 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
    new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),
    byte=>byte.toString(16).padStart(2,'0')).join('');
   prGateImport=accepted;
-  invalidateBrief();refreshPrDesk();
+  clearPortableGatePreview();invalidateBrief();refreshPrDesk();
   document.getElementById('prGateClear').disabled=false;
   document.getElementById('prGateStatus').textContent=
    accepted.items.size+' linked PR receipts imported · '+accepted.time+
@@ -2029,7 +2064,7 @@ document.getElementById('prGateFocus').onchange=()=>{
  invalidateBrief();refreshPrDesk();
 };
 document.getElementById('prGateClear').onclick=()=>{
- prGateImport=null;invalidateBrief();refreshPrDesk();
+ prGateImport=null;clearPortableGatePreview();invalidateBrief();refreshPrDesk();
  document.getElementById('prGateClear').disabled=true;
  document.getElementById('prGateStatus').textContent=
   'Imported gate source cleared. Current PR gates unknown.';
