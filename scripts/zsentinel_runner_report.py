@@ -10,9 +10,11 @@ from html import escape
 import os
 from pathlib import Path
 import subprocess
+import time
 
 from zsentinel_background_priority import (
-    admission, installed_cgroup, matches_cgroup, pressure_reasons,
+    PROMOTION_SECONDS, _boot_token, admission, installed_cgroup,
+    matches_cgroup, pressure_reasons, promotion_policy, read_private_state,
     runner_inventory, snapshot,
 )
 
@@ -57,8 +59,20 @@ def collect():
     units = runner_inventory()
     try:
         current = installed_cgroup()
+        clock = time.monotonic()
+        effective_quota, effective_weight, promotion_status, promotion = promotion_policy(
+            quota, weight, current, read_private_state(), clock, _boot_token()
+        )
         coach = {
             "observed": True,
+            "effective_quota": effective_quota,
+            "effective_weight": effective_weight,
+            "promotion_status": promotion_status,
+            "promotion_observations": promotion["observations"] if promotion else None,
+            "promotion_remaining_seconds": (
+                max(0, round(PROMOTION_SECONDS - (clock - promotion["started_mono"])))
+                if promotion else None
+            ),
             "active": current["active"],
             "weight": current["weight"],
             "quota": round(current["quota_seconds"] * 100, 2)
@@ -68,7 +82,11 @@ def collect():
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         # Deliberately redact systemd error text (may include private paths).
         coach = {"observed": False, "active": None, "weight": None,
-                 "quota": None, "recommendation_matches": None}
+                 "quota": None, "recommendation_matches": None,
+                 "effective_quota": None, "effective_weight": None,
+                 "promotion_status": "source-unavailable",
+                 "promotion_observations": None,
+                 "promotion_remaining_seconds": None}
     return {
         "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "host": host, "units": units, "coach": coach,
@@ -297,6 +315,32 @@ def render(data):
                    f'gewicht {_value(coach["weight"])}')
     coach_match = ("Gelijk aan huidig beleid" if coach["recommendation_matches"] is True
                    else "Niet gelijk of niet vastgesteld")
+
+    promotion_status = coach.get("promotion_status")
+    if promotion_status == "promotion-waiting":
+        cpu_policy = (
+            "Voorzichtige opschaalwachttijd: "
+            + _value(coach.get("promotion_remaining_seconds"), " seconden")
+            + " resterend; gescheiden vrije bronmetingen: "
+            + _value(coach.get("promotion_observations"))
+            + " (minimaal drie vóór verhoging)."
+        )
+    elif promotion_status == "sustained-headroom":
+        cpu_policy = "Stabiele vrije capaciteit: opschalen aanbevolen, niet door dit rapport uitgevoerd."
+    elif promotion_status in {"immediate-cpu-yield", "immediate-weight-yield"}:
+        cpu_policy = "Direct ruimte voor runners: lagere cgroup-toewijzing aanbevolen."
+    elif promotion_status == "unreadable-current-cgroup":
+        cpu_policy = "Huidige cgroup niet leesbaar; geen veilig CPU-advies toe te passen."
+    elif promotion_status in {"no-promotion-needed", "inactive-no-action"}:
+        cpu_policy = "Geen extra CPU-verhoging voorgesteld."
+    else:
+        cpu_policy = "Opschaalbeslissing niet in deze bron aangetroffen (mogelijk oudere privébon)."
+    applied_policy = (
+        "Effectief veilig doel: CPU " + _value(coach.get("effective_quota"), "%")
+        + ", gewicht " + _value(coach.get("effective_weight"))
+        if coach.get("effective_quota") is not None else
+        "Effectief veilig doel onbekend"
+    )
     css = """
     :root {color-scheme:light; font-family:system-ui,-apple-system,sans-serif}
     body {margin:0;background:#f5f6f8;color:#171c25;line-height:1.55}
@@ -337,6 +381,8 @@ def render(data):
 <p><strong>Advies:</strong> CPUQuota {_value(data["quota"], "%")}, CPUWeight {_value(data["weight"])}</p>
 <p><strong>Oorzaken:</strong> {escape(reasons)}</p>
 <p>{escape(coach_state)} · {escape(coach_match)}</p>
+<p><strong>Afgewogen CPU-regeling:</strong> {escape(applied_policy)}</p>
+<p class="muted">{escape(cpu_policy)}</p>
 <p>De voorbeeldinstellingen zijn niet door dit rapport toegepast.</p></section>
 {history}
 {footprint_html}
