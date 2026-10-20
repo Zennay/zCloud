@@ -174,6 +174,10 @@ def as_markdown(board):
                          ") ↔ [#" + str(right["number"]) + "](" + right["url"] +
                          "): " + str(pair["shared_file_count_observed"]) +
                          " gedeelde bestanden")
+        if view["unpaired_open_prs_not_claim_verified"]:
+            lines.extend(["", "Zonder gedeelde paden binnen de steekproef (GEEN claimvrijgave):"])
+            for pr in view["unpaired_open_prs_not_claim_verified"]:
+                lines.append("- [#" + str(pr["number"]) + "](" + pr["url"] + ")")
         if view.get("source_truncated"):
             lines.append("Bronkaarten afgekapt; inspecteer overige PR's.")
     return "\n".join(lines) + "\n"
