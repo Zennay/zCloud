@@ -191,7 +191,10 @@ def compose(source, source_sha, canonical, selected, collision, saved_gates=None
             and item.get("source_status") != "unavailable")
         if item.get("issue_reference_source_covered") is True and mentions_stable:
             recorded = item.get("observed_issue_to_pr_mentions_unverified", [])
-            if type(recorded) is not list or len(recorded) > 512:
+            # The producer admits at most 48 PRs × 32 issue references.
+            # Reject anything beyond that actual hard source maximum, not
+            # a smaller arbitrary limit that breaks busy projects.
+            if type(recorded) is not list or len(recorded) > 48 * 32:
                 raise ValueError("unbounded cross-PR issue reference evidence")
             for ref in recorded:
                 if type(ref) is not dict:
