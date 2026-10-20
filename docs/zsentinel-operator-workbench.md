@@ -1225,3 +1225,35 @@ geeft **NOOIT** bewijs voor de actuele verplichte CI, reviews,
 branch protection, eigenaarschap, een merge of live productie.
 Er is geen QA- of regressiesuite toegevoegd of uitgevoerd en
 geen VPS-/GitHub-/Notion-mutatie gestart vanuit de pagina.
+
+
+### Optioneel: twee bronmomenten in dezelfde offline HTML bekijken
+
+De zelfstandige HTML-werkbak kan nu ook een oudere privé-JSON bridge
+van **precies hetzelfde originele reviewmanifest** naast de later
+verzamelde gate-receipts tonen:
+
+```sh
+python3 scripts/zsentinel_saved_gate_batch_bridge.py \
+  --from-review ./review-manifest.json \
+  --receipt ./nieuwe-gate-batch-1.json \
+  --receipt ./nieuwe-gate-batch-2.json \
+  --previous ./vorige-private-gate-bridge.json \
+  --format html --output ./private-merge-eerst-met-wijzigingen.html
+```
+
+Boven de huidige brongebonden PR-blokkades verschijnt een apart
+open-/dichtklapbaar onderdeel: **welke bestaande PR's veranderden
+tussen twee daadwerkelijk opeenvolgende bewaarde bronmomenten?**
+Canonieke PR-links zijn rechtstreeks aanklikbaar. De oorspronkelijke
+vergelijkingslogica uit `prior_gate_delta` wordt **hergebruikt**:
+beide bronnen vereisen hetzelfde board- en reviewmanifest-SHA,
+niet-overlappende oplopende UTC-observaties, dezelfde PR-issue-identiteiten,
+correcte batchdekking en expliciet niet-autoriseren.
+
+Een gewijzigde HEAD maakt eerdere review-/CI-getallen nooit geldig
+voor de nieuwe HEAD. Een verdwenen PR uit een *steekproef* is
+geen bewijs dat de PR is gemerged, ingetrokken of afgerond.
+De HTML ontsluit alleen het reeds opgeslagen bronsignaal; dezelfde
+privacygrenzen, no-script-CSP, create-only 0600 output en vereiste
+verse GitHub-/Notion-/releasebevoegdheden blijven intact.
