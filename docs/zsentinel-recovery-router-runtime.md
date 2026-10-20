@@ -2512,3 +2512,23 @@ De beide geïntegreerde operator-CLI's accepteren naast hun bestaande
 de nieuwe bron geweigerd. Alle uitvoer behoudt de bestaande
 GitHub-review, exacte-head CI, beschermde main en runtime-eigenaargates;
 er is **geen** cleanup, claimherverdeling, runnerherstart of release ingevoerd.
+
+
+### 20 oktober · Bestandrotatie, padveiligheid en procesprivacy
+
+Latere broncorrecties op dezelfde PR scherpen de werkelijk gebruikte
+read-only scan aan: open-verwijzingen mogen alleen als positief bewijs bij
+een groot-bestandkandidaat komen wanneer diens **oorspronkelijke bij de
+schijfscan gemeten `st_dev + st_ino`** nog overeenkomt. Is het bestand
+intussen geroteerd, vervangen of verdwenen, dan wordt die
+bestandsidentiteit ONBEKEND; nooit automatisch nul geopende schrijvers.
+De begrensde scanners openen bij BFS-mapherbezoeken **iedere
+padcomponent** opnieuw via `O_NOFOLLOW` en directory-FD's relatief aan
+de gekozen projectroot. Een achteraf verwisselde parent-symlink kan zo
+geen nieuw pad buiten de bedoelde workspace toelaten. Gevonden procesrefs
+worden per kandidaat als teller bijgehouden zonder PID's in een resultaat
+of persistente datastructuur te bewaren. Open fd != actieve writer;
+geen open fd != veilige vrijgave.
+
+Dit blijft broncode op de nog niet gemergede PR; afzonderlijke CI,
+independent review en bevoegde runtime release blijven nodig.
