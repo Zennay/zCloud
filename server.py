@@ -2802,7 +2802,7 @@ def _portfolio_queue_execution_capable(title,completion_criteria=''):
         'implement','build','fix','change','write','deploy','merge','create','update','refactor',
         'execute','run','train','generate','migrate','configure','persist','experiment',
     )
-    has_execution=bool(re.search(r'\\b(?:'+('|'.join(execution_words))+r')\\b',combined)) or any(
+    has_execution=bool(re.search(r'\b(?:'+('|'.join(execution_words))+r')\b',combined)) or any(
         marker in combined for marker in ('material code','material config','material workflow','runtime state change')
     )
     if title_text.startswith(non_exec_prefixes) and not has_execution:
@@ -2958,7 +2958,10 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
     if not queue_id:
         digest=hashlib.sha256((project_id+'\n'+title+'\n'+str(parent_queue_id or '')).encode()).hexdigest()[:16]
         queue_id=project_id+'-'+digest
-    queue_id=re.sub(r'[^a-zA-Z0-9._:-]+','-',str(queue_id).strip())[:160]
+    # Explicit queue identities must remain canonical: two differently
+    # spelled producer IDs must never collapse into one persisted task.
+    if not isinstance(queue_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',queue_id):
+        raise ValueError('Queue-ID moet een unieke canonieke identiteit van 1-160 tekens zijn')
     ts=now()
     with connect() as c:
         # A producer retry must never rewrite an actively owned task, a
@@ -2974,6 +2977,8 @@ def portfolio_queue_enqueue(project_id,title,priority='P2',completion_criteria='
             updated_at=excluded.updated_at
         WHERE portfolio_queue.status='queued' AND portfolio_queue.eligible=1
           AND portfolio_queue.project_id=excluded.project_id
+          AND portfolio_queue.title=excluded.title
+          AND COALESCE(portfolio_queue.parent_queue_id,'')=COALESCE(excluded.parent_queue_id,'')
           AND portfolio_queue.worker_slot IS NULL
           AND portfolio_queue.claimed_at IS NULL
           AND portfolio_queue.claim_expires IS NULL""",
