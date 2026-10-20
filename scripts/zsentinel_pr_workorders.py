@@ -59,16 +59,21 @@ def _markdown(value):
     return re.sub(r"([\\\[\]_*\x60<>])", r"\\\1", value)
 
 
-def _observed_overlap_paths(view, pr_url, head, direct_overlaps=None):
+def _observed_overlap_paths(view, pr_url, head, repository, direct_overlaps=None):
     """Only observed shared filenames, including an older focused PR."""
     paths, related, hinted_issues = set(), set(), set()
     paths_limited = False
     for pair in view.get("shown_collision_pairs", [])[:80]:
+        if (type(pair) is not dict or type(pair.get("left")) is not dict
+                or type(pair.get("right")) is not dict):
+            raise ValueError("malformed observed PR collision")
         left, right = pair["left"], pair["right"]
-        if left["url"] == pr_url:
-            related.add(right["url"])
-        elif right["url"] == pr_url:
-            related.add(left["url"])
+        left_url = _same_repo_url(left.get("url"), repository)
+        right_url = _same_repo_url(right.get("url"), repository)
+        if left_url == pr_url:
+            related.add(right_url)
+        elif right_url == pr_url:
+            related.add(left_url)
         else:
             continue
         for path in pair.get("shared_files", [])[:MAX_PATHS]:
@@ -76,7 +81,7 @@ def _observed_overlap_paths(view, pr_url, head, direct_overlaps=None):
     for source in (direct_overlaps or [])[:16]:
         if type(source) is not dict:
             raise ValueError("invalid older PR collision observation")
-        related.add(source["other_pr_url"])
+        related.add(_same_repo_url(source.get("other_pr_url"), repository))
         paths_limited |= (source.get("shared_paths_preview_truncated") is True or
                           source.get("other_pr_file_list_incomplete") is True)
         for path in source.get("shared_paths_preview", [])[:12]:
@@ -115,7 +120,18 @@ def collect_workorders(board):
                 "claim_authorized", "merge_authorized",
                 "deploy_authorized", "writes_performed"))):
         raise ValueError("opt-in current merge-first gate inspection required")
-    projects = {view["project"]: view for view in board["project_views"]}
+    views, project_ids = board.get("project_views"), board.get("projects")
+    if (type(views) is not list or type(project_ids) is not list
+            or not 1 <= len(views) <= 3 or len(views) != len(project_ids)
+            or any(type(view) is not dict or
+                   type(view.get("project")) is not str or
+                   type(view.get("repository")) is not str for view in views)
+            or any(type(project) is not str for project in project_ids)):
+        raise ValueError("missing bounded project source")
+    projects = {view["project"]: view for view in views}
+    if (len(projects) != len(views) or len(set(project_ids)) != len(project_ids)
+            or set(projects) != set(project_ids)):
+        raise ValueError("duplicate or drifting project source")
     live = board.get("current_live_pr_gate_observation")
     if (type(live) is not dict or type(live.get("items")) is not list
             or len(live["items"]) > MAX_PRS):
@@ -164,7 +180,7 @@ def collect_workorders(board):
         elif live_gate.get("status") == "current_exact_pr_head_and_sample_match":
             raise ValueError("current gate receipt lost exact HEAD in workorder")
         paths, paths_cut, related, hints = _observed_overlap_paths(
-            projects[project], url, head if pinned else None,
+            projects[project], url, head if pinned else None, repo,
             live_gate.get("sampled_file_overlaps_observed"))
         for extra in item.get("observed_file_overlap_prs", [])[:8]:
             related.append(_same_repo_url(extra, repo))
