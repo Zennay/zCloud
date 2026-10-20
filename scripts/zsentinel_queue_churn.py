@@ -171,6 +171,22 @@ def compare(previous, current, now=None):
                 "claim_failure_verified": False,
                 # No queue ref, UUID, claim token or human-authored title.
             })
+    # A conflicting current lease window needs a human even when its claim
+    # attempt counter has NOT increased since the preceding observation.
+    # Only the current private bounded sample is used; queue identifiers are
+    # deliberately discarded before constructing the operator work list.
+    lease_conflicts = [
+        {"project_id": project, "priority": priority,
+         "current_status": row["status"],
+         "current_claim_attempts": row["attempts"],
+         "owner_must_reconcile_claim_and_expiry": True,
+         "claim_release_authorized": False}
+        for (_, project, priority), row in refs1.items()
+        if row["lease_inconsistent"]
+    ]
+    lease_conflicts.sort(key=lambda row: (
+        PRIORITIES[row["priority"]], row["project_id"],
+        -row["current_claim_attempts"], row["current_status"]))
     increases.sort(key=lambda row: (
         PRIORITIES[row["priority"]], -row["new_claim_attempts_observed"],
         row["project_id"], row["current_status"]))
@@ -235,6 +251,11 @@ def compare(previous, current, now=None):
         "current_unverifiable_lease_candidates_owner_review": total1["unverifiable_owner_lease_rows"],
         "current_inconsistent_lease_windows_owner_review": inconsistent_leases,
         "sampled_increased_claims": increases[:MAX_SAMPLES],
+        "sampled_current_inconsistent_lease_items": lease_conflicts[:MAX_SAMPLES],
+        "lease_conflict_samples_truncated": (
+            len(lease_conflicts) > MAX_SAMPLES or
+            not current["sample_is_complete"]),
+        "current_conflicts_only_from_bounded_sample": True,
         "sampled_group_changes": group_changes,
         "sampled_changes_truncated": count > MAX_SAMPLES or
                                      len(groups0.keys() & groups1.keys()) > 40,
@@ -314,6 +335,24 @@ def public_html(report):
 def private_html(report):
     public_summary(report)
     details = []
+    conflicts = []
+    for item in report["sampled_current_inconsistent_lease_items"][:MAX_SAMPLES]:
+        if (item.get("owner_must_reconcile_claim_and_expiry") is not True
+                or item.get("claim_release_authorized") is not False
+                or item.get("priority") not in PRIORITIES
+                or item.get("current_status") not in STATUSES
+                or type(item.get("current_claim_attempts")) is not int
+                or not 0 <= item["current_claim_attempts"] <= 10**9
+                or type(item.get("project_id")) is not str
+                or not SLUG.fullmatch(item["project_id"])):
+            raise ValueError("unsafe current lease owner action")
+        conflicts.append(
+            "<li><strong>" + escape(item["priority"]) + " · " +
+            escape(item["project_id"]) + "</strong> · " +
+            escape(item["current_status"]) + " · claimpogingen " +
+            str(item["current_claim_attempts"]) +
+            " · eigenaar moet tegenstrijdige leasevensters beoordelen; "
+            "GEEN vrijgave.</li>")
     for item in report["sampled_increased_claims"][:MAX_SAMPLES]:
         details.append(
             "<tr><td>" + escape(item["project_id"]) + "</td><td>" +
@@ -341,6 +380,11 @@ def private_html(report):
         '<main><h1>zSentinel · Herhaalde claimpogingen</h1>' +
         public_html(report) +
         '<p>' + escape(report["action"]) + '</p>'
+        '<h2>Tegenstrijdige huidige leasevensters · eigenaarcheck</h2>' +
+        ('<ol>' + "".join(conflicts) + '</ol>' if conflicts else
+         '<p>Geen tegenstrijdige lease-items in de beperkte privésample.</p>') +
+        ('<p>Bronsteekproef afgekapt; verborgen conflicten niet uitgesloten.</p>'
+         if report["lease_conflict_samples_truncated"] else '')
         '<table><thead><tr><th>Project</th><th>Prioriteit</th>'
         '<th>Claimpogingen</th><th>Status</th><th>Leasebewijs</th></tr></thead><tbody>' +
         "".join(details) +
