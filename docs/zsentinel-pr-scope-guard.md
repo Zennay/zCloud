@@ -1280,3 +1280,27 @@ om de identiteit van het genoemde nummer **op één observatiemoment**:
 de echte issue-status, toegewezen eigenaar, productfix, conflicten,
 verplichte CI, onafhankelijke review en productie-release blijven aparte
 beslissingen. Zelfs een geverifieerd open issue verleent geen bevoegdheid.
+
+
+### GitHub-identiteit daadwerkelijk gelezen
+
+De optionele identiteitscontrole verwerkt het echte onderscheid in
+GitHub's `GET /issues/N`-response: een regulier issue heeft een
+`html_url` eindigend op `/issues/N`, terwijl een pullrequest op
+dezelfde API-route een `pull_request`-veld en `/pull/N` heeft.
+De bron verifieert eerst het exacte nummer en de juiste URL voor het
+responstype, voordat het een mogelijke dubbele issue-opdracht labelt.
+
+Concreet op de bestaande zCloud-bron read-only gezien op 20 oktober:
+[issue #1326](https://github.com/Zennay/zCloud/issues/1326) geeft een
+echt issue terug; [PR #1536](https://github.com/Zennay/zCloud/pull/1536)
+komt als pullrequest terug. De eerste bronversie zou een PR door zijn
+`/pull/N`-URL abusievelijk `identity_unconfirmed` noemen; dat
+productgedrag is gecorrigeerd.
+
+Als de GitHub-response ontbreekt, inconsequent is of door rechten/rate
+limiting niet kan worden gelezen, blijft `identity_status` onbekend.
+Zelfs een volledig uitgevoerde lijst GETs wordt expliciet als
+**onvolledig bewijs** gepresenteerd zodra één geobserveerde identiteit
+onbereikbaar/onduidelijk is. Geen bestaande GitHub-issue-status wordt
+naar een claim, fix, merge of live herstel gepromoveerd.
