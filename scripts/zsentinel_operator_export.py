@@ -33,6 +33,7 @@ Vanaf deze map:
   python3 zsentinel_background_priority.py --preview --snapshot T1.json --previous T0.json
   python3 zsentinel_runner_report.py --t0 T0.json --t1 T1.json --output NIEUW.html
   python3 zsentinel_runner_report.py --timeline T0.json T1.json T2.json --output VERLOOP.html
+  python3 zsentinel_runner_report.py --format markdown --timeline T0.json T1.json T2.json --output OVERDRACHT.md
 
 Rapporten worden create-only (0600) gemaakt in bestaande veilige doelmappen.
 Gebruik nooit bestaande rapport-/bronbestandsnamen als nieuw doel. Historische
