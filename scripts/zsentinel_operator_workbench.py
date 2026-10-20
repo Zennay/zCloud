@@ -340,6 +340,17 @@ Imported receipts are NOT live GitHub evidence, required branch rules, owner con
 <label>Saved PR gate JSON (maximum 1 MiB)
 <input type="file" id="prGateImport" accept=".json,application/json"></label>
 <button id="prGateClear" type="button" disabled>Clear imported gate snapshot</button>
+<details><summary>Combine original reviewed manifest and saved PR batches here (offline)</summary>
+<p>Choose the exact previously exported review-only JSON manifest plus up to 75
+saved four-PR gate JSON files. The browser checks the original review SHA,
+board, PR order, batch boundaries and timestamps before replacing the
+current local observation. Missing batches remain UNKNOWN. No internet calls.</p>
+<label>Original saved review manifest (maximum 1 MiB)
+<input type="file" id="prGateReviewFile" accept=".json,application/json"></label>
+<label>Saved current-head PR gate batches (up to 75, 8 MiB combined)
+<input type="file" id="prGateBatchFiles" multiple accept=".json,application/json"></label>
+<button id="prGateBatchApply" type="button">Combine saved batches in this browser</button>
+</details>
 <p id="prGateStatus" aria-live="polite">No imported source. All current PR gates unknown.</p>
 <label>Filter saved PR references by observed gate state
 <select id="prGateFocus">
@@ -613,6 +624,109 @@ function parseGateRow(row){
    incomplete:row.legacy_status_source_may_be_truncated||
      !row.check_runs_page_complete||row.review_page_may_be_truncated,
    next:row.human_next_gate_step};
+}
+
+// Combine an original reviewed PR manifest and independent historical gate batches
+// entirely in this offline browser. Source membership is verified against the
+// original captured issue board; no batch, credential or private note is sent out.
+async function combineSavedGateFiles(manifestFile,batchFiles){
+ if(!globalThis.crypto?.subtle||!manifestFile||!batchFiles.length||
+    batchFiles.length>75)throw Error('Missing bounded local files or SHA-256');
+ const files=[manifestFile,...batchFiles],totalBytes=files.reduce((v,f)=>v+f.size,0);
+ if(files.some(f=>f.size<2||f.size>1048576)||totalBytes>8388608)
+  throw Error('Offline source exceeds strict file bounds');
+ const readJSON=async f=>{
+  const raw=await f.arrayBuffer();
+  return {raw,data:JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw))};
+ };
+ const {raw,data:review}=await readJSON(manifestFile);
+ const reviewSha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',raw)),
+  b=>b.toString(16).padStart(2,'0')).join('');
+ if(!review||Array.isArray(review)||review.schema!=='zsentinel-offline-merge-first-review-v1'||
+    review.evidence_scope!=='bounded_saved_snapshot_not_live'||
+    review.source_board_sha256!==boardSha||
+    ['claim_authorized','merge_authorized','deploy_authorized','dispatch_authorized']
+      .some(k=>review[k]!==false)||
+    !Array.isArray(review.pr_references)||review.pr_references.length<1||
+    review.pr_references.length>300)
+  throw Error('Source is not the original bounded, non-authorizing review manifest');
+ const weights={P0:0,P1:1,P2:2,Unspecified:3},seenRefs=new Set();
+ const selected=review.pr_references.map(ref=>{
+  if(!ref||Array.isArray(ref)||typeof ref.url!=='string'||
+     !/^https:\/\/github\.com\/Zennay\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]{0,8}$/.test(ref.url)||
+     !knownPrLinks.has(ref.url)||seenRefs.has(ref.url)||
+     !Object.hasOwn(weights,ref.highest_linked_priority)||
+     ref.merge_authorized!==false||
+     !Array.isArray(ref.observed_issue_refs)||!ref.observed_issue_refs.length||
+     ref.observed_issue_refs.length>60)
+   throw Error('Foreign, duplicated or malformed reviewed PR');
+  seenRefs.add(ref.url);
+  const path=ref.url.split('/'),repository=path.slice(3,5).join('/');
+  const seenIssues=new Set();
+  for(const issue of ref.observed_issue_refs){
+   const saved=entries.get(issue?.issue);
+   if(!saved||saved.url!==issue.url||seenIssues.has(issue.issue)||
+      !saved.open_pr_candidates.includes(ref.url)||
+      issue.issue.split('#')[0]!==repository)
+    throw Error('Original review links a PR to an unrelated issue');
+   seenIssues.add(issue.issue);
+  }
+  return {url:ref.url,rank:weights[ref.highest_linked_priority],
+   repo:path[4],number:Number(path[6])};
+ }).sort((a,b)=>a.rank-b.rank||a.repo.localeCompare(b.repo)||a.number-b.number);
+ const total=Math.ceil(selected.length/4),observed=new Map();
+ let earliest=Infinity,latest=-Infinity;
+ for(const file of batchFiles){
+  const {data:receipt}=await readJSON(file);
+  const idx=receipt?.source_review_batch_index;
+  if(!receipt||Array.isArray(receipt)||
+     receipt.schema!=='zsentinel-current-pr-gate-observation-v1'||
+     receipt.merge_authorized!==false||receipt.deployment_authorized!==false||
+     receipt.writes_performed!==false||
+     receipt.required_branch_protection_verified!==false||
+     receipt.current_review_and_check_samples_only!==true||
+     receipt.source_review_manifest_sha256!==reviewSha||
+     receipt.source_review_board_sha256!==boardSha||
+     receipt.source_review_pr_count!==selected.length||
+     receipt.source_review_batches_total!==total||
+     receipt.review_only_top_four_observed!==(selected.length>4)||
+     !Number.isInteger(idx)||idx<1||idx>total||observed.has(idx))
+   throw Error('Gate batch belongs to another review or duplicates an observed batch');
+  const expected=selected.slice((idx-1)*4,idx*4);
+  if(receipt.source_review_batch_first_pr!==(idx-1)*4+1||
+     receipt.source_review_batch_count!==expected.length||
+     !Array.isArray(receipt.items)||receipt.items.length!==expected.length)
+   throw Error('Gate batch has missing or reordered original source rows');
+  const when=gateTime(receipt.observed_at_utc);
+  earliest=Math.min(earliest,when);latest=Math.max(latest,when);
+  if(latest-earliest>600000)throw Error('Saved batches exceed common 10-minute window');
+  const normalized=new Map();
+  for(let i=0;i<expected.length;i++){
+   const row=receipt.items[i];
+   if(row?.url!==expected[i].url||
+      row.required_branch_checks_and_rules_verified!==false)
+    throw Error('Saved PR order or branch gate scope mismatches original review');
+   normalized.set(row.url,parseGateRow(row));
+  }
+  observed.set(idx,normalized);
+ }
+ const missing=[],missingPrs=[],items=new Map();
+ for(let batch=1;batch<=total;batch++){
+  if(!observed.has(batch)){
+   missing.push(batch);
+   missingPrs.push({batch_index:batch,
+    unobserved_pr_urls:selected.slice((batch-1)*4,batch*4).map(x=>x.url)});
+  }else for(const [url,item] of observed.get(batch))items.set(url,item);
+ }
+ const timestamp=earliest,time=new Date(earliest).toISOString();
+ const bridgeCoverage={manifest_sha256:reviewSha,batches:observed.size,
+  expected_batches:total,missing_indexes:missing,
+  candidate_count:selected.length,expected_observed_prs:items.size,
+  missing_prs:missingPrs,complete:missing.length===0,
+  earliest_observed_at_utc:time,latest_observed_at_utc:new Date(latest).toISOString(),
+  complete_receipts_not_required_checks:missing.length===0};
+ return {time,timestamp,items,kind:'zsentinel-local-saved-review-batch-import-v1',
+  sha256:reviewSha,reviewContext:null,bridgeCoverage};
 }
 function acceptGateSource(data){
  if(!data||typeof data!=='object'||Array.isArray(data)||
@@ -1783,6 +1897,30 @@ document.getElementById('restore').addEventListener('change',async event=>{
 
 
 
+document.getElementById('prGateBatchApply').onclick=async()=>{
+ const original=document.getElementById('prGateReviewFile');
+ const selected=document.getElementById('prGateBatchFiles');
+ try{
+  const combined=await combineSavedGateFiles(original.files?.[0],
+   [...(selected.files||[])]);
+  // All files were admitted and cross-matched before replacing any state.
+  prGateImport=combined;invalidateBrief();refreshPrDesk();
+  document.getElementById('prGateClear').disabled=false;
+  const coverage=combined.bridgeCoverage;
+  document.getElementById('prGateStatus').textContent=
+   'OFFLINE '+(coverage.complete?'COMPLETE':'PARTIAL')+
+   ' saved batch import · '+coverage.batches+'/'+coverage.expected_batches+
+   ' batches · '+combined.items.size+'/'+coverage.candidate_count+
+   ' original PRs observed · UNKNOWN batches '+
+   (coverage.missing_indexes.join(', ')||'none')+
+   ' · oldest observation '+combined.time+
+   ' · exact original review SHA '+coverage.manifest_sha256.slice(0,12)+
+   ' · current required CI, independent review and owner permission UNKNOWN.';
+  status.textContent='Local batch review imported; no GitHub requests or actions performed.';
+ }catch{
+  status.textContent='Offline batch combination refused; current imported gate evidence preserved.';
+ }finally{original.value='';selected.value='';}
+};
 document.getElementById('prGateImport').addEventListener('change',async event=>{
  const file=event.currentTarget.files?.[0];
  try{
