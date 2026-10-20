@@ -191,8 +191,11 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
         summary[pid]["github_job_runner_route"] = route
         source_stop = item.get("repository_stop_reason")
         windows_skipped = item.get("not_scanned_windows", [])
-        if (source_stop not in (None, "github_permission_or_rate_limit",
-                                "repository_inaccessible", "github_network_unavailable")
+        if (source_stop not in (
+                None, "github_permission_or_rate_limit",
+                "github_authentication_required", "github_rate_limit_confirmed",
+                "github_forbidden_or_rate_limit_unknown",
+                "repository_inaccessible", "github_network_unavailable")
                 or type(windows_skipped) is not list or len(windows_skipped) > 3
                 or any(window not in ("queued", "in_progress", "failure")
                        for window in windows_skipped)
@@ -257,6 +260,10 @@ def portfolio_summary(registry, queue, selected, github_coverage, decision):
             row["next_action"] = "github_unassigned_job_route_owner_review"
         elif row["project_id"] in unstarted_job_projects:
             row["next_action"] = "github_job_unstarted_platform_owner_review"
+        elif row["github_ci_source_stop_reason"] == "github_rate_limit_confirmed":
+            row["next_action"] = "github_rate_limit_backoff_other_projects"
+        elif row["github_ci_source_stop_reason"] == "github_authentication_required":
+            row["next_action"] = "github_auth_owner_access_review"
         elif row["github_ci_source_stop_reason"] is not None:
             row["next_action"] = "github_ci_source_denied_no_retry_owner_review"
         elif not complete:
@@ -421,6 +428,10 @@ def portfolio_html(summary, decision, window_index, windows, branch_inventory=No
             "github_source_unavailable_no_all_clear": "Bronfout: opnieuw via geautoriseerde route",
             "github_ci_source_denied_no_retry_owner_review":
                 "GitHub CI-bron geweigerd of netwerk onbereikbaar; geen herhaalde retries. Bevoegde API-/repo-eigenaar controleert toegang.",
+            "github_rate_limit_backoff_other_projects":
+                "GitHub-rate-limit bevestigd; geen extra retries, andere vrije producttaak oppakken.",
+            "github_auth_owner_access_review":
+                "GitHub API authenticatie ontbreekt (401); bevoegde eigenaar controleert tokenrechten.",
             "branch_overlap_needs_owner": "RECENTE BRANCHOVERLAP: eigenaar + PR-scope controleren",
             "branch_inventory_partial": "PR-loze branchbron onvolledig: geen vrijgave",
             "branch_scope_not_provided": "Geen actuele padscope: overlap onbekend",
