@@ -594,3 +594,27 @@ does not infer `merged=true` from a historical PR reference or enable any
 automatic claim, merge, review, dispatch or deploy. Existing mandatory CI
 and independent review gates remain separate. No new QA, regression or
 test suites were written or run.
+
+
+### Structured review-only JSON manifest
+
+The same Merge-first Desk also supports **Preview exact review manifest (.json)**,
+then a separate deliberate **Download exactly this review-only JSON** action.
+The manifest includes a versioned schema, source board SHA256 and UTC
+observation, current filter count, bounded coverage flags and de-duplicated
+candidate PR-to-issue relationships, plus unlinked issue references. It
+includes the original public GitHub URLs, captured product priorities and
+missing evidence, without the local operator's private notes or contact
+labels. Each PR and each unlinked issue has `active_claim_verified=false`;
+the root explicitly records `claim_authorized=false`,
+`merge_authorized=false`, `deploy_authorized=false` and
+`dispatch_authorized=false`.
+
+The preview is rendered as plain text. Download re-derives the entire manifest
+from the current filtered source and refuses byte drift. All original link
+identities were already validated when opening the source board, and
+the manifest is not a current GitHub state query or machine-executable
+dispatch/release instruction. Only an independently authorized operator or
+worker may later inspect a candidate using live ownership, CI and release
+evidence. No automatic workflow, background scheduler, claim or PR mutation
+was installed.
