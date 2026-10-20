@@ -827,12 +827,28 @@ function mergeValidatedZSentinelReceipts(previous,next,kind){
       throw Error('Receipt is older than the current '+row.project+' observation; clear first if an older snapshot is intended');
     }
   }
-  const coverage=[...previous.coverage.filter(row=>!ids.has(row.project)),...next.coverage].slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
+  const priorProjects=new Set((previous.events||[]).map(row=>row.project));
+  const nextCoverage=next.coverage.map(row=>kind==='github'&&
+    row.status!=='partial_sources'&&priorProjects.has(row.project)
+      ?{...row,staleEvidence:true,lastAttemptAt:row.observedAt}
+      :row);
+  const coverage=[...previous.coverage.filter(row=>!ids.has(row.project)),...nextCoverage]
+    .slice(-ZSENTINEL_PORTFOLIO_SOURCE_LIMIT);
   const retained=new Set(coverage.map(row=>row.project));
   if(kind==='github'){
+    const fresh=next.events.filter(row=>retained.has(row.project));
+    const freshIds=new Set(fresh.map(row=>row.id));
+    const partialProjects=new Set(nextCoverage.filter(row=>
+      row.status!=='partial_sources').map(row=>row.project));
+    // A new incomplete receipt is not an assertion that absent old PR/CI
+    // events disappeared. Admit the actual new facts before historical rows
+    // so a changed status for the same immutable event never loses to old data.
+    const historical=previous.events.filter(row=>retained.has(row.project)&&
+      partialProjects.has(row.project)&&!freshIds.has(row.id))
+      .map(row=>({...row,staleUnverified:true}));
     const events=fairPublicGitHubHistory([
       ...previous.events.filter(row=>!ids.has(row.project)&&retained.has(row.project)),
-      ...next.events.filter(row=>retained.has(row.project))],coverage);
+      ...fresh,...historical],coverage);
     return {observedAt:new Date().toISOString(),events,coverage};
   }
   const issues=fairProductIssueHistory([
