@@ -156,9 +156,18 @@ def render_html(board, max_rows=20):
                        or url.split("/issues/", 1)[0] != pr.split("/pull/", 1)[0]
                        for url in linked)):
             raise ValueError("untrusted existing PR issue-group evidence")
+        primary_urls = group.get("primary_issue_urls_in_source", [])
+        if (type(primary_urls) is not list
+                or len(primary_urls) > len(linked)
+                or len(set(primary_urls)) != len(primary_urls)
+                or any(url not in linked for url in primary_urls)
+                or type(group.get("primary_issue_count_observed")) is not int
+                or group["primary_issue_count_observed"] != len(primary_urls)):
+            raise ValueError("invalid primary vs secondary PR issue mapping")
         shown_links = [url for url in linked if url in visible_issues]
         if not shown_links:
             continue
+        primary_visible = sum(url in visible_issues for url in primary_urls)
         refs = "".join("<li><a rel='noopener noreferrer' target='_blank' href='" +
                        escape(url, quote=True) + "'>Issue " +
                        escape(url.rsplit("/", 1)[-1]) + "</a></li>"
@@ -169,14 +178,16 @@ def render_html(board, max_rows=20):
             escape(pr, quote=True) + "'>PR " +
             escape(pr.rsplit("/", 1)[-1]) + "</a> · " +
             str(len(shown_links)) +
-            " gekoppelde issuevermelding(en) in deze beperkte overdracht"
+            " gekoppelde issuevermelding(en) in deze beperkte overdracht; " +
+            str(primary_visible) + " als primaire reviewkandidaat"
             "<details><summary>Bekijk bronissues (geen fixbewijs)</summary><ul>" +
             refs + "</ul></details></li>"
         )
     groups_panel = (
         "<section class='ticket'><h2>Bestaande PR's als één werkgroep</h2>"
-        "<p>Dezelfde PR kan meerdere issues noemen. Dit is géén bewijs "
-        "dat al deze issues door de PR worden opgelost en geen mergevrijgave.</p>"
+        "<p>Iedere bestaande PR-kandidaat staat hier, ook als een andere PR "
+        "primair bij het issue werd gekozen. Gedeelde issuevermeldingen zijn "
+        "géén fixbewijs, eigenaarschap of mergevrijgave.</p>"
         "<ol>" + "".join(grouped) + "</ol></section>" if grouped else "")
     if len(cards) > max_rows:
         hidden = "<p class='warning'>ONVOLLEDIGE overdracht: " + str(len(cards)-max_rows) + (
