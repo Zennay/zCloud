@@ -316,6 +316,18 @@ Ieder voorstel toont probleem, veilige menselijke vervolgactie en
 beslisadviezen en nooit een impliciete toestemming tot process kill,
 auto-restart, terugzetten van claims, dispatch, GitHub merge of deploy.
 
+**Prioriteitswaarheid:** een ooit in de vorige twaalf bronmomenten
+geobserveerde `failed`-service is niet automatisch een actuele P0.
+Alleen een `failed`-status **in de laatste bron** in combinatie met
+**in dezelfde laatste bron geobserveerde** hoge swap-, schijf- of load-
+druk krijgt een P0-eigenaarsonderzoek. Laatste bron failed maar geen
+bevestigde hoge druk → P1; uitsluitend eerder failed → een historische
+P1-opvolging, ook wanneer de laatste status active is (dat bewijst immers
+geen GitHub-jobherstel). Onvolledige actuele capaciteit blijft **onbekend**
+en kan geen P0-resourceclaim op basis van oude cijfers rechtvaardigen.
+Deze bronbinding is zichtbaar in de privé HTML én de optionele Markdown-
+hersteloverdracht.
+
 De weergave laat per opeenvolgende meting zien: servicestatuswijzigingen,
 onvolledige inventarisdekking, dezelfde of veranderde Linux-opstartsessie,
 load/RAM/swap/root-schijfverschil en (uitsluitend waar vergelijkbaar) de
