@@ -3683,7 +3683,15 @@ def portfolio_queue_allocate():
             # turnover inside a slot that is already resident. Remember that the
             # slot was occupied before any priority/manual-start preemption below.
             slot_was_occupied = row is not None
-            lane_candidates=_portfolio_eligible_lane_candidates_locked(c,ts,preempted,candidate_cache=candidate_cache)
+            # A running/verifying owner is never preemptible by this allocator.
+            # Skip candidate/expensive lane discovery for that pinned slot:
+            # its existing assignment is renewed below without a new claim.
+            if row and str(row['status']) in ('running','verifying'):
+                lane_candidates=[]
+            else:
+                lane_candidates=_portfolio_eligible_lane_candidates_locked(
+                    c,ts,preempted,candidate_cache=candidate_cache
+                )
             # Do not admit this forced queue item in the wrong global slot.
             if force_pair and force_preferred_slot and slot!=force_preferred_slot:
                 lane_candidates=[pair for pair in lane_candidates
