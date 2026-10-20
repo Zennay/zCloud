@@ -298,3 +298,27 @@ miss that active writer. The live read-only snapshot during this run had
 integration risk, not a claimed live outage. This server path overlaps
 the separately owned runtime PR #1571 and has **not** been modified or
 taken over in this branch; reconcile with its current owner when ready.
+
+### Same-source in-flight eligibility coverage
+
+The read-only desk now samples `eligible` on every observed
+`claimed/running/verifying` zSentinel queue row and records
+`runtime_active_filtered_by_eligibility` when it is not exactly integer
+`1`. This is separate from whether a task is queued, whether its lease
+is known, and whether its file scope is declared. When nonzero, the
+offline HTML, text, JSON, Markdown action cards and completeness flags
+surface an explicit `HOLD_RUNTIME_SOURCE_GAP`, because the separately
+owned `server.py` planner currently applies `eligible=1` even to active
+tasks. No automatic queue mutation or task reinstatement is authorized
+by this observation.
+
+Read-only current VPS direct-source inspection at exact
+[`b2c13aa`](https://github.com/Zennay/zCloud/commit/b2c13aaebb4b62f27163581fc63ea6f9dd54a253)
+observed **zero** in-flight zSentinel rows with `eligible!=1`, and
+**three** in-flight zSentinel rows without declared write scope.
+Accordingly the source-gap warning did **not** fabricate a live outage,
+while the existing scope-ownership HOLD continued to prevent new parallel
+admission. The server implementation path remains under the independent
+owner's [PR #1571](https://github.com/Zennay/zCloud/pull/1571),
+with a specific owner handoff; no conflicting server source files were
+modified by this PR.
