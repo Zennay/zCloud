@@ -272,3 +272,42 @@ bevoegde release-eigenaar blijven vereist.
 
 Broncode op bestaande PR #1567; nog niet gemerged op main of
 live uitgerold.
+
+## Huidige exact-head PR-reviews en checks · merge-eerst-operator (20 oktober)
+
+Naast bestaande bestandscope- en dubbele issueverwijzingen kent de gecombineerde
+live productcockpit nu optioneel een brongebonden current-head PR-checkreview:
+
+    python3 scripts/zsentinel_issue_scope_cockpit.py \
+      --live-issues --project cloud \
+      --max-prs 10 --inspect-pr-gates --format html
+
+Nieuwe scripts/zsentinel_pr_gate_now.py leest voor maximaal VIER
+canoniek gekoppelde open PR's in huidige P0/P1-prioriteitsvolgorde
+de actuele PR base/head identiteit, check-runs (maximaal 100)
+en ingediende reviews (maximaal 100), daarna de actuele PR base/head
+opnieuw. Bij bronverandering of ontbrekende permissie is de ontvangst
+UNKNOWN, geen positief oordeel. Elke bron vereist maximaal vier
+GitHub GETs en verandert niets aan GitHub/Notion/worker/queue/VPS.
+
+De operatorcockpit toont per gevonden bestaande PR exact HEAD
+(commitprefix), lopende checks, niet-geslaagde checks en getelde
+waargenomen onafhankelijke APPROVED-reviews op diezelfde commit.
+Reviews van de PR-auteur tellen NIET als onafhankelijk; een latere
+CHANGES_REQUESTED/DISMISSED-waarneming op dezelfde exacte HEAD
+wordt niet als goedkeuring weergegeven.
+
+**DIT IS GEEN VOLLEDIGE MERGE-ADMISSIE**: niet alle check-runs hoeven
+verplichte branch protection checks te zijn, de complete actuele
+reviewpolicy en werkelijke claim-/releasebevoegdheid blijven onbekend.
+Een 'mergeable' GitHub bronboolean of aantal groene checks/approvals
+mag nooit automatisch een merge, force push of deploy autoriseren.
+Alle permissionflags in source blijven false; een bevoegde
+GitHub-reviewer/CI-protectie bepaalt de feitelijke toelaatbaarheid.
+De optionele optie is uitsluitend beschikbaar bij --live-issues;
+de eerdere saved-board variant blijft bewust historisch.
+
+De operator ziet een eerlijk gedeeltelijk snapshot; ontbrekende
+reviews/checks bij niet-toegankelijke GitHub zijn UNKNOWN, geen
+vrijgave of bewezen productherstel. Geen QA-/regressiesuites geschreven
+of gestart. Source slechts op open product-PR #1567, niet live gedeployed.
