@@ -341,6 +341,15 @@ Imported receipts are NOT live GitHub evidence, required branch rules, owner con
 <input type="file" id="prGateImport" accept=".json,application/json"></label>
 <button id="prGateClear" type="button" disabled>Clear imported gate snapshot</button>
 <p id="prGateStatus" aria-live="polite">No imported source. All current PR gates unknown.</p>
+<label>Filter saved PR references by observed gate state
+<select id="prGateFocus">
+<option value="">All referenced PRs</option>
+<option value="failed">Observed failing checks</option>
+<option value="pending">Observed pending checks</option>
+<option value="review">Review required / changes requested</option>
+<option value="unverified">No usable current-head source</option>
+<option value="observed-no-authority">Observed clear checks, NOT merge authority</option>
+</select></label>
 </div>
 <p id="prDeskSummary" aria-live="polite"></p><ol id="prDeskRows"></ol>
 <h3>Productissues without captured PR references · human triage first</h3>
@@ -637,6 +646,14 @@ function acceptGateSource(data){
  if(!items.size)throw Error('No PR receipt matches this captured source board');
  return {time,timestamp,items,kind:data.schema};
 }
+function gateState(url){
+ const row=prGateImport?.items.get(url);
+ if(!row||!row.available)return 'unverified';
+ if(row.checks_failed||row.legacy_failed)return 'failed';
+ if(row.checks_pending||row.legacy_pending||row.incomplete)return 'pending';
+ if(row.changes_requested||!row.approvals)return 'review';
+ return 'observed-no-authority';
+}
 function prGateLabel(url){
  if(!prGateImport)return 'No imported PR gate receipt; current checks and approvals UNKNOWN.';
  const row=prGateImport.items.get(url);
@@ -665,10 +682,13 @@ function prDeskGroups(){
    for(const gap of card.evidence_gaps)group.gaps.add(gap);
   }
  }
- return [...index.values()].sort((a,b)=>
-  weights[a.priority]-weights[b.priority] ||
-  b.issues.length-a.issues.length ||
-  a.project.localeCompare(b.project) || a.url.localeCompare(b.url));
+ const desired=document.getElementById('prGateFocus').value;
+ const focus={failed:0,pending:1,review:2,unverified:3,'observed-no-authority':4};
+ return [...index.values()].filter(group=>!desired||gateState(group.url)===desired)
+  .sort((a,b)=>weights[a.priority]-weights[b.priority] ||
+   focus[gateState(a.url)]-focus[gateState(b.url)] ||
+   b.issues.length-a.issues.length ||
+   a.project.localeCompare(b.project)||a.url.localeCompare(b.url));
 }
 function refreshPrDesk(){
  const list=document.getElementById('prDeskRows');
@@ -687,11 +707,13 @@ function refreshPrDesk(){
  if(!unlinked.length)
   without.append(elem('li','Every filtered issue had a captured PR link; live state still unknown.'));
  const withMultiple=groups.filter(g=>g.issues.length>1).length;
+ const gateFilter=document.getElementById('prGateFocus').value;
  document.getElementById('prDeskSummary').textContent=
   groups.length+' unique saved PR links · '+withMultiple+
   ' linked from multiple issues · '+unlinked.length+
   ' issue(s) without referenced PRs in '+current.length+
-  ' filtered captured issue cards. Snapshot '+board.observed_at_utc+
+  ' filtered captured issue cards. Gate filter '+(gateFilter||'all')+
+  '. Snapshot '+board.observed_at_utc+
   '. Not proof of active PR, available work or merge rights.';
  if(!groups.length){
   list.append(elem('li','No referenced PRs in this bounded filtered snapshot; not proof that none exist.'));
@@ -728,6 +750,7 @@ function currentPrManifest(){
   source_board_sha256:boardSha,
   source_observed_at_utc:board.observed_at_utc,
   captured_issue_count:cards.length,
+  saved_gate_focus:document.getElementById('prGateFocus').value||'all',
   evidence_scope:'bounded_saved_snapshot_not_live',
   project_coverage:board.coverage,
   required_current_claim_review_ci_branch_release_check:true,
@@ -773,6 +796,7 @@ function currentPrDesk(){
   'Captured UTC: '+board.observed_at_utc,
   'Filtered current issue cards: '+filtered().length,
   'Unique referenced PR links: '+groups.length,
+  'Gate focus: '+(document.getElementById('prGateFocus').value||'all'),
   'Filtered issues with no recorded PR link: '+unlinked.length,
   'Evidence window: bounded and partial; original links are not verified open/current.',
   'All claim/merge/deploy permissions: FALSE; required CI/branch protection/review UNKNOWN.',
@@ -1536,6 +1560,9 @@ document.getElementById('prGateImport').addEventListener('change',async event=>{
   status.textContent='Gate import refused; existing overlay (if any) kept unchanged.';
  }finally{event.currentTarget.value='';}
 });
+document.getElementById('prGateFocus').onchange=()=>{
+ invalidateBrief();refreshPrDesk();
+};
 document.getElementById('prGateClear').onclick=()=>{
  prGateImport=null;invalidateBrief();refreshPrDesk();
  document.getElementById('prGateClear').disabled=true;
