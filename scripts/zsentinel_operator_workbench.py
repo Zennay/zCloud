@@ -393,7 +393,8 @@ function saveSelection(){
   const after={
    decision:decision.value,note:note.value.slice(0,1000),
    owner:contactLabel(owner.value),due:validFollowupDate(due.value)?due.value:'',
-   followup_status:before?.followup_status||'open',
+   followup_status:manualGateDecisions.has(decision.value)?
+    (before?.followup_status||'open'):'open',
    carried_from:before?.carried_from||''
   };
   const blank=!after.note&&!after.owner&&!after.due&&
@@ -667,7 +668,9 @@ function previewCarry(data){
       typeof record.owner!=='string'||record.owner.length>80||
       [...record.owner].some(ch=>ch.codePointAt(0)<32||ch==='<'||ch==='>')||
       !validFollowupDate(record.due)||
-      (data.schema_version===3&&!['open','local-complete'].includes(record.followup_status))||
+      (data.schema_version===3&&(
+       !['open','local-complete'].includes(record.followup_status)||
+       (record.followup_status==='local-complete'&&!manualGateDecisions.has(record.decision))))||
       (record.carried_from!==undefined&&
        (typeof record.carried_from!=='string'||
         (record.carried_from!==''&&!/^[a-f0-9]{64}$/.test(record.carried_from)))))))
@@ -1024,7 +1027,9 @@ document.getElementById('restore').addEventListener('change',async event=>{
           typeof v.owner!=='string'||v.owner.length>80||
           [...v.owner].some(ch=>ch.codePointAt(0)<32||ch==='<'||ch==='>')||
           !validFollowupDate(v.due)||
-          (data.schema_version===3&&!['open','local-complete'].includes(v.followup_status))||
+          (data.schema_version===3&&(
+           !['open','local-complete'].includes(v.followup_status)||
+           (v.followup_status==='local-complete'&&!manualGateDecisions.has(v.decision))))||
           (v.carried_from!==undefined&&
            (typeof v.carried_from!=='string'||
             (v.carried_from!==''&&!/^[a-f0-9]{64}$/.test(v.carried_from)))))))
