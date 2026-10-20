@@ -352,8 +352,16 @@ def collect(database, maximum, include_runner_processes=False):
             ),
             # Scope, queue IDs and worker/claim identity are intentionally absent.
         })
+    protected_lanes = sum(
+        lane["admission"]["code"] == "ACTIVE_OWNER_PROTECTED" for lane in visible
+    )
+    active_task_reservations = sum(
+        lane["active_backlog_count"] for lane in visible
+    )
     admission_counts = {
-        "active_owner_protected": sum(lane["admission"]["code"] == "ACTIVE_OWNER_PROTECTED" for lane in visible),
+        "active_owner_protected": protected_lanes,
+        "active_task_reservations": active_task_reservations,
+        "parallel_active_reservations": max(0, active_task_reservations - protected_lanes),
         "held_for_owner_or_source": sum(lane["admission"]["code"].startswith("HOLD_") for lane in visible),
         "local_candidate_external_gates": sum(lane["admission"]["code"] == "CANDIDATE_EXTERNAL_GATES" for lane in visible),
         "no_local_candidate_observed": sum(lane["admission"]["code"] == "NO_LOCAL_CANDIDATE" for lane in visible),
@@ -418,8 +426,10 @@ def text_view(data):
     ]
     summary = data["admission_summary"]
     out.append(
-        "Beslisoverzicht: " + str(summary["active_owner_protected"])
-        + " eigenaars beschermd; " + str(summary["held_for_owner_or_source"])
+        "Beslisoverzicht: " + str(summary["active_task_reservations"])
+        + " actieve taakreserveringen in " + str(summary["active_owner_protected"])
+        + " beschermde banen (" + str(summary["parallel_active_reservations"])
+        + " extra in dezelfde baan); " + str(summary["held_for_owner_or_source"])
         + " banen HOLD; " + str(summary["local_candidate_external_gates"])
         + " lokale kandidaten met externe gates; "
         + str(summary["no_local_candidate_observed"]) + " zonder lokale taak."
@@ -674,7 +684,10 @@ def html_view(data):
     summary = data["admission_summary"]
     admission_banner = (
         "<p class='warn' role='status'>"
-        + str(summary["active_owner_protected"]) + " bestaande eigenaar(s) beschermd · "
+        + str(summary["active_task_reservations"]) + " actieve taken in "
+        + str(summary["active_owner_protected"]) + " beschermde banen · "
+        + str(summary["parallel_active_reservations"])
+        + " extra taakreserveringen binnen dezelfde baan · "
         + str(summary["held_for_owner_or_source"]) + " baan/banen HOLD · "
         + str(summary["local_candidate_external_gates"]) + " lokale kandidaten zonder externe toelating · "
         + str(summary["no_local_candidate_observed"]) + " zonder lokale taak.</p>"
@@ -736,8 +749,12 @@ def markdown_view(data):
         "**Context:** alleen read-only wachtrijobservatie; Notion-claims en"
         " GitHub-releasegates NIET gecontroleerd.",
         "**Beslisoverzicht:** "
+        + str(data["admission_summary"]["active_task_reservations"])
+        + " actieve taken in "
         + str(data["admission_summary"]["active_owner_protected"])
-        + " eigenaars beschermd; "
+        + " beschermde banen ("
+        + str(data["admission_summary"]["parallel_active_reservations"])
+        + " extra binnen dezelfde baan); "
         + str(data["admission_summary"]["held_for_owner_or_source"])
         + " banen HOLD; "
         + str(data["admission_summary"]["local_candidate_external_gates"])
