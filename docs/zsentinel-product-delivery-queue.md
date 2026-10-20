@@ -653,3 +653,31 @@ gedropte vrije taak volgt het bestaande geautoriseerde refillpad.
 
 Dit is broncode op de bestaande PR #1536; geen live queue/claim mutatie,
 QA- of regressiesuite, workerherstart of release uitgevoerd.
+
+
+## 20 oktober · Volledige vs gedeeltelijke afronding zichtbaar in queue-response
+
+De bestaande `portfolio_queue_finish()` registreerde een echte
+`DONE`/`BLOCKED`/`CONTINUE`-overgang, maar gaf vervolgens alleen
+`updated=true` terug, ook wanneer het aanmaken van een vervolgtaak door
+bestaande producer-/eigenaarsregels werd geweigerd of het schrijven van het
+statusbewijs faalde. Daardoor kon een operator het succes van de
+**statusovergang** verwarren met een volledige overdracht aan vervolgwerk.
+
+De backend houdt de bestaande responsevelden en statusovergangen intact,
+maar levert nu daarnaast drie strikt onderscheiden waarden:
+
+- `continuation_status` is een vaste enum:
+  `created`, `not_created`, `rejected_by_producer_guard`,
+  `not_requested` of `original_task_requeued`. De exacte afwijsreden
+  en gevoelige bronvelden worden niet in de publieke response gekopieerd.
+- `state_receipt_saved` is alleen `true` wanneer de bestaande
+  statusbewijsopslag daadwerkelijk zonder uitzondering terugkeerde.
+- `handoff_complete` is alleen `true` wanneer het statusbewijs bewaard
+  is én geen vereiste vervolgstap ontbreekt of is afgewezen.
+
+Een ontbrekende continuation wordt niet automatisch als toegelaten of
+uitgevoerd aangemerkt; de oorspronkelijke `updated=true` blijft
+waarheidsgetrouw uitsluitend voor de database-statusovergang.
+De bestaande beveiligde beheer-API, claims, PR-/CI-reviewvoorwaarden en
+productiedatabase zijn niet gewijzigd buiten de nieuwe broncode.
