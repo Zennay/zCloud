@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""One-shot private owner handoff from an already assembled zSentinel decision.
+
+No provider reads or control-plane writes. Handoff items are suggestions only:
+even an apparent free slot, expired lease or green CI is NOT authorization.
+"""
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
+
+SCHEMA = "zsentinel-runtime-owner-handoff-v1"
+MAX_ITEMS = 24
+MAX_TEXT = 220
+SAFE_PROJECT = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
+SAFE_ISSUE = re.compile(r"^https://github\.com/Zennay/[A-Za-z0-9_.-]+/issues/[1-9][0-9]{0,8}$")
+
+
+def _short(value, limit=MAX_TEXT):
+    if not isinstance(value, str):
+        return "ONBEKEND"
+    return " ".join(value.split())[:limit] or "ONBEKEND"
+
+
+def _project(value):
+    if not isinstance(value, str) or not SAFE_PROJECT.fullmatch(value):
+        raise ValueError("invalid handoff project identity")
+    return value
+
+
+def _card(priority, project, kind, action, *, source="observed_partial", ref=None):
+    if priority not in ("P0", "P1", "P2") or not isinstance(kind, str):
+        raise ValueError("invalid handoff priority or kind")
+    card = {
+        "priority": priority,
+        "project": _project(project),
+        "kind": kind,
+        "next_step": _short(action),
+        "evidence": source,
+        "claim_authorized": False,
+        "retry_authorized": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+        "owner_verification_required": True,
+    }
+    if ref is not None and isinstance(ref, str) and SAFE_ISSUE.fullmatch(ref):
+        card["issue_url"] = ref
+    return card
+
+
+def build_handoff(decision):
+    """Prioritize exact incidents, owner/lease conflicts, and open product work.
+
+    The handoff does not infer absence of work from a missing/partial source.
+    Limited source samples are not promoted into a complete project state.
+    """
+    if not isinstance(decision, dict):
+        raise ValueError("missing source-bound recovery decision")
+    sources = decision.get("live_sources")
+    incidents = decision.get("incidents")
+    if not isinstance(sources, dict) or not isinstance(incidents, list) or len(incidents) > 200:
+        raise ValueError("handoff requires assembled live source provenance")
+    cards = []
+    for item in incidents:
+        if not isinstance(item, dict) or item.get("severity") not in ("P0", "P1", "P2"):
+            raise ValueError("malformed fresh incident")
+        cards.append(_card(item["severity"], item.get("project_id"),
+                           "fresh_incident", item.get("action"),
+                           source="bounded_fresh_incident"))
+    worker = decision.get("worker_progress_observation")
+    worker_coverage = "not_requested"
+    if worker is not None:
+        if (not isinstance(worker, dict)
+                or worker.get("schema") != "zsentinel-worker-progress-observation-v1"
+                or worker.get("source") != "existing_sqlite_mode_ro_query_only_indexed_runner_events"
+                or worker.get("actions_performed") is not False
+                or worker.get("live_worker_claims_verified") is not False
+                or worker.get("worker_resumed_verified") is not False
+                or worker.get("runner_restart_authorized") is not False):
+            raise ValueError("untrusted worker progress source")
+        worker_coverage = _short(worker.get("coverage"), 80)
+        followups = worker.get("owner_followup_candidates")
+        if not isinstance(followups, list) or len(followups) > 24:
+            raise ValueError("unbounded worker followup list")
+        seen = set()
+        for item in followups:
+            if (not isinstance(item, dict)
+                    or item.get("owner_claim_verified") is not False
+                    or item.get("recovery_authorized") is not False
+                    or item.get("continuation_verified") is not False
+                    or type(item.get("worker_slot")) is not int
+                    or not 1 <= item["worker_slot"] <= 16):
+                raise ValueError("untrusted worker owner followup")
+            project = _project(item.get("project_id"))
+            key = (project, item["worker_slot"])
+            if key in seen:
+                raise ValueError("duplicate worker owner followup")
+            seen.add(key)
+            cls = item.get("classification")
+            priority = ("P0" if cls == "allocated_paused_with_claimed_queue_owner_gate"
+                        else "P1")
+            cards.append(_card(priority, project, "worker_owner_review",
+                               "Worker " + str(item["worker_slot"]) + ": " +
+                               _short(item.get("safe_followup"), 150),
+                               source="indexed_browser_event_and_queue_sample"))
+    pressure = decision.get("live_queue_pressure")
+    queue_coverage = "not_requested_or_unavailable"
+    if pressure is not None:
+        if (not isinstance(pressure, dict)
+                or pressure.get("claim_ownership_verified") is not False):
+            raise ValueError("untrusted queue pressure contract")
+        queue_coverage = _short(pressure.get("coverage", pressure.get("source")), 80)
+        # An aggregate must never invent a new owner or translate attempts to failures.
+        if pressure.get("queue_write_authorized") is True:
+            raise ValueError("queue write authority cannot come from a read-only handoff")
+    issue = decision.get("open_product_issue_triage")
+    issue_coverage = "not_requested_or_unavailable"
+    if issue is not None:
+        if not isinstance(issue, dict):
+            raise ValueError("invalid open issue triage")
+        records = issue.get("issues", [])
+        if not isinstance(records, list) or len(records) > 60:
+            raise ValueError("unbounded issue sample")
+        issue_coverage = "bounded_issue_sample_never_complete"
+        seen_urls = set()
+        for row in records:
+            if not isinstance(row, dict):
+                raise ValueError("invalid issue row")
+            priority = row.get("priority")
+            url = row.get("issue_url")
+            if priority not in ("P0", "P1") or not isinstance(url, str):
+                continue
+            if url in seen_urls or not SAFE_ISSUE.fullmatch(url):
+                continue
+            seen_urls.add(url)
+            cards.append(_card(priority, row.get("project_id"), "open_product_issue",
+                               row.get("action") or "Controleer bestaande open PR en eigenaar",
+                               source="bounded_open_issue_sample", ref=url))
+    # Priority before kind: make owner/incident work visible before new intake.
+    order = {"P0": 0, "P1": 1, "P2": 2}
+    kind_order = {"fresh_incident": 0, "worker_owner_review": 1, "open_product_issue": 2}
+    cards.sort(key=lambda c: (order[c["priority"]], kind_order[c["kind"]],
+                              c["project"], c.get("issue_url", ""), c["next_step"]))
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return {
+        "schema": SCHEMA,
+        "created_at_utc": stamp,
+        "coverage": {"github": _short(sources.get("github_jobs"), 80)
+                     if isinstance(sources.get("github_jobs"), str)
+                     else "bounded_exact_job_receipts_only",
+                     "queue": queue_coverage, "workers": worker_coverage,
+                     "issues": issue_coverage, "notion": _short(sources.get("notion"), 80)},
+        "priority_items": cards[:MAX_ITEMS],
+        "items_truncated": len(cards) > MAX_ITEMS,
+        "all_sources_complete": False,
+        "owner_and_current_claim_verified": False,
+        "human_review_required": True,
+        "actions_performed": False,
+        "worker_resumed_verified": False,
+        "merge_authorized": False,
+        "deploy_authorized": False,
+    }
+
+
+def markdown(report):
+    if (not isinstance(report, dict) or report.get("schema") != SCHEMA
+            or report.get("actions_performed") is not False
+            or report.get("merge_authorized") is not False):
+        raise ValueError("invalid handoff report")
+    lines = ["# zSentinel · actuele eigenaaroverdracht",
+             "Bronmoment: " + _short(report.get("created_at_utc"), 40),
+             "",
+             "**Alleen brongebonden advies.** Geen claim, CI-herstart, merge, "
+             "VPS-herstel of deploy uitgevoerd of toegestaan.",
+             "",
+             "## Bronbereik (nooit volledig)"]
+    for label, value in report["coverage"].items():
+        lines.append("- " + _short(label, 24) + ": " + _short(value, 100))
+    lines.append("")
+    lines.append("## Prioritaire opvolging")
+    for n, card in enumerate(report["priority_items"], 1):
+        lines.append(str(n) + ". **" + card["priority"] + " " +
+                     _short(card["project"]) + "** · " + _short(card["kind"]) +
+                     " · " + _short(card["next_step"]))
+        if card.get("issue_url"):
+            lines.append("   Bestaand issue: " + card["issue_url"])
+    if not report["priority_items"]:
+        lines.append("Geen actie in de beperkte steekproef; brongebrek is geen groen licht.")
+    if report["items_truncated"]:
+        lines.append("Meer items niet getoond; geen volledige werkvoorraad.")
+    lines.extend(["", "Eigenaar moet actuele claims, exacte PR-head, CI, reviews "
+                  "en releasebevoegdheid apart verifiëren.", ""])
+    return "\n".join(lines)
+
+
+def serialize(report, suffix):
+    if suffix == ".md":
+        return markdown(report)
+    if suffix == ".json":
+        return json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2)
+    raise ValueError("private handoff output must be .md or .json")
