@@ -1003,3 +1003,44 @@ verschijnen ook binnen P0/P1-issuekaarten via de bestaande PR-link; zonder
 historische bron of bij niet-stabiele opname blijft de relatie onbekend.
 Een positief steekproefverschil is nooit een geverifieerde bugfix,
 succesvolle merge, runner-herstel of toestemming om andermans claim te nemen.
+
+
+## 20 oktober · Merge-eerst P0/P1 operatorwerkbak met één bronopvraag
+
+De bestaande gecombineerde issue/PR-cockpit bevat nu een **menselijke
+merge-eerst werklijst** boven de issuekaarten. De werklijst verwerkt
+de al opgehaalde issue- en PR-bestandsinformatie, optioneel actuele
+exact-HEAD check/reviewwaarnemingen en optioneel historische PR-snapshots.
+Er worden **geen aanvullende GitHub-GETs** uitgevoerd om deze
+actiecategorieën te berekenen; de oorspronkelijke bronbudgetten blijven gelden.
+
+Per issue staat een bestaande gevonden PR vóór nieuwe implementatie.
+Een zichtbaar P0-infrastructuurissue zoals #1326 is expliciet
+**human-only**; een PR met falende gates wordt naar de actuele PR-eigenaar
+verwezen; lopende/missende checkgates krijgen een HOLD die alleen die PR
+raakt; bestandsoverlap wijst naar ownerafstemming. Geen enkele categorie
+mag een claim, release, merge of dispatch autoriseren.
+
+Maak een compacte overdracht voor een eigenaar:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud --max-prs 10 \
+  --inspect-pr-gates --format worklist-markdown \
+  --worklist-limit 20 --output /private/zsentinel-p0-werkbrief.md
+```
+
+De volledige offline HTML, JSON, tekst en Markdown bevatten dezelfde
+geprioriteerde werkbak. Gebruik `--format worklist-json` of
+`--format worklist-text` voor een kort handoff-artifact. De rijlimiet is
+1–60; verborgen rijen worden geteld en mogen niet als afwezig beschouwd
+worden. Alleen `--output` schrijft lokaal en maakt exclusief een
+**nieuw 0600-bestand**; zonder deze optie schrijft de opdracht stdout.
+Er wordt geen Notion-claim, workerjob, PR-review, GitHub-write,
+runnerrecovery, test of deploy uitgevoerd.
+
+Wanneer `--compare-previous` is meegegeven, markeert de werklijst
+PR-beweging tussen twee bronmomenten, maar zelfs een gewijzigde HEAD
+geeft geen automatische eigenaar- of mergevrijgave. Verplichte exact-head
+CI, onafhankelijke review, eigenaarsclaims en branchregels blijven externe
+verplichtingen.
