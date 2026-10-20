@@ -159,3 +159,25 @@ of live runnerreparatie. De ongewijzigde veiligheids-,
 CI-, review- en eigenaargates blijven verplicht. Er is
 geen QA-/regressiesuite aangemaakt of gedraaid en geen
 zSSH-schrijfactie of live queue-mutatie uitgevoerd.
+
+
+### 20 oktober · Producerbeleid voor werkelijk nieuw werk
+
+Het historische `portfolio_write_continuation()` maakte nog
+**nieuwe** werkopdrachten die automatische tests expliciet verplicht
+stelden. Dit kon de product-only toelating in de praktijk
+ondergraven: een worker ontving een gemengde producttaak met
+oude QA-instructies en mocht ondanks het beleidsbesluit van
+17 oktober een regressieronde beginnen.
+
+De producent geeft voortaan voor *nieuwe* zSentinel-, zSSH-
+en reguliere projectcontinuations een bouw-/integratie-/
+probleemoplossingsopdracht met slechts directe functionele
+inspectie of build-bewijs. De oude formuleringen die het schrijven
+of draaien van tests verplicht stelden zijn geschrapt.
+Bestaande verplichte CI-workflows, onafhankelijke security-/red-team-
+en code-reviewgates blijven expliciet verplicht en mogen
+nooit door productpolicy of de worker worden omzeild.
+
+Dit is **geen wijziging aan reeds geclaimde of lopende
+werkopdrachten**. De branche is nog geen live deploy.
