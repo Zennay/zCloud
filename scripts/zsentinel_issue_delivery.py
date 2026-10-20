@@ -860,6 +860,39 @@ def render_markdown(board):
         lines.append("Expliciet opgeslagen privé-bronvensters; geen live-opvraag.")
     progress = board.get("progress_since_previous")
     notion = board.get("notion_active_work_observation")
+    delta = portfolio_pr_delta_source(board)
+    if delta is not None:
+        lines.extend([
+            "", "## PR-bronveranderingen sinds vorige portfolio-opname",
+            "Eerdere bron: " + _markdown_literal(
+                delta["previous_observed_at_utc"], 50),
+            "Huidige bron: " + _markdown_literal(
+                delta["current_observed_at_utc"], 50),
+            "Waargenomen HEAD-wijzigingen: " +
+            str(delta["changed_listed_head_count"]),
+            "Nieuw in beperkte steekproef (NIET nieuw PR): " +
+            str(delta["newly_sampled_not_new_pr_count"]),
+            "Niet langer gesampled (NOOIT merge-/sluitingsbewijs): " +
+            str(delta["prior_not_in_current_bounded_sample_count"]),
+            "Bronwaarnemingen vereisen actuele CI/review/ownercontrole. "
+            "Geen volledig PR-overzicht of mergeautoriteit."
+        ])
+        for row in delta["changed_or_newly_observed"][:60]:
+            lines.append("- [" + _markdown_literal(row["url"], 180) +
+                         "](" + row["url"] + ") · " +
+                         _markdown_literal(
+                             ", ".join(row["changes"]) or row["state"], 160) +
+                         " · HEAD " + row["listed_head_sha"][:12] +
+                         " · GEEN mergeautorisatie")
+        for row in delta["prior_no_longer_observed_NOT_MERGED"][:40]:
+            lines.append("- EERDER GEZIEN, NU NIET SAMPLED: [" +
+                         _markdown_literal(row["url"], 180) +
+                         "](" + row["url"] + ") · " +
+                         _markdown_literal(row["state"], 100) +
+                         " · NIET GEMERGED/GEVERIFIEERD GESLOTEN")
+        if (len(delta["changed_or_newly_observed"]) > 60 or
+                len(delta["prior_no_longer_observed_NOT_MERGED"]) > 40):
+            lines.append("- Aanvullende bronverschillen staan in privé JSON.")
     windows = board.get("source_windows", [])
     queue = board.get("queue_pressure_observation")
     change_map = {}
