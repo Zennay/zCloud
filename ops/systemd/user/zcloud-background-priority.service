@@ -1,0 +1,9 @@
+[Unit]
+Description=Yield Fuckball background CPU to zSentinel and GitHub runners
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/ubuntu/.local/bin/zcloud-background-priority.py
+NoNewPrivileges=true
+
