@@ -192,3 +192,19 @@ Voer de cockpit uit met `--live-issues` of exclusief met `--issue-board`. De JSO
 ### Bounded bronverkeer voor grote PR-beschrijvingen
 
 De open-PR-metadata gebruikt nu maximaal **48 PR's op de eerste pagina** in plaats van 100, omdat volledige PR-beschrijvingen bij een groot project de begrensde GitHub-response kunnen overschrijden. De bestandslijsten blijven begrensd tot 100 bestanden per PR. Bij precies 48 ontvangen PR's is de open-PR-inventaris **ONVOLLEDIG/UNKNOWN**, ook als 48 toevallig het werkelijke totaal is. Dit versnelt een bruikbare *positieve* gedeeltelijke PR→issue- en gedeelde-bestandsscopelezing in drukke projecten zonder valse 'geen overlap'-conclusies. Er is geen automatische paginering of tweede claimbron toegevoegd.
+
+
+## Eén bestaande blokkade gericht uitwerken
+
+De live-/offline Product Delivery Cockpit kan nu in dezelfde codebasis een **één-issue-herstelkaart** maken met `--focus-issue`. Hiermee hoeft de operator niet door een volledig portfolio-overzicht te zoeken wanneer al duidelijk is welk P0/P1-issue aangepakt moet worden:
+
+```bash
+python3 scripts/zsentinel_issue_scope_cockpit.py \
+  --live-issues --project cloud \
+  --focus-issue 'Zennay/zCloud#1326' \
+  --format markdown
+```
+
+De gefocuste kaart combineert issuetitel, prioriteit, originele Workbench-adviezen/bronhiaten, gevonden bestaande PR's (inclusief positieve vermeldingen uit een beperkte stabiele lijst), geobserveerde bestandsbotsingen en eventuele historische CI-/reviewbewijsverwijzingen. Voor eigenaar-only issues zoals zCloud #1326 of #1523 blijft de tekst expliciet **bevoegde menselijke eigenaar vereist**; er wordt nooit een restart/claim/merge/retry uitgevoerd.
+
+**Belangrijk:** als het exacte `Zennay/Repo#nummer` niet voorkomt in de begrensde actuele issuesample, wordt dit met exitcode 3 gemeld als *niet aangetroffen in de steekproef*. Het product beweert niet dat het issue gesloten of opgelost is. Het selecteren van een issue verandert ook nooit de originele private bron-SHA of de werkelijke bronobservatietijd.
