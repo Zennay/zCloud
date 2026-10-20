@@ -393,8 +393,13 @@ function acceptBaseline(data){
   if(c.open_pr_candidates.some(p=>typeof p!=='string'||!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]{0,8}$/.test(p))||
      c.evidence_gaps.some(g=>typeof g!=='string'||g.length>300))
        throw Error('invalid earlier evidence');
+  if(typeof c.title!=='string'||!c.title.trim()||c.title.length>180||
+     typeof c.recommended_next_step!=='string'||c.recommended_next_step.length>650||
+     c.open_pr_candidates.some(p=>!p.startsWith('https://github.com/'+c.issue.split('#')[0]+'/pull/')))
+       throw Error('invalid earlier issue detail or cross-repository PR');
   items.set(c.issue,{issue:c.issue,project:c.project,priority:c.priority,
-   prs:new Set(c.open_pr_candidates),gaps:c.evidence_gaps.length});
+   title:c.title,next:c.recommended_next_step,
+   prs:new Set(c.open_pr_candidates),gaps:new Set(c.evidence_gaps)});
  }
  return {observed_at_utc:data.observed_at_utc,items,
   coverage:{projects:cov.projects,inbox_truncated:cov.inbox_truncated,
@@ -407,11 +412,16 @@ function changesSinceBaseline(){
  for(const c of board.cards){
   const old=baseline.items.get(c.issue);
   if(!old){result.push({kind:'new-observation',issue:c.issue,priority:c.priority});continue;}
-  const changed=old.priority!==c.priority||
-    old.prs.size!==new Set(c.open_pr_candidates).size||
-    c.open_pr_candidates.some(p=>!old.prs.has(p))||
-    old.gaps!==c.evidence_gaps.length;
-  result.push({kind:changed?'changed-evidence':'still-observed',issue:c.issue,priority:c.priority});
+  const changedFields=[];
+  if(old.priority!==c.priority)changedFields.push('priority '+old.priority+' → '+c.priority);
+  if(old.title!==c.title)changedFields.push('issue title');
+  if(old.next!==c.recommended_next_step)changedFields.push('recommended investigation');
+  if(old.prs.size!==new Set(c.open_pr_candidates).size||
+     c.open_pr_candidates.some(p=>!old.prs.has(p)))changedFields.push('referenced PRs');
+  if(old.gaps.size!==new Set(c.evidence_gaps).size||
+     c.evidence_gaps.some(g=>!old.gaps.has(g)))changedFields.push('missing evidence');
+  result.push({kind:changedFields.length?'changed-evidence':'still-observed',
+    issue:c.issue,priority:c.priority,changedFields});
  }
  for(const old of baseline.items.values())if(!now.has(old.issue))
    result.push({kind:'not-observed',issue:old.issue,priority:old.priority});
@@ -452,6 +462,8 @@ function refreshComparison(){
   subset.forEach(e=>{
    const li=elem('li');
    li.append(elem('strong',title+' · '),elem('span',e.priority+' '+e.issue));
+   if(e.changedFields?.length)
+     li.append(elem('small',' · Changed: '+e.changedFields.join(', ')));
    if(e.kind!=='not-observed'){
     const b=elem('button','Inspect current issue');b.type='button';
     b.onclick=()=>{saveSelection();invalidateBrief();selected=e.issue;drawList();drawDetail();detail.scrollIntoView({block:'nearest'});};
@@ -509,7 +521,9 @@ function currentBrief(){
       '; current coverage: '+(board.coverage.inbox_truncated||board.coverage.cards_truncated||board.coverage.github_denial?
        'truncated, bounded or denied':'bounded partial')+'.',
     ...['new-observation','changed-evidence','still-observed','not-observed'].map(kind=>
-     kind+': '+diff.filter(item=>item.kind===kind).map(item=>line(item.issue,110)).join(', ')),
+     kind+': '+diff.filter(item=>item.kind===kind).map(item=>
+      line(item.issue,110)+(item.changedFields?.length?
+       ' ['+item.changedFields.map(x=>line(x,100)).join('; ')+']':'' )).join(', ')),
     '');
  }
  lines.push('No live reassignment, dispatch, queue mutation or production readiness is asserted.','');
