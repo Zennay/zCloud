@@ -1065,6 +1065,19 @@ def operator_text(result):
             f"Action ({item['owner']}): {item['action']}",
             f"Status: {item['status']} · review {item['target_review_by']}",
         ))
+        exact = item.get("exact_github_job")
+        if exact is not None:
+            if (type(exact) is not dict or set(exact) != {"run_id", "job_id", "head_sha"}
+                    or type(exact["run_id"]) is not int
+                    or type(exact["job_id"]) is not int
+                    or not 1 <= exact["run_id"] <= 2**53 - 1
+                    or not 1 <= exact["job_id"] <= 2**53 - 1
+                    or type(exact["head_sha"]) is not str
+                    or not SHA.fullmatch(exact["head_sha"])):
+                raise ValueError("untrusted exact operator job identity")
+            lines.append("Exact GitHub job (read only): run " +
+                         str(exact["run_id"]) + " / job " +
+                         str(exact["job_id"]) + " / HEAD " + exact["head_sha"])
     if not result["incidents"]:
         lines.append("No actionable fresh incidents; unknown or missing evidence does not mean healthy.")
     lines.append(f"Independent work suggestions (not claimed): {len(result['independent_task_suggestions'])}")
