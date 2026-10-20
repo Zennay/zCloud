@@ -217,28 +217,34 @@ def build(report):
     # issue cards and their independent ownership and source gaps intact.
     by_pr = {}
     for card in cards:
-        pr_url = card["candidate_existing_pr_url"]
-        if pr_url is None:
-            continue
-        group = by_pr.setdefault(pr_url, {
-            "pr_url": pr_url,
-            "highest_priority": card["priority"],
-            "linked_issue_urls_in_source": [],
-            "issue_categories_observed": [],
-            "fixes_all_linked_issues_verified": False,
-            "current_owner_verified": False,
-            "merge_authorized": False,
-        })
-        if ORDER[card["priority"]] < ORDER[group["highest_priority"]]:
-            group["highest_priority"] = card["priority"]
-        group["linked_issue_urls_in_source"].append(card["issue_url"])
-        if card["category"] not in group["issue_categories_observed"]:
-            group["issue_categories_observed"].append(card["category"])
+        # Every referenced existing PR is a potential integration point.
+        # Restricting the grouped view to the selected primary PR can hide
+        # a second PR owned by someone else and invite duplicate work.
+        for linked in card["all_existing_pr_candidates_in_sample"]:
+            pr_url = linked["url"]
+            group = by_pr.setdefault(pr_url, {
+                "pr_url": pr_url,
+                "highest_priority": card["priority"],
+                "linked_issue_urls_in_source": [],
+                "primary_issue_urls_in_source": [],
+                "issue_categories_observed": [],
+                "fixes_all_linked_issues_verified": False,
+                "current_owner_verified": False,
+                "merge_authorized": False,
+            })
+            if ORDER[card["priority"]] < ORDER[group["highest_priority"]]:
+                group["highest_priority"] = card["priority"]
+            group["linked_issue_urls_in_source"].append(card["issue_url"])
+            if pr_url == card["candidate_existing_pr_url"]:
+                group["primary_issue_urls_in_source"].append(card["issue_url"])
+            if card["category"] not in group["issue_categories_observed"]:
+                group["issue_categories_observed"].append(card["category"])
     pr_groups = sorted(by_pr.values(), key=lambda g: (
         ORDER[g["highest_priority"]], -len(g["linked_issue_urls_in_source"]),
-        g["pr_url"]))
+        -len(g["primary_issue_urls_in_source"]), g["pr_url"]))
     for group in pr_groups:
         group["linked_issue_count_observed"] = len(group["linked_issue_urls_in_source"])
+        group["primary_issue_count_observed"] = len(group["primary_issue_urls_in_source"])
         group["additional_issues_do_not_prove_fixes"] = True
     totals = Counter(item["category"] for item in cards)
     return {
