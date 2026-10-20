@@ -422,6 +422,10 @@ def to_html(rows, unmatched, partial, observed, targeted=None, target_coverage=N
                 esc(target_coverage["search_examined"]) +
                 " · Bron: " + esc(target_coverage["source"]) + "</p>"
             )
+            if target_coverage.get("auto_pages_observed", 1) > 1:
+                target_section += ("<p>Automatisch gelezen pagina\u0027s: " +
+                    esc(", ".join(str(p["candidate_page"]) for p in target_coverage["page_windows"])) +
+                    ". Niet-atomaire GitHub-zoekbron; geen volledig actueel PR-bewijs.</p>")
             if target_coverage["next_page"] is not None:
                 target_section += (
                     "<p>Volgende zoekpagina: " +
@@ -449,6 +453,8 @@ def main():
                      help="target one known open issue outside the recent PR window; requires one --project")
     cli.add_argument("--candidate-page", type=int, default=1,
                      help="continue targeted issue search on page 1–50 of 20 PRs")
+    cli.add_argument("--auto-pages", type=int, default=1,
+                     help="follow 1–3 existing PR search pages within the same bounded run")
     cli.add_argument("--output", help="create new private 0600 offline .html (never overwrite)")
     cli.add_argument("--snapshot-output",
                      help="save this targeted issue search page as a NEW private 0600 JSON snapshot")
@@ -463,6 +469,12 @@ def main():
         cli.error("--candidate-page must be between 1 and 50")
     if args.issue is None and args.candidate_page != 1:
         cli.error("--candidate-page requires --issue")
+    if not 1 <= args.auto_pages <= 3 or args.candidate_page + args.auto_pages - 1 > MAX_TARGET_PAGES:
+        cli.error("--auto-pages must remain inside page 1–50 and be at most 3")
+    if args.issue is None and args.auto_pages != 1:
+        cli.error("--auto-pages requires --issue")
+    if args.snapshot_output and args.auto_pages != 1:
+        cli.error("--snapshot-output requires exactly one source page")
     if args.snapshot_output and args.issue is None:
         cli.error("--snapshot-output requires a targeted --issue")
     if args.snapshot_output and args.output:
@@ -472,9 +484,9 @@ def main():
         budget = [0, time.monotonic() + board.MAX_SECONDS]
         targeted = None
         if args.issue is not None:
-            rows, targeted, partial, target_coverage = collect_targeted(
+            rows, targeted, partial, target_coverage = collect_targeted_windows(
                 args.project[0], args.issue, registry, budget,
-                candidate_page=args.candidate_page)
+                candidate_page=args.candidate_page, auto_pages=args.auto_pages)
             unmatched = []
         else:
             rows, unmatched, partial = collect(args.project, registry, budget)
