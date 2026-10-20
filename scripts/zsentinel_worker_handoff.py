@@ -130,12 +130,39 @@ def compare_worker_snapshots(prior, current):
         else:
             label = "opnieuw_waargenomen_geen_continuiteitsbewijs"
             next_step = "Observeer eigenaarclaim en productoutput apart; geen automatische overname."
+        # A browser heartbeat can change recency classifications without
+        # creating a new progress event. Compare stable indexed event cursors
+        # only within the same selected worker slot. They remain unbound to
+        # any queue claim epoch and are NEVER proof of delivered code.
+        cursor_signal = "historic_event_cursor_unavailable"
+        progress_signal = "historic_progress_cursor_unavailable"
+        if before is not None and after is not None:
+            previous_id = before.get("latest_indexed_event_id")
+            current_id = after.get("latest_indexed_event_id")
+            if type(previous_id) is int and type(current_id) is int:
+                if current_id > previous_id:
+                    cursor_signal = "new_indexed_browser_events_observed"
+                elif current_id == previous_id:
+                    cursor_signal = "same_last_event_no_new_indexed_browser_activity"
+                else:
+                    cursor_signal = "event_cursor_regressed_owner_source_recheck"
+            previous_progress = before.get("latest_indexed_progress_event_id")
+            current_progress = after.get("latest_indexed_progress_event_id")
+            if type(previous_progress) is int and type(current_progress) is int:
+                if current_progress > previous_progress:
+                    progress_signal = "new_browser_progress_event_not_product_proof"
+                elif current_progress == previous_progress:
+                    progress_signal = "no_new_indexed_progress_event_observed"
+                else:
+                    progress_signal = "progress_cursor_regressed_owner_source_recheck"
         changes.append({
             "project_id": key[0],
             "worker_slot": key[1],
             "previous_classification": state_before,
             "current_classification": state_now,
             "interpretation": label,
+            "event_cursor_observation": cursor_signal,
+            "progress_cursor_observation": progress_signal,
             "safe_next_step": next_step,
             "owner_verified": False,
             "claim_epoch_bound": False,
@@ -193,6 +220,8 @@ def _continuity_html(transition):
             escape(row["interpretation"]) + " · eerder: " +
             escape(row["previous_classification"] or "ONBEKEND") +
             " → nu: " + escape(row["current_classification"] or "ONBEKEND") +
+            ". Eventcursor: " + escape(row["event_cursor_observation"]) +
+            "; voortgangscursor: " + escape(row["progress_cursor_observation"]) +
             ". " + escape(row["safe_next_step"]) + "</li>"
         )
     return (
@@ -217,7 +246,9 @@ def _continuity_markdown(transition):
             ": " + row["interpretation"] + " (" +
             (row["previous_classification"] or "ONBEKEND") + " → " +
             (row["current_classification"] or "ONBEKEND") +
-            "). " + row["safe_next_step"])
+            "). Eventcursor: " + row["event_cursor_observation"] +
+            "; voortgangscursor: " + row["progress_cursor_observation"] +
+            ". " + row["safe_next_step"])
     return "\n".join(out)
 
 
@@ -321,6 +352,13 @@ def render_markdown(receipt, previous=None):
                 str(age) + "s" if type(age) is int else "ONBEKEND") +
             "; progress-tijdsignaal: " + (
                 str(progress) + "s" if type(progress) is int else "ONBEKEND") + ".",
+            "- Indexed eventcursor: " +
+            (str(row["latest_indexed_event_id"])
+             if type(row.get("latest_indexed_event_id")) is int else "ONBEKEND") +
+            "; expliciete progress-eventcursor: " +
+            (str(row["latest_indexed_progress_event_id"])
+             if type(row.get("latest_indexed_progress_event_id")) is int else
+             "ONBEKEND") + " (geen claim-epoch of productbewijs).",
             "- Veilige volgende actie: " + STEP[followup],
         ])
         if type(timeline) is dict:
