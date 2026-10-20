@@ -8,7 +8,7 @@ python3 scripts/zcloud_vps_preflight.py --json --expected-main-sha "$VERIFIED_MA
 
 Set `VERIFIED_MAIN_SHA` to an independently obtained *current* 40-character GitHub main SHA before invoking the command; never infer it from the dirty VPS checkout. This optional binding reports a blocked local-vs-main drift. Without the SHA the output is partial even if all local checks pass, never release authorized. Git identity comes from the checkout with inherited Git override environment variables excluded.
 
-This command inspects local Git worktree identity and tracked/untracked changes, the dedicated zCloud self-hosted Runner.Listener, its unit state where readable, memory/swap and free disk. It never executes Git writes, restarts a service, calls an API, contacts GitHub, accesses SQLite, modifies workers or authorizes a release. No raw process arguments, file contents or credentials are returned. Exit codes: 2 = blocked, 1 = partial visibility, 0 = local checks clear (not permission to deploy).
+This command inspects local Git worktree identity and tracked/untracked changes, the dedicated zCloud self-hosted Runner.Listener, its unit state where readable, memory/swap and free disk. It checks both system and user systemd managers, ignoring the misleading `ActiveState=inactive` response of a **unit that is not loaded**. If both managers contain the same loaded runner unit but disagree on state, the result is **ambiguous / blocked** instead of silently choosing whichever was queried first. If the unit cannot be verified, the release board says `unit_unverified`, even if a listener process was seen. It never executes Git writes, restarts a service, calls an API, contacts GitHub, accesses SQLite, modifies workers or authorizes a release. No raw process arguments, file contents or credentials are returned. Exit codes: 2 = blocked, 1 = partial visibility, 0 = local checks clear (not permission to deploy).
 
 **Critical limitation:** a clean local report is not evidence of protected-main approval, exact-head CI, active GitHub runner registration, a healthy web UI, owner leases or production status. Existing #1326 runner recovery, #1447 writer serialization and #580/#1089 release ownership are still required. Do not act on a failed/inactive runner merely from this report. Staged isolated execution in a scratch location can be used to inspect the live host without changing its dirty production checkout.
 
@@ -36,12 +36,12 @@ Severity changes such as a warning becoming a hard blocker are reported separate
 
 ## Bounded disk triage (optional)
 
-Add `--disk-hotspots` to include disk sizes for **five specifically named categories** only: checkout, zCloud runner installation, user cache, Gradle cache and RaiseAI build directory alongside the checkout's parent. All `du` operations are read-only, use argv rather than shell expansion, and have a three-second deadline each. Missing or timed-out categories are shown as **incomplete**, never as zero. Default runs incur **no recursive disk scan**. The operator can inspect candidates before any separately authorized cleanup; the preflight cannot remove caches, log files, runner builds or other workers' files.
+Add `--disk-hotspots` to include disk sizes for **five specifically named categories** only: checkout, zCloud runner installation, user cache, Gradle cache and RaiseAI build directory alongside the checkout's parent. All `du` operations are read-only, use argv rather than shell expansion, and have a three-second deadline each. Missing, symlinked, unreadable or timed-out categories are shown as **incomplete**, never as zero. Default runs incur **no recursive disk scan**. The operator can inspect candidates before any separately authorized cleanup; the preflight cannot remove caches, log files, runner builds or other workers' files.
 
 
 ## Inspect external archive availability without moving data
 
-Use `--archive-readiness` to inspect the configured `/home/ubuntu/VPS-Archief` mount as part of the same read-only report. This checks the *exact* mountpoint in `/proc/self/mountinfo`; an unmounted directory is not mistaken for an archive. It also detects the existing rclone process when it explicitly runs with `--read-only`, without printing arguments, secrets or environment variables.
+Use `--archive-readiness` to inspect the configured `/home/ubuntu/VPS-Archief` mount as part of the same read-only report. This checks the *exact* mountpoint in `/proc/self/mountinfo`; an unmounted directory is not mistaken for an archive. It also parses NUL-separated Linux `/proc/<pid>/cmdline` arguments to detect an existing rclone client explicitly started with `--read-only`, without printing arguments, secrets or environment variables. An unreadable process remains unknown, **not** proof of writability.
 
 ```sh
 python3 scripts/zcloud_vps_preflight.py --archive-readiness --format html > private-preflight.html
@@ -87,7 +87,7 @@ In addition to the individual detailed sections, every text, JSON and HTML repor
 | `preserve_checkout` | tracked/untracked checkout modifications | Never |
 | `runner_identity` | listener process / local service observation | Never; GitHub assigned-job evidence required |
 | `host_capacity` | live RAM, swap and disk headroom | Never; capacity isn't reserved |
-| `worker_safe_idle` | opt-in read-only queue claims and recent browser reports | Never; actual independent idle/lease confirmation required |
+| `worker_safe_idle` | opt-in read-only queue claims and recent browser reports | Never; **incomplete evidence is blocked**, actual independent idle/lease confirmation required |
 | `external_archive` | optional FUSE mount presence / known explicit read-only modes | Never; encrypted remote transfer authorizations separate |
 | `required_exact_head_ci` | always `external_gate_required` | Existing exact-HEAD GitHub checks |
 | `independent_review` | always `external_gate_required` | Existing human independent approval |
