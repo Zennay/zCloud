@@ -59,6 +59,36 @@ python3 scripts/zsentinel_issue_first_board.py --project cloud --issue 1326 \
 - De zoekresultaten zijn slechts een kandidatenlijst. Alleen expliciete brongebonden issueverwijzingen `fixes #N`, `refs #N` in de body, óf expliciete `#N` in de PR-titel op dezelfde repository worden gekoppeld. De oorspronkelijke én laatste titel en beschrijving moeten allebei ongewijzigd zijn tegenover de eerste huidige PR-bron. Maximaal 32 bekeken kandidaten en 4 gekoppelde product-PRs; overige zoekresultaten blijven expliciet `CANDIDATE_WINDOW_32`/UNKNOWN. De laatste exacte issue-opvraag moet nog steeds `open` melden. Een tussentijds gewijzigde PR-body **of titel** wordt geweigerd, ook als de Git commit ongewijzigd bleef.
 - Alle bronnen en één privé offline HTML worden begrensd door hetzelfde totale 84-GET / 120s budget. De HTML toont het gerichte issue, zoekdekking, PRs met concrete next-gate en de onvolledigheidswaarschuwingen. Geen automatische issueclaim, workflowrestart, PR-merge, deploy of P0-statuswijziging.
 
+### P0/P1 in één opdracht over meerdere bestaande PR-zoekpagina's
+
+Bij een bekend kritisch issue kan de issue-first werkbak nu **zonder handmatige
+tussenstappen** maximaal drie aaneengesloten GitHub Search-pagina's doorlopen
+binnen het **bestaande gezamenlijke 84-GET / 120s-budget**:
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py \
+  --project cloud --issue 1326 --candidate-page 1 --auto-pages 3 \
+  --output /private/issue-1326-three-pages.html
+```
+
+Voor elke pagina worden bestaande nog open PR-kandidaten via de actuele echte
+GitHub-bron opnieuw gelezen, inclusief HEAD, checks, review en eventuele
+expliciete issueverwijzingen. De output combineert maximaal twaalf rechtstreeks
+geobserveerde PR-kaarten, toont de werkelijk bekeken pagina's en de volgende
+nog te bekijken pagina. Veranderende zoektotalen, dubbele kandidaten, inmiddels
+veranderde HEADs, ontbrekende issueverificatie, einde van bronbudget of
+onbeschikbare latere pagina blijven expliciet **PARTIAL**; het onafhankelijke
+PR- en repo-eigenaarschap wordt nooit afgeleid. Multi-page GitHub Search is
+niet atomair, ook niet bij een aansluitende paginareeks. Het programma neemt
+geen claim, dispatch, review, merge of deploy over.
+
+Een snapshot via `--snapshot-output` is bewust uitsluitend voor **één**
+oorspronkelijke `--candidate-page`; voor meerdere historische pagina's zijn de
+afzonderlijke privé-snapshots met de offline bundelaar hieronder nodig. De optie
+`--auto-pages` geldt uitsluitend met `--issue`, is 1–3 en kan niet voorbij
+zoekpagina 50 doorlopen. Onverwachte storingen laten een eerder gelezen
+bronvenster zichtbaar met een onvolledigheidsmelding, niet als afgeleverd werk.
+
 ### Meerdere zoekpagina's bewaren en samenvoegen (offline)
 
 Een gerichte P0/P1-zoekopdracht kan meer dan twintig bestaande PR-kandidaten hebben.
