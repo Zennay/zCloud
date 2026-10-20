@@ -59,7 +59,6 @@ jobs:
       CONFIRMED_SHA: ${{ inputs.confirm_sha }}
       QUEUE_DB: /home/ubuntu/zennay-cloud/history.db
       WORKER_EVENTS_DB: /home/ubuntu/zennay-cloud/history.db
-      REPORT_PATH: ${{ runner.temp }}/zsentinel-audit-${{ github.run_id }}-${{ github.run_attempt }}.json
       SOURCE_WINDOW: ${{ inputs.window || 'auto' }}
     steps:
       - name: Checkout canonical event SHA without persistent credentials
@@ -127,6 +126,8 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Runner context exists only after job scheduling, not in jobs.audit.env.
+          REPORT_PATH: ${{ runner.temp }}/zsentinel-audit-${{ github.run_id }}-${{ github.run_attempt }}.json
         run: |
           set -euo pipefail
           # This exact new, runner-temp, per-run report is the only output file.
