@@ -491,3 +491,36 @@ action was performed. It only reverses changes to the **private human
 annotation state** within the current browser session. Original verified
 owner/security/CI/release gates remain independent and unchanged.
 No QA or regression suites were authored or manually run.
+
+## 20 October · Reviewed offline spreadsheet triage export
+
+The private workbench now offers **Preview filtered offline CSV** followed by
+a separate **Download exactly this reviewed CSV** action. The export covers
+only currently filtered issue cards (maximum 60) from the already saved,
+validated board; it does not query or modify GitHub, Notion, workers, claims,
+SQLite, CI, runners or production. The export contains the board SHA-256,
+UTC source observation timestamp, canonical issue link, captured issue title
+and priority/project, observed candidate PR links, evidence gaps, proposed next
+step, manual disposition, private follow-up state and date, plus explicit
+`claim_authorized=false`, `merge_authorized=false`,
+`deploy_authorized=false` for **each row**. It is a portable working view
+for spreadsheet sorting, **not** proof of current issue state or authority.
+
+By default no private contact labels or free-text operator notes are exported.
+The operator can explicitly enable those two extra columns; toggling the
+checkbox invalidates the prior CSV preview and requires reviewing it again.
+Editing a note, selecting a different issue, changing any filter or changing
+the source-derived view also invalidates an existing preview. At download
+the complete CSV contents must equal the reviewed bytes, or the action is
+refused and preview must be recreated. Exports happen through a local browser
+Blob with UTF-8 BOM for spreadsheet import; no automatic network/upload or
+localStorage persistence.
+
+Every cell is quoted; control bytes are stripped and leading spreadsheet
+formula markers (`=`, `+`, `-`, `@`) are neutralized with an apostrophe
+before CSV quoting, including untrusted GitHub issue titles and notes.
+The private CSV may still be copied to a cloud provider by the chosen
+spreadsheet application: the workbench explains this and the private-note
+checkbox defaults off. Original ownership, exact-head checks, independent
+review, security/consent and release gates remain unchanged. No QA or
+regression suite was authored or manually run.
