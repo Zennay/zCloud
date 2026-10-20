@@ -1807,3 +1807,61 @@ queue claim, worker dispatch, CI-retry, Merge API call, zSSH mutatie
 of productiedeploy. Het is een operatorhulpmiddel, geen geautomatiseerde
 autorisatie. Verifieer merge of live herstel pas apart op actuele
 geautoriseerde bronnen.
+
+
+## 20 oktober · Issue-eerst bestaande product-PRs hergebruiken (PR #1560)
+
+De nieuwe `scripts/zsentinel_saved_issue_timeline.py` vertaalt al
+opgeslagen, volledig brongebonden PR-dossiers naar een **issue-eerst**
+operatorwerklijst. Dat is de bruikbare route om een bestaande PR bij een
+productissue te vinden voordat een nieuw werkpakket of PR wordt gestart.
+Een los opgeslagen projectdossier is voldoende; met maximaal twaalf
+chronologische dossiers is ook historische issue-/PR-ontwikkeling mogelijk.
+
+```bash
+# Eén bronmoment: meteen bestaande bron-PRs per issue zien.
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./private-zcloud-handoff.zip \
+  --priority P0 \
+  --format html \
+  --output ./private-p0-bestaande-product-prs.html
+
+# Met meerdere bronnen en paginering; dezelfde gevalideerde bronfeiten.
+python3 scripts/zsentinel_saved_issue_timeline.py \
+  --source ./private-zcloud-moment1.zip \
+  --source ./private-zcloud-moment2.zip \
+  --page 2 --page-size 30 \
+  --format csv \
+  --output ./private-issues-pagina2.csv
+```
+
+De uitvoer groepeert de **werkelijk in een oude PR-steekproef
+gekoppelde issues** op hoogste waargenomen bron-PR-prioriteit, met alle
+betreffende bestaande PR-URLs, laatst waargenomen HEAD, oorspronkelijke
+blokkade, laatst zichtbaar bronmoment, en een concrete menselijke
+vervolgstap om actuele eigenaarschap/CI/review/branchregels te controleren.
+
+PRs zonder betrouwbare issuekoppeling blijven **apart zichtbaar**, óók
+als er een P0-filter voor het issue-overzicht wordt gebruikt. Afwezigheid
+van een issue in de bron of van een PR in de laatste steekproef is geen
+bewijs van een vrij issue, afgeloste blocker, gefixte code, bestaande
+issue-eigenaar of succesvol gemergede PR. Een bestaand issue zonder
+waargenomen PR wordt niet verzonnen.
+
+`--priority` selecteert de hoogste waargenomen bestaande PR-prioriteit
+voor de issuekaarten; `--page 1..100`, `--page-size 1..100` bieden
+menselijke bronpaginering. De volledige bron wordt altijd eerst
+toegelaten; een ontbrekende pagina wordt niet behandeld als ontbrekend
+productwerk. Maximum 600 verschillende oorspronkelijke bronissues en
+maximaal 12 bronmomenten. De HTML is lokaal, CSP-afgeschermd,
+toetsenbordvriendelijk en zonder scripts of API-calls; de alternatieve
+`--format markdown`, `csv` en `json` delen dezelfde bronaggregatie.
+Het nieuwe resultaat is maximaal 1 MiB, schrijft alleen met create-only
+en 0600 naar een nieuw privébestand en wijzigt nooit de bron-archieven.
+
+Het issue-eerst scherm vervangt geen live GitHub-issuezoekopdracht,
+actuele Notion-workclaim, verplichte exacte-HEAD CI, onafhankelijke
+review of beschermde mainregels. Het **claimt of dispatcht niet** en
+voert geen merge, runnerrestart of productieactie uit. Als een originele
+PR niet bij het issue past, controleer de live bron en eigenaars voordat
+je hem wijzigt.
