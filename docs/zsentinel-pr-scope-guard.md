@@ -1806,3 +1806,28 @@ python3 scripts/zsentinel_pr_scope_portfolio.py \
 ```
 
 CSV blijft verplicht een exclusief NIEUW privébestand met mode 0600; geen stdout voor CSV. Formule-activerende of controlekarakters worden volgens de bestaande CSV-sanitizer behandeld. Detailrijen verschijnen uitsluitend wanneer de geselecteerde PR-bron en exacte HEAD overeenkomen; verborgen regels krijgen een expliciete waarschuwing. Geen CI/review/lease- of deployvrijgave volgt uit deze export.
+
+## 20 oktober · vergelijk twee exacte-HEAD CI-/review-opnamen (geen herhaalde stagnatiechecks)
+
+De bestaande `--compare-previous` toont voortaan ook gate-episodeverandering wanneer de huidige run `--inspect-current-pr-gates` bevat en de vorige **privé-JSON** reeds gatebonnen bevat. Deze functie gebruikt géén extra GitHub-calls: de al beschikbare exacte-HEAD Check Runs, legacy statussen, reviews en PR-identiteiten worden lokaal vergeleken.
+
+Maak eerst de bronopname (standaard exclusief nieuwe mode-0600 uitvoer):
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --format json --output /secure/location/zsentinel-gates-T0.json
+```
+
+Voor een latere geautoriseerde **read-only** herinspectie:
+
+```bash
+python3 scripts/zsentinel_pr_scope_portfolio.py \
+  --project cloud --inspect-current-pr-gates --gate-pr cloud#1567 \
+  --compare-previous /secure/location/zsentinel-gates-T0.json \
+  --format html --output /secure/location/zsentinel-gate-episodes-T1.html
+```
+
+De bronvergelijking leest alleen gewone private historische bestanden zonder symlinks, begrensd op twee megabytes; snapshots moeten dezelfde geregistreerde project/repo-identiteiten bevatten en chronologisch binnen zeven dagen liggen. Vier bestaande PRs per opnamemoment is het maximum. Het huidige en vorige gatebewijs is alleen vergelijkbaar bij dezelfde exacte HEAD en complete, niet-afgeknotte Check Run-, legacy- en reviewbronnen. Als dit volledig klopt, wordt alleen gezegd: *dezelfde blokkade op twee meetmomenten*. Niet dat de tussenliggende periode ongewijzigd was. Een andere HEAD, gewijzigde checkpoging, reviewbeweging, ontbrekende PR of onvolledige bron krijgt een aparte conservatieve operatorcategorie. Geen automatische reruns worden afgehandeld.
+
+HTML, Markdown, tekst, JSON en de bestaande private CSV ondersteunen die episodeoverdracht. De CSV bevat afzonderlijke `gate_episode_history`-rijen met bron-HEAD, vorige en huidige blokkadecategorie en wijzigingstype. **Geen** resultaat bewijst dat een verdwenen PR werkelijk gemerged is, dat een eigenaar vrij is of dat branch protection, verplichte CI en release-autorisatie vervuld zijn. De gebruiker/PR-eigenaar beslist over opnieuw kijken en eventuele merge; zSentinel neemt geen claims over.
