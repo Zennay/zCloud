@@ -710,7 +710,8 @@ function refreshPrDesk(){
       (handoffs.get(card.issue)?.decision||'investigate')));
    inner.append(li);
   }
-  item.append(inner,elem('small','Source gaps: '+(group.gaps.size?
+  item.append(inner,elem('small',prGateLabel(group.url)),
+   elem('small','Source gaps: '+(group.gaps.size?
    [...group.gaps].slice(0,3).map(g=>line(g,180)).join(' · '):
    'Live claim, exact-head CI, review, branch and release authority UNVERIFIED')));
   list.append(item);
@@ -742,6 +743,12 @@ function currentPrManifest(){
     missing_evidence:c.evidence_gaps
    })),
    source_missing_evidence:[...g.gaps],
+   optional_imported_observation:prGateImport?.items.get(g.url)?
+    {source_kind:prGateImport.kind,source_observed_at_utc:prGateImport.time,
+     stale_at_export:Date.now()-prGateImport.timestamp>900000,
+     receipt:prGateImport.items.get(g.url),
+     current_pr_head_verified:false,mandatory_branch_rules_verified:false,
+     merge_authorized:false}:null,
    active_claim_verified:false,
    exact_head_required_ci_verified:false,
    independent_review_verified:false,
@@ -780,6 +787,7 @@ function currentPrDesk(){
    ...group.issues.map(c=>
     '- '+c.url+' · '+line(c.title,180)+' · '+c.priority+
     ' · human disposition '+(handoffs.get(c.issue)?.decision||'investigate')),
+   'Imported PR gate observation (non-authorizing): '+line(prGateLabel(group.url),650),
    'Observed gaps: '+(group.gaps.size?
     [...group.gaps].map(g=>line(g,300)).join('; '):
     'No complete current gate receipt; verify required CI, owner, review and release.'),
@@ -1507,6 +1515,33 @@ document.getElementById('restore').addEventListener('change',async event=>{
 });
 
 
+
+document.getElementById('prGateImport').addEventListener('change',async event=>{
+ const file=event.currentTarget.files?.[0];
+ try{
+  if(!file||file.size<2||file.size>1048576)throw Error('Invalid gate file size');
+  const bytes=await file.arrayBuffer();
+  const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  const accepted=acceptGateSource(value);
+  prGateImport=accepted;
+  invalidateBrief();refreshPrDesk();
+  document.getElementById('prGateClear').disabled=false;
+  document.getElementById('prGateStatus').textContent=
+   accepted.items.size+' linked PR receipts imported · '+accepted.time+
+   (Date.now()-accepted.timestamp>900000?
+    ' · STALE saved source':' · recent observation, NOT live ownership')+
+   '. Never merge without current mandatory checks, approvals and authority.';
+  status.textContent='Read-only PR evidence imported locally; no GitHub action performed.';
+ }catch{
+  status.textContent='Gate import refused; existing overlay (if any) kept unchanged.';
+ }finally{event.currentTarget.value='';}
+});
+document.getElementById('prGateClear').onclick=()=>{
+ prGateImport=null;invalidateBrief();refreshPrDesk();
+ document.getElementById('prGateClear').disabled=true;
+ document.getElementById('prGateStatus').textContent=
+  'Imported gate source cleared. Current PR gates unknown.';
+};
 document.getElementById('previewPrManifest').onclick=()=>{
  saveSelection();
  viewedPrManifest=currentPrManifest();
