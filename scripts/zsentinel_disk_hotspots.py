@@ -345,6 +345,9 @@ def markdown(report):
     if "sqlite_footprint" in report:
         from zsentinel_sqlite_footprint import markdown as sqlite_markdown
         lines.extend(["", sqlite_markdown(report["sqlite_footprint"])])
+    if "archive_readiness" in report:
+        from zsentinel_archive_readiness import markdown as archive_markdown
+        lines.extend(["", archive_markdown(report["archive_readiness"])])
     return "\n".join(lines)
 
 
@@ -415,6 +418,12 @@ def html(report):
     if "disk_growth_comparison" in report:
         from zsentinel_disk_trend import as_html
         lines.append(as_html(report["disk_growth_comparison"]))
+    if "archive_readiness" in report:
+        from zsentinel_archive_readiness import markdown as archive_markdown
+        lines.append("<article><h2>Externe opslag · koude-bestandenplan</h2><pre "
+                     "style=\"white-space:pre-wrap;overflow-wrap:anywhere\">" +
+                     escape(archive_markdown(report["archive_readiness"])) +
+                     "</pre></article>")
     if "sqlite_footprint" in report:
         from zsentinel_sqlite_footprint import markdown as sqlite_markdown
         lines.append("<article><h2>SQLite en WAL · eigenaarwerkbank</h2><pre "
@@ -504,6 +513,11 @@ def public_summary(report):
     else:
         orphan_summary = None
     brief = operator_action_brief(mount, report["coverage"], orphan_summary)
+    archive_obs = report.get("archive_readiness")
+    archive_public = None
+    if archive_obs is not None:
+        from zsentinel_archive_readiness import public_summary as archive_summary
+        archive_public = archive_summary(archive_obs)
     sqlite_obs = report.get("sqlite_footprint")
     if sqlite_obs is not None and (
             type(sqlite_obs) is not dict
@@ -517,6 +531,7 @@ def public_summary(report):
         "schema": "zsentinel-disk-workbench-summary-v1",
         "sqlite_files_metadata_observed": len(sqlite_obs["reports"]) if sqlite_obs else None,
         "sqlite_reclaimable_bytes_verified": False,
+        "external_archive_readiness": archive_public,
         "operator_action": brief,
         "unlinked_open_files": orphan_summary,
         "files_with_open_references_observed": (
@@ -581,6 +596,13 @@ def public_summary_html(summary):
          ' database(s) waargenomen; interne freelist is geen bewezen'
          ' vrijmaakbare opslag. Geen SQL, checkpoint of opschoning.</p>'
          if summary.get('sqlite_files_metadata_observed') is not None else '') +
+        ('<p>Externe opslag op andere mount waargenomen; circa ' +
+         str(summary["external_archive_readiness"]["archive_available_gib_estimate"]) +
+         ' GiB doelruimte-indicatie, ' +
+         str(summary["external_archive_readiness"]["candidate_count_sampled_not_transferable"]) +
+         ' oude bestandshints. Geen bestanden gekopieerd, verplaatst of ' +
+         'verwijderd; eigenaarschap, writerstatus en archiefrechten NIET bewezen.</p>'
+         if summary.get("external_archive_readiness") is not None else '') +
         '<p>Grote-bestanden inventaris uitsluitend lokaal en begrensd,'
         ' ondergrens ' + str(summary["observed_allocated_gib_min"]) +
         ' GiB toegewezen, minstens ' + str(summary["large_file_candidates_min"]) +
@@ -635,6 +657,9 @@ def main():
                         help="optional private same-mount deleted-but-open file metadata only")
     parser.add_argument("--inspect-open-handles", action="store_true",
                         help="optional bounded /proc fd metadata only; no PID or writer proof")
+    parser.add_argument("--archive-target", type=Path,
+                        help="optional separate existing archive mount; no copy or delete")
+    parser.add_argument("--archive-min-age-days", type=int, default=7)
     parser.add_argument("--sqlite", action="append", default=[],
                         help="optional relative existing SQLite DB inside workspace; max 8, metadata only")
     parser.add_argument("--previous", type=Path,
@@ -651,6 +676,10 @@ def main():
             attach_open_references(report, args.root)
         if args.inspect_unlinked_files:
             attach_unlinked_open_files(report, args.root)
+        if args.archive_target is not None:
+            from zsentinel_archive_readiness import observe as archive_observe
+            report["archive_readiness"] = archive_observe(
+                report, args.archive_target, min_age_days=args.archive_min_age_days)
         if args.sqlite:
             from zsentinel_sqlite_footprint import observe_many
             report["sqlite_footprint"] = observe_many(args.root, args.sqlite)
