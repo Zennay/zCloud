@@ -53,7 +53,41 @@ def _safe_projects(source, canonical, explicit=None):
                                     key=lambda item: (item[1][0], -item[1][1], item[0]))[:MAX_PROJECTS]]
 
 
-def compose(source, source_sha, canonical, selected, collision):
+def _saved_pr_gates(raw):
+    """Bounded saved exact-head observations; never convert success to approval."""
+    rows = raw.get("pr_delivery_observations", [])
+    if type(rows) is not list or len(rows) > 5:
+        raise ValueError("unexpected source PR gate observation count")
+    result = {}
+    for row in rows:
+        if type(row) is not dict:
+            raise ValueError("invalid saved PR gate observation")
+        link, head = row.get("url"), row.get("head_sha")
+        approvals = row.get("observed_approvals")
+        check = row.get("observed_check_success")
+        blockers = row.get("blocking_unknowns")
+        if (type(link) is not str or PR.fullmatch(link) is None
+                or link in result or type(head) is not str
+                or re.fullmatch(r"[a-f0-9]{40}", head) is None
+                or type(approvals) is not int or not 0 <= approvals <= 100
+                or type(check) is not bool
+                or type(blockers) is not list or len(blockers) > 20
+                or any(type(v) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,70}", v)
+                       for v in blockers)
+                or row.get("merge_authorized") is not False):
+            raise ValueError("saved source PR gate receipt cannot authorize merge")
+        result[link] = {
+            "observed_exact_head_sha": head,
+            "saved_native_checks_success": check,
+            "saved_independent_approval_count_unverified": approvals,
+            "saved_remaining_unknowns": blockers,
+            "current_head_and_required_rules_not_verified": True,
+            "merge_authorized": False,
+        }
+    return result
+
+
+def compose(source, source_sha, canonical, selected, collision, saved_gates=None):
     if (not isinstance(source_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", source_sha)
             or type(collision) is not dict
             or collision.get("schema") != "zsentinel-portfolio-pr-collision-board-v1"
@@ -66,6 +100,9 @@ def compose(source, source_sha, canonical, selected, collision):
             or type(collision.get("project_views")) is not list
             or len(collision["project_views"]) != len(selected)):
         raise ValueError("scope source unexpectedly authorizes work or mismatches issue projects")
+    saved_gates = saved_gates or {}
+    if type(saved_gates) is not dict or len(saved_gates) > 5:
+        raise ValueError("invalid saved PR gate map")
     exact = {}
     for item in collision["project_views"]:
         pid = item.get("project")
@@ -140,10 +177,18 @@ def compose(source, source_sha, canonical, selected, collision):
                 status = "no_shared_paths_in_complete_open_pr_snapshot_only"
             else:
                 status = "scope_unknown_or_uninspected"
+            gates = saved_gates.get(link)
+            if gates is not None and (not coherent or
+                    gates.get("merge_authorized") is not False):
+                gates = None
             refs.append({"url": link, "file_scope_state": status,
                          "overlap_with_open_prs": rivals[:16],
+                         "saved_exact_head_gates": gates,
+                         "current_branch_required_checks_verified": False,
+                         "independent_review_current_head_verified": False,
                          "collision_is_merge_failure": False,
-                         "claim_authorized": False})
+                         "claim_authorized": False,
+                         "merge_authorized": False})
         if card["url"] in OWNER_ONLY:
             route = "authorized_infrastructure_owner_only"
         elif refs and any(p["file_scope_state"] == "shared_file_paths_observed" for p in refs):
@@ -204,6 +249,13 @@ def output_text(report, markdown=False):
         for pr in row["existing_prs"]:
             link = ("[" + pr["url"] + "](" + pr["url"] + ")" if markdown else pr["url"])
             lines.append("  " + link + " · " + pr["file_scope_state"])
+            gates = pr["saved_exact_head_gates"]
+            if gates is not None:
+                lines.append("    Historische exacte HEAD " + gates["observed_exact_head_sha"] +
+                             " · checks: " + str(gates["saved_native_checks_success"]) +
+                             " · observed approvals: " +
+                             str(gates["saved_independent_approval_count_unverified"]) +
+                             " (geen actuele merge-autorisatie)")
             for other in pr["overlap_with_open_prs"]:
                 lines.append("    Gedeeld bestandspad met " + other)
     lines.extend(["", "Gedeeld pad ≠ mergeconflict. Geen claims, PR-less ownership, CI of review geautoriseerd.",
@@ -220,10 +272,22 @@ def output_html(report):
                 "<li><a rel='noopener noreferrer' href='" + escape(other, quote=True) +
                 "'>" + escape(other) + "</a></li>"
                 for other in pr["overlap_with_open_prs"])
+            gates = pr["saved_exact_head_gates"]
+            gate_note = ("<p>Opgeslagen HEAD " +
+                         escape(gates["observed_exact_head_sha"][:12]) +
+                         " · native checks: " +
+                         ("geslaagd (historische waarneming)" if gates["saved_native_checks_success"]
+                          else "niet volledig geslaagd (historische waarneming)") +
+                         " · waargenomen approvals: " +
+                         str(gates["saved_independent_approval_count_unverified"]) +
+                         ". Verplichte huidige-head rules/review niet geverifieerd.</p>"
+                         if gates is not None else
+                         "<p>Geen verse, exact opgeslagen check/review-waarneming.</p>")
             prs.append(
                 "<li><a rel='noopener noreferrer' href='" +
                 escape(pr["url"], quote=True) + "'>" + escape(pr["url"]) +
                 "</a> · " + escape(pr["file_scope_state"]) +
+                gate_note +
                 ("<ul>" + rivals + "</ul>" if rivals else "") + "</li>")
         cards.append(
             "<article><small>" + escape(row["priority"]) + " · " +
@@ -279,7 +343,8 @@ def main(argv=None):
         if not projects:
             raise ValueError("no canonical product-issue projects in the selected issue source")
         pr_scope = collect_portfolio(projects, canonical, os.environ.get("GITHUB_TOKEN"), args.max_prs)
-        report = compose(view, sha, canonical, projects, pr_scope)
+        report = compose(view, sha, canonical, projects, pr_scope,
+                         saved_gates=_saved_pr_gates(source))
         if args.format == "json":
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.format == "html":
