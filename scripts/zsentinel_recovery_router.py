@@ -669,7 +669,8 @@ def queue_pressure_summary(source, now):
     safe_totals = {}
     for name in ("active_items","queued_items","owned_items","high_claim_attempt_items",
                  "ten_plus_claim_attempt_items","expired_owner_lease_rows",
-                 "unverifiable_owner_lease_rows","invalid_record_rows","max_claim_attempts"):
+                 "unverifiable_owner_lease_rows","inconsistent_owner_lease_window_rows",
+                 "invalid_record_rows","max_claim_attempts"):
         value = totals.get(name)
         if type(value) is not int or not 0 <= value <= 10**9:
             raise ValueError("queue pressure total invalid")
@@ -678,7 +679,9 @@ def queue_pressure_summary(source, now):
             or safe_totals["high_claim_attempt_items"] > safe_totals["active_items"]
             or safe_totals["ten_plus_claim_attempt_items"] > safe_totals["high_claim_attempt_items"]
             or safe_totals["expired_owner_lease_rows"] +
-                safe_totals["unverifiable_owner_lease_rows"] > safe_totals["owned_items"]):
+                safe_totals["unverifiable_owner_lease_rows"] +
+                safe_totals["inconsistent_owner_lease_window_rows"] >
+                safe_totals["owned_items"]):
         raise ValueError("queue pressure totals incoherent")
     safe_groups=[]
     for group in groups:
@@ -691,7 +694,8 @@ def queue_pressure_summary(source, now):
         counts={}
         for name in ("queued","claimed","running","verifying",
                      "high_claim_attempts","ten_plus_claim_attempts",
-                     "expired_owner_lease_rows","unverifiable_owner_lease_rows","max_claim_attempts"):
+                     "expired_owner_lease_rows","unverifiable_owner_lease_rows",
+                     "inconsistent_owner_lease_window_rows","max_claim_attempts"):
             value=group.get(name)
             if type(value) is not int or not 0<=value<=10**9:
                 raise ValueError("invalid queue group count")
@@ -700,7 +704,9 @@ def queue_pressure_summary(source, now):
         if (counts["high_claim_attempts"]>active
                 or counts["ten_plus_claim_attempts"]>counts["high_claim_attempts"]
                 or counts["expired_owner_lease_rows"] +
-                 counts["unverifiable_owner_lease_rows"]>active-counts["queued"]):
+                 counts["unverifiable_owner_lease_rows"] +
+                 counts["inconsistent_owner_lease_window_rows"] >
+                 active-counts["queued"]):
             raise ValueError("incoherent queue group count")
         safe_groups.append({"project_id":project, "priority":priority, **counts})
     safe_samples=[]
@@ -717,8 +723,10 @@ def queue_pressure_summary(source, now):
                 or type(count) is not int or not 0<=count<=10**9
                 or type(row.get("owner_lease_expired_observed")) is not bool
                 or type(row.get("owner_lease_unverifiable_observed")) is not bool
-                or (row["owner_lease_expired_observed"] and
-                    row["owner_lease_unverifiable_observed"])):
+                or type(row.get("owner_lease_window_inconsistent_observed")) is not bool
+                or sum((row["owner_lease_expired_observed"],
+                        row["owner_lease_unverifiable_observed"],
+                        row["owner_lease_window_inconsistent_observed"])) > 1):
             raise ValueError("invalid queue sample")
         safe_samples.append({
             "queue_ref":ref, "project_id":pid, "title":title,
@@ -726,7 +734,11 @@ def queue_pressure_summary(source, now):
             "claim_attempts":count,
             "owner_lease_expired_observed":row["owner_lease_expired_observed"],
             "owner_lease_unverifiable_observed":row["owner_lease_unverifiable_observed"],
-            "action":("Ask authorized owner to review expired lease; do not remove claim."
+            "owner_lease_window_inconsistent_observed":
+                row["owner_lease_window_inconsistent_observed"],
+            "action":("Ask authorized owner to verify BOTH lease timestamps; do not reclaim."
+                      if row["owner_lease_window_inconsistent_observed"] else
+                      "Ask authorized owner to review expired lease; do not remove claim."
                      if row["owner_lease_expired_observed"] else
                      "Lease clock not verifiable; owner must check claim before any action."
                      if row["owner_lease_unverifiable_observed"] else
