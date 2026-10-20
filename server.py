@@ -1018,6 +1018,10 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
     generation_ms=_dynamic_int(payload.get('generation_start_timeout_ms',DYNAMIC_WORKER_GENERATION_TIMEOUT_MS),'Generation timeout',10000,600000)
     scheduler_seconds=_dynamic_int(payload.get('scheduler_interval_seconds',AUTONOMY_TICK_SECONDS),'Scheduler interval',1,300)
     old=dynamic_worker_settings()
+    capacity_changed=(
+        chatgpt_count!=DYNAMIC_CHATGPT_WORKERS
+        or claude_count!=DYNAMIC_CLAUDE_WORKERS
+    )
     values={
         DYNAMIC_WORKER_SETTING_KEY:str(chatgpt_count+claude_count),
         DYNAMIC_WORKER_SETTING_KEYS['chatgpt_count']:str(chatgpt_count),
@@ -1063,11 +1067,16 @@ def set_dynamic_worker_settings(payload,actor='dashboard'):
     DYNAMIC_WORKER_HEARTBEAT_INTERVAL_MS=heartbeat_ms
     DYNAMIC_WORKER_GENERATION_TIMEOUT_MS=generation_ms
     AUTONOMY_TICK_SECONDS=scheduler_seconds
-    allocation=reconcile_dynamic_worker_limit()
+    # An interval/cooldown edit is not permission to reassign a browser tab.
+    # Only an actual provider-capacity change requires the allocator. The
+    # ordinary scheduler remains responsible for independently due work.
+    allocation=(reconcile_dynamic_worker_limit() if capacity_changed
+                else portfolio_queue_allocation())
     settings=dynamic_worker_settings()
     settings['allocated_workers']=len(allocation.get('workers') or [])
     settings['allocation_keys']=list(allocation.get('keys') or [])
-    settings['reconciled']=True
+    settings['reconciled']=bool(capacity_changed)
+    settings['capacity_changed']=bool(capacity_changed)
     return settings
 
 def set_dynamic_worker_limit(value,actor='dashboard'):
