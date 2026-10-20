@@ -71,6 +71,19 @@ Geen claims vrijgeven, jobs herstarten of automatische retries uitvoeren.</p>
 <p id="queueFeedback" aria-live="polite">Geen overdracht gemaakt.</p>
 <pre id="queueBrief" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto"></pre>
 </section>
+<section class="warning" aria-label="Historische worker-voortgang">
+<h2>Workergebeurtenissen tussen bronmomenten</h2>
+<p>Vergelijkt alleen dezelfde oorspronkelijke SQLite-workerbron en dezelfde geobserveerde slots.
+Nieuwe browsergeneratie-events zijn <strong>geen</strong> bewijs van productlevering, geldige
+lease, herstelde worker of merge. Ontbrekende slots en bronwisselingen blijven ONBEKEND.</p>
+<div id="workerMetrics" class="statgrid"></div>
+<div id="workerHistory"></div>
+<p>Menselijke overdracht zonder uitvoerbevoegdheid:</p>
+<button id="workerPreview">Bekijk privé worker-opvolging</button>
+<button id="workerDownload" disabled>Download worker-overdracht als Markdown</button>
+<p id="workerFeedback" aria-live="polite">Geen historische worker-overdracht gegenereerd.</p>
+<pre id="workerBrief" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:290px;overflow:auto"></pre>
+</section>
 <section class="filters" aria-label="Filters">
 <label>Zoeken<input id="search" type="search" placeholder="Incident, project, eigenaar of advies"></label>
 <label>Hoogste historisch waargenomen prioriteit<select id="severity"><option value="">Alle</option><option>P0</option><option>P1</option><option>P2</option><option>P3</option></select></label>
@@ -235,6 +248,86 @@ $("queueDownload").onclick=()=>{
  }catch(_){
   queuePreview=null;$("queueDownload").disabled=true;
   $("queueFeedback").textContent="Bron of inhoud niet actueel; maak een nieuwe voorvertoning.";
+ }
+};
+const workers=data.worker_continuity_history;
+$("workerMetrics").append(
+ stat("Oorspronkelijke workerbronnen",workers.source_windows),
+ stat("Onvolledige of gewijzigde bronparen",workers.unknown_or_partial_pairs),
+ stat("Nieuw geobserveerde generatiesignalen",workers.observed_generation_signal_pairs),
+ stat("Productlevering bewezen","NEE")
+);
+for(const pair of workers.adjacent_comparisons){
+ const detail=el("details");
+ detail.append(el("summary",null,"Vensters "+pair.from_window+" → "+pair.to_window+
+  " · "+pair.comparison+" · "+pair.workers_compared+" dezelfde slots"));
+ if(!pair.entries.length){
+  detail.append(el("p",null,"Geen vergelijkbare workerbron of slots: ONBEKEND. Geen herstel of vrije claim."));
+ }else{
+  const list=el("ol");
+  for(const worker of pair.entries){
+   list.append(el("li",null,worker.project_id+" · slot "+worker.worker_slot+
+    " · "+worker.classification+" · bronactie: "+worker.later_owner_followup+
+    (worker.worker_state_changed?" · laatste classificatie veranderd, niet bewezen hersteld":"")+
+    " · geen claim- of mergeautorisatie"));
+  }
+  detail.append(list);
+ }
+ $("workerHistory").append(detail);
+}
+let lastWorkerBrief=null;
+function renderWorkerBrief(){
+ const out=[
+  "# zSentinel · historische menselijke worker-opvolging","",
+  "> NIET ACTUEEL. Nieuwe browser-events zijn geen productlevering, geldige lease of geverifieerd herstel.",
+  "> Ongeziene of gewijzigde slots zijn ONBEKEND. Geen restart, claim, dispatcheractie of merge.","",
+  "- Eerste bron: "+data.first_source_observed_at_utc,
+  "- Laatste bron: "+data.last_source_observed_at_utc,
+  "- Bron SHA-256: "+data.sources.map(s=>s.normalized_source_sha256).join(", "), ""
+ ];
+ for(const pair of workers.adjacent_comparisons){
+  out.push("## Vensters "+pair.from_window+" → "+pair.to_window,
+   "- Bronvergelijking: "+pair.comparison);
+  if(!pair.entries.length)out.push("- Geen betrouwbaar vergelijkbaar workerslot; eigenaar controleert de actuele claimbron.");
+  for(const row of pair.entries){
+   out.push("- "+row.project_id+" slot "+row.worker_slot+
+    " · "+row.classification+
+    " · bronadvies "+row.later_owner_followup+
+    " · na later moment "+row.later_worker_state+
+    " · productlevering NIET bewezen.");
+  }
+  out.push("");
+ }
+ const content=out.join("\n");
+ if(new TextEncoder().encode(content).byteLength>130000)throw Error("bounded-handoff");
+ return content;
+}
+$("workerPreview").onclick=()=>{
+ try{
+  const content=renderWorkerBrief();
+  lastWorkerBrief={identity:data.sources.map(s=>s.normalized_source_sha256).join(","),content};
+  $("workerBrief").textContent=content;
+  $("workerDownload").disabled=false;
+  $("workerFeedback").textContent="Voorvertoning gereed. Verifieer eigenaar, CI en voortgang via actuele bronnen.";
+ }catch(_){
+  lastWorkerBrief=null;$("workerDownload").disabled=true;
+  $("workerBrief").textContent="";
+  $("workerFeedback").textContent="Historische worker-overdracht niet beschikbaar.";
+ }
+};
+$("workerDownload").onclick=()=>{
+ try{
+  if(!lastWorkerBrief||
+      lastWorkerBrief.identity!==data.sources.map(s=>s.normalized_source_sha256).join(",")||
+      lastWorkerBrief.content!==renderWorkerBrief())throw Error("stale-source");
+  const url=URL.createObjectURL(new Blob([lastWorkerBrief.content],
+   {type:"text/markdown;charset=utf-8"}));
+  const a=el("a");a.href=url;a.download="zsentinel-historische-worker-opvolging.md";
+  document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  $("workerFeedback").textContent="Lokale overdracht aangeboden; geen externe actie uitgevoerd.";
+ }catch(_){lastWorkerBrief=null;$("workerDownload").disabled=true;
+  $("workerFeedback").textContent="Overdracht niet actueel; maak een nieuwe voorvertoning.";
  }
 };
 for(const source of data.sources){
