@@ -1896,3 +1896,48 @@ automatische discovery-lijst voorkomt. De operatorpagina en tekstmodus
 tonen hoeveel expliciete jobs zijn gepind. Andere, niet opgevraagde
 CI-/reviewchecks blijven onbekend; zelfs een toegewezen runner-ID
 bewijst geen actuele listenergezondheid, werkhervatting of releaserecht.
+
+
+### 20 oktober · meerdere brongebonden GitHub-jobs per project
+
+Een bronvenster kan meerdere geblokkeerde jobs tonen, terwijl de
+herstelrouter slechts één exact geverifieerde job per project mag
+behandelen. De GitHub-discovery bewaart daarom naast de primaire job
+maximaal **vijf andere gevalideerde jobs** als afzonderlijke
+read-only bronlinks. Deze selectie blijft binnen de bestaande
+begrensde calls naar GitHub; geen extra workflows worden gestart
+of opnieuw uitgevoerd. Elke referentie bevat alleen run-ID, job-ID,
+volledige HEAD-SHA, jobstatus, runnerroute en GitHub-link.
+
+Het operatoroverzicht laat de primaire én aanvullende joblinks zien
+in één uitklapbare bronlijst. Bij elke job staat een exact kopieerbare
+`--job PROJECT:RUN_ID:JOB_ID:HEAD_SHA` selector waarmee de operator
+die bestaande job gericht opnieuw kan laten uitlezen via
+`scripts/zsentinel_portfolio_overview.py`. De CLI accepteert
+**maximaal één exact gepinde job per geselecteerd project per run**;
+om meerdere jobs van hetzelfde project te inspecteren, kies één
+andere pin per handmatige uitvoering. Links zijn gebonden aan de
+canonieke projectrepository en numerieke GitHub-jobidentiteit.
+De oorspronkelijke GitHub-jobdata wordt nooit gekopieerd als
+shellcommando, token, jobstapinhoud of gebruikersinput.
+
+Het portfolio-overzicht bevat nu de kolom **GitHub-jobs (steekproef)**:
+minstens zoveel geldige jobrecords als werkelijk in het beperkte
+venster zijn gevonden, en een afzonderlijke ondergrens voor
+wachtende self-hosted jobs. Onuitgelezen jobpagina's, tussenliggende
+workflows en extra jobs buiten de vijf zichtbaar getoonde links
+blijven expliciet onbekend. Een rechtstreeks gepinde job telt
+ook mee als beperkte bronwaarneming als de automatische
+CI-discovery voor dat project niet is uitgevoerd.
+
+**Bronfix:** `github_ci_source_stop_reason` wordt in het
+portfolio voortaan uit `ci_discovery.coverage` gelezen, niet langer
+uit het aparte `github_jobs.refreshed_projects`-object. Daardoor
+worden GitHub API 401/403/rate-limit-/netwerkstops daadwerkelijk
+zichtbaar in de portfolio-rij en ontvangt de eigenaar het juiste
+vervolgadvies. Deze data is nooit een release- of herstelautorisatie.
+
+Geen QA- of regressiesuites geschreven of uitgevoerd, geen runner
+herstart, GitHub job retrigger, workerclaim, productiequeue-write,
+Notion-claim of deployment uitgevoerd. De bestaande exact-head CI,
+review, toestemming en releasegates blijven verplicht.
