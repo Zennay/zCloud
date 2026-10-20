@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 from html import escape
-from io import StringIO
+from io import BytesIO, StringIO
 import json
 import os
 from pathlib import Path
 import re
 import sys
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZIP_DEFLATED, ZipFile, ZipInfo
 
 from zsentinel_saved_dossier_timeline import build_timeline, PRIORITIES
 
@@ -407,7 +408,68 @@ def csv_content(result):
     return "\ufeff" + source.getvalue()
 
 
+
+def private_issue_package(report):
+    """One fixed, source-pinned local bundle, not an authority or live action.
+
+    All four human interfaces come from the SAME previously admitted and
+    optionally issue-filtered historical evidence. Never include credentials,
+    raw provider responses, active leases, or an executable instruction.
+    """
+    files = {
+        "issue-dossier.html": html_content(report).encode("utf-8"),
+        "issue-actions.md": markdown_content(report).encode("utf-8"),
+        "issue-prs.csv": csv_content(report).encode("utf-8"),
+        "source-receipt.json": (
+            json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) +
+            "\n"
+        ).encode("utf-8"),
+    }
+    if any(not content or len(content) > MAX_BYTES
+           for content in files.values()) or sum(map(len, files.values())) > 4 * MAX_BYTES:
+        raise ValueError("Issue dossier exceeds bounded private content budget")
+    manifest = {
+        "schema": "zsentinel-private-issue-continuity-zip-v1",
+        "source": "previously_saved_private_zip_sources_not_live",
+        "selected_issue": report["selection"]["exact_source_issue_filter"],
+        "original_manifest_sha256": [
+            item["original_review_manifest_sha256"]
+            for item in report["source_snapshots"]
+        ],
+        "files_sha256": {
+            name: hashlib.sha256(content).hexdigest()
+            for name, content in files.items()
+        },
+        "read_only": True,
+        "known_complete_github_inventory": False,
+        "owner_claim_verified": False,
+        "required_exact_head_ci_and_review_verified": False,
+        "merge_authorized": False,
+        "worker_dispatch_authorized": False,
+        "main_merge_verified": False,
+        "live_verified": False,
+    }
+    files["source-checksums.json"] = (
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) +
+        "\n"
+    ).encode("utf-8")
+    output = BytesIO()
+    with ZipFile(output, "w", compression=ZIP_DEFLATED, allowZip64=False) as archive:
+        for name, content in files.items():
+            info = ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.create_system = 3
+            info.external_attr = 0o100600 << 16
+            info.compress_type = ZIP_DEFLATED
+            archive.writestr(info, content)
+    result = output.getvalue()
+    if not result or len(result) > MAX_BYTES:
+        raise ValueError("Private issue continuity bundle exceeds one MiB")
+    return result
+
+
 def render(report, fmt):
+    if fmt == "zip":
+        return private_issue_package(report)
     if fmt == "json":
         value = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     elif fmt == "markdown":
@@ -431,7 +493,7 @@ def main(argv=None):
                         help="Exact canonical GitHub issue URL from saved sources; not live")
     parser.add_argument("--page", type=int, default=1)
     parser.add_argument("--page-size", type=int, default=30)
-    parser.add_argument("--format", choices=("html", "markdown", "csv", "json"),
+    parser.add_argument("--format", choices=("html", "markdown", "csv", "json", "zip"),
                         default="html")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -441,6 +503,8 @@ def main(argv=None):
         filtered = filter_issue_page(
             issue_report, priority=args.priority, issue_url=args.inspect_issue,
             page=args.page, page_size=args.page_size)
+        if args.format == "zip" and args.output.suffix.lower() != ".zip":
+            raise ValueError("Private ZIP output must use .zip extension")
         data = render(filtered, args.format)
         if not hasattr(os, "O_NOFOLLOW"):
             raise ValueError("Safe local output requires nofollow")
