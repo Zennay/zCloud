@@ -25,6 +25,26 @@ MAX_CMDLINE_BYTES = 4096
 MAX_STAT_BYTES = 4096
 
 
+def _runner_binary(first, process):
+    """Identify only this configured runner with relative or absolute argv[0].
+
+    runsvc.sh often starts ./bin/Runner.Listener. Never attribute a different
+    repository's listener merely because its executable shares a basename.
+    Only argv[0] and the /proc cwd symlink are read; secrets are not copied.
+    """
+    if first in (LISTENER, WORKER):
+        return first
+    if first not in (b"Runner.Listener", b"Runner.Worker",
+                     b"./Runner.Listener", b"./Runner.Worker",
+                     b"bin/Runner.Listener", b"bin/Runner.Worker",
+                     b"./bin/Runner.Listener", b"./bin/Runner.Worker"):
+        return None
+    cwd = os.readlink(process / "cwd")
+    candidate = os.fsencode(os.path.normpath(
+        os.path.join(cwd, os.fsdecode(first))))
+    return candidate if candidate in (LISTENER, WORKER) else None
+
+
 def observe_local_runner():
     """Read exactly bounded /proc cmdline+stat, no ps subprocess or mutation."""
     if os.name != "posix" or not PROC.is_dir():
@@ -51,8 +71,11 @@ def observe_local_runner():
                 if len(command) > MAX_CMDLINE_BYTES:
                     unreadable += 1
                     continue
-                first = command.split(b"\0", 1)[0]
-                if first not in (LISTENER, WORKER):
+                first = command.split(b"\\0", 1)[0]
+                # Relative argv[0] is normal for GitHub service listeners.
+                # Resolve only known executable names within this root.
+                target = _runner_binary(first, process)
+                if target is None:
                     continue
                 with (process / "stat").open("rb", buffering=0) as status:
                     raw = status.read(MAX_STAT_BYTES + 1)
@@ -67,7 +90,7 @@ def observe_local_runner():
                     unreadable += 1
                     continue
                 state = raw[closing + 2:closing + 3]
-                if first == LISTENER:
+                if target == LISTENER:
                     if state in (b"Z", b"X"):
                         listener_zombies += 1
                     else:
