@@ -222,3 +222,16 @@ python3 scripts/zsentinel_issue_scope_cockpit.py \
 ```
 
 Zonder `--focus-issue` blijft de reguliere productissue-inbox P0/P1/P2-prioriteit en onafhankelijke projecten ondersteunen. Met `--focus-issue` is het exact ene nog open GitHub-issue de bron en kan het veel oudere P0-probleem niet meer door paginering verdwijnen. Voor #1326 blijft de herstelactie bij de geautoriseerde VPS/runner-eigenaar; de browserkaart is bewijs-/overdrachtsinformatie, geen toestemming om de listener te herstarten.
+
+
+## 20 oktober · Bestaande integratiefouten opgelost
+
+De oorspronkelijk geïntegreerde Product Delivery Workbench gebruikt `validated_view()` om een veilige, **bewust verkleinde** lijst kaarten terug te geven. Dit object bevat géén ruwe `title`, `project_operations`, `source_times_utc` of `coverage.branches`. Daardoor verscheen het eerder beschreven productdeel met echte issuetitels en opgeslagen claim-/retry-/branchobservaties in werkelijkheid niet volledig. De cockpit koppelt nu de **volledige, al via de canonical validator gecontroleerde** bronkaart via exacte issue-identiteit, project, prioriteit, PR-verwijzingen, advies en bestaande no-authority-flags aan de verkleinde kaart. Ruwe externe brongegevens kunnen zich daardoor niet als een ander gevalideerd issue voordoen. `--focus-issue` beperkt alleen de weergegeven kaart en behoudt de oorspronkelijke volledige bron-SHA.
+
+**API-venster zonder schijnzekerheid:** de PR-bron haalt maximaal `min(48, --max-prs+1)` PR-metadata op, en leest die exacte beperkte selectie vóór en na de bestandsobservatie. Een volle eerste pagina is altijd **onvolledig**, ook wanneer die mogelijk echt de laatste is. Dit maakt een operatoropdracht over 10 PR's goedkoper/kleiner dan onnodig 48 volledige PR-beschrijvingen ophalen. De direct geselecteerde bron-PR blijft daarnaast head én base opnieuw pinnen.
+
+**Broncapaciteit intern consistent:** per PR kunnen maximaal 32 issueverwijzingen worden geobserveerd, met maximaal 48 PRs in de absolute broncap. De samengestelde incidentkaart accepteert nu veilig maximaal **48 × 32** expliciete verwijzingen; een volle drukke GitHub-repository veroorzaakt dus niet meer een onterecht `unbounded`-falen door de oude veel kleinere interne limiet. Dit staat los van de zichtbare cap van vijf kandidaat-PR's per issue.
+
+**Private handoffs:** openbare issuetitels en opgeslagen mensnotities worden in tekst-/Markdown-overdracht tot één inerte regel genormaliseerd en Markdown-metatekens ontsnapt. Ruwe GitHub-issueinhoud of eerdere operatornotities komen daardoor niet als uitvoerbare instructie, HTML of verborgen meerdere regels over.
+
+De directe `--live-issues --focus-issue`-flow blijft strikt read-only: één exact geregistreerd repository/issue, canonical priority/QA-only screening en dezelfde bestaande triagekaart. Onbereikbare, gesloten of QA-only issues worden niet stilzwijgend als opgelost verklaard.
