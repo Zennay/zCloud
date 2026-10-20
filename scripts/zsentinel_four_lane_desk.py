@@ -26,6 +26,7 @@ from lane_generator import (
     classify_backlog_item,
     generate_execution_lanes,
     scopes_overlap,
+    recovery_scope_diagnostic,
 )
 from scripts.zsentinel_recovery_actions import suggested_actions
 from scripts.zsentinel_runner_presence import observe_local_runners, text_report
@@ -225,9 +226,16 @@ def collect(database, maximum, include_runner_processes=False):
     unknown_queue_claim_expiry = 0
     inconsistent_queue_claim_windows = 0
     runtime_shadowed_active = 0
+    missing_active_declarations = 0
+    invalid_active_declarations = 0
     for item in queue:
         if str(item.get("status", "")).lower() not in ACTIVE:
             continue
+        declaration = recovery_scope_diagnostic(item)
+        if declaration == "missing_declaration":
+            missing_active_declarations += 1
+        elif declaration == "invalid_or_empty_declaration":
+            invalid_active_declarations += 1
         # The runtime currently filters eligible=1 for all lane inputs.
         if item.get("eligible") != 1:
             runtime_shadowed_active += 1
@@ -361,6 +369,8 @@ def collect(database, maximum, include_runner_processes=False):
         "queue_partial": queue_partial,
         "truncated_queue_fields_observed": truncated_queue_fields,
         "active_write_scopes_not_declared": unknown_active_scopes,
+        "active_scope_declarations_missing": missing_active_declarations,
+        "active_scope_declarations_invalid_or_empty": invalid_active_declarations,
         "active_claim_scopes_not_declared": unknown_claim_scopes,
         "untrusted_active_leases_observed": untrusted_active_leases,
         "runtime_active_filtered_by_eligibility": runtime_shadowed_active,
@@ -479,6 +489,11 @@ def text_view(data):
                    + " actieve queue-claimvensters hebben onmogelijke of ontbrekende start; "
                    "behoud huidige eigenaar.")
     if data["active_write_scopes_not_declared"]:
+        out.append(
+            "Schrijfscopes actief: " + str(data["active_scope_declarations_missing"])
+            + " ontbreken; " + str(data["active_scope_declarations_invalid_or_empty"])
+            + " ongeldig/leeg (geen bestandsvrije parallelle werkruimte bewezen)."
+        )
         out.append("HOLD: " + str(data["active_write_scopes_not_declared"])
                    + " actieve taken hebben geen expliciete schrijf-scope; "
                    + "nieuwe parallelle toelating geblokkeerd.")
@@ -567,6 +582,12 @@ def html_view(data):
               "niet-vooruitlopende vervaltijd; geen herclaim zonder eigenaar."
         )
     if data["active_write_scopes_not_declared"]:
+        warnings.append(
+            "Actieve schrijfscopes: " + str(data["active_scope_declarations_missing"])
+            + " ontbrekende verklaringen; "
+            + str(data["active_scope_declarations_invalid_or_empty"])
+            + " ongeldig of zonder expliciet bestandenbereik."
+        )
         warnings.append(
             str(data["active_write_scopes_not_declared"])
             + " actieve taken missen een declaratie van bestands-/capability-scope. "
@@ -764,6 +785,9 @@ def markdown_view(data):
         "- Actieve queueleases niet toelaatbaar voor nieuwe schrijvers: "
         + str(data["untrusted_active_leases_observed"])
         + " (houder blijft eigenaar).",
+        "- Schrijfscopes: " + str(data["active_scope_declarations_missing"])
+        + " ontbrekend; " + str(data["active_scope_declarations_invalid_or_empty"])
+        + " ongeldig/leeg; niet herclaimen of invullen namens eigenaar.",
         "- Onbetrouwbare actieve queue-claimvensters: "
         + str(data["inconsistent_in_flight_queue_claim_windows_observed"])
         + " (geen automatische herclaim).",
