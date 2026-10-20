@@ -1332,3 +1332,25 @@ teruggeeft: acht ontvangen responses zijn niet gelijk aan acht
 geverifieerde identiteiten. Open issue- en PR-nummers uit dit
 werkoverzicht worden nooit als bewijzen van codefix of live herstel
 gebruikt.
+
+
+### Prioriteit bovenaan: alleen voor werkelijk waargenomen open issues
+
+Bij opt-in issue-identiteitslezing toont de collision workbench nu de
+bronprioriteit van een **bevestigd open GitHub-issue**. Alleen een
+expliciet P0/P1-issue-label (waaronder de reeds bestaande
+`priority:p0`/`priority:p1`-varianten) of titelprefix
+`P0`/`P1` wordt meegenomen. Onjuiste of onvolledige bronvelden
+geven `unclassified` of `not_observed`, nooit een gegokte
+prioriteit. Geverifieerde P0-kandidaten komen vóór P1 en vóór de
+onbekende kandidaten in de visuele werkbak. Binnen dezelfde groep
+worden de bestaande PR-vermeldingen behouden.
+
+Deze volgorde geldt **alleen binnen de brongebonden en maximaal acht
+opgevraagde issue-identiteiten**, niet voor het gehele GitHub-project:
+de resterende of niet bekeken pagina's kunnen zelf ook P0 bevatten.
+In JSON, tekst, Markdown en HTML staan waargenomen prioriteit en de
+human-only vervolgactie apart bij ieder nummer. Een `P0`-kaart
+beweert niet dat een bestaande PR dat issue repareert, de eigenaar
+vrij is, een vereiste check groen is of een veilige productieactie
+is toegestaan. Die autorisatie blijft buiten de scanner.
