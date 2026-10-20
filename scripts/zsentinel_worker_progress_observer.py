@@ -192,6 +192,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             "queue_assignment_coverage": assignment["coverage"],
             "queue_lease_current_from_source": assignment["current_lease"],
             "last_event_type": None, "event_age_seconds": None,
+            "latest_indexed_event_id": None, "latest_indexed_progress_event_id": None,
             "progress_age_seconds": None, "assistant_character_count": None,
             "browser_generating": False, "browser_sending": False,
             "recent_block_event_after_last_prompt": False,
@@ -235,7 +236,7 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
             },
         }
     last_id, timestamp, event, generating, sending, progress, chars = last
-    if type(last_id) is not int or last_id < 1:
+    if type(last_id) is not int or not 1 <= last_id <= 2**53 - 1:
         raise ValueError("invalid worker event row identity")
     event_age = _age(timestamp, now)
     if type(generating) is not int or generating not in (0, 1):
@@ -244,18 +245,29 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         sending = 0
     if chars is not None and (type(chars) is not int or not 0 <= chars <= 2000000):
         chars = None
-    # A bounded recent slice protects large 14-day histories from a full
-    # progress scan. progress_at is browser-reported and may be repeated in
-    # heartbeats: it is a signal, NOT proof of useful work or a resumed claim.
+    # Heartbeats can repeat a browser's old progress_at indefinitely.
+    # Keep latest event id separately from the most recent explicit
+    # generation-progress/finish event. Neither identifies a claim epoch,
+    # but both are stable indexed SQLite cursor evidence for comparisons.
     progress_row = con.execute(
-        "SELECT progress_at,assistant_chars FROM runner_events "
+        "SELECT id,ts,progress_at,assistant_chars FROM runner_events "
+        "INDEXED BY runner_events_project_worker_event_id "
         "WHERE project_id=? AND worker_slot=? AND id>=? "
-        "AND progress_at IS NOT NULL ORDER BY id DESC LIMIT 1",
-        (project, slot, max(1, last_id-200))).fetchone()
+        "AND event IN ('generation-progress','generation-finished') "
+        "ORDER BY id DESC LIMIT 1",
+        (project, slot, max(1, last_id-MAX_WORKER_EVENT_LOOKBACK))).fetchone()
+    latest_progress_id = None
     if progress_row is not None:
-        progress = progress_row[0]
+        candidate_id, event_ts, reported_progress, progress_chars = progress_row
+        if (type(candidate_id) is not int
+                or not 1 <= candidate_id <= last_id):
+            raise ValueError("invalid indexed progress event identity")
+        latest_progress_id = candidate_id
+        progress = reported_progress if reported_progress is not None else event_ts
         if chars is None:
-            chars = progress_row[1]
+            chars = progress_chars
+    else:
+        progress = None
     progress_age = _age(progress, now)
     prompt = con.execute(
         "SELECT id,ts FROM runner_events WHERE project_id=? "
@@ -330,6 +342,8 @@ def _observe_slot(con, project, slot, now, desired_state, global_slot, queue_ava
         "queue_lease_current_from_source": assignment["current_lease"],
         "last_event_type": event if event in SAFE_EVENT else "other_event",
         "event_age_seconds": event_age,
+        "latest_indexed_event_id": last_id,
+        "latest_indexed_progress_event_id": latest_progress_id,
         "progress_age_seconds": progress_age,
         "assistant_character_count": chars if type(chars) is int and 0 <= chars <= 2000000 else None,
         "browser_generating": bool(generating),
@@ -646,6 +660,18 @@ def worker_progress_html(source):
                 or row.get("worker_resumed_verified") is not False
                 or row.get("repair_authorized") is not False):
             raise ValueError("invalid browser progress state receipt")
+        # Optional additive IDs allow safe before/after observations,
+        # but are never authorizing claim/epoch tokens.
+        for name in ("latest_indexed_event_id", "latest_indexed_progress_event_id"):
+            if name in row:
+                cursor = row[name]
+                if cursor is not None and (
+                        type(cursor) is not int or not 1 <= cursor <= 2**53 - 1):
+                    raise ValueError("invalid worker event cursor")
+        latest_id = row.get("latest_indexed_event_id")
+        progress_id = row.get("latest_indexed_progress_event_id")
+        if latest_id is not None and progress_id is not None and progress_id > latest_id:
+            raise ValueError("progress cursor newer than last event")
         age = row.get("event_age_seconds")
         progress = row.get("progress_age_seconds")
         if any(value is not None and (type(value) is not int or value < 0)
