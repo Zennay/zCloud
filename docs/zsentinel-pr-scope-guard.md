@@ -1234,3 +1234,49 @@ volledige inventaris, geen vrij eigenaarschap, geen werkovername en
 geen automatische mergebeslissing. De bestaande Notion-claim-,
 review-, beveiligings- en productie-releasegates blijven vereist.
 Er wordt geen CI-rerun, QA, queue-update of VPS-mutatie uitgevoerd.
+
+
+## Zelfde nummer in meerdere product-PR's: titel, body en echt GitHub-issue
+
+Een **concreet productgat** in de eerdere cross-page-controle: bestaande
+PR's konden hetzelfde issue noemen in hun titel (`fix(#1326)` of
+`... (#1326)`) terwijl de body dat nummer niet herhaalde. De
+werkbak vond zulke potentiële dubbele werkzaamheden niet.
+
+De bron combineert nu dezelfde expliciete `#N`-titelverwijzingen die al
+in de bestaande issue-first route worden gebruikt, met de reeds bekende
+body-verwijzingen. De JSON bewaart **per PR/nummer de bronherkomst**:
+`title`, `body` of beide. Een te grote/onbetrouwbare PR-body
+maakt de tekstdekking **onvolledig**, zelfs wanneer er wel een
+titelverwijzing zichtbaar is. Alle zichtbare issueverwijzingen blijven
+slechts tekst-hints, nooit een fix-, ownership-, review- of mergebewijs.
+
+Omdat `#123` in een titel soms ook **PR #123** kan zijn, bestaat
+een optionele, strikt begrensde live GitHub-issue-identiteitscontrole:
+
+```sh
+python3 scripts/zsentinel_pr_scope_guard.py \
+  --project cloud --audit-open-prs \
+  --max-prs 16 --open-page 1 --page-count 3 \
+  --resolve-issue-identity --format html \
+  > ./private-issue-and-pr-overlaps.html
+```
+
+Alleen bij zichtbare dubbele nummervermeldingen vraagt deze modus via
+GitHub **GET /issues/N** maximaal acht verschillende nummers op.
+Hij leest geen volledige issue-body of persoonsgegevens in de output.
+De pagina en JSON onderscheiden `confirmed_open_issue_at_observation`,
+`confirmed_closed_issue_at_observation`,
+`reference_is_pull_request_not_issue`,
+`identity_unconfirmed`, `source_unavailable` en `not_observed`.
+Een onbeoordeeld nummer wordt nooit als geverifieerd issue gepresenteerd.
+De uitvoer toont het requestbudget en ontbrekende dekking.
+
+De verificatie is bewust opt-in; zonder de vlag wordt **geen extra
+GitHub-GET** toegevoegd. Hij is uitsluitend voor de bestaande
+`--audit-open-prs`-modus en kan niet met een rewrite, merge, workerclaim,
+queue-update of workflow-dispatch worden gecombineerd. Het gaat alleen
+om de identiteit van het genoemde nummer **op één observatiemoment**:
+de echte issue-status, toegewezen eigenaar, productfix, conflicten,
+verplichte CI, onafhankelijke review en productie-release blijven aparte
+beslissingen. Zelfs een geverifieerd open issue verleent geen bevoegdheid.
