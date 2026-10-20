@@ -71,6 +71,28 @@ python3 scripts/zsentinel_issue_first_board.py \
   --output /private/issue-1326-three-pages.html
 ```
 
+**Geen kandidaten binnen één pagina overslaan.** Bij vier relevante PRs, een
+aflopende GitHub-GET-limiet of een vroeg gestopte pagina stopt de automatische
+volgende-pagina-route bewust vóór er andere zoekpagina's gelezen worden. De
+operator krijgt `next_candidate_offset` en `source_page_sha256` in de JSON,
+tekst en HTML. Hervat op **dezelfde** zoekpagina met de geobserveerde offset en
+fingerprint, bijvoorbeeld als het resultaat `next_candidate_offset=6` toont:
+
+```sh
+python3 scripts/zsentinel_issue_first_board.py \
+  --project cloud --issue 1326 --candidate-page 1 \
+  --candidate-offset 6 --expected-page-sha <exact-sha256-uit-vorig-rapport> \
+  --output /private/issue-1326-page1-remainder.html
+```
+
+De SHA-256 is een *zelfcontrole van de geordende zoekkandidaatnummers*,
+geen cryptografisch bewijs van GitHub-herkomst. Een gewijzigde zoekvolgorde
+weigert een onbetrouwbare offset en vraagt een verse inspectie vanaf offset 0.
+Vervolg-snapshots die midden in een pagina starten zijn niet toegestaan met
+`--snapshot-output`: de offline bundelaar accepteert uitsluitend oorspronkelijke
+privésnapshots vanaf pagina-offset nul en zal onvolledige pagina's als PARTIAL
+weergeven. Deze hervatroute neemt geen merge, claim of dispatch over.
+
 Voor elke pagina worden bestaande nog open PR-kandidaten via de actuele echte
 GitHub-bron opnieuw gelezen, inclusief HEAD, checks, review en eventuele
 expliciete issueverwijzingen. De output combineert maximaal twaalf rechtstreeks
@@ -90,8 +112,7 @@ Een snapshot via `--snapshot-output` is bewust uitsluitend voor **één**
 oorspronkelijke `--candidate-page`; voor meerdere historische pagina's zijn de
 afzonderlijke privé-snapshots met de offline bundelaar hieronder nodig. De optie
 `--auto-pages` geldt uitsluitend met `--issue`, is 1–3 en kan niet voorbij
-zoekpagina 50 doorlopen. Onverwachte storingen laten een eerder gelezen
-bronvenster zichtbaar met een onvolledigheidsmelding, niet als afgeleverd werk.
+zoekpagina 50 doorlopen. Onverwachte storingen en nog niet bekeken kandidaten op dezelfde pagina laten het reeds gelezen bronvenster zichtbaar met een onvolledigheidsmelding, niet als afgeleverd werk.
 
 ### Meerdere zoekpagina's bewaren en samenvoegen (offline)
 
