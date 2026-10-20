@@ -500,7 +500,7 @@ def render_html(board):
     # listing that the issue collector already fetched. Not an exact HEAD
     # check or a lease/merge decision; unlinked means only unlinked in sample.
     listed_prs = board.get("recent_open_product_prs", [])
-    if (type(listed_prs) is not list or len(listed_prs) > 144):
+    if (type(listed_prs) is not list or len(listed_prs) > 162):
         raise ValueError("untrusted existing PR source count")
     listed_sections = []
     for pid in board["projects"]:
@@ -516,7 +516,11 @@ def render_html(board):
                 escape(pr["title"]) + '</a> · ' +
                 ('CONCEPT · ' if pr["draft"] else 'OPEN · ') +
                 'getoonde HEAD ' + escape(pr["listed_head_sha"][:12]) +
-                ' · doel ' + escape(pr["listed_base"]) +
+                (' · oudere PR uit gecontroleerde issuelink' if
+                 pr.get("source_kind") ==
+                 "existing_issue_link_exact_head_not_recent_pr_listing"
+                 else ' · recent PR-bronvenster · doel ' +
+                 escape(pr["listed_base"])) +
                 (' · issuekoppeling in beperkte steekproef'
                  if pr["referenced_by_sampled_issue"] else
                  ' · GEEN issuekoppeling in deze beperkte steekproef') +
@@ -780,7 +784,9 @@ def render_markdown(board):
                          " · [" + _markdown_literal(pr["title"]) +
                          "](" + pr["url"] + ")" +
                          (" · CONCEPT" if pr["draft"] else " · OPEN") +
-                         " · lijst-HEAD " + pr["listed_head_sha"][:12] +
+                         (" · opnieuw gelezen HEAD " if pr.get("source_kind") ==
+                          "existing_issue_link_exact_head_not_recent_pr_listing"
+                          else " · lijst-HEAD ") + pr["listed_head_sha"][:12] +
                          (" · GEEN issuekoppeling in beperkte bron" if not
                           pr["referenced_by_sampled_issue"] else
                           " · issuekoppeling in beperkte bron") +
