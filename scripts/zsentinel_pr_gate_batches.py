@@ -27,6 +27,17 @@ MAX_RECEIPT_BYTES = 1024 * 1024
 HEAD = re.compile(r"^[a-f0-9]{40}$")
 OBSERVED = "observed_current_head_partial_gate_evidence"
 UNKNOWN = "github_source_unavailable_or_head_changed"
+# Only the canonical live gate collector may supply a saved human action.
+# Never render arbitrary instructions embedded in a local receipt as advice.
+HUMAN_GATE_STEPS = frozenset({
+    "inspect_incomplete_current_head_gate_source",
+    "inspect_current_head_failed_checks_with_owner",
+    "wait_for_existing_current_head_checks",
+    "owner_address_exact_head_review_changes",
+    "verify_missing_current_head_checks_and_rules",
+    "request_independent_current_head_review",
+    "verify_required_rules_ownership_and_release_separately",
+})
 
 
 def _load_regular(path: Path, max_bytes: int) -> dict:
@@ -149,7 +160,7 @@ def reconcile(manifest: Path, receipt_paths: list[Path], now=None) -> dict:
                 or type(item.get("observed_checks_pending")) is not int
                 or type(item.get("observed_checks_not_successful")) is not int
                 or type(item.get("observed_independent_exact_head_approvals")) is not int
-                or type(item.get("human_next_gate_step")) is not str
+                or item.get("human_next_gate_step") not in HUMAN_GATE_STEPS
             ):
                 raise ValueError("incomplete observed gate evidence")
             if observed:
@@ -296,7 +307,7 @@ def human(report, markdown=False):
         for row in batch["prs"]:
             name = ("[" + row["url"] + "](" + row["url"] + ")") if markdown else row["url"]
             lines.append("- " + name + " · [" + row["historic_gate_category"] + "] " + row["next_human_gate"] +
-                         (" · VEROUderd (>15 min)" if row["saved_source_stale_over_15_minutes"] else "") +
+                         (" · VEROUDERD (>15 min)" if row["saved_source_stale_over_15_minutes"] else "") +
                          " · MERGE NEE")
     lines.append("\nGeen claims, workflows, GitHub-writes, merge of deploy uitgevoerd.")
     return "\n".join(lines) + "\n"
