@@ -406,7 +406,11 @@ Bij classificatie gaat een aanwezige ruwe `metadata_json` vóór een afzonderlij
 
 ## 20 oktober · Canonieke queue-identiteit, idempotente producer en eerlijk runtime-signaal
 
-De bestaande `portfolio_queue_enqueue` weigert nu expliciet opgegeven niet-canonieke
+De bestaande `portfolio_queue_enqueue` weigert nu expliciet opgegeven lege,
+niet-string of niet-canonieke queue-ID's; alleen een echt weggelaten ID wordt
+op basis van de taakbron berekend. Dit voorkomt dat bijvoorbeeld een expliciete
+lege ID stilzwijgend een nieuwe taakidentiteit oplevert. Voor overige
+niet-canonieke waarden geldt dezelfde weigering. De producent
 queue-ID's, in plaats van bijvoorbeeld `foo#1` en `foo 1` beide stil naar
 `foo-1` te herschrijven. Een producer-retry mag uitsluitend een bestaande,
 nog ongeclaimde taak met **dezelfde project-ID, exacte titel en dezelfde parent-ID**
